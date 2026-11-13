@@ -33,7 +33,7 @@ describe('API sign-in gate', () => {
     }
   });
 
-  it('passes only the member and invitation routes on to their own sign-in check', () => {
+  it('passes only the member, invitation and job routes on to their own sign-in check', () => {
     expect([...memberApiPaths]).toEqual([
       '/api/me',
       '/api/companies/:id/team',
@@ -51,9 +51,14 @@ describe('API sign-in gate', () => {
       '/api/prices/preview',
       '/api/prices/publish',
       '/api/prices/export',
+      '/api/prices/import',
       '/api/prices/versions',
       '/api/prices/versions/:id',
       '/api/prices/versions/:id/restore',
+      '/api/jobs',
+      '/api/jobs/:id',
+      '/api/jobs/:id/customer',
+      '/api/jobs/:id/claim',
     ]);
     expect(call('/api/me').headers.get('x-middleware-next')).toBe('1');
     expect(call('/api/me/extra').status).toBe(401);
@@ -69,6 +74,7 @@ describe('API sign-in gate', () => {
     expect(call(`/api/companies/${id}/team`).headers.get('x-middleware-next')).toBe('1');
     expect(call(`/api/companies/${id}/members/${id.toUpperCase()}/disable`, 'POST').headers.get('x-middleware-next')).toBe('1');
     expect(call(`/api/invitations/${id}/accept`, 'POST').headers.get('x-middleware-next')).toBe('1');
+    expect(call(`/api/jobs/${id}/customer`, 'PUT').headers.get('x-middleware-next')).toBe('1');
     for (const path of [
       '/api/companies/current/team',
       `/api/companies/${id}/team/extra`,
@@ -76,6 +82,8 @@ describe('API sign-in gate', () => {
       `/api/companies/${id}x/team`,
       `/api/companies/${id}/members/${id}/delete`,
       `/api/invitations/${id}/accept/`,
+      `/api/jobs/${id}/archive`,
+      `/api/jobs/${id}/customer/`,
       '/api/invitations/..%2Fme',
     ]) {
       expect({ path, status: call(path).status }).toEqual({ path, status: 401 });
@@ -88,7 +96,7 @@ describe('API sign-in gate', () => {
   });
 
   it.each([
-    ['/api/jobs', 'GET'],
+    ['/api/jobs/current', 'GET'],
     ['/api/companies', 'POST'],
     ['/api/health/details', 'GET'],
     ['/api/healthz', 'GET'],

@@ -3,11 +3,13 @@ import { openDatabase } from '@/db/client';
 import { databaseDirectory, databaseOperators } from '@/lib/auth/directory';
 import { IdentityRefusal, type TokenVerifier } from '@/lib/auth/identity';
 import type { IdentityServices, OperatorServices } from '@/lib/auth/services';
+import { jobsService, type JobsService } from '@/lib/jobs/service';
 import { noEmailService, platformService, type PlatformService } from '@/lib/platform/service';
 import { pricesService, type PricesService } from '@/lib/prices/service';
 import type { PlatformUsers } from '@/lib/platform/users';
 import { teamService, type TeamService } from '@/lib/team/service';
 import { TenantUsersUnavailable } from '@/lib/team/users';
+import { fakeDrafts, type FakeDrafts } from './draft-fake';
 import { startMigratedDatabase, type MigratedDatabase, type SharedRole } from './postgres-harness';
 
 // The team and invitation routes against a real Postgres, as the app's runtime role with forced
@@ -49,6 +51,9 @@ export type Harness = {
   team: TeamService;
   platform: PlatformService;
   prices: PricesService;
+  // The jobs routes' service, over the same database and an in-memory stand-in for the field drafts.
+  jobs: JobsService;
+  drafts: FakeDrafts;
   // The migrator's login (the table owner), for the owner-run command.
   migratorUrl: string;
   // Each member the team service asked to project, in order, after its change committed.
@@ -201,6 +206,8 @@ export async function resetTeamDatabase(
     team: null as unknown as TeamService,
     platform: null as unknown as PlatformService,
     prices: pricesService(handle.db),
+    jobs: null as unknown as JobsService,
+    drafts: fakeDrafts(),
     migratorUrl: urlAs(server, server.roles.migrator),
     projected: [],
   };
@@ -233,6 +240,7 @@ export async function resetTeamDatabase(
   };
   harness.platform = platformService(handle.db, users, projectInto, noEmailService);
   harness.team = teamService(handle.db, users, projectInto);
+  harness.jobs = jobsService(handle.db, harness.drafts);
   return harness;
 }
 

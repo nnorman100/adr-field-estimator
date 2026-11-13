@@ -6,10 +6,10 @@ import { starterTable } from '@/lib/prices/starter';
 // The company-isolation matrix (S3-17): one row for every handler of every route file under
 // src/app, saying what kind of access rule it has and how the isolation suite attacks it. The suite
 // (company-isolation.test.ts) imports every route file, fails when one of its handlers is not in
-// this list or a row names one that no longer exists, and calls every row with the other company's
-// ids. So a new route cannot ship without somebody deciding here how another company's caller is
-// refused, and the decision is read in review. That each handler has an access rule at all is
-// tests/unit/route-rules.test.ts.
+// this list or a row names one that no longer exists, and calls every exported handler with the
+// other company's ids, failing by name on one it did not reach. So a new route cannot ship without
+// somebody deciding here how another company's caller is refused, and the decision is read in
+// review. That each handler has an access rule at all is tests/unit/route-rules.test.ts.
 //
 // Kinds:
 //   company     a company member; the company comes from the sign-in
@@ -35,7 +35,11 @@ export type MatrixRow = {
   // path that names another company's record:
   //   list   the caller's own ids; a 200 that holds none of the other company's rows
   //   cross  the caller's own company with the other company's record ids: refused
-  own?: 'list' | 'cross';
+  //   create a route that makes the caller's own record from the body and names no company in its
+  //          path, so the other company's people are not refused: the suite sends the other
+  //          company's record ids in the body and checks the caller got only its own record and
+  //          the other company's rows are unchanged
+  own?: 'list' | 'cross' | 'create';
   // The route names no company and no record of one: the company is the caller's sign-in (the
   // Prices routes). A call by the other company's user is therefore answered about the caller's own
   // company, so the suite expects an answer that holds nothing of the other company and changes
@@ -49,6 +53,11 @@ const row = (route: string, method: Method, kind: RouteKind, extra: Pick<MatrixR
   kind,
   ...extra,
 });
+
+// Bodies that are valid for the job routes, so a refusal is the access rule's (the ids in them are
+// the suite's own; the path carries the other company's job).
+const JOB_CUSTOMER = { revision: 1, changeId: '5b7c1e0a-3f6d-4a52-9d1e-7a0c2b4f8e61', name: 'Planted Name', phone: '555-0100', email: 'planted@example.test', propertyAddress: '1 Planted Way' };
+const JOB_CLAIM = { revision: 1, changeId: '8d2f4a90-61b3-4c7e-a5d8-0e9b3c1f7a24', carrier: 'Planted Mutual', claimNumber: 'PL-1', policyNumber: 'PL-2', dateOfLoss: null, lossCause: '', adjusterName: '', adjusterEmail: '', adjusterPhone: '', deductible: '' };
 
 const COMPANY = 'api/companies/[companyId]';
 const PLATFORM = 'api/platform/companies';
@@ -76,9 +85,16 @@ export const MATRIX: readonly MatrixRow[] = [
     body: { expectedRevision: STALE, reason: 'Isolation check', publishKey: 'isolation-key-1', rangeChoice: 'single' },
   }),
   row(`${PRICES}/export`, 'GET', 'company', { self: true, own: 'list' }),
+  // A file with no price in it: refused or answered about the caller's own company, never applied.
+  row(`${PRICES}/import`, 'POST', 'company', { self: true, body: { expectedRevision: STALE, csv: 'item_id,code,name,group,trade,unit,enabled,row,room_type,up_to_sf,tier,price\r\n' } }),
   row(`${PRICES}/versions`, 'GET', 'company', { self: true, own: 'list' }),
   row(`${PRICES}/versions/[versionId]`, 'GET', 'company', { own: 'cross' }),
   row(`${PRICES}/versions/[versionId]/restore`, 'POST', 'company', { body: { expectedRevision: STALE }, own: 'cross' }),
+  row('api/jobs', 'GET', 'company', { self: true, own: 'list' }),
+  row('api/jobs', 'POST', 'company', { body: { id: '3c9a6e12-84d1-4f0b-b7a3-52e8d1c04f96', draftId: 'a1f0d7b4-2e65-4c39-8b1a-9d3e6f20c578' }, own: 'create' }),
+  row('api/jobs/[jobId]', 'GET', 'company', { own: 'cross' }),
+  row('api/jobs/[jobId]/customer', 'PUT', 'company', { body: JOB_CUSTOMER, own: 'cross' }),
+  row('api/jobs/[jobId]/claim', 'PUT', 'company', { body: JOB_CLAIM, own: 'cross' }),
 
   row('api/invitations/[invitationId]', 'GET', 'invitation'),
   row('api/invitations/[invitationId]/accept', 'POST', 'invitation'),
@@ -160,3 +176,20 @@ export function matrixProblems(found: readonly FoundHandler[], matrix: readonly 
   }
   return problems;
 }
+
+// The path with every [name] filled in from `ids`, as the framework would hand it to the handler. A
+// name that `ids` does not have is an error, not a made-up id: a route with a new path parameter
+// must be given the other company's value for it before the suite can call it.
+export function pathFor(route: string, ids: Readonly<Record<string, string>>): string {
+  return `/${route}`.replace(/\[([A-Za-z]+)\]/g, (_match, name: string) => {
+    const value = ids[name];
+    if (value === undefined) throw new Error(`${route} has the path parameter [${name}], which the isolation suite has no id for (web/tests/db/company-isolation.test.ts, idsOf)`);
+    return value;
+  });
+}
+
+// One call the suite made: who, which handler, and the path it was given.
+export const callKey = (who: string, method: string, path: string) => `${who} ${method} ${path}`;
+
+// The calls that were expected and were not made, so a handler the loop skipped fails by name.
+export const uncalled = (expected: readonly string[], made: ReadonlySet<string>): string[] => expected.filter((key) => !made.has(key));

@@ -95,7 +95,7 @@ for those two prompts.
 **Not in use.** Neither the code, the docs, the scripts nor CI refer to Model Armor, and no
 Vertex safety setting or data-loss-prevention screen is configured. The standard puts Model Armor
 on every AI call and, for live voice, screens the text transcript and replies, not the audio
-stream (to be confirmed against Model Armor's supported inputs). The target coverage by modality, with raw audio and video pending the owner's decision R2, is in
+stream (to be confirmed against Model Armor's supported inputs). The target coverage by modality, with raw audio and video under the narrow exception the owner decided on 2026-11-12 (R2 = S7 decision V1 B), is in
 [ai-inventory.md](ai-inventory.md#ai-modality-coverage-contract). Stand-ins that exist today are
 application-level only: prompts label input as untrusted, output is schema-validated, the server
 writes prices and prose, inputs are size-limited and rate-limited, and sensitive fields are kept

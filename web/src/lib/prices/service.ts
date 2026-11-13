@@ -4,6 +4,7 @@ import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant
 import { checkTable, priceEstimate, type Estimate, type Json, type Refusal } from '@/engine/estimate';
 import { ENGINE_VERSION, contentHash, effectiveTable, parseTable, zeroPriceItems, type Table } from '@/engine/table';
 import { exportPriceList } from './csv';
+import { applyPriceList, PriceImportError } from './import';
 import { SAMPLE_JOBS } from './samples';
 import { starterTable } from './starter';
 
@@ -37,6 +38,9 @@ export const PRICES_ERRORS = {
   conflict: 409,
   // The table does not pass the schema.
   invalid_table: 422,
+  // The price list file cannot be applied to the working copy (a formula cell, a line that matches
+  // no price, a price the table refuses); nothing is changed. The detail names the line.
+  invalid_import: 422,
   // The table passes the schema but cannot be published yet (a blank price, an unconfirmed zero price).
   not_publishable: 422,
   // The first publish needs the owner to choose the estimate setting: a range or one price.
@@ -112,6 +116,12 @@ export type Preview = {
   publishCheck: { ok: true } | { ok: false; error: string };
   zeroPrices: string[];
   samples: PreviewSample[];
+};
+
+export type Imported = {
+  // How many prices the file changed; 0 means the working copy was left as it was.
+  changed: number;
+  workingCopy: WorkingCopyView;
 };
 
 export type Published = { version: VersionMeta; workingCopy: WorkingCopyView; replayed: boolean };
@@ -415,6 +425,37 @@ export function pricesService(db: Database) {
       });
     },
 
+    // Applies a CSV price list (import.ts) to the working copy and writes nothing else. A stale
+    // revision is refused before the file is read; a file that changes no price leaves the working
+    // copy and its revision as they were, with no audit row.
+    async importPriceList(
+      companyId: string,
+      actorId: string,
+      input: { expectedRevision: number; csv: string },
+      now: Date,
+    ): Promise<Imported> {
+      return inCompany(companyId, async (tx) => {
+        const working = await workingRow(tx, companyId, true);
+        const revision = working?.revision ?? 0;
+        if (revision !== input.expectedRevision) throw new PricesError('stale_revision', undefined, revision);
+        const current = workingView(working);
+        let applied: ReturnType<typeof applyPriceList>;
+        try {
+          applied = applyPriceList(current.table, input.csv);
+        } catch (error) {
+          if (error instanceof PriceImportError) throw new PricesError('invalid_import', error.detail);
+          throw error;
+        }
+        if (applied.changed === 0) return { changed: 0, workingCopy: current };
+        const saved = await replaceWorking(tx, companyId, revision, applied.table, undefined, now);
+        await audit(tx, companyId, actorId, 'price_working_copy_imported', companyId, {
+          revision: saved.revision,
+          prices: applied.changed,
+        });
+        return { changed: applied.changed, workingCopy: saved };
+      });
+    },
+
     async listVersions(companyId: string): Promise<{ versions: VersionMeta[]; more: boolean }> {
       return readOnly(db, companyId, (tx) => readVersionList(tx, companyId));
     },
@@ -484,8 +525,9 @@ export function pricesService(db: Database) {
         const hash = contentHash(table);
         if (latest && latest.contentHash === hash) throw new PricesError('no_changes');
         // 'restore' when nothing was changed after a version was copied into the working copy;
-        // 'blank' for a table the owner built or edited from the starter list (the table has no
-        // record of an import yet, S4-7).
+        // 'import' when the working copy is as the last import left it (every other change bumps
+        // the revision, and the import's audit row names the revision it wrote); 'blank' for a
+        // table the owner built or edited from the starter list.
         let source: PriceSource = 'blank';
         if (working.baseSequence !== null) {
           const [base] = await tx
@@ -493,6 +535,20 @@ export function pricesService(db: Database) {
             .from(priceTableVersions)
             .where(and(eq(priceTableVersions.companyId, companyId), eq(priceTableVersions.sequence, working.baseSequence)));
           if (base?.hash === hash) source = 'restore';
+        }
+        if (source === 'blank') {
+          const [imported] = await tx
+            .select({ id: auditEvents.id })
+            .from(auditEvents)
+            .where(
+              and(
+                eq(auditEvents.companyId, companyId),
+                eq(auditEvents.action, 'price_working_copy_imported'),
+                sql`${auditEvents.details}->>'revision' = ${String(working.revision)}`,
+              ),
+            )
+            .limit(1);
+          if (imported) source = 'import';
         }
         const sequence = (latest?.sequence ?? 0) + 1;
         const [inserted] = await tx

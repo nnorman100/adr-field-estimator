@@ -82,6 +82,8 @@ async function body<T>(request: Request, schema: z.ZodType<T>): Promise<T> {
 const revision = z.number().int().min(0).max(2_000_000_000);
 const saveBody = z.strictObject({ expectedRevision: revision, table: z.unknown() });
 const previewBody = z.strictObject({ table: z.unknown().optional() });
+// The CSV file as text beside the revision it was read against (the whole body is under 2 MB).
+const importBody = z.strictObject({ expectedRevision: revision, csv: z.string() });
 const restoreBody = z.strictObject({ expectedRevision: revision });
 // The owner's change reason, as migration 0009 checks it: 3 to 500 characters, no padding.
 const reason = z
@@ -137,6 +139,15 @@ export async function publishPrices(request: Request, identity: Identity): Promi
     const input = await body(request, publishBody);
     const published = await pricesServices().publish(identity.companyId, actorId, input, new Date());
     return json(published, published.replayed ? 200 : 201);
+  });
+}
+
+// POST /api/prices/import  { expectedRevision, csv }: applies a price list to the working copy only.
+export async function importPrices(request: Request, identity: Identity): Promise<Response> {
+  return respond(async () => {
+    const actorId = requireManage(identity);
+    const input = await body(request, importBody);
+    return json(await pricesServices().importPriceList(identity.companyId, actorId, input, new Date()));
   });
 }
 

@@ -305,7 +305,7 @@ previous value only) in one transaction, and refuses an unknown name before writ
   prices when a table is written and read, and the hash is checked again on read.
 
 `0010_core_job_tables` adds the job header, customer, claim and evidence registry tables and the company
-profile columns (S5a-2, `docs/plans/S5.md`); no route uses them until S5a-3 to S5a-5. All four tables hold a
+profile columns (S5a-2, `docs/plans/S5.md`); the jobs routes (S5a-3, `docs/ACCESS.md`) read and write `jobs`, `job_customers` and `job_claims`, and nothing uses `evidence_objects` until S5a-5. All four tables hold a
 company's rows only inside `withCompany`, with forced row-level security. A key between rows always carries
 `company_id`, so a row can never point at another company's job or person.
 
@@ -323,7 +323,8 @@ company's rows only inside `withCompany`, with forced row-level security. A key 
   status and sign-in tenant rights). That only the owner changes the profile is the route's rule
   (`profile_manage`, S5a-4).
 - `revision` starts at 1 and each change raises it by exactly one (a trigger), so a save made from an older
-  copy finds no row (`WHERE revision = expected`) and a blind save fails the check; a job starts as a `draft`.
+  copy is refused and a blind save fails the check (the jobs routes compare it under the job's row lock); a job
+  starts as a `draft`.
   `last_change_id` is the client's id for the latest change, so a retry that carries it again is not a
   conflict; the routes decide that, and the same job id with another body is told by `request_digest`.
 - An `evidence_objects.object_name` must sit under `companies/<company id>/jobs/<job id>/` and use only
@@ -367,7 +368,7 @@ The rules deny every path they do not name. They read three server-written recor
 | --- | --- | --- |
 | `companies/{companyId}` (company header) | `authTenantId`, the company's sign-in tenant | server only |
 | `companies/{companyId}/access/{uid}` (access record) | `role` (owner, estimator or office) and `expiresAt` (a timestamp; the record stops working then) | server only |
-| `companies/{companyId}/drafts/{draftId}`, its `rooms/{roomId}` and its `photos/{photoId}` | draft: `fieldOwnerUid` and `state` (editing, submitting or submitted); client data sits in one `field` map in each document | the draft's field owner changes only `field`, while the draft is `editing`; the server creates and removes drafts |
+| `companies/{companyId}/drafts/{draftId}`, its `rooms/{roomId}` and its `photos/{photoId}` | draft: `fieldOwnerUid` and `state` (editing, submitting or submitted); client data sits in one `field` map in each document | the draft's field owner changes only `field`, while the draft is `editing`; the server creates and removes drafts. `POST /api/jobs` (S5a-3) makes a job's first draft after its Postgres row, as `{ fieldOwnerUid, state: 'editing', field: {} }` (no `fieldOwnerUid` key while nobody owns the field work), and a retry makes it only if it is missing |
 
 Every read or write needs a token whose `firebase.tenant` is the company's `authTenantId` and an
 unexpired access record for that uid in that company. With both, owner and office read every draft
