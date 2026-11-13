@@ -22,7 +22,7 @@ The app is `web/`: TypeScript, Next.js, Zod at every route boundary; Cloud SQL P
 ## Every change
 One small PR with a test that fails without it; the eight checks in `docs/roadmap.md`; no edits to `docs/status/` in feature PRs (updated in a batch after merges). Report what changed, what you were unsure of, and what the owner must check on a phone. Search functions by name; write the failing test first.
 
-## Technology Standard 2.6 (build and agent rules)
+## Technology Standard 2.9 (build and agent rules)
 Profile and exceptions: `docs/ARCHITECTURE.md`, `docs/DECISIONS.md` (D-013 to D-016); stage plans: `docs/plans/`.
 - Migrations: add first, switch over, remove later; never rename or drop in one step. Drops or row deletions need a fresh backup and the owner. Test-copy migrations run from the release workflow's job; live ones need the owner. One database-changing job at a time.
 - CI runs on the self-hosted pool. Never set or delete `CI_RUNNER` or move a job to GitHub-hosted runners ($0 Actions hard stop).

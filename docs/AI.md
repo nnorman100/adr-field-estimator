@@ -100,3 +100,40 @@ stream (to be confirmed against Model Armor's supported inputs). The target cove
 application-level only: prompts label input as untrusted, output is schema-validated, the server
 writes prices and prose, inputs are size-limited and rate-limited, and sensitive fields are kept
 out of prompts.
+
+## Rules from Technology Standard 2.7 and 2.8 (planned for the rebuild)
+
+Nothing below is built yet. The rebuilt app's AI is stage S7 ([plans/S7.md](plans/S7.md)); the Terraform
+settings are in [plans/TC.md](plans/TC.md). The owner's decisions are D-018 to D-028 in
+[DECISIONS.md](DECISIONS.md). Google statements cite documents read through the Developer Knowledge tool.
+
+- **Model Armor is a baseline, not a guarantee.** The built-in Agent Platform integration covers the
+  `generateContent` method and skips screening and carries on if Model Armor is unavailable,
+  unreachable or errors, so a prompt or reply can occasionally go unscreened
+  (`documents/docs.cloud.google.com/model-armor/model-armor-vertex-integration`). It does not
+  sanitize documents or file uploads. Streamed replies and voice transcripts go through the
+  Model Armor sanitize API, as S7 plans; no audio or video is screened, under the owner's R2
+  exception ([ai-inventory.md](ai-inventory.md#ai-modality-coverage-contract)).
+- **Model Armor logging stays off.** Logging sanitize operations writes full prompts and replies to
+  Cloud Logging; in the console that setting is on by default for Agent Platform in the floor settings
+  (`documents/docs.cloud.google.com/model-armor/configure-logging`). Rule 5 above applies to it too.
+  The owner confirms the floor settings and the spike template `dryscope-live-spike` have it off before S7
+  uses them; use audit logs (no payload) and the app's own counters instead.
+- **Zero-data-retention checklist, one line per AI feature.** Google's guide lists what needs a
+  deliberate choice: session resumption, grounding, explicit context caching, and stored files
+  (`documents/docs.cloud.google.com/gemini-enterprise-agent-platform/resources/zero-data-retention`).
+  Each S7 feature records here whether it uses any of them. Today none of the rebuilt features is
+  built, so the checklist is empty by design.
+- **Live voice resumes after a drop, so it is not zero-retention (D-019).** Google stores the session's
+  text, audio and video prompts and model outputs for up to 24 hours so a session can resume
+  (`documents/docs.cloud.google.com/gemini-enterprise-agent-platform/models/live-api/start-manage-session`).
+  The Live relay in S7 turns resumption on; the customer terms say so.
+- **Where text AI runs:** the `us` multi-region endpoint, because no current GA Flash model is served from
+  `us-central1` (D-027); Live stays on `us-central1`.
+- **Spend cap:** a monthly Agent Platform cap on each project with AI, above the company budgets
+  (D-020). The app keeps working with AI off when it triggers.
+- **Agents:** none in S7; the first will run on Cloud Run (D-028). The "Agent Gateway" and
+  "Agent Identity" products are not relied on.
+
+The old app's rows above (Model Armor "Not in use", `LIVE_LOCATION`, `GOOGLE_CLOUD_LOCATION`) describe
+the Python backend and stay true until it is retired.
