@@ -124,6 +124,16 @@ describe('hand-written spans', () => {
   });
 });
 
+describe('the AI boundary seam', () => {
+  it('is the real helper: the boundary\'s withAiSpan opens an ai.call span', async () => {
+    start();
+    const { withAiSpan: boundary } = await import('@/lib/ai/span');
+    expect(boundary).toBe(withAiSpan);
+    await boundary({ model: 'gemini-3.8-flash', outcome: 'ok' }, async () => 1);
+    expect(finished().map((s) => s.name)).toEqual(['ai.call']);
+  });
+});
+
 describe('what may leave the process', () => {
   it('keeps listed attributes and drops the rest, scrubbing what stays', () => {
     const out = sanitizeAttributes({
