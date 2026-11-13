@@ -57,6 +57,12 @@ export const SETTINGS = {
   APP_COMMIT: { source: 'tooling', services: NOT_SET, reader: 'web' },
   // An older name for APP_ENV that config.ts still accepts. Terraform sets APP_ENV, never this.
   APP_ENVIRONMENT: { source: 'local', services: NOT_SET, reader: 'web' },
+  // Request tracing (src/lib/telemetry). OTEL_SDK_DISABLED=true is the off switch (the standard
+  // OpenTelemetry name). K_SERVICE is set by Cloud Run itself on a service revision: the exporter to
+  // Cloud Trace starts only where it is present, so no local run or CI job exports. Terraform sets
+  // neither today; a later infra change may set the switch on a service.
+  OTEL_SDK_DISABLED: { source: 'tooling', services: NOT_SET, reader: 'web' },
+  K_SERVICE: { source: 'tooling', services: NOT_SET, reader: 'web' },
   // Developer machine only. The emulator hosts make firebase-admin trust unsigned tokens and
   // credential-free writes, so Terraform must never set them (config.ts also refuses them unless
   // APP_ENV is local).

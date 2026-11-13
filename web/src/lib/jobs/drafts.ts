@@ -1,4 +1,5 @@
 import type { Firestore } from 'firebase-admin/firestore';
+import { firestoreSpan } from '@/lib/telemetry/spans';
 
 // The job's first Firestore field draft (docs/data-ownership.md). The server makes it; a client may
 // only change its `field` map, and only the field owner while `state` is `editing`
@@ -17,11 +18,13 @@ export function firestoreDraftStore(db: Firestore): DraftStore {
       const draft = db.collection('companies').doc(companyId).collection('drafts').doc(draftId);
       try {
         // create() refuses an existing document, so a retry never overwrites later field work.
-        await draft.create({
-          ...(fieldOwnerUid === null ? {} : { fieldOwnerUid }),
-          state: 'editing',
-          field: {},
-        });
+        await firestoreSpan('create', 'drafts', () =>
+          draft.create({
+            ...(fieldOwnerUid === null ? {} : { fieldOwnerUid }),
+            state: 'editing',
+            field: {},
+          }),
+        );
         return 'created';
       } catch (error) {
         if ((error as { code?: unknown } | null)?.code === ALREADY_EXISTS) return 'exists';
