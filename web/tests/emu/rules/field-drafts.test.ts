@@ -202,7 +202,44 @@ describe('field database rules', () => {
       }),
     ).toBe(403);
     expect(await updateDoc(owner.caller, `${editing}/rooms/kitchen`, { ocrStatus: 'verified' })).toBe(403);
-    expect(await deleteDoc(owner.caller, `${editing}/rooms/kitchen`)).toBe(403);
+    // Changed by owner decision (2026-11-13, S5a-6): the field owner may now remove a room of an
+    // editing draft, so this delete is allowed. Who else is refused, and on which drafts, is the
+    // next test; a photo reference stays undeletable.
+    await serverSet(`${editing}/rooms/removable`, { field: { name: 'Removable' } });
+    expect(await deleteDoc(owner.caller, `${editing}/rooms/removable`)).toBe(200);
+  });
+
+  it('lets only the field owner remove a room, only while the draft is editing, and never a photo', async () => {
+    const editing = draft(A, 'editing');
+    const room = (id: string) => serverSet(`${editing}/rooms/${id}`, { field: { name: id } });
+    // Another estimator of the company, office, and the company owner who is not the field owner.
+    for (const name of ['otherEstimatorA', 'officeA', 'ownerA']) {
+      await room(`kept-${name}`);
+      expect(await deleteDoc(u(name).caller, `${editing}/rooms/kept-${name}`), name).toBe(403);
+      expect(await getDoc(u('estimatorA').caller, `${editing}/rooms/kept-${name}`), name).toBe(200);
+    }
+    // Another company's estimator: its token belongs to another tenant.
+    await room('kept-b');
+    expect(await deleteDoc(u('estimatorB').caller, `${editing}/rooms/kept-b`)).toBe(403);
+    // Expired or missing access records.
+    for (const [name, id] of [
+      ['expiredA', 'expired-owner'],
+      ['noAccessA', 'no-access-owner'],
+    ] as const) {
+      expect(await deleteDoc(u(name).caller, `${draft(A, id)}/rooms/kitchen`), name).toBe(403);
+    }
+    // The field owner, once the draft is no longer editing.
+    for (const id of ['submitting', 'submitted']) {
+      expect(await deleteDoc(u('estimatorA').caller, `${draft(A, id)}/rooms/kitchen`), id).toBe(403);
+      expect(await getDoc(u('estimatorA').caller, `${draft(A, id)}/rooms/kitchen`), id).toBe(200);
+    }
+    // A photo reference, even from the field owner of an editing draft.
+    await serverSet(`${editing}/photos/p-kept`, { field: { shotTag: 'overview' } });
+    expect(await deleteDoc(u('estimatorA').caller, `${editing}/photos/p-kept`)).toBe(403);
+    // Control: the field owner removes a room of their editing draft.
+    await room('gone');
+    expect(await deleteDoc(u('estimatorA').caller, `${editing}/rooms/gone`)).toBe(200);
+    expect(await getDoc(u('estimatorA').caller, `${editing}/rooms/gone`)).toBe(404);
   });
 
   it('refuses writes to a draft that is no longer editing, and still lets it be read', async () => {

@@ -145,7 +145,8 @@ service cloud.firestore {
         return get(/databases/$(database)/documents/companies/$(companyId)/drafts/$(draftId)).data;
       }
 
-      // A nested document holds only `field`, and that map is valid. A client never deletes one.
+      // A nested document holds only `field`, and that map is valid. A client deletes only a room
+      // (below), never a photo reference.
       function nestedCreate(valid) {
         return canEdit(companyId, draft())
           && request.resource.data.keys().hasOnly(['field'])
@@ -168,6 +169,9 @@ service cloud.firestore {
         allow read: if canRead(companyId, draft());
         allow create: if nestedCreate(validRoomField(request.resource.data.field));
         allow update: if nestedUpdate(validRoomField(request.resource.data.field));
+        // Removing a room (owner decision, 2026-11-13, S5a-6): only its field owner, while the draft
+        // is editing. The phone removes the room from `roomOrder` in the same batch.
+        allow delete: if canEdit(companyId, draft());
       }
 
       match /photos/{photoId} {

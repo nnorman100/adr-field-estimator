@@ -2,7 +2,8 @@ import { readdir, readFile } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { SCREENS } from '../e2e/screens';
+import { FIELD_VIEWS } from '@/lib/field/views';
+import { FIELD_VIEW_SCREENS, SCREENS } from '../e2e/screens';
 
 // Every page must have an axe accessibility check. This finds every page.tsx under src/app, so a
 // new screen with no entry in tests/e2e/screens.ts fails here (and so in CI) without anyone
@@ -49,4 +50,15 @@ describe('every page has an axe check', () => {
       expect(source).toMatch(AXE_CHECK);
     },
   );
+});
+
+describe('every view of the field page has an axe check', () => {
+  it('lists every field view in tests/e2e/screens.ts', () => {
+    expect(Object.keys(FIELD_VIEW_SCREENS).sort()).toEqual([...FIELD_VIEWS].sort());
+  });
+
+  it.each(Object.entries(FIELD_VIEW_SCREENS))('the %s view is checked by %s, which runs axe', async (_view, spec) => {
+    const source = await readFile(join(E2E_DIR, spec), 'utf8');
+    expect(source).toMatch(AXE_CHECK);
+  });
 });

@@ -1,0 +1,152 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { photoAddress, sendPhoto, SHOT_NAMES } from '@/lib/field/api';
+import { preparePhoto } from '@/lib/field/photo';
+import { SHOT_TAGS, type PhotoField } from '@/lib/field/schema';
+import { savePhotoRef, type FieldDraft } from '@/lib/field/store';
+import type { JobContext } from './job-screens';
+import { Choice, Outcome, Section } from './ui';
+
+// A photo taken here that the job does not hold yet. Its id and bytes are kept until the server
+// has a receipt and the reference is written, so "Send again" sends the very same photo.
+type Pending = { id: string; bytes: Blob; field: PhotoField; step: 'sending' | 'send-failed' | 'saving' | 'save-failed'; message?: string };
+
+const SHOT_OPTIONS = [{ value: '', label: 'Not tagged' }, ...SHOT_TAGS.map((tag) => ({ value: tag, label: SHOT_NAMES[tag] }))];
+
+function fieldOf(roomId: string, shotTag: string): PhotoField {
+  return {
+    ...(roomId ? { roomId } : {}),
+    ...(shotTag ? { shotTag: shotTag as PhotoField['shotTag'] & string } : {}),
+  };
+}
+
+// Photos (S5a-6): the camera, a room and a shot tag for each photo, and the job's photos. A photo's
+// bytes go to the photo route (S5a-5) first; its reference (room and shot tag) is written to the
+// field draft only once the server holds the bytes.
+export function PhotosView({ job, draft }: { job: JobContext; draft: FieldDraft }) {
+  const [roomId, setRoomId] = useState('');
+  const [shotTag, setShotTag] = useState('');
+  const [pending, setPending] = useState<Pending[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const canTake = job.editable && job.session.capabilities.includes('photos');
+  const roomOptions = [{ value: '', label: 'No room' }, ...draft.rooms.map((room) => ({ value: room.id, label: room.field.name ?? 'Room' }))];
+  const roomName = (id: string | undefined) => draft.rooms.find((room) => room.id === id)?.field.name ?? null;
+
+  const update = (id: string, change: Partial<Pending>) =>
+    setPending((current) => current.map((item) => (item.id === id ? { ...item, ...change } : item)));
+
+  async function finish(item: Pending) {
+    const db = job.session.db;
+    if (!db) return;
+    update(item.id, { step: 'sending', message: undefined });
+    const sent = await sendPhoto(job.session.user, job.detail.job.id, item.id, item.bytes);
+    if (!sent.ok) return update(item.id, { step: 'send-failed', message: sent.message });
+    update(item.id, { step: 'saving' });
+    try {
+      await savePhotoRef(db, job.draftRef, item.id, item.field);
+      await job.reloadDraft();
+      setPending((current) => current.filter((found) => found.id !== item.id));
+    } catch {
+      update(item.id, { step: 'save-failed', message: 'The photo is stored but its room and tag were not saved. Save again.' });
+    }
+  }
+
+  async function take(file: File | undefined) {
+    setError(null);
+    if (!file) return;
+    const bytes = await preparePhoto(file);
+    if (!bytes) return setError('This picture could not be read. Take the photo with the camera.');
+    const item: Pending = { id: crypto.randomUUID(), bytes, field: fieldOf(roomId, shotTag), step: 'sending' };
+    setPending((current) => [...current, item]);
+    await finish(item);
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <h3 className="sr-only">Photos</h3>
+      {canTake ? (
+        <Section title="Take a photo">
+          <Choice id="photo-room" label="Room" value={roomId} options={roomOptions} onChange={setRoomId} />
+          <Choice id="photo-shot" label="Shot" value={shotTag} options={SHOT_OPTIONS} onChange={setShotTag} />
+          <label
+            htmlFor="photo-camera"
+            className="inline-flex h-12 cursor-pointer items-center justify-center rounded-md bg-primary px-6 text-base font-medium text-primary-foreground focus-within:ring-2 focus-within:ring-ring"
+          >
+            Take photo
+            <input
+              id="photo-camera"
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="sr-only"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = '';
+                void take(file);
+              }}
+            />
+          </label>
+          <Outcome error={error} notice={null} />
+        </Section>
+      ) : null}
+      {pending.length > 0 ? (
+        <Section title="Sending">
+          <ul className="flex flex-col gap-2" aria-label="Photos being sent">
+            {pending.map((item) => (
+              <li key={item.id} className="flex flex-col gap-2 rounded-md border border-foreground/20 p-3">
+                <p role="status">{item.step === 'sending' ? 'Sending the photo…' : item.step === 'saving' ? 'Saving its room and tag…' : 'Not sent yet.'}</p>
+                {item.message ? <p role="alert">{item.message}</p> : null}
+                {item.step === 'send-failed' || item.step === 'save-failed' ? (
+                  <Button variant="outline" onClick={() => void finish(item)}>
+                    Send again
+                  </Button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </Section>
+      ) : null}
+      <Section title={`Job photos (${draft.photos.length})`}>
+        {draft.photos.length === 0 ? <p>No photos yet.</p> : null}
+        <ul className="grid grid-cols-2 gap-3" aria-label="Job photos">
+          {draft.photos.map((photo, index) => (
+            <li key={photo.id} className="flex flex-col gap-1">
+              <Thumbnail
+                job={job}
+                photoId={photo.id}
+                label={`Photo ${index + 1}${roomName(photo.field.roomId) ? `, ${roomName(photo.field.roomId)}` : ''}${photo.field.shotTag ? `, ${SHOT_NAMES[photo.field.shotTag]}` : ''}`}
+              />
+              <p className="text-sm">
+                {roomName(photo.field.roomId) ?? 'No room'} · {photo.field.shotTag ? SHOT_NAMES[photo.field.shotTag] : 'Not tagged'}
+              </p>
+            </li>
+          ))}
+        </ul>
+      </Section>
+    </div>
+  );
+}
+
+// The photo's bytes through the photo route, which checks this person may see the job.
+function Thumbnail({ job, photoId, label }: { job: JobContext; photoId: string; label: string }) {
+  const [address, setAddress] = useState<string | null | 'missing'>(null);
+  useEffect(() => {
+    let live = true;
+    let made: string | null = null;
+    void photoAddress(job.session.user, job.detail.job.id, photoId).then((found) => {
+      made = found;
+      if (live) setAddress(found ?? 'missing');
+      else if (found) URL.revokeObjectURL(found);
+    });
+    return () => {
+      live = false;
+      if (made) URL.revokeObjectURL(made);
+    };
+  }, [job.session.user, job.detail.job.id, photoId]);
+  if (address === null) return <div className="aspect-square rounded-md bg-foreground/10" role="img" aria-label={`${label}, loading`} />;
+  if (address === 'missing') return <div className="aspect-square rounded-md bg-foreground/10 p-2 text-sm" role="img" aria-label={`${label}, not available`} />;
+  // eslint-disable-next-line @next/next/no-img-element -- a local object address; the image optimiser cannot fetch it
+  return <img src={address} alt={label} className="aspect-square w-full rounded-md object-cover" />;
+}

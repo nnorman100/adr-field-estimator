@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { readLatestMe, type DsMe } from '@/lib/field/ds-me';
 import { registerFieldWorker } from '@/lib/field/register-worker';
 import { offlineCaptureAllowed } from '@/lib/field/platform';
 import { rememberedSignInAddress } from '@/lib/sign-in/remember';
 import { NotSavedBanner, OfflineBanner } from './banners';
+import { FieldApp } from './field-app';
 import { useReachable } from './connection';
 import { HomeScreenSheet, useFieldSurface } from './home-screen-sheet';
 
@@ -13,7 +14,7 @@ import { HomeScreenSheet, useFieldSurface } from './home-screen-sheet';
 // a person's here, so the page is built once, the service worker keeps that copy, and the Home
 // Screen icon opens it with no signal. It starts from `ds-me` (the settings and company saved at
 // the last online sign-in), never from the server, and all views under it are client state. The
-// job screens (S5a-6) and the phone's stores (S6-3 and after) mount in the slot below.
+// job screens (S5a-6, ./field-app.tsx) mount below; the phone's stores (S6-3 and after) join them.
 type Boot =
   | { kind: 'starting' }
   | { kind: 'ready'; me: DsMe }
@@ -51,6 +52,8 @@ export function FieldShell() {
     };
   }, []);
 
+  const homeScreen = surface === 'ios-tab' ? <HomeScreenSheet openFirstTime={boot.kind !== 'starting'} /> : null;
+
   return (
     <div
       className="mx-auto flex min-h-dvh max-w-md flex-col"
@@ -69,7 +72,12 @@ export function FieldShell() {
         {boot.kind === 'ready' ? (
           <>
             <h1 className="text-2xl font-semibold">{boot.me.companyName}</h1>
-            <p className="text-base">Your jobs will show here.</p>
+            {/* Above the jobs, which load after the page shows: nothing moves the notice once it is there. */}
+            {homeScreen}
+            {/* The view is read from the address, which only the browser knows. */}
+            <Suspense fallback={<p role="status">Opening your jobs…</p>}>
+              <FieldApp me={boot.me} />
+            </Suspense>
           </>
         ) : null}
         {boot.kind === 'signed-out' || boot.kind === 'no-storage' ? (
@@ -86,7 +94,7 @@ export function FieldShell() {
             ) : null}
           </>
         ) : null}
-        {surface === 'ios-tab' ? <HomeScreenSheet openFirstTime={boot.kind !== 'starting'} /> : null}
+        {boot.kind === 'ready' ? null : homeScreen}
       </main>
     </div>
   );
