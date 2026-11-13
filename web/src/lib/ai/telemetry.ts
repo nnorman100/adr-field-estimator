@@ -2,15 +2,15 @@ import { AI_OUTCOMES, ARMOR_CATEGORIES, type AiOutcomeCode } from './codes';
 import { AI_MODELS, type AiModel } from './pricing';
 import { AI_FEATURES, type AiFeature } from './registry';
 import type { ArmorCategory } from './armor';
+import { log } from '@/lib/log';
 
 // The one AI log line per model call (docs/plans/S7.md section 3, hard rule 6). It carries the
 // feature, model, prompt version, token counts, latency, outcome code and verdict category only:
 // never a prompt, transcript, image, model text, error message, company, person or job. Every
 // field is checked against a closed list or a number rule here, so a caller cannot slip text in.
 //
-// The line is a JSON object on stdout, which Cloud Run sends to Cloud Logging. TC-1 (the structured
-// logger, web/src/lib/log.ts) is not on master yet; when it lands, aiLog calls its log() with these
-// fields added to its allowlist, and this file keeps the checks. Server runtime only.
+// The line goes out through the shared logger (src/lib/log.ts), whose field allowlist holds these
+// names and whose scrubbers are a second line behind the checks here. Server runtime only.
 
 export type AiVerdict = ArmorCategory | 'not_screened';
 
@@ -33,7 +33,8 @@ const HEX64 = /^[0-9a-f]{64}$/;
 
 const oneOf = (value: unknown, list: readonly string[]) =>
   typeof value === 'string' && list.includes(value) ? value : 'invalid';
-const whole = (value: unknown) => (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0);
+const whole = (value: unknown) =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0;
 
 export function aiTelemetry(line: Partial<AiLogLine>): AiTelemetry {
   const version = line.promptVersion;
@@ -56,6 +57,5 @@ export function aiTelemetry(line: Partial<AiLogLine>): AiTelemetry {
 
 export function aiLog(line: AiLogLine): void {
   const fields = aiTelemetry(line);
-  const severity = fields.outcome === 'ok' ? 'INFO' : 'WARNING';
-  process.stdout.write(`${JSON.stringify({ severity, message: 'ai_call', component: 'ai', ...fields })}\n`);
+  log(fields.outcome === 'ok' ? 'INFO' : 'WARNING', 'ai_call', { component: 'ai', ...fields });
 }

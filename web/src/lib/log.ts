@@ -13,7 +13,11 @@ import { isSpanContextValid, trace } from '@opentelemetry/api';
 export type Severity = 'DEBUG' | 'INFO' | 'NOTICE' | 'WARNING' | 'ERROR' | 'CRITICAL';
 
 // The fixed field allowlist. Add a name here only when it can never hold personal data.
-const FIELDS = ['component', 'event', 'code', 'status', 'method', 'route', 'errorClass', 'durationMs'] as const;
+const FIELDS = [
+  'component', 'event', 'code', 'status', 'method', 'route', 'errorClass', 'durationMs',
+  // The AI call line (src/lib/ai/telemetry.ts): closed words, a hash and counts only.
+  'feature', 'model', 'promptVersion', 'inputTokens', 'outputTokens', 'latencyMs', 'outcome', 'verdict',
+] as const;
 export type LogFields = Partial<Record<(typeof FIELDS)[number], string | number | boolean>>;
 
 const TRACE_KEY = 'logging.googleapis.com/trace';
