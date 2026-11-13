@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { saveClaim, saveCustomer, type Answer, type JobDetail } from '@/lib/field/api';
+import { pending, usePending, type RecordKind } from '@/lib/field/pending';
 import type { JobContext } from './job-screens';
 import { Box, Outcome, Section } from './ui';
 
@@ -42,8 +43,8 @@ export function CustomerView({ job }: { job: JobContext }) {
       <RecordForm
         job={job}
         title="Customer"
+        kind="customer"
         boxes={CUSTOMER}
-        initial={customerOf(job.detail)}
         readOnly={!canSave}
         send={(values, revision, changeId) =>
           saveCustomer(job.session.user, job.detail.job.id, {
@@ -60,8 +61,8 @@ export function CustomerView({ job }: { job: JobContext }) {
       <RecordForm
         job={job}
         title="Claim"
+        kind="claim"
         boxes={CLAIM}
-        initial={claimOf(job.detail)}
         readOnly={!canSave}
         send={(values, revision, changeId) =>
           saveClaim(job.session.user, job.detail.job.id, {
@@ -85,52 +86,57 @@ export function CustomerView({ job }: { job: JobContext }) {
 }
 
 // One whole record saved at once with the job revision it was read at and a change id made here.
-// A save with no answer is sent again with the same change id, so it is never taken for a
-// conflict with itself.
+// The boxes hold only what the person changed over the job as last read, so a box they never
+// touched always saves what is stored now. A save with no answer is kept (src/lib/field/pending.ts,
+// one per job for customer and claim together) and sent again with the same change id, so it is
+// never taken for a conflict with itself; while it is unsettled the other record waits, because a
+// save of it would move the job's revision on.
 function RecordForm({
   job,
   title,
+  kind,
   boxes,
-  initial,
   readOnly,
   send,
   reread,
 }: {
   job: JobContext;
   title: string;
+  kind: RecordKind;
   boxes: BoxSpec[];
-  initial: Values;
   readOnly: boolean;
   send: (values: Values, revision: number, changeId: string) => Promise<Answer<JobDetail>>;
   reread: (detail: JobDetail) => Values;
 }) {
-  const [values, setValues] = useState<Values>(initial);
-  const [pending, setPending] = useState<{ changeId: string; revision: number; values: Values } | null>(null);
+  const jobId = job.detail.job.id;
+  const [edits, setEdits] = useState<Values>({});
+  const unsettled = usePending(() => pending.record(jobId));
+  const mine = unsettled?.kind === kind ? unsettled : null;
+  const waiting = unsettled !== null && mine === null;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const shown = mine?.values ?? { ...reread(job.detail), ...edits };
 
   async function save() {
     setBusy(true);
     setError(null);
     setNotice(null);
-    const attempt = pending ?? { changeId: crypto.randomUUID(), revision: job.detail.job.revision, values };
-    setPending(attempt);
+    const attempt = mine ?? { kind, changeId: crypto.randomUUID(), revision: job.detail.job.revision, values: shown };
+    pending.setRecord(jobId, attempt);
     const answer = await send(attempt.values, attempt.revision, attempt.changeId);
     setBusy(false);
     if (answer.ok) {
-      setPending(null);
+      pending.setRecord(jobId, null);
+      setEdits((current) => Object.fromEntries(Object.entries(current).filter(([key, value]) => attempt.values[key] !== value)));
       job.setDetail(answer.value);
-      setValues(reread(answer.value));
       setNotice(`${title} saved.`);
       return;
     }
-    if (answer.status !== 0 && answer.status < 500) setPending(null);
-    // Changed elsewhere: show the job as it is now, and let the person make their change again.
-    if (answer.stale) {
-      const fresh = await job.reloadJob();
-      if (fresh) setValues(reread(fresh));
-    }
+    // A refusal settles the request; no answer keeps it to send again.
+    if (answer.status !== 0 && answer.status < 500) pending.setRecord(jobId, null);
+    // Changed elsewhere: read the job again; the person's edits stay on top of the new values.
+    if (answer.stale) await job.reloadJob();
     setError(answer.message);
   }
 
@@ -152,19 +158,23 @@ function RecordForm({
             label={box.label}
             type={box.type}
             autoComplete={box.autoComplete}
-            value={(pending?.values ?? values)[box.key] ?? ''}
-            readOnly={readOnly || pending !== null}
+            value={shown[box.key] ?? ''}
+            readOnly={readOnly || mine !== null}
             onChange={(value) => {
-              setValues((current) => ({ ...current, [box.key]: value }));
+              setEdits((current) => ({ ...current, [box.key]: value }));
               setNotice(null);
             }}
           />
         ))}
         {readOnly ? null : (
-          <Button type="submit" disabled={busy}>
-            {busy ? 'Saving…' : pending ? 'Try again' : `Save ${title.toLowerCase()}`}
+          <Button type="submit" disabled={busy || waiting}>
+            {busy ? 'Saving…' : mine ? 'Try again' : `Save ${title.toLowerCase()}`}
           </Button>
         )}
+        {waiting ? (
+          <p className="text-sm">The {unsettled.kind} save has not been answered yet. Try it again first.</p>
+        ) : null}
+        {mine && !busy && !error ? <p role="status">This {title.toLowerCase()} was sent but no answer came back. Try again to finish it.</p> : null}
         <Outcome error={error} notice={notice} />
       </Section>
     </form>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { answerMessage } from '@/lib/field/api';
-import { factChanges, formOf, FACT_FIELDS, roomChanges, roomName, ROOM_FIELDS } from '@/lib/field/forms';
+import { editsAfterSave, factChanges, formOf, FACT_FIELDS, roomChanges, roomName, ROOM_FIELDS, withEdits } from '@/lib/field/forms';
 import { scaledSize } from '@/lib/field/photo';
 import { draftFieldSchema, roomFieldSchema } from '@/lib/field/schema';
 import { defaultList, FIELD_VIEWS, hrefOf, placeOf, type FieldPlace } from '@/lib/field/views';
@@ -91,6 +91,18 @@ describe('Check Scope forms', () => {
       errors: {},
     });
     expect(roomChanges({ ...formOf(ROOM_FIELDS, stored), category: '4' }, stored).errors.category).toBeDefined();
+  });
+
+  it('saves only what the person changed, never a stale copy of what someone else has since changed', () => {
+    // The person edits air movers; meanwhile the draft is read again with another change in it.
+    const edits = { airMovers: '6' };
+    const readAgain = { airMovers: 4, notes: 'changed by the office', yearBuilt: 1970 };
+    const shown = withEdits(FACT_FIELDS, readAgain, edits);
+    expect(shown.notes).toBe('changed by the office');
+    expect(factChanges(shown, readAgain).changes).toEqual({ airMovers: 6 });
+    // After the save, an edit made again meanwhile stays; the one that was sent is done.
+    expect(editsAfterSave({ airMovers: '6', notes: 'x' }, { airMovers: '6' })).toEqual({ notes: 'x' });
+    expect(editsAfterSave({ airMovers: '7' }, { airMovers: '6' })).toEqual({ airMovers: '7' });
   });
 
   it('accepts a room name the field map accepts', () => {

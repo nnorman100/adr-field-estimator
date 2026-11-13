@@ -41,7 +41,9 @@ const listItem = jobView
 const jobPage = z.object({ jobs: z.array(listItem), nextCursor: z.string().nullable() });
 const receipt = z.object({ photoId: z.string(), sha256: z.string() });
 
-// `stale` marks a save that met a newer revision (409 stale_revision): the screen reads the job again.
+// `status` 0 means no answer, or a success answer that did not arrive whole: the request may have been
+// made, so it is kept and sent again as it was. `stale` marks a save that met a newer revision (409
+// stale_revision): the screen reads the job again.
 export type Answer<T> = { ok: true; value: T } | { ok: false; status: number; message: string; stale?: true };
 
 const MESSAGES: Record<string, string> = {
@@ -60,7 +62,7 @@ const MESSAGES: Record<string, string> = {
 export function answerMessage(status: number, body: unknown): string {
   if (status === 0) return 'No answer from the server. Check the signal and try again; nothing is lost.';
   const code = (body as { error?: unknown } | null)?.error;
-  if (status === 409 && code === 'stale_revision') return 'Someone else changed this job. Their version is shown; make your change again.';
+  if (status === 409 && code === 'stale_revision') return 'Someone else changed this job. Their changes are now shown with yours; check and save again.';
   if (typeof code === 'string' && Object.hasOwn(MESSAGES, code)) return MESSAGES[code]!;
   if (status === 401 || status === 403) return 'Sign in again to continue.';
   return 'The server could not do this just now. Try again.';
@@ -70,7 +72,9 @@ function answerOf<T>(status: number, body: unknown, schema: z.ZodType<T>, okStat
   if (okStatuses.includes(status)) {
     const parsed = schema.safeParse(body);
     if (parsed.success) return { ok: true, value: parsed.data };
-    return { ok: false, status, message: answerMessage(503, null) };
+    // The server said yes but its answer did not arrive whole: the write may well be made, so this is
+    // no answer, and the screen keeps the request to send again with the same ids.
+    return { ok: false, status: 0, message: answerMessage(0, null) };
   }
   const stale = status === 409 && (body as { error?: unknown } | null)?.error === 'stale_revision';
   return { ok: false, status, message: answerMessage(status, body), ...(stale ? { stale: true as const } : {}) };

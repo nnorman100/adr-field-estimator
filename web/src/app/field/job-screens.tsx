@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { readJob, type JobDetail } from '@/lib/field/api';
 import type { FieldSession } from '@/lib/field/session';
-import { canEditDraft, loadDraft, type DraftRef, type FieldDraft } from '@/lib/field/store';
+import { canEditDraft, InvalidFieldData, loadDraft, type DraftRef, type FieldDraft } from '@/lib/field/store';
 import type { JobView } from '@/lib/field/views';
 import { CustomerView } from './customer-view';
 import { PhotosView } from './photos-view';
@@ -49,8 +49,13 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
         const found = await loadDraft(session.db, { companyId: session.companyId, draftId: job.job.currentDraftId });
         setDraft(found);
         setDraftError(found ? null : 'The field work of this job is not there yet. Try again in a moment.');
-      } catch {
-        setDraftError('The field work could not be read just now. Check the signal and try again.');
+      } catch (error) {
+        setDraft(null);
+        setDraftError(
+          error instanceof InvalidFieldData
+            ? 'Part of this job’s field work is stored in a form this app cannot read, so it is not shown. Ask the office to check this job.'
+            : 'The field work could not be read just now. Check the signal and try again.',
+        );
       }
     },
     [detail, session],

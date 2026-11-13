@@ -35,14 +35,24 @@ export type FieldDraft = {
 
 export const draftPath = ({ companyId, draftId }: DraftRef) => `companies/${companyId}/drafts/${draftId}`;
 
-// A map this app did not write is shown as empty rather than trusted.
+// A stored map that does not follow field map v1 (./schema.ts). The draft is not shown at all
+// rather than shown as empty or partial work.
+export class InvalidFieldData extends Error {
+  constructor() {
+    super('stored field data does not match the field map');
+    this.name = 'InvalidFieldData';
+  }
+}
+
 function mapOf<T>(schema: { safeParse: (value: unknown) => { success: boolean; data?: T } }, value: unknown): T {
   const parsed = schema.safeParse(value ?? {});
-  return parsed.success ? (parsed.data as T) : ({} as T);
+  if (!parsed.success) throw new InvalidFieldData();
+  return parsed.data as T;
 }
 
 // The draft, its rooms and its photo references, read from the field database itself (never a
-// cache), or null when there is no such draft.
+// cache), or null when there is no such draft. Throws InvalidFieldData when a stored map does not
+// follow the field map.
 export async function loadDraft(db: Firestore, ref: DraftRef): Promise<FieldDraft | null> {
   const path = draftPath(ref);
   const [draft, rooms, photos] = await Promise.all([

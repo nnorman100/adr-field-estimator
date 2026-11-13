@@ -52,13 +52,11 @@ describe('every page has an axe check', () => {
   );
 });
 
-describe('every view of the field page has an axe check', () => {
+// The views of the field page are checked by running axe on each of them in the browser
+// (tests/e2e/jobs.spec.ts, "every field view passes axe", which visits each view of FIELD_VIEWS);
+// this only keeps the list in tests/e2e/screens.ts complete.
+describe('every view of the field page is listed', () => {
   it('lists every field view in tests/e2e/screens.ts', () => {
     expect(Object.keys(FIELD_VIEW_SCREENS).sort()).toEqual([...FIELD_VIEWS].sort());
-  });
-
-  it.each(Object.entries(FIELD_VIEW_SCREENS))('the %s view is checked by %s, which runs axe', async (_view, spec) => {
-    const source = await readFile(join(E2E_DIR, spec), 'utf8');
-    expect(source).toMatch(AXE_CHECK);
   });
 });

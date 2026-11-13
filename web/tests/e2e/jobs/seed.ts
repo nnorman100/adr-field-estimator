@@ -63,3 +63,12 @@ export async function storedPhotos(companyId: string, jobId: string): Promise<{ 
     SELECT object_id::text AS "objectId", kind FROM evidence_objects WHERE company_id = ${companyId} AND job_id = ${jobId}
   `;
 }
+
+// The field draft a job's screens read (its current draft).
+export async function currentDraftOf(companyId: string, jobId: string): Promise<string> {
+  const [row] = await adminSql()<{ draftId: string }[]>`
+    SELECT current_draft_id::text AS "draftId" FROM jobs WHERE company_id = ${companyId} AND id = ${jobId}
+  `;
+  if (!row) throw new Error('no such job');
+  return row.draftId;
+}

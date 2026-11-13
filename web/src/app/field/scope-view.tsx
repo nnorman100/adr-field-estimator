@@ -5,11 +5,12 @@ import { Button } from '@/components/ui/button';
 import {
   CHARGE_FIELDS,
   CONFIRMED_FIELD,
+  editsAfterSave,
   EQUIPMENT_FIELDS,
   factChanges,
   FACT_FIELDS,
-  formOf,
   NOTES_FIELD,
+  withEdits,
   YEAR_FIELD,
   type FormField,
   type FormValues,
@@ -21,18 +22,21 @@ import { RoomsSection } from './rooms-section';
 import { Box, Outcome, Section, Tick } from './ui';
 
 // Check Scope (S5a-6): year built, the rooms, equipment counts, job charges, notes and the
-// scope-confirmed box, written straight to the job's field draft. The boxes keep what was typed;
-// Save writes only the boxes that changed, and the screen then reads the draft back. The
+// scope-confirmed box, written straight to the job's field draft. The boxes hold only what the
+// person changed over the draft as last read; Save writes only those, and the screen then reads the
+// draft back, so a save never writes back a value someone else has since changed. The
 // pre-1978 wording itself comes from the server with the estimate (S5a-9), never from here.
 export function ScopeView({ job, draft }: { job: JobContext; draft: FieldDraft }) {
-  const [values, setValues] = useState<FormValues>(() => formOf(FACT_FIELDS, draft.field));
+  // Only the boxes the person changed; the rest always show the draft as last read.
+  const [edits, setEdits] = useState<FormValues>({});
+  const values = withEdits(FACT_FIELDS, draft.field, edits);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const readOnly = !job.editable;
   const set = (key: string) => (value: string | boolean) => {
-    setValues((current) => ({ ...current, [key]: value }));
+    setEdits((current) => ({ ...current, [key]: value }));
     setNotice(null);
   };
 
@@ -45,8 +49,10 @@ export function ScopeView({ job, draft }: { job: JobContext; draft: FieldDraft }
     if (Object.keys(found).length > 0) return setError('Check the boxes marked below.');
     setError(null);
     setBusy(true);
+    const sent = edits;
     try {
       await saveDraftField(db, job.draftRef, changes);
+      setEdits((current) => editsAfterSave(current, sent));
       await job.reloadDraft();
       setNotice(Object.keys(changes).length === 0 ? 'Nothing to save.' : 'Scope saved.');
     } catch {

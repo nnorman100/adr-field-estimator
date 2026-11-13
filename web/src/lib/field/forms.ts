@@ -72,6 +72,18 @@ export function formOf<K extends string>(fields: FormField<K>[], stored: Partial
   return values;
 }
 
+// What the boxes show: the stored values, with the person's own edits on top. Only edited boxes are
+// held as edits, so a box the person never touched always shows (and saves) what is stored now,
+// even after the draft was read again with someone else's change in it.
+export function withEdits<K extends string>(fields: FormField<K>[], stored: Partial<Record<K, unknown>>, edits: FormValues): FormValues {
+  return { ...formOf(fields, stored), ...edits };
+}
+
+// The edits still waiting after a save of `sent`: those changed again since it was sent.
+export function editsAfterSave(edits: FormValues, sent: FormValues): FormValues {
+  return Object.fromEntries(Object.entries(edits).filter(([key, value]) => sent[key] !== value));
+}
+
 function parseBox(kind: Kind, raw: string | boolean): { value: string | number | boolean | null } | { error: string } {
   if (kind === 'bool') return { value: raw === true ? true : null };
   const text = String(raw).trim();

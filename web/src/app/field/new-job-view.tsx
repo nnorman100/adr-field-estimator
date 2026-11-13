@@ -2,17 +2,19 @@
 
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { createJob, type NewJob } from '@/lib/field/api';
+import { createJob } from '@/lib/field/api';
+import { pending, usePending } from '@/lib/field/pending';
 import type { FieldSession } from '@/lib/field/session';
 import { Box, FieldLink, go, Outcome } from './ui';
 
 // New job (S5a-6). The job's id and its first draft's id are made here, on the phone, and kept
-// until the server answers: a lost answer is sent again with the same ids, so it can never make a
-// second job (S5a-3 answers the same job). The address is locked while a send is unanswered, and
-// new ids are made only after the server refused the old ones.
+// (src/lib/field/pending.ts) until the server answers: a lost answer is sent again with the same
+// ids, so it can never make a second job (S5a-3 answers the same job), even after leaving this
+// screen and coming back. The address is locked while a send is unanswered, and new ids are made
+// only after the server refused the old ones.
 export function NewJobView({ session }: { session: FieldSession }) {
   const [address, setAddress] = useState('');
-  const [pending, setPending] = useState<NewJob | null>(null);
+  const unsent = usePending(pending.job);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -30,17 +32,18 @@ export function NewJobView({ session }: { session: FieldSession }) {
     setBusy(true);
     setError(null);
     // The same request again while one is unanswered; a new one otherwise.
-    const request = pending ?? { id: crypto.randomUUID(), draftId: crypto.randomUUID(), propertyAddress: address.trim() };
-    setPending(request);
+    const request = pending.job() ?? { id: crypto.randomUUID(), draftId: crypto.randomUUID(), propertyAddress: address.trim() };
+    pending.setJob(request);
     const answer = await createJob(session.user, request);
     setBusy(false);
     if (answer.ok) {
+      pending.setJob(null);
       go({ view: 'scope', jobId: answer.value.job.id });
       return;
     }
     // No answer at all: the job may be saved, so the next tap sends the same ids. A refusal is final
     // for these ids.
-    if (answer.status !== 0 && answer.status < 500) setPending(null);
+    if (answer.status !== 0 && answer.status < 500) pending.setJob(null);
     setError(answer.message);
   }
 
@@ -57,15 +60,16 @@ export function NewJobView({ session }: { session: FieldSession }) {
       <Box
         id="new-job-address"
         label="Property address"
-        value={pending ? pending.propertyAddress : address}
+        value={unsent ? unsent.propertyAddress : address}
         onChange={setAddress}
-        readOnly={pending !== null}
+        readOnly={unsent !== null}
         autoComplete="street-address"
         hint="Optional now; you can add it with the customer."
       />
       <Button type="submit" disabled={busy}>
-        {pending && !busy ? 'Try again' : 'Start job'}
+        {unsent && !busy ? 'Try again' : 'Start job'}
       </Button>
+      {unsent && !busy && !error ? <p role="status">This job was sent but no answer came back. Try again to finish it.</p> : null}
       <Outcome error={error} notice={busy ? 'Starting the job…' : null} />
       <FieldLink to={{ view: 'jobs', list: null }}>Back to jobs</FieldLink>
     </form>

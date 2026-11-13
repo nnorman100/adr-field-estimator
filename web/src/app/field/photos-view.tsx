@@ -3,15 +3,12 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { photoAddress, sendPhoto, SHOT_NAMES } from '@/lib/field/api';
+import { pending as unsent, usePending, type PendingPhoto } from '@/lib/field/pending';
 import { preparePhoto } from '@/lib/field/photo';
 import { SHOT_TAGS, type PhotoField } from '@/lib/field/schema';
 import { savePhotoRef, type FieldDraft } from '@/lib/field/store';
 import type { JobContext } from './job-screens';
 import { Choice, Outcome, Section } from './ui';
-
-// A photo taken here that the job does not hold yet. Its id and bytes are kept until the server
-// has a receipt and the reference is written, so "Send again" sends the very same photo.
-type Pending = { id: string; bytes: Blob; field: PhotoField; step: 'sending' | 'send-failed' | 'saving' | 'save-failed'; message?: string };
 
 const SHOT_OPTIONS = [{ value: '', label: 'Not tagged' }, ...SHOT_TAGS.map((tag) => ({ value: tag, label: SHOT_NAMES[tag] }))];
 
@@ -28,26 +25,28 @@ function fieldOf(roomId: string, shotTag: string): PhotoField {
 export function PhotosView({ job, draft }: { job: JobContext; draft: FieldDraft }) {
   const [roomId, setRoomId] = useState('');
   const [shotTag, setShotTag] = useState('');
-  const [pending, setPending] = useState<Pending[]>([]);
+  // Photos sent and not yet settled, kept for the life of the page (src/lib/field/pending.ts), so
+  // leaving this screen never drops one: its id and bytes stay for "Send again".
+  const jobId = job.detail.job.id;
+  const pending = usePending(() => unsent.photos(jobId));
   const [error, setError] = useState<string | null>(null);
   const canTake = job.editable && job.session.capabilities.includes('photos');
   const roomOptions = [{ value: '', label: 'No room' }, ...draft.rooms.map((room) => ({ value: room.id, label: room.field.name ?? 'Room' }))];
   const roomName = (id: string | undefined) => draft.rooms.find((room) => room.id === id)?.field.name ?? null;
 
-  const update = (id: string, change: Partial<Pending>) =>
-    setPending((current) => current.map((item) => (item.id === id ? { ...item, ...change } : item)));
+  const update = (id: string, change: Partial<PendingPhoto>) => unsent.updatePhoto(jobId, id, change);
 
-  async function finish(item: Pending) {
+  async function finish(item: PendingPhoto) {
     const db = job.session.db;
     if (!db) return;
     update(item.id, { step: 'sending', message: undefined });
-    const sent = await sendPhoto(job.session.user, job.detail.job.id, item.id, item.bytes);
+    const sent = await sendPhoto(job.session.user, jobId, item.id, item.bytes);
     if (!sent.ok) return update(item.id, { step: 'send-failed', message: sent.message });
     update(item.id, { step: 'saving' });
     try {
       await savePhotoRef(db, job.draftRef, item.id, item.field);
       await job.reloadDraft();
-      setPending((current) => current.filter((found) => found.id !== item.id));
+      unsent.removePhoto(jobId, item.id);
     } catch {
       update(item.id, { step: 'save-failed', message: 'The photo is stored but its room and tag were not saved. Save again.' });
     }
@@ -58,8 +57,8 @@ export function PhotosView({ job, draft }: { job: JobContext; draft: FieldDraft 
     if (!file) return;
     const bytes = await preparePhoto(file);
     if (!bytes) return setError('This picture could not be read. Take the photo with the camera.');
-    const item: Pending = { id: crypto.randomUUID(), bytes, field: fieldOf(roomId, shotTag), step: 'sending' };
-    setPending((current) => [...current, item]);
+    const item: PendingPhoto = { id: crypto.randomUUID(), bytes, field: fieldOf(roomId, shotTag), step: 'sending' };
+    unsent.addPhoto(jobId, item);
     await finish(item);
   }
 

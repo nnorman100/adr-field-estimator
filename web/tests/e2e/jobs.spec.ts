@@ -1,7 +1,11 @@
-import { test as base, expect as baseExpect, type Browser, type Page } from '@playwright/test';
+import { test as base, expect as baseExpect, type Browser, type Locator, type Page } from '@playwright/test';
+import { randomUUID } from 'node:crypto';
+import { hrefOf, type FieldView } from '../../src/lib/field/views';
 import { expectNoAxeViolations } from './a11y';
 import { JOBS_BASE_URL } from './jobs/backend';
-import { seedCompany, storedJobs, storedPhotos, type Company, type Person } from './jobs/seed';
+import { currentDraftOf, seedCompany, storedJobs, storedPhotos, type Company, type Person } from './jobs/seed';
+import { adminDb } from './offline/world';
+import { idTokenFor } from './sign-in/emulator';
 import { PASSWORD } from './sign-in/seed';
 
 // The job screens (S5a-6) in Chromium and WebKit at phone width, against the second app server
@@ -11,7 +15,10 @@ import { PASSWORD } from './sign-in/seed';
 // of its own, so the tests run side by side.
 
 const test = base;
-test.use({ baseURL: JOBS_BASE_URL, viewport: { width: 390, height: 844 } });
+// No field worker: these tests drop answers with page.route, which WebKit does not apply to a
+// request from a page the worker controls (Playwright's advice for interception). The worker's own
+// behaviour is tested in tests/e2e/offline.
+test.use({ baseURL: JOBS_BASE_URL, viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
 const expect = baseExpect.configure({ timeout: 20_000 });
 
 // A small PNG, as a phone's camera would hand the page a picture.
@@ -35,7 +42,7 @@ async function signIn(page: Page, company: Company, person: Person) {
 }
 
 async function newPage(browser: Browser): Promise<Page> {
-  const context = await browser.newContext({ baseURL: JOBS_BASE_URL, viewport: { width: 390, height: 844 } });
+  const context = await browser.newContext({ baseURL: JOBS_BASE_URL, viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
   return context.newPage();
 }
 
@@ -45,7 +52,32 @@ async function expectNoSideways(page: Page) {
 }
 
 const main = (page: Page) => page.getByRole('main');
+
+// A photo really shown: an image with exactly this label whose bytes were fetched and decoded (the
+// loading and not-available placeholders carry longer labels, and are not images).
+async function expectPhoto(page: Page, label: string) {
+  const image = page.getByRole('img', { name: label, exact: true });
+  await expect(image).toBeVisible();
+  await expect
+    .poll(() => image.evaluate((element) => (element instanceof HTMLImageElement && element.complete ? element.naturalWidth : 0)))
+    .toBeGreaterThan(0);
+}
 const jobIdOf = (page: Page) => new URL(page.url()).searchParams.get('job')!;
+
+// The server answers each matching request, and the answer is dropped on its way to the phone,
+// until `lift`. `statuses` are what the server answered: proof it committed before the answer was lost.
+async function dropAnswers(page: Page, url: string, method: string) {
+  const dropped = { statuses: [] as number[], lifted: false, lift: () => {} };
+  dropped.lift = () => {
+    dropped.lifted = true;
+  };
+  await page.route(url, async (route) => {
+    if (route.request().method() !== method || dropped.lifted) return route.fallback();
+    dropped.statuses.push((await route.fetch()).status());
+    await route.abort();
+  });
+  return dropped;
+}
 
 async function startJob(page: Page, address: string): Promise<string> {
   await main(page).getByRole('link', { name: 'New job' }).click();
@@ -119,13 +151,13 @@ test('an estimator creates a job, adds two rooms and a photo, reloads and sees t
   // A photo of the kitchen's source of loss.
   await takePhoto(page, 'Kitchen', 'Source of loss');
   await expect(page.getByRole('heading', { name: 'Job photos (1)' })).toBeVisible();
-  await expect(page.getByRole('img', { name: 'Photo 1, Kitchen, Source of loss' })).toBeVisible();
+  await expectPhoto(page, 'Photo 1, Kitchen, Source of loss');
   await expectNoSideways(page);
   await expectNoAxeViolations(page);
 
   // Everything is still there after a reload, read back from the server and the field database.
   await page.reload();
-  await expect(page.getByRole('img', { name: 'Photo 1, Kitchen, Source of loss' })).toBeVisible();
+  await expectPhoto(page, 'Photo 1, Kitchen, Source of loss');
   await main(page).getByRole('link', { name: 'Check Scope' }).click();
   await expect(page.getByLabel('Year built')).toHaveValue('1962');
   await expect(page.getByRole('list', { name: 'Rooms' }).getByRole('listitem')).toHaveCount(2);
@@ -179,7 +211,7 @@ test('office sees the job read-only; another estimator and another company canno
   await expect(office.getByRole('button', { name: 'Remove room' })).toHaveCount(0);
   await expectNoAxeViolations(office);
   await main(office).getByRole('link', { name: 'Photos' }).click();
-  await expect(office.getByRole('img', { name: 'Photo 1, Bath, Overview' })).toBeVisible();
+  await expectPhoto(office, 'Photo 1, Bath, Overview');
   await expect(office.getByLabel('Take photo')).toHaveCount(0);
   await expectNoAxeViolations(office);
 
@@ -201,19 +233,23 @@ test('a dropped response after the server committed leaves one job and one photo
   const company = await seedCompany('dropped', { estimator: 'estimator' });
   await signIn(page, company, company.people.estimator!);
 
-  // The server makes the job, and its answer never reaches the phone.
-  const committed: number[] = [];
-  await page.route('**/api/jobs', async (route) => {
-    if (route.request().method() !== 'POST' || committed.length > 0) return route.fallback();
-    committed.push((await route.fetch()).status());
-    await route.abort();
-  });
+  // The server makes the job, and its answer never reaches the phone. Every answer is dropped until
+  // the test lifts the drop, as a browser may resend a request by itself after a network error.
+  const committed = await dropAnswers(page, '**/api/jobs', 'POST');
   await main(page).getByRole('link', { name: 'New job' }).click();
   await page.getByLabel('Property address').fill('9 Lost Answer Way');
   await page.getByRole('button', { name: 'Start job' }).click();
   await expect(main(page).getByRole('alert')).toContainText('No answer from the server');
-  expect(committed).toEqual([201]);
+  expect(committed.statuses[0]).toBe(201);
   expect(await storedJobs(company.id)).toHaveLength(1);
+  committed.lift();
+  // A resend the browser made by itself met the request already made: the same answer, no second one.
+  expect(committed.statuses.slice(1).every((status) => status === 200)).toBe(true);
+  // Leaving the screen keeps the unanswered request: back on New job it is the same one.
+  await main(page).getByRole('link', { name: 'Back to jobs' }).click();
+  await main(page).getByRole('link', { name: 'New job' }).click();
+  await expect(page.getByLabel('Property address')).toHaveValue('9 Lost Answer Way');
+  await expect(page.getByLabel('Property address')).not.toBeEditable();
   await page.getByRole('button', { name: 'Try again' }).click();
   await expect(page.getByRole('heading', { name: '9 Lost Answer Way' })).toBeVisible();
   const jobId = jobIdOf(page);
@@ -221,23 +257,112 @@ test('a dropped response after the server committed leaves one job and one photo
 
   // The same for a photo: the bytes are stored, the receipt is lost, the phone sends it again.
   await addRoom(page, 'Laundry');
-  const received: number[] = [];
-  await page.route('**/api/jobs/*/photos/*', async (route) => {
-    if (route.request().method() !== 'PUT' || received.length > 0) return route.fallback();
-    received.push((await route.fetch()).status());
-    await route.abort();
-  });
+  const received = await dropAnswers(page, '**/api/jobs/*/photos/*', 'PUT');
   await takePhoto(page, 'Laundry', 'Moisture meter');
   await expect(page.getByRole('button', { name: 'Send again' })).toBeVisible();
-  expect(received).toEqual([201]);
+  expect(received.statuses[0]).toBe(201);
   expect(await storedPhotos(company.id, jobId)).toHaveLength(1);
+  received.lift();
+  // A resend the browser made by itself met the request already made: the same answer, no second one.
+  expect(received.statuses.slice(1).every((status) => status === 200)).toBe(true);
+  // Leaving the screen keeps the unsent photo and its "Send again".
+  await main(page).getByRole('link', { name: 'Customer and claim' }).click();
+  await main(page).getByRole('link', { name: 'Photos' }).click();
   await page.getByRole('button', { name: 'Send again' }).click();
   await expect(page.getByRole('heading', { name: 'Job photos (1)' })).toBeVisible();
   await page.reload();
-  await expect(page.getByRole('img', { name: 'Photo 1, Laundry, Moisture meter' })).toBeVisible();
+  await expectPhoto(page, 'Photo 1, Laundry, Moisture meter');
   await expect(page.getByRole('list', { name: 'Job photos' }).getByRole('listitem')).toHaveCount(1);
   expect(await storedPhotos(company.id, jobId)).toHaveLength(1);
 
+  // A customer save that the server made but whose answer was lost: the claim waits for it, and
+  // sending it again is answered as made, not as a conflict.
+  await main(page).getByRole('link', { name: 'Customer and claim' }).click();
+  const saved = await dropAnswers(page, '**/api/jobs/*/customer', 'PUT');
+  await page.getByLabel('Customer name').fill('Lee Example');
+  await page.getByRole('button', { name: 'Save customer' }).click();
+  await expect(page.getByRole('form', { name: 'Customer' }).getByRole('alert')).toContainText('No answer from the server');
+  expect(saved.statuses[0]).toBe(200);
+  saved.lift();
+  // A resend the browser made by itself met the request already made: the same answer, no second one.
+  expect(saved.statuses.slice(1).every((status) => status === 200)).toBe(true);
+  await expect(page.getByRole('button', { name: 'Save claim' })).toBeDisabled();
+  await page.getByRole('form', { name: 'Customer' }).getByRole('button', { name: 'Try again' }).click();
+  await expect(page.getByRole('form', { name: 'Customer' }).getByRole('status')).toHaveText('Customer saved.');
+  await expect(page.getByRole('button', { name: 'Save claim' })).toBeEnabled();
+
   await main(page).getByRole('link', { name: 'Back to jobs' }).click();
   await expect(main(page).getByRole('list', { name: 'My jobs' }).getByRole('listitem')).toHaveCount(1);
+  await expect(main(page).getByText('Lee Example')).toBeVisible();
+});
+
+test('every field view passes axe', async ({ page }) => {
+  const company = await seedCompany('axe', { estimator: 'estimator' });
+  await signIn(page, company, company.people.estimator!);
+  const jobId = await startJob(page, '5 Checked Court');
+  // One entry per view of src/lib/field/views.ts: a view missing here does not compile.
+  const views: Record<FieldView, (page: Page) => Locator> = {
+    jobs: (p) => p.getByRole('heading', { name: 'My jobs' }),
+    'new-job': (p) => p.getByRole('heading', { name: 'New job' }),
+    scope: (p) => p.getByLabel('Year built'),
+    customer: (p) => p.getByLabel('Customer name'),
+    photos: (p) => p.getByRole('heading', { name: /^Job photos/ }),
+  };
+  for (const [view, ready] of Object.entries(views) as [FieldView, (page: Page) => Locator][]) {
+    const place = view === 'jobs' ? { view, list: null } : view === 'new-job' ? { view } : { view, jobId };
+    await page.goto(hrefOf(place));
+    await expect(ready(page), view).toBeVisible();
+    await expectNoSideways(page);
+    await expectNoAxeViolations(page);
+  }
+});
+
+test("a save that meets someone else's change keeps their change", async ({ page, request }) => {
+  const company = await seedCompany('stale', { estimator: 'estimator', office: 'office' });
+  await signIn(page, company, company.people.estimator!);
+  const jobId = await startJob(page, '11 Shared Street');
+  await main(page).getByRole('link', { name: 'Customer and claim' }).click();
+  await expect(page.getByLabel('Claim number')).toHaveValue('');
+
+  // Meanwhile the office saves the claim from another device.
+  const office = company.people.office!;
+  const headers = { Authorization: `Bearer ${await idTokenFor(company.tenantId, office.email, PASSWORD)}` };
+  const read = await request.get(`${JOBS_BASE_URL}/api/jobs/${jobId}`, { headers });
+  const { job, claim } = await read.json();
+  const saved = await request.put(`${JOBS_BASE_URL}/api/jobs/${jobId}/claim`, {
+    headers,
+    data: { ...claim, claimNumber: 'OFFICE-1', revision: job.revision, changeId: randomUUID() },
+  });
+  expect(saved.status()).toBe(200);
+
+  // The estimator's customer save meets the newer job, shows the office's claim, and saves again.
+  await page.getByLabel('Customer name').fill('Sam Example');
+  await page.getByRole('button', { name: 'Save customer' }).click();
+  await expect(page.getByRole('form', { name: 'Customer' }).getByRole('alert')).toContainText('Someone else changed this job');
+  await expect(page.getByLabel('Claim number')).toHaveValue('OFFICE-1');
+  await expect(page.getByLabel('Customer name')).toHaveValue('Sam Example');
+  await page.getByRole('button', { name: 'Save customer' }).click();
+  await expect(page.getByRole('form', { name: 'Customer' }).getByRole('status')).toHaveText('Customer saved.');
+  // Saving the untouched claim form writes the office's value back, not the old empty one.
+  await page.getByRole('button', { name: 'Save claim' }).click();
+  await expect(page.getByRole('form', { name: 'Claim' }).getByRole('status')).toHaveText('Claim saved.');
+  const after = await (await request.get(`${JOBS_BASE_URL}/api/jobs/${jobId}`, { headers })).json();
+  expect(after.claim.claimNumber).toBe('OFFICE-1');
+  expect(after.customer.name).toBe('Sam Example');
+});
+
+test('a stored room the field map does not accept shows the load error, not empty work', async ({ page }) => {
+  const company = await seedCompany('invalid', { estimator: 'estimator' });
+  await signIn(page, company, company.people.estimator!);
+  const jobId = await startJob(page, '13 Broken Room Row');
+  await addRoom(page, 'Attic');
+  const draftId = await currentDraftOf(company.id, jobId);
+  const rooms = await adminDb().collection(`companies/${company.id}/drafts/${draftId}/rooms`).get();
+  expect(rooms.size).toBe(1);
+  // Written past the rules, as only a server or a bug could: a room name that is not text.
+  await rooms.docs[0]!.ref.update({ 'field.name': 42 });
+  await page.reload();
+  await expect(main(page).getByRole('alert')).toContainText('cannot read');
+  await expect(page.getByRole('list', { name: 'Rooms' })).toHaveCount(0);
+  await expect(page.getByLabel('Year built')).toHaveCount(0);
 });

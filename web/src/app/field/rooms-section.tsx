@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { formOf, ROOM_FIELDS, roomChanges, roomName, type FormValues } from '@/lib/field/forms';
+import { editsAfterSave, ROOM_FIELDS, roomChanges, roomName, withEdits, type FormValues } from '@/lib/field/forms';
 import { MAX_ROOMS, type RoomField } from '@/lib/field/schema';
 import { addRoom, removeRoom, saveRoomField, type FieldDraft } from '@/lib/field/store';
 import type { JobContext } from './job-screens';
@@ -110,14 +110,16 @@ export function RoomCard({
   number: number;
   onRemove?: () => Promise<void>;
 }) {
-  const [values, setValues] = useState<FormValues>(() => formOf(ROOM_FIELDS, stored));
+  // Only the boxes the person changed; the rest always show the room as last read.
+  const [edits, setEdits] = useState<FormValues>({});
+  const values = withEdits(ROOM_FIELDS, stored, edits);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const readOnly = !job.editable;
   const set = (key: string) => (value: string) => {
-    setValues((current) => ({ ...current, [key]: value }));
+    setEdits((current) => ({ ...current, [key]: value }));
     setNotice(null);
   };
   const title = stored.name ?? `Room ${number}`;
@@ -131,8 +133,10 @@ export function RoomCard({
     if (Object.keys(found).length > 0) return setError('Check the boxes marked above.');
     setError(null);
     setBusy(true);
+    const sent = edits;
     try {
       await saveRoomField(db, job.draftRef, roomId, changes);
+      setEdits((current) => editsAfterSave(current, sent));
       await job.reloadDraft();
       setNotice(Object.keys(changes).length === 0 ? 'Nothing to save.' : 'Room saved.');
     } catch {

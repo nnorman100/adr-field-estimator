@@ -17,8 +17,9 @@ export const SCREENS: Record<string, string> = {
 
 // The views of the field page (S5a-6): every field screen is a view of /field picked by the
 // address's query (src/lib/field/views.ts), because the field worker answers every /field address
-// with the one kept shell page. Each view is listed here with the spec that runs axe on it;
-// tests/unit/screens.test.ts fails on a view with no entry.
+// with the one kept shell page. Each view is listed here with the spec that runs axe on it (by
+// visiting every view of src/lib/field/views.ts); tests/unit/screens.test.ts fails on a view with no
+// entry.
 export const FIELD_VIEW_SCREENS: Record<string, string> = {
   jobs: 'jobs.spec.ts',
   'new-job': 'jobs.spec.ts',
