@@ -45,20 +45,11 @@ export function wavFile(pcm: Uint8Array, rate = 16_000): Uint8Array {
 
 const MAX_PHOTO_BYTES = 4 * 1024 * 1024; // Model Armor's image limit (documents/docs.cloud.google.com/model-armor/screen-images)
 
-// Why a meter photo cannot join the dataset, or null. JPEG or PNG only, at most 4 MB, and no
-// embedded metadata: an Exif block can carry GPS coordinates, which never go into git (hard rule 6).
+// Why a meter photo cannot join the dataset, or null. PNG only (what render-eval-photos.ts writes),
+// at most 4 MB, and no metadata chunk: an Exif chunk can carry GPS coordinates, which never go into
+// git (hard rule 6).
 export function photoProblem(bytes: Uint8Array): string | null {
   if (bytes.byteLength === 0 || bytes.byteLength > MAX_PHOTO_BYTES) return 'not between 1 byte and 4 MB';
-  if (bytes[0] === 0xff && bytes[1] === 0xd8) {
-    let at = 2;
-    while (at + 4 <= bytes.byteLength && bytes[at] === 0xff) {
-      const marker = bytes[at + 1]!;
-      if (marker === 0xda) return null; // image data starts; no metadata segment came before it
-      if (marker === 0xe1) return 'has an Exif or XMP block (strip metadata first)';
-      at += 2 + ((bytes[at + 2]! << 8) | bytes[at + 3]!);
-    }
-    return 'not a readable JPEG';
-  }
   if ([0x89, 0x50, 0x4e, 0x47].every((byte, i) => bytes[i] === byte)) {
     let at = 8;
     while (at + 8 <= bytes.byteLength) {
@@ -70,7 +61,7 @@ export function photoProblem(bytes: Uint8Array): string | null {
     }
     return 'not a readable PNG';
   }
-  return 'not a JPEG or PNG';
+  return 'not a PNG';
 }
 
 // Rewrites a manifest with new file names and hashes, keeping every other field and the order.

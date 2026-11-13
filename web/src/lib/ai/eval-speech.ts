@@ -36,9 +36,11 @@ export function attemptBoundMicroUsd(text: string, at: Date): number {
 }
 
 // Live reports its output as responseTokenCount and responseTokensDetails, not the REST
-// candidates fields.
+// candidates fields. Null when the counts are missing, so the caller charges its bound.
 type LiveUsage = NonNullable<LiveServerMessage['usageMetadata']>;
-export function liveUsage(meta: LiveUsage): AiUsage {
+const counted = (n: unknown) => typeof n === 'number' && Number.isSafeInteger(n) && n > 0;
+export function liveUsage(meta: LiveUsage): AiUsage | null {
+  if (!counted(meta.promptTokenCount) || !counted(meta.responseTokenCount)) return null;
   return usageFromMetadata({
     promptTokenCount: meta.promptTokenCount,
     toolUsePromptTokenCount: meta.toolUsePromptTokenCount,
@@ -81,7 +83,7 @@ export function createSpeaker(project: string): Speaker {
                 if (part.inlineData?.data) audio.push(Buffer.from(part.inlineData.data, 'base64'));
               }
               if (content?.outputTranscription?.text) transcript += content.outputTranscription.text;
-              if (message.usageMetadata) usage = liveUsage(message.usageMetadata);
+              if (message.usageMetadata) usage = liveUsage(message.usageMetadata) ?? usage;
               if (content?.turnComplete) finish(true);
             },
             onerror: () => finish(false),

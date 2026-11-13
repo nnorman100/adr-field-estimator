@@ -15,7 +15,7 @@ export const STORED_DIR = fileURLToPath(new URL('./stored/', import.meta.url));
 const id = (prefix: string) => z.string().regex(new RegExp(`^${prefix}-\\d{2}$`));
 const text = z.string().min(1).max(4000);
 const sha256 = z.string().regex(/^[0-9a-f]{64}$/).nullable();
-const file = (dir: string) => z.string().regex(new RegExp(`^${dir}/[a-z]{2}-\\d{2}\\.(?:wav|jpg|png)$`));
+const file = (dir: string) => z.string().regex(new RegExp(`^${dir}/[a-z]{2}-\\d{2}\\.(?:wav|png)$`));
 
 // ---- Fill scope from words (S7-7): 40 walkthrough transcripts with hand-checked labels.
 // `expected` lists every change the technician's words support: room null is a job-level field.

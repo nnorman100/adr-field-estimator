@@ -191,6 +191,21 @@ describe('runSuite', () => {
     expect(result).toMatchObject({ pass: false, incomplete: ['token_budget_reached'] });
   });
 
+  it('keeps the whole reservation and counts the whole token bound when a model answers without usage counts', async () => {
+    const reply = JSON.stringify({ summary: 'Water damage.', suggestions: [], unpriced_work: [], testing_advice: [] });
+    const silent = () => ({ calls: 0, async generate() { this.calls += 1; return { text: reply, usage: {} }; } });
+    const capped = silent();
+    const byCap = await runSuite('summary', 200_000, MAX_RUN_TOKENS, ports({ model: capped, adapters: { summary: summaryAdapter } }));
+    expect(capped.calls).toBe(3);
+    expect(byCap.cost.settledMicroUsd).toBeGreaterThan(150_000);
+    expect(byCap.cost.settledMicroUsd).toBeLessThanOrEqual(200_000);
+    expect(byCap).toMatchObject({ incomplete: ['run_cap_reached'], counts: { answered: 3, notRun: 26 } });
+    const tokens = silent();
+    const byTokens = await runSuite('summary', MAX_RUN_MICRO_USD, 40_000, ports({ model: tokens, adapters: { summary: summaryAdapter } }));
+    expect(tokens.calls).toBe(2);
+    expect(byTokens).toMatchObject({ incomplete: ['token_budget_reached'], counts: { answered: 2, notRun: 28 } });
+  });
+
   it('counts a call with an unknown outcome as its whole token bound', async () => {
     const model = { calls: 0, generate: async () => ((model.calls += 1), Promise.reject(new AiModelError('failed'))) };
     const result = await runSuite('summary', MAX_RUN_MICRO_USD, 40_000, ports({ model, adapters: { summary: summaryAdapter } }));

@@ -63,7 +63,7 @@ export function parseEvalArgs(argv: string[], env: Record<string, string | undef
 }
 
 function readDataFile(relative: string): Uint8Array | null {
-  if (!/^[a-z-]+\/[a-z]{2}-\d{2}\.(?:wav|jpg|png)$/.test(relative)) return null;
+  if (!/^[a-z-]+\/[a-z]{2}-\d{2}\.(?:wav|png)$/.test(relative)) return null;
   try {
     return readFileSync(`${DATA_DIR}${relative}`);
   } catch {

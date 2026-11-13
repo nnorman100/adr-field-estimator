@@ -138,13 +138,14 @@ describe('Live speech usage', () => {
       responseTokensDetails: [{ modality: 'AUDIO', tokenCount: 100 }],
     } as unknown as Parameters<typeof liveUsage>[0];
     expect(liveUsage(meta)).toEqual({ input: { text: 30 }, output: { audio: 100, unknown: 20 } });
+    for (const empty of [{}, { promptTokenCount: 30 }, { promptTokenCount: 30, responseTokenCount: 0 }]) {
+      expect(liveUsage(empty as Parameters<typeof liveUsage>[0]), JSON.stringify(empty)).toBeNull();
+    }
   });
 });
 
 describe('meter photos', () => {
-  const jpeg = (segments: number[][]) => new Uint8Array([0xff, 0xd8, ...segments.flat(), 0xff, 0xda, 0, 2, 1, 2, 0xff, 0xd9]);
-  const app0 = [0xff, 0xe0, 0, 4, 0x4a, 0x46];
-  const exif = [0xff, 0xe1, 0, 4, 0x45, 0x78];
+  const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 4, 0x4a, 0x46, 0xff, 0xda, 0, 2, 1, 2, 0xff, 0xd9]);
   const chunk = (type: string, data: number[] = []) => {
     const head = Buffer.alloc(8);
     head.writeUInt32BE(data.length, 0);
@@ -153,13 +154,12 @@ describe('meter photos', () => {
   };
   const png = (...chunks: number[][]) => new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, ...chunks.flat()]);
 
-  it('takes a plain JPEG or PNG and refuses metadata, other formats and oversize files', () => {
-    expect(photoProblem(jpeg([app0]))).toBeNull();
-    expect(photoProblem(jpeg([app0, exif]))).toMatch(/Exif/);
+  it('takes a plain PNG and refuses metadata, other formats (JPEG included) and oversize files', () => {
+    expect(photoProblem(jpeg)).toMatch(/not a PNG/);
     expect(photoProblem(png(chunk('IHDR', [0, 0, 0, 1]), chunk('IDAT', [1]), chunk('IEND')))).toBeNull();
     expect(photoProblem(png(chunk('IHDR'), chunk('tEXt', [65]), chunk('IEND')))).toMatch(/metadata/);
     expect(photoProblem(png(chunk('IHDR'), chunk('eXIf', [65]), chunk('IEND')))).toMatch(/metadata/);
-    expect(photoProblem(new Uint8Array([0x47, 0x49, 0x46, 0x38]))).toMatch(/JPEG or PNG/);
+    expect(photoProblem(new Uint8Array([0x47, 0x49, 0x46, 0x38]))).toMatch(/not a PNG/);
     expect(photoProblem(new Uint8Array(4 * 1024 * 1024 + 1))).toMatch(/4 MB/);
     expect(photoProblem(new Uint8Array(0))).toMatch(/4 MB/);
   });

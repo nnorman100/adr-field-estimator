@@ -73,7 +73,9 @@ export const MAX_RUN_TOKENS = 1_000_000;
 const EVAL_COMPANY = '00000000-0000-4000-8000-0000000005e5';
 const EVAL_ACTOR = '00000000-0000-4000-8000-0000000005e6';
 
-export function createRunBudget(capMicroUsd: number) {
+// `unknownUsage` says the model ran but reported no usable token counts; then a settlement keeps
+// the whole reservation instead of the boundary's measured cost.
+export function createRunBudget(capMicroUsd: number, unknownUsage: () => boolean = () => false) {
   const open = new Map<string, number>();
   let settled = 0;
   let held = 0;
@@ -87,8 +89,10 @@ export function createRunBudget(capMicroUsd: number) {
       return { ok: true, reservationId };
     },
     async settle(reservationId, microUsd) {
-      if (!open.delete(reservationId)) return;
-      settled += microUsd;
+      const reserved = open.get(reservationId);
+      if (reserved === undefined) return;
+      open.delete(reservationId);
+      settled += unknownUsage() ? reserved : microUsd;
     },
     async hold(reservationId) {
       const amount = open.get(reservationId);
@@ -195,13 +199,19 @@ export async function runSuite(suite: Suite, capMicroUsd: number, tokenBudget: n
 
   const now = ports.now ?? (() => new Date());
   const startedAt = now().toISOString();
-  const budget = createRunBudget(capMicroUsd);
+  // Per call: whether the model ran, and whether it reported usable token counts.
+  let modelRan = false;
+  let usageKnown = false;
+  const budget = createRunBudget(capMicroUsd, () => modelRan && !usageKnown);
   const lines: AiLogLine[] = [];
   let raw: string | undefined;
+  const counted = (n: unknown) => typeof n === 'number' && Number.isSafeInteger(n) && n > 0;
   const boundary = createAiBoundary({
     model: {
       async generate(request) {
+        modelRan = true;
         const reply = await ports.model.generate(request);
+        usageKnown = counted(reply.usage?.promptTokenCount) && counted(reply.usage?.candidatesTokenCount);
         raw = reply.text;
         return reply;
       },
@@ -232,13 +242,13 @@ export async function runSuite(suite: Suite, capMicroUsd: number, tokenBudget: n
       return { answer: { ok: false, outcome: 'not_run' }, verdict: 'not_screened' };
     }
     raw = undefined;
+    modelRan = false;
+    usageKnown = false;
     usedModel = true;
     const outcome = await boundary.call(context, request);
     const line = lines[lines.length - 1];
-    const reported = line ? line.inputTokens + line.outputTokens : 0;
-    // Tokens Google reported; with none reported after the model may have run, the whole bound.
-    const unknown = !outcome.ok && ['model_timeout', 'model_failed'].includes(outcome.refusal.code);
-    usedTokens += reported > 0 ? reported : unknown ? bound : 0;
+    // Tokens Google reported; when the model ran without usable counts, whatever the outcome, the whole bound.
+    usedTokens += modelRan && !usageKnown ? bound : line ? line.inputTokens + line.outputTokens : 0;
     const verdict = line?.verdict ?? 'not_screened';
     if (outcome.ok) {
       return { answer: raw === undefined ? { ok: true, response: outcome.output } : { ok: true, response: outcome.output, raw }, verdict };
