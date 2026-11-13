@@ -15,6 +15,21 @@ import {
 } from './score';
 import { hasPhrase, median, normalizeWords, numberOf, numbersIn, wordErrorRate } from './text';
 
+// A reply names a word when one of its words is that word, or (for words of four letters or more)
+// starts with it, so "wick" finds "wicking" but "no" does not find "noted".
+function names(replyWords: readonly string[], word: string): boolean {
+  const needle = normalizeWords(word);
+  if (needle.length > 1) return hasPhrase(replyWords.join(' '), word);
+  const stem = needle[0];
+  if (!stem) return false;
+  return replyWords.some((w) => w === stem || (stem.length >= 4 && w.startsWith(stem)));
+}
+
+// A short acknowledgement or follow-up question is a relevant answer to a statement (not to a question).
+const ACKNOWLEDGE = /^(?:got it|noted|okay|ok|understood|sounds good|all right|alright|copy that|thanks)\b/i;
+const acknowledges = (reply: string) =>
+  normalizeWords(reply).length <= 15 && (ACKNOWLEDGE.test(reply.trim()) || reply.trim().endsWith('?'));
+
 // Scorers for the audio and image features (V9 A, docs/plans/S7.md section 8): meter reading
 // (S7-8), voice notes (S7-9) and the Live walkthrough (S7-16).
 
@@ -122,10 +137,11 @@ export function scoreLive(cases: readonly LiveTurn[], answers: Answers, session?
     vocabulary += turn.vocabulary.length;
     const k = kept(heard, turn.vocabulary, []);
     vocabularyKept += k.terms;
-    const replyWords = normalizeWords(reply).join(' ');
-    const isRelevant =
-      replyWords.length > 0 &&
-      turn.relevant.every((group) => group.some((word) => hasPhrase(replyWords, word)));
+    // A question needs an answer (its groups hold answer words, not the question's own words); a
+    // statement is answered by naming what was said, or by a short acknowledgement.
+    const replyWords = normalizeWords(reply);
+    const answered = replyWords.length > 0 && turn.relevant.every((group) => group.some((word) => names(replyWords, word)));
+    const isRelevant = answered || (turn.kind === 'statement' && acknowledges(reply));
     const price = statesPrice(reply);
     if (isRelevant) relevant += 1;
     if (price) priced += 1;

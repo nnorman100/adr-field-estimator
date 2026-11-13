@@ -5,26 +5,26 @@
 {"id":"lt-05","response":{"heard":"Drywall is wicking about a foot up behind the vanity.","reply":"Noted, I have that about the drywall.","latencyMs":1420}}
 {"id":"lt-06","response":{"heard":"Moving to the hallway now.","reply":"Noted, I have that about the hallway.","latencyMs":1150}}
 {"id":"lt-07","response":{"heard":"Carpet and pad are soaked, the subfloor feels solid.","reply":"Noted, I have that about the carpet.","latencyMs":1290}}
-{"id":"lt-08","response":{"heard":"Should I pull the baseboard in here?","reply":"Noted, I have that about the baseboard.","latencyMs":1360}}
+{"id":"lt-08","response":{"heard":"Should I pull the baseboard in here?","reply":"Yes, if the meter shows the drywall behind it is wet, pull it so the wall can dry.","latencyMs":1360}}
 {"id":"lt-09","response":{"heard":"We will set up containment before we open the wall.","reply":"Noted, I have that about the containment.","latencyMs":1225}}
 {"id":"lt-10","response":{"heard":"The crawl space has standing water under the bathroom.","reply":"Noted, I have that about the crawl space.","latencyMs":1500}}
 {"id":"lt-11","response":{"heard":"Reading on the subfloor is 28 percent.","reply":"Noted, I have that about the subfloor.","latencyMs":1180}}
 {"id":"lt-12","response":{"heard":"I see some visible growth on the back of the vanity.","reply":"Noted, I have that about the growth.","latencyMs":1240}}
 {"id":"lt-13","response":{"heard":"This one is category three, it came from the toilet.","reply":"Noted, I have that about the category.","latencyMs":1310}}
-{"id":"lt-14","response":{"heard":"Do we need a HEPA air scrubber for this room?","reply":"Noted, I have that about the scrubber.","latencyMs":1205}}
+{"id":"lt-14","response":{"heard":"Do we need a HEPA air scrubber for this room?","reply":"It depends on whether there is visible growth; with mold present, yes, run one inside containment.","latencyMs":1205}}
 {"id":"lt-15","response":{"heard":"Taking a source photo of the water heater.","reply":"Noted, I have that about the photo.","latencyMs":1420}}
 {"id":"lt-16","response":{"heard":"The laundry room is about sixty square feet.","reply":"Noted, I have that about the laundry.","latencyMs":1150}}
 {"id":"lt-17","response":{"heard":"I am going to do a flood cut at two feet.","reply":"Noted, I have that about the flood cut.","latencyMs":1290}}
 {"id":"lt-18","response":{"heard":"The hardwood is cupping near the dishwasher.","reply":"Noted, I have that about the hardwood.","latencyMs":1360}}
 {"id":"lt-19","response":{"heard":"Note that the homeowner moved the contents already.","reply":"Noted, I have that about the contents.","latencyMs":1225}}
-{"id":"lt-20","response":{"heard":"What else should I check in the bathroom?","reply":"Noted, I have that about the bathroom.","latencyMs":1500}}
+{"id":"lt-20","response":{"heard":"What else should I check in the bathroom?","reply":"Check the subfloor around the toilet and the cabinet base under the vanity with the meter.","latencyMs":1500}}
 {"id":"lt-21","response":{"heard":"The ceiling below the bathroom is stained but dry.","reply":"Noted, I have that about the ceiling.","latencyMs":1180}}
 {"id":"lt-22","response":{"heard":"Insulation in the outside wall is wet.","reply":"Noted, I have that about the insulation.","latencyMs":1240}}
 {"id":"lt-23","response":{"heard":"Set this room as class two.","reply":"Noted, I have that about the class.","latencyMs":1310}}
 {"id":"lt-24","response":{"heard":"The toe kick on the sink cabinet is swollen.","reply":"Noted, I have that about the toe kick.","latencyMs":1205}}
 {"id":"lt-25","response":{"heard":"Next is the primary bedroom.","reply":"Noted, I have that about the bedroom.","latencyMs":1420}}
 {"id":"lt-26","response":{"heard":"Carpet pad is wet about four feet out from the wall.","reply":"Noted, I have that about the carpet.","latencyMs":1150}}
-{"id":"lt-27","response":{"heard":"Is an LGR dehumidifier better here than a conventional one?","reply":"Noted, I have that about the lgr.","latencyMs":1290}}
+{"id":"lt-27","response":{"heard":"Is an LGR dehumidifier better here than a conventional one?","reply":"Usually yes, an LGR pulls the humidity lower than a conventional unit in cooler rooms.","latencyMs":1290}}
 {"id":"lt-28","response":{"heard":"The air mover cords are taped down in the hallway.","reply":"Noted, I have that about the air mover.","latencyMs":1360}}
 {"id":"lt-29","response":{"heard":"Okay, I think that covers the downstairs.","reply":"Noted, I have that about the downstairs.","latencyMs":1225}}
 {"id":"lt-30","response":{"heard":"Let us finish the walkthrough.","reply":"Noted, I have that about the finish.","latencyMs":1500}}

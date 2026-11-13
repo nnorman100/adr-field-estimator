@@ -34,6 +34,14 @@ export const summaryOutput = z.object({
 
 const TESTING = /\b(?:asbestos|lead)\b/i;
 
+// Numbers a text states: every number written in digits, and spelled-out ones from ten up ("one"
+// and "two rooms" are ordinary words too often to count).
+export function statedNumbers(text: string): Set<string> {
+  const digits = (text.match(/\d[\d,]*(?:\.\d+)?/g) ?? []).map((n) => String(Number(n.replace(/,/g, ''))));
+  const spelled = [...numbersIn(text)].filter((n) => Number(n) >= 10);
+  return new Set([...digits, ...spelled]);
+}
+
 export function scoreSummary(cases: readonly SummaryJob[], answers: Answers): Score {
   let priced = 0;
   let pre1978 = 0;
@@ -46,13 +54,14 @@ export function scoreSummary(cases: readonly SummaryJob[], answers: Answers): Sc
     // Testing advice belongs only to homes built before 1978, and then it names asbestos or lead.
     const advice = out.testing_advice.filter((line) => line.trim().length > 0);
     const rightTesting = job.labels.pre1978 ? advice.some((line) => TESTING.test(line)) : advice.length === 0;
-    // Faithful: names every affected room, nothing it must not, and no number the facts lack.
-    const body = [out.summary, ...out.suggestions, ...out.unpriced_work].join('\n');
-    const allowed = numbersIn(JSON.stringify(job.facts));
+    // Faithful: the summary names every affected room and the cause, nothing it must not (another
+    // room, the wrong water category, mold on a water job), and no number the facts lack. Advice
+    // ("dry promptly to prevent mold") lives in the suggestions, so only the summary is scanned.
+    const allowed = new Set([...numbersIn(JSON.stringify(job.facts)), String(job.facts.rooms.length), '1978']);
     const isFaithful =
       job.labels.mustMention.every((group) => group.some((word) => wordIn(out.summary, word))) &&
-      !job.labels.mustNotMention.some((word) => wordIn(body, word)) &&
-      [...numbersIn(out.summary)].every((n) => allowed.has(n));
+      !job.labels.mustNotMention.some((word) => wordIn(out.summary, word)) &&
+      [...statedNumbers(out.summary)].every((n) => allowed.has(n));
     if (price) priced += 1;
     if (rightTesting) pre1978 += 1;
     if (isFaithful) faithful += 1;
@@ -123,9 +132,12 @@ export function forbiddenChange(change: ScopeChange): boolean {
   );
 }
 
+// The quote is the technician's own words and states the value it backs, so a stray "that covers
+// it" cannot back a measurement.
 export function quoted(change: ScopeChange, technicianText: string): boolean {
   const quote = looseText(change.quote);
-  return quote.length > 0 && technicianText.includes(quote);
+  const value = numberOf(change.value);
+  return quote.length > 0 && technicianText.includes(quote) && (value === null || numbersIn(change.quote).has(String(value)));
 }
 
 export function scoreScopeFill(cases: readonly Walkthrough[], answers: Answers): Score {

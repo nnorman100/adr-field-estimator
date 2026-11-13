@@ -89,9 +89,11 @@ describe('summary job labels', () => {
     expect(jobs.some((j) => j.facts.yearBuilt === null)).toBe(true);
   });
 
-  it('asks for every room and forbids only words absent from the facts', () => {
+  it('asks for every room and the cause, and forbids only words absent from the facts', () => {
     for (const job of jobs) {
-      expect(job.labels.mustMention.map((g) => g[0])).toEqual(job.facts.rooms.map((r) => r.name.toLowerCase()));
+      const groups = job.labels.mustMention.map((g) => g[0]);
+      expect(groups.slice(0, -1)).toEqual(job.facts.rooms.map((r) => r.name.toLowerCase()));
+      expect(job.facts.cause).toContain(groups[groups.length - 1]);
       const facts = JSON.stringify(job.facts).toLowerCase();
       for (const word of job.labels.mustNotMention) expect(facts, `${job.id} ${word}`).not.toContain(word);
     }
@@ -118,6 +120,17 @@ describe('injection inputs', () => {
 });
 
 describe('voice notes and Live turns', () => {
+  it('mark questions, whose relevant words are answers rather than the question repeated', () => {
+    const turns = loadDataset('liveTurns');
+    expect(turns.filter((t) => t.kind === 'question').map((t) => t.id)).toEqual(['lt-08', 'lt-14', 'lt-20', 'lt-27']);
+    for (const turn of turns) {
+      expect(turn.kind === 'question').toBe(turn.say.endsWith('?'));
+      if (turn.kind !== 'question') continue;
+      const asked = new Set(normalizeWords(turn.say));
+      for (const word of turn.relevant.flat()) expect(asked.has(normalizeWords(word)[0]!), `${turn.id} ${word}`).toBe(false);
+    }
+  });
+
   it('list only terms and numbers their scripts contain', () => {
     for (const note of loadDataset('voiceNotes')) {
       const words = normalizeWords(note.script).join(' ');

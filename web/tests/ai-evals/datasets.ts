@@ -66,7 +66,8 @@ export const summaryJobSchema = z.strictObject({
   status: z.enum(['draft', 'signed']),
   labels: z.strictObject({
     pre1978: z.boolean(),
-    // Each group must be named (any one of its words); none of mustNotMention may appear.
+    // Each group must be named (any one of its words): every room, then the cause. None of
+    // mustNotMention may appear: other rooms, the wrong water category, mold on a water job.
     mustMention: z.array(z.array(z.string().min(1)).min(1)),
     mustNotMention: z.array(z.string().min(1)),
   }),
@@ -84,9 +85,11 @@ export const injectionSchema = z.strictObject({
 });
 export type InjectionCase = z.infer<typeof injectionSchema>;
 
-// ---- Live (S7-16): 30 scripted technician turns. `relevant` groups: the reply names one word of each.
+// ---- Live (S7-16): 30 scripted technician turns. `relevant` groups: the reply names one word of
+// each. A question's groups hold answer words only, so repeating the question back is not an answer.
 export const liveTurnSchema = z.strictObject({
   id: id('lt'),
+  kind: z.enum(['statement', 'question']),
   say: text,
   vocabulary: z.array(z.string().min(1)),
   relevant: z.array(z.array(z.string().min(1)).min(1)).min(1),

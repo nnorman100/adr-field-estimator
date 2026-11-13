@@ -68,6 +68,32 @@ describe('findings summary (30 jobs: no price, pre-1978 30/30, faithful >= 28/30
     expect(failing(three)).toEqual(['faithful']);
   });
 
+  it('reads only the summary for forbidden words, and allows the room count, 1978 and small spelled numbers', () => {
+    const water = jobs.find((j) => j.labels.mustNotMention.includes('mold'))!;
+    const s = scoreSummary(
+      jobs,
+      answers('summary.jsonl', (m) => {
+        (m.get(water.id)!.suggestions as string[]).push('Dry promptly to prevent mold.');
+        m.get(water.id)!.summary += ` Work covers ${water.facts.rooms.length} rooms; one wall was opened. The home dates from before 1978 or after.`;
+      }),
+    );
+    expect(s.pass).toBe(true);
+  });
+
+  it('fails three summaries that miss the cause or state the wrong water category', () => {
+    const clean = jobs.slice(1).filter((j) => j.facts.rooms[0]!.category === 1).slice(0, 2);
+    const s = scoreSummary(
+      jobs,
+      answers('summary.jsonl', (m) => {
+        const first = jobs[0]!;
+        m.get(first.id)!.summary = (m.get(first.id)!.summary as string).replace(first.facts.cause, 'an unknown source');
+        for (const job of clean) m.get(job.id)!.summary += ' This was sewage.';
+      }),
+    );
+    expect(clean).toHaveLength(2);
+    expect(failing(s)).toEqual(['faithful']);
+  });
+
   it('does not take "molding" for mold', () => {
     const water = jobs.find((j) => j.labels.mustNotMention.includes('mold'))!;
     const s = scoreSummary(jobs, answers('summary.jsonl', (m) => (m.get(water.id)!.summary += ' Trim molding is wet.')));
@@ -116,6 +142,11 @@ describe('fill scope from words (quote for every change, value >= 95%, recall >=
     expect(metric(s, 'recall').value).toBeGreaterThan(0.95);
   });
 
+  it('fails when a quote the technician said does not state the value it backs', () => {
+    const s = scoreScopeFill(walks, answers('scope-fill.jsonl', (m) => (changesOf(m, 'wt-01')[0]!.quote = 'No, that covers it.')));
+    expect(failing(s)).toEqual(['quote_for_every_change']);
+  });
+
   it('fails when one change quotes words the technician never said, or only the assistant said', () => {
     expect(failing(scoreScopeFill(walks, answers('scope-fill.jsonl', (m) => (changesOf(m, 'wt-01')[0]!.quote = 'The house is old.'))))).toEqual(['quote_for_every_change']);
     const assistantLine = walks.flatMap((w) => w.turns.map((t) => ({ w, t }))).find(({ t }) => t.speaker === 'assistant' && /how big/i.test(t.text))!;
@@ -125,7 +156,7 @@ describe('fill scope from words (quote for every change, value >= 95%, recall >=
 
   it('fails on any equipment count or price, whatever its quote', () => {
     expect(COUNT_FIELDS.has('airMovers') && COUNT_FIELDS.has('laborHours') && !COUNT_FIELDS.has('yearBuilt')).toBe(true);
-    const count = scoreScopeFill(walks, answers('scope-fill.jsonl', (m) => changesOf(m, 'wt-01').push({ ...changesOf(m, 'wt-01')[0]!, field: 'airMovers', value: 2 })));
+    const count = scoreScopeFill(walks, answers('scope-fill.jsonl', (m) => changesOf(m, 'wt-01').push({ ...changesOf(m, 'wt-01')[0]!, field: 'airMovers' })));
     expect(failing(count)).toEqual(['counts_or_prices']);
     const priced = walks.find((w) => w.traps.includes('price'))!;
     const quote = priced.turns.flatMap((t) => (t.speaker === 'technician' ? t.text.split(/(?<=[.?!])\s+/) : [])).find((x) => /dollar|bucks/i.test(x))!;
@@ -280,6 +311,25 @@ describe('Live (WER <= 10%, vocabulary >= 90%, relevance >= 27/30, no prices, p5
     const slow = scoreLive(turns, answers('live.jsonl', (m) => turns.forEach((t) => (m.get(t.id)!.latencyMs = 1700))), SESSION);
     expect(failing(slow)).toEqual(['latency_p50_ms']);
     expect(failing(scoreLive(turns, answers('live.jsonl'), { minutes: 10, costMicroUsd: 10 * 56_000 }))).toEqual(['cost_micro_usd_per_minute']);
+  });
+
+  it('takes a short acknowledgement for a statement but never for a question, and does not take a question repeated back', () => {
+    const statement = turns.find((t) => t.kind === 'statement')!.id;
+    const question = turns.filter((t) => t.kind === 'question');
+    const acked = scoreLive(turns, answers('live.jsonl', (m) => (m.get(statement)!.reply = 'Got it, what do you see next?')), SESSION);
+    expect(acked.cases.find((c) => c.id === statement)!.checks.relevant).toBe(true);
+    const parroted = scoreLive(turns, answers('live.jsonl', (m) => question.forEach((t) => (m.get(t.id)!.reply = `Got it. ${t.say}`))), SESSION);
+    expect(parroted.cases.filter((c) => c.checks.relevant === false).map((c) => c.id)).toEqual(question.map((t) => t.id));
+    expect(failing(parroted)).toEqual(['relevant_replies']);
+  });
+
+  it('matches a stem inside a longer word, but not a short word inside another', () => {
+    const wick = turns.find((t) => t.relevant.flat().includes('wick'))!.id;
+    const s = scoreLive(turns, answers('live.jsonl', (m) => (m.get(wick)!.reply = 'The drywall is wicking, plan a cut.')), SESSION);
+    expect(s.cases.find((c) => c.id === wick)!.checks.relevant).toBe(true);
+    const q = turns.find((t) => t.id === 'lt-08')!.id;
+    const noted = scoreLive(turns, answers('live.jsonl', (m) => (m.get(q)!.reply = 'Noted, nothing else here.')), SESSION);
+    expect(noted.cases.find((c) => c.id === q)!.checks.relevant).toBe(false);
   });
 
   it('fails on a lost vocabulary word or a garbled transcript', () => {
