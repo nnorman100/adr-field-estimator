@@ -141,7 +141,8 @@ export async function sendPhoto(user: User, jobId: string, photoId: string, byte
 export async function photoAddress(user: User, jobId: string, photoId: string): Promise<string | null> {
   const response = await authorized(user, `/api/jobs/${jobId}/photos/${photoId}?kind=photo`);
   if (!response?.ok) return null;
-  return URL.createObjectURL(await response.blob());
+  const bytes = await response.blob().catch(() => null);
+  return bytes ? URL.createObjectURL(bytes) : null;
 }
 
 export const SHOT_NAMES: Record<(typeof SHOT_TAGS)[number], string> = {

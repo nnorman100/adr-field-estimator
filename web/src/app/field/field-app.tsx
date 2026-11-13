@@ -4,6 +4,7 @@ import { useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import type { DsMe } from '@/lib/field/ds-me';
+import { pending } from '@/lib/field/pending';
 import { openSession, type SessionOutcome } from '@/lib/field/session';
 import { placeOf } from '@/lib/field/views';
 import { JobScreens } from './job-screens';
@@ -22,7 +23,9 @@ export function FieldApp({ me }: { me: DsMe }) {
     let live = true;
     openSession(me).then(
       (next) => {
-        if (live) setOutcome(next);
+        if (!live) return;
+        if (next.kind === 'ready') pending.openFor(`${next.session.companyId}/${next.session.user.uid}`);
+        setOutcome(next);
       },
       () => {
         if (live) setOutcome({ kind: 'unavailable' });

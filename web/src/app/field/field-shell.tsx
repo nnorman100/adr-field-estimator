@@ -1,7 +1,7 @@
 'use client';
 
 import { Suspense, useEffect, useState } from 'react';
-import { readLatestMe, type DsMe } from '@/lib/field/ds-me';
+import { meKey, readLatestMe, type DsMe } from '@/lib/field/ds-me';
 import { registerFieldWorker } from '@/lib/field/register-worker';
 import { offlineCaptureAllowed } from '@/lib/field/platform';
 import { rememberedSignInAddress } from '@/lib/sign-in/remember';
@@ -74,9 +74,10 @@ export function FieldShell() {
             <h1 className="text-2xl font-semibold">{boot.me.companyName}</h1>
             {/* Above the jobs, which load after the page shows: nothing moves the notice once it is there. */}
             {homeScreen}
-            {/* The view is read from the address, which only the browser knows. */}
+            {/* The view is read from the address, which only the browser knows. Another sign-in
+                starts the screens afresh, so nothing of the last person's stays on them. */}
             <Suspense fallback={<p role="status">Opening your jobs…</p>}>
-              <FieldApp me={boot.me} />
+              <FieldApp key={meKey(boot.me.tenantId, boot.me.uid)} me={boot.me} />
             </Suspense>
           </>
         ) : null}

@@ -113,28 +113,31 @@ function RecordForm({
   const unsettled = usePending(() => pending.record(jobId));
   const mine = unsettled?.kind === kind ? unsettled : null;
   const waiting = unsettled !== null && mine === null;
-  const [busy, setBusy] = useState(false);
+  // In flight is kept with the save itself, so a form opened again while it is on its way waits.
+  const busy = mine?.sending ?? false;
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const shown = mine?.values ?? { ...reread(job.detail), ...edits };
 
   async function save() {
-    setBusy(true);
+    const held = pending.record(jobId);
+    if (held && (held.kind !== kind || held.sending)) return;
     setError(null);
     setNotice(null);
-    const attempt = mine ?? { kind, changeId: crypto.randomUUID(), revision: job.detail.job.revision, values: shown };
+    const attempt = { ...(held ?? { kind, changeId: crypto.randomUUID(), revision: job.detail.job.revision, values: shown, edits }), sending: true };
     pending.setRecord(jobId, attempt);
     const answer = await send(attempt.values, attempt.revision, attempt.changeId);
-    setBusy(false);
+    // No answer at all keeps the save to send again; an answer, even a refusal, settles it.
+    const settled = answer.ok || (answer.status !== 0 && answer.status < 500);
+    if (!pending.settleRecord(jobId, attempt.changeId, !settled)) return;
     if (answer.ok) {
-      pending.setRecord(jobId, null);
       setEdits((current) => Object.fromEntries(Object.entries(current).filter(([key, value]) => attempt.values[key] !== value)));
       job.setDetail(answer.value);
       setNotice(`${title} saved.`);
       return;
     }
-    // A refusal settles the request; no answer keeps it to send again.
-    if (answer.status !== 0 && answer.status < 500) pending.setRecord(jobId, null);
+    // A refusal puts the person's own changes back on the form, over the job as read next.
+    if (settled) setEdits((current) => ({ ...attempt.edits, ...current }));
     // Changed elsewhere: read the job again; the person's edits stay on top of the new values.
     if (answer.stale) await job.reloadJob();
     setError(answer.message);

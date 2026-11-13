@@ -50,11 +50,15 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
         setDraft(found);
         setDraftError(found ? null : 'The field work of this job is not there yet. Try again in a moment.');
       } catch (error) {
+        // A read that did not get through keeps the draft as last read on screen, and with it any
+        // boxes the person has changed and not saved; field work the app cannot read is not shown.
+        if (!(error instanceof InvalidFieldData)) {
+          setDraftError('The field work could not be read just now. Check the signal and try again.');
+          return;
+        }
         setDraft(null);
         setDraftError(
-          error instanceof InvalidFieldData
-            ? 'Part of this job’s field work is stored in a form this app cannot read, so it is not shown. Ask the office to check this job.'
-            : 'The field work could not be read just now. Check the signal and try again.',
+          'Part of this job’s field work is stored in a form this app cannot read, so it is not shown. Ask the office to check this job.',
         );
       }
     },

@@ -8,12 +8,25 @@
 //   is unanswered the other waits (a second save would move the revision on, and the first one's
 //   resend would then meet a conflict instead of its own answer).
 // - Photos: per job, each with its id and the very bytes sent.
+//
+// A send in flight is marked here, not in the screen, so a screen opened again while it is on its
+// way cannot send it a second time; an answer settles only the request that still holds its slot.
+// All of it belongs to one signed-in person of one company (`openFor`): another sign-in on the same
+// page starts empty.
 import { useSyncExternalStore } from 'react';
 import type { PhotoField } from './schema';
 
-export type PendingJob = { id: string; draftId: string; propertyAddress: string };
+export type PendingJob = { id: string; draftId: string; propertyAddress: string; sending: boolean };
 export type RecordKind = 'customer' | 'claim';
-export type PendingRecord = { kind: RecordKind; changeId: string; revision: number; values: Record<string, string> };
+export type PendingRecord = {
+  kind: RecordKind;
+  changeId: string;
+  revision: number;
+  values: Record<string, string>;
+  // Only the boxes the person changed, put back on the form if the server refuses the save.
+  edits: Record<string, string>;
+  sending: boolean;
+};
 export type PendingPhoto = {
   id: string;
   bytes: Blob;
@@ -23,12 +36,13 @@ export type PendingPhoto = {
 };
 
 type State = {
+  owner: string | null;
   job: PendingJob | null;
   records: Record<string, PendingRecord>;
   photos: Record<string, PendingPhoto[]>;
 };
 
-let state: State = { job: null, records: {}, photos: {} };
+let state: State = { owner: null, job: null, records: {}, photos: {} };
 const listeners = new Set<() => void>();
 
 function change(next: Partial<State>) {
@@ -44,16 +58,33 @@ function subscribe(listener: () => void): () => void {
 const NO_PHOTOS: PendingPhoto[] = [];
 
 export const pending = {
+  // Keeps the unsent work only while `owner` (company and person) stays the one signed in.
+  openFor(owner: string) {
+    if (state.owner !== owner) change({ owner, job: null, records: {}, photos: {} });
+  },
   job: () => state.job,
-  setJob(job: PendingJob | null) {
+  setJob(job: PendingJob) {
     change({ job });
   },
+  // Ends the send of job `id` if it still holds the slot: kept for a resend, or cleared. Answers
+  // whether it did.
+  settleJob(id: string, keep: boolean): boolean {
+    if (state.job?.id !== id) return false;
+    change({ job: keep ? { ...state.job, sending: false } : null });
+    return true;
+  },
   record: (jobId: string): PendingRecord | null => state.records[jobId] ?? null,
-  setRecord(jobId: string, record: PendingRecord | null) {
+  setRecord(jobId: string, record: PendingRecord) {
+    change({ records: { ...state.records, [jobId]: record } });
+  },
+  settleRecord(jobId: string, changeId: string, keep: boolean): boolean {
+    const current = state.records[jobId];
+    if (current?.changeId !== changeId) return false;
     const records = { ...state.records };
-    if (record) records[jobId] = record;
+    if (keep) records[jobId] = { ...current, sending: false };
     else delete records[jobId];
     change({ records });
+    return true;
   },
   photos: (jobId: string): PendingPhoto[] => state.photos[jobId] ?? NO_PHOTOS,
   addPhoto(jobId: string, photo: PendingPhoto) {

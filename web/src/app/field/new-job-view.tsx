@@ -15,7 +15,8 @@ import { Box, FieldLink, go, Outcome } from './ui';
 export function NewJobView({ session }: { session: FieldSession }) {
   const [address, setAddress] = useState('');
   const unsent = usePending(pending.job);
-  const [busy, setBusy] = useState(false);
+  // In flight is kept with the request itself, so a screen opened again while it is on its way waits.
+  const busy = unsent?.sending ?? false;
   const [error, setError] = useState<string | null>(null);
 
   if (!session.capabilities.includes('jobs_create')) {
@@ -29,21 +30,22 @@ export function NewJobView({ session }: { session: FieldSession }) {
   }
 
   async function start() {
-    setBusy(true);
+    const held = pending.job();
+    if (held?.sending) return;
     setError(null);
     // The same request again while one is unanswered; a new one otherwise.
-    const request = pending.job() ?? { id: crypto.randomUUID(), draftId: crypto.randomUUID(), propertyAddress: address.trim() };
+    const request = { ...(held ?? { id: crypto.randomUUID(), draftId: crypto.randomUUID(), propertyAddress: address.trim() }), sending: true };
     pending.setJob(request);
-    const answer = await createJob(session.user, request);
-    setBusy(false);
+    const answer = await createJob(session.user, { id: request.id, draftId: request.draftId, propertyAddress: request.propertyAddress });
+    // No answer at all: the job may be saved, so the next tap sends the same ids. A refusal is final
+    // for these ids, and the address goes back in its box.
+    const settled = answer.ok || (answer.status !== 0 && answer.status < 500);
+    if (!pending.settleJob(request.id, !settled)) return;
     if (answer.ok) {
-      pending.setJob(null);
       go({ view: 'scope', jobId: answer.value.job.id });
       return;
     }
-    // No answer at all: the job may be saved, so the next tap sends the same ids. A refusal is final
-    // for these ids.
-    if (answer.status !== 0 && answer.status < 500) pending.setJob(null);
+    if (settled) setAddress(request.propertyAddress);
     setError(answer.message);
   }
 
