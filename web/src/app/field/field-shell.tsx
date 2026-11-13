@@ -7,13 +7,15 @@ import { offlineCaptureAllowed } from '@/lib/field/platform';
 import { rememberedSignInAddress } from '@/lib/sign-in/remember';
 import { NotSavedBanner, OfflineBanner } from './banners';
 import { useReachable } from './connection';
+import { FieldStore } from './field-store';
 import { HomeScreenSheet, useFieldSurface } from './home-screen-sheet';
 
 // The field shell (S6-2): the one page every field screen lives in. The server renders nothing of
 // a person's here, so the page is built once, the service worker keeps that copy, and the Home
 // Screen icon opens it with no signal. It starts from `ds-me` (the settings and company saved at
 // the last online sign-in), never from the server, and all views under it are client state. The
-// job screens (S5a-6) and the phone's stores (S6-3 and after) mount in the slot below.
+// phone's Firestore cache and sync gate (S6-3, ./field-store.tsx) start below, and the job screens
+// (S5a-6) mount inside them.
 type Boot =
   | { kind: 'starting' }
   | { kind: 'ready'; me: DsMe }
@@ -24,6 +26,8 @@ type Boot =
 
 export function FieldShell() {
   const [boot, setBoot] = useState<Boot>({ kind: 'starting' });
+  // The Firestore cache fell back to memory (S6-3): nothing is kept, as with no storage at all.
+  const [notSaved, setNotSaved] = useState(false);
   const reachable = useReachable();
   const surface = useFieldSurface();
 
@@ -59,17 +63,27 @@ export function FieldShell() {
       data-offline-capture={offlineCaptureAllowed(surface) ? 'allowed' : 'blocked'}
     >
       <OfflineBanner
-        offline={!reachable && (boot.kind === 'ready' || boot.kind === 'signed-out')}
+        offline={!reachable && !notSaved && (boot.kind === 'ready' || boot.kind === 'signed-out')}
         onlineOnly={surface === 'ios-tab'}
       />
-      <NotSavedBanner unavailable={boot.kind === 'no-storage'} />
+      <NotSavedBanner unavailable={boot.kind === 'no-storage' || notSaved} />
       <main className="flex flex-1 flex-col gap-4 p-6">
         <p className="text-sm font-semibold tracking-wide">DryScope</p>
         {boot.kind === 'starting' ? <p role="status">Opening…</p> : null}
         {boot.kind === 'ready' ? (
           <>
             <h1 className="text-2xl font-semibold">{boot.me.companyName}</h1>
-            <p className="text-base">Your jobs will show here.</p>
+            {/* Above the content that loads after the page shows, so nothing moves the notice. */}
+            {surface === 'ios-tab' ? <HomeScreenSheet openFirstTime /> : null}
+            <FieldStore
+              key={`${boot.me.tenantId}/${boot.me.uid}`}
+              me={boot.me}
+              surface={surface}
+              reachable={reachable}
+              onNotSaved={setNotSaved}
+            >
+              <p className="text-base">Your jobs will show here.</p>
+            </FieldStore>
           </>
         ) : null}
         {boot.kind === 'signed-out' || boot.kind === 'no-storage' ? (
@@ -86,7 +100,7 @@ export function FieldShell() {
             ) : null}
           </>
         ) : null}
-        {surface === 'ios-tab' ? <HomeScreenSheet openFirstTime={boot.kind !== 'starting'} /> : null}
+        {surface === 'ios-tab' && boot.kind !== 'ready' ? <HomeScreenSheet openFirstTime={boot.kind !== 'starting'} /> : null}
       </main>
     </div>
   );

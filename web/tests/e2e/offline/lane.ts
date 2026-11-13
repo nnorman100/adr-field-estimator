@@ -34,7 +34,8 @@ type Side = {
   bytes: number;
 };
 
-export type StaticFile = { type: string; body: string | Buffer };
+// `status` is 200 unless set: a test can stand in for one API answer (S6-3's GET /api/me).
+export type StaticFile = { type: string; body: string | Buffer; status?: number };
 
 export class NetworkLane {
   private readonly sides = new Map<Target, Side>();
@@ -185,7 +186,7 @@ export class NetworkLane {
     const server = createHttpServer((req, res) => {
       const own = this.statics.get(new URL(req.url ?? '/', 'http://lane').pathname);
       if (own) {
-        res.writeHead(200, { 'Content-Type': own.type, 'Cache-Control': 'no-store' });
+        res.writeHead(own.status ?? 200, { 'Content-Type': own.type, 'Cache-Control': 'no-store' });
         res.end(own.body);
         return;
       }

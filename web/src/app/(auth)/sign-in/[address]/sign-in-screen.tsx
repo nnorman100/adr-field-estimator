@@ -19,7 +19,7 @@ import {
   type SecondStepChallenge,
 } from '@/lib/firebase-client';
 import { saveMe } from '@/lib/field/ds-me';
-import { signOutOfCompany } from '@/lib/field/sign-out';
+import { hasUnsentWork, signOutDiscarding, signOutOfCompany } from '@/lib/field/sign-out';
 import { endsSession, errorCode, signInErrorMessage, type MeOutcome } from '@/lib/sign-in/outcome';
 import { rememberSignInAddress } from '@/lib/sign-in/remember';
 import { offersCompanyScreen } from '@/lib/profile/screen';
@@ -31,6 +31,7 @@ import { EnrolScreen } from '../../second-step/enrol-screen';
 import { hadSecondStep, rememberSecondStep } from '../../second-step/remember';
 import { SecondStepSection } from '../../second-step/second-step-section';
 import { InvitationScreen } from './invitation-screen';
+import { UnsentSignOutDialog, type UnsentChoice } from './unsent-sign-out-dialog';
 
 export type SignInScreenProps = {
   address: string;
@@ -72,6 +73,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [askUnsent, setAskUnsent] = useState(false);
   const authRef = useRef<Auth | null>(null);
   // The person signed in on this phone, for the screens that act on their account.
   const [signedInUser, setSignedInUser] = useState<User | null>(null);
@@ -189,12 +191,37 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
   const auth = () => authRef.current!;
   const currentUser = () => authRef.current?.currentUser ?? null;
 
+  // The person's own sign-out (S6-3). With work on this phone the server does not have yet, it asks
+  // to keep or discard it; otherwise, and on Discard, this person's cache for this company goes too.
+  // Kept work stays for the same person's next sign-in here (D7).
+  const signOutChosen = (choice: UnsentChoice) =>
+    run(async () => {
+      if (choice === 'keep') return endSession('You are signed out. Your unsent work is kept on this phone.');
+      const result = await signOutDiscarding(auth(), tenantId, config);
+      if (result === 'elsewhere') return setError('DryScope is open in another window. Close it there, then sign out.');
+      if (result === 'failed') return setError('Your work on this phone could not be removed. Try again.');
+      setNotice('You are signed out.');
+      setScreen({ name: 'signed-out' });
+    });
+
   const signOutButton = (
     <>
       <ErrorMessage text={error} />
-      <Button variant="outline" disabled={busy} onClick={() => run(() => endSession('You are signed out.'))}>
+      <Button
+        variant="outline"
+        disabled={busy}
+        onClick={() => (hasUnsentWork(auth(), tenantId) ? setAskUnsent(true) : void signOutChosen('discard'))}
+      >
         Sign out
       </Button>
+      <UnsentSignOutDialog
+        open={askUnsent}
+        companyName={companyName}
+        onChoice={(choice) => {
+          setAskUnsent(false);
+          if (choice) void signOutChosen(choice);
+        }}
+      />
     </>
   );
 

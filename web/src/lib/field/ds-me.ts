@@ -8,8 +8,9 @@ import type { BrowserSignInConfig } from '@/lib/config';
 // A row holds the browser settings of the company's sign-in (public values every visitor's browser
 // receives anyway), the tenant, the signed-in person's id, the company's name and its sign-in
 // address. No email, no token. Rows are keyed by (tenant id, uid), because several companies share
-// one origin and one person's phone can hold two companies' sign-ins. S6-3 adds the role and the
-// capabilities to the same row.
+// one origin and one person's phone can hold two companies' sign-ins. S6-3 adds what the server
+// said at the last online check (company id, role, capabilities) and when the person signed in, so
+// the shell can stand in for the server offline until the role's session limit (D7).
 //
 // IndexedDB can be missing or blocked (a private window, a full disk). Every call here then
 // answers "not saved" instead of throwing, and the shell says so ("Not saved on this phone").
@@ -26,6 +27,12 @@ export type DsMe = {
   config: BrowserSignInConfig;
   // Milliseconds since 1970 of the sign-in that wrote the row; the newest row wins.
   savedAt: number;
+  // From S6-3, each written at an online check; absent on a row written before it.
+  companyId?: string;
+  role?: string;
+  capabilities?: string[];
+  // When the person signed in (the ID token's auth_time), in milliseconds since 1970.
+  authTime?: number;
 };
 
 export const meKey = (tenantId: string, uid: string): string => `${tenantId}/${uid}`;
@@ -77,7 +84,12 @@ export function parseMe(value: unknown): DsMe | null {
     typeof config !== 'object' ||
     !isString(config.apiKey) ||
     !isString(config.authDomain) ||
-    !isString(config.projectId)
+    !isString(config.projectId) ||
+    (row.companyId !== undefined && !isString(row.companyId)) ||
+    (row.role !== undefined && !isString(row.role)) ||
+    (row.capabilities !== undefined &&
+      !(Array.isArray(row.capabilities) && row.capabilities.every((item) => typeof item === 'string'))) ||
+    (row.authTime !== undefined && !(typeof row.authTime === 'number' && Number.isFinite(row.authTime)))
   ) {
     return null;
   }

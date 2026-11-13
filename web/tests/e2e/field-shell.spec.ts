@@ -3,7 +3,9 @@ import { expect, test, type Page } from '@playwright/test';
 import { NOT_SAVED_TEXT, OFFLINE_TEXT } from '../../src/app/field/banners';
 import { PROBE_PATH } from '../../src/app/field/connection';
 import { HOME_SCREEN_HELP, HOME_SCREEN_TITLE } from '../../src/app/field/home-screen-text';
+import { DISCARD_LABEL, KEEP_LABEL, UNSENT_TITLE } from '../../src/app/(auth)/sign-in/[address]/unsent-sign-out-dialog';
 import { ME_DB, ME_DB_VERSION, ME_STORE } from '../../src/lib/field/ds-me';
+import { unsentKey } from '../../src/lib/field/unsent';
 import { PASSWORD, readSeed, type ProjectSeed } from './sign-in/seed';
 
 // The field shell's own screens (S6-2) in Chromium and WebKit at phone width: it starts from the
@@ -298,4 +300,55 @@ test('the "No signal" check reaches the app without its API', async ({ page }) =
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
   expect((await probed).ok()).toBe(true);
   await expect(page.getByText(OFFLINE_TEXT)).toHaveCount(0);
+});
+
+// S6-3: the person's own sign-out asks first when their field edits for this company have not all
+// reached the server; Keep leaves them for the same person's next sign-in here (D7), Discard
+// removes them. The phone's mark of unsent work is set here as a field edit sets it.
+test('signing out with unsent work asks to keep or discard it', async ({ page }) => {
+  await signInAsMemberA(page);
+  const [row] = await page.evaluate(
+    ([db, store]) =>
+      new Promise<{ tenantId: string; uid: string }[]>((resolve, reject) => {
+        const open = indexedDB.open(db as string);
+        open.onerror = () => reject(open.error);
+        open.onsuccess = () => {
+          const rows = open.result.transaction(store as string, 'readonly').objectStore(store as string).getAll();
+          rows.onsuccess = () => {
+            open.result.close();
+            resolve(rows.result as { tenantId: string; uid: string }[]);
+          };
+        };
+      }),
+    [ME_DB, ME_STORE] as const,
+  );
+  const mark = unsentKey(row!.tenantId, row!.uid);
+  const unsent = JSON.stringify({ writes: 1, unsentSince: Date.now(), lockedSince: null });
+  await page.evaluate(([key, value]) => window.localStorage.setItem(key!, value!), [mark, unsent]);
+
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  const dialog = page.getByRole('dialog', { name: UNSENT_TITLE });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('button', { name: KEEP_LABEL })).toBeFocused();
+  await expectAccessible(page);
+  // Cancel signs nobody out.
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole('heading', { name: `Signed in to ${A}` })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await dialog.getByRole('button', { name: KEEP_LABEL }).click();
+  await expect(page.getByRole('heading', { name: `Sign in to ${A}` })).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), mark)).toBe(unsent);
+
+  await signInAsMemberA(page);
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await dialog.getByRole('button', { name: DISCARD_LABEL }).click();
+  await expect(page.getByRole('heading', { name: `Sign in to ${A}` })).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), mark)).toBeNull();
+
+  // With nothing unsent, signing out asks nothing.
+  await signInAsMemberA(page);
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await expect(page.getByRole('heading', { name: `Sign in to ${A}` })).toBeVisible();
 });
