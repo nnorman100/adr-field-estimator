@@ -57,6 +57,8 @@ if [ "$app" = web ]; then
   cp -a "$root/web/.next/standalone/." "$stage/app/"
   mkdir -p "$stage/app/.next"
   cp -a "$root/web/.next/static" "$stage/app/.next/static"
+  # The standalone output leaves public/ out: the icons and the field worker (/sw.js) are served from it.
+  cp -a "$root/web/public" "$stage/app/public"
   (cd "$root/web" && npm run --silent build:migrate -- "$stage/app")
   env+=(--env HOSTNAME=0.0.0.0 --env NEXT_TELEMETRY_DISABLED=1 --env "APP_COMMIT=$commit")
 else
