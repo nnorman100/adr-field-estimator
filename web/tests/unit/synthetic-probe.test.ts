@@ -65,6 +65,27 @@ function expectNoSecrets(text: string) {
   expect(text).not.toMatch(/eyJ/);
 }
 
+async function probeFails(fetch: typeof globalThis.fetch) {
+  const events: ProbeEvent[] = [];
+  const failure = await failureOf(runProbe(config, { fetch, log: (e) => events.push(e) }));
+  expectNoSecrets(failure.message + (failure.stack ?? '') + JSON.stringify(events));
+  return { failure, events };
+}
+
+function configFails(env: Record<string, string | undefined>): ProbeFailure {
+  let failure: unknown;
+  try {
+    readProbeConfig(env);
+  } catch (error) {
+    failure = error;
+  }
+  expect(failure).toBeInstanceOf(ProbeFailure);
+  const probeFailure = failure as ProbeFailure;
+  expect(probeFailure).toMatchObject({ step: 'config', code: 'invalid_config' });
+  expectNoSecrets(probeFailure.message + (probeFailure.stack ?? ''));
+  return probeFailure;
+}
+
 describe('runProbe', () => {
   it('signs in with the tenant and the app origin, reads /api/me, opens the fixed job', async () => {
     const { calls, fetch } = stub([signedIn, meOk, jobOk]);
@@ -119,7 +140,8 @@ describe('runProbe', () => {
     const lines: string[] = [];
     const spy = vi.spyOn(console, 'log').mockImplementation((line: unknown) => void lines.push(String(line)));
     try {
-      await failureOf(runProbe(config, { fetch: stub([signedIn, () => json(403, { error: `forbidden ${EMAIL}` })]).fetch }));
+      const failure = await failureOf(runProbe(config, { fetch: stub([signedIn, () => json(403, { error: `forbidden ${EMAIL}` })]).fetch }));
+      expectNoSecrets(failure.message + (failure.stack ?? ''));
     } finally {
       spy.mockRestore();
     }
@@ -132,8 +154,7 @@ describe('runProbe', () => {
 
   it('wrong password: names the sign-in step and its status, and leaks nothing', async () => {
     const { fetch, calls } = stub([() => json(400, { error: { code: 400, message: `INVALID_PASSWORD ${EMAIL}` } })]);
-    const events: ProbeEvent[] = [];
-    const failure = await failureOf(runProbe(config, { fetch, log: (e) => events.push(e) }));
+    const { failure, events } = await probeFails(fetch);
     expect(failure).toMatchObject({ step: 'sign_in', code: 'refused', status: 400 });
     expect(failure.message).toBe('synthetic probe failed at step sign_in: refused (status 400)');
     expect(calls).toHaveLength(1);
@@ -143,17 +164,16 @@ describe('runProbe', () => {
 
   it('a sign-in answer with no token is a bad reply, not a pass', async () => {
     for (const body of [{}, { idToken: '' }, { idToken: 'has space.in.it' }, { idToken: 42 }, 'text']) {
-      const { fetch } = stub([() => json(200, body)]);
-      const failure = await failureOf(runProbe(config, { fetch, log: () => undefined }));
+      const { failure, events } = await probeFails(stub([() => json(200, body)]).fetch);
       expect(failure).toMatchObject({ step: 'sign_in', code: 'bad_reply', status: 200 });
+      expect(events).toEqual([{ step: 'sign_in', status: 200, code: 'bad_reply' }]);
     }
   });
 
   it('membership removed: /api/me refuses and the probe names the me step', async () => {
     for (const status of [401, 403]) {
       const { fetch, calls } = stub([signedIn, () => json(status, { error: 'unknown_tenant' })]);
-      const events: ProbeEvent[] = [];
-      const failure = await failureOf(runProbe(config, { fetch, log: (e) => events.push(e) }));
+      const { failure, events } = await probeFails(fetch);
       expect(failure).toMatchObject({ step: 'me', code: 'refused', status });
       expect(calls).toHaveLength(2);
       expect(events.map((e) => e.step)).toEqual(['sign_in', 'me']);
@@ -163,41 +183,35 @@ describe('runProbe', () => {
 
   it('/api/me for another company fails the me step', async () => {
     const other = () => json(200, { company: { id: '99999999-9999-4999-8999-999999999999', name: 'Other' } });
-    const failure = await failureOf(runProbe(config, { fetch: stub([signedIn, other]).fetch, log: () => undefined }));
+    const { failure } = await probeFails(stub([signedIn, other]).fetch);
     expect(failure).toMatchObject({ step: 'me', code: 'wrong_company', status: 200 });
     expectNoSecrets(failure.message);
   });
 
   it('/api/me with no company is a bad reply', async () => {
-    const failure = await failureOf(runProbe(config, { fetch: stub([signedIn, () => json(200, {})]).fetch, log: () => undefined }));
+    const { failure } = await probeFails(stub([signedIn, () => json(200, {})]).fetch);
     expect(failure).toMatchObject({ step: 'me', code: 'bad_reply' });
   });
 
   it('job 404: names the job step', async () => {
-    const { fetch } = stub([signedIn, meOk, () => json(404, { error: 'not_found' })]);
-    const events: ProbeEvent[] = [];
-    const failure = await failureOf(runProbe(config, { fetch, log: (e) => events.push(e) }));
+    const { failure, events } = await probeFails(stub([signedIn, meOk, () => json(404, { error: 'not_found' })]).fetch);
     expect(failure).toMatchObject({ step: 'job', code: 'job_not_found', status: 404 });
     expect(failure.message).toBe('synthetic probe failed at step job: job_not_found (status 404)');
     expectNoSecrets(failure.message + JSON.stringify(events));
   });
 
   it('other job statuses are refused, a different name or id is the wrong job', async () => {
-    const refused = await failureOf(
-      runProbe(config, { fetch: stub([signedIn, meOk, () => json(503, { error: 'jobs_unavailable' })]).fetch, log: () => undefined }),
-    );
+    const { failure: refused } = await probeFails(stub([signedIn, meOk, () => json(503, { error: 'jobs_unavailable' })]).fetch);
     expect(refused).toMatchObject({ step: 'job', code: 'refused', status: 503 });
 
     const renamed = () => json(200, { job: { id: JOB }, customer: { name: 'Someone Else' } });
     const otherJob = () => json(200, { job: { id: '33333333-3333-4333-8333-333333333333' }, customer: { name: JOB_NAME } });
     for (const reply of [renamed, otherJob]) {
-      const failure = await failureOf(runProbe(config, { fetch: stub([signedIn, meOk, reply]).fetch, log: () => undefined }));
+      const { failure } = await probeFails(stub([signedIn, meOk, reply]).fetch);
       expect(failure).toMatchObject({ step: 'job', code: 'wrong_job', status: 200 });
       expectNoSecrets(failure.message);
     }
-    const shapeless = await failureOf(
-      runProbe(config, { fetch: stub([signedIn, meOk, () => json(200, { job: {} })]).fetch, log: () => undefined }),
-    );
+    const { failure: shapeless } = await probeFails(stub([signedIn, meOk, () => json(200, { job: {} })]).fetch);
     expect(shapeless).toMatchObject({ step: 'job', code: 'bad_reply' });
   });
 
@@ -205,15 +219,14 @@ describe('runProbe', () => {
     const fetch = vi.fn(async () => {
       throw new TypeError(`fetch failed for https://identitytoolkit.googleapis.com/?key=${API_KEY} as ${EMAIL}`);
     }) as unknown as typeof globalThis.fetch;
-    const failure = await failureOf(runProbe(config, { fetch, log: () => undefined }));
+    const { failure } = await probeFails(fetch);
     expect(failure).toMatchObject({ step: 'sign_in', code: 'network_error', status: null });
     expect(failure.message).toBe('synthetic probe failed at step sign_in: network_error');
     expectNoSecrets(failure.message + (failure.stack ?? ''));
   });
 
   it('a body that is not JSON is a bad reply, not a crash', async () => {
-    const { fetch } = stub([() => new Response('<html>nope</html>', { status: 200 })]);
-    const failure = await failureOf(runProbe(config, { fetch, log: () => undefined }));
+    const { failure } = await probeFails(stub([() => new Response('<html>nope</html>', { status: 200 })]).fetch);
     expect(failure).toMatchObject({ step: 'sign_in', code: 'bad_reply' });
   });
 
@@ -242,10 +255,9 @@ describe('runProbe', () => {
 
     it('slow answers that add up past the limit fail at the step then running', async () => {
       const { fetch } = stub([after(11_000, signedIn), after(11_000, meOk), after(11_000, jobOk)]);
-      const events: ProbeEvent[] = [];
-      const running = failureOf(runProbe(config, { fetch, log: (e) => events.push(e) }));
+      const running = probeFails(fetch);
       await vi.advanceTimersByTimeAsync(30_000);
-      const failure = await running;
+      const { failure, events } = await running;
       expect(failure).toMatchObject({ step: 'job', code: 'timeout', status: null });
       expect(events).toEqual([
         { step: 'sign_in', status: 200 },
@@ -257,22 +269,22 @@ describe('runProbe', () => {
 
     it('a call that never answers times out at 30 seconds, even when fetch ignores the abort', async () => {
       const fetch = vi.fn(() => new Promise<Response>(() => undefined)) as unknown as typeof globalThis.fetch;
-      const running = failureOf(runProbe(config, { fetch, log: () => undefined }));
+      const running = probeFails(fetch);
       await vi.advanceTimersByTimeAsync(29_999);
       let settled = false;
       void running.then(() => (settled = true));
       await vi.advanceTimersByTimeAsync(0);
       expect(settled).toBe(false);
       await vi.advanceTimersByTimeAsync(1);
-      expect(await running).toMatchObject({ step: 'sign_in', code: 'timeout' });
+      expect((await running).failure).toMatchObject({ step: 'sign_in', code: 'timeout' });
     });
 
     it('a body that stalls after the headers times out too', async () => {
       const stalled = () =>
         ({ status: 200, json: () => new Promise(() => undefined) }) as unknown as Response;
-      const running = failureOf(runProbe(config, { fetch: stub([signedIn, stalled]).fetch, log: () => undefined }));
+      const running = probeFails(stub([signedIn, stalled]).fetch);
       await vi.advanceTimersByTimeAsync(30_000);
-      expect(await running).toMatchObject({ step: 'me', code: 'timeout' });
+      expect((await running).failure).toMatchObject({ step: 'me', code: 'timeout' });
     });
 
     it('stops its clock when it finishes: nothing is left running', async () => {
@@ -311,28 +323,23 @@ describe('readProbeConfig', () => {
     expect(passwordFrom(`  ${PASSWORD}  `)).toBe(`  ${PASSWORD}  `);
     expect(passwordFrom(`\t${PASSWORD} \n`)).toBe(`\t${PASSWORD} `);
     expect(passwordFrom(`${PASSWORD}\n\n`)).toBe(`${PASSWORD}\n`);
-    expect(() => readProbeConfig({ ...env, SYNTHETIC_PASSWORD: '\n' })).toThrow(/SYNTHETIC_PASSWORD/);
+    expect(configFails({ ...env, SYNTHETIC_PASSWORD: '\n' }).message).toMatch(/SYNTHETIC_PASSWORD/);
   });
 
   it('names a missing or malformed setting by variable name, never by value', () => {
     const bad = { ...env, SYNTHETIC_PASSWORD: undefined, SYNTHETIC_JOB_ID: 'not-a-uuid', SYNTHETIC_EMAIL: '' };
-    let failure: ProbeFailure | undefined;
-    try {
-      readProbeConfig(bad);
-    } catch (error) {
-      failure = error as ProbeFailure;
-    }
+    const failure = configFails(bad);
     expect(failure).toBeInstanceOf(ProbeFailure);
     expect(failure).toMatchObject({ step: 'config', code: 'invalid_config' });
-    expect(failure?.message).toBe(
+    expect(failure.message).toBe(
       'synthetic probe failed at step config: invalid_config: SYNTHETIC_EMAIL, SYNTHETIC_PASSWORD, SYNTHETIC_JOB_ID',
     );
-    expectNoSecrets(failure?.message ?? '');
+    expectNoSecrets(failure.message);
   });
 
   it('refuses an app address that is not https, or that carries a key or a path', () => {
     for (const url of ['http://dryscope-test.example.test', `${APP}/?key=${API_KEY}`, 'https://user:pass@example.test', 'nonsense']) {
-      expect(() => readProbeConfig({ ...env, SYNTHETIC_APP_URL: url })).toThrow(/SYNTHETIC_APP_URL/);
+      expect(configFails({ ...env, SYNTHETIC_APP_URL: url }).message).toMatch(/SYNTHETIC_APP_URL/);
     }
     expect(readProbeConfig({ ...env, SYNTHETIC_APP_URL: 'http://localhost:3100' }).appUrl).toBe('http://localhost:3100');
   });
@@ -341,7 +348,7 @@ describe('readProbeConfig', () => {
     const emulator = 'http://127.0.0.1:9099/identitytoolkit.googleapis.com';
     expect(readProbeConfig({ ...env, SYNTHETIC_AUTH_URL: `${emulator}/` }).authUrl).toBe(emulator);
     for (const url of ['https://identitytoolkit.googleapis.com', 'http://example.test:9099', 'nonsense']) {
-      expect(() => readProbeConfig({ ...env, SYNTHETIC_AUTH_URL: url })).toThrow(/SYNTHETIC_AUTH_URL/);
+      expect(configFails({ ...env, SYNTHETIC_AUTH_URL: url }).message).toMatch(/SYNTHETIC_AUTH_URL/);
     }
   });
 });
