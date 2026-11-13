@@ -259,6 +259,8 @@ Format: **UI** screens, **FE** frontend, **BE** server routes and services, **DB
   - `google_recaptcha_enterprise_key` (Website, `SCORE`, the environment's app host only, no localhost, no checkbox).
   - `google_firebase_app_check_recaptcha_enterprise_config` (`app_id` from a new variable that the owner fills from the registered web app; `token_ttl = "3600s"`).
   - The `identitytoolkit` service identity grant is owner-run, because creating a service identity is not a plain Terraform resource here.
+  - **Added 2026-11-12 (D-023, G6): the 35-day backup window.** The evidence bucket gets a lifecycle rule deleting noncurrent versions after 28 days, with soft delete at 7 days in every environment (`evidence_soft_delete_days` is 30 in `live.tfvars` today, which would make the window 58 days); Cloud SQL keeps at most 30 retained backups (`sql_backup_retained_count` capped at 30); the Firestore field database gets a daily backup schedule kept 14 days, which does not exist today. Test: the plan shows the rule, the schedule and both limits, and a soft delete above 7 days or more than 30 retained backups is refused.
+  - **Added 2026-11-12 (D-024, G7): GitHub keyless sign-in trusts the numeric repository id only.** `workload_identity_principal_set` accepts `attribute.repository_id` only; the repository-name form (`attribute.repository`) is refused. Test: a `terraform test` case for each form.
 - Tests:
   - `terraform test` and `check-guards.js` cases: every new grant names one account and one condition; the key lists no wildcard or localhost.
   - `check-plan.js` accepts the plan with no deletes.
@@ -288,6 +290,7 @@ Format: **UI** screens, **FE** frontend, **BE** server routes and services, **DB
     - `google_monitoring_uptime_check_config` with `synthetic_monitor`, every 15 minutes (C4).
     - Its alert on `uptime_check/check_passed`.
   - **Budget** (C8): created once for the project (only when `environment == "test"` and a billing account is passed), $200 a month, 50, 90 and 100%, notifying the phone and email channels.
+  - **Added 2026-11-12 (D-020, G3): a monthly Agent Platform spend cap** on each project that uses AI, set above the sum of the companies' AI budgets so the app's own ceilings act first; when it triggers, the app keeps working with AI off. Never a cap on Cloud Run on live. Test: the cap exists once per project and is above the configured company budget sum.
   - TC-5's settings in `common_env`.
 - Tests:
   - `terraform test`: every policy has the phone and email channels; one budget per project; the release and backup filters match fixed sample entries (one from the docs' `windowStatus` example with the status swapped); the uptime and synthetic checks exist in `test`.
@@ -473,3 +476,4 @@ Recorded under "Corrections" in the named plan files in the pull request that co
 Later changes to this plan, newest last.
 
 - **2026-11-12, S7 plan ([S7.md](S7.md)), owner-approved.** TC-3 and TC-8: `withAiSpan` is used by S7-1, and the manifest's "prompt and model versions" come from `web/src/lib/ai/registry.ts`; the manifest also gains the relay image digest (S7-R).
+- **2026-11-12, Technology Standard 2.7 decisions ([DECISIONS.md](../DECISIONS.md) D-020, D-023, D-024), owner-approved.** TC-9 gains the 35-day backup window (D-023: evidence noncurrent versions deleted after 28 days plus 7 days of soft delete, Cloud SQL at most 30 backups, a Firestore daily backup schedule kept 14 days) and the numeric-`repository_id`-only keyless sign-in (D-024). TC-11 gains the monthly Agent Platform spend cap (D-020). Plan text only; the Terraform lands in those pull requests, owner-applied.
