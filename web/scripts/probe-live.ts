@@ -11,7 +11,6 @@
 // session handle, transcript, audio, prompt or email (formatLine refuses anything else). It runs
 // about 31 minutes, because question (f) waits 2, 10 and 30 minutes before resuming a handle.
 // The results go in the S7-0 note (docs/plans/S7.md section 13).
-import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import {
   createArmorStreamClient,
@@ -21,7 +20,6 @@ import {
   probeIdleBilling,
   probeResumeAndVoice,
   probeSanitizeLatency,
-  sdkLiveFields,
   takeHandle,
   type ArmorStreamClient,
   type LiveDialer,
@@ -107,7 +105,6 @@ export type ProbePorts = {
   ownerArmor: ArmorStreamClient;
   testPermissions: () => Promise<Record<string, boolean> | string>;
   readOwner: (url: string) => Promise<{ status: number; body: unknown }>;
-  sdkTypes: () => string;
   sleep: (ms: number) => Promise<void>;
   now: () => number;
 };
@@ -163,8 +160,6 @@ export async function runProbe(
   ports: ProbePorts,
   print: (line: string) => void,
 ): Promise<void> {
-  const offline = sdkLiveFields(ports.sdkTypes());
-  for (const line of formatRecord('(b)', offline, 'sdk_types_')) print(line);
   print(formatLine('(e)', 'concurrent_session_quota', 'owner_reads_quotas_page'));
   print(formatLine('(a)', 'impersonation', ports.impersonation));
 
@@ -262,7 +257,6 @@ async function realPorts(options: ProbeOptions): Promise<ProbePorts> {
         return { status: statusOf(error), body: null };
       }
     },
-    sdkTypes: () => readFileSync(new URL('../node_modules/@google/genai/dist/genai.d.ts', import.meta.url), 'utf8'),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     now: () => Date.now(),
   };

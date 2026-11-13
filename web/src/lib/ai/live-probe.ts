@@ -5,9 +5,9 @@ import { judge, templateEndpoint, type ArmorStreamHandle, type SanitizeResult } 
 import { LIVE_LOCATION } from './client';
 
 // S7-0 calibration probes (docs/plans/S7.md, S7-0 and section 7 A). An owner-run measurement tool,
-// never app code and never run in CI: web/scripts/probe-live.ts is its only importer (a unit test
-// holds that). It lives inside the AI boundary because it needs the Gen AI SDK and the Model Armor
-// client, and the import guard keeps those here. It deliberately skips call.ts's caller, quota and
+// never app code and never run in CI: web/scripts/probe-live.ts is the command, and it refuses to
+// run on any automated runner. It lives inside the AI boundary because it needs the Gen AI SDK and
+// the Model Armor client, and the import guard keeps those here. It deliberately skips call.ts's caller, quota and
 // budget steps: it sends fixed synthetic text and generated room tone, never a person's words.
 //
 // Nothing here returns or prints a session handle, transcript, audio, prompt, token or email. Each
@@ -393,11 +393,18 @@ export type IdleResult = {
   replies_during_idle: number;
 };
 
-const lastUsage = (events: readonly LiveEvent[], from = 0) =>
-  events
+const USAGE_MS = 5_000;
+
+// The last usage report since `from`. A turn's usage may arrive after its turnComplete, so this
+// waits, briefly, for one; none in that time is unknown.
+async function usageSince(conn: LiveConn, from: number) {
+  await conn.next((e) => e.kind === 'usage', USAGE_MS, from);
+  return conn
+    .seen()
     .slice(from)
     .filter((e) => e.kind === 'usage')
     .at(-1) as Extract<LiveEvent, { kind: 'usage' }> | undefined;
+}
 
 // (d): proactive audio is always on for gemini-3.8-live. A text turn, then idle room tone streamed
 // in real time, then a second text turn: the audio prompt tokens added across the idle stretch
@@ -410,7 +417,7 @@ export async function probeIdleBilling(
   if (!opened.setup) return { connected: false, close_code: opened.closeCode };
   const { conn } = opened;
   await turn(conn);
-  const before = lastUsage(conn.seen());
+  const before = await usageSince(conn, 0);
   const idleFrom = conn.seen().length;
   const chunkMs = 100;
   for (let sent = 0; sent < options.idleSeconds * 1000; sent += chunkMs) {
@@ -420,7 +427,7 @@ export async function probeIdleBilling(
   const replies = conn.seen().slice(idleFrom).filter((e) => e.kind === 'turnComplete').length;
   const afterFrom = conn.seen().length;
   await turn(conn);
-  const after = lastUsage(conn.seen(), afterFrom);
+  const after = await usageSince(conn, afterFrom);
   conn.close();
   const expected = 25 * options.idleSeconds;
   const added = before && after ? after.audioPromptTokens - before.audioPromptTokens : null;
@@ -591,36 +598,5 @@ export async function probeSanitizeLatency(
     p95_ms: round(percentile(latencies, 95)),
     max_ms: round(latencies.length ? Math.max(...latencies) : null),
     error,
-  };
-}
-
-// ---------- (b) offline: the installed SDK's own types ----------
-
-// The body of `export declare interface <name> { ... }` in a .d.ts, or '' when absent.
-function interfaceBody(dts: string, name: string): string {
-  const start = dts.indexOf(`export declare interface ${name} {`);
-  if (start < 0) return '';
-  const end = dts.indexOf('\n}', start);
-  return end < 0 ? '' : dts.slice(start, end);
-}
-
-export type SdkFieldsOffline = {
-  session_resumption_transparent: boolean;
-  last_consumed_client_message_index: boolean;
-  custom_vocabulary: boolean;
-  context_update: boolean;
-};
-
-// Reads @google/genai's dist/genai.d.ts text (passed in): does the SDK carry each field S7 needs?
-export function sdkLiveFields(dts: string): SdkFieldsOffline {
-  const has = (iface: string, field: string) => new RegExp(`\\n\\s+${field}\\?:`).test(interfaceBody(dts, iface));
-  return {
-    session_resumption_transparent: has('SessionResumptionConfig', 'transparent'),
-    last_consumed_client_message_index: has('LiveServerSessionResumptionUpdate', 'lastConsumedClientMessageIndex'),
-    custom_vocabulary: has('AudioTranscriptionConfig', 'customVocabulary'),
-    context_update:
-      has('LiveClientMessage', 'contextUpdate') &&
-      has('LiveClientContextUpdate', 'systemInstruction') &&
-      /\n\s+sendContextUpdate\(params: types\.LiveClientContextUpdate\): void;/.test(dts),
   };
 }

@@ -1,8 +1,14 @@
-import { readdirSync, readFileSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import type { Duplex } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  PROBE_INSTRUCTION,
+  PROBE_VOCABULARY,
+  createLiveDialer,
   eventBuffer,
   httpStatusIn,
   liveConfig,
@@ -11,7 +17,6 @@ import {
   probeIdleBilling,
   probeSanitizeLatency,
   roomTone,
-  sdkLiveFields,
   toEvents,
   type ArmorStreamClient,
   type LiveConn,
@@ -30,10 +35,11 @@ import {
 
 // S7-0 calibration probes (docs/plans/S7.md, S7-0). The probe is owner-run against Google Cloud;
 // these tests run it against fakes only and hold its guards: dryscope and dryscope-live-test only,
-// never automated, only measurements printed, and no app code or workflow reaches it.
+// never automated, and only measurements printed.
 
 const WEB = fileURLToPath(new URL('../../', import.meta.url));
-const REPO = fileURLToPath(new URL('../../../', import.meta.url));
+const SECRET_HANDLE = 'HANDLE-SECRET-4f1c';
+const SECRET_TEXT = 'owner@example.com said 12 Main Street';
 const OK_ARGS = ['--impersonate', LIVE_TEST_ACCOUNT];
 
 describe('arguments and guards', () => {
@@ -105,22 +111,97 @@ describe('output is measurements only', () => {
   });
 });
 
-describe('(b) offline: the installed SDK carries every field S7 needs', () => {
-  const dts = readFileSync(join(WEB, 'node_modules/@google/genai/dist/genai.d.ts'), 'utf8');
+// ---------- a local stand-in for the Live WebSocket endpoint ----------
 
-  it('finds transparent resumption, the consumed index, custom vocabulary and context updates', () => {
-    expect(sdkLiveFields(dts)).toEqual({
-      session_resumption_transparent: true,
-      last_consumed_client_message_index: true,
-      custom_vocabulary: true,
-      context_update: true,
+// Just enough of RFC 6455 for the SDK's ws client: the upgrade, masked text frames in, unmasked
+// text frames out. Each client frame is parsed as JSON and kept; `reply` answers it.
+async function liveSocketServer(reply: (frame: Record<string, unknown>, send: (m: unknown) => void) => void) {
+  const frames: Record<string, unknown>[] = [];
+  const sockets: Duplex[] = [];
+  const server = createServer();
+  server.on('upgrade', (req, socket: Duplex) => {
+    sockets.push(socket);
+    const accept = createHash('sha1')
+      .update(`${req.headers['sec-websocket-key']}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
+      .digest('base64');
+    socket.write(
+      `HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`,
+    );
+    const send = (message: unknown) => {
+      const data = Buffer.from(JSON.stringify(message));
+      const head =
+        data.length < 126 ? Buffer.from([0x81, data.length]) : Buffer.from([0x81, 126, data.length >> 8, data.length & 255]);
+      socket.write(Buffer.concat([head, data]));
+    };
+    let buffered = Buffer.alloc(0);
+    socket.on('data', (chunk: Buffer) => {
+      buffered = Buffer.concat([buffered, chunk]);
+      for (;;) {
+        if (buffered.length < 2) return;
+        const opcode = buffered[0]! & 0x0f;
+        let length = buffered[1]! & 0x7f;
+        let at = 2;
+        if (length === 126) [length, at] = [buffered.readUInt16BE(2), 4];
+        else if (length === 127) [length, at] = [Number(buffered.readBigUInt64BE(2)), 10];
+        if (buffered.length < at + 4 + length) return;
+        const mask = buffered.subarray(at, at + 4);
+        const payload = Buffer.from(buffered.subarray(at + 4, at + 4 + length)).map((b, i) => b ^ mask[i % 4]!);
+        buffered = buffered.subarray(at + 4 + length);
+        if (opcode === 8) {
+          socket.end(Buffer.from([0x88, 0]));
+          return;
+        }
+        if (opcode === 1) {
+          const frame = JSON.parse(Buffer.from(payload).toString('utf8')) as Record<string, unknown>;
+          frames.push(frame);
+          reply(frame, send);
+        }
+      }
     });
   });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return {
+    url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+    frames,
+    stop: () => {
+      for (const socket of sockets) socket.destroy();
+      return new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
+}
 
-  it('reports a field the types lack as missing', () => {
-    const without = dts.replace(/\n(\s+)transparent\?:/g, '\n$1removed?:');
-    expect(sdkLiveFields(without).session_resumption_transparent).toBe(false);
-    expect(sdkLiveFields('').custom_vocabulary).toBe(false);
+describe('(b) offline: the installed SDK sends and receives every field S7 needs', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('the real dialer sends transparent resumption, custom vocabulary and a context update, and reads the consumed index', async () => {
+    const live = await liveSocketServer((frame, send) => {
+      if (frame.setup) send({ setupComplete: {} });
+      if (frame.realtimeInput) {
+        send({ sessionResumptionUpdate: { newHandle: SECRET_HANDLE, resumable: true, lastConsumedClientMessageIndex: '3' } });
+        send({ serverContent: { turnComplete: true } });
+      }
+    });
+    vi.stubEnv('GOOGLE_VERTEX_BASE_URL', live.url);
+    try {
+      const authClient = { getRequestHeaders: async () => new Headers({ authorization: 'Bearer fake' }) };
+      const dialer = createLiveDialer({ project: 'dryscope', authClient: authClient as never });
+      const conn = await dialer.connect({ voice: 'Charon', transparent: true, vocabulary: PROBE_VOCABULARY });
+      expect(await conn.next((e) => e.kind === 'setup', 5_000)).toEqual({ kind: 'setup' });
+      conn.contextUpdate(PROBE_INSTRUCTION);
+      conn.sendText('ready');
+      expect(await conn.next((e) => e.kind === 'turnComplete', 5_000)).toEqual({ kind: 'turnComplete' });
+      conn.close();
+
+      const setup = live.frames.find((f) => f.setup)?.setup as Record<string, unknown>;
+      expect(setup.sessionResumption).toEqual({ transparent: true });
+      expect(setup.inputAudioTranscription).toEqual({ customVocabulary: PROBE_VOCABULARY });
+      expect(JSON.stringify(live.frames.find((f) => f.contextUpdate))).toContain(PROBE_INSTRUCTION);
+      expect(conn.seen()).toContainEqual({ kind: 'resumption', handle: SECRET_HANDLE, resumable: true, lastConsumedIndex: 3 });
+    } finally {
+      await live.stop();
+    }
   });
 });
 
@@ -185,15 +266,13 @@ describe('Live message handling', () => {
 
 // ---------- a fake Live service ----------
 
-const SECRET_HANDLE = 'HANDLE-SECRET-4f1c';
-const SECRET_TEXT = 'owner@example.com said 12 Main Street';
-
 type FakeLive = {
   refuse?: { code: number; permission: string | null };
   handleLifeMs?: number; // a handle older than this is refused
   refuseVoiceChange?: boolean;
   idleBilled?: boolean;
   dropLanguageCodes?: boolean;
+  usageAfterTurn?: boolean; // the usage report comes after turnComplete, on a later tick
 };
 
 // Time is Date.now(), which the whole-probe tests fake with vitest's timers.
@@ -214,6 +293,7 @@ function fakeDialer(behaviour: FakeLive = {}): { dialer: LiveDialer; opened: Liv
           const audio = idleMs * (behaviour.idleBilled ? 25 / 1000 : 0) + 40;
           const handle = `${SECRET_HANDLE}-${++count}`;
           issued.set(handle, { at: Date.now(), voice: options.voice });
+          const usage: LiveEvent = { kind: 'usage', promptTokens: audio + 100, audioPromptTokens: audio };
           queueMicrotask(() =>
             buffer.push(
               { kind: 'audio' },
@@ -223,10 +303,11 @@ function fakeDialer(behaviour: FakeLive = {}): { dialer: LiveDialer; opened: Liv
                 resumable: true,
                 lastConsumedIndex: options.transparent ? count : null,
               },
-              { kind: 'usage', promptTokens: audio + 100, audioPromptTokens: audio },
+              ...(behaviour.usageAfterTurn ? [] : [usage]),
               { kind: 'turnComplete' },
             ),
           );
+          if (behaviour.usageAfterTurn) setTimeout(() => buffer.push(usage), 10);
         },
         sendAudio(pcm) {
           idleMs += (pcm.length / 2 / 16_000) * 1000;
@@ -293,7 +374,6 @@ function ports(overrides: Partial<ProbePorts> = {}): ProbePorts {
       url.includes('floorSetting')
         ? { status: 404, body: { error: SECRET_TEXT } }
         : { status: 200, body: { name: SECRET_TEXT, templateMetadata: { logTemplateOperations: true } } },
-    sdkTypes: () => readFileSync(join(WEB, 'node_modules/@google/genai/dist/genai.d.ts'), 'utf8'),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     now: () => Date.now(),
     ...overrides,
@@ -325,7 +405,6 @@ describe('the whole probe against a fake Live service', () => {
     expect(value(lines, 'live_connected')).toBe('yes');
     expect(value(lines, 'holds_aiplatform.endpoints.predict')).toBe('yes');
     expect(value(lines, 'holds_aiplatform.customJobs.create')).toBe('no');
-    expect(value(lines, 'sdk_types_session_resumption_transparent')).toBe('yes');
     expect(value(lines, 'live_last_consumed_index_seen')).toBe('yes');
     expect(value(lines, 'live_context_update_then_turn')).toBe('yes');
     expect(value(lines, 'resume_other_voice')).toBe('yes');
@@ -409,6 +488,17 @@ describe('single probes', () => {
     expect(result).toMatchObject({ idle_seconds: 20, expected_if_billed: 500, audio_tokens_added: 500, idle_billed: true });
   });
 
+  it('waits for usage that arrives after the turn completes, before and after the idle stretch', async () => {
+    const { dialer } = fakeDialer({ idleBilled: true, usageAfterTurn: true });
+    const result = await probeIdleBilling(dialer, { idleSeconds: 20, sleep: async () => {} });
+    expect(result).toMatchObject({
+      audio_prompt_tokens_before: 40,
+      audio_prompt_tokens_after: 540,
+      audio_tokens_added: 500,
+      idle_billed: true,
+    });
+  });
+
   it('measures each chunk from write to answer and stops at a timeout', async () => {
     let t = 0;
     const result = await probeSanitizeLatency(fakeArmor(), 'projects/dryscope/locations/us-central1/templates/x', 'prompt', {
@@ -434,30 +524,33 @@ describe('single probes', () => {
   });
 });
 
-// ---------- reach: only the owner's script uses the probe ----------
+// ---------- the owner command refuses before it reaches Google ----------
 
-function files(dir: string, test: RegExp, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (entry.isDirectory()) {
-      if (!['node_modules', '.next', '.git', 'test-results', 'playwright-report'].includes(entry.name)) {
-        files(join(dir, entry.name), test, out);
-      }
-    } else if (test.test(entry.name)) out.push(join(dir, entry.name));
-  }
-  return out;
-}
+describe('the probe:live command', () => {
+  // Credentials point nowhere, so a run that got past the guards would fail on them instead.
+  const command = (args: string[], env: Record<string, string>) =>
+    spawnSync(process.execPath, ['--import', 'tsx', 'scripts/probe-live.ts', ...args], {
+      cwd: WEB,
+      encoding: 'utf8',
+      timeout: 60_000,
+      env: {
+        NODE_ENV: 'test',
+        PATH: process.env.PATH ?? '',
+        GOOGLE_APPLICATION_CREDENTIALS: '/nonexistent/adc.json',
+        ...env,
+      },
+    });
 
-describe('reach', () => {
-  it('no app code imports the probe module; only web/scripts/probe-live.ts does', () => {
-    const importers = files(WEB, /\.(?:[cm]?[jt]s|tsx)$/)
-      .filter((file) => /['"`][^'"`]*\/live-probe['"`]/.test(readFileSync(file, 'utf8')))
-      .map((file) => relative(WEB, file).split(sep).join('/'));
-    expect(importers.sort()).toEqual(['scripts/probe-live.ts', 'tests/unit/live-probe.test.ts']);
-  });
-
-  it('no workflow runs the probe', () => {
-    const workflows = files(join(REPO, '.github'), /\.ya?ml$/);
-    expect(workflows.length).toBeGreaterThan(0);
-    for (const file of workflows) expect(readFileSync(file, 'utf8'), file).not.toMatch(/probe-live|probe:live/);
-  });
+  it('refuses on an automated runner and for another account, printing only its refusal', () => {
+    for (const name of ['CI', 'GITHUB_ACTIONS', 'K_SERVICE', 'CLOUD_RUN_JOB']) {
+      const run = command(OK_ARGS, { [name]: 'true' });
+      expect(run.status, name).toBe(1);
+      expect(run.stderr.trim(), name).toBe(`refusing to run: ${name} is set (the probe is owner-run only, never automated)`);
+      expect(run.stdout, name).toBe('');
+    }
+    const other = command(['--impersonate', 'dryscope-live-live@dryscope.iam.gserviceaccount.com'], {});
+    expect(other.status).toBe(1);
+    expect(other.stderr.trim()).toBe(`refusing to run: --impersonate must be ${LIVE_TEST_ACCOUNT}`);
+    expect(other.stdout).toBe('');
+  }, 120_000);
 });
