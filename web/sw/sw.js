@@ -10,8 +10,8 @@
 //   * answers a navigation to /field or /field/* with the kept shell page, whether or not there is
 //     signal, and a request for a kept file with the kept copy (cache-first);
 //   * lets everything else through untouched: /api/*, photos, sign-in pages, other origins,
-//     anything that is not a GET. It never stores a response of its own making, so the cache holds
-//     exactly the list and no person's data (docs/plans/S6.md section 3).
+//     anything that is not a GET. It stores nothing it answers, so the cache holds exactly the
+//     list and no person's data (docs/plans/S6.md section 3).
 // A new build installs beside this one and waits; it reaches a window only when the person taps
 // "Update ready" (S6-6), so a deployment never changes a running window.
 'use strict';
@@ -24,7 +24,12 @@ const PRECACHE = __PRECACHE__;
 const CACHE_PREFIX = 'ds-field-';
 const CACHE = CACHE_PREFIX + BUILD_ID;
 const SHELL = '/field';
+const MANIFEST = '/manifest.webmanifest';
 const KEPT = new Set(PRECACHE);
+// Install asks for each file with this query, which no worker answers from its cache (the old app's
+// worker matches its files by path and query, and this one lets the query through below), so what
+// is kept is the server's file and never another worker's copy.
+const PRECACHE_QUERY = 'ds-precache';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -35,11 +40,18 @@ self.addEventListener('install', (event) => {
           PRECACHE.map(async (path) => {
             // Past the browser's HTTP cache: the shell page and the manifest keep their names
             // from build to build.
-            const response = await fetch(new Request(path, { cache: 'reload' }));
-            // A redirect cannot be served for a navigation, and an error page must never be kept
-            // as if it were the file.
-            if (!response.ok || response.redirected) throw new Error('could not keep ' + path);
-            await cache.put(path, response);
+            const query = '?' + PRECACHE_QUERY + '=' + encodeURIComponent(BUILD_ID);
+            const response = await fetch(new Request(path + query, { cache: 'reload' }));
+            // An error page must never be kept as if it were the file.
+            if (!response.ok) throw new Error('could not keep ' + path);
+            if (path === MANIFEST) {
+              const manifest = await response.clone().json();
+              if (manifest.start_url !== SHELL) throw new Error('the manifest does not open ' + SHELL);
+            }
+            // Kept under its own address as the file itself: a response that was redirected cannot
+            // be served for a navigation, so only its status, headers and body are kept.
+            const file = new Response(await response.blob(), { status: response.status, headers: response.headers });
+            await cache.put(path, file);
           }),
         );
       } catch (error) {
@@ -74,7 +86,7 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
   const path = url.pathname;
-  if (path.startsWith('/api/')) return;
+  if (path.startsWith('/api/') || url.searchParams.has(PRECACHE_QUERY)) return;
   if (request.mode === 'navigate' && (path === SHELL || path.startsWith(SHELL + '/'))) {
     event.respondWith(kept(SHELL, request));
     return;

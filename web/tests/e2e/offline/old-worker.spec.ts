@@ -88,8 +88,10 @@ test('the new worker replaces the old one at /sw.js only when every old window i
   await expect.poll(() => old.evaluate(() => navigator.serviceWorker.controller !== null)).toBe(true);
   expect(await old.evaluate(async () => (await caches.keys()).filter((name) => name.startsWith('dryscope-')))).toEqual(['dryscope-o1-o4-unstamped']);
 
-  // The new app is deployed at the same address: /sw.js is now the new worker.
+  // The new app is deployed at the same address: /sw.js is now the new worker, and every file it
+  // lists is the new app's own.
   lane.unserve('/sw.js');
+  for (const path of precacheOf(await workerText(lane))) lane.unserve(path);
   await old.evaluate(async () => {
     await (await navigator.serviceWorker.getRegistration())!.update();
   });

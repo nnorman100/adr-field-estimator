@@ -100,8 +100,8 @@ test.describe('a deployment', () => {
     const worker = await workerText(lane);
     const page = await context.newPage();
     await openControlled(page, lane);
-    const manifest = await (await fetch(`${lane.appUrl}/manifest.webmanifest`)).text();
-    lane.serve('/manifest.webmanifest', { type: 'application/manifest+json', body: manifest.replace('"/field"', '"/field?next-build"') });
+    const manifest = (await (await fetch(`${lane.appUrl}/manifest.webmanifest`)).json()) as Record<string, unknown>;
+    lane.serve('/manifest.webmanifest', { type: 'application/manifest+json', body: JSON.stringify({ ...manifest, name: 'next-build' }) });
     lane.serve('/sw.js', { type: 'text/javascript; charset=utf-8', body: worker.replace(buildIdOf(worker), 'next-build') });
     await page.evaluate(async () => {
       await (await navigator.serviceWorker.getRegistration())!.update();
@@ -109,12 +109,17 @@ test.describe('a deployment', () => {
     await expect
       .poll(() => page.evaluate(async () => (await navigator.serviceWorker.getRegistration())!.waiting !== null))
       .toBe(true);
-    const startUrls = await page.evaluate(async (current) => {
-      const read = async (name: string) =>
-        ((await (await (await caches.open(name)).match('/manifest.webmanifest'))!.json()) as { start_url: string }).start_url;
+    const manifests = await page.evaluate(async (current) => {
+      const read = async (name: string) => {
+        const kept = (await (await (await caches.open(name)).match('/manifest.webmanifest'))!.json()) as { name: string; start_url: string };
+        return { name: kept.name, start_url: kept.start_url };
+      };
       return { current: await read(current), next: await read('ds-field-next-build') };
     }, `ds-field-${buildIdOf(worker)}`);
-    expect(startUrls).toEqual({ current: '/field', next: '/field?next-build' });
+    expect(manifests).toEqual({
+      current: { name: 'DryScope', start_url: '/field' },
+      next: { name: 'next-build', start_url: '/field' },
+    });
     // Each listed file is kept under its own address as the file itself: no redirect, no variant.
     expect(await keptEntries(page, 'ds-field-next-build')).toEqual(keptAsFiles(precacheOf(worker)));
   });

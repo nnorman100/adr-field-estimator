@@ -86,15 +86,20 @@ export async function cacheNames(page: Page): Promise<string[]> {
 }
 
 // Every entry of a worker cache: the address it is kept under (with any query) and the response
-// kept for it, so a test can see that each one is the file itself, never a redirect or an error.
-export async function keptEntries(page: Page, name: string): Promise<{ path: string; status: number; redirected: boolean }[]> {
+// kept for it, so a test can see that each one is the file itself, never a redirect, an error or
+// an empty body.
+export async function keptEntries(
+  page: Page,
+  name: string,
+): Promise<{ path: string; status: number; redirected: boolean; empty: boolean }[]> {
   return page.evaluate(async (cacheName) => {
     const cache = await caches.open(cacheName);
     const entries = await Promise.all(
       (await cache.keys()).map(async (request) => {
         const response = (await cache.match(request))!;
         const url = new URL(request.url);
-        return { path: url.pathname + url.search, status: response.status, redirected: response.redirected };
+        const empty = (await response.arrayBuffer()).byteLength === 0;
+        return { path: url.pathname + url.search, status: response.status, redirected: response.redirected, empty };
       }),
     );
     return entries.sort((a, b) => (a.path < b.path ? -1 : 1));
@@ -103,7 +108,7 @@ export async function keptEntries(page: Page, name: string): Promise<{ path: str
 
 // What keptEntries reads for a cache that holds exactly `paths`, each as the file itself.
 export const keptAsFiles = (paths: readonly string[]) =>
-  [...paths].sort().map((path) => ({ path, status: 200, redirected: false }));
+  [...paths].sort().map((path) => ({ path, status: 200, redirected: false, empty: false }));
 
 export async function cachedPaths(page: Page, name: string): Promise<string[]> {
   return page.evaluate(async (cacheName) => {
