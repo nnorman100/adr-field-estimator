@@ -92,8 +92,10 @@ for those two prompts.
 
 ## Model Armor
 
-**Not in use.** Neither the code, the docs, the scripts nor CI refer to Model Armor, and no
-Vertex safety setting or data-loss-prevention screen is configured. The standard puts Model Armor
+**Not in use by any app.** No application code calls Model Armor and no Vertex safety setting or
+data-loss-prevention screen is configured. Terraform now provisions the text template, the floor setting
+and the sanitize grants (S7-2; `infra/dryscope/README.md`), with Model Armor's own logging held off by a
+plan check, but nothing screens a call until the S7 features that use them. The standard puts Model Armor
 on every AI call and, for live voice, screens the text transcript and replies, not the audio
 stream (to be confirmed against Model Armor's supported inputs). The target coverage by modality, with raw audio and video under the narrow exception the owner decided on 2026-11-12 (R2 = S7 decision V1 B), is in
 [ai-inventory.md](ai-inventory.md#ai-modality-coverage-contract). Stand-ins that exist today are
