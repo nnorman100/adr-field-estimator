@@ -5,8 +5,8 @@ name: AI evaluations (test)
 # Manual only: never on pull requests, pushes or a schedule, and never part of CI. Keyless:
 # workload identity federation from the dryscope-test pool as dryscope-eval-test, which holds only
 # the predict-only Gemini role and roles/modelarmor.user (infra/dryscope/data/ai.tf). The runner
-# caps each run at $2 (web/tests/ai-evals/runner.ts) and refuses to start anywhere but this
-# workflow on master. The result (counts, scores, model, prompt version and cost; no dataset or
+# caps each run at $2 and 1,000,000 tokens (web/tests/ai-evals/runner.ts) and refuses to start
+# anywhere but this workflow on master. The result (counts, scores, model, prompt version and cost; no dataset or
 # model text) goes into the run summary: link that run from the pull request that turns the
 # feature on. How to run it and read it: web/tests/ai-evals/README.md.
 on:
@@ -28,6 +28,11 @@ on:
         description: Run cap in dollars (at most 2)
         required: true
         default: '2'
+        type: string
+      max_tokens:
+        description: Token budget for the run, input plus output (at most 1000000)
+        required: true
+        default: '1000000'
         type: string
 
 permissions: {}
@@ -53,11 +58,14 @@ jobs:
         env:
           PROVIDER: ${{ vars.DRYSCOPE_TEST_WIF_PROVIDER }}
           MAX_USD: ${{ inputs.max_usd }}
+          MAX_TOKENS: ${{ inputs.max_tokens }}
         run: |
           [[ "$PROVIDER" =~ ^projects/570228742694/locations/global/workloadIdentityPools/dryscope-test/providers/[a-z0-9-]{4,32}$ ]] \
             || { echo "::error::DRYSCOPE_TEST_WIF_PROVIDER must be a provider in the dryscope-test pool of project 570228742694 (docs/runbook/test-release.md)."; exit 1; }
           [[ "$MAX_USD" =~ ^(0|1)(\.[0-9]{1,2})?$|^2(\.0{1,2})?$ ]] \
             || { echo "::error::max_usd must be dollars from 0.01 to 2, such as 2 or 0.50."; exit 1; }
+          [[ "$MAX_TOKENS" =~ ^[1-9][0-9]{0,5}$|^1000000$ ]] \
+            || { echo "::error::max_tokens must be a whole number from 1 to 1000000."; exit 1; }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -80,7 +88,8 @@ jobs:
         env:
           FEATURE: ${{ inputs.feature }}
           MAX_USD: ${{ inputs.max_usd }}
-        run: npm run eval:ai -- --feature "$FEATURE" --max-usd "$MAX_USD" --out "$RUNNER_TEMP/ai-eval-result.json"
+          MAX_TOKENS: ${{ inputs.max_tokens }}
+        run: npm run eval:ai -- --feature "$FEATURE" --max-usd "$MAX_USD" --max-tokens "$MAX_TOKENS" --out "$RUNNER_TEMP/ai-eval-result.json"
       - id: summary
         name: Write the result to the run summary
         if: always()
