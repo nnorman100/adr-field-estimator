@@ -16,7 +16,6 @@ import {
 import {
   agreementOf,
   bytesOf,
-  heldOpen,
   insertAgreement,
   insertEstimate,
   insertPin,
@@ -67,11 +66,29 @@ const actorA = () => h.seed.ownerA.actor;
 const chainA = () => seedChain(h.admin, h.seed.a, actorA());
 const jobA = () => seedJob(h.admin, newJob(h.seed.a, actorA()));
 
-// A company A transaction that writes, then commits once another transaction is waiting on it.
-const held = (write: (tx: CompanyTransaction) => Promise<unknown>) => heldOpen(h.admin, (run) => as(h.seed.a, run), write);
+const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+// A company A transaction that writes, then stays open for a while before it commits. `written`
+// settles once the write is done (or the transaction failed), `done` once it has committed.
+function heldOpen(write: (tx: CompanyTransaction) => Promise<unknown>, ms = 400) {
+  let wrote!: () => void;
+  const ready = new Promise<void>((resolve) => (wrote = resolve));
+  const done = as(h.seed.a, async (tx) => {
+    await write(tx);
+    wrote();
+    await pause(ms);
+  });
+  return { written: Promise.race([ready, done]), done };
+}
+
+async function timed<T>(run: () => Promise<T>): Promise<{ value: T; waited: number }> {
+  const started = Date.now();
+  const value = await run();
+  return { value, waited: Date.now() - started };
+}
 
 // The job's second pin as the runtime writes it: `repriceNow` makes it when called, `heldReprice`
-// writes it and holds the transaction open until another one waits on it.
+// writes it and holds the transaction open before it commits.
 async function repriceNow(c: Chain) {
   const v2 = await seedVersion(h.admin, c.company, c.actor, { sequence: 2 });
   return () => as(h.seed.a, (tx) => insertPin(tx, { company: c.company, job: c.job.id, version: v2.id, actor: c.actor, sequence: 2 }));
@@ -79,7 +96,7 @@ async function repriceNow(c: Chain) {
 
 async function heldReprice(c: Chain) {
   const v2 = await seedVersion(h.admin, c.company, c.actor, { sequence: 2 });
-  return held((tx) => insertPin(tx, { company: c.company, job: c.job.id, version: v2.id, actor: c.actor, sequence: 2 }));
+  return heldOpen((tx) => insertPin(tx, { company: c.company, job: c.job.id, version: v2.id, actor: c.actor, sequence: 2 }));
 }
 
 // A second committed submission on the chain's job, with its own estimate priced from the same pin.
@@ -126,11 +143,7 @@ describe('job price pins', () => {
   it('gives two first pins at once for one job one success, never two with the same number', async () => {
     const job = await jobA();
     const v = await seedVersion(h.admin, h.seed.a, actorA());
-    const write = (tx: CompanyTransaction) => insertPin(tx, { company: h.seed.a, job: job.id, version: v.id, actor: actorA() });
-    const first = held(write);
-    await first.written;
-    const second = errorCode(as(h.seed.a, write));
-    const results = await Promise.all([errorCode(first.done), second]);
+    const results = await Promise.all([1, 2].map(() => errorCode(as(h.seed.a, (tx) => insertPin(tx, { company: h.seed.a, job: job.id, version: v.id, actor: actorA() })))));
     expect(results.filter((code) => code === undefined)).toHaveLength(1);
     expect(results.filter((code) => code === UNIQUE_VIOLATION)).toHaveLength(1);
     expect(await h.admin`SELECT count(*)::int AS n FROM job_price_pins`).toEqual([{ n: 1 }]);
@@ -236,11 +249,12 @@ describe('job estimates', () => {
   it('holds a reprice until an estimate in progress on the current pin has committed', async () => {
     const second = await seedCommitted(h.admin, newSubmission(c.company, c.job.id, c.actor));
     const reprice = await repriceNow(c);
-    const pricing = held((tx) => insertEstimate(tx, { company: c.company, job: c.job.id, submission: second.id, pin: c.pin, actor: c.actor, hash: c.version.hash }));
+    const pricing = heldOpen((tx) => insertEstimate(tx, { company: c.company, job: c.job.id, submission: second.id, pin: c.pin, actor: c.actor, hash: c.version.hash }));
     await pricing.written;
-    const pinned = reprice();
+    const pinned = await timed(reprice);
     await pricing.done;
-    expect(await pinned).toEqual([{ id: expect.any(String), sequence: 2 }]);
+    expect(pinned.value).toEqual([{ id: expect.any(String), sequence: 2 }]);
+    expect(pinned.waited).toBeGreaterThanOrEqual(250);
   });
 
   it('holds the proposal’s hash to the proposal’s bytes, and the result to an object', async () => {
@@ -440,11 +454,12 @@ describe('agreements', () => {
 
   it('holds a reprice until a signing in progress has committed', async () => {
     const reprice = await repriceNow(c);
-    const signing = held((tx) => insertAgreement(tx, agreementOf(c)));
+    const signing = heldOpen((tx) => insertAgreement(tx, agreementOf(c)));
     await signing.written;
-    const pinned = reprice();
+    const pinned = await timed(reprice);
     await signing.done;
-    expect(await pinned).toEqual([{ id: expect.any(String), sequence: 2 }]);
+    expect(pinned.value).toEqual([{ id: expect.any(String), sequence: 2 }]);
+    expect(pinned.waited).toBeGreaterThanOrEqual(250);
     expect(await h.admin`SELECT count(*)::int AS n FROM agreements`).toEqual([{ n: 1 }]);
   });
 

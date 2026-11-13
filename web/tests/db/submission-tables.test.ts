@@ -25,7 +25,6 @@ import {
   agreementOf,
   bytesOf,
   commitSubmission,
-  heldOpen,
   insertAgreement,
   insertSubmission,
   newSubmission,
@@ -473,10 +472,19 @@ describe('a submission’s decision', () => {
     const draft = randomUUID();
     const one = await seedSubmission(h.admin, newSubmission(h.seed.a, job.id, h.seed.ownerA.actor, { draft }));
     const two = await seedSubmission(h.admin, newSubmission(h.seed.a, job.id, h.seed.ownerA.actor, { draft }));
-    const slow = heldOpen(h.admin, (run) => as(h.seed.a, run), (tx) => commitSubmission(tx, h.seed.a, one.id));
-    await slow.written;
-    const late = refusal(as(h.seed.a, (tx) => commitSubmission(tx, h.seed.a, two.id)));
-    expect(await slow.done).toHaveLength(1);
+    let updated!: () => void;
+    const first = new Promise<void>((resolve) => (updated = resolve));
+    const slow = as(h.seed.a, async (tx) => {
+      const result = await commitSubmission(tx, h.seed.a, one.id);
+      updated();
+      await pause(300);
+      return result;
+    });
+    const late = (async () => {
+      await first;
+      return refusal(as(h.seed.a, (tx) => commitSubmission(tx, h.seed.a, two.id)));
+    })();
+    expect(await slow).toHaveLength(1);
     expect(await late).toMatchObject({ code: UNIQUE_VIOLATION, constraint: 'job_submissions_one_committed_per_draft' });
     expect(await h.admin`SELECT id::text, status FROM job_submissions WHERE draft_id = ${draft} ORDER BY status`).toEqual([
       { id: one.id, status: 'committed' },
@@ -485,11 +493,20 @@ describe('a submission’s decision', () => {
   });
 
   it('gives a commit and an abort of the same row at once one outcome, and the loser changes nothing', async () => {
-    const slow = heldOpen(h.admin, (run) => as(h.seed.a, run), (tx) => commitSubmission(tx, h.seed.a, s.id));
-    await slow.written;
-    // Waits for the first transaction, then finds the row no longer pending.
-    const late = as(h.seed.a, (tx) => abortSubmission(tx, h.seed.a, s.id));
-    expect(await slow.done).toHaveLength(1);
+    let updated!: () => void;
+    const first = new Promise<void>((resolve) => (updated = resolve));
+    const slow = as(h.seed.a, async (tx) => {
+      const result = await commitSubmission(tx, h.seed.a, s.id);
+      updated();
+      await pause(300);
+      return result;
+    });
+    const late = (async () => {
+      await first;
+      // Waits for the first transaction, then finds the row no longer pending.
+      return as(h.seed.a, (tx) => abortSubmission(tx, h.seed.a, s.id));
+    })();
+    expect(await slow).toHaveLength(1);
     expect(await late).toHaveLength(0);
     expect(await state()).toMatchObject({ status: 'committed', decided: true });
   });
