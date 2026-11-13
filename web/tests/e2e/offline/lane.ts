@@ -41,6 +41,9 @@ export class NetworkLane {
   private readonly cuts = new Set<Target>();
   private readonly bytesAtCut = new Map<Target, number>();
   private statics = new Map<string, StaticFile>();
+  // Paths (and everything under a path ending in "/") the app side answers 404 to, as a server does
+  // for files a newer build no longer has.
+  private gone: string[] = [];
 
   private constructor() {}
 
@@ -68,6 +71,22 @@ export class NetworkLane {
   // What the server hands the browser as settings (parseBrowserSignInConfig reads these names).
   get env(): Record<string, string> {
     return { FIREBASE_AUTH_EMULATOR_HOST: this.authHost, FIRESTORE_EMULATOR_HOST: this.firestoreHost };
+  }
+
+  // Serves `file` at `path` from now on instead of the app's own answer: a deployment that changed
+  // that file. Used by the worker tests (S6-2); restore with unserve().
+  serve(path: string, file: StaticFile): void {
+    this.statics.set(path, file);
+  }
+
+  unserve(path: string): void {
+    this.statics.delete(path);
+  }
+
+  // Answers 404 for these paths from now on (a path ending in "/" covers everything under it): the
+  // files an older build had and a newer deployment dropped.
+  drop(...paths: string[]): void {
+    this.gone.push(...paths);
   }
 
   isCut(target: Target): boolean {
@@ -168,6 +187,12 @@ export class NetworkLane {
       if (own) {
         res.writeHead(200, { 'Content-Type': own.type, 'Cache-Control': 'no-store' });
         res.end(own.body);
+        return;
+      }
+      const path = new URL(req.url ?? '/', 'http://lane').pathname;
+      if (this.gone.some((gone) => (gone.endsWith('/') ? path.startsWith(gone) : path === gone))) {
+        res.writeHead(404, { 'Cache-Control': 'no-store' });
+        res.end('gone');
         return;
       }
       const forwarded = httpRequest(

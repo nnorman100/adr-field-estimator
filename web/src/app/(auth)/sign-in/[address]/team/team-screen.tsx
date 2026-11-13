@@ -7,7 +7,8 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import type { BrowserSignInConfig } from '@/lib/config';
-import { belongsTo, callApi, companyAuth, signOutCompany } from '@/lib/firebase-client';
+import { belongsTo, callApi, companyAuth } from '@/lib/firebase-client';
+import { signOutOfCompany } from '@/lib/field/sign-out';
 import { endsSession, meOutcome } from '@/lib/sign-in/outcome';
 import { fullTeam, signedInMember } from '@/lib/team/screen';
 import type { TeamView } from '@/lib/team/service';
@@ -54,7 +55,7 @@ function CompanyTeam({ address, companyName, tenantId, config }: TeamScreenProps
     authRef.current = auth;
     // The latest sign-in wins: an answer for a user who has since signed out is dropped.
     const stale = (user: User) => authRef.current?.currentUser !== user;
-    const signOutOrUnavailable = () => signOutCompany(auth).catch(() => setPhase({ name: 'unavailable' }));
+    const signOutOrUnavailable = () => signOutOfCompany(auth, tenantId).catch(() => setPhase({ name: 'unavailable' }));
 
     async function open(user: User) {
       setPhase({ name: 'checking' });
@@ -138,7 +139,7 @@ function CompanyTeam({ address, companyName, tenantId, config }: TeamScreenProps
           initial={phase.team}
           onSignInAgain={async () => {
             try {
-              if (authRef.current) await signOutCompany(authRef.current);
+              if (authRef.current) await signOutOfCompany(authRef.current, tenantId);
             } catch {
               return setPhase({ name: 'unavailable' });
             }
