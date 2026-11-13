@@ -141,6 +141,13 @@ function makeClient(app: FirebaseApp, person: FieldPerson, databaseId: string, c
   return db;
 }
 
+// The cache the SDK started for this client. Firebase is pinned (package.json); a shape this does
+// not know counts as memory.
+function startedCache(db: Firestore): CacheKind {
+  const client = (db as unknown as { _firestoreClient?: { _offlineComponents?: { kind?: unknown } } })._firestoreClient;
+  return client?._offlineComponents?.kind === 'persistent' ? 'persistent' : 'memory';
+}
+
 function within<T>(promise: Promise<T>, ms: number): Promise<T | 'timeout'> {
   return Promise.race([promise, new Promise<'timeout'>((done) => setTimeout(() => done('timeout'), ms))]);
 }
@@ -171,7 +178,7 @@ export async function startFieldClient(
     ),
     watchdogMs,
   );
-  if (answer === 'answered') {
+  if (answer === 'answered' && startedCache(db) === 'persistent') {
     const client: FieldClient = { db, cache: 'persistent', person };
     clients.set(app.name, client);
     return { kind: 'ready', client, fellBack: false };
@@ -196,9 +203,17 @@ export async function settle(client: FieldClient): Promise<void> {
 
 // Every field edit goes through here: the mark first, then the write (absolute values only, never
 // a transform; S6-1 (b)). The returned promise settles when the server answers, which with no
-// signal is later; the edit is already in the cache when this is called.
+// signal is later; the edit is already in the cache when this is called. When the mark cannot be
+// saved the edit is not made, and the promise rejects with UnsentMarkNotSaved.
+export class UnsentMarkNotSaved extends Error {
+  constructor() {
+    super('This phone could not record the change, so it was not made.');
+    this.name = 'UnsentMarkNotSaved';
+  }
+}
+
 export function fieldWrite<T>(client: FieldClient, write: (db: Firestore) => Promise<T>): Promise<T> {
-  noteWrite(client.person.tenantId, client.person.uid);
+  if (noteWrite(client.person.tenantId, client.person.uid) === null) return Promise.reject(new UnsentMarkNotSaved());
   const result = write(client.db);
   result.then(
     () => void settle(client).catch(() => undefined),

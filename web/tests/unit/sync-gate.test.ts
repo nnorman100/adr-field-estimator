@@ -180,6 +180,60 @@ describe('the gate', () => {
     g.stop();
   });
 
+  it('closes the network before the confirmed record runs out while the renewal keeps being skipped', async () => {
+    answers = [me(NOW + 20_000)];
+    const g = gate();
+    g.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls).toEqual(['ask', 'enable']);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(calls).toContain('disable');
+    expect(g.current()).toEqual({ kind: 'renewing' });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(calls.filter((c) => c === 'enable')).toHaveLength(1);
+    g.stop();
+  });
+
+  it('does not keep the network on past the confirmed record when /api/me stops answering', async () => {
+    answers = [me(NOW + 30_000), { status: 0, body: null }];
+    const g = gate();
+    g.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls).toEqual(['ask', 'enable']);
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(calls).toContain('disable');
+    expect(g.current().kind).not.toBe('open');
+    g.stop();
+  });
+
+  it('keeps a refusal locked when the next ask gets no answer', async () => {
+    answers = [refused(403, 'member_disabled'), { status: 0, body: null }];
+    const g = gate();
+    g.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(g.current()).toEqual({ kind: 'locked', reason: 'member-disabled' });
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(calls.filter((c) => c === 'ask')).toHaveLength(2);
+    expect(g.current()).toEqual({ kind: 'locked', reason: 'member-disabled' });
+    expect(states.map((s) => s.kind)).not.toContain('offline');
+    g.stop();
+  });
+
+  it('starts from a lock saved on the phone, keeps it with no answer, and lifts it when the server lets the person in', async () => {
+    answers = [{ status: 0, body: null }, me(NOW + 7 * DAY)];
+    const g = gate({ initial: { kind: 'locked', reason: 'company-inactive' } });
+    expect(g.current()).toEqual({ kind: 'locked', reason: 'company-inactive' });
+    g.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(g.current()).toEqual({ kind: 'locked', reason: 'company-inactive' });
+    expect(calls).toEqual(['ask']);
+    g.poke();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls).toEqual(['ask', 'ask', 'enable']);
+    expect(g.current()).toMatchObject({ kind: 'open' });
+    g.stop();
+  });
+
   it('works offline with no answer, and opens when the signal is back', async () => {
     answers = [{ status: 0, body: null }, me(NOW + 7 * DAY)];
     const g = gate();
@@ -225,6 +279,16 @@ describe('the gate', () => {
       expect(calls).toEqual(['ask']);
       await vi.advanceTimersByTimeAsync(1);
       expect(calls).toEqual(['ask', 'enable']);
+      g.stop();
+    });
+
+    it('does not open when the token takes until the confirmed record is nearly out', async () => {
+      answers = [me(NOW + 13_000)];
+      const g = gate({ appCheck: { mode: 'monitor', token: () => new Promise(() => undefined) } });
+      g.start();
+      await vi.advanceTimersByTimeAsync(APP_CHECK_MONITOR_WAIT_MS);
+      expect(calls).toEqual(['ask']);
+      expect(g.current()).toEqual({ kind: 'renewing' });
       g.stop();
     });
 

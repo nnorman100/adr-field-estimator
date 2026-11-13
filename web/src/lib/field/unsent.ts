@@ -16,6 +16,8 @@
 // one company's or one person's mark never speaks for another. The values are counts and times;
 // no email, no field values.
 
+export type LockReason = 'member-disabled' | 'company-inactive';
+
 export type UnsentMark = {
   // Bumped by every write, so a clearing that started before a later write cannot clear it.
   writes: number;
@@ -23,6 +25,8 @@ export type UnsentMark = {
   unsentSince: number | null;
   // When the server first refused this person since they last got through; null when it has not.
   lockedSince: number | null;
+  // Which refusal it was, while lockedSince is set.
+  lockedReason?: LockReason;
 };
 
 const EMPTY: UnsentMark = { writes: 0, unsentSince: null, lockedSince: null };
@@ -35,7 +39,10 @@ function parse(raw: string | null): UnsentMark | null {
     const value = JSON.parse(raw) as Record<string, unknown>;
     const time = (field: unknown) => (typeof field === 'number' && Number.isFinite(field) ? field : null);
     if (typeof value.writes !== 'number' || !Number.isSafeInteger(value.writes)) return null;
-    return { writes: value.writes, unsentSince: time(value.unsentSince), lockedSince: time(value.lockedSince) };
+    const lockedSince = time(value.lockedSince);
+    const mark: UnsentMark = { writes: value.writes, unsentSince: time(value.unsentSince), lockedSince };
+    if (lockedSince !== null) mark.lockedReason = value.lockedReason === 'company-inactive' ? 'company-inactive' : 'member-disabled';
+    return mark;
   } catch {
     return null;
   }
@@ -70,7 +77,7 @@ function change(tenantId: string, uid: string, update: (mark: UnsentMark) => Uns
 }
 
 // Records a write about to be made. Returns the write count to pass to settled(), or null when the
-// mark could not be saved (the write still goes ahead: the edit itself is safe in the cache).
+// mark could not be saved (the write must then not be made: nothing would say it is unsent).
 export function noteWrite(tenantId: string, uid: string, now = Date.now()): number | null {
   let writes: number | null = null;
   const saved = change(tenantId, uid, (mark) => {
@@ -93,19 +100,28 @@ export function settled(tenantId: string, uid: string, writes: number): void {
 }
 
 // The server refused this person (O5). Returns when the refusals began.
-export function noteLocked(tenantId: string, uid: string, now = Date.now()): number {
+export function noteLocked(tenantId: string, uid: string, reason: LockReason, now = Date.now()): number {
   let since = now;
   change(tenantId, uid, (mark) => {
     since = mark.lockedSince ?? now;
-    return { ...mark, lockedSince: since };
+    return { ...mark, lockedSince: since, lockedReason: reason };
   });
   return since;
+}
+
+// The refusal this person's work is locked under on this phone, or null when it is not locked.
+export function savedLock(tenantId: string, uid: string): LockReason | null {
+  const mark = readUnsent(tenantId, uid);
+  return mark === 'unreadable' || mark.lockedSince === null ? null : (mark.lockedReason ?? 'member-disabled');
 }
 
 export function noteUnlocked(tenantId: string, uid: string): void {
   const mark = readUnsent(tenantId, uid);
   if (mark !== 'unreadable' && mark.lockedSince === null) return;
-  change(tenantId, uid, (current) => ({ ...current, lockedSince: null }));
+  change(tenantId, uid, ({ lockedReason: _reason, ...current }) => {
+    void _reason;
+    return { ...current, lockedSince: null };
+  });
 }
 
 // The person's work on this phone is gone (Discard, or the O5 limit): the mark goes with it.

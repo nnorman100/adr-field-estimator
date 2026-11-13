@@ -19,6 +19,10 @@ import * as text from './field-store-text';
 // what the phone is waiting for. The job screens (S5a-6) mount as its children and use the client
 // from FieldContext; nothing here renders on the server.
 
+// What the started cache keeps: the jobs on this phone, nothing by choice (online only), or
+// nothing because the phone's storage failed (the memory fallback).
+export type FieldStorage = 'kept' | 'online-only' | 'not-saved';
+
 export type FieldMe = { companyId: string | null; role: string | null; capabilities: string[] };
 export type FieldContextValue = { client: FieldClient; me: FieldMe; gate: GateState };
 const FieldContext = createContext<FieldContextValue | null>(null);
@@ -87,13 +91,13 @@ export function FieldStore({
   me,
   surface,
   reachable,
-  onNotSaved,
+  onStorage,
   children,
 }: {
   me: DsMe;
   surface: FieldSurface | null;
   reachable: boolean;
-  onNotSaved: (notSaved: boolean) => void;
+  onStorage: (storage: FieldStorage) => void;
   children?: ReactNode;
 }) {
   const [answer, setAnswer] = useState<KeepAnswer | null>(() => keepAnswer(me.tenantId));
@@ -123,7 +127,7 @@ export function FieldStore({
       if (!live) return;
       if (started.kind === 'no-database') return;
       if (started.kind === 'reopen') return setPhase({ kind: 'reopen' });
-      onNotSaved(started.fellBack);
+      onStorage(started.client.cache === 'persistent' ? 'kept' : started.fellBack ? 'not-saved' : 'online-only');
       if (cache === 'persistent') void askToPersist();
       setPhase({ kind: 'ready', client: started.client });
       gateRef.current = runFieldSync(started.client, me, (event) => {

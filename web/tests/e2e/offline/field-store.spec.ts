@@ -3,7 +3,7 @@
 // fallback's banner and "Reopen the app", the offline sign-in's age limit, and what the shell says
 // while the sync gate waits. The field client code itself is tested in field-gate.spec.ts.
 import type { Page } from '@playwright/test';
-import { NOT_SAVED_TEXT } from '../../../src/app/field/banners';
+import { NOT_KEPT_TEXT, NOT_SAVED_TEXT, OFFLINE_TEXT } from '../../../src/app/field/banners';
 import * as text from '../../../src/app/field/field-store-text';
 import { ME_DB, ME_DB_VERSION, ME_STORE, meKey, type DsMe } from '../../../src/lib/field/ds-me';
 import { keepKey } from '../../../src/lib/field/keep-consent';
@@ -134,6 +134,63 @@ test.describe('the field shell\'s phone storage (S6-3)', () => {
     await expect(page.getByText('Your jobs will show here.')).toHaveCount(0);
     await expect(page.getByText(NOT_SAVED_TEXT)).toHaveCount(0);
     await expectNoAxeViolations(page);
+  });
+
+  test('a cache the browser refuses at once falls back to memory and says nothing is saved', async ({ page, lane }) => {
+    const world = await seedCompany();
+    await openShell(page, lane, world, world.owner);
+    // Firestore's own databases fail to open the way a private window fails them; the SDK then goes
+    // on in memory by itself, and its first cache read still answers.
+    await page.addInitScript(() => {
+      const real = IDBFactory.prototype.open;
+      IDBFactory.prototype.open = function (this: IDBFactory, name: string, version?: number) {
+        if (!name.startsWith('firestore/')) return real.call(this, name, version);
+        const request = {} as { error?: DOMException; onerror?: (event: { target: unknown }) => void };
+        setTimeout(() => {
+          request.error = new DOMException('Storage refused', 'InvalidStateError');
+          request.onerror?.({ target: request });
+        });
+        return request as unknown as IDBOpenDBRequest;
+      } as typeof real;
+    });
+    await page.reload();
+    await expect(page.getByText(NOT_SAVED_TEXT)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(text.LOCKED_SIGN_IN_TEXT)).toBeVisible();
+  });
+
+  test('with unsent work, a cache the browser refuses at once asks to reopen the app and takes no edits', async ({ page, lane }) => {
+    const world = await seedCompany();
+    await openShell(page, lane, world, world.owner);
+    await setLocal(page, unsentKey(world.tenantId, world.owner.uid), JSON.stringify({ writes: 1, unsentSince: Date.now(), lockedSince: null }));
+    await page.addInitScript(() => {
+      const real = IDBFactory.prototype.open;
+      IDBFactory.prototype.open = function (this: IDBFactory, name: string, version?: number) {
+        if (!name.startsWith('firestore/')) return real.call(this, name, version);
+        const request = {} as { error?: DOMException; onerror?: (event: { target: unknown }) => void };
+        setTimeout(() => {
+          request.error = new DOMException('Storage refused', 'InvalidStateError');
+          request.onerror?.({ target: request });
+        });
+        return request as unknown as IDBOpenDBRequest;
+      } as typeof real;
+    });
+    await page.reload();
+    await expect(page.getByRole('heading', { name: text.REOPEN_TITLE })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText('Your jobs will show here.')).toHaveCount(0);
+  });
+
+  test('with Online only chosen, no signal does not say the work is saved on this phone', async ({ context, page, lane }) => {
+    const world = await seedCompany();
+    await page.goto(`${lane.appUrl}/field`);
+    await saveRow(page, lane, world, world.owner, 'Field Store Test');
+    await setLocal(page, keepKey(world.tenantId), 'online-only');
+    await page.reload();
+    await expect(page.getByText(text.ONLINE_ONLY_NOTICE)).toBeVisible();
+    await context.setOffline(true);
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    await expect(page.getByText(NOT_KEPT_TEXT)).toBeVisible();
+    await expect(page.getByText(OFFLINE_TEXT)).toHaveCount(0);
+    await context.setOffline(false);
   });
 
   test('says what the phone waits for: no signal with an old sign-in, a renewal, a refusal', async ({ context, page, lane }) => {

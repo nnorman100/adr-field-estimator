@@ -4,7 +4,7 @@ import { callApi } from '@/lib/firebase-client';
 import { appCheckSeam, discardFieldWork, fieldUser, settle, type FieldClient } from '@/lib/field-db';
 import { saveMe, type DsMe } from './ds-me';
 import { SyncGate, type GateState, type MeFacts } from './sync-gate';
-import { noteLocked, noteUnlocked } from './unsent';
+import { noteLocked, noteUnlocked, savedLock } from './unsent';
 
 // Runs the sync gate for one person's started field client (S6-3), and does what each of its
 // answers asks of the phone:
@@ -12,7 +12,8 @@ import { noteLocked, noteUnlocked } from './unsent';
 //   cleared once the queue has been sent, and the ds-me row gets the company id, role,
 //   capabilities and sign-in time for the next offline start;
 // - locked as a disabled member or an inactive company: the work stays, locked, and is removed
-//   only after 30 days of refusals (owner decision O5).
+//   only after 30 days of refusals (owner decision O5). The lock is saved on the phone, so a start
+//   with no answer is locked too.
 
 export const LOCKED_LIMIT_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -25,6 +26,8 @@ export function runFieldSync(
   now: () => number = Date.now,
 ): SyncGate {
   const { person } = client;
+  const lock = savedLock(person.tenantId, person.uid);
+  const initial = lock === null ? undefined : ({ kind: 'locked', reason: lock } as const);
   const gate: SyncGate = new SyncGate({
     async ask() {
       const user = fieldUser(person);
@@ -35,6 +38,7 @@ export function runFieldSync(
     disableNetwork: () => disableNetwork(client.db),
     appCheck: appCheckSeam(),
     now,
+    initial,
     onState(state) {
       onEvent({ state });
       if (state.kind === 'open') {
@@ -43,7 +47,7 @@ export function runFieldSync(
         void remember(saved, state.facts);
       }
       if (state.kind === 'locked' && (state.reason === 'member-disabled' || state.reason === 'company-inactive')) {
-        const since = noteLocked(person.tenantId, person.uid, now());
+        const since = noteLocked(person.tenantId, person.uid, state.reason, now());
         if (now() - since > LOCKED_LIMIT_MS) {
           gate.stop();
           void discardFieldWork(person, { lockHeld: true }).then((result) => {
@@ -74,6 +78,7 @@ export function runFieldSync(
     });
   }
 
+  if (initial) onEvent({ state: initial });
   gate.start();
   return gate;
 }

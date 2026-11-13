@@ -7,7 +7,7 @@ import { offlineCaptureAllowed } from '@/lib/field/platform';
 import { rememberedSignInAddress } from '@/lib/sign-in/remember';
 import { NotSavedBanner, OfflineBanner } from './banners';
 import { useReachable } from './connection';
-import { FieldStore } from './field-store';
+import { FieldStore, type FieldStorage } from './field-store';
 import { HomeScreenSheet, useFieldSurface } from './home-screen-sheet';
 
 // The field shell (S6-2): the one page every field screen lives in. The server renders nothing of
@@ -26,8 +26,9 @@ type Boot =
 
 export function FieldShell() {
   const [boot, setBoot] = useState<Boot>({ kind: 'starting' });
-  // The Firestore cache fell back to memory (S6-3): nothing is kept, as with no storage at all.
-  const [notSaved, setNotSaved] = useState(false);
+  // What the Firestore cache keeps (S6-3). A fallback to memory keeps nothing, as with no storage at
+  // all; Online only keeps nothing by choice.
+  const [storage, setStorage] = useState<FieldStorage>('kept');
   const reachable = useReachable();
   const surface = useFieldSurface();
 
@@ -63,10 +64,11 @@ export function FieldShell() {
       data-offline-capture={offlineCaptureAllowed(surface) ? 'allowed' : 'blocked'}
     >
       <OfflineBanner
-        offline={!reachable && !notSaved && (boot.kind === 'ready' || boot.kind === 'signed-out')}
+        offline={!reachable && storage !== 'not-saved' && (boot.kind === 'ready' || boot.kind === 'signed-out')}
         onlineOnly={surface === 'ios-tab'}
+        kept={storage === 'kept'}
       />
-      <NotSavedBanner unavailable={boot.kind === 'no-storage' || notSaved} />
+      <NotSavedBanner unavailable={boot.kind === 'no-storage' || storage === 'not-saved'} />
       <main className="flex flex-1 flex-col gap-4 p-6">
         <p className="text-sm font-semibold tracking-wide">DryScope</p>
         {boot.kind === 'starting' ? <p role="status">Opening…</p> : null}
@@ -80,7 +82,7 @@ export function FieldShell() {
               me={boot.me}
               surface={surface}
               reachable={reachable}
-              onNotSaved={setNotSaved}
+              onStorage={setStorage}
             >
               <p className="text-base">Your jobs will show here.</p>
             </FieldStore>

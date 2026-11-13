@@ -7,6 +7,7 @@ import {
   noteUnlocked,
   noteWrite,
   readUnsent,
+  savedLock,
   settled,
   unsentKey,
   writesNow,
@@ -68,10 +69,23 @@ describe('unsent work marks', () => {
   });
 
   it('keep the time the refusals began, until the person gets through', () => {
-    expect(noteLocked('t-a', 'ana', 1000)).toBe(1000);
-    expect(noteLocked('t-a', 'ana', 5000)).toBe(1000);
+    expect(noteLocked('t-a', 'ana', 'member-disabled', 1000)).toBe(1000);
+    expect(noteLocked('t-a', 'ana', 'member-disabled', 5000)).toBe(1000);
     noteUnlocked('t-a', 'ana');
-    expect(noteLocked('t-a', 'ana', 9000)).toBe(9000);
+    expect(noteLocked('t-a', 'ana', 'member-disabled', 9000)).toBe(9000);
+  });
+
+  it('keep the refusal for a start with no answer, for that person in that company, until they get through', () => {
+    expect(savedLock('t-a', 'ana')).toBeNull();
+    noteLocked('t-a', 'ana', 'company-inactive', 1000);
+    expect(savedLock('t-a', 'ana')).toBe('company-inactive');
+    expect(savedLock('t-b', 'ana')).toBeNull();
+    expect(savedLock('t-a', 'ben')).toBeNull();
+    noteWrite('t-a', 'ana', 2000);
+    expect(savedLock('t-a', 'ana')).toBe('company-inactive');
+    noteUnlocked('t-a', 'ana');
+    expect(savedLock('t-a', 'ana')).toBeNull();
+    expect(mayHaveUnsent('t-a', 'ana')).toBe(true);
   });
 
   it('are forgotten for one person only', () => {

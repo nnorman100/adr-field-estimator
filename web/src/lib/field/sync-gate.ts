@@ -57,7 +57,7 @@ export function judgeMe(answer: MeAnswer, now: number): Verdict {
   if (typeof companyId !== 'string' || !Array.isArray(capabilities) || !capabilities.every((c) => typeof c === 'string')) {
     return { kind: 'offline' };
   }
-  if (!Number.isFinite(expiresAt) || expiresAt <= now) return { kind: 'renewing' };
+  if (!Number.isFinite(expiresAt) || !accessCurrent(expiresAt, now)) return { kind: 'renewing' };
   return {
     kind: 'open',
     facts: { companyId, companyName: outcome.companyName, role: outcome.role, capabilities: capabilities as string[], expiresAt },
@@ -76,6 +76,10 @@ export function offlineSignInValid(saved: { role?: string; authTime?: number }, 
 }
 
 export const APP_CHECK_MONITOR_WAIT_MS = 5_000;
+// The network is on only while the access record the server last confirmed has this much left, so
+// no write reaches the rules after the record has run out.
+export const EXPIRY_MARGIN_MS = 10_000;
+const accessCurrent = (expiresAt: number, now: number): boolean => expiresAt - EXPIRY_MARGIN_MS > now;
 const RENEW_FIRST_MS = 3_000;
 const RENEW_MAX_MS = 30_000;
 const OFFLINE_RETRY_MS = 10_000;
@@ -90,13 +94,16 @@ export type GateDeps = {
   appCheck?: AppCheckSeam | null;
   onState(state: GateState): void;
   now?: () => number;
+  // The lock saved on the phone by an earlier refusal (O5), kept until the server lets the person in.
+  initial?: Extract<GateState, { kind: 'locked' }>;
 };
 
 // Runs the gate for one field client. Foreground only: it asks on start, on poke() (the app
 // became visible, the signal came back, a tap) and on its own timer while the page lives.
 export class SyncGate {
-  private state: GateState = { kind: 'starting' };
+  private state: GateState;
   private timer: ReturnType<typeof setTimeout> | undefined;
+  private deadline: ReturnType<typeof setTimeout> | undefined;
   private running = false;
   private again = false;
   private stopped = false;
@@ -105,7 +112,9 @@ export class SyncGate {
   // App Check tokens that would not come in monitor mode, counted on the phone only (no telemetry).
   appCheckMisses = 0;
 
-  constructor(private readonly deps: GateDeps) {}
+  constructor(private readonly deps: GateDeps) {
+    this.state = deps.initial ?? { kind: 'starting' };
+  }
 
   private now(): number {
     return this.deps.now ? this.deps.now() : Date.now();
@@ -122,6 +131,7 @@ export class SyncGate {
   stop(): void {
     this.stopped = true;
     clearTimeout(this.timer);
+    clearTimeout(this.deadline);
   }
 
   // Ask now (an `online` event, the app shown again, a tap).
@@ -139,10 +149,7 @@ export class SyncGate {
   // let queued writes out ahead of a renewal.
   async networkLost(): Promise<void> {
     if (this.stopped) return;
-    if (this.networkOn) {
-      this.networkOn = false;
-      await this.deps.disableNetwork();
-    }
+    await this.closeNetwork();
     if (this.state.kind === 'open') this.set({ kind: 'offline' });
   }
 
@@ -157,9 +164,22 @@ export class SyncGate {
   }
 
   private async closeNetwork(): Promise<void> {
+    clearTimeout(this.deadline);
     if (!this.networkOn) return;
     this.networkOn = false;
     await this.deps.disableNetwork();
+  }
+
+  private closeAt(expiresAt: number): void {
+    clearTimeout(this.deadline);
+    this.deadline = setTimeout(() => void this.expired(), Math.max(expiresAt - EXPIRY_MARGIN_MS - this.now(), 0));
+  }
+
+  private async expired(): Promise<void> {
+    if (this.stopped) return;
+    await this.closeNetwork();
+    if (this.state.kind === 'open') this.set({ kind: 'renewing' });
+    this.poke();
   }
 
   // True when the network may go on as far as App Check is concerned.
@@ -189,10 +209,21 @@ export class SyncGate {
     if (this.stopped || this.running) return;
     this.running = true;
     try {
-      const verdict = judgeMe(await this.deps.ask(), this.now());
+      let verdict = judgeMe(await this.deps.ask(), this.now());
       if (this.stopped) return;
+      if (verdict.kind === 'open') {
+        const passes = await this.appCheckPasses();
+        if (this.stopped) return;
+        if (!passes) {
+          this.renewWait = RENEW_FIRST_MS;
+          this.set({ kind: 'checking-phone' });
+          this.later(RENEW_FIRST_MS);
+          return;
+        }
+        if (!accessCurrent(verdict.facts.expiresAt, this.now())) verdict = { kind: 'renewing' };
+      }
       if (verdict.kind === 'offline') {
-        if (this.state.kind !== 'open') this.set({ kind: 'offline' });
+        if (this.state.kind !== 'open' && this.state.kind !== 'locked') this.set({ kind: 'offline' });
         this.later(OFFLINE_RETRY_MS);
         return;
       }
@@ -212,18 +243,13 @@ export class SyncGate {
         if (verdict.reason === 'member-disabled' || verdict.reason === 'company-inactive') this.later(LOCKED_RETRY_MS);
         return;
       }
-      if (!(await this.appCheckPasses())) {
-        this.set({ kind: 'checking-phone' });
-        this.later(RENEW_FIRST_MS);
-        return;
-      }
-      if (this.stopped) return;
       if (!this.networkOn) {
         await this.deps.enableNetwork();
         this.networkOn = true;
       }
       this.set({ kind: 'open', facts: verdict.facts });
-      this.later(Math.max(verdict.facts.expiresAt - this.now() - BEFORE_EXPIRY_MS, BEFORE_EXPIRY_MS));
+      this.closeAt(verdict.facts.expiresAt);
+      this.later(Math.max(verdict.facts.expiresAt - this.now() - BEFORE_EXPIRY_MS, RENEW_FIRST_MS));
     } finally {
       this.running = false;
       if (this.again && !this.stopped) {
