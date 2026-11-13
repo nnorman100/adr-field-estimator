@@ -8,8 +8,10 @@ rules_version = '2';
 // - companies/{companyId}/access/{uid}: one person's access to that company, written by the
 //   server after a membership change commits in Postgres. `role` is owner, estimator or office;
 //   `expiresAt` is a timestamp, and the record stops working at that time.
-// - companies/{companyId}/drafts/{draftId}: a draft. `fieldOwnerUid` and `state` (editing,
-//   submitting or submitted) are the server's. A client may change only the `field` map.
+// - companies/{companyId}/drafts/{draftId}: a draft. `fieldOwnerUid`, `state` (editing,
+//   submitting or submitted), `fence` (the submission holding it, S5a-8) and `previous` (the
+//   submitted draft a "Back to editing" version came from) are the server's
+//   (web/src/lib/submissions/fence.ts). A client may change only the `field` map.
 //
 // The `field` maps follow field map v1 (`web/src/lib/field/schema.ts`): the rules check each
 // key's type and size and refuse a key the map does not name. Every key is optional; clearing a
