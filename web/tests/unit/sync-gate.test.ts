@@ -234,6 +234,26 @@ describe('the gate', () => {
     g.stop();
   });
 
+  it('drops an answer for a sign-in that ended while it was awaited, and asks again', async () => {
+    let who: string | null = 'ana';
+    answers = [me(NOW + 7 * DAY), refused(401, 'missing_token')];
+    const g = gate({
+      session: () => who,
+      ask: async () => {
+        calls.push('ask');
+        const answer = answers.shift()!;
+        who = null;
+        return answer;
+      },
+    });
+    g.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls).toEqual(['ask', 'ask']);
+    expect(states.map((s) => s.kind)).not.toContain('open');
+    expect(g.current()).toEqual({ kind: 'locked', reason: 'sign-in-again' });
+    g.stop();
+  });
+
   it('works offline with no answer, and opens when the signal is back', async () => {
     answers = [{ status: 0, body: null }, me(NOW + 7 * DAY)];
     const g = gate();

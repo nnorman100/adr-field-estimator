@@ -96,6 +96,9 @@ export type GateDeps = {
   now?: () => number;
   // The lock saved on the phone by an earlier refusal (O5), kept until the server lets the person in.
   initial?: Extract<GateState, { kind: 'locked' }>;
+  // Who an answer is for: an answer is dropped, and asked for again, when this changes while it is
+  // awaited.
+  session?: () => unknown;
 };
 
 // Runs the gate for one field client. Foreground only: it asks on start, on poke() (the app
@@ -209,11 +212,17 @@ export class SyncGate {
     if (this.stopped || this.running) return;
     this.running = true;
     try {
+      const session = this.deps.session?.();
+      const stale = () => {
+        if (this.deps.session?.() === session) return false;
+        this.again = true;
+        return true;
+      };
       let verdict = judgeMe(await this.deps.ask(), this.now());
-      if (this.stopped) return;
+      if (this.stopped || stale()) return;
       if (verdict.kind === 'open') {
         const passes = await this.appCheckPasses();
-        if (this.stopped) return;
+        if (this.stopped || stale()) return;
         if (!passes) {
           this.renewWait = RENEW_FIRST_MS;
           this.set({ kind: 'checking-phone' });

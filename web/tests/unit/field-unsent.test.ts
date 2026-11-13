@@ -75,6 +75,29 @@ describe('unsent work marks', () => {
     expect(noteLocked('t-a', 'ana', 'member-disabled', 9000)).toBe(9000);
   });
 
+  it('keep every kind of refusal, and count as locked when they cannot be read', () => {
+    noteLocked('t-a', 'ana', 'sign-in-again', 1000);
+    expect(savedLock('t-a', 'ana')).toBe('sign-in-again');
+    noteLocked('t-a', 'ben', 'second-step', 1000);
+    expect(savedLock('t-a', 'ben')).toBe('second-step');
+    storage.items.set(unsentKey('t-a', 'cleo'), '{not json');
+    expect(savedLock('t-a', 'cleo')).toBe('sign-in-again');
+    storage.items.set(unsentKey('t-a', 'dee'), JSON.stringify({ writes: 0, unsentSince: null, lockedSince: 5, lockedReason: 'shrug' }));
+    expect(savedLock('t-a', 'dee')).toBe('sign-in-again');
+  });
+
+  it('say when a refusal could not be saved', () => {
+    vi.stubGlobal('window', {
+      localStorage: {
+        getItem: () => null,
+        setItem() {
+          throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+        },
+      },
+    });
+    expect(noteLocked('t-a', 'ana', 'member-disabled', 1000)).toBeNull();
+  });
+
   it('keep the refusal for a start with no answer, for that person in that company, until they get through', () => {
     expect(savedLock('t-a', 'ana')).toBeNull();
     noteLocked('t-a', 'ana', 'company-inactive', 1000);

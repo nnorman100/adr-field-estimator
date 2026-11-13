@@ -197,6 +197,21 @@ export function saveMe(me: Omit<DsMe, 'savedAt'>): Promise<boolean> {
   return write((store) => store.put({ key: meKey(me.tenantId, me.uid), ...me, savedAt: Date.now() }));
 }
 
+// Updates this sign-in's row only while it is still there, in one transaction, so a sign-out that
+// removed it is never undone. False when there was no row or it could not be saved.
+export function updateMe(me: Omit<DsMe, 'savedAt'>): Promise<boolean> {
+  let found = false;
+  return write((store) => {
+    const key = meKey(me.tenantId, me.uid);
+    const row = store.get(key);
+    row.onsuccess = () => {
+      if (row.result === undefined) return;
+      found = true;
+      store.put({ key, ...me, savedAt: Date.now() });
+    };
+  }).then((committed) => committed && found);
+}
+
 // Removes this sign-in's row (the phone is signed out of this company). Only this (tenant, person)'s
 // row: another company's stays. Resolves to the row it removed (null when there was none, or the
 // phone's storage cannot be opened at all), or false when the row may still be there.

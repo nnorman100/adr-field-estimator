@@ -9,7 +9,7 @@ import { doc, enableNetwork, getDocFromCache, getDocFromServer, increment, setLo
 import type { BrowserSignInConfig } from '../../../../src/lib/config';
 import { companyAuth } from '../../../../src/lib/firebase-client';
 import { fieldWrite, mirrorSignIn, setAppCheckSeam, startFieldClient, stopFieldClient, type CacheKind, type FieldClient } from '../../../../src/lib/field-db';
-import type { DsMe } from '../../../../src/lib/field/ds-me';
+import { readLatestMe, saveMe, updateMe, type DsMe } from '../../../../src/lib/field/ds-me';
 import { runFieldSync } from '../../../../src/lib/field/field-sync';
 import { signOutDiscarding, signOutOfCompany } from '../../../../src/lib/field/sign-out';
 import type { GateState, SyncGate } from '../../../../src/lib/field/sync-gate';
@@ -130,6 +130,15 @@ const f = {
   },
 
   unsent: (person: Pick<Person, 'tenantId' | 'uid'>) => readUnsent(person.tenantId, person.uid),
+
+  // The saved sign-in rows (ds-me): the sign-in page's save, the field check's update, and which
+  // (tenant/person) row the shell would start from.
+  saveMe: (person: Person) => saveMe(savedRow(person)),
+  updateMe: (person: Person) => updateMe(savedRow(person)),
+  async latestMe(): Promise<string | null> {
+    const me = await readLatestMe();
+    return me === null || me === 'unavailable' ? null : `${me.tenantId}/${me.uid}`;
+  },
 
   // A fake App Check provider in field-db.ts's seam (TC-7): 'expired' always fails, 'slow' never
   // answers, 'fresh' answers; null empties the seam.

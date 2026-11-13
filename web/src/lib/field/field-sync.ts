@@ -2,7 +2,7 @@ import { disableNetwork, enableNetwork } from 'firebase/firestore';
 import { getIdTokenResult } from 'firebase/auth';
 import { callApi } from '@/lib/firebase-client';
 import { appCheckSeam, discardFieldWork, fieldUser, settle, type FieldClient } from '@/lib/field-db';
-import { saveMe, type DsMe } from './ds-me';
+import { forgetMe, updateMe, type DsMe } from './ds-me';
 import { SyncGate, type GateState, type MeFacts } from './sync-gate';
 import { noteLocked, noteUnlocked, savedLock } from './unsent';
 
@@ -11,9 +11,10 @@ import { noteLocked, noteUnlocked, savedLock } from './unsent';
 // - open: the server let this person in, so any earlier lock is cleared, the unsent mark is
 //   cleared once the queue has been sent, and the ds-me row gets the company id, role,
 //   capabilities and sign-in time for the next offline start;
-// - locked as a disabled member or an inactive company: the work stays, locked, and is removed
-//   only after 30 days of refusals (owner decision O5). The lock is saved on the phone, so a start
-//   with no answer is locked too.
+// - locked: the work stays, locked, and the refusal is saved on the phone, so a start with no answer
+//   is locked too; a phone that cannot save it forgets the offline sign-in instead. A disabled
+//   member's or inactive company's work is removed only after 30 days of refusals (owner decision O5).
+// An answer for a sign-in that has changed while it was awaited is dropped (sync-gate.ts).
 
 export const LOCKED_LIMIT_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -39,6 +40,7 @@ export function runFieldSync(
     appCheck: appCheckSeam(),
     now,
     initial,
+    session: () => fieldUser(person),
     onState(state) {
       onEvent({ state });
       if (state.kind === 'open') {
@@ -46,9 +48,13 @@ export function runFieldSync(
         void settle(client).catch(() => undefined);
         void remember(saved, state.facts);
       }
-      if (state.kind === 'locked' && (state.reason === 'member-disabled' || state.reason === 'company-inactive')) {
+      if (state.kind === 'locked') {
         const since = noteLocked(person.tenantId, person.uid, state.reason, now());
-        if (now() - since > LOCKED_LIMIT_MS) {
+        if (since === null) {
+          void forgetMe(person.tenantId, person.uid);
+          return;
+        }
+        if ((state.reason === 'member-disabled' || state.reason === 'company-inactive') && now() - since > LOCKED_LIMIT_MS) {
           gate.stop();
           void discardFieldWork(person, { lockHeld: true }).then((result) => {
             if (result === 'discarded') onEvent({ removed: true });
@@ -60,15 +66,17 @@ export function runFieldSync(
 
   async function remember(row: DsMe, facts: MeFacts): Promise<void> {
     const user = fieldUser(person);
+    if (!user) return;
     let authTime = row.authTime;
     try {
-      if (user) authTime = Date.parse((await getIdTokenResult(user)).authTime);
+      authTime = Date.parse((await getIdTokenResult(user)).authTime);
     } catch {
       // Keeps the time saved before.
     }
+    if (fieldUser(person) !== user) return;
     const { savedAt: _savedAt, ...rest } = row;
     void _savedAt;
-    await saveMe({
+    await updateMe({
       ...rest,
       companyName: facts.companyName,
       companyId: facts.companyId,

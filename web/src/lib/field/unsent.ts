@@ -8,15 +8,29 @@
 // question or one "Reopen the app", never a lost edit. The recovery journal (S6-4) gives each edit
 // its own entry later; until then this mark is what "unsent work" means.
 //
-// It also holds when the server first refused this person (member disabled, company inactive), for
-// the 30-day limit after which locked work is removed (owner decision O5).
+// It also holds when the server first refused this person, and which refusal it was: the work
+// stays locked through a start with no answer, and a disabled member's or inactive company's is
+// removed after 30 days (owner decision O5). A mark that cannot be read counts as locked.
 //
 // localStorage, not IndexedDB, on purpose: it answers at once, and still answers when IndexedDB
 // hangs, which is exactly when the start-up watchdog needs it. Keys are per (tenant, person), so
 // one company's or one person's mark never speaks for another. The values are counts and times;
 // no email, no field values.
 
-export type LockReason = 'member-disabled' | 'company-inactive';
+import type { GateState } from './sync-gate';
+
+export type LockReason = Extract<GateState, { kind: 'locked' }>['reason'];
+
+const LOCK_REASONS: Record<LockReason, true> = {
+  'verify-email': true,
+  'needs-invitation': true,
+  'member-disabled': true,
+  'company-inactive': true,
+  'second-step': true,
+  'sign-in-again': true,
+  'not-this-company': true,
+  'account-disabled': true,
+};
 
 export type UnsentMark = {
   // Bumped by every write, so a clearing that started before a later write cannot clear it.
@@ -41,7 +55,10 @@ function parse(raw: string | null): UnsentMark | null {
     if (typeof value.writes !== 'number' || !Number.isSafeInteger(value.writes)) return null;
     const lockedSince = time(value.lockedSince);
     const mark: UnsentMark = { writes: value.writes, unsentSince: time(value.unsentSince), lockedSince };
-    if (lockedSince !== null) mark.lockedReason = value.lockedReason === 'company-inactive' ? 'company-inactive' : 'member-disabled';
+    if (lockedSince !== null) {
+      const reason = value.lockedReason;
+      mark.lockedReason = typeof reason === 'string' && Object.hasOwn(LOCK_REASONS, reason) ? (reason as LockReason) : 'sign-in-again';
+    }
     return mark;
   } catch {
     return null;
@@ -99,20 +116,22 @@ export function settled(tenantId: string, uid: string, writes: number): void {
   change(tenantId, uid, (mark) => (mark.writes === writes ? { ...mark, unsentSince: null } : mark));
 }
 
-// The server refused this person (O5). Returns when the refusals began.
-export function noteLocked(tenantId: string, uid: string, reason: LockReason, now = Date.now()): number {
+// The server refused this person (O5). Returns when the refusals began, or null when the lock could
+// not be saved.
+export function noteLocked(tenantId: string, uid: string, reason: LockReason, now = Date.now()): number | null {
   let since = now;
-  change(tenantId, uid, (mark) => {
+  const saved = change(tenantId, uid, (mark) => {
     since = mark.lockedSince ?? now;
     return { ...mark, lockedSince: since, lockedReason: reason };
   });
-  return since;
+  return saved ? since : null;
 }
 
 // The refusal this person's work is locked under on this phone, or null when it is not locked.
 export function savedLock(tenantId: string, uid: string): LockReason | null {
   const mark = readUnsent(tenantId, uid);
-  return mark === 'unreadable' || mark.lockedSince === null ? null : (mark.lockedReason ?? 'member-disabled');
+  if (mark === 'unreadable') return 'sign-in-again';
+  return mark.lockedSince === null ? null : (mark.lockedReason ?? 'sign-in-again');
 }
 
 export function noteUnlocked(tenantId: string, uid: string): void {

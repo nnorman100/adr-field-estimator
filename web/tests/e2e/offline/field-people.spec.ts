@@ -72,6 +72,19 @@ test.describe('people and companies on one phone (S6-3)', () => {
     await context.close();
   });
 
+  test('a field check that finishes after a sign-out does not bring the saved sign-in back', async ({ browser, lane }) => {
+    const context = await browser.newContext();
+    const world = await seedCompany();
+    const phone = await FieldPhone.open(context, lane);
+    const person = phone.person(world, world.owner);
+    expect(await phone.call('updateMe', person)).toBe(false);
+    expect(await phone.call('latestMe')).toBeNull();
+    expect(await phone.call('saveMe', person)).toBe(true);
+    expect(await phone.call('updateMe', person)).toBe(true);
+    expect(await phone.call('latestMe')).toBe(`${world.tenantId}/${world.owner.uid}`);
+    await context.close();
+  });
+
   test('a different person on the same phone neither sees nor sends the first person\'s work', async ({ browser, lane }) => {
     const context = await browser.newContext();
     // Cleo is another estimator of the same company: the rules refuse her Ana's draft.
