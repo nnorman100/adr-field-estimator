@@ -2,9 +2,9 @@
 // asks /api/me who it is, and opens one fixed job. Pure `fetch`, no packages, so the web app's own
 // tests run it (tests/unit/synthetic-probe.test.ts) and the function build (index.ts) reuses it.
 //
-// What may leave this file (hard rule 6): the step names below, the HTTP status code of each
-// answer, and a fixed failure word. Never the email, the password, the API key, a token, a company
-// or job id, a name, or any response body. A thrown failure carries only fixed text, because the
+// What may leave this file (hard rule 6): a severity, the step names below, the HTTP status code
+// of each answer, and a fixed failure code. Never the email, the password, the API key, a token, a
+// company or job id, a name, or any response body. A thrown failure carries only fixed text, because the
 // Cloud Monitoring synthetics SDK copies an error's message and stack into the check result.
 
 export const PROBE_LIMIT_MS = 30_000;
@@ -54,13 +54,12 @@ export type ProbeConfig = {
   authUrl?: string;
 };
 
-export type ProbeEvent = { step: Step; status: number | null; outcome: 'ok' | 'failed'; code?: FailureCode };
+export type ProbeEvent = { step: Step; status: number | null; code?: FailureCode };
 
 export type ProbeDeps = {
   fetch?: typeof fetch;
   // One line per step. The default writes JSON to stdout, where Cloud Run sends it to Cloud Logging.
   log?: (event: ProbeEvent) => void;
-  limitMs?: number;
 };
 
 const IDENTITY_PLATFORM = 'https://identitytoolkit.googleapis.com';
@@ -112,7 +111,8 @@ export function readProbeConfig(env: Record<string, string | undefined>): ProbeC
   const apiKey = read('apiKey');
   const tenantId = read('tenantId');
   const email = read('email');
-  const password = read('password');
+  const password = (env[ENV_NAMES.password] ?? '').replace(/\r?\n$/, '');
+  if (!password) bad.push(ENV_NAMES.password);
   const companyId = read('companyId');
   const jobId = read('jobId');
   const jobName = env[ENV_NAMES.jobName] ?? '';
@@ -149,25 +149,18 @@ export function readProbeConfig(env: Record<string, string | undefined>): ProbeC
 }
 
 function logToStdout(event: ProbeEvent): void {
-  console.log(
-    JSON.stringify({
-      severity: event.outcome === 'ok' ? 'INFO' : 'ERROR',
-      component: 'synthetic-probe',
-      event: 'step',
-      ...event,
-    }),
-  );
+  console.log(JSON.stringify({ severity: event.code ? 'ERROR' : 'INFO', ...event }));
 }
 
 // The one clock for the whole probe: every call and every body read shares it.
-function startClock(limitMs: number) {
+function startClock() {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const expired = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       controller.abort();
       reject(new Error('limit'));
-    }, limitMs);
+    }, PROBE_LIMIT_MS);
   });
   // Nobody may be waiting on it when it fires; that must not be an unhandled rejection.
   expired.catch(() => undefined);
@@ -185,22 +178,17 @@ function asObject(value: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
-export async function runProbe(config: ProbeConfig, deps: ProbeDeps = {}): Promise<{ steps: ProbeEvent[] }> {
+export async function runProbe(config: ProbeConfig, deps: ProbeDeps = {}): Promise<void> {
   const doFetch = deps.fetch ?? fetch;
   const log = deps.log ?? logToStdout;
-  const clock = startClock(deps.limitMs ?? PROBE_LIMIT_MS);
-  const steps: ProbeEvent[] = [];
+  const clock = startClock();
 
   const fail = (step: Step, code: FailureCode, status: number | null = null): never => {
-    const event: ProbeEvent = { step, status, outcome: 'failed', code };
-    steps.push(event);
-    log(event);
+    log({ step, status, code });
     throw new ProbeFailure(step, code, status);
   };
   const pass = (step: Step, status: number): void => {
-    const event: ProbeEvent = { step, status, outcome: 'ok' };
-    steps.push(event);
-    log(event);
+    log({ step, status });
   };
 
   // One call and the read of its body, both inside the probe's time limit. Whatever goes wrong,
@@ -279,5 +267,4 @@ export async function runProbe(config: ProbeConfig, deps: ProbeDeps = {}): Promi
   } finally {
     clock.stop();
   }
-  return { steps };
 }

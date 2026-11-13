@@ -69,7 +69,7 @@ describe('runProbe', () => {
   it('signs in with the tenant and the app origin, reads /api/me, opens the fixed job', async () => {
     const { calls, fetch } = stub([signedIn, meOk, jobOk]);
     const events: ProbeEvent[] = [];
-    const result = await runProbe(config, { fetch, log: (e) => events.push(e) });
+    await runProbe(config, { fetch, log: (e) => events.push(e) });
 
     expect(calls).toHaveLength(3);
     const [signIn, me, job] = calls as [Call, Call, Call];
@@ -92,15 +92,14 @@ describe('runProbe', () => {
       expect(call.init.redirect).toBe('error');
     }
     expect(events).toEqual([
-      { step: 'sign_in', status: 200, outcome: 'ok' },
-      { step: 'me', status: 200, outcome: 'ok' },
-      { step: 'job', status: 200, outcome: 'ok' },
+      { step: 'sign_in', status: 200 },
+      { step: 'me', status: 200 },
+      { step: 'job', status: 200 },
     ]);
-    expect(result.steps).toEqual(events);
     expectNoSecrets(JSON.stringify(events));
   });
 
-  it('writes only step, status and outcome to the default log', async () => {
+  it('writes only severity, step and status to the default log', async () => {
     const lines: string[] = [];
     const spy = vi.spyOn(console, 'log').mockImplementation((line: unknown) => void lines.push(String(line)));
     try {
@@ -108,12 +107,27 @@ describe('runProbe', () => {
     } finally {
       spy.mockRestore();
     }
-    expect(lines).toHaveLength(3);
-    for (const line of lines) {
-      const parsed = JSON.parse(line) as Record<string, unknown>;
-      expect(Object.keys(parsed).sort()).toEqual(['component', 'event', 'outcome', 'severity', 'status', 'step']);
-      expectNoSecrets(line);
+    expect(lines.map((line) => JSON.parse(line) as unknown)).toEqual([
+      { severity: 'INFO', step: 'sign_in', status: 200 },
+      { severity: 'INFO', step: 'me', status: 200 },
+      { severity: 'INFO', step: 'job', status: 200 },
+    ]);
+    for (const line of lines) expectNoSecrets(line);
+  });
+
+  it('adds only an ERROR severity and the fixed failure code to the default log on failure', async () => {
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, 'log').mockImplementation((line: unknown) => void lines.push(String(line)));
+    try {
+      await failureOf(runProbe(config, { fetch: stub([signedIn, () => json(403, { error: `forbidden ${EMAIL}` })]).fetch }));
+    } finally {
+      spy.mockRestore();
     }
+    expect(lines.map((line) => JSON.parse(line) as unknown)).toEqual([
+      { severity: 'INFO', step: 'sign_in', status: 200 },
+      { severity: 'ERROR', step: 'me', status: 403, code: 'refused' },
+    ]);
+    for (const line of lines) expectNoSecrets(line);
   });
 
   it('wrong password: names the sign-in step and its status, and leaks nothing', async () => {
@@ -123,7 +137,7 @@ describe('runProbe', () => {
     expect(failure).toMatchObject({ step: 'sign_in', code: 'refused', status: 400 });
     expect(failure.message).toBe('synthetic probe failed at step sign_in: refused (status 400)');
     expect(calls).toHaveLength(1);
-    expect(events).toEqual([{ step: 'sign_in', status: 400, outcome: 'failed', code: 'refused' }]);
+    expect(events).toEqual([{ step: 'sign_in', status: 400, code: 'refused' }]);
     expectNoSecrets(failure.message + (failure.stack ?? '') + JSON.stringify(events));
   });
 
@@ -215,10 +229,15 @@ describe('runProbe', () => {
 
     it('slow but within the limit still passes', async () => {
       const { fetch } = stub([after(9_000, signedIn), after(9_000, meOk), after(9_000, jobOk)]);
-      const running = runProbe(config, { fetch, log: () => undefined });
+      const events: ProbeEvent[] = [];
+      const running = runProbe(config, { fetch, log: (e) => events.push(e) });
       await vi.advanceTimersByTimeAsync(27_000);
-      const result = await running;
-      expect(result.steps.map((s) => s.outcome)).toEqual(['ok', 'ok', 'ok']);
+      await running;
+      expect(events).toEqual([
+        { step: 'sign_in', status: 200 },
+        { step: 'me', status: 200 },
+        { step: 'job', status: 200 },
+      ]);
     });
 
     it('slow answers that add up past the limit fail at the step then running', async () => {
@@ -228,7 +247,11 @@ describe('runProbe', () => {
       await vi.advanceTimersByTimeAsync(30_000);
       const failure = await running;
       expect(failure).toMatchObject({ step: 'job', code: 'timeout', status: null });
-      expect(events.map((e) => `${e.step}:${e.outcome}`)).toEqual(['sign_in:ok', 'me:ok', 'job:failed']);
+      expect(events).toEqual([
+        { step: 'sign_in', status: 200 },
+        { step: 'me', status: 200 },
+        { step: 'job', status: null, code: 'timeout' },
+      ]);
       expectNoSecrets(failure.message + JSON.stringify(events));
     });
 
@@ -279,6 +302,16 @@ describe('readProbeConfig', () => {
 
   it('reads the settings from the environment', () => {
     expect(readProbeConfig(env)).toEqual({ ...config, appUrl: APP });
+  });
+
+  it('keeps the password exactly, dropping only one trailing newline', () => {
+    const passwordFrom = (value: string) => readProbeConfig({ ...env, SYNTHETIC_PASSWORD: value }).password;
+    expect(passwordFrom(`${PASSWORD}\r\n`)).toBe(PASSWORD);
+    expect(passwordFrom(PASSWORD)).toBe(PASSWORD);
+    expect(passwordFrom(`  ${PASSWORD}  `)).toBe(`  ${PASSWORD}  `);
+    expect(passwordFrom(`\t${PASSWORD} \n`)).toBe(`\t${PASSWORD} `);
+    expect(passwordFrom(`${PASSWORD}\n\n`)).toBe(`${PASSWORD}\n`);
+    expect(() => readProbeConfig({ ...env, SYNTHETIC_PASSWORD: '\n' })).toThrow(/SYNTHETIC_PASSWORD/);
   });
 
   it('names a missing or malformed setting by variable name, never by value', () => {

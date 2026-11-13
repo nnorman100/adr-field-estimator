@@ -9,8 +9,9 @@ option A). Every run it:
 2. calls `GET /api/me` and checks it says the technician is signed in to that company;
 3. calls `GET /api/jobs/{id}` and checks the fixed job opens with its fixed customer name.
 
-The whole probe has a 30-second limit. It logs only step names and HTTP status codes, and a failure
-names its step and a fixed reason (`refused`, `timeout`, `wrong_job`, ...). No email, password, key,
+The whole probe has a 30-second limit. Each log line holds only a severity (`INFO` or `ERROR`), the
+step name, the HTTP status code and, on failure, a fixed failure code (`refused`, `timeout`,
+`wrong_job`, ...); a thrown failure names the same step and code. No email, password, key,
 token, id, name or response body is ever written, thrown or logged.
 
 | File             | What it is                                                                                    |
@@ -25,7 +26,8 @@ Plain variables (set by Terraform in TC-11, not secret): `SYNTHETIC_APP_URL` (th
 origin), `SYNTHETIC_API_KEY` (the test app's Identity Platform web API key), `SYNTHETIC_TENANT_ID`,
 `SYNTHETIC_EMAIL`, `SYNTHETIC_COMPANY_ID`, `SYNTHETIC_JOB_ID`, `SYNTHETIC_JOB_NAME`.
 
-Secret variable (from Secret Manager `dryscope-<env>-synthetic-password`): `SYNTHETIC_PASSWORD`.
+Secret variable (from Secret Manager `dryscope-<env>-synthetic-password`): `SYNTHETIC_PASSWORD`. It is
+used exactly as stored, except that one trailing newline (`\n` or `\r\n`) is dropped.
 
 Local runs only: `SYNTHETIC_AUTH_URL`, a loopback address that replaces Identity Platform (for the
 Auth emulator, `http://127.0.0.1:<port>/identitytoolkit.googleapis.com`). Any other address is
