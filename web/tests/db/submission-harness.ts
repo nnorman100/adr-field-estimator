@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import type postgres from 'postgres';
 import type { CompanyTransaction } from '@/db/tenant';
-import { digestOf, newJob, seedJob, type JobInput } from './job-harness';
+import { digestOf, newJob, pause, seedJob, type JobInput } from './job-harness';
 
 // Shared by the migration 0011 tests (S5a-7): a submission, a price version, a pin, an estimate and
 // an agreement seeded or inserted the way S5a-8 to S5a-11's routes will.
@@ -20,6 +20,37 @@ export async function refusal(promise: Promise<unknown>): Promise<Refusal | unde
     return { code: pg.code, constraint: (pg as { constraint_name?: string }).constraint_name, message: pg.message };
   }
   return undefined;
+}
+
+// A transaction that writes, then stays open until the database shows another backend waiting on it,
+// and only then commits. `written` settles once the write is done (or the transaction failed), `done`
+// once it has committed; `done` fails if nothing came to wait on it within `timeout` ms.
+export function heldOpen<T>(
+  admin: postgres.Sql,
+  open: (run: (tx: CompanyTransaction) => Promise<T>) => Promise<T>,
+  write: (tx: CompanyTransaction) => Promise<T>,
+  timeout = 10_000,
+) {
+  let wrote!: () => void;
+  const ready = new Promise<void>((resolve) => (wrote = resolve));
+  const done = open(async (tx) => {
+    const [{ pid }] = (await tx.execute(sql`SELECT pg_backend_pid() AS pid`)) as unknown as [{ pid: number }];
+    const result = await write(tx);
+    wrote();
+    await waitedOn(admin, pid, timeout);
+    return result;
+  });
+  return { written: Promise.race([ready, done]), done };
+}
+
+async function waitedOn(admin: postgres.Sql, pid: number, timeout: number) {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    const [row] = await admin<{ n: number }[]>`SELECT count(*)::int AS n FROM pg_stat_activity WHERE ${pid}::int = ANY(pg_blocking_pids(pid))`;
+    if (row!.n > 0) return;
+    if (Date.now() > deadline) throw new Error(`nothing waited on backend ${pid}`);
+    await pause(20);
+  }
 }
 
 export type Bytes = { bytes: Buffer; sha: string };
