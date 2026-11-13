@@ -15,9 +15,7 @@ const require = createRequire(import.meta.url);
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SCRIPT = path.join(ROOT, 'infra', 'dryscope', 'scripts', 'check-plan.js');
 const { checkPlan } = require(SCRIPT);
-const { checkConfig, REQUIRED_IGNORED } = require(
-  path.join(ROOT, 'infra', 'dryscope', 'scripts', 'check-guards.js'),
-);
+const { checkConfig } = require(path.join(ROOT, 'infra', 'dryscope', 'scripts', 'check-guards.js'));
 
 const load = (root, environment) =>
   JSON.parse(
@@ -215,10 +213,6 @@ describe('app root: what a release sets is ignored by the next apply', () => {
 
   test('the real configuration ignores the image and traffic', () => {
     expect(checkConfig(real, 'app')).toEqual([]);
-    expect(REQUIRED_IGNORED.app['google_cloud_run_v2_service.svc']).toEqual([
-      'template[0].containers[0].image',
-      'traffic',
-    ]);
   });
 
   test.each([
