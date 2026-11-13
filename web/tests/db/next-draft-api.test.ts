@@ -21,6 +21,7 @@ const jobsRoute = await import('@/app/api/jobs/route');
 const photoRoute = await import('@/app/api/jobs/[jobId]/photos/[photoId]/route');
 const submissionsRoute = await import('@/app/api/jobs/[jobId]/submissions/route');
 const draftsRoute = await import('@/app/api/jobs/[jobId]/drafts/route');
+const claimRoute = await import('@/app/api/jobs/[jobId]/claim/route');
 const { everything, params, request, resetTeamDatabase, startTeamServer } = await import('./team-harness');
 
 let base: Awaited<ReturnType<typeof startTeamServer>>;
@@ -170,5 +171,45 @@ describe('Back to editing', () => {
     expect(h.field.draft(h.seed.a, body.draftId)).toBeNull();
     expect((await f.nextDraft(ESTIMATOR_A, jobId, body)).status).toBe(200);
     expect(h.field.draft(h.seed.a, body.draftId)).toMatchObject({ state: 'editing', previous: { draftId } });
+  });
+
+  it('makes the missing draft on a retry even after the office saved the claim in between', async () => {
+    const { jobId, draftId, submissionId } = await submittedJob();
+    const body = { draftId: randomUUID(), fromDraftId: draftId };
+    h.field.failNext.createFrom = true;
+    expect((await f.nextDraft(ESTIMATOR_A, jobId, body)).status).toBe(503);
+    const claim = {
+      revision: (await f.job(jobId)).revision,
+      changeId: randomUUID(),
+      carrier: 'Sample Mutual',
+      claimNumber: 'CL-1',
+      policyNumber: 'PO-1',
+      dateOfLoss: '2026-10-30',
+      lossCause: 'Burst supply line',
+      adjusterName: 'Alex Adjuster',
+      adjusterEmail: 'alex@example.test',
+      adjusterPhone: '555-0111',
+      deductible: '$1,000',
+    };
+    const saved = await claimRoute.PUT(request(OFFICE_A, `/api/jobs/${jobId}/claim`, { method: 'PUT', body: claim }), params({ jobId }));
+    expect(saved.status).toBe(200);
+    expect((await f.job(jobId)).last_change_id).toBe(claim.changeId);
+    expect((await f.nextDraft(ESTIMATOR_A, jobId, body)).status).toBe(200);
+    expect(h.field.draft(h.seed.a, body.draftId)).toMatchObject({ state: 'editing', previous: { draftId, submissionId } });
+  });
+
+  it('never makes the missing draft from a record that is not the latest', async () => {
+    const { jobId, draftId, manifest } = await submittedJob();
+    const second = randomUUID();
+    expect((await f.nextDraft(ESTIMATOR_A, jobId, { draftId: second, fromDraftId: draftId })).status).toBe(201);
+    h.field.put(h.seed.a, second, manifest);
+    expect((await f.submitShown(ESTIMATOR_A, jobId, second, manifest)).answer.status).toBe(201);
+    const third = randomUUID();
+    h.field.failNext.createFrom = true;
+    expect((await f.nextDraft(ESTIMATOR_A, jobId, { draftId: third, fromDraftId: second })).status).toBe(503);
+    expect(await f.nextDraft(ESTIMATOR_A, jobId, { draftId: third, fromDraftId: draftId })).toMatchObject({ status: 409, body: { error: 'conflict' } });
+    expect(h.field.draft(h.seed.a, third)).toBeNull();
+    expect((await f.nextDraft(ESTIMATOR_A, jobId, { draftId: third, fromDraftId: second })).status).toBe(200);
+    expect(h.field.draft(h.seed.a, third)?.previous).toMatchObject({ draftId: second });
   });
 });

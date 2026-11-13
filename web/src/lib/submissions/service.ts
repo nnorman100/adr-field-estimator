@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { actors, auditEvents, evidenceObjects, jobClaims, jobCustomers, jobs, jobSubmissions } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
@@ -389,22 +389,25 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
       if (!hasAny(caller, SUBMIT)) throw new JobError('not_allowed');
       const made = await inCompany(caller.companyId, async (tx) => {
         const job = await jobAccess(tx, caller, jobId, SUBMIT, { lock: true });
-        const [source] = await tx
+        // The job's latest record: a new draft is made only from it.
+        const [latest] = await tx
           .select()
           .from(jobSubmissions)
           .where(
             and(
               eq(jobSubmissions.companyId, caller.companyId),
               eq(jobSubmissions.jobId, jobId),
-              eq(jobSubmissions.draftId, input.fromDraftId),
               eq(jobSubmissions.status, 'committed'),
             ),
-          );
+          )
+          .orderBy(desc(jobSubmissions.createdAt))
+          .limit(1);
+        const source = latest?.draftId === input.fromDraftId ? latest : undefined;
         let next: JobRow | undefined = job;
         let changed = false;
         if (job.currentDraftId === input.draftId) {
           // The same change again (its answer was lost): nothing more to change in Postgres.
-          if (!source || job.lastChangeId !== input.draftId) throw new SubmissionError('conflict');
+          if (!source) throw new SubmissionError('conflict');
         } else {
           if (job.status === 'signed') throw new SubmissionError('job_signed');
           // Only from the job's current draft: a second call with another new id is 409.

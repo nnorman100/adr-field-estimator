@@ -42,7 +42,9 @@ describe('the Finish and review screen', () => {
     expect(outcomeOf(0, null).next).toBe('retry');
     expect(outcomeOf(409, { error: 'digest_mismatch' }).next).toBe('reload');
     expect(outcomeOf(409, { error: 'submission_aborted' }).next).toBe('reload');
-    expect(outcomeOf(409, { error: 'already_submitted' }).next).toBe('done');
+    // A refusal that means the job changed elsewhere reads the job again, so the screen shows its state.
+    for (const code of ['already_submitted', 'not_submitted', 'job_signed']) expect(outcomeOf(409, { error: code }).next).toBe('reload');
+    expect(outcomeOf(404, { error: 'not_found' }).next).toBe('done');
     expect(outcomeOf(400, { error: 'something new' })).toEqual({ message: 'Something went wrong. Reload the job.', next: 'reload' });
   });
 });

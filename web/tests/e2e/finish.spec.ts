@@ -155,6 +155,28 @@ test('a lost answer is sent again with the same id, and a changed draft starts o
   expect(sent[2]!.body.digest).toBe(sent[0]!.body.digest);
 });
 
+test('when another phone finished first, a reload shows the record and Back to editing', async ({ page }) => {
+  const { jobId, draftId } = await seedDraft(team.estimator, 'estimator');
+  const job = { id: jobId, status: 'draft', currentDraftId: draftId, revision: 2 };
+  await playJobsApi(page, job, {
+    submit: () => {
+      // The other phone's Submit is already recorded on the server.
+      job.status = 'submitted';
+      job.revision = 3;
+      return [409, { error: 'already_submitted' }];
+    },
+  });
+  await signInTo(page, team.estimator);
+  await page.goto(`/sign-in/${team.address}/jobs/${jobId}/finish`);
+  const main = page.getByRole('main');
+  await main.getByRole('button', { name: 'Finish and review' }).click();
+  await expect(main.getByRole('alert')).toContainText('This draft is already finished.');
+  await main.getByRole('button', { name: 'Reload the job' }).click();
+  await expect(main.getByRole('heading', { name: 'Finished' })).toBeVisible();
+  await expect(main.getByRole('button', { name: 'Back to editing' })).toBeVisible();
+  await expect(main.getByRole('button', { name: 'Finish and review' })).toHaveCount(0);
+});
+
 test('office sees the draft but cannot finish it', async ({ page }) => {
   const { jobId, draftId } = await seedDraft(team.office, 'office');
   const sent = await playJobsApi(page, { id: jobId, status: 'draft', currentDraftId: draftId, revision: 2 }, {});
