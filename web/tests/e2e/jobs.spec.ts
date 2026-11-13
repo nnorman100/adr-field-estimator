@@ -296,6 +296,51 @@ test('a dropped response after the server committed leaves one job and one photo
   await expect(main(page).getByText('Lee Example')).toBeVisible();
 });
 
+test('photos are downloaded only while Photos is open, and kept after', async ({ page }) => {
+  const company = await seedCompany('lazy-photos', { estimator: 'estimator' });
+  await signIn(page, company, company.people.estimator!);
+  await startJob(page, '15 Quiet Lane');
+  await addRoom(page, 'Utility');
+
+  // The upload's answer is held until the person has moved on to Check Scope.
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route('**/api/jobs/*/photos/*', async (route) => {
+    if (route.request().method() !== 'PUT') return route.fallback();
+    const response = await route.fetch();
+    await held;
+    await route.fulfill({ response });
+  });
+  const downloads: string[] = [];
+  page.on('request', (request) => {
+    if (request.method() === 'GET' && /^\/api\/jobs\/[^/]+\/photos\//.test(new URL(request.url()).pathname)) downloads.push(request.url());
+  });
+
+  await takePhoto(page, 'Utility', 'Overview');
+  await expect(page.getByRole('status').filter({ hasText: 'Sending the photo…' })).toBeVisible();
+  await main(page).getByRole('link', { name: 'Check Scope' }).click();
+  await expect(page.getByLabel('Year built')).toBeVisible();
+  release();
+  // The photo is stored and in the job's photos, which are not on screen: nothing is downloaded.
+  await expect(page.getByText('Job photos (1)')).toHaveCount(1);
+  await expect(page.getByText('Saving its room and tag…')).toHaveCount(0);
+  await page.waitForTimeout(1_000);
+  expect(downloads).toEqual([]);
+
+  // Opening Photos downloads and shows it; leaving and coming back keeps it without downloading again.
+  await main(page).getByRole('link', { name: 'Photos' }).click();
+  await expectPhoto(page, 'Photo 1, Utility, Overview');
+  const fetched = downloads.length;
+  expect(fetched).toBeGreaterThan(0);
+  await main(page).getByRole('link', { name: 'Check Scope' }).click();
+  await expect(page.getByLabel('Year built')).toBeVisible();
+  await main(page).getByRole('link', { name: 'Photos' }).click();
+  await expectPhoto(page, 'Photo 1, Utility, Overview');
+  expect(downloads).toHaveLength(fetched);
+});
+
 test('every field view passes axe', async ({ page }) => {
   const company = await seedCompany('axe', { estimator: 'estimator' });
   await signIn(page, company, company.people.estimator!);

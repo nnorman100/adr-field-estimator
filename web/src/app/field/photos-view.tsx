@@ -23,9 +23,6 @@ function fieldOf(roomId: string, shotTag: string): PhotoField {
 // bytes go to the photo route (S5a-5) first; its reference (room and shot tag) is written to the
 // field draft only once the server holds the bytes.
 export function PhotosView({ job, draft, open }: { job: JobContext; draft: FieldDraft; open: boolean }) {
-  // The photos' bytes are fetched only once this view has been opened, and kept after.
-  const [opened, setOpened] = useState(open);
-  if (open && !opened) setOpened(true);
   const [roomId, setRoomId] = useState('');
   const [shotTag, setShotTag] = useState('');
   // Photos sent and not yet settled, kept for the life of the page (src/lib/field/pending.ts), so
@@ -117,7 +114,7 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
             <li key={photo.id} className="flex flex-col gap-1">
               <Thumbnail
                 job={job}
-                load={opened}
+                load={open}
                 photoId={photo.id}
                 label={`Photo ${index + 1}${roomName(photo.field.roomId) ? `, ${roomName(photo.field.roomId)}` : ''}${photo.field.shotTag ? `, ${SHOT_NAMES[photo.field.shotTag]}` : ''}`}
               />
@@ -132,23 +129,28 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
   );
 }
 
-// The photo's bytes through the photo route, which checks this person may see the job.
+// The photo's bytes through the photo route, which checks this person may see the job. They are
+// fetched only while Photos is the open view (`load`), and kept once fetched.
 function Thumbnail({ job, load, photoId, label }: { job: JobContext; load: boolean; photoId: string; label: string }) {
   const [address, setAddress] = useState<string | null | 'missing'>(null);
+  const fetching = load && address === null;
   useEffect(() => {
-    if (!load) return;
+    if (!fetching) return;
     let live = true;
-    let made: string | null = null;
     void photoAddress(job.session.user, job.detail.job.id, photoId).then((found) => {
-      made = found;
       if (live) setAddress(found ?? 'missing');
       else if (found) URL.revokeObjectURL(found);
     });
     return () => {
       live = false;
-      if (made) URL.revokeObjectURL(made);
     };
-  }, [load, job.session.user, job.detail.job.id, photoId]);
+  }, [fetching, job.session.user, job.detail.job.id, photoId]);
+  useEffect(
+    () => () => {
+      if (address !== null && address !== 'missing') URL.revokeObjectURL(address);
+    },
+    [address],
+  );
   if (address === null) return <div className="aspect-square rounded-md bg-foreground/10" role="img" aria-label={`${label}, loading`} />;
   if (address === 'missing') return <div className="aspect-square rounded-md bg-foreground/10 p-2 text-sm" role="img" aria-label={`${label}, not available`} />;
   // eslint-disable-next-line @next/next/no-img-element -- a local object address; the image optimiser cannot fetch it
