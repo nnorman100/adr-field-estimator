@@ -1,4 +1,4 @@
-import type { Attributes } from '@opentelemetry/api';
+import type { Attributes, SpanContext } from '@opentelemetry/api';
 import type { ExportResult } from '@opentelemetry/core';
 import type { ReadableSpan, SpanExporter } from '@opentelemetry/sdk-trace';
 import { scrub } from '@/lib/log';
@@ -10,8 +10,8 @@ import { scrub } from '@/lib/log';
 //     boolean; strings are scrubbed for emails, tokens and coordinates, and any path in them has its
 //     query cut and its id-shaped segments replaced;
 //   - span names get the same path treatment ("GET /api/jobs/<id>?x=1" -> "GET /api/jobs/[id]");
-//   - events (an exception event holds the error's message and stack), links and the status message
-//     are dropped.
+//   - events (an exception event holds the error's message and stack), links, the status message
+//     and the incoming tracestate are dropped.
 
 const ALLOWED_NAME = new RegExp(
   '^(?:' +
@@ -52,14 +52,16 @@ export function sanitizeAttributes(attributes: Attributes): Attributes {
   return out;
 }
 
+const withoutTraceState = (ids: SpanContext): SpanContext => ({ ...ids, traceState: undefined });
+
 function sanitizedSpan(span: ReadableSpan): ReadableSpan {
   const attributes = sanitizeAttributes(span.attributes);
   const dropped = Object.keys(span.attributes).length - Object.keys(attributes).length;
   return {
     name: clean(span.name),
     kind: span.kind,
-    spanContext: () => span.spanContext(),
-    parentSpanContext: span.parentSpanContext,
+    spanContext: () => withoutTraceState(span.spanContext()),
+    parentSpanContext: span.parentSpanContext && withoutTraceState(span.parentSpanContext),
     startTime: span.startTime,
     endTime: span.endTime,
     status: { code: span.status.code },

@@ -168,6 +168,23 @@ describe('what may leave the process', () => {
     expect(out!.status).toEqual({ code: SpanStatusCode.ERROR });
     expect(JSON.stringify(out)).not.toMatch(/example\.com|203\.0|abc\.def|3f2c0a1e/);
   });
+
+  it('exports a request span without the incoming tracestate, keeping its trace and parent ids', async () => {
+    start();
+    const { propagation, context, ROOT_CONTEXT } = await import('@opentelemetry/api');
+    const trace32 = '4bf92f3577b34da6a3ce929d0e0e4736';
+    const incoming = propagation.extract(ROOT_CONTEXT, {
+      traceparent: `00-${trace32}-00f067aa0ba902b7-01`,
+      tracestate: 'vendor=jo@example.com',
+    });
+    expect(trace.getSpanContext(incoming)?.traceState?.serialize()).toBe('vendor=jo@example.com');
+    await context.with(incoming, () => inSpan('GET /api/health', SpanKind.SERVER, {}, async () => 1));
+    const [out] = finished();
+    expect(out!.spanContext()).toMatchObject({ traceId: trace32, traceFlags: 1 });
+    expect(out!.spanContext().traceState).toBeUndefined();
+    expect(out!.parentSpanContext).toMatchObject({ traceId: trace32, spanId: '00f067aa0ba902b7', traceFlags: 1 });
+    expect(out!.parentSpanContext?.traceState).toBeUndefined();
+  });
 });
 
 describe('a failing exporter', () => {
