@@ -1,5 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { APP_CHECK_MONITOR_WAIT_MS, judgeMe, offlineSignInValid, SyncGate, type GateDeps, type GateState, type MeAnswer } from '@/lib/field/sync-gate';
+import {
+  APP_CHECK_ENFORCE_WITHIN_MS,
+  APP_CHECK_MONITOR_WAIT_MS,
+  ASK_WITHIN_MS,
+  judgeMe,
+  sessionValid,
+  SyncGate,
+  type GateDeps,
+  type GateState,
+  type MeAnswer,
+} from '@/lib/field/sync-gate';
 
 // The sync gate (S6-3, docs/plans/S6.md section 3) and the App Check step in it (TC-7): the field
 // client's network goes on only after GET /api/me answered 200 with a future
@@ -52,6 +62,11 @@ describe('one /api/me answer, judged', () => {
     expect(judgeMe(refused(status, code), NOW)).toEqual({ kind: 'locked', reason });
   });
 
+  it('tells a revoked sign-in (what disabling a member does) from one that is only too old', () => {
+    expect(judgeMe(refused(401, 'sign_in_revoked'), NOW)).toEqual({ kind: 'locked', reason: 'session-revoked' });
+    expect(judgeMe(refused(401, 'sign_in_again'), NOW)).toEqual({ kind: 'locked', reason: 'sign-in-again' });
+  });
+
   it.each([
     ['no answer', { status: 0, body: null }],
     ['a server error', { status: 503, body: null }],
@@ -68,15 +83,15 @@ describe('the offline me read (D7)', () => {
     ['office', 14],
   ])('a %s sign-in stands in for %i days offline, and not after', (role, days) => {
     const authTime = NOW - days * DAY;
-    expect(offlineSignInValid({ role, authTime }, NOW)).toBe(true);
-    expect(offlineSignInValid({ role, authTime: authTime - 1000 }, NOW)).toBe(false);
+    expect(sessionValid({ role, authTime }, NOW)).toBe(true);
+    expect(sessionValid({ role, authTime: authTime - 1000 }, NOW)).toBe(false);
   });
 
   it('does not stand in for a row with no role or sign-in time, or an unknown role', () => {
-    expect(offlineSignInValid({}, NOW)).toBe(false);
-    expect(offlineSignInValid({ role: 'estimator' }, NOW)).toBe(false);
-    expect(offlineSignInValid({ role: 'operator', authTime: NOW }, NOW)).toBe(true);
-    expect(offlineSignInValid({ role: 'admin', authTime: NOW }, NOW)).toBe(false);
+    expect(sessionValid({}, NOW)).toBe(false);
+    expect(sessionValid({ role: 'estimator' }, NOW)).toBe(false);
+    expect(sessionValid({ role: 'operator', authTime: NOW }, NOW)).toBe(true);
+    expect(sessionValid({ role: 'admin', authTime: NOW }, NOW)).toBe(false);
   });
 });
 
@@ -303,6 +318,103 @@ describe('the gate', () => {
     }
   });
 
+  describe('the session limit, in every state', () => {
+    let tokenComes = false;
+    const reach: Record<string, { answers: () => MeAnswer[]; appCheck?: GateDeps['appCheck']; network: boolean }> = {
+      starting: { answers: () => [], network: false },
+      offline: { answers: () => [{ status: 0, body: null }], network: false },
+      open: { answers: () => [me(NOW + 7 * DAY)], network: true },
+      renewing: { answers: () => [me(NOW - DAY)], network: false },
+      'checking-phone': {
+        answers: () => [me(NOW + 7 * DAY)],
+        appCheck: { mode: 'enforce', token: async () => (tokenComes ? 'fresh' : Promise.reject(new Error('no token'))) },
+        network: false,
+      },
+      locked: { answers: () => [refused(403, 'member_disabled')], network: false },
+    };
+
+    it.each(Object.keys(reach))('from %s, a sign-in past the limit stops everything until it is valid again', async (from) => {
+      const setup = reach[from]!;
+      tokenComes = false;
+      answers = setup.answers();
+      let valid = true;
+      const g = gate({ sessionValid: () => valid, appCheck: setup.appCheck ?? null });
+      if (from !== 'starting') {
+        g.start();
+        await vi.advanceTimersByTimeAsync(0);
+      }
+      expect(g.current().kind).toBe(from);
+      valid = false;
+      g.checkSession();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(g.current()).toEqual({ kind: 'expired' });
+      if (setup.network) expect(calls.at(-1)).toBe('disable');
+      // Asking again changes nothing while the sign-in is too old, whatever the server says.
+      answers = [me(NOW + 7 * DAY)];
+      const enables = calls.filter((c) => c === 'enable').length;
+      g.poke();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(g.current()).toEqual({ kind: 'expired' });
+      expect(calls.filter((c) => c === 'enable')).toHaveLength(enables);
+      // Signed in again: the next check opens.
+      valid = true;
+      tokenComes = true;
+      g.poke();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(g.current()).toMatchObject({ kind: 'open' });
+      g.stop();
+    });
+
+    it('does not open when the sign-in is past the limit at the first answer', async () => {
+      answers = [me(NOW + 7 * DAY)];
+      const g = gate({ sessionValid: () => false });
+      g.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(g.current()).toEqual({ kind: 'expired' });
+      expect(calls).toEqual(['ask']);
+      g.stop();
+    });
+  });
+
+  it('gives up on an /api/me that does not answer, and a later poke asks afresh', async () => {
+    let first = true;
+    const g = gate({
+      ask: async () => {
+        calls.push('ask');
+        if (first) {
+          first = false;
+          return new Promise<MeAnswer>(() => undefined);
+        }
+        return me(NOW + 7 * DAY);
+      },
+    });
+    g.start();
+    await vi.advanceTimersByTimeAsync(ASK_WITHIN_MS);
+    expect(g.current()).toEqual({ kind: 'offline' });
+    g.poke();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls).toEqual(['ask', 'ask', 'enable']);
+    expect(g.current()).toMatchObject({ kind: 'open' });
+    g.stop();
+  });
+
+  it('while the page is hidden, closes the network and asks nothing; shown again, asks before it opens', async () => {
+    answers = [me(NOW + 7 * DAY)];
+    const g = gate();
+    g.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls).toEqual(['ask', 'enable']);
+    await g.suspend();
+    expect(calls).toEqual(['ask', 'enable', 'disable']);
+    g.poke();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(calls).toEqual(['ask', 'enable', 'disable']);
+    g.resume();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls).toEqual(['ask', 'enable', 'disable', 'ask', 'enable']);
+    g.stop();
+  });
+
   it('works offline with no answer, and opens when the signal is back', async () => {
     answers = [{ status: 0, body: null }, me(NOW + 7 * DAY)];
     const g = gate();
@@ -358,6 +470,16 @@ describe('the gate', () => {
       await vi.advanceTimersByTimeAsync(APP_CHECK_MONITOR_WAIT_MS);
       expect(calls).toEqual(['ask']);
       expect(g.current()).toEqual({ kind: 'renewing' });
+      g.stop();
+    });
+
+    it('under enforcement, a token that will not come is given up on, and says "checking this phone"', async () => {
+      answers = [me(NOW + 7 * DAY)];
+      const g = gate({ appCheck: { mode: 'enforce', token: () => new Promise(() => undefined) } });
+      g.start();
+      await vi.advanceTimersByTimeAsync(APP_CHECK_ENFORCE_WITHIN_MS);
+      expect(g.current()).toEqual({ kind: 'checking-phone' });
+      expect(calls).toEqual(['ask']);
       g.stop();
     });
 

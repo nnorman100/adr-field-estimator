@@ -38,7 +38,11 @@ export type GateState =
   // App Check under enforcement, waiting for a token.
   | { kind: 'checking-phone' }
   | { kind: 'open'; facts: MeFacts }
-  | { kind: 'locked'; reason: Exclude<MeOutcome['kind'], 'signed-in' | 'unavailable'> };
+  // The saved sign-in is older than the role's session limit: nothing shows and nothing is sent
+  // until the person signs in again.
+  | { kind: 'expired' }
+  // 'session-revoked': the server refused a sign-in that was revoked (disabling a member does that).
+  | { kind: 'locked'; reason: Exclude<MeOutcome['kind'], 'signed-in' | 'unavailable'> | 'session-revoked' };
 
 export type Verdict = { kind: 'open'; facts: MeFacts } | { kind: 'renewing' } | { kind: 'offline' } | Extract<GateState, { kind: 'locked' }>;
 
@@ -61,7 +65,10 @@ export function judgeMe(answer: MeAnswer, now: number): Verdict {
   if (answer.status === 0) return { kind: 'offline' };
   const outcome = meOutcome(answer.status, answer.body);
   if (outcome.kind === 'unavailable') return { kind: 'offline' };
-  if (outcome.kind !== 'signed-in') return { kind: 'locked', reason: outcome.kind };
+  if (outcome.kind !== 'signed-in') {
+    const revoked = answer.status === 401 && field(answer.body, 'error') === 'sign_in_revoked';
+    return { kind: 'locked', reason: revoked ? 'session-revoked' : outcome.kind };
+  }
   const facts = meFacts(answer.body);
   const expires = field(answer.body, 'fieldAccessExpiresAt');
   const expiresAt = typeof expires === 'string' ? Date.parse(expires) : NaN;
@@ -74,7 +81,7 @@ export function judgeMe(answer: MeAnswer, now: number): Verdict {
 // signal, but only until the role's own session limit (12 hours to 30 days, S3-8); after that the
 // person must open the app once online. A row without a role or sign-in time (written before S6-3)
 // does not stand in at all. The rules and the server still decide everything once online.
-export function offlineSignInValid(saved: { role?: string; authTime?: number }, now: number): boolean {
+export function sessionValid(saved: { role?: string; authTime?: number }, now: number): boolean {
   if (typeof saved.role !== 'string' || typeof saved.authTime !== 'number') return false;
   const rule = (SESSION_RULES as Record<string, { maxSignInAgeSeconds: number } | undefined>)[saved.role];
   if (!rule) return false;
@@ -82,6 +89,14 @@ export function offlineSignInValid(saved: { role?: string; authTime?: number }, 
 }
 
 export const APP_CHECK_MONITOR_WAIT_MS = 5_000;
+// The longest the gate waits for GET /api/me, and for an App Check token under enforcement; a late
+// answer is not acted on, and the next check asks again.
+export const ASK_WITHIN_MS = 15_000;
+export const APP_CHECK_ENFORCE_WITHIN_MS = 10_000;
+
+function within<T>(promise: Promise<T>, ms: number, otherwise: T): Promise<T> {
+  return Promise.race([promise, new Promise<T>((done) => setTimeout(() => done(otherwise), ms))]);
+}
 // The network is on only while the access record the server last confirmed has this much left, so
 // no write reaches the rules after the record has run out.
 export const EXPIRY_MARGIN_MS = 10_000;
@@ -105,6 +120,10 @@ export type GateDeps = {
   // Who an answer is for: an answer is dropped, and asked for again, when this changes while it is
   // awaited.
   session?: () => unknown;
+  // Whether the saved sign-in is still within the role's session limit (sessionValid on the
+  // person's ds-me row). Asked after every answer, before the network goes on, and by
+  // checkSession(); when it is not, the gate is 'expired'.
+  sessionValid?: (now: number) => boolean;
 };
 
 // Runs the gate for one field client. Foreground only: it asks on start, on poke() (the app
@@ -118,8 +137,11 @@ export class SyncGate {
   private stopped = false;
   private renewWait = RENEW_FIRST_MS;
   private networkOn = false;
-  // Bumped when the signal goes or the gate stops: an answer asked for before then is not acted on.
+  // Bumped when the signal goes, the page is hidden or the gate stops: an answer asked for before
+  // then is not acted on.
   private epoch = 0;
+  // The page is hidden: the network stays off and nothing is asked until resume().
+  private suspended = false;
   // App Check tokens that would not come in monitor mode, counted on the phone only (no telemetry).
   appCheckMisses = 0;
 
@@ -129,6 +151,32 @@ export class SyncGate {
 
   private now(): number {
     return this.deps.now ? this.deps.now() : Date.now();
+  }
+
+  private sessionOk(): boolean {
+    return this.deps.sessionValid ? this.deps.sessionValid(this.now()) : true;
+  }
+
+  // The saved sign-in's age, judged now (a timer, the page shown again): past the role's limit,
+  // the network goes off and the gate is 'expired', whatever it was.
+  checkSession(): void {
+    if (this.stopped || this.state.kind === 'expired' || this.sessionOk()) return;
+    this.epoch += 1;
+    void this.closeNetwork();
+    this.set({ kind: 'expired' });
+  }
+
+  // The page was hidden: the network goes off, and nothing is asked until it is shown again.
+  async suspend(): Promise<void> {
+    if (this.stopped) return;
+    this.suspended = true;
+    await this.networkLost();
+  }
+
+  resume(): void {
+    this.suspended = false;
+    this.checkSession();
+    this.poke();
   }
 
   current(): GateState {
@@ -210,16 +258,18 @@ export class SyncGate {
       if (!got) this.appCheckMisses += 1;
       return true;
     }
-    try {
-      await seam.token();
-      return true;
-    } catch {
-      return false;
-    }
+    return within(
+      seam.token().then(
+        () => true,
+        () => false,
+      ),
+      APP_CHECK_ENFORCE_WITHIN_MS,
+      false,
+    );
   }
 
   private async check(): Promise<void> {
-    if (this.stopped || this.running) return;
+    if (this.stopped || this.running || this.suspended) return;
     this.running = true;
     try {
       const epoch = this.epoch;
@@ -230,11 +280,17 @@ export class SyncGate {
         this.again = true;
         return true;
       };
-      let verdict = judgeMe(await this.deps.ask(), this.now());
+      const expire = async (): Promise<void> => {
+        await this.closeNetwork();
+        if (!stale()) this.set({ kind: 'expired' });
+      };
+      let verdict = judgeMe(await within(this.deps.ask(), ASK_WITHIN_MS, { status: 0, body: null }), this.now());
       if (stale()) return;
+      if (!this.sessionOk()) return await expire();
       if (verdict.kind === 'open') {
         const passes = await this.appCheckPasses();
         if (stale()) return;
+        if (!this.sessionOk()) return await expire();
         if (!passes) {
           this.renewWait = RENEW_FIRST_MS;
           this.set({ kind: 'checking-phone' });

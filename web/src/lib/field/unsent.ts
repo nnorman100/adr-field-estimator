@@ -30,7 +30,13 @@ const LOCK_REASONS: Record<LockReason, true> = {
   'sign-in-again': true,
   'not-this-company': true,
   'account-disabled': true,
+  'session-revoked': true,
 };
+
+// The refusals whose locked work is removed after 30 days (O5): the owner turned the person or the
+// company off (disabling a member also revokes their sign-in). A later plain "sign in again" does
+// not replace one of these as the saved reason.
+export const RETAINED_REASONS: ReadonlySet<LockReason> = new Set<LockReason>(['member-disabled', 'company-inactive', 'session-revoked']);
 
 export type UnsentMark = {
   // Bumped by every write, so a clearing that started before a later write cannot clear it.
@@ -138,7 +144,8 @@ export function noteLocked(tenantId: string, uid: string, reason: LockReason, no
   let since = now;
   const saved = change(tenantId, uid, (mark) => {
     since = mark.lockedSince ?? now;
-    return { ...mark, lockedSince: since, lockedReason: reason };
+    const kept = reason === 'sign-in-again' && mark.lockedReason !== undefined && RETAINED_REASONS.has(mark.lockedReason);
+    return { ...mark, lockedSince: since, lockedReason: kept ? mark.lockedReason : reason };
   });
   return saved ? since : null;
 }

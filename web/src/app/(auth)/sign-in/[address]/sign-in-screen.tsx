@@ -19,7 +19,9 @@ import {
   type SecondStepChallenge,
 } from '@/lib/firebase-client';
 import { saveMe } from '@/lib/field/ds-me';
+import { registerFieldWorker } from '@/lib/field/register-worker';
 import { meFacts } from '@/lib/field/sync-gate';
+import { noteUnlocked } from '@/lib/field/unsent';
 import { hasUnsentWork, signOutDiscarding, signOutOfCompany } from '@/lib/field/sign-out';
 import { endsSession, errorCode, signInErrorMessage, type MeOutcome } from '@/lib/sign-in/outcome';
 import { rememberSignInAddress } from '@/lib/sign-in/remember';
@@ -144,8 +146,12 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
       // The field shell starts from this row with no signal (S6-2), so it is saved before the screen
       // that opens the shell, with what the server said and when the person signed in, for the
       // offline `me` read (S6-3); a phone that cannot keep it still signs in, and the shell says it
-      // is not saved.
+      // is not saved. The field worker is registered here too, so its install keeps the shell
+      // while there is signal, and a phone that loses it before ever opening the shell can. The
+      // server just let this person in, so a refusal saved on the phone for them is lifted.
       if (outcome.kind === 'signed-in') {
+        registerFieldWorker();
+        noteUnlocked(tenantId, user.uid);
         const authTime = await user.getIdTokenResult().then(
           (result) => Date.parse(result.authTime),
           () => NaN,

@@ -9,7 +9,7 @@ import type { DsMe } from '@/lib/field/ds-me';
 import { runFieldSync } from '@/lib/field/field-sync';
 import { askToPersist, keepAnswer, saveKeepAnswer, type KeepAnswer } from '@/lib/field/keep-consent';
 import type { FieldSurface } from '@/lib/field/platform';
-import { offlineSignInValid, type GateState, type SyncGate } from '@/lib/field/sync-gate';
+import { sessionValid, type GateState, type SyncGate } from '@/lib/field/sync-gate';
 import { unsentWork } from '@/lib/field/unsent';
 import { holdWindow } from '@/lib/field/window-lock';
 import * as text from './field-store-text';
@@ -68,21 +68,32 @@ function KeepQuestion({ onAnswer }: { onAnswer: (answer: KeepAnswer) => void }) 
   );
 }
 
-function gateLine(gate: GateState, address: string): ReactNode {
+function SignInLink({ address }: { address: string }) {
+  return (
+    <a className="inline-flex min-h-11 items-center text-base font-medium underline" href={`/sign-in/${address}`}>
+      Go to sign in
+    </a>
+  );
+}
+
+// `kept`: the started cache keeps unsent work on this phone; otherwise the words say it is lost.
+function gateLine(gate: GateState, address: string, kept: boolean): ReactNode {
   switch (gate.kind) {
     case 'renewing':
-      return <p className="text-base">{text.RENEWING_TEXT}</p>;
+      return <p className="text-base">{kept ? text.RENEWING_TEXT : text.RENEWING_MEMORY_TEXT}</p>;
     case 'checking-phone':
-      return <p className="text-base">{text.CHECKING_PHONE_TEXT}</p>;
+      return <p className="text-base">{kept ? text.CHECKING_PHONE_TEXT : text.CHECKING_PHONE_MEMORY_TEXT}</p>;
     case 'locked':
-      if (gate.reason === 'member-disabled') return <p className="text-base">{text.LOCKED_DISABLED_TEXT}</p>;
-      if (gate.reason === 'company-inactive') return <p className="text-base">{text.LOCKED_INACTIVE_TEXT}</p>;
+      if (gate.reason === 'member-disabled') {
+        return <p className="text-base">{kept ? text.LOCKED_DISABLED_TEXT : text.LOCKED_DISABLED_MEMORY_TEXT}</p>;
+      }
+      if (gate.reason === 'company-inactive') {
+        return <p className="text-base">{kept ? text.LOCKED_INACTIVE_TEXT : text.LOCKED_INACTIVE_MEMORY_TEXT}</p>;
+      }
       return (
         <>
-          <p className="text-base">{text.LOCKED_SIGN_IN_TEXT}</p>
-          <a className="inline-flex min-h-11 items-center text-base font-medium underline" href={`/sign-in/${address}`}>
-            Go to sign in
-          </a>
+          <p className="text-base">{kept ? text.LOCKED_SIGN_IN_TEXT : text.LOCKED_SIGN_IN_MEMORY_TEXT}</p>
+          <SignInLink address={address} />
         </>
       );
     default:
@@ -152,14 +163,21 @@ export function FieldStore({
     const stopAuth = onAuthStateChanged(companyAuth({ config: me.config, tenantId: me.tenantId }), () => {
       void mirrorSignIn(person).then(() => gateRef.current?.poke(), () => undefined);
     });
-    const poke = () => {
-      if (document.visibilityState === 'visible') gateRef.current?.poke();
+    // Hidden, the network goes off; shown again, the session's age is judged and the gate asks
+    // before the network goes back on. The browser saying it is offline closes it too.
+    const shown = () => {
+      setNow(Date.now());
+      if (document.visibilityState === 'visible') gateRef.current?.resume();
+      else void gateRef.current?.suspend();
     };
-    document.addEventListener('visibilitychange', poke);
+    const offline = () => void gateRef.current?.networkLost();
+    document.addEventListener('visibilitychange', shown);
+    window.addEventListener('offline', offline);
     return () => {
       live = false;
       stopAuth();
-      document.removeEventListener('visibilitychange', poke);
+      document.removeEventListener('visibilitychange', shown);
+      window.removeEventListener('offline', offline);
       gateRef.current?.stop();
       gateRef.current = null;
       release();
@@ -176,7 +194,10 @@ export function FieldStore({
   }, [reachable]);
 
   useEffect(() => {
-    const tick = setInterval(() => setNow(Date.now()), 60_000);
+    const tick = setInterval(() => {
+      setNow(Date.now());
+      gateRef.current?.checkSession();
+    }, 60_000);
     return () => clearInterval(tick);
   }, []);
 
@@ -235,11 +256,14 @@ export function FieldStore({
   }
   if (phase.kind === 'starting') return <p role="status">Opening your jobs…</p>;
 
-  // With no answer from the server (yet), the saved sign-in stands in only within the role's limit.
-  if ((gate.kind === 'offline' || gate.kind === 'starting') && !offlineSignInValid(known, now)) {
+  const kept = phase.client.cache === 'persistent';
+  // The saved sign-in counts only within the role's session limit, in every state of the gate:
+  // past it nothing shows (and the gate sends nothing) until the person signs in again.
+  if (gate.kind === 'expired' || !sessionValid(known, now)) {
     return (
       <Notice title={text.ONLINE_ONCE_TITLE}>
-        <p className="text-base">{text.ONLINE_ONCE_TEXT}</p>
+        <p className="text-base">{kept ? text.ONLINE_ONCE_TEXT : text.ONLINE_ONCE_MEMORY_TEXT}</p>
+        <SignInLink address={me.address} />
       </Notice>
     );
   }
@@ -250,7 +274,7 @@ export function FieldStore({
   return (
     <FieldContext.Provider value={{ client: phase.client, me: fieldMe, gate }}>
       <div role="status" className="flex flex-col gap-2">
-        {gateLine(gate, me.address)}
+        {gateLine(gate, me.address, kept)}
       </div>
       {answer === 'online-only' && surface !== 'ios-tab' ? <p className="text-base">{text.ONLINE_ONLY_NOTICE}</p> : null}
       {/* Locked work is neither sent nor added to. */}

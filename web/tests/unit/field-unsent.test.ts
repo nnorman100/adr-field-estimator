@@ -105,6 +105,17 @@ describe('unsent work marks', () => {
     expect(unsentWork('t-a', 'dee')).toBe('kept');
   });
 
+  it('keep a refusal the owner made as the reason when a plain "sign in again" follows it', () => {
+    noteLocked('t-a', 'ana', 'session-revoked', 1000);
+    noteLocked('t-a', 'ana', 'sign-in-again', 2000);
+    expect(savedLock('t-a', 'ana')).toBe('session-revoked');
+    noteLocked('t-a', 'ana', 'member-disabled', 3000);
+    expect(savedLock('t-a', 'ana')).toBe('member-disabled');
+    noteLocked('t-a', 'ben', 'sign-in-again', 1000);
+    noteLocked('t-a', 'ben', 'second-step', 2000);
+    expect(savedLock('t-a', 'ben')).toBe('second-step');
+  });
+
   it('say when a refusal could not be saved', () => {
     vi.stubGlobal('window', {
       localStorage: {

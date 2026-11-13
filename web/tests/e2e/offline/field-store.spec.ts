@@ -115,7 +115,7 @@ test.describe('the field shell\'s phone storage (S6-3)', () => {
     });
     await page.reload();
     await expect(page.getByText(NOT_SAVED_TEXT)).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText(text.LOCKED_SIGN_IN_TEXT)).toBeVisible();
+    await expect(page.getByText(text.LOCKED_SIGN_IN_MEMORY_TEXT)).toBeVisible();
     await expectNoAxeViolations(page);
   });
 
@@ -155,7 +155,7 @@ test.describe('the field shell\'s phone storage (S6-3)', () => {
     });
     await page.reload();
     await expect(page.getByText(NOT_SAVED_TEXT)).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText(text.LOCKED_SIGN_IN_TEXT)).toBeVisible();
+    await expect(page.getByText(text.LOCKED_SIGN_IN_MEMORY_TEXT)).toBeVisible();
   });
 
   test('with unsent work, a cache the browser refuses at once asks to reopen the app and takes no edits', async ({ page, lane }) => {
@@ -207,6 +207,39 @@ test.describe('the field shell\'s phone storage (S6-3)', () => {
     await page.clock.fastForward('48:00:00');
     await expect(page.getByRole('heading', { name: text.ONLINE_ONCE_TITLE })).toBeVisible();
     await expect(page.getByText('Your jobs will show here.')).toHaveCount(0);
+  });
+
+  test('an open shell stops at the role\'s limit when /api/me stops answering but the app is still reachable (day 29 to day 31)', async ({ context, page, lane }) => {
+    const world = await seedCompany();
+    const harness = await FieldPhone.open(context, lane);
+    await harness.signIn(world, world.owner);
+    await harness.page.close();
+    // The shell's clock runs 29 days after that sign-in; the server lets the person in.
+    serveMe(lane, { expiresAt: inDays(29 + 7) });
+    await page.clock.install({ time: inDays(29) });
+    await openShell(page, lane, world, world.owner);
+    await expect(page.getByText('Your jobs will show here.')).toBeVisible();
+    await expect(page.getByRole('heading', { name: text.ONLINE_ONCE_TITLE })).toHaveCount(0);
+
+    // /api/me stops answering while the app itself stays reachable; two days on, the window is
+    // still open and the estimator's 30 days are up.
+    serveMe(lane, { status: 503, error: 'unavailable' });
+    await page.clock.fastForward('48:00:00');
+    await expect(page.getByRole('heading', { name: text.ONLINE_ONCE_TITLE })).toBeVisible();
+    await expect(page.getByText('Your jobs will show here.')).toHaveCount(0);
+    await expect(page.getByRole('link', { name: 'Go to sign in' })).toBeVisible();
+  });
+
+  test('a shell that keeps nothing never says unsent work is kept on this phone', async ({ page, lane }) => {
+    const world = await seedCompany();
+    await page.goto(`${lane.appUrl}/field`);
+    await saveRow(page, lane, world, world.owner, 'Field Store Test');
+    await setLocal(page, keepKey(world.tenantId), 'online-only');
+    await page.reload();
+    // Nobody is signed in on this phone, so the gate asks for a sign-in.
+    await expect(page.getByText(text.LOCKED_SIGN_IN_MEMORY_TEXT)).toBeVisible();
+    await expect(page.getByText(text.LOCKED_SIGN_IN_TEXT)).toHaveCount(0);
+    await expect(page.getByText(/stay on this phone/)).toHaveCount(0);
   });
 
   test('a browser without the window lock gets no field client and says it cannot keep work offline', async ({ page, lane }) => {

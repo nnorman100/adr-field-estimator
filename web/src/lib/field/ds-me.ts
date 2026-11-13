@@ -117,6 +117,23 @@ export async function readLatestMe(): Promise<DsMe | null | 'unavailable'> {
   }
 }
 
+// This (tenant, person)'s row, or null when there is none or the storage cannot be read.
+export async function readMe(tenantId: string, uid: string): Promise<DsMe | null> {
+  let db: IDBDatabase;
+  try {
+    db = await openDb();
+  } catch {
+    return null;
+  }
+  try {
+    return parseMe(await done(db.transaction(ME_STORE, 'readonly').objectStore(ME_STORE).get(meKey(tenantId, uid))));
+  } catch {
+    return null;
+  } finally {
+    db.close();
+  }
+}
+
 // A change to the rows, settled when the transaction has committed (not when its request was
 // accepted: a page that navigates away first loses it) or has failed. True when it committed. A
 // phone whose storage does not answer within WRITE_WITHIN_MS gets false, and false is final: the

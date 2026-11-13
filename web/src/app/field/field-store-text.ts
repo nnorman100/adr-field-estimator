@@ -35,5 +35,16 @@ export const LOCKED_INACTIVE_TEXT =
   'This company is not active, so nothing is sent. Your changes stay on this phone, and are sent if the company is turned back on.';
 export const LOCKED_SIGN_IN_TEXT =
   'Sign in again to send your changes. They stay on this phone until you do.';
+
+// The same screens for a cache that keeps nothing (Online only, an iPhone browser tab, the memory
+// fallback): changes not sent yet live only in this window, so nothing promises they are kept.
+export const IN_WINDOW_ONLY = 'Changes not sent yet are only in this window: they are lost if you close it or leave DryScope.';
+export const ONLINE_ONCE_MEMORY_TEXT = `You signed in on this phone too long ago to keep working with no signal. ${IN_WINDOW_ONLY}`;
+export const RENEWING_MEMORY_TEXT = `Waiting for access to renew. ${IN_WINDOW_ONLY}`;
+export const CHECKING_PHONE_MEMORY_TEXT = `Checking this phone. ${IN_WINDOW_ONLY}`;
+export const LOCKED_DISABLED_MEMORY_TEXT = `Your access has been turned off, so nothing is sent. ${IN_WINDOW_ONLY}`;
+export const LOCKED_INACTIVE_MEMORY_TEXT = `This company is not active, so nothing is sent. ${IN_WINDOW_ONLY}`;
+export const LOCKED_SIGN_IN_MEMORY_TEXT = `Sign in again to send your changes. ${IN_WINDOW_ONLY} Signing in leaves this window.`;
+
 export const REMOVED_TEXT =
   'The changes kept on this phone were removed, because your access stayed turned off for 30 days.';

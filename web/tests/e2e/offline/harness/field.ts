@@ -13,12 +13,12 @@ import { readLatestMe, saveMe, updateMe, type DsMe } from '../../../../src/lib/f
 import { runFieldSync } from '../../../../src/lib/field/field-sync';
 import { signOutDiscarding, signOutOfCompany } from '../../../../src/lib/field/sign-out';
 import type { GateState, SyncGate } from '../../../../src/lib/field/sync-gate';
-import { readUnsent } from '../../../../src/lib/field/unsent';
+import { readUnsent, unsentKey } from '../../../../src/lib/field/unsent';
 
 setLogLevel('silent');
 
 export type Person = { tenantId: string; uid: string; config: BrowserSignInConfig };
-type Running = { client: FieldClient; gate: SyncGate | null; states: GateState[] };
+type Running = { client: FieldClient; gate: SyncGate | null; states: GateState[]; removed: boolean };
 
 const running = new Map<string, Running>();
 const ops = new Map<string, { state: 'pending' | 'acked' | 'rejected'; code?: string }>();
@@ -38,8 +38,14 @@ function decode(value: unknown): unknown {
   return value;
 }
 
-function savedRow(person: Person): DsMe {
+// The row the sign-in page saves, without the S6-3 facts.
+function bareRow(person: Person): DsMe {
   return { ...person, companyName: 'Field Test', address: 'field-test', savedAt: Date.now() };
+}
+
+// The row the gate starts from: an estimator signed in just now.
+function savedRow(person: Person): DsMe {
+  return { ...bareRow(person), role: 'estimator', authTime: Date.now() };
 }
 
 function get(person: Pick<Person, 'tenantId' | 'uid'>): Running {
@@ -74,7 +80,7 @@ const f = {
     const signedIn = await mirrorSignIn(person);
     const started = await startFieldClient(person, cache, watchdogMs === undefined ? {} : { watchdogMs });
     if (started.kind !== 'ready') return started.kind;
-    running.set(key(person), { client: started.client, gate: null, states: [] });
+    running.set(key(person), { client: started.client, gate: null, states: [], removed: false });
     return `${started.client.cache}${started.fellBack ? ' (fell back)' : ''}${signedIn ? '' : ' (signed out)'}`;
   },
   // Runs the sync gate for it, as the field shell does.
@@ -82,9 +88,11 @@ const f = {
     const entry = get(person);
     entry.gate = runFieldSync(entry.client, savedRow(person), (event) => {
       if ('state' in event) entry.states.push(event.state);
+      if ('removed' in event) entry.removed = true;
     });
   },
   gate(person: Pick<Person, 'tenantId' | 'uid'>): string {
+    if (get(person).removed) return 'removed';
     const states = get(person).states;
     return states.at(-1)?.kind === 'locked' ? `locked: ${(states.at(-1) as { reason: string }).reason}` : (states.at(-1)?.kind ?? 'starting');
   },
@@ -133,8 +141,12 @@ const f = {
 
   // The saved sign-in rows (ds-me): the sign-in page's save, the field check's update, and which
   // (tenant/person) row the shell would start from.
-  saveMe: (person: Person, facts: Pick<DsMe, 'role' | 'companyId' | 'capabilities' | 'authTime'> = {}) => saveMe({ ...savedRow(person), ...facts }),
-  updateMe: (person: Person) => updateMe(savedRow(person)),
+  saveMe: (person: Person, facts: Pick<DsMe, 'role' | 'companyId' | 'capabilities' | 'authTime'> = {}) => saveMe({ ...bareRow(person), ...facts }),
+  updateMe: (person: Person) => updateMe(bareRow(person)),
+  // Sets this phone's unsent-work mark for a person, as a past session would have left it.
+  setMark(person: Pick<Person, 'tenantId' | 'uid'>, mark: Record<string, unknown>): void {
+    window.localStorage.setItem(unsentKey(person.tenantId, person.uid), JSON.stringify(mark));
+  },
   async latestMe(): Promise<string | null> {
     const me = await readLatestMe();
     return me === null || me === 'unavailable' ? null : `${me.tenantId}/${me.uid}`;

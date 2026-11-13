@@ -8,6 +8,7 @@ import type { Person as FieldPerson } from './harness/field';
 import { readDraft, removeAccess, seedCompany, setAccessExpiry, type World } from './world';
 
 const sent = async (world: World) => (await readDraft(world)).field.airMovers;
+const DAY = 24 * 60 * 60 * 1000;
 
 // Signed in, the gate open, the draft read once (so it is cached), then the signal cut and one
 // edit made: +1 to a counter, so a test can count how many times it reached the server.
@@ -160,6 +161,33 @@ test.describe('the sync gate (S6-3)', () => {
     await expect.poll(() => phone.call('unsent', person)).toMatchObject({ lockedSince: null });
     await phone.page.waitForTimeout(3000);
     expect(await sent(world)).toBe(1);
+    await context.close();
+  });
+});
+
+test.describe('locked work kept past 30 days (O5)', () => {
+  test('a revoked sign-in\'s locked work is removed after 30 days even when the phone opens with no signal; a plain "sign in again" lock is not', async ({ browser, lane }) => {
+    const context = await browser.newContext();
+    const world = await seedCompany({ people: ['ana', 'ben'] });
+    const phone = await FieldPhone.open(context, lane);
+    const ana = phone.person(world, world.people.ana!);
+    const ben = phone.person(world, world.people.ben!);
+    lane.drop('/api/me');
+    const locked = (reason: string) => ({ writes: 1, unsentSince: Date.now(), lockedSince: Date.now() - 31 * DAY, lockedReason: reason });
+
+    await phone.call('start', ana, 'persistent');
+    await phone.call('setMark', ana, locked('session-revoked'));
+    await phone.call('sync', ana);
+    await expect.poll(() => phone.call('gate', ana)).toBe('removed');
+    expect(await phone.call('unsent', ana)).toEqual({ writes: 0, unsentSince: null, lockedSince: null });
+
+    await phone.call('start', ben, 'persistent');
+    await phone.call('setMark', ben, locked('sign-in-again'));
+    await phone.call('sync', ben);
+    await expect.poll(() => phone.call('gate', ben)).toBe('locked: sign-in-again');
+    await phone.page.waitForTimeout(2000);
+    expect(await phone.call('gate', ben)).toBe('locked: sign-in-again');
+    expect(await phone.call('unsent', ben)).toMatchObject({ unsentSince: expect.any(Number), lockedSince: expect.any(Number) });
     await context.close();
   });
 });

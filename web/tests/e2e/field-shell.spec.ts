@@ -5,7 +5,7 @@ import { PROBE_PATH } from '../../src/app/field/connection';
 import { HOME_SCREEN_HELP, HOME_SCREEN_TITLE } from '../../src/app/field/home-screen-text';
 import { DISCARD_LABEL, KEEP_LABEL, UNSENT_TITLE } from '../../src/app/(auth)/sign-in/[address]/unsent-sign-out-dialog';
 import { ME_DB, ME_DB_VERSION, ME_STORE } from '../../src/lib/field/ds-me';
-import { offlineSignInValid } from '../../src/lib/field/sync-gate';
+import { sessionValid } from '../../src/lib/field/sync-gate';
 import { unsentKey } from '../../src/lib/field/unsent';
 import { PASSWORD, readSeed, type ProjectSeed } from './sign-in/seed';
 
@@ -338,11 +338,19 @@ function rowsNow(page: Page): Promise<Record<string, unknown>[]> {
 // signed in and then taken out of signal before the field shell ever opens can work offline.
 test('a sign-in taken offline before the field shell opens can stand in offline', async ({ page, context }) => {
   await signInAsMemberA(page);
+  // Signing in kept the shell: the field worker is installed before the field app was ever opened.
+  await page.evaluate(() => navigator.serviceWorker.ready);
   await context.setOffline(true);
   const [row] = await rowsNow(page);
   expect(row).toMatchObject({ companyName: A, role: expect.any(String), companyId: expect.any(String), capabilities: expect.any(Array) });
   expect(Math.abs(Date.now() - (row!.authTime as number))).toBeLessThan(5 * 60_000);
-  expect(offlineSignInValid(row as { role?: string; authTime?: number }, Date.now())).toBe(true);
+  expect(sessionValid(row as { role?: string; authTime?: number }, Date.now())).toBe(true);
+
+  // With no signal, the field app opens for the first time on this phone.
+  await page.goto('/field');
+  await expect(page.getByRole('heading', { name: A })).toBeVisible();
+  await expect(page.getByText('Your jobs will show here.')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Sign in to continue' })).toHaveCount(0);
   await context.setOffline(false);
 });
 
