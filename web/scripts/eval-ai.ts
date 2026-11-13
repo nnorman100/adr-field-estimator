@@ -12,7 +12,8 @@ import { pathToFileURL } from 'node:url';
 import { createArmor, createArmorClients } from '../src/lib/ai/armor';
 import { parseAiClientConfig, vertexModel } from '../src/lib/ai/client';
 import { DATA_DIR } from '../tests/ai-evals/datasets';
-import { EvalRefusal, MAX_RUN_MICRO_USD, SUITES, isSuite, runSuite, type Suite } from '../tests/ai-evals/runner';
+import { EvalRefusal, MAX_RUN_MICRO_USD, runSuite } from '../tests/ai-evals/runner';
+import { SUITES, isSuite, type Suite } from '../tests/ai-evals/suites';
 
 export const PROJECT = 'dryscope';
 // Test's templates only (infra/dryscope/modules/naming): evaluations never touch live.

@@ -54,6 +54,17 @@ describe('findings summary (30 jobs: no price, pre-1978 30/30, faithful >= 28/30
     expect(failing(scoreSummary(jobs, answers('summary.jsonl', (m) => (m.get(pre)!.testing_advice = ['Check the paint.']))))).toEqual(['pre1978_right']);
   });
 
+  it('fails on the opposite testing decision in any field, before or after 1978', () => {
+    const pre = jobs.find((j) => j.labels.pre1978)!.id;
+    const post = jobs.find((j) => !j.labels.pre1978)!.id;
+    const decide = (edit: (m: Map<string, Json>) => void) => failing(scoreSummary(jobs, answers('summary.jsonl', edit)));
+    expect(decide((m) => (m.get(pre)!.testing_advice = ['No asbestos or lead testing is required.']))).toEqual(['pre1978_right']);
+    expect(decide((m) => (m.get(pre)!.summary += " Asbestos testing isn't needed."))).toEqual(['pre1978_right']);
+    expect(decide((m) => (m.get(post)!.suggestions as string[]).push('Test for lead before demolition.'))).toEqual(['pre1978_right']);
+    expect(decide((m) => (m.get(post)!.summary += ' Asbestos testing comes first.'))).toEqual(['pre1978_right']);
+    expect(decide((m) => (m.get(post)!.suggestions as string[]).push('Slow drying can lead to swelling.'))).toEqual([]);
+  });
+
   it('allows two unfaithful summaries and fails on the third: a missed room, a forbidden word, a new number', () => {
     const edit = (count: number) => (m: Map<string, Json>) => {
       const [a, b, c] = jobs;

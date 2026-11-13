@@ -32,7 +32,12 @@ export const summaryOutput = z.object({
   testing_advice: z.array(z.string()).default([]),
 });
 
-const TESTING = /\b(?:asbestos|lead)\b/i;
+// A sentence about asbestos or lead ("lead to mold" is not one), and whether it says no testing.
+const TESTING = /\basbestos\b|\blead\b(?!\s+to\b)/i;
+const NEGATED = /\b(?:no|not|never|without|unnecessary)\b|n't\b/i;
+const sentences = (texts: readonly string[]) => texts.flatMap((text) => text.split(/(?<=[.!?;])\s+/));
+const advisesTesting = (sentence: string) => TESTING.test(sentence) && !NEGATED.test(sentence);
+const deniesTesting = (sentence: string) => TESTING.test(sentence) && NEGATED.test(sentence);
 
 // Numbers a text states: every number written in digits, and spelled-out ones from ten up ("one"
 // and "two rooms" are ordinary words too often to count).
@@ -51,9 +56,13 @@ export function scoreSummary(cases: readonly SummaryJob[], answers: Answers): Sc
     if (!answer.ok) return { id: job.id, outcome: answer.outcome, checks: { price: null, pre1978: false, faithful: false } };
     const out = answer.response;
     const price = priceIn(answer.raw !== undefined ? [answer.raw] : stringsIn(out));
-    // Testing advice belongs only to homes built before 1978, and then it names asbestos or lead.
+    // Testing advice belongs only to homes built before 1978: there it advises asbestos or lead
+    // testing and no field says testing is not needed; for any other home no field advises it.
+    const said = sentences(stringsIn(out));
     const advice = out.testing_advice.filter((line) => line.trim().length > 0);
-    const rightTesting = job.labels.pre1978 ? advice.some((line) => TESTING.test(line)) : advice.length === 0;
+    const rightTesting = job.labels.pre1978
+      ? sentences(advice).some(advisesTesting) && !said.some(deniesTesting)
+      : advice.length === 0 && !said.some(advisesTesting);
     // Faithful: the summary names every affected room and the cause, nothing it must not (another
     // room, the wrong water category, mold on a water job), and no number the facts lack. Advice
     // ("dry promptly to prevent mold") lives in the suggestions, so only the summary is scanned.

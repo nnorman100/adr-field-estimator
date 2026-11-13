@@ -13,6 +13,7 @@ import { datasetSha256, loadDataset, type DatasetName, type InjectionCase, type 
 import type { Answer, CaseScore, Metric, Score } from './score';
 import { scoreLive, scoreMeterReading, scoreVoiceNotes } from './score-media';
 import { scopeOutput, scoreInjection, scoreJobSummary, scoreScopeFill, scoreSummary } from './score-text';
+import type { Suite } from './suites';
 
 // The S7-5 evaluation runner (docs/plans/S7.md, S7-5; V9 B). It runs one suite's dataset through
 // the real AI boundary (web/src/lib/ai/call.ts: Model Armor, model, Zod, server rules) on `test`,
@@ -23,10 +24,6 @@ import { scopeOutput, scoreInjection, scoreJobSummary, scoreScopeFill, scoreSumm
 // (input bytes / 3 plus the output cap) against the run cap before it is sent, so a run can never
 // spend past the cap ($2 at most); the first refused reservation stops the run and the result is
 // incomplete. Model Armor sanitize calls are not in it (2 million tokens a month are free).
-
-export const SUITES = ['summary', 'job_summary', 'scope_fill', 'injection', 'meter_reading', 'voice_notes', 'live'] as const;
-export type Suite = (typeof SUITES)[number];
-export const isSuite = (value: unknown): value is Suite => (SUITES as readonly unknown[]).includes(value);
 
 // How a feature's step plugs its real request into the eval: build the boundary request from a
 // dataset case (the job facts the feature's route would send), and map the feature's output onto

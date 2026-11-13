@@ -3,14 +3,16 @@
 // property the owner approved: manual only on master, keyless as the test evaluation account and
 // no other, pinned actions, no secret, inputs never pasted into shell, one run at a time, and real
 // models reachable from no other workflow.
-import { readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { SUITES } from '../web/tests/ai-evals/suites.ts';
 import {
   allSteps,
+  commands,
   load,
-  ROOT,
   Shell,
+  shlex,
   step,
   steps,
   WORKFLOWS,
@@ -18,7 +20,6 @@ import {
 } from './workflow_support.ts';
 
 const FILE = path.join(WORKFLOWS, 'ai-evals.yml');
-const text = readFileSync(FILE, 'utf8');
 const workflow: Data = load(FILE);
 const job: Data = workflow.jobs.evaluate;
 const EVAL_SA = 'dryscope-eval-test@dryscope.iam.gserviceaccount.com';
@@ -35,6 +36,23 @@ function shell(): Shell {
   return s;
 }
 
+// Every string value in a parsed workflow, with the key it sits under.
+function values(data: Data, key = ''): { key: string; value: string }[] {
+  if (typeof data === 'string') return [{ key, value: data }];
+  if (Array.isArray(data)) return data.flatMap((item) => values(item, key));
+  if (data !== null && typeof data === 'object') {
+    return Object.entries(data).flatMap(([k, v]) => values(v, k));
+  }
+  return [];
+}
+
+// Every GitHub expression (${{ ... }}) in a parsed workflow, with the key it sits under.
+function expressions(data: Data): { key: string; expression: string }[] {
+  return values(data).flatMap(({ key, value }) =>
+    [...value.matchAll(/\$\{\{\s*(.*?)\s*\}\}/g)].map((m) => ({ key, expression: m[1]! })),
+  );
+}
+
 describe('ai-evals.yml', () => {
   it('runs only when dispatched by hand, on master, in the test environment', () => {
     expect(Object.keys(workflow.on)).toEqual(['workflow_dispatch']);
@@ -46,13 +64,8 @@ describe('ai-evals.yml', () => {
   });
 
   it('offers exactly the runner suites, with a cap input', () => {
-    const runner = readFileSync(path.join(ROOT, 'web/tests/ai-evals/runner.ts'), 'utf8');
-    const suites = /export const SUITES = \[([^\]]+)\]/
-      .exec(runner)![1]!
-      .match(/'([a-z_]+)'/g)!
-      .map((s) => s.slice(1, -1));
     expect([...workflow.on.workflow_dispatch.inputs.feature.options].sort()).toEqual(
-      [...suites].sort(),
+      [...SUITES].sort(),
     );
     expect(workflow.on.workflow_dispatch.inputs.max_usd).toMatchObject({
       default: '2',
@@ -75,8 +88,19 @@ describe('ai-evals.yml', () => {
       service_account: EVAL_SA,
       project_id: 'dryscope',
     });
-    expect(text.match(/[a-z0-9-]+@[a-z0-9-]+\.iam\.gserviceaccount\.com/g)).toEqual([EVAL_SA]);
-    expect(text).not.toMatch(/DEPLOY_SA|MIGRATE_SA|secrets\.|credentials_json|-live\b/);
+    const accounts = values(workflow).filter(({ value }) => value.includes('gserviceaccount.com'));
+    expect(accounts).toEqual([{ key: 'service_account', value: EVAL_SA }]);
+  });
+
+  it('reads no secret and no setting but the runner, the test provider and its own inputs', () => {
+    expect(new Set(expressions(workflow).map((e) => e.expression))).toEqual(
+      new Set([
+        "vars.CI_RUNNER || 'dryscope-linux'",
+        'vars.DRYSCOPE_TEST_WIF_PROVIDER',
+        'inputs.feature',
+        'inputs.max_usd',
+      ]),
+    );
   });
 
   it('pins every action by commit and installs before signing in', () => {
@@ -98,13 +122,29 @@ describe('ai-evals.yml', () => {
   });
 
   it('passes inputs through the environment, never into the shell text', () => {
-    for (const s of allSteps(workflow)) expect(String(s.run ?? '')).not.toMatch(/\$\{\{/);
+    expect(expressions(workflow).filter((e) => e.key === 'run')).toEqual([]);
     const run = step(job, 'run');
-    expect(run.run).toBe(
-      'npm run eval:ai -- --feature "$FEATURE" --max-usd "$MAX_USD" --out "$RUNNER_TEMP/ai-eval-result.json"',
-    );
     expect(run.env).toEqual({ FEATURE: '${{ inputs.feature }}', MAX_USD: '${{ inputs.max_usd }}' });
     expect(run['working-directory']).toBe('web');
+    const sh = shell();
+    sh.fake('npm');
+    const FEATURE = 'injection"; touch pwned; echo "';
+    const ran = sh.run(run.run, { FEATURE, MAX_USD: '0.50', RUNNER_TEMP: sh.tmp });
+    expect(ran.status).toBe(0);
+    expect(sh.calls('npm')).toEqual([
+      [
+        'run',
+        'eval:ai',
+        '--',
+        '--feature',
+        FEATURE,
+        '--max-usd',
+        '0.50',
+        '--out',
+        path.join(sh.tmp, 'ai-eval-result.json'),
+      ],
+    ]);
+    expect(existsSync(path.join(sh.tmp, 'pwned'))).toBe(false);
   });
 
   it('checks the provider and the cap before anything runs', () => {
@@ -138,11 +178,19 @@ describe('ai-evals.yml', () => {
   });
 
   it('is the only workflow that runs real-model evaluations or the audio script', () => {
+    const evalCommand = (token: string) =>
+      ['eval:ai', 'eval:audio'].includes(token) ||
+      ['eval-ai.ts', 'make-eval-audio.ts'].includes(path.basename(token));
     for (const name of readdirSync(WORKFLOWS).filter(
       (f) => /\.ya?ml$/.test(f) && f !== 'ai-evals.yml',
     )) {
-      const other = readFileSync(path.join(WORKFLOWS, name), 'utf8');
-      expect(other, name).not.toMatch(/eval:ai|eval-ai|eval:audio|make-eval-audio|dryscope-eval-/);
+      const other: Data = load(path.join(WORKFLOWS, name));
+      for (const s of allSteps(other)) {
+        const tokens = shlex(commands(s), { punctuation: true, comments: true });
+        expect(tokens.filter(evalCommand), `${name}: ${s.name ?? s.id ?? s.run}`).toEqual([]);
+      }
+      const accounts = values(other).filter(({ value }) => value.includes('dryscope-eval-'));
+      expect(accounts, name).toEqual([]);
     }
   });
 });

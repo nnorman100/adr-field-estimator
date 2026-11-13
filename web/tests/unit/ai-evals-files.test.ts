@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { Speaker, Spoken } from '@/lib/ai/eval-speech';
+import { attemptBoundMicroUsd, liveUsage, type Attempt, type Speaker } from '@/lib/ai/eval-speech';
 import { addPhotos, parsePhotoArgs } from '../../scripts/add-eval-photos';
-import { AudioArgsError, checkAudioEnv, makeAudio, MAX_MICRO_USD, VOICES } from '../../scripts/make-eval-audio';
+import { AudioArgsError, checkAudioEnv, makeAudio, matchesScript, MAX_MICRO_USD, VOICES } from '../../scripts/make-eval-audio';
 import { DATA_DIR } from '../ai-evals/datasets';
 import { photoProblem, resample24kTo16k, sha256, wavFile } from '../ai-evals/files';
 
@@ -37,9 +37,9 @@ describe('make-eval-audio', () => {
     expect(() => checkAudioEnv([], {})).not.toThrow();
   });
 
-  const spoken = (text: string, outputTokens = 100): Spoken => ({
-    pcm24k: pcm([0, 100, 200, 300, 400, 500]),
-    transcript: text,
+  const NOW = () => new Date('2026-11-13T12:00:00Z');
+  const spoken = (text: string, outputTokens = 100): Attempt => ({
+    spoken: { pcm24k: pcm([0, 100, 200, 300, 400, 500]), transcript: text },
     usage: { input: { text: 20 }, output: { audio: outputTokens } },
   });
   const io = () => {
@@ -53,9 +53,11 @@ describe('make-eval-audio', () => {
       record: (name: 'voiceNotes' | 'liveTurns', changes: Map<string, { file: string; sha256: string }>) => void recorded.push([name, changes]),
     };
   };
+  const VN01 =
+    'Kitchen note. The supply line under the sink failed overnight. I pulled the toe kick and the subfloor is reading twenty eight percent near the dishwasher.';
   const items = [
-    { id: 'vn-01', text: 'The subfloor reads twenty eight percent.', file: 'voice-notes/vn-01.wav', sha256: null },
-    { id: 'vn-02', text: 'Drywall is wet behind the vanity.', file: 'voice-notes/vn-02.wav', sha256: null },
+    { id: 'vn-01', text: VN01, terms: ['toe kick', 'subfloor', 'dishwasher'], file: 'voice-notes/vn-01.wav', sha256: null },
+    { id: 'vn-02', text: 'Drywall is wet behind the vanity.', terms: ['drywall', 'vanity'], file: 'voice-notes/vn-02.wav', sha256: null },
   ];
 
   it('keeps clips whose spoken words match the script, rotating voices, and records their hashes', async () => {
@@ -80,16 +82,61 @@ describe('make-eval-audio', () => {
     expect(files.recorded[0]![1].has('vn-02')).toBe(true);
   });
 
-  it('skips files already there with their hash, and stops before passing $1', async () => {
+  it('drops a clip whose numbers or labelled terms differ from the script, even with few word errors', async () => {
+    expect(matchesScript(items[0]!, VN01)).toBe(true);
+    expect(matchesScript(items[0]!, VN01.replace('twenty eight', '28'))).toBe(true);
+    expect(matchesScript(items[0]!, VN01.replace('twenty eight', 'twenty nine'))).toBe(false);
+    expect(matchesScript(items[0]!, VN01.replace('Kitchen note.', 'Kitchen note 2.'))).toBe(false);
+    expect(matchesScript(items[0]!, VN01.replace('dishwasher', 'washer'))).toBe(false);
+    const speaker: Speaker = { speak: async (text) => spoken(text.replace('twenty eight', 'twenty nine')) };
+    const files = io();
+    const counts = await makeAudio([{ name: 'voiceNotes', items }], speaker, files, NOW);
+    expect(counts).toMatchObject({ kept: 1, mismatched: 1 });
+    expect(files.files.has(`${DATA_DIR}voice-notes/vn-01.wav`)).toBe(false);
+  });
+
+  it('skips files already there with their hash', async () => {
     const files = io();
     const wav = wavFile(pcm([1]));
     files.files.set(`${DATA_DIR}voice-notes/vn-01.wav`, wav);
-    const skipped = await makeAudio([{ name: 'voiceNotes', items: [{ ...items[0]!, sha256: sha256(wav) }] }], { speak: async () => null }, files);
-    expect(skipped).toMatchObject({ skipped: 1, failed: 0 });
-    // 100,000 audio tokens at $12 a million is $1.20: the first clip spends past $1, the second never starts.
-    const expensive = await makeAudio([{ name: 'voiceNotes', items }], { speak: async (text) => spoken(text, 100_000) }, io());
-    expect(expensive.costMicroUsd).toBeGreaterThan(MAX_MICRO_USD);
-    expect(expensive).toMatchObject({ kept: 1, stopped: true });
+    const speak = async (): Promise<Attempt> => ({ spoken: null, usage: null });
+    const skipped = await makeAudio([{ name: 'voiceNotes', items: [{ ...items[0]!, sha256: sha256(wav) }] }], { speak }, files, NOW);
+    expect(skipped).toMatchObject({ skipped: 1, failed: 0, costMicroUsd: 0 });
+  });
+
+  it('charges a failed attempt, or one with no reported usage, at least its bound', async () => {
+    const bound = (text: string) => attemptBoundMicroUsd(text, NOW());
+    const one = [items[1]!];
+    const failed = await makeAudio([{ name: 'voiceNotes', items: one }], { speak: async () => ({ spoken: null, usage: null }) }, io(), NOW);
+    expect(failed).toMatchObject({ failed: 1, costMicroUsd: 2 * bound(one[0]!.text) });
+    const partial = await makeAudio([{ name: 'voiceNotes', items: one }], { speak: async (text) => ({ ...spoken(text, 10), spoken: null }) }, io(), NOW);
+    expect(partial.costMicroUsd).toBe(2 * bound(one[0]!.text));
+    const unreported = await makeAudio([{ name: 'voiceNotes', items: one }], { speak: async (text) => ({ ...spoken(text), usage: null }) }, io(), NOW);
+    expect(unreported).toMatchObject({ kept: 1, costMicroUsd: bound(one[0]!.text) });
+  });
+
+  it('reserves its bound before every attempt, retries included, and never passes $1', async () => {
+    const many = Array.from({ length: 40 }, (_, i) => ({ ...items[1]!, id: `vn-${i}`, file: `voice-notes/vn-${i}.wav` }));
+    const bound = attemptBoundMicroUsd(many[0]!.text, NOW());
+    let calls = 0;
+    const capped: Speaker = { speak: async () => (calls++, { spoken: null, usage: null }) };
+    const counts = await makeAudio([{ name: 'voiceNotes', items: many }], capped, io(), NOW);
+    expect(counts.stopped).toBe(true);
+    expect(counts.costMicroUsd).toBeLessThanOrEqual(MAX_MICRO_USD);
+    expect(counts.costMicroUsd + bound).toBeGreaterThan(MAX_MICRO_USD);
+    expect(calls).toBe(Math.floor(MAX_MICRO_USD / bound));
+  });
+});
+
+describe('Live speech usage', () => {
+  it('reads the Live response fields, so generated audio is charged', () => {
+    const meta = {
+      promptTokenCount: 30,
+      promptTokensDetails: [{ modality: 'TEXT', tokenCount: 30 }],
+      responseTokenCount: 120,
+      responseTokensDetails: [{ modality: 'AUDIO', tokenCount: 100 }],
+    } as unknown as Parameters<typeof liveUsage>[0];
+    expect(liveUsage(meta)).toEqual({ input: { text: 30 }, output: { audio: 100, unknown: 20 } });
   });
 });
 

@@ -6,17 +6,18 @@
 //   npm run eval:audio
 //
 // It skips files already there with a matching SHA-256, keeps a clip only when the words the model
-// spoke match the script (word error rate at most 5%, one retry), records each kept file's SHA-256
-// in the manifest, and stops before its estimated spend passes $1. It prints counts only. Commit
-// the WAV files and the two manifests afterwards.
+// spoke match the script (word error rate at most 5%, the script's numbers and no others, every
+// labelled term; one retry), records each kept file's SHA-256 in the manifest, and never starts an
+// attempt whose bound would take its spend past $1. It prints counts only. Commit the WAV files and
+// the two manifests afterwards.
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { createSpeaker, SPEECH_MODEL, type Speaker } from '../src/lib/ai/eval-speech';
+import { attemptBoundMicroUsd, createSpeaker, SPEECH_MODEL, type Speaker } from '../src/lib/ai/eval-speech';
 import { costMicroUsd } from '../src/lib/ai/pricing';
 import { DATA_DIR, loadDataset } from '../tests/ai-evals/datasets';
 import { readIfPresent, resample24kTo16k, sha256, updateManifest, wavFile } from '../tests/ai-evals/files';
-import { wordErrorRate } from '../tests/ai-evals/text';
+import { hasPhrase, numbersIn, wordErrorRate } from '../tests/ai-evals/text';
 
 export const PROJECT = 'dryscope';
 export const MAX_MICRO_USD = 1_000_000;
@@ -33,7 +34,21 @@ export function checkAudioEnv(argv: string[], env: Record<string, string | undef
   if (argv.length > 0) throw new AudioArgsError('this command takes no arguments');
 }
 
-type Item = { id: string; text: string; file: string; sha256: string | null };
+type Item = { id: string; text: string; terms: readonly string[]; file: string; sha256: string | null };
+
+// The spoken words agree with the script and its answer key: few word errors, the same numbers,
+// and every labelled term.
+export function matchesScript(item: Pick<Item, 'text' | 'terms'>, transcript: string): boolean {
+  const said = numbersIn(transcript);
+  const script = numbersIn(item.text);
+  return (
+    wordErrorRate([{ reference: item.text, hypothesis: transcript }]) <= MAX_WER &&
+    said.size === script.size &&
+    [...script].every((n) => said.has(n)) &&
+    item.terms.every((term) => hasPhrase(transcript, term))
+  );
+}
+
 export type AudioCounts = { kept: number; skipped: number; mismatched: number; failed: number; stopped: boolean; costMicroUsd: number };
 
 export async function makeAudio(
@@ -52,22 +67,26 @@ export async function makeAudio(
         counts.skipped += 1;
         continue;
       }
-      if (counts.costMicroUsd >= MAX_MICRO_USD) {
-        counts.stopped = true;
-        break;
-      }
       const voice = VOICES[turn % VOICES.length]!;
       turn += 1;
       let kept = false;
       let missed: 'failed' | 'mismatched' = 'failed';
       for (let attempt = 0; attempt < 2 && !kept; attempt += 1) {
-        const spoken = await speaker.speak(item.text, voice);
+        const bound = attemptBoundMicroUsd(item.text, now());
+        if (counts.costMicroUsd + bound > MAX_MICRO_USD) {
+          counts.stopped = true;
+          break;
+        }
+        const { spoken, usage } = await speaker.speak(item.text, voice);
+        // A clip with reported usage costs what Live reported; any other outcome is charged at
+        // least its bound, since what it spent is unknown.
+        const spent = usage ? costMicroUsd(SPEECH_MODEL, usage, now()) : 0;
+        counts.costMicroUsd += spoken && usage ? spent : Math.max(spent, bound);
         if (!spoken) {
           missed = 'failed';
           continue;
         }
-        counts.costMicroUsd += costMicroUsd(SPEECH_MODEL, spoken.usage, now());
-        if (wordErrorRate([{ reference: item.text, hypothesis: spoken.transcript }]) > MAX_WER) {
+        if (!matchesScript(item, spoken.transcript)) {
           missed = 'mismatched';
           continue;
         }
@@ -77,6 +96,7 @@ export async function makeAudio(
         kept = true;
         counts.kept += 1;
       }
+      if (counts.stopped) break;
       if (!kept) counts[missed] += 1;
     }
     if (changes.size > 0) io.record(set.name, changes);
@@ -88,8 +108,8 @@ export async function makeAudio(
 async function main() {
   checkAudioEnv(process.argv.slice(2), process.env);
   const sets = [
-    { name: 'voiceNotes' as const, items: loadDataset('voiceNotes').map((n) => ({ id: n.id, text: n.script, file: n.file, sha256: n.sha256 })) },
-    { name: 'liveTurns' as const, items: loadDataset('liveTurns').map((t) => ({ id: t.id, text: t.say, file: t.file, sha256: t.sha256 })) },
+    { name: 'voiceNotes' as const, items: loadDataset('voiceNotes').map((n) => ({ id: n.id, text: n.script, terms: n.terms, file: n.file, sha256: n.sha256 })) },
+    { name: 'liveTurns' as const, items: loadDataset('liveTurns').map((t) => ({ id: t.id, text: t.say, terms: t.vocabulary, file: t.file, sha256: t.sha256 })) },
   ];
   const counts = await makeAudio(sets, createSpeaker(PROJECT), {
     read: readIfPresent,

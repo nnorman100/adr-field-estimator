@@ -5,7 +5,8 @@ import type { AiModelPort, AiModelRequest } from '@/lib/ai/call';
 import { AI_REGISTRY, definePrompt, type AiRegistry } from '@/lib/ai/registry';
 import { parseEvalArgs, TEXT_TEMPLATE } from '../../scripts/eval-ai';
 import { loadDataset, type SummaryJob, type Walkthrough } from '../ai-evals/datasets';
-import { checkFiles, createRunBudget, EvalRefusal, MAX_RUN_MICRO_USD, runSuite, SUITES, type EvalAdapter, type RunPorts } from '../ai-evals/runner';
+import { checkFiles, createRunBudget, EvalRefusal, MAX_RUN_MICRO_USD, runSuite, type EvalAdapter, type RunPorts } from '../ai-evals/runner';
+import { SUITES } from '../ai-evals/suites';
 import { scopeOutput, summaryOutput } from '../ai-evals/score-text';
 
 // The S7-5 runner and its command, against a fake model and a fake Model Armor: real runs happen
