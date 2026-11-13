@@ -143,7 +143,11 @@ describe('job price pins', () => {
   it('gives two first pins at once for one job one success, never two with the same number', async () => {
     const job = await jobA();
     const v = await seedVersion(h.admin, h.seed.a, actorA());
-    const results = await Promise.all([1, 2].map(() => errorCode(as(h.seed.a, (tx) => insertPin(tx, { company: h.seed.a, job: job.id, version: v.id, actor: actorA() })))));
+    const write = (tx: CompanyTransaction) => insertPin(tx, { company: h.seed.a, job: job.id, version: v.id, actor: actorA() });
+    const first = heldOpen(write);
+    await first.written;
+    const second = errorCode(as(h.seed.a, write));
+    const results = await Promise.all([errorCode(first.done), second]);
     expect(results.filter((code) => code === undefined)).toHaveLength(1);
     expect(results.filter((code) => code === UNIQUE_VIOLATION)).toHaveLength(1);
     expect(await h.admin`SELECT count(*)::int AS n FROM job_price_pins`).toEqual([{ n: 1 }]);
