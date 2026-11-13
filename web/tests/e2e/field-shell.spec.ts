@@ -4,6 +4,7 @@ import { NOT_SAVED_TEXT, OFFLINE_TEXT } from '../../src/app/field/banners';
 import { PROBE_PATH } from '../../src/app/field/connection';
 import { HOME_SCREEN_HELP, HOME_SCREEN_TITLE } from '../../src/app/field/home-screen-text';
 import { DISCARD_LABEL, KEEP_LABEL, UNSENT_TITLE } from '../../src/app/(auth)/sign-in/[address]/unsent-sign-out-dialog';
+import { NOT_READY_OFFLINE_TEXT, PREPARING_TEXT } from '../../src/app/(auth)/sign-in/[address]/offline-ready-text';
 import { ME_DB, ME_DB_VERSION, ME_STORE } from '../../src/lib/field/ds-me';
 import { sessionValid } from '../../src/lib/field/sync-gate';
 import { unsentKey } from '../../src/lib/field/unsent';
@@ -338,8 +339,9 @@ function rowsNow(page: Page): Promise<Record<string, unknown>[]> {
 // signed in and then taken out of signal before the field shell ever opens can work offline.
 test('a sign-in taken offline before the field shell opens can stand in offline', async ({ page, context }) => {
   await signInAsMemberA(page);
-  // Signing in kept the shell: the field worker is installed before the field app was ever opened.
-  await page.evaluate(() => navigator.serviceWorker.ready);
+  // The signed-in screen shows only once the field worker has kept the shell, and says nothing is
+  // missing for working with no signal.
+  await expect(page.getByText(NOT_READY_OFFLINE_TEXT)).toHaveCount(0);
   await context.setOffline(true);
   const [row] = await rowsNow(page);
   expect(row).toMatchObject({ companyName: A, role: expect.any(String), companyId: expect.any(String), capabilities: expect.any(Array) });
@@ -352,6 +354,27 @@ test('a sign-in taken offline before the field shell opens can stand in offline'
   await expect(page.getByText('Your jobs will show here.')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Sign in to continue' })).toHaveCount(0);
   await context.setOffline(false);
+});
+
+// S6-3: signing in waits, saying so, while the field worker keeps the shell; when it cannot, the
+// signed-in screen says the field app is not ready to open with no signal.
+test('signing in says it is getting ready to work with no signal, and says so when it could not', async ({ page }) => {
+  // The worker's registration is held, then fails, as on a phone whose browser will not install it.
+  await page.addInitScript(() => {
+    let fail = () => undefined as void;
+    const held = new Promise<never>((_, reject) => (fail = () => reject(new Error('no worker'))));
+    (window as unknown as { failWorker: () => void }).failWorker = fail;
+    navigator.serviceWorker.register = () => held;
+  });
+  await page.goto('/sign-in/company-a');
+  await page.getByLabel('Email').fill(mine.memberA.email);
+  await page.getByLabel('Password').fill(PASSWORD);
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: PREPARING_TEXT })).toBeVisible();
+  await expect(page.getByRole('heading', { name: `Signed in to ${A}` })).toHaveCount(0);
+  await page.evaluate(() => (window as unknown as { failWorker: () => void }).failWorker());
+  await expect(page.getByRole('heading', { name: `Signed in to ${A}` })).toBeVisible();
+  await expect(page.getByText(NOT_READY_OFFLINE_TEXT)).toBeVisible();
 });
 
 // S6-3: the person's own sign-out asks first when their field edits for this company have not all

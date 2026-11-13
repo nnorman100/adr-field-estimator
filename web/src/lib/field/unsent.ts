@@ -34,9 +34,16 @@ const LOCK_REASONS: Record<LockReason, true> = {
 };
 
 // The refusals whose locked work is removed after 30 days (O5): the owner turned the person or the
-// company off (disabling a member also revokes their sign-in). A later plain "sign in again" does
-// not replace one of these as the saved reason.
-export const RETAINED_REASONS: ReadonlySet<LockReason> = new Set<LockReason>(['member-disabled', 'company-inactive', 'session-revoked']);
+// company off, or the sign-in must be made again. Disabling a member revokes their sign-in, which
+// the phone may see as the server's "revoked" or, when Firebase ends the sign-in itself first, as no
+// sign-in at all ("sign in again"); every one of those paths counts. A later plain "sign in again"
+// does not replace a more specific saved reason.
+export const RETAINED_REASONS: ReadonlySet<LockReason> = new Set<LockReason>([
+  'member-disabled',
+  'company-inactive',
+  'session-revoked',
+  'sign-in-again',
+]);
 
 export type UnsentMark = {
   // Bumped by every write, so a clearing that started before a later write cannot clear it.

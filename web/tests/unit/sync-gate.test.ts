@@ -415,6 +415,19 @@ describe('the gate', () => {
     g.stop();
   });
 
+  it('started while the page is hidden, asks nothing and keeps the network off until shown', async () => {
+    answers = [me(NOW + 7 * DAY)];
+    const g = gate({ startSuspended: true });
+    g.start();
+    g.poke();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(calls).toEqual([]);
+    g.resume();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls).toEqual(['ask', 'enable']);
+    g.stop();
+  });
+
   it('works offline with no answer, and opens when the signal is back', async () => {
     answers = [{ status: 0, body: null }, me(NOW + 7 * DAY)];
     const g = gate();

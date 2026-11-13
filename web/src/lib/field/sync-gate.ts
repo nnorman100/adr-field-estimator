@@ -117,6 +117,8 @@ export type GateDeps = {
   now?: () => number;
   // The lock saved on the phone by an earlier refusal (O5), kept until the server lets the person in.
   initial?: Extract<GateState, { kind: 'locked' }>;
+  // The page is hidden as the gate starts: it asks nothing and the network stays off until resume().
+  startSuspended?: boolean;
   // Who an answer is for: an answer is dropped, and asked for again, when this changes while it is
   // awaited.
   session?: () => unknown;
@@ -147,6 +149,7 @@ export class SyncGate {
 
   constructor(private readonly deps: GateDeps) {
     this.state = deps.initial ?? { kind: 'starting' };
+    this.suspended = deps.startSuspended === true;
   }
 
   private now(): number {

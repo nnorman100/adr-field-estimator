@@ -19,7 +19,7 @@ import {
   type SecondStepChallenge,
 } from '@/lib/firebase-client';
 import { saveMe } from '@/lib/field/ds-me';
-import { registerFieldWorker } from '@/lib/field/register-worker';
+import { prepareFieldShell } from '@/lib/field/register-worker';
 import { meFacts } from '@/lib/field/sync-gate';
 import { noteUnlocked } from '@/lib/field/unsent';
 import { hasUnsentWork, signOutDiscarding, signOutOfCompany } from '@/lib/field/sign-out';
@@ -35,6 +35,7 @@ import { hadSecondStep, rememberSecondStep } from '../../second-step/remember';
 import { SecondStepSection } from '../../second-step/second-step-section';
 import { InvitationScreen } from './invitation-screen';
 import { UnsentSignOutDialog, type UnsentChoice } from './unsent-sign-out-dialog';
+import { NOT_READY_OFFLINE_TEXT, PREPARING_TEXT } from './offline-ready-text';
 
 export type SignInScreenProps = {
   address: string;
@@ -52,6 +53,8 @@ type Screen =
   | { name: 'set-password' }
   | { name: 'set-password-sent' }
   | { name: 'checking' }
+  // Signed in: the field worker is being installed so the field app opens with no signal.
+  | { name: 'preparing' }
   // The password or Google account was right and the person has a second step: the code is next.
   | { name: 'code'; challenge: SecondStepChallenge }
   // A signed-in person adds an authenticator app (the required first setup is the outcome below).
@@ -77,6 +80,8 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [askUnsent, setAskUnsent] = useState(false);
+  // False when the field app could not be made ready to open with no signal during this sign-in.
+  const [offlineReady, setOfflineReady] = useState(true);
   const authRef = useRef<Auth | null>(null);
   // The person signed in on this phone, for the screens that act on their account.
   const [signedInUser, setSignedInUser] = useState<User | null>(null);
@@ -146,11 +151,11 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
       // The field shell starts from this row with no signal (S6-2), so it is saved before the screen
       // that opens the shell, with what the server said and when the person signed in, for the
       // offline `me` read (S6-3); a phone that cannot keep it still signs in, and the shell says it
-      // is not saved. The field worker is registered here too, so its install keeps the shell
-      // while there is signal, and a phone that loses it before ever opening the shell can. The
-      // server just let this person in, so a refusal saved on the phone for them is lifted.
+      // is not saved. The field worker is installed here too, and the signed-in screen waits for
+      // it ("Getting DryScope ready…"), so a phone that loses signal before ever opening the field
+      // app can still open it; when that does not finish in time, the screen says so. The server
+      // just let this person in, so a refusal saved on the phone for them is lifted.
       if (outcome.kind === 'signed-in') {
-        registerFieldWorker();
         noteUnlocked(tenantId, user.uid);
         const authTime = await user.getIdTokenResult().then(
           (result) => Date.parse(result.authTime),
@@ -167,6 +172,10 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
           ...(Number.isFinite(authTime) ? { authTime } : {}),
         });
         if ((authRef.current?.currentUser ?? null) !== user) return;
+        setScreen({ name: 'preparing' });
+        const ready = await prepareFieldShell();
+        if ((authRef.current?.currentUser ?? null) !== user) return;
+        setOfflineReady(ready);
       }
       setScreen({ name: 'outcome', outcome: outcome as Extract<Screen, { name: 'outcome' }>['outcome'] });
     },
@@ -251,6 +260,14 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
     return (
       <FocusedPanel title={`Sign in to ${companyName}`}>
         <p role="status">Checking your sign-in…</p>
+      </FocusedPanel>
+    );
+  }
+
+  if (screen.name === 'preparing') {
+    return (
+      <FocusedPanel title={`Sign in to ${companyName}`}>
+        <p role="status">{PREPARING_TEXT}</p>
       </FocusedPanel>
     );
   }
@@ -348,6 +365,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
               You are signed in as {ROLE_NAMES[outcome.role] ?? 'a team member'}. The rest of DryScope arrives in later
               updates.
             </p>
+            {offlineReady ? null : <p role="status">{NOT_READY_OFFLINE_TEXT}</p>}
             {signedInUser ? (
               <SecondStepSection
                 user={signedInUser}

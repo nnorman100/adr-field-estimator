@@ -166,28 +166,44 @@ test.describe('the sync gate (S6-3)', () => {
 });
 
 test.describe('locked work kept past 30 days (O5)', () => {
-  test('a revoked sign-in\'s locked work is removed after 30 days even when the phone opens with no signal; a plain "sign in again" lock is not', async ({ browser, lane }) => {
+  test('locked work is removed after 30 days for a revoked or ended sign-in, even when the phone opens with no signal, and kept before that', async ({ browser, lane }) => {
     const context = await browser.newContext();
-    const world = await seedCompany({ people: ['ana', 'ben'] });
+    const world = await seedCompany({ people: ['ana', 'ben', 'cleo'] });
     const phone = await FieldPhone.open(context, lane);
-    const ana = phone.person(world, world.people.ana!);
-    const ben = phone.person(world, world.people.ben!);
+    const [ana, ben, cleo] = (['ana', 'ben', 'cleo'] as const).map((name) => phone.person(world, world.people[name]!));
     lane.drop('/api/me');
-    const locked = (reason: string) => ({ writes: 1, unsentSince: Date.now(), lockedSince: Date.now() - 31 * DAY, lockedReason: reason });
+    const locked = (reason: string, days: number) => ({ writes: 1, unsentSince: Date.now(), lockedSince: Date.now() - days * DAY, lockedReason: reason });
 
-    await phone.call('start', ana, 'persistent');
-    await phone.call('setMark', ana, locked('session-revoked'));
-    await phone.call('sync', ana);
-    await expect.poll(() => phone.call('gate', ana)).toBe('removed');
-    expect(await phone.call('unsent', ana)).toEqual({ writes: 0, unsentSince: null, lockedSince: null });
+    // The server said the sign-in was revoked, 31 days ago.
+    await phone.call('start', ana!, 'persistent');
+    await phone.call('setMark', ana!, locked('session-revoked', 31));
+    await phone.call('sync', ana!);
+    await expect.poll(() => phone.call('gate', ana!)).toBe('removed');
+    expect(await phone.call('unsent', ana!)).toEqual({ writes: 0, unsentSince: null, lockedSince: null });
 
-    await phone.call('start', ben, 'persistent');
-    await phone.call('setMark', ben, locked('sign-in-again'));
-    await phone.call('sync', ben);
-    await expect.poll(() => phone.call('gate', ben)).toBe('locked: sign-in-again');
+    // Firebase ended the revoked sign-in itself, so the phone has no sign-in to ask with: the lock
+    // this saves counts too once it is 31 days old, read back at an offline start.
+    expect(await phone.call('start', ben!, 'persistent')).toBe('persistent (signed out)');
+    await phone.call('setMark', ben!, { writes: 1, unsentSince: Date.now(), lockedSince: null });
+    await phone.call('sync', ben!);
+    await expect.poll(() => phone.call('gate', ben!)).toBe('locked: sign-in-again');
+    const saved = await phone.call('unsent', ben!);
+    expect(saved).toMatchObject({ lockedSince: expect.any(Number), lockedReason: 'sign-in-again' });
+    await phone.call('stop', ben!);
+    await phone.call('setMark', ben!, { ...(saved as object), lockedSince: Date.now() - 31 * DAY });
+    await phone.call('start', ben!, 'persistent');
+    await phone.call('sync', ben!);
+    await expect.poll(() => phone.call('gate', ben!)).toBe('removed');
+    expect(await phone.call('unsent', ben!)).toEqual({ writes: 0, unsentSince: null, lockedSince: null });
+
+    // Locked for 29 days: kept.
+    await phone.call('start', cleo!, 'persistent');
+    await phone.call('setMark', cleo!, locked('sign-in-again', 29));
+    await phone.call('sync', cleo!);
+    await expect.poll(() => phone.call('gate', cleo!)).toBe('locked: sign-in-again');
     await phone.page.waitForTimeout(2000);
-    expect(await phone.call('gate', ben)).toBe('locked: sign-in-again');
-    expect(await phone.call('unsent', ben)).toMatchObject({ unsentSince: expect.any(Number), lockedSince: expect.any(Number) });
+    expect(await phone.call('gate', cleo!)).toBe('locked: sign-in-again');
+    expect(await phone.call('unsent', cleo!)).toMatchObject({ unsentSince: expect.any(Number), lockedSince: expect.any(Number) });
     await context.close();
   });
 });

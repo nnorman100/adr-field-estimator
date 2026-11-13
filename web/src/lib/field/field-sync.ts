@@ -13,8 +13,10 @@ import { noteLocked, noteUnlocked, RETAINED_REASONS, savedLock } from './unsent'
 //   capabilities and sign-in time for the next offline start;
 // - locked: the work stays, locked, and the refusal is saved on the phone, so a start with no answer
 //   is locked too, through this same handling; a phone that cannot save it forgets the offline
-//   sign-in instead. A disabled member's, inactive company's or revoked sign-in's work is removed
-//   only after 30 days of refusals (owner decision O5).
+//   sign-in instead. A disabled member's, inactive company's or signed-out (revoked or ended)
+//   sign-in's work is removed only after 30 days of refusals (owner decision O5).
+// The gate starts paused when the page is hidden by the time the client has started; showing the
+// page resumes it (field-store.tsx).
 // The gate judges the person's ds-me row (read again before each check) against the role's session
 // limit, the same check the shell makes before it shows anything. An answer for a sign-in that has
 // changed while it was awaited is dropped (sync-gate.ts).
@@ -52,6 +54,7 @@ export function runFieldSync(
     initial,
     session: () => fieldUser(person),
     sessionValid: (at) => sessionValid(row, at),
+    startSuspended: typeof document !== 'undefined' && document.visibilityState === 'hidden',
     onState: apply,
   });
 

@@ -230,6 +230,33 @@ test.describe('the field shell\'s phone storage (S6-3)', () => {
     await expect(page.getByRole('link', { name: 'Go to sign in' })).toBeVisible();
   });
 
+  test('a shell opened in a hidden page asks nothing until it is shown', async ({ context, page, lane }) => {
+    const world = await seedCompany();
+    const harness = await FieldPhone.open(context, lane);
+    await harness.signIn(world, world.owner);
+    await harness.page.close();
+    serveMe(lane, { status: 403, error: 'member_disabled' });
+    await page.addInitScript(() => {
+      const shown = { value: false };
+      (window as unknown as { shown: typeof shown }).shown = shown;
+      Object.defineProperty(document, 'visibilityState', { get: () => (shown.value ? 'visible' : 'hidden'), configurable: true });
+    });
+    let asked = 0;
+    page.on('request', (request) => {
+      if (new URL(request.url()).pathname === '/api/me') asked += 1;
+    });
+    await openShell(page, lane, world, world.owner);
+    await page.waitForTimeout(3000);
+    expect(asked).toBe(0);
+    await expect(page.getByText(text.LOCKED_DISABLED_TEXT)).toHaveCount(0);
+    await page.evaluate(() => {
+      (window as unknown as { shown: { value: boolean } }).shown.value = true;
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await expect(page.getByText(text.LOCKED_DISABLED_TEXT)).toBeVisible();
+    expect(asked).toBeGreaterThan(0);
+  });
+
   test('a shell that keeps nothing never says unsent work is kept on this phone', async ({ page, lane }) => {
     const world = await seedCompany();
     await page.goto(`${lane.appUrl}/field`);
