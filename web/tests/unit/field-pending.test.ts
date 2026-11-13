@@ -120,6 +120,23 @@ describe('what a late send posts for the open screen of its job', () => {
     expect(pending.denial('job-late')).toBeNull();
   });
 
+  it('drops the job for a refused read that comes back after its screen closed, by job id', () => {
+    pending.openFor('company-a/user-late-refusal');
+    pending.publishDetail('job-late', at(4, 'cached'), pending.mark('job-late'));
+    // The job is opened again and left before the read's refusal comes back.
+    const sentAt = pending.mark('job-late');
+    expect(pending.readAnswered('job-late', { ok: false, status: 0, message: 'No answer' }, sentAt)).toBe(true);
+    expect(pending.detail('job-late')?.customer.name).toBe('cached');
+    const refused = { ok: false as const, status: 404, message: 'This job is not in your list.', denied: true as const };
+    expect(pending.readAnswered('job-late', refused, sentAt)).toBe(true);
+    expect(pending.detail('job-late')).toBeNull();
+    expect(pending.denial('job-late')).toBe('This job is not in your list.');
+    // An answer to a read sent before that refusal no longer counts.
+    expect(pending.readAnswered('job-late', { ok: true, value: at(5, 'late') }, sentAt)).toBe(false);
+    expect(pending.publishDetail('job-late', at(5, 'late'), sentAt)).toBe(false);
+    expect(pending.detail('job-late')).toBeNull();
+  });
+
   it('counts draft changes per job, and starts empty for another sign-in', () => {
     pending.openFor('company-a/user-late');
     const before = pending.draftChanges('job-late');

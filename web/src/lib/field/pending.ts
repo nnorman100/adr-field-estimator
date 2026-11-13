@@ -22,6 +22,7 @@
 // page starts empty.
 import { useSyncExternalStore } from 'react';
 import type { JobDetail } from '@/lib/jobs/service';
+import type { Answer } from './api';
 import type { PhotoField } from './schema';
 
 export type PendingJob = { id: string; draftId: string; propertyAddress: string; sending: boolean };
@@ -174,6 +175,14 @@ export const pending = {
     });
   },
   denial: (jobId: string): string | null => state.denials[jobId] ?? null,
+  // A read of the job sent under `mark` came back, whether or not a screen of the job is still
+  // open: a refusal drops every copy of the job. Answers false when the job was refused since, so
+  // the answer no longer counts.
+  readAnswered(jobId: string, answer: Answer<unknown>, mark: number): boolean {
+    if (mark !== pending.mark(jobId)) return false;
+    if (!answer.ok && answer.denied) pending.denyDetail(jobId, answer.message);
+    return true;
+  },
   draftChanges: (jobId: string): number => state.draftChanges[jobId] ?? 0,
   // A send changed the job's field draft after its screen closed: the open screen reads it again.
   draftChanged(jobId: string) {

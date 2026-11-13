@@ -101,18 +101,18 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
 
   const apply = useCallback(
     async (answer: Awaited<ReturnType<typeof readJob>>, sentAt: number): Promise<JobDetail | null> => {
-      if (sentAt !== pending.mark(jobId)) return null;
+      if (!pending.readAnswered(jobId, answer, sentAt)) return null;
       setError(answer.ok ? null : answer.message);
       if (!answer.ok) {
         // A refusal to show the job drops every copy of it; no answer keeps the one on screen.
-        if (answer.denied) deny(answer.message);
+        if (answer.denied) setDraft(null);
         return null;
       }
       setDetail(answer.value, sentAt);
       await reloadDraft(answer.value);
       return answer.value;
     },
-    [reloadDraft, setDetail, deny, jobId],
+    [reloadDraft, setDetail, jobId],
   );
 
   const reloadJob = useCallback(async () => {
@@ -127,7 +127,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       if (refusal.status !== 404) return;
       const sentAt = pending.mark(jobId);
       void readJob(session.user, jobId).then((answer) => {
-        if (!answer.ok && answer.denied && sentAt === pending.mark(jobId)) deny(answer.message);
+        if (pending.readAnswered(jobId, answer, sentAt) && !answer.ok && answer.denied) setDraft(null);
       });
     },
     [deny, jobId, session.user],
@@ -138,7 +138,9 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     let live = true;
     const sentAt = pending.mark(jobId);
     void readJob(session.user, jobId).then((answer) => {
+      // A refusal that comes back after this screen closed still drops the job for the next one.
       if (live) void apply(answer, sentAt);
+      else pending.readAnswered(jobId, answer, sentAt);
     });
     return () => {
       live = false;
