@@ -271,15 +271,21 @@ describe('the release image', () => {
   });
 });
 
+// What the image's server prints to its log at start (src/lib/telemetry/start.ts) with tracing on and
+// no exporter: the one line the step looks for.
+const TRACING_STARTED =
+  '{"severity":"INFO","message":"tracing started","component":"tracing","event":"started","code":"spans"}';
+// scripts/smoke-release.ts waits for the server to answer; the fake waits for its first log line.
+const WAIT_FOR_SERVER_LOG =
+  '[ "$1" != server.js ] && for _ in $(seq 50); do [ -s "$RUNNER_TEMP/web.log" ] && break; sleep 0.1; done';
+const SERVER_THAT_STARTS_TRACING = `if [ "$1" = server.js ]; then echo "$APP_ENV $APP_COMMIT $NODE_ENV $PORT" > started; echo '${TRACING_STARTED}'; fi; ${WAIT_FOR_SERVER_LOG}; exit 0`;
+
 describe('the Web app image job', () => {
   it('starts the image tree as test and smoke-checks it', async () => {
     const sh = shell();
     const app = path.join(sh.tmp, 'web-stage', 'app');
     mkdirSync(app, { recursive: true });
-    sh.fake(
-      'node',
-      '[ "$1" = server.js ] && echo "$APP_ENV $APP_COMMIT $NODE_ENV $PORT" > started; exit 0',
-    );
+    sh.fake('node', SERVER_THAT_STARTS_TRACING);
     const result = sh.run(commands(step(imageJob(), IMAGE_STEPS[0])), {
       GITHUB_SHA: SHA,
       RUNNER_TEMP: sh.tmp,
@@ -306,6 +312,30 @@ describe('the Web app image job', () => {
       '8080',
     ]);
   }, 15_000); // room for the 5 s wait for the background server, as pytest has no time limit
+
+  it.each([
+    ['says nothing about tracing', 'listening on 8080', 'Tracing did not start'],
+    [
+      'reports tracing unavailable',
+      `${TRACING_STARTED}\\ntracing unavailable`,
+      'Tracing failed to start',
+    ],
+    [
+      'starts tracing with an exporter',
+      TRACING_STARTED.replace('"spans"', '"export"'),
+      'Tracing did not start',
+    ],
+  ])('fails when the server %s', (_name, line, error) => {
+    const sh = shell();
+    mkdirSync(path.join(sh.tmp, 'web-stage', 'app'), { recursive: true });
+    sh.fake('node', `[ "$1" = server.js ] && printf '%b\\n' '${line}'; ${WAIT_FOR_SERVER_LOG}; exit 0`);
+    const result = sh.run(commands(step(imageJob(), IMAGE_STEPS[0])), {
+      GITHUB_SHA: SHA,
+      RUNNER_TEMP: sh.tmp,
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toContain(error);
+  });
 
   it('fails and shows the server log when the smoke check fails', () => {
     const sh = shell();
