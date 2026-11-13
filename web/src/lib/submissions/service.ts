@@ -32,16 +32,18 @@ import { manifestProblem, SNAPSHOT_FORMAT, snapshotBytes, snapshotManifest, stor
 //    newer fence. The worker (repair.ts) writes a marker this request could not, and aborts rows
 //    that stayed pending past their expiry.
 //
-// No Postgres transaction is held across a Firestore call. A failure talking to Firestore leaves
-// the row pending: never an abort, so a retry racing a failing attempt can still commit, and never
-// a release, so nothing is unlocked while its row could still commit.
+// No Postgres transaction is held across a Firestore call, except the fence, which is closed under
+// its row's lock (closeFence). A failure talking to Firestore leaves the row pending: never an
+// abort, so a retry racing a failing attempt can still commit, and never a release, so nothing is
+// unlocked while its row could still commit.
 
 // Submit and Back to editing are scope work: the owner and the estimator (docs/ACCESS.md).
 const SUBMIT: readonly Capability[] = ['scope'];
 
 // How long a pending row may wait before the worker aborts it, and how close to that a request no
-// longer closes a fence it has not closed yet (so a fence never lands after the worker has given up
-// on its row; the worker runs every five minutes, docs/plans/S5.md section 4 step 6).
+// longer closes a fence it has not closed yet, so an attempt does not start a fence its row is about
+// to lose (the worker runs every five minutes, docs/plans/S5.md section 4 step 6). That no fence
+// lands after its row is decided is the row lock's work in closeFence, not this margin's.
 export const SUBMIT_WINDOW_MS = 2 * 60 * 1000;
 export const FENCE_MARGIN_MS = 30 * 1000;
 
@@ -325,27 +327,30 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
     });
   }
 
-  // Step 2: the fence, replacing one whose own row is known to be aborted (its attempt fenced late
-  // and never released it). Anything else is not this attempt's to take.
+  // Step 2: the fence, closed under the row's own lock and only while the row is still pending, so
+  // no abort lands between the check and the fence, and the release of an aborted row always comes
+  // after any fence of its epoch. It replaces a fence whose own row is known to be aborted (its
+  // attempt fenced and never released it). Anything else is not this attempt's to take.
   async function closeFence(caller: JobCaller, row: SubmissionRow): Promise<SubmissionErrorCode | null> {
     const fence = { submissionId: row.id, epoch: row.epoch, expiresAt: row.expiresAt };
-    let result = await field(() => store.fence(caller.companyId, row.draftId, fence));
-    if (result.outcome === 'held') {
-      const held = result.epoch;
-      const [owner] = await inCompany(caller.companyId, (tx) =>
-        tx
+    return inCompany(caller.companyId, async (tx) => {
+      if ((await submissionRow(tx, caller.companyId, row.id, true))?.status !== 'pending') return 'submission_aborted';
+      let result = await field(() => store.fence(caller.companyId, row.draftId, fence));
+      if (result.outcome === 'held') {
+        const held = result.epoch;
+        const [owner] = await tx
           .select({ status: jobSubmissions.status })
           .from(jobSubmissions)
           .where(
             and(eq(jobSubmissions.companyId, caller.companyId), eq(jobSubmissions.draftId, row.draftId), sql`${jobSubmissions.epoch}::text = ${held}`),
-          ),
-      );
-      if (owner?.status === 'aborted') result = await field(() => store.fence(caller.companyId, row.draftId, fence, held));
-    }
-    if (result.outcome === 'fenced') return null;
-    if (result.outcome === 'missing') return 'draft_missing';
-    if (result.outcome === 'submitted') return 'already_submitted';
-    return 'submission_in_progress';
+          );
+        if (owner?.status === 'aborted') result = await field(() => store.fence(caller.companyId, row.draftId, fence, held));
+      }
+      if (result.outcome === 'fenced') return null;
+      if (result.outcome === 'missing') return 'draft_missing';
+      if (result.outcome === 'submitted') return 'already_submitted';
+      return 'submission_in_progress';
+    });
   }
 
   return {

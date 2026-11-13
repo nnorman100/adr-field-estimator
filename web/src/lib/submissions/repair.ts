@@ -14,6 +14,9 @@ import { abortPending, writeMarker, type DecidedRow } from './service';
 // - A decided row whose marker is still unwritten after the grace (the request that decided it
 //   died or could not reach Firestore) gets its marker: `submitted` after a commit, `editing` after
 //   an abort.
+// - An aborted row whose marker is written and whose expiry passed within the last REOPEN_SECONDS
+//   has its release written again, so a draft still fenced by that epoch goes back to `editing`.
+//   Only companies the lookup returns for other work are visited for this.
 //
 // Only finding the companies with work crosses companies, through job_submission_due_companies
 // (migration 0011), which returns company ids and nothing else. Every row is read and changed inside
@@ -21,6 +24,9 @@ import { abortPending, writeMarker, type DecidedRow } from './service';
 
 // A decided row's marker is the deciding request's to write first; the worker waits this long.
 export const MARKER_GRACE_SECONDS = 60;
+
+// How long after an aborted row's expiry the worker still writes its release again.
+export const REOPEN_SECONDS = 15 * 60;
 
 export type RepairSummary = { aborted: number; marked: number; failed: number };
 
@@ -86,6 +92,30 @@ export async function runSubmissionRepair(
       }
       if (await writeMarker(db, store, companyId, row)) summary.marked += 1;
       else summary.failed += 1;
+    }
+    const reopen = await withCompany(db, companyId, (tx) =>
+      tx
+        .select({ draftId: jobSubmissions.draftId, epoch: jobSubmissions.epoch })
+        .from(jobSubmissions)
+        .where(
+          and(
+            eq(jobSubmissions.companyId, companyId),
+            eq(jobSubmissions.status, 'aborted'),
+            eq(jobSubmissions.markerState, 'done'),
+            sql`${jobSubmissions.expiresAt} <= now()`,
+            sql`${jobSubmissions.expiresAt} > now() - make_interval(secs => ${REOPEN_SECONDS})`,
+          ),
+        )
+        .orderBy(jobSubmissions.createdAt)
+        .limit(maxRowsPerCompany),
+    );
+    for (const row of reopen) {
+      try {
+        if ((await store.release(companyId, row.draftId, row.epoch)) === 'released') summary.marked += 1;
+      } catch (error) {
+        console.error('submission marker unavailable', error instanceof Error ? error.name : 'unknown');
+        summary.failed += 1;
+      }
     }
   }
   return summary;

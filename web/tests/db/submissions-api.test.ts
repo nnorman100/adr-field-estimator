@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { canonicalManifest, manifestDigest } from '@/lib/field/canonical';
+import type { FenceStore } from '@/lib/submissions/fence';
 import type { SubmissionsService } from '@/lib/submissions/service';
 import { flow, latch, sha256, until } from './submission-flow';
 import type { FakeClaims, Harness } from './team-harness';
@@ -208,6 +209,34 @@ describe('Submit', () => {
       const again = await f.submitShown(ESTIMATOR_A, jobId, draftId, manifest);
       expect(again.answer.status).toBe(201);
       expect(await f.expectOneOutcome(h.seed.a, jobId, draftId)).toBe('committed');
+    });
+
+    it('a same-id retry held before its fence while the other aborts and releases never leaves the draft fenced', async () => {
+      const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
+      // The phone's digest is not what the draft holds, so whichever attempt reads the draft aborts.
+      const body = { id: randomUUID(), draftId, digest: await manifestDigest({ ...manifest, photos: [] }) };
+      // The first attempt waits at its fence, then closes it and dies before deciding.
+      const hold = latch();
+      let reached = false;
+      const delayed: FenceStore = {
+        ...h.field,
+        fence: async (...args) => {
+          reached = true;
+          await hold.wait;
+          return h.field.fence(...args);
+        },
+        read: () => new Promise(() => {}),
+      };
+      live.service = submissionsService(h.handle.db, delayed);
+      void f.submit(ESTIMATOR_A, jobId, body);
+      await until(() => reached, 'the first attempt at its fence');
+      live.service = null;
+      const retry = f.submit(ESTIMATOR_A, jobId, body);
+      await Promise.race([retry, new Promise((resolve) => setTimeout(resolve, 500))]);
+      hold.open();
+      expect(await retry).toMatchObject({ status: 409, body: { error: 'digest_mismatch' } });
+      expect((await f.submissions(jobId))[0]).toMatchObject({ status: 'aborted', marker_state: 'done' });
+      expect(await f.expectOneOutcome(h.seed.a, jobId, draftId)).toBe('aborted');
     });
 
     it('a same-id retry that commits while an aborting attempt waits leaves the record and the submitted draft', async () => {
@@ -455,6 +484,26 @@ describe('the worker', () => {
     expect(await f.expectOneOutcome(h.seed.a, jobId, draftId)).toBe('aborted');
     // Nothing left to do.
     expect(await runSubmissionRepair(h.handle.db, h.field, { markerGraceSeconds: 0 })).toEqual({ aborted: 0, marked: 0, failed: 0 });
+  });
+
+  it('reopens a draft still fenced by an aborted attempt whose marker was written, in a company it visits', async () => {
+    live.service = shortWindow();
+    const stuck = await f.readyJob(ESTIMATOR_A, h.seed.a);
+    const body = { id: randomUUID(), draftId: stuck.draftId, digest: await manifestDigest({ ...stuck.manifest, photos: [] }) };
+    expect((await f.submit(ESTIMATOR_A, stuck.jobId, body)).body.error).toBe('digest_mismatch');
+    const [row] = await f.submissions(stuck.jobId);
+    expect(row).toMatchObject({ status: 'aborted', marker_state: 'done' });
+    // A fence for that epoch the release did not see (a state no route makes now).
+    await h.field.fence(h.seed.a, stuck.draftId, { submissionId: row!.id, epoch: row!.epoch, expiresAt: new Date(Date.now() + 60_000) });
+    // Other work in the same company, so the worker visits it.
+    const stalled = await f.readyJob(ESTIMATOR_A, h.seed.a);
+    h.field.gate.read = () => new Promise<void>(() => {});
+    void f.submitShown(ESTIMATOR_A, stalled.jobId, stalled.draftId, stalled.manifest);
+    await until(() => h.field.draft(h.seed.a, stalled.draftId)?.state === 'submitting', 'the stalled fence');
+    await expire();
+    expect(await runSubmissionRepair(h.handle.db, h.field, { markerGraceSeconds: 0 })).toEqual({ aborted: 1, marked: 2, failed: 0 });
+    expect(await f.expectOneOutcome(h.seed.a, stuck.jobId, stuck.draftId)).toBe('aborted');
+    expect(await f.expectOneOutcome(h.seed.a, stalled.jobId, stalled.draftId)).toBe('aborted');
   });
 
   it('a retry of a decided submission writes its missing marker', async () => {
