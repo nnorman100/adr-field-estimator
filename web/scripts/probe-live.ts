@@ -9,7 +9,7 @@
 // Armor streaming sanitize, and reads back the spike template and the floor setting with your own
 // credentials. It prints only measurements, yes/no answers and short fixed codes: never a token,
 // session handle, transcript, audio, prompt or email (formatLine refuses anything else). It runs
-// about 31 minutes, because question (f) waits 2, 10 and 30 minutes before resuming a handle.
+// about 32 minutes, because question (f) waits 2, 10 and 30 minutes before resuming a handle.
 // The results go in the S7-0 note (docs/plans/S7.md section 13).
 import { pathToFileURL } from 'node:url';
 import {
