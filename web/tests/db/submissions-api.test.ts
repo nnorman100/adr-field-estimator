@@ -448,6 +448,8 @@ describe('the worker', () => {
     h.field.gate.read = () => new Promise<void>(() => {});
     void f.submitShown(ESTIMATOR_A, expiring.jobId, expiring.draftId, expiring.manifest);
     await until(() => h.field.draft(h.seed.a, expiring.draftId)?.state === 'submitting', 'the first fence');
+    // The gate is one-shot: wait until the first attempt is stalled in it, so the second gate is the second attempt's.
+    await until(() => h.field.gate.read === undefined, 'the first attempt stalled');
     live.service = null;
     h.field.gate.read = () => new Promise<void>(() => {});
     void f.submitShown(ESTIMATOR_A, running.jobId, running.draftId, running.manifest);
