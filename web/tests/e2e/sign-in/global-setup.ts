@@ -127,6 +127,9 @@ async function warmTeamRoutes(baseUrl: string) {
   const paths = [
     ['GET', '/sign-in/company-z'],
     ['GET', '/sign-in/company-a/team'],
+    ['GET', '/sign-in/company-a/company'],
+    ['GET', `/api/companies/${id}/profile`],
+    ['PUT', `/api/companies/${id}/profile`],
     ['GET', `/api/companies/${id}/team`],
     ['POST', `/api/companies/${id}/invitations`],
     ['POST', `/api/companies/${id}/invitations/${id}/resend`],
