@@ -119,6 +119,13 @@ found that fetches company A's photo bytes or full-size original as company B, a
 covers the `inspections` and `authorizations` collections (the rules test covers superadmin
 records only).
 
+Rebuilt app (S5a-5): `web/tests/db/company-isolation.test.ts` ("never gives company B the photo bytes or
+the original of company A") reads company A's photo and original as company B's owner, estimator and
+office user, by A's job id and by B's own job with A's photo id, and is refused (404) with no byte of
+A's, while A's own people read them; `web/tests/db/photos-api.test.ts` adds the other estimator of the
+same company. The bucket is a fake at its boundary in CI; the real bucket is checked in S5a-12. That
+closes the photo-bytes and original gap for the rebuilt app only; the old app's gap above stays.
+
 ### 4.2 Double submit makes one record, and a signed record is rejected
 
 Acceptance: sending the same sign request twice returns one receipt and one agreement; a changed

@@ -31,6 +31,8 @@ export type MatrixRow = {
   // A request body that is valid for the route, so a refusal is the access rule's and not the
   // body check's. Never carries another company's id: the ids come from the path.
   body?: unknown;
+  // The query string the route needs to get past its own request check (with the `?`).
+  query?: string;
   // How the suite also calls the route as the caller's own company, where that is a read or a
   // path that names another company's record:
   //   list   the caller's own ids; a 200 that holds none of the other company's rows
@@ -47,7 +49,7 @@ export type MatrixRow = {
   self?: true;
 };
 
-const row = (route: string, method: Method, kind: RouteKind, extra: Pick<MatrixRow, 'body' | 'own' | 'self'> = {}): MatrixRow => ({
+const row = (route: string, method: Method, kind: RouteKind, extra: Pick<MatrixRow, 'body' | 'query' | 'own' | 'self'> = {}): MatrixRow => ({
   route,
   method,
   kind,
@@ -58,6 +60,10 @@ const row = (route: string, method: Method, kind: RouteKind, extra: Pick<MatrixR
 // the suite's own; the path carries the other company's job).
 const JOB_CUSTOMER = { revision: 1, changeId: '5b7c1e0a-3f6d-4a52-9d1e-7a0c2b4f8e61', name: 'Planted Name', phone: '555-0100', email: 'planted@example.test', propertyAddress: '1 Planted Way' };
 const JOB_CLAIM = { revision: 1, changeId: '8d2f4a90-61b3-4c7e-a5d8-0e9b3c1f7a24', carrier: 'Planted Mutual', claimNumber: 'PL-1', policyNumber: 'PL-2', dateOfLoss: null, lossCause: '', adjusterName: '', adjusterEmail: '', adjusterPhone: '', deductible: '' };
+
+// A body the photo route accepts as an image (its first bytes are a PNG's), so a refusal is the
+// access rule's and not the image check's.
+const JOB_PHOTO = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, ...Buffer.from('planted photo')]);
 
 const COMPANY = 'api/companies/[companyId]';
 const PLATFORM = 'api/platform/companies';
@@ -95,6 +101,8 @@ export const MATRIX: readonly MatrixRow[] = [
   row('api/jobs/[jobId]', 'GET', 'company', { own: 'cross' }),
   row('api/jobs/[jobId]/customer', 'PUT', 'company', { body: JOB_CUSTOMER, own: 'cross' }),
   row('api/jobs/[jobId]/claim', 'PUT', 'company', { body: JOB_CLAIM, own: 'cross' }),
+  row('api/jobs/[jobId]/photos/[photoId]', 'GET', 'company', { query: '?kind=photo', own: 'cross' }),
+  row('api/jobs/[jobId]/photos/[photoId]', 'PUT', 'company', { query: '?kind=photo', body: JOB_PHOTO, own: 'cross' }),
 
   row('api/invitations/[invitationId]', 'GET', 'invitation'),
   row('api/invitations/[invitationId]/accept', 'POST', 'invitation'),

@@ -43,7 +43,8 @@ export const SETTINGS = {
   // infra/dryscope/scripts/check-plan.js requires ALLOWED_ORIGINS, so removing one is a
   // Terraform change as well as a change here.
   GOOGLE_CLOUD_LOCATION: { source: 'terraform', services: SERVING, reader: 'planned' },
-  EVIDENCE_BUCKET: { source: 'terraform', services: SERVING, reader: 'planned' },
+  // The private evidence bucket the photo routes (S5a-5) store and read bytes in.
+  EVIDENCE_BUCKET: { source: 'terraform', services: SERVING, reader: 'web' },
   ALLOWED_ORIGINS: { source: 'terraform', services: SERVING, reader: 'planned' },
   // Secret Manager references (the naming module's secret_access table), named by Terraform from
   // the secret's name. Nothing reads them yet.
