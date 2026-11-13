@@ -9,8 +9,8 @@
 //
 //   git tag --list | node web/scripts/release-version.ts next --date <YYYY.MM.DD>
 //   crane config <image> | node web/scripts/release-version.ts from-image
-//   gh api repos/<repo>/releases | node web/scripts/release-version.ts previous --before <version>
-//     (prints the tag, or nothing when there is no earlier one)
+//   gh api --paginate --slurp repos/<repo>/releases | node web/scripts/release-version.ts previous --before <version>
+//     (every page of the list; prints the tag, or nothing when there is no earlier one)
 //   gh release view <version> --json isDraft,isPrerelease,assets,body \
 //     | node web/scripts/release-version.ts complete --manifest <its manifest.json>   (exit 0 if complete)
 //
@@ -104,7 +104,11 @@ async function main(argv: string[]) {
     console.log(versionFromImageConfig(JSON.parse(input)));
   } else if (argv[0] === 'previous') {
     const i = argv.indexOf('--before');
-    const tag = previousRelease(i >= 0 ? (argv[i + 1] ?? '') : '', JSON.parse(input));
+    const pages: unknown = JSON.parse(input);
+    if (!Array.isArray(pages) || !pages.every((page) => Array.isArray(page))) {
+      throw new Error('the releases pages are not lists (gh api --paginate --slurp)');
+    }
+    const tag = previousRelease(i >= 0 ? (argv[i + 1] ?? '') : '', pages.flat());
     if (tag) console.log(tag);
   } else if (argv[0] === 'complete') {
     const i = argv.indexOf('--manifest');

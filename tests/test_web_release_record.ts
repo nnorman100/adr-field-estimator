@@ -262,17 +262,24 @@ esac`,
     prerelease: false,
     assets: [],
   };
-  function earlier(sh: Shell, releases: object[], download = 'echo \'{}\' > "$7/manifest.json"') {
+  // gh api --paginate --slurp prints every page of the list, as a list of pages.
+  function earlier(
+    sh: Shell,
+    releases: object[],
+    download = 'echo \'{}\' > "$7/manifest.json"',
+    pages: object[][] = [releases],
+  ) {
     sh.fake(
       'gh',
       `case "$1 $2" in
-  'api repos/owner/repo/releases?per_page=100') echo '${JSON.stringify(releases)}' ;;
+  'api --paginate') echo '${JSON.stringify(pages)}' ;;
   'release download') ${download} ;;
   *) exit 9 ;;
 esac`,
     );
     return sh.run(recordStep('earlier').run, earlierEnv(sh), ROOT);
   }
+  const LIST_RELEASES = ['api', '--paginate', '--slurp', 'repos/owner/repo/releases?per_page=100'];
   const downloadEarlier = (sh: Shell, tag: string) => [
     'release',
     'download',
@@ -294,12 +301,37 @@ esac`,
     ];
     const result = earlier(sh, releases);
     expect(result.status, result.stdout + result.stderr).toBe(0);
-    expect(sh.calls('gh')).toEqual([
-      ['api', 'repos/owner/repo/releases?per_page=100'],
-      downloadEarlier(sh, '2026.11.12-4'),
-    ]);
+    expect(sh.calls('gh')).toEqual([LIST_RELEASES, downloadEarlier(sh, '2026.11.12-4')]);
     expect(sh.outputs()).toEqual({ manifest: `${sh.tmp}/earlier/manifest.json` });
     expect(existsSync(`${sh.tmp}/earlier/manifest.json`)).toBe(true);
+  });
+
+  it('reads every page of the releases list, so a predecessor past the first 100 is still found', () => {
+    const sh = shell();
+    const newer = Array.from({ length: 100 }, (_, i) => published(`2026.11.20-${i + 1}`));
+    const result = earlier(sh, [], undefined, [newer, [published('2026.11.13-1')]]);
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(sh.calls('gh')).toEqual([LIST_RELEASES, downloadEarlier(sh, '2026.11.13-1')]);
+    expect(sh.outputs()).toEqual({ manifest: `${sh.tmp}/earlier/manifest.json` });
+  });
+
+  it.each([
+    ['a later page fails', `echo '[${JSON.stringify([])}]'; exit 1`],
+    ['the pages are not lists', `echo '${JSON.stringify([{ message: 'Bad credentials' }])}'`],
+  ])('stops the record, never declaring a first release, when %s', (_label, list) => {
+    const sh = shell();
+    sh.fake(
+      'gh',
+      `case "$1 $2" in
+  'api --paginate') ${list} ;;
+  *) exit 9 ;;
+esac`,
+    );
+    const result = sh.run(recordStep('earlier').run, earlierEnv(sh), ROOT);
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toContain('Nothing was tagged or published');
+    expect(sh.outputs()).toEqual({});
+    expect(sh.calls('gh')).toEqual([LIST_RELEASES]);
   });
 
   it.each([

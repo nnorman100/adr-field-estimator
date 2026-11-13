@@ -454,7 +454,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          if ! last=$(gh api "repos/$GH_REPO/releases?per_page=100" | node web/scripts/release-version.ts previous --before "$VERSION"); then
+          if ! pages=$(gh api --paginate --slurp "repos/$GH_REPO/releases?per_page=100") \
+            || ! last=$(node web/scripts/release-version.ts previous --before "$VERSION" <<<"$pages"); then
             echo "::error::Could not read the earlier GitHub Releases. Nothing was tagged or published."
             exit 1
           fi
