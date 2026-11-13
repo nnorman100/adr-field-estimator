@@ -9,7 +9,7 @@
 // its own entry later; until then this mark is what "unsent work" means.
 //
 // It also holds when the server first refused this person, and which refusal it was: the work
-// stays locked through a start with no answer, and a disabled member's or inactive company's is
+// stays locked through a start with no answer, and the work of a refusal in RETAINED_REASONS is
 // removed after 30 days (owner decision O5). A mark that cannot be read counts as locked.
 //
 // localStorage, not IndexedDB, on purpose: it answers at once, and still answers when IndexedDB
