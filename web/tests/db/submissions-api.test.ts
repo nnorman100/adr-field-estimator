@@ -355,6 +355,22 @@ describe('Submit', () => {
     expect(await f.expectOneOutcome(h.seed.a, jobId, draftId)).toBe('committed');
   });
 
+  it('never replaces a fence whose own attempt was recorded, only one whose attempt was aborted', async () => {
+    const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
+    // A recorded attempt still holds the draft's fence (its marker not yet written), while the job
+    // row says draft: a state no route makes, so only the fence's own row can tell.
+    const recorded = { id: randomUUID(), epoch: randomUUID() };
+    await h.admin`
+      INSERT INTO job_submissions (id, company_id, job_id, draft_id, epoch, kind, request_digest, expires_at, created_by_actor_id)
+      VALUES (${recorded.id}, ${h.seed.a}, ${jobId}, ${draftId}, ${recorded.epoch}, 'original', ${'a'.repeat(64)}, now() + interval '1 minute', ${h.seed.estimatorA.actor})
+    `;
+    await h.admin`UPDATE job_submissions SET status = 'committed', snapshot_bytes = ${Buffer.from('{}')}, snapshot_sha256 = ${sha256(Buffer.from('{}'))} WHERE id = ${recorded.id}`;
+    await h.field.fence(h.seed.a, draftId, { submissionId: recorded.id, epoch: recorded.epoch, expiresAt: new Date(Date.now() + 60_000) });
+    expect((await f.submitShown(ESTIMATOR_A, jobId, draftId, manifest)).answer).toMatchObject({ status: 409, body: { error: 'submission_in_progress' } });
+    expect(h.field.draft(h.seed.a, draftId)).toMatchObject({ state: 'submitting', fence: { epoch: recorded.epoch } });
+    expect((await f.submissions(jobId)).map((row) => row.status)).toEqual(['committed', 'aborted']);
+  });
+
   it('a request too close to its expiry closes no fence and stops', async () => {
     live.service = submissionsService(h.handle.db, h.field, { windowMs: 60_000, now: () => new Date(Date.now() + 59_000) });
     const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
@@ -393,6 +409,25 @@ describe('the worker', () => {
     hold.open();
     expect((await newer).answer.status).toBe(201);
     expect(await f.expectOneOutcome(h.seed.a, jobId, draftId)).toBe('committed');
+  });
+
+  it('aborts only the expired attempt when another of the same company is still within its window', async () => {
+    const expiring = await f.readyJob(ESTIMATOR_A, h.seed.a);
+    const running = await f.readyJob(ESTIMATOR_A, h.seed.a);
+    // Both attempts stall after their fence; the first has a short window, the second the usual one.
+    live.service = shortWindow();
+    h.field.gate.read = () => new Promise<void>(() => {});
+    void f.submitShown(ESTIMATOR_A, expiring.jobId, expiring.draftId, expiring.manifest);
+    await until(() => h.field.draft(h.seed.a, expiring.draftId)?.state === 'submitting', 'the first fence');
+    live.service = null;
+    h.field.gate.read = () => new Promise<void>(() => {});
+    void f.submitShown(ESTIMATOR_A, running.jobId, running.draftId, running.manifest);
+    await until(() => h.field.draft(h.seed.a, running.draftId)?.state === 'submitting', 'the second fence');
+    await expire();
+    expect(await runSubmissionRepair(h.handle.db, h.field, { markerGraceSeconds: 0 })).toEqual({ aborted: 1, marked: 1, failed: 0 });
+    expect(await f.expectOneOutcome(h.seed.a, expiring.jobId, expiring.draftId)).toBe('aborted');
+    expect((await f.submissions(running.jobId)).map((row) => row.status)).toEqual(['pending']);
+    expect(h.field.draft(h.seed.a, running.draftId)?.state).toBe('submitting');
   });
 
   it('writes a submitted marker the request could not, after the grace', async () => {
