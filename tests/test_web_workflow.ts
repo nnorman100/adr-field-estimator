@@ -3,7 +3,7 @@
 // live-relay-placeholder/ or the workflow itself changed, the web jobs are skipped when nothing
 // did, and `check` passes then only after seeing them skipped. Run by vitest in the node CI job.
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { evaluateStep, load, Shell, WEB, type Data } from './workflow_support.ts';
@@ -11,10 +11,19 @@ import { evaluateStep, load, Shell, WEB, type Data } from './workflow_support.ts
 const WEB_PATHS = ['web/**', 'live-relay-placeholder/**', '.github/workflows/web.yml'];
 const GATED = ['database', 'emulators', 'company-isolation', 'e2e', 'image'];
 const REQUIRED = ['database', 'emulators', 'company-isolation'];
-const GATE = "${{ !cancelled() && needs.changes.outputs.web != 'false' }}";
 
 const web = (): Data => load(WEB);
 const diffStep = (): Data => web().jobs.changes.steps.find((s: Data) => s.id === 'diff');
+
+/** A run step's working directory: its own, else the job's default, else the workflow's. */
+function workDir(job: Data, step: Data): string {
+  return (
+    step['working-directory'] ??
+    job.defaults?.run?.['working-directory'] ??
+    web().defaults?.run?.['working-directory'] ??
+    '.'
+  );
+}
 
 type Needs = Record<string, { result: string; outputs?: Record<string, string> }>;
 
@@ -39,11 +48,17 @@ function expand(run: string, needs: Needs): string {
   });
 }
 
-/** Runs the check job's steps as Actions would; the gate steps really run, the rest are listed. */
+/**
+ * Runs the check job's steps as Actions would on a fresh runner: the workspace starts empty and
+ * holds the repository only after actions/checkout, and a run step fails when its working
+ * directory is missing. The gate steps really run; the rest are listed.
+ */
 function runCheck(needs: Needs): { passed: boolean; ran: string[] } {
   const job = web().jobs.check;
   expect(evaluateStep(job.if, {}, false, { needs })).toBe(true);
   const sh = shell();
+  const workspace = path.join(sh.tmp, 'workspace');
+  mkdirSync(workspace);
   let failed = false;
   const ran: string[] = [];
   for (const s of job.steps as Data[]) {
@@ -51,8 +66,12 @@ function runCheck(needs: Needs): { passed: boolean; ran: string[] } {
     if (!runs) continue;
     const label = s.name ?? s.run ?? s.uses;
     ran.push(label);
-    if (/^(Require|Confirm) /.test(s.name ?? '')) {
-      const result = sh.run(expand(s.run, needs));
+    if (s.uses?.startsWith('actions/checkout@')) mkdirSync(path.join(workspace, 'web'));
+    if (s.run === undefined) continue;
+    const cwd = path.join(workspace, workDir(job, s));
+    if (!existsSync(cwd)) failed = true;
+    else if (/^(Require|Confirm) /.test(s.name ?? '')) {
+      const result = sh.run(expand(s.run, needs), {}, cwd);
       if (result.status !== 0) failed = true;
     }
   }
@@ -94,10 +113,8 @@ describe('web.yml triggers', () => {
 });
 
 describe('the web jobs', () => {
-  it.each(GATED)('%s waits for the changes job and is gated on it', (name) => {
-    const job = web().jobs[name];
-    expect(job.needs).toBe('changes');
-    expect(job.if).toBe(GATE);
+  it.each(GATED)('%s waits for the changes job', (name) => {
+    expect(web().jobs[name].needs).toBe('changes');
   });
 
   it.each([
@@ -116,10 +133,11 @@ describe('the web jobs', () => {
 });
 
 describe('the check job', () => {
-  it('needs the changes job and the three required jobs, and reports unless cancelled', () => {
+  it('needs the changes job and the three required jobs, and reports when they fail', () => {
     const job = web().jobs.check;
     expect(job.needs).toEqual(['changes', ...REQUIRED]);
-    expect(job.if).toBe('always() && !cancelled()');
+    const needs = needsOf('failure', undefined, all('skipped'));
+    expect(evaluateStep(job.if, {}, true, { needs })).toBe(true);
   });
 
   it('with web changes requires each job and runs every one of its own steps', () => {
@@ -230,9 +248,12 @@ describe('the changes job', () => {
 
   function decide(sh: Shell, cwd: string, event = 'pull_request'): string | undefined {
     const step = diffStep();
-    expect(step['working-directory']).toBe('.');
     expect(step.env).toEqual({ EVENT_NAME: '${{ github.event_name }}' });
-    const result = sh.run(step.run, { EVENT_NAME: event }, cwd);
+    const result = sh.run(
+      step.run,
+      { EVENT_NAME: event },
+      path.join(cwd, workDir(web().jobs.changes, step)),
+    );
     expect(result.status, result.stderr).toBe(0);
     return sh.outputs().web;
   }

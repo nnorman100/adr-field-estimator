@@ -167,9 +167,11 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Require the changes job
+        working-directory: .
         run: test "${{ needs.changes.result }}" = "success"
       - name: Confirm the web jobs were skipped
         if: needs.changes.outputs.web == 'false'
+        working-directory: .
         run: |
           test "${{ needs.database.result }}" = "skipped"
           test "${{ needs.emulators.result }}" = "skipped"

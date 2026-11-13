@@ -94,9 +94,9 @@ function layerMembers(layer: string): string[][] {
 
 function imageJob(): Data {
   const web = load(WEB);
-  // Pushes filter on the path; pull requests run the job when the changes job sees it changed.
+  // Pushes filter on the path; pull requests run the job when the changes job sees it changed
+  // (tests/test_web_workflow.ts).
   expect(web.on.push.paths).toContain('live-relay-placeholder/**');
-  expect(web.jobs.changes.steps[1].run).toContain(' live-relay-placeholder ');
   return web.jobs.image;
 }
 
