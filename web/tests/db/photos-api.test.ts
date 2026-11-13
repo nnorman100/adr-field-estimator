@@ -329,6 +329,8 @@ describe('the full-size original', () => {
     expect(await auditCount('photo_original_received')).toBe(1);
     // Other bytes under the same id are a conflict.
     expect((await sendOriginal(ESTIMATOR_A, jobId, photoId, image('another original', JPEG), copyHash)).body).toEqual({ error: 'photo_conflict' });
+    // The same bytes again, but naming another photo's hash, are a conflict too.
+    expect(await sendOriginal(ESTIMATOR_A, jobId, photoId, original, sha256(image('some other photo')))).toEqual({ status: 409, body: { error: 'photo_conflict' } });
   });
 
   it('needs its photo in the registry with the hash it names', async () => {

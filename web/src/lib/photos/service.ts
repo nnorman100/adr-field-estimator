@@ -109,22 +109,22 @@ export function photosService(db: Database, store: EvidenceStore, drafts: DraftS
       if (contentType === null) throw new PhotoError('unsupported_image');
       const sha256 = sha256Of(bytes);
 
-      // 2. Sent before: the same bytes are the same receipt (a lost response is settled by sending
+      // 2. An original may arrive after signing, but only for a photo the job already holds, and
+      // only when it names that photo's hash, on its first sending and every one after.
+      if (kind === 'original') {
+        if (!seen.photo || !input.photoSha256) throw new PhotoError('photo_missing');
+        if (seen.photo.sha256 !== input.photoSha256) throw new PhotoError('photo_conflict');
+      }
+
+      // 3. Sent before: the same bytes are the same receipt (a lost response is settled by sending
       // again), other bytes under the same id are a conflict.
       if (seen.same) {
         if (seen.same.sha256 !== sha256) throw new PhotoError('photo_conflict');
         return { created: false, receipt: receiptOf(seen.same) };
       }
 
-      // 3. The state rule for a new object, by kind.
-      if (kind === 'photo') {
-        await requireEditing(caller, seen.job);
-      } else {
-        // An original may arrive after signing, but only for a photo the job already holds, and
-        // only when it names that photo's hash.
-        if (!seen.photo || !input.photoSha256) throw new PhotoError('photo_missing');
-        if (seen.photo.sha256 !== input.photoSha256) throw new PhotoError('photo_conflict');
-      }
+      // A new photo needs the draft still being edited.
+      if (kind === 'photo') await requireEditing(caller, seen.job);
 
       // 4. The bytes, create-only. An object already there with these bytes is a first attempt
       // that stored them and then lost its place (the registry row below was never made): it is
