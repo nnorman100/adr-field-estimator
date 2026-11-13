@@ -5,11 +5,14 @@
 //   git tag --list 'infra-test-*' | npx tsx scripts/release-manifest.ts --version <YYYY.MM.DD-N> \
 //     --commit <commit> --image <image@sha256:...> --revision <new revision> \
 //     --replaced <revision=percent,...> --run <run URL> --out <manifest.json> --notes <notes.md> \
-//     [--previous-release <earlier manifest.json>]
+//     [--previous-release <earlier manifest.json> | --first-release]
 //
 // --replaced is the traffic the deploy job remembered before the move. On a rerun that found this
 // release's image already serving, that traffic is the release's own, so the record job passes the
 // previous published release's manifest instead and the rollback target is the revision it released.
+// When there is no earlier DryScope test release at all (the bootstrap run after the owner's first
+// app-root apply), it passes --first-release: the manifest is marked firstRelease and its rollback
+// is null, the only case where it may be.
 //
 // The rest it reads from the checkout of the released commit: the migration level (the highest
 // numbered file in web/migrations, which the migrate job applied or the release stopped), the switch
@@ -23,7 +26,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { z } from 'zod';
 import { AI_FEATURES, AI_REGISTRY } from '../src/lib/ai/registry';
 import { FLAG_NAMES } from '../src/lib/flags/known';
-import { VERSION } from './release-version';
+import { FIRST_RELEASE, VERSION } from './release-version';
 
 export const SERVICE = 'dryscope-api-test';
 export const REGION = 'us-central1';
@@ -43,7 +46,8 @@ const TERRAFORM_TAG = (root: string) =>
 
 const Revision = z.string().regex(REVISION);
 
-export const ReleaseManifest = z.strictObject({
+export const ReleaseManifest = z
+  .strictObject({
   schema: z.literal(1),
   version: z.string().regex(VERSION),
   environment: z.literal('test'),
@@ -74,9 +78,14 @@ export const ReleaseManifest = z.strictObject({
   ),
   switchDefaults: z.record(z.enum(FLAG_NAMES), z.literal(false)),
   minClientEpoch: z.int().nonnegative().nullable(),
-  rollback: z.strictObject({ command: z.string().min(1), database: z.literal(DATABASE_RULE) }),
+  firstRelease: z.boolean(),
+  rollback: z.strictObject({ command: z.string().min(1), database: z.literal(DATABASE_RULE) }).nullable(),
   run: z.url({ protocol: /^https$/ }),
-});
+  })
+  .refine((manifest) => (manifest.rollback === null) === manifest.firstRelease, {
+    error: 'only the first recorded release has no rollback, and it has none',
+    path: ['rollback'],
+  });
 export type ReleaseManifest = z.infer<typeof ReleaseManifest>;
 
 export type ManifestInput = {
@@ -90,6 +99,8 @@ export type ManifestInput = {
   tags: readonly string[];
   /** The previous published release's manifest, when this release's image was already serving. */
   previousRelease?: unknown;
+  /** No earlier DryScope test release exists and this release's image was already serving. */
+  firstRelease?: boolean;
 };
 
 /** "rev-a=90,rev-b=10", as the deploy job remembered the traffic before the move. */
@@ -139,6 +150,10 @@ export function rollbackCommand(replaced: readonly { revision: string; percent: 
 }
 
 export function buildManifest(input: ManifestInput): ReleaseManifest {
+  const firstRelease = input.firstRelease === true;
+  if (firstRelease && input.previousRelease !== undefined) {
+    throw new Error('a first release has no previous release');
+  }
   const replaced =
     input.previousRelease === undefined ? parseTraffic(input.replaced) : releasedBefore(input.previousRelease, input);
   const digest = IMAGE.exec(input.image)?.[1] ?? '';
@@ -162,7 +177,8 @@ export function buildManifest(input: ManifestInput): ReleaseManifest {
     switchDefaults: Object.fromEntries(FLAG_NAMES.map((name) => [name, false])),
     // S6-6 sets this from MIN_CLIENT_EPOCH.
     minClientEpoch: null,
-    rollback: { command: rollbackCommand(replaced), database: DATABASE_RULE },
+    firstRelease,
+    rollback: firstRelease ? null : { command: rollbackCommand(replaced), database: DATABASE_RULE },
     run: input.run,
   };
   const parsed = ReleaseManifest.safeParse(manifest);
@@ -177,16 +193,21 @@ export function buildManifest(input: ManifestInput): ReleaseManifest {
 
 /** The GitHub Release notes: the rollback command and the database rule up front. */
 export function releaseNotes(manifest: ReleaseManifest): string {
+  const rollback = manifest.rollback
+    ? [
+        'Roll back to the traffic this release replaced:',
+        '',
+        '```sh',
+        manifest.rollback.command,
+        '```',
+        '',
+        manifest.rollback.database,
+      ]
+    : [FIRST_RELEASE];
   return [
     `Test release ${manifest.version} of commit ${manifest.commit}, serving as \`${manifest.revision}\`.`,
     '',
-    'Roll back to the traffic this release replaced:',
-    '',
-    '```sh',
-    manifest.rollback.command,
-    '```',
-    '',
-    manifest.rollback.database,
+    ...rollback,
     '',
     `Migration level: ${manifest.migrationLevel ?? 'none'}. The full record is manifest.json, attached.`,
     '',
@@ -210,6 +231,7 @@ function args(argv: string[]) {
     out: value('out'),
     notes: value('notes'),
     previousRelease: argv.includes('--previous-release') ? value('previous-release') : undefined,
+    firstRelease: argv.includes('--first-release'),
   };
 }
 

@@ -743,10 +743,12 @@ describe('release record', () => {
       REVISION: '${{ needs.deploy.outputs.revision }}',
       PREVIOUS: '${{ needs.deploy.outputs.previous }}',
       EARLIER: '${{ steps.earlier.outputs.manifest }}',
+      FIRST: '${{ steps.earlier.outputs.first }}',
+      EXISTING: '${{ steps.existing.outputs.state }}',
     });
   });
 
-  it('is the only job that can write, and only its lookup, tag and Release steps hold the token', () => {
+  it('is the only job that can write, and only its Release lookups, tag and Release steps hold the token', () => {
     const writers = Object.entries(jobs as Record<string, Data>)
       .filter(([, job]) =>
         Object.entries(job.permissions ?? {}).some(([k, v]) => k !== 'id-token' && v !== 'read'),
@@ -758,7 +760,7 @@ describe('release record', () => {
       .flatMap((job) => steps(job))
       .filter((s) => bindsCredential(s))
       .map((s) => s.id);
-    expect(holders).toEqual(['earlier', 'tag', 'release']);
+    expect(holders).toEqual(['existing', 'earlier', 'tag', 'release']);
     for (const s of steps(record())) {
       if (String(s.uses ?? '').startsWith('actions/checkout@')) {
         expect(s.with['persist-credentials']).toBe(false);

@@ -62,7 +62,7 @@ describe('release manifest', () => {
 
   it('rolls back to the remembered split exactly when traffic was split', () => {
     const replaced = 'dryscope-api-test-00011-xyz=90,dryscope-api-test-00009-def=10';
-    expect(buildManifest(input({ replaced })).rollback.command).toContain(
+    expect(buildManifest(input({ replaced })).rollback!.command).toContain(
       `--to-revisions=${replaced} `,
     );
     expect(rollbackCommand(parseTraffic(replaced))).toBe(
@@ -79,7 +79,7 @@ describe('release manifest', () => {
       input({ revision: 'dryscope-api-test-00013-new', replaced: 'dryscope-api-test-00012-abc=100', previousRelease: earlier }),
     );
     expect(rerun.replaced).toEqual([{ revision: 'dryscope-api-test-00010-pqr', percent: 100 }]);
-    expect(rerun.rollback.command).toBe(
+    expect(rerun.rollback!.command).toBe(
       'gcloud run services update-traffic dryscope-api-test --to-revisions=dryscope-api-test-00010-pqr=100 --region=us-central1 --project=dryscope',
     );
     expect(releasedBefore(earlier, { version: '2026.11.13-2', revision: 'dryscope-api-test-00013-new' })).toEqual(
@@ -164,10 +164,36 @@ describe('release manifest', () => {
     expect(ReleaseManifest.safeParse({ ...manifest, switchDefaults: {} }).success).toBe(false);
   });
 
+  it('records the first release with no rollback target, and says so in its notes', () => {
+    const manifest = buildManifest(input({ firstRelease: true }));
+    expect(manifest.firstRelease).toBe(true);
+    expect(manifest.rollback).toBeNull();
+    const notes = releaseNotes(manifest);
+    expect(notes).toContain('\nFirst recorded release: there is no earlier DryScope release to return to.\n');
+    expect(notes).not.toContain('update-traffic');
+    expect(buildManifest(input()).firstRelease).toBe(false);
+  });
+
+  it('allows no rollback only for the first recorded release', () => {
+    const manifest = buildManifest(input());
+    expect(ReleaseManifest.safeParse({ ...manifest, rollback: null }).success).toBe(false);
+    const first = buildManifest(input({ firstRelease: true }));
+    expect(ReleaseManifest.safeParse({ ...first, rollback: manifest.rollback }).success).toBe(false);
+    expect(ReleaseManifest.safeParse({ ...first, firstRelease: false }).success).toBe(false);
+    expect(ReleaseManifest.safeParse(first).success).toBe(true);
+  });
+
+  it('refuses a first release that also names a previous release', () => {
+    const earlier = buildManifest(input({ version: '2026.11.12-4', revision: 'dryscope-api-test-00010-pqr' }));
+    expect(() => buildManifest(input({ firstRelease: true, previousRelease: earlier }))).toThrow(
+      /first release has no previous release/,
+    );
+  });
+
   it('puts the rollback command and the database rule in the Release notes', () => {
     const manifest = buildManifest(input());
     const notes = releaseNotes(manifest);
-    expect(notes).toContain('```sh\n' + manifest.rollback.command + '\n```');
+    expect(notes).toContain('```sh\n' + manifest.rollback!.command + '\n```');
     expect(notes).toContain(DATABASE_RULE);
     expect(notes).toContain('0012_ai_live_tables.sql');
   });
@@ -202,7 +228,7 @@ describe('the manifest command, as the record job runs it', () => {
       app: 'infra-test-app-2026.11.12-1',
     });
     expect(manifest.migrationLevel).toMatch(/^\d{4}_\w+\.sql$/);
-    expect(readFileSync(`${out}/notes.md`, 'utf8')).toContain(manifest.rollback.command);
+    expect(readFileSync(`${out}/notes.md`, 'utf8')).toContain(manifest.rollback!.command);
   }, 60_000);
 
   it('takes the rollback target from the previous release manifest it is given', () => {
@@ -223,6 +249,25 @@ describe('the manifest command, as the record job runs it', () => {
     const manifest = ReleaseManifest.parse(JSON.parse(readFileSync(`${out}/manifest.json`, 'utf8')));
     expect(manifest.replaced).toEqual([{ revision: 'dryscope-api-test-00010-pqr', percent: 100 }]);
     expect(readFileSync(`${out}/notes.md`, 'utf8')).toContain('--to-revisions=dryscope-api-test-00010-pqr=100 ');
+  }, 60_000);
+
+  it('writes a first release with --first-release', () => {
+    const out = mkdtempSync(path.join(tmpdir(), 'release-manifest-'));
+    dirs.push(out);
+    const args = [
+      'tsx',
+      'scripts/release-manifest.ts',
+      ...['--version', '2026.11.13-2', '--commit', commit, '--image', image],
+      ...['--revision', 'dryscope-api-test-00013-new', '--replaced', 'dryscope-api-test-00012-abc=100'],
+      ...['--run', run, '--out', `${out}/manifest.json`, '--notes', `${out}/notes.md`, '--first-release'],
+    ];
+    const result = spawnSync('npx', args, { cwd: WEB, input: '', encoding: 'utf8', timeout: 60_000 });
+    expect(result.status, result.stderr).toBe(0);
+    const manifest = ReleaseManifest.parse(JSON.parse(readFileSync(`${out}/manifest.json`, 'utf8')));
+    expect(manifest).toMatchObject({ firstRelease: true, rollback: null });
+    expect(readFileSync(`${out}/notes.md`, 'utf8')).toContain(
+      'First recorded release: there is no earlier DryScope release to return to.',
+    );
   }, 60_000);
 
   it('fails without writing when an argument is missing', () => {

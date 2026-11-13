@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  FIRST_RELEASE,
   isVersion,
   nextVersion,
   previousRelease,
@@ -104,12 +105,18 @@ describe('the previous published release, for a rerun that found its own image s
 
   it.each([
     ['a draft', { draft: true }],
-    ['a full release', { prerelease: false }],
-    ['one without manifest.json', { assets: [{ name: 'notes.md' }] }],
-    ['one without assets', { assets: undefined }],
+    ['a full release (the old app)', { prerelease: false }],
   ])('passes over %s', (_label, changes) => {
     const releases = [release('2026.11.13-1', changes), release('2026.11.12-4')];
     expect(previousRelease('2026.11.13-2', releases)).toBe('2026.11.12-4');
+  });
+
+  it.each([
+    ['one without manifest.json', { assets: [{ name: 'notes.md' }] }],
+    ['one without assets', { assets: undefined }],
+  ])('still names the previous release when it is %s, so the record refuses it', (_label, changes) => {
+    const releases = [release('2026.11.13-1', changes), release('2026.11.12-4')];
+    expect(previousRelease('2026.11.13-2', releases)).toBe('2026.11.13-1');
   });
 
   it('passes over tags that are not release versions', () => {
@@ -117,12 +124,17 @@ describe('the previous published release, for a rerun that found its own image s
     expect(previousRelease('2026.11.13-2', releases)).toBe('2026.11.12-4');
   });
 
-  it.each([[[]], [[release('2026.11.13-2'), release('2026.11.14-1')]], [null]])(
-    'refuses when there is no earlier one: %j',
-    (releases) => {
-      expect(() => previousRelease('2026.11.13-2', releases)).toThrow(/no earlier published test release/);
-    },
-  );
+  it.each([
+    [[]],
+    [[release('2026.11.13-2'), release('2026.11.14-1')]],
+    [[release('2026.11.04-10', { prerelease: false }), release('2026.11.12-4', { draft: true })]],
+  ])('finds none for the first recorded release: %j', (releases) => {
+    expect(previousRelease('2026.11.13-2', releases)).toBeNull();
+  });
+
+  it.each([[null], [{ message: 'Not Found' }]])('refuses a releases list that is not one: %j', (releases) => {
+    expect(() => previousRelease('2026.11.13-2', releases)).toThrow(/not a list/);
+  });
 
   it('refuses a version that is not one', () => {
     expect(() => previousRelease('latest', [release('2026.11.12-4')])).toThrow(/--before/);
@@ -152,6 +164,13 @@ describe('whether an existing GitHub Release is complete', () => {
     ['another rollback command', { body: command.replace('00011-xyz', '00010-pqr') }],
   ])('finishes one with %s', (_label, changes) => {
     expect(releaseComplete({ ...complete, ...changes }, command)).toBe(false);
+  });
+
+  it('keeps a first recorded release only when its notes say so', () => {
+    expect(FIRST_RELEASE).toBe('First recorded release: there is no earlier DryScope release to return to.');
+    const first = { ...complete, body: `Test release.\n\n${FIRST_RELEASE}\n` };
+    expect(releaseComplete(first, FIRST_RELEASE)).toBe(true);
+    expect(releaseComplete(complete, FIRST_RELEASE)).toBe(false);
   });
 
   it('never calls a Release complete without a rollback command to look for', () => {

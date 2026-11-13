@@ -369,8 +369,8 @@ jobs:
   # Release carrying manifest.json, with the rollback command in its notes. After any failure past
   # the gate (here or in an earlier job): one ERROR line in the dryscope-release log for the
   # failed-release alert (TC-11, C11), which needs roles/logging.logWriter for the deploy account
-  # (TC-9). The workflow's only write permission is this job's, and only the earlier-release lookup,
-  # tag and Release steps hold the token.
+  # (TC-9). The workflow's only write permission is this job's, and only the Release lookups, tag
+  # and Release steps hold the token.
   record:
     needs: [gate, build, migrate, deploy]
     if: >-
@@ -423,22 +423,52 @@ jobs:
             tar -xzf "$archive" -C "$RUNNER_TEMP"
             echo "$RUNNER_TEMP/gh_${GH_VERSION}_linux_amd64/bin" >> "$GITHUB_PATH"
           fi
+      # A complete GitHub Release for this version (a rerun after the record finished) is kept as
+      # it is, whatever the release history: published, a pre-release, with manifest.json and that
+      # manifest's rollback note in its notes. Anything less is written again below.
+      - id: existing
+        if: needs.deploy.result == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          state=missing
+          if view=$(gh release view "$VERSION" --json isDraft,isPrerelease,assets,body 2>/dev/null); then
+            state=incomplete
+            dir="$RUNNER_TEMP/existing"
+            mkdir -p "$dir"
+            if gh release download "$VERSION" --pattern manifest.json --dir "$dir" --clobber 2>/dev/null \
+              && node web/scripts/release-version.ts complete --manifest "$dir/manifest.json" <<<"$view"; then
+              state=complete
+            fi
+          fi
+          echo "state=$state" >> "$GITHUB_OUTPUT"
       # A rerun after this release's image already took the traffic (the record failed after the
       # move): the traffic deploy remembered is this release's own, so the rollback target comes
-      # from the previous published release's manifest, never from current traffic.
+      # from the previous published DryScope test release's manifest, never from current traffic.
+      # With no earlier one at all (the bootstrap run after the owner's first app-root apply), this
+      # is the first recorded release, which has no rollback target.
       - id: earlier
-        if: needs.deploy.result == 'success' && needs.deploy.outputs.serving == 'true'
+        if: needs.deploy.result == 'success' && needs.deploy.outputs.serving == 'true' && steps.existing.outputs.state != 'complete'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           if ! last=$(gh api "repos/$GH_REPO/releases?per_page=100" | node web/scripts/release-version.ts previous --before "$VERSION"); then
-            echo "::error::This release's image was already serving, and no earlier published test release with manifest.json names the revision to roll back to. Nothing was tagged or published."
+            echo "::error::Could not read the earlier GitHub Releases. Nothing was tagged or published."
             exit 1
+          fi
+          if [ -z "$last" ]; then
+            echo "first=true" >> "$GITHUB_OUTPUT"
+            echo "This release's image was already serving and no earlier DryScope test release exists: it is the first recorded release, with no rollback target." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
           dir="$RUNNER_TEMP/earlier"
           mkdir -p "$dir"
-          gh release download "$last" --pattern manifest.json --dir "$dir" --clobber
+          if ! gh release download "$last" --pattern manifest.json --dir "$dir" --clobber; then
+            echo "::error::This release's image was already serving, and the previous test release $last has no manifest.json naming the revision to roll back to. Nothing was tagged or published."
+            exit 1
+          fi
           echo "manifest=$dir/manifest.json" >> "$GITHUB_OUTPUT"
           echo "This release's image was already serving (a rerun): the rollback target is \`$last\`'s revision." >> "$GITHUB_STEP_SUMMARY"
       - id: manifest
@@ -449,10 +479,17 @@ jobs:
           REVISION: ${{ needs.deploy.outputs.revision }}
           PREVIOUS: ${{ needs.deploy.outputs.previous }}
           EARLIER: ${{ steps.earlier.outputs.manifest }}
+          FIRST: ${{ steps.earlier.outputs.first }}
+          EXISTING: ${{ steps.existing.outputs.state }}
         run: |
+          if [ "$EXISTING" = complete ]; then
+            echo "GitHub Release \`$VERSION\` is already complete; its manifest stands." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           git tag --list 'infra-test-*' | npx tsx scripts/release-manifest.ts --version "$VERSION" --commit "$COMMIT" \
             --image "$IMAGE_REF" --revision "$REVISION" --replaced "$PREVIOUS" --run "$RUN_URL" \
-            --out "$RUNNER_TEMP/manifest.json" --notes "$RUNNER_TEMP/notes.md" ${EARLIER:+--previous-release "$EARLIER"}
+            --out "$RUNNER_TEMP/manifest.json" --notes "$RUNNER_TEMP/notes.md" \
+            ${EARLIER:+--previous-release "$EARLIER"} ${FIRST:+--first-release}
           cat "$RUNNER_TEMP/notes.md" >> "$GITHUB_STEP_SUMMARY"
       # The version tag, at the released commit. A tag is never moved: one already on this commit (a
       # rerun) is kept, and one on another commit stops the record.
@@ -477,24 +514,26 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        # An existing Release is kept only when it is complete: published, a pre-release, with
-        # manifest.json and this release's rollback command in its notes. An incomplete one (a draft
-        # left by an interrupted create, say) is finished with this run's manifest and notes.
+          EXISTING: ${{ steps.existing.outputs.state }}
+        # A complete Release is kept; an incomplete one (a draft left by an interrupted create, say) is
+        # finished with this run's manifest and notes; otherwise the Release is created.
         run: |
-          if existing=$(gh release view "$VERSION" --json isDraft,isPrerelease,assets,body 2>/dev/null); then
-            if node web/scripts/release-version.ts complete --manifest "$RUNNER_TEMP/manifest.json" <<<"$existing"; then
+          case "$EXISTING" in
+            complete)
               echo "::notice title=Release kept::GitHub Release $VERSION is already complete; it is left as it is."
-            else
+              ;;
+            incomplete)
               gh release upload "$VERSION" "$RUNNER_TEMP/manifest.json" --clobber
               gh release edit "$VERSION" --draft=false --prerelease --verify-tag \
                 --title "$VERSION (test)" --notes-file "$RUNNER_TEMP/notes.md"
               echo "Finished GitHub Release \`$VERSION\` with manifest.json" >> "$GITHUB_STEP_SUMMARY"
-            fi
-          else
-            gh release create "$VERSION" "$RUNNER_TEMP/manifest.json" --verify-tag --prerelease \
-              --title "$VERSION (test)" --notes-file "$RUNNER_TEMP/notes.md"
-            echo "Published GitHub Release \`$VERSION\` with manifest.json" >> "$GITHUB_STEP_SUMMARY"
-          fi
+              ;;
+            *)
+              gh release create "$VERSION" "$RUNNER_TEMP/manifest.json" --verify-tag --prerelease \
+                --title "$VERSION (test)" --notes-file "$RUNNER_TEMP/notes.md"
+              echo "Published GitHub Release \`$VERSION\` with manifest.json" >> "$GITHUB_STEP_SUMMARY"
+              ;;
+          esac
       # Every failure path past the gate ends here: an earlier job failed or was cancelled, or a
       # record step above failed or this job was cancelled.
       - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
