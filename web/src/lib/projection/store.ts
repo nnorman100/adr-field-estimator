@@ -30,6 +30,14 @@ export type AccessStore = {
   remove(companyId: string, uid: string, version: number): Promise<void>;
 };
 
+// Reads one record's expiry: when the uid's access record stops working, or null when there is
+// none. GET /api/me returns it (S6-3), so a phone opens its sync gate only on a record that works
+// now: a renewal can be skipped (a busy actor, a row in back-off), and a 200 alone proves nothing
+// about the record.
+export type AccessReader = {
+  expiry(companyId: string, uid: string): Promise<Date | null>;
+};
+
 // Firestore document ids cannot hold a slash, be `.` or `..`, or match __.*__; a uid that could
 // address another document is refused rather than written.
 const DOCUMENT_ID = /^(?!\.\.?$)(?!__.*__$)[^/]{1,128}$/;

@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { AccessStoreError, type AccessStore } from '@/lib/projection/store';
+import { AccessStoreError, type AccessReader, type AccessStore } from '@/lib/projection/store';
 
 // The behaviour every access store must have. Run against the in-memory store in tests/db and the
 // real Firestore store in tests/emu, so the database tests' stand-in cannot drift from Firestore.
 
 export type StoreProbe = {
-  store: AccessStore;
+  store: AccessStore & AccessReader;
   // What the store holds now: the access record and the company header.
   record(companyId: string, uid: string): Promise<{ role: string; expiresAt: Date } | null>;
   header(companyId: string): Promise<{ authTenantId: string } | null>;
@@ -93,6 +93,18 @@ export function accessStoreContract(name: string, probe: () => StoreProbe, compa
         store.grant({ companyId: company, authTenantId: 't', uid: 'uid-6', role: 'owner', expiresAt: later, version: 18 }),
       ).rejects.toEqual(new AccessStoreError('stale_decision'));
       expect(await record(company, 'uid-6')).toEqual({ role: 'estimator', expiresAt: later });
+    });
+
+    it('reads back the expiry of a record, and null for one that is gone or never was', async () => {
+      const { store } = probe();
+      const company = companyId();
+      expect(await store.expiry(company, 'uid-7')).toBeNull();
+      await store.grant({ companyId: company, authTenantId: 't', uid: 'uid-7', role: 'estimator', expiresAt: later, version: 1 });
+      expect(await store.expiry(company, 'uid-7')).toEqual(later);
+      expect(await store.expiry(companyId(), 'uid-7')).toBeNull();
+      await store.remove(company, 'uid-7', 2);
+      expect(await store.expiry(company, 'uid-7')).toBeNull();
+      await expect(store.expiry(company, 'a/b')).rejects.toBeInstanceOf(AccessStoreError);
     });
   });
 }

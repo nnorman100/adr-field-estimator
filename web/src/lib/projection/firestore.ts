@@ -2,7 +2,7 @@ import { getApps, initializeApp, type App } from 'firebase-admin/app';
 import { getFirestore, Timestamp, type Firestore, type Transaction } from 'firebase-admin/firestore';
 import type { ProjectionConfig } from '@/lib/config';
 import { firestoreSpan } from '@/lib/telemetry/spans';
-import { AccessStoreError, checkedUid, type AccessStore } from './store';
+import { AccessStoreError, checkedUid, type AccessReader, type AccessStore } from './store';
 
 // Access records in the field database, written with the Admin SDK, which the rules do not bind.
 // Only ids, the role, the expiry and the decision version are written; nothing here is logged.
@@ -21,7 +21,7 @@ export function firestoreFor(config: ProjectionConfig): Firestore {
   return getFirestore(firebaseApp(config), config.databaseId);
 }
 
-export function firestoreAccessStore(db: Firestore): AccessStore {
+export function firestoreAccessStore(db: Firestore): AccessStore & AccessReader {
   const company = (companyId: string) => db.collection('companies').doc(companyId);
   const access = (companyId: string, uid: string) => company(companyId).collection('access').doc(checkedUid(uid));
   const applied = (companyId: string, uid: string) =>
@@ -60,6 +60,12 @@ export function firestoreAccessStore(db: Firestore): AccessStore {
       );
       const after = await firestoreSpan('get', 'access', () => record.get());
       if (after.exists) throw new AccessStoreError('record_still_present');
+    },
+
+    async expiry(companyId, uid) {
+      const snapshot = await firestoreSpan('get', 'access', () => access(companyId, uid).get());
+      const expiresAt: unknown = snapshot.get('expiresAt');
+      return snapshot.exists && expiresAt instanceof Timestamp ? expiresAt.toDate() : null;
     },
   };
 }

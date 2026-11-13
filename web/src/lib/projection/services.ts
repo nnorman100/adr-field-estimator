@@ -5,11 +5,12 @@ import { parseProjectionConfig } from '@/lib/config';
 import { firestoreAccessStore, firestoreFor } from './firestore';
 import { projectActor, runAccessProjection, type RunSummary } from './outbox';
 import { renewAccess } from './renew';
-import type { AccessStore } from './store';
+import type { AccessReader, AccessStore } from './store';
 
 export type ProjectionServices = { db: Database; store: AccessStore };
 
 let services: ProjectionServices | null = null;
+let reader: AccessReader | null = null;
 
 // A projection holds its connection until its Firestore write answers, so one slow write must not
 // leave other members' renewals waiting for the only connection.
@@ -20,9 +21,17 @@ export function projectionServices(): ProjectionServices {
   if (!services) {
     const config = parseProjectionConfig(process.env);
     const { db } = openDatabase(process.env, { max: PROJECTION_CONNECTIONS });
-    services = { db, store: firestoreAccessStore(firestoreFor(config)) };
+    const store = firestoreAccessStore(firestoreFor(config));
+    services = { db, store };
+    reader = store;
   }
   return services;
+}
+
+// The same records, read: GET /api/me's expiry (expiry.ts).
+export function projectionReader(): AccessReader {
+  projectionServices();
+  return reader!;
 }
 
 // Called by a team change right after its transaction commits, for the member it changed: a

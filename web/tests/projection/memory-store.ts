@@ -1,4 +1,4 @@
-import { AccessStoreError, checkedUid, type AccessGrant, type AccessStore } from '@/lib/projection/store';
+import { AccessStoreError, checkedUid, type AccessGrant, type AccessReader, type AccessStore } from '@/lib/projection/store';
 
 // An in-memory stand-in for the Firestore access records, for tests that run where no Firestore
 // emulator is (the database job). tests/projection/store-contract.ts holds it and the real
@@ -6,7 +6,7 @@ import { AccessStoreError, checkedUid, type AccessGrant, type AccessStore } from
 
 export type StoredAccess = { role: string; expiresAt: Date };
 
-export type MemoryStore = AccessStore & {
+export type MemoryStore = AccessStore & AccessReader & {
   records: Map<string, StoredAccess>;
   headers: Map<string, { authTenantId: string }>;
   // The version of the decision last applied for each uid; it stays after a removal.
@@ -35,6 +35,10 @@ export function memoryStore(): MemoryStore {
       store.records.delete(key(companyId, uid));
       store.versions.set(key(companyId, uid), version);
       if (store.records.has(key(companyId, uid))) throw new AccessStoreError('record_still_present');
+    },
+    async expiry(companyId: string, uid: string) {
+      const found = store.records.get(key(companyId, checkedUid(uid)));
+      return found ? new Date(found.expiresAt) : null;
     },
   };
   function newest(companyId: string, uid: string, version: number) {
