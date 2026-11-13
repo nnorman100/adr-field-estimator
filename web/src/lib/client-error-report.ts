@@ -37,6 +37,7 @@ export const CLIENT_ROUTES: readonly string[] = [
   '/sign-in/[address]/company',
   '/sign-in/[address]/team',
   '/sign-in/[address]/invitations/[invitationId]',
+  '/sign-in/[address]/jobs/[jobId]/finish',
   '/operator/[tenantId]',
   '/operator/[tenantId]/companies/[companyId]',
   '/operator/[tenantId]/companies/[companyId]/team',
