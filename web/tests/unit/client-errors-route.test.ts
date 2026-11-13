@@ -43,7 +43,6 @@ afterEach(() => {
 });
 
 const report = (extra: Record<string, unknown> = {}) => ({
-  kind: 'error',
   name: 'TypeError',
   message: 'x is not a function',
   stack: ['    at fn (/_next/static/chunks/app-0123.js:10:20)', '    at /_next/static/chunks/main.js:3:4'],
@@ -67,7 +66,7 @@ const events = () => lines.map((line) => JSON.parse(line) as Record<string, unkn
 
 describe('POST /api/client-errors: what it writes', () => {
   it('writes one Error Reporting event per report, in the documented shape', async () => {
-    const res = await send([report(), report({ kind: 'rejection', name: 'RangeError', message: 'too far', stack: [] })], {
+    const res = await send([report(), report({ name: 'RangeError', message: 'too far', stack: [] })], {
       headers: { traceparent: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01' },
     });
     expect(res.status).toBe(202);
@@ -81,19 +80,18 @@ describe('POST /api/client-errors: what it writes', () => {
       serviceContext: { service: 'dryscope-web-client', version: COMMIT },
       message: 'TypeError: x is not a function\n    at fn (/_next/static/chunks/app-0123.js:10:20)\n    at /_next/static/chunks/main.js:3:4',
       context: { httpRequest: { url: '/sign-in/[address]' } },
-      kind: 'error',
       browser: 'safari',
       'logging.googleapis.com/trace': 'projects/dryscope-test/traces/4bf92f3577b34da6a3ce929d0e0e4736',
     });
     expect((first as { stack_trace: string }).stack_trace).toBe((first as { message: string }).message);
-    expect(second).toMatchObject({ kind: 'rejection', message: 'RangeError: too far' });
+    expect(second).toMatchObject({ message: 'RangeError: too far' });
     expect(lines.every((line) => line.endsWith('\n') && line.trim().split('\n').length === 1)).toBe(true);
   });
 
   it('writes only the fixed fields, whatever else the body carries', async () => {
-    await send([{ ...report(), user: EMAIL, headers: { authorization: BEARER }, extra: { deep: COORDS } }]);
+    await send([{ ...report(), kind: 'error', user: EMAIL, headers: { authorization: BEARER }, extra: { deep: COORDS } }]);
     expect(Object.keys(events()[0]!).sort()).toEqual(
-      ['@type', 'browser', 'context', 'kind', 'message', 'serviceContext', 'severity', 'stack_trace'].sort(),
+      ['@type', 'browser', 'context', 'message', 'serviceContext', 'severity', 'stack_trace'].sort(),
     );
     expect(lines.join('')).not.toMatch(/example\.com|sekritvalue|34\.05/);
   });
@@ -123,6 +121,20 @@ describe('POST /api/client-errors: what it writes', () => {
     expect((event as { message: string }).message).toContain('    at fn (/_next/static/chunks/ok.js:5:6)');
   });
 
+  it('scrubs a token-shaped name, a street address and an email in a script path', async () => {
+    const token = 'A1b2C3d4'.repeat(5);
+    await send([
+      report({
+        name: token,
+        message: 'Failed at 123 Main Street',
+        stack: ['    at /_next/static/chunks/jane@example.com.js:1:2', `    at ${token} (/_next/static/chunks/ok.js:5:6)`],
+      }),
+    ]);
+    const text = lines.join('');
+    expect(text).not.toMatch(/A1b2C3d4|123 Main|jane|example\.com/);
+    expect((events()[0] as { message: string }).message).toBe('Error: Failed at [redacted]\n    at [redacted] (/_next/static/chunks/ok.js:5:6)');
+  });
+
   it('cuts a long message to 300 characters', async () => {
     await send([report({ message: 'word '.repeat(100) })]);
     const header = ((events()[0] as { message: string }).message.split('\n')[0] ?? '').replace(/^TypeError: /, '');
@@ -143,7 +155,7 @@ describe('POST /api/client-errors: what it refuses', () => {
     ['no reports key', { raw: JSON.stringify({}) }],
     ['a body that is not an object', { raw: JSON.stringify([report()]) }],
     ['21 reports', { raw: JSON.stringify({ reports: Array.from({ length: 21 }, (_, i) => report({ message: `m${i}` })) }) }],
-    ['an unknown kind', { raw: JSON.stringify({ reports: [report({ kind: 'telemetry' })] }) }],
+    ['a report with no name', { raw: JSON.stringify({ reports: [report({ name: undefined })] }) }],
     ['an unknown browser', { raw: JSON.stringify({ reports: [report({ browser: 'Mozilla/5.0 (iPhone)' })] }) }],
     ['a message that is not text', { raw: JSON.stringify({ reports: [report({ message: { a: 1 } })] }) }],
     ['a message over its bound', { raw: JSON.stringify({ reports: [report({ message: 'x'.repeat(601) })] }) }],
@@ -229,7 +241,7 @@ describe('POST /api/client-errors: the cap', () => {
 describe('POST /api/client-errors: what it reads', () => {
   it('opens no Postgres connection and no Firestore client, whether it writes, refuses or caps', async () => {
     expect((await send([report()])).status).toBe(202);
-    expect((await send([report({ kind: 'telemetry' })])).status).toBe(400);
+    expect((await send([report({ browser: 'Mozilla/5.0' })])).status).toBe(400);
     for (let i = 0; i < 4; i++) await send(Array.from({ length: 20 }, () => report()));
     expect(limitedReports()).toBeGreaterThan(0);
     expect(trap.postgres).not.toHaveBeenCalled();

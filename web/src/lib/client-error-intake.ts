@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import {
   BROWSER_FAMILIES,
-  CLIENT_ERROR_KINDS,
   MAX_FRAMES,
   MAX_MESSAGE,
   cleanFrames,
@@ -34,7 +33,6 @@ export const MAX_REPORTS = 20;
 export const REPORTS_PER_MINUTE = 60;
 
 const reportSchema = z.object({
-  kind: z.enum(CLIENT_ERROR_KINDS),
   name: z.string().max(64),
   message: z.string().max(2 * MAX_MESSAGE),
   stack: z.array(z.string().max(MAX_MESSAGE)).max(MAX_FRAMES),
@@ -119,7 +117,6 @@ function eventFor(report: Report, version: string): Record<string, unknown> {
     message: text,
     stack_trace: text,
     context: { httpRequest: { url: isKnownRoute(report.route) ? report.route : 'unknown' } },
-    kind: report.kind,
     browser: report.browser,
   };
 }

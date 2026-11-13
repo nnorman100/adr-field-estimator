@@ -5,7 +5,7 @@
 // browser-safe way to call Error Reporting directly, so the app's own route is the way in.
 //
 // Limits, so a broken page cannot flood the route or the phone:
-//   - at most 10 reports per page load (a repeat of the same error is not counted again);
+//   - at most 10 reports per page load;
 //   - at most 20 wait in memory while the phone has no signal, and none is ever stored: there is no
 //     new phone store, and what is still waiting is gone when the page closes;
 //   - a request is under the server's 8 KB limit; more reports than fit go in the next request.
@@ -14,8 +14,8 @@
 // started as the page hides or closes (`visibilitychange`, `pagehide`) is not cut off. fetchLater()
 // is not used: Chrome only, and its send cannot tell the page a request failed, which the wait-offline
 // rule needs. Offline (or a request that could not reach the server), the reports stay and go on the
-// `online` event, when the page is visible again, or on a slow retry. An answer from the server, of
-// any status, ends that report's story: nothing is retried into a refusal.
+// `online` event or when the page is visible again. An answer from the server, of any status, ends
+// that report's story: nothing is retried into a refusal.
 
 import { buildReport, type ClientErrorKind, type ClientErrorReport } from './client-error-report';
 
@@ -27,7 +27,6 @@ const MAX_BODY_BYTES = 8000;
 // The server accepts at most 20 reports in one request.
 const MAX_REPORTS_PER_REQUEST = 20;
 const SETTLE_MS = 1500;
-const RETRY_MS = 10_000;
 
 type ReporterOptions = {
   // Resolves true when the server answered (any status), false when the request could not get there.
@@ -53,7 +52,6 @@ export function createReporter(options: ReporterOptions): Reporter {
   const maxPerLoad = options.maxPerLoad ?? MAX_REPORTS_PER_LOAD;
   const maxWaiting = options.maxWaiting ?? MAX_REPORTS_WAITING;
   const waiting: ClientErrorReport[] = [];
-  const seen = new Set<string>();
   let counted = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let sending = false;
@@ -87,7 +85,6 @@ export function createReporter(options: ReporterOptions): Reporter {
     if (!reached) {
       waiting.unshift(...batch);
       waiting.splice(maxWaiting);
-      arm(RETRY_MS);
     }
     return reached;
   }
@@ -112,13 +109,10 @@ export function createReporter(options: ReporterOptions): Reporter {
   }
 
   function report(kind: ClientErrorKind, thrown: unknown): void {
-    const built = buildReport(kind, thrown, options.where());
-    const key = `${built.name}|${built.message}|${built.stack[0] ?? ''}`;
-    if (seen.has(key) || counted >= maxPerLoad) return;
-    seen.add(key);
+    if (counted >= maxPerLoad) return;
     counted += 1;
     if (waiting.length >= maxWaiting) return;
-    waiting.push(built);
+    waiting.push(buildReport(kind, thrown, options.where()));
     arm(options.isVisible() ? SETTLE_MS : 0);
   }
 

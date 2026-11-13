@@ -73,7 +73,8 @@ describe('hooks', () => {
     expect(init).toMatchObject({ method: 'POST', keepalive: true, credentials: 'omit' });
     const reports = page.bodies()[0]!.reports;
     expect(reports).toHaveLength(1);
-    expect(reports[0]).toMatchObject({ kind: 'error', name: 'TypeError', route: '/sign-in/[address]', browser: 'chrome' });
+    expect(Object.keys(reports[0]!).sort()).toEqual(['browser', 'message', 'name', 'route', 'stack']);
+    expect(reports[0]).toMatchObject({ name: 'TypeError', route: '/sign-in/[address]', browser: 'chrome' });
     expect(JSON.stringify(reports)).not.toMatch(/example\.com|acme-restoration/);
   });
 
@@ -82,14 +83,14 @@ describe('hooks', () => {
     installClientErrors(page);
     page.fire('unhandledrejection', { reason: new RangeError('too far') });
     await vi.advanceTimersByTimeAsync(SETTLE);
-    expect(page.bodies()[0]!.reports[0]).toMatchObject({ kind: 'rejection', name: 'RangeError', message: 'too far' });
+    expect(page.bodies()[0]!.reports[0]).toMatchObject({ name: 'RangeError', message: 'too far' });
   });
 
   it('reports what a React error boundary caught, even before anything was installed', async () => {
     const page = fakePage();
     reportBoundaryError(new Error('render failed'), page);
     await vi.advanceTimersByTimeAsync(SETTLE);
-    expect(page.bodies()[0]!.reports[0]).toMatchObject({ kind: 'boundary', message: 'render failed' });
+    expect(page.bodies()[0]!.reports[0]).toMatchObject({ name: 'Error', message: 'render failed' });
   });
 
   it('batches reports that arrive together into one request', async () => {
@@ -102,12 +103,15 @@ describe('hooks', () => {
     expect(page.bodies()[0]!.reports).toHaveLength(2);
   });
 
-  it('ignores a repeat of the same error', async () => {
+  it('counts a repeat of the same error like any other report, up to the cap', async () => {
     const page = fakePage();
     installClientErrors(page);
     for (let i = 0; i < 5; i++) page.fire('error', { error: new Error('same') });
     await vi.advanceTimersByTimeAsync(SETTLE);
-    expect(page.bodies()[0]!.reports).toHaveLength(1);
+    expect(page.bodies()[0]!.reports).toHaveLength(5);
+    for (let i = 0; i < 10; i++) page.fire('error', { error: new Error('same') });
+    await vi.advanceTimersByTimeAsync(SETTLE);
+    expect(page.bodies().flatMap((b) => b.reports)).toHaveLength(10);
   });
 
   it('never throws out of a hook, whatever the event holds', async () => {
@@ -231,6 +235,23 @@ describe('offline and leaving', () => {
     await vi.advanceTimersByTimeAsync(SETTLE);
     expect(page.fetchSpy).toHaveBeenCalledTimes(2);
     expect(page.bodies()[1]!.reports).toHaveLength(1);
+  });
+
+  it('does not try again on a timer when the server cannot be reached, only on online or visible', async () => {
+    const page = fakePage({
+      fetch: async () => {
+        throw new TypeError('Failed to fetch');
+      },
+    });
+    installClientErrors(page);
+    page.fire('error', { error: new Error('unreachable') });
+    await vi.advanceTimersByTimeAsync(SETTLE);
+    expect(page.fetchSpy).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(page.fetchSpy).toHaveBeenCalledTimes(1);
+    page.fire('visibilitychange');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(page.fetchSpy).toHaveBeenCalledTimes(2);
   });
 
   it('does not send a report again after the server answered, even with an error status', async () => {

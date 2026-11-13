@@ -4,11 +4,12 @@
 // sides cannot drift: nothing here touches `window`, `process` or any import.
 //
 // A report holds only:
-//   - the error NAME, if it is an identifier;
-//   - the MESSAGE, scrubbed (emails, tokens, coordinates, long digit runs, URL query strings) and cut
-//     to 300 characters;
+//   - the error NAME, if it is an identifier that the scrub rules leave alone;
+//   - the MESSAGE, scrubbed (emails, tokens, street addresses, coordinates, phone numbers, long digit
+//     runs, URL query strings) and cut to 300 characters;
 //   - stack FRAMES from the app's own scripts (/_next/static/...) as path, line and column, never the
-//     page address or another site's script;
+//     page address or another site's script, with the same rules applied to the function name and
+//     the path;
 //   - the route PATTERN of the page (/sign-in/[address]), never the address itself;
 //   - the browser FAMILY, one word.
 // Nothing about the person, company, job or address (hard rule 6).
@@ -17,7 +18,6 @@ export type ClientErrorKind = 'error' | 'rejection' | 'boundary';
 export type BrowserFamily = 'chrome' | 'safari' | 'firefox' | 'edge' | 'other';
 
 export type ClientErrorReport = {
-  kind: ClientErrorKind;
   name: string;
   message: string;
   stack: string[];
@@ -25,7 +25,6 @@ export type ClientErrorReport = {
   browser: BrowserFamily;
 };
 
-export const CLIENT_ERROR_KINDS = ['error', 'rejection', 'boundary'] as const;
 export const BROWSER_FAMILIES = ['chrome', 'safari', 'firefox', 'edge', 'other'] as const;
 
 export const MAX_MESSAGE = 300;
@@ -69,39 +68,54 @@ const MESSAGE_RULES: RegExp[] = [
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, // id
   /[A-Za-z0-9_\-+=]{32,}/g, // any other long unbroken token or digest
   /-?\d{1,3}\.\d{3,}\s*,\s*-?\d{1,3}\.\d{3,}/g, // latitude, longitude pair
+  /\b\d{1,6}\s+(?:[A-Za-z0-9.'-]+\s+){0,4}?(?:street|st|avenue|ave|road|rd|boulevard|blvd|drive|dr|lane|ln|way|court|ct|place|pl|circle|cir|parkway|pkwy|highway|hwy|terrace|ter|trail|trl)\b\.?/gi, // street address
   /\+?\d[\d ().-]{7,}\d/g, // phone number or other long number group
   /-?\d{1,3}\.\d{4,}/g, // a single coordinate
   /\d{6,}/g, // any remaining long digit run
 ];
 
-export function scrubMessage(text: string): string {
+function redact(text: string): string {
   // A URL's query string and fragment go first, whole: they are where tokens travel.
-  let out = (typeof text === 'string' ? text : '').replace(/[?#]\S+/g, '');
+  let out = text.replace(/[?#]\S+/g, '');
   for (const rule of MESSAGE_RULES) out = out.replace(rule, REDACTED);
-  return out.replace(/\s+/g, ' ').trim().slice(0, MAX_MESSAGE);
+  return out;
+}
+
+export function scrubMessage(text: string): string {
+  return redact(typeof text === 'string' ? text : '').replace(/\s+/g, ' ').trim().slice(0, MAX_MESSAGE);
 }
 
 const NAME = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
 
 export function errorName(name: unknown): string {
-  return typeof name === 'string' && NAME.test(name) ? name : 'Error';
+  return typeof name === 'string' && NAME.test(name) && redact(name) === name ? name : 'Error';
 }
 
+const OWN_SCRIPT = '/_next/static/';
 const PATH = String.raw`\/_next\/static\/[\w\-./%~@[\]]{1,150}`;
 const FUNCTION_NAME = /^[\w$.<>[\] ]{1,80}$/;
 // A frame as found in a browser's stack text: V8 "at fn (url:line:col)", Safari and Firefox
 // "fn@url:line:col". The query a script URL may carry (?dpl=...) is skipped.
 const FRAME = new RegExp(`(${PATH}?\\.js)(?:[?#][^\\s:)]*)?:(\\d{1,7}):(\\d{1,7})`);
 // The one shape a stored frame has, V8-style, which is what Error Reporting reads for JavaScript.
-const CANONICAL = new RegExp(`^ {4}at (?:[\\w$.<>[\\] ]{1,80} \\(${PATH}\\.js:\\d{1,7}:\\d{1,7}\\)|${PATH}\\.js:\\d{1,7}:\\d{1,7})$`);
+const CANONICAL = new RegExp(`^ {4}at (?:([\\w$.<>[\\] ]{1,80}) \\((${PATH}\\.js):(\\d{1,7}):(\\d{1,7})\\)|(${PATH}\\.js):(\\d{1,7}):(\\d{1,7}))$`);
+
+// The canonical frame, with the scrub rules applied to the function name and the path. A path that
+// no longer names one of the app's own scripts once scrubbed is dropped.
+function canonicalFrame(fn: string, path: string, line: string, column: string): string | null {
+  const script = redact(path);
+  if (!script.startsWith(OWN_SCRIPT)) return null;
+  const name = redact(fn);
+  const where = `${script}:${line}:${column}`;
+  return FUNCTION_NAME.test(name) ? `    at ${name} (${where})` : `    at ${where}`;
+}
 
 function frameOf(line: string): string | null {
   const found = FRAME.exec(line);
   if (!found) return null;
   const head = line.slice(0, found.index).replace(/https?:\/\/[^\s/()@]*$/, '');
   const fn = head.replace(/^\s*at\s+/, '').replace(/[\s@(]+$/, '').trim();
-  const where = `${found[1]}:${found[2]}:${found[3]}`;
-  return FUNCTION_NAME.test(fn) ? `    at ${fn} (${where})` : `    at ${where}`;
+  return canonicalFrame(fn, found[1]!, found[2]!, found[3]!);
 }
 
 // The app's own frames from a stack text, rewritten into the canonical shape. The header line (which
@@ -117,9 +131,17 @@ export function ownFrames(stack: unknown): string[] {
   return out;
 }
 
-// The server's check of frames that arrive: only the canonical shape passes.
+// The server's check of frames that arrive: only the canonical shape passes, and the same rules
+// apply to it again.
 export function cleanFrames(lines: readonly string[]): string[] {
-  return lines.filter((line) => CANONICAL.test(line)).slice(0, MAX_FRAMES);
+  const out: string[] = [];
+  for (const line of lines) {
+    const found = CANONICAL.exec(line);
+    const frame = found && canonicalFrame(found[1] ?? '', (found[2] ?? found[5])!, (found[3] ?? found[6])!, (found[4] ?? found[7])!);
+    if (frame) out.push(frame);
+    if (out.length >= MAX_FRAMES) break;
+  }
+  return out;
 }
 
 // One word. Edge and the iPhone Chrome both carry "Chrome" or "Safari" too, so the order matters.
@@ -154,5 +176,5 @@ export function buildReport(
   } else if (typeof thrown === 'string') {
     message = scrubMessage(thrown);
   }
-  return { kind, name, message, stack, route: routePattern(where.pathname), browser: browserFamily(where.userAgent) };
+  return { name, message, stack, route: routePattern(where.pathname), browser: browserFamily(where.userAgent) };
 }

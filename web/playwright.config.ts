@@ -1,6 +1,7 @@
 import { defineConfig } from '@playwright/test';
 import { AUTH_EMULATOR_HOST, E2E_PROJECT } from './tests/e2e/sign-in/emulator';
 import { FIRESTORE_EMULATOR_HOST } from './tests/e2e/offline/emulators';
+import { SERVER_LOG, SERVER_LOG_DIR } from './tests/e2e/server-log';
 import { FIXTURE_PATH } from './tests/e2e/sign-in/seed';
 
 const port = 3100;
@@ -41,8 +42,9 @@ export default defineConfig({
     },
     {
       // A production build and server, not `next dev`: the dev server stopped listening in the
-      // middle of a CI run (2026-11-11), and every later test got ECONNREFUSED.
-      command: 'npm run build && npm run start',
+      // middle of a CI run (2026-11-11), and every later test got ECONNREFUSED. Its stdout, where
+      // the structured log lines go, is kept in a file the tests read (tests/e2e/server-log.ts).
+      command: `npm run build && mkdir -p ${JSON.stringify(SERVER_LOG_DIR)} && npm run start > ${JSON.stringify(SERVER_LOG)}`,
       url: `http://localhost:${port}/api/health`,
       env: {
         APP_ENV: 'local',

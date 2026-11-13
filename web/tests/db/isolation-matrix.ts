@@ -116,7 +116,7 @@ export const MATRIX: readonly MatrixRow[] = [
   row('api/echo', 'POST', 'public', { body: { message: 'hello' } }),
   row('api/sign-in/[address]', 'GET', 'public'),
   row('api/client-errors', 'POST', 'public', {
-    body: { reports: [{ kind: 'error', name: 'TypeError', message: 'x is not a function', stack: [], route: '/', browser: 'chrome' }] },
+    body: { reports: [{ name: 'TypeError', message: 'x is not a function', stack: [], route: '/', browser: 'chrome' }] },
   }),
 
   row('api/internal/access-projection', 'POST', 'service'),

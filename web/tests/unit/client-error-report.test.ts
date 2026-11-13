@@ -52,6 +52,11 @@ describe('scrubMessage', () => {
     expect(out).not.toMatch(/555/);
   });
 
+  it('removes a street address', () => {
+    expect(scrubMessage('Failed at 123 Main Street')).toBe('Failed at [redacted]');
+    expect(scrubMessage('no access to 4500 W. Sunset Blvd. today')).not.toMatch(/4500|Sunset/);
+  });
+
   it('keeps short numbers that carry no identity', () => {
     expect(scrubMessage('Unexpected token at position 42')).toBe('Unexpected token at position 42');
   });
@@ -98,6 +103,19 @@ describe('ownFrames', () => {
     ]);
   });
 
+  it('scrubs the function name and drops a frame whose path is not the app’s own once scrubbed', () => {
+    const token = 'A1b2'.repeat(10);
+    const stack = [
+      `    at ${token} (https://app.example/_next/static/chunks/a.js:1:2)`,
+      '    at https://app.example/_next/static/chunks/jane@example.com.js:1:2',
+      '    at fn (https://app.example/_next/static/chunks/page-1234567.js:3:4)',
+    ].join('\n');
+    expect(ownFrames(stack)).toEqual([
+      '    at [redacted] (/_next/static/chunks/a.js:1:2)',
+      '    at fn (/_next/static/chunks/page-[redacted].js:3:4)',
+    ]);
+  });
+
   it('does not carry the error message or a function name that is not an identifier', () => {
     const stack = `Error: ${EMAIL}\n    at ${EMAIL} (https://app.example/_next/static/chunks/a.js:1:2)`;
     const out = ownFrames(stack).join('\n');
@@ -125,12 +143,30 @@ describe('cleanFrames', () => {
       ]),
     ).toEqual(['    at fn (/_next/static/chunks/a.js:1:2)', '    at /_next/static/chunks/b.js:3:4']);
   });
+
+  it('applies the scrub rules again to the function name and the path of a canonical frame', () => {
+    expect(
+      cleanFrames([
+        '    at /_next/static/chunks/jane@example.com.js:1:2',
+        `    at ${'A1b2'.repeat(10)} (/_next/static/chunks/a.js:1:2)`,
+        '    at fn (/_next/static/chunks/page-1234567.js:3:4)',
+      ]),
+    ).toEqual(['    at [redacted] (/_next/static/chunks/a.js:1:2)', '    at fn (/_next/static/chunks/page-[redacted].js:3:4)']);
+  });
+
+  it('gives the server back exactly what the browser built', () => {
+    const frames = ownFrames(
+      ['    at fn (https://app.example/_next/static/chunks/page-1234567.js:3:4)', '    at https://app.example/_next/static/chunks/b.js:9:1'].join('\n'),
+    );
+    expect(cleanFrames(frames)).toEqual(frames);
+  });
 });
 
 describe('errorName, routePattern, browserFamily', () => {
   it('keeps an identifier-shaped error name and falls back to Error', () => {
     expect(errorName('TypeError')).toBe('TypeError');
     expect(errorName(EMAIL)).toBe('Error');
+    expect(errorName('A1b2'.repeat(10))).toBe('Error');
     expect(errorName('')).toBe('Error');
     expect(errorName(undefined)).toBe('Error');
   });
@@ -181,8 +217,8 @@ describe('buildReport', () => {
   it('builds the C13 fields from an Error and nothing else', () => {
     const error = new TypeError(`bad value for ${EMAIL} ${BEARER} at ${COORDS}`);
     const report = buildReport('error', error, where);
-    expect(Object.keys(report).sort()).toEqual(['browser', 'kind', 'message', 'name', 'route', 'stack']);
-    expect(report).toMatchObject({ kind: 'error', name: 'TypeError', route: '/sign-in/[address]', browser: 'chrome' });
+    expect(Object.keys(report).sort()).toEqual(['browser', 'message', 'name', 'route', 'stack']);
+    expect(report).toMatchObject({ name: 'TypeError', route: '/sign-in/[address]', browser: 'chrome' });
     const text = JSON.stringify(report);
     expect(text).not.toContain('example.com');
     expect(text).not.toContain('abcdef0123456789');
