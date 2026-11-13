@@ -10,7 +10,7 @@ import { extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from './fixture';
 import type { NetworkLane, StaticFile } from './lane';
-import { COMPANY, seedMe } from './shell';
+import { COMPANY, precacheOf, seedMe, workerText } from './shell';
 
 const OLD_PUBLIC = fileURLToPath(new URL('../../../../public', import.meta.url));
 const TYPES: Record<string, string> = {
@@ -145,4 +145,49 @@ test('the new worker replaces the old one at /sw.js only when every old window i
   );
   expect(drafts).toEqual([{ id: 'draft-1', note: 'unsent' }]);
   expect(await page.evaluate(async () => (await indexedDB.databases()).map((db) => db.name).sort())).toEqual(['adr-private-drafts-v2', 'ds-me']);
+});
+
+test('the new worker keeps the files of the new deployment, not the copies the old worker kept at the same addresses', async ({ context, lane }) => {
+  serveOldApp(lane);
+  const old = await context.newPage();
+  await old.goto(`${lane.appUrl}/__old/`);
+  await old.waitForFunction(() => (window as unknown as { oldReady?: boolean }).oldReady === true);
+  await expect.poll(() => old.evaluate(() => navigator.serviceWorker.controller !== null)).toBe(true);
+  const startUrl = () => old.evaluate(async () => ((await (await fetch('/manifest.webmanifest')).json()) as { start_url: string }).start_url);
+  // The old worker keeps its own copy of the manifest, which opens the old app.
+  expect(await startUrl()).toBe('/app');
+
+  // The new app is deployed: /sw.js and every file its worker lists are the new app's own.
+  lane.unserve('/sw.js');
+  for (const path of precacheOf(await workerText(lane))) lane.unserve(path);
+  await old.evaluate(async () => {
+    await (await navigator.serviceWorker.getRegistration())!.update();
+  });
+  await expect
+    .poll(() => old.evaluate(async () => (await navigator.serviceWorker.getRegistration())!.waiting !== null))
+    .toBe(true);
+  // The old window still gets the old worker's copy, and the new worker kept the new manifest.
+  expect(await startUrl()).toBe('/app');
+  const kept = await old.evaluate(async () => {
+    const name = (await caches.keys()).find((key) => key.startsWith('ds-field-'))!;
+    const manifest = await (await caches.open(name)).match('/manifest.webmanifest');
+    return ((await manifest!.json()) as { start_url: string }).start_url;
+  });
+  expect(kept).toBe('/field');
+
+  // Once the old window is closed and the new worker has taken over, a window gets the new manifest
+  // from it, with no signal.
+  await old.close();
+  await expect(async () => {
+    const probe = await context.newPage();
+    try {
+      lane.cut();
+      await probe.goto(`${lane.appUrl}/field`, { timeout: 5000 });
+      await expect(probe.locator('[data-shell="field"]')).toBeVisible({ timeout: 3000 });
+      expect(await probe.evaluate(async () => ((await (await fetch('/manifest.webmanifest')).json()) as { start_url: string }).start_url)).toBe('/field');
+    } finally {
+      lane.restore();
+      await probe.close();
+    }
+  }).toPass({ timeout: 45_000, intervals: [1000] });
 });
