@@ -467,3 +467,9 @@ Recorded under "Corrections" in the named plan files in the pull request that co
 - Keeping source maps as a private release asset.
 - Live wiring for every alert at S8.
 - The agent spending cap (runner side).
+
+## 13. Corrections
+
+Later changes to this plan, newest last.
+
+- **2026-11-12, S7 plan ([S7.md](S7.md)), owner-approved.** TC-3 and TC-8: `withAiSpan` is used by S7-1, and the manifest's "prompt and model versions" come from `web/src/lib/ai/registry.ts`; the manifest also gains the relay image digest (S7-R).
