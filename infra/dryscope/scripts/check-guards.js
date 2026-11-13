@@ -102,17 +102,12 @@ function ownLevel(body) {
 // What a release sets by hand and a later apply must therefore leave alone: each protected
 // resource's lifecycle.ignore_changes must name these. Plan JSON cannot show a missing one until
 // the day a plan tries to put the old value back, so the configuration is read here instead.
-// Cloud Run services: the image and traffic move with releases and rollbacks, and the revision
-// name is set by the release workflow (this root never configures it), so a plan that kept it
-// out of ignore_changes would clear it in place on the running service.
+// Cloud Run services: the image and traffic move with releases and rollbacks. The revision name
+// the release sets is not here: an apply that changes the template must clear it (check-plan.js).
 const REQUIRED_IGNORED = {
   data: {},
   app: {
-    'google_cloud_run_v2_service.svc': [
-      'template[0].containers[0].image',
-      'template[0].revision',
-      'traffic',
-    ],
+    'google_cloud_run_v2_service.svc': ['template[0].containers[0].image', 'traffic'],
     'google_cloud_run_v2_job.migrate': ['template[0].template[0].containers[0].image'],
   },
 };

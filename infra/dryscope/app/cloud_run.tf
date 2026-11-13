@@ -155,13 +155,14 @@ resource "google_cloud_run_v2_service" "svc" {
     # image; releases and rollbacks go through gcloud as the deploy account, which
     # cannot run this root. Without these lines the next apply would put the
     # tfvars image and traffic back. The release also names each revision it deploys
-    # (template[0].revision), which this root never sets; without that line the next apply
-    # would plan to clear the name. client and client_version are stamped by tooling.
+    # (template[0].revision), which this root never sets and does not ignore: a revision cannot
+    # change once it exists, so an apply that changes the template must clear that name for Cloud
+    # Run to make a fresh revision (the release's image, no traffic until the next release moves
+    # it). client and client_version are stamped by tooling.
     ignore_changes = [
       client,
       client_version,
       template[0].containers[0].image,
-      template[0].revision,
       traffic,
     ]
   }

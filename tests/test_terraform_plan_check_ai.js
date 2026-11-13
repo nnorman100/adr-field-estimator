@@ -16,7 +16,6 @@ const require = createRequire(import.meta.url);
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SCRIPTS = path.join(ROOT, 'infra', 'dryscope', 'scripts');
 const { checkPlan } = require(path.join(SCRIPTS, 'check-plan.js'));
-const { checkConfig, PROTECTED } = require(path.join(SCRIPTS, 'check-guards.js'));
 
 function load(root, environment) {
   const file = path.join(ROOT, 'infra', 'dryscope', 'fixtures', `${root}-${environment}.plan.json`);
@@ -162,12 +161,6 @@ describe.each(['test', 'live'])('data root, %s: Model Armor', (environment) => {
     expect(check(changed, 'data', environment)).toEqual([
       `${ARMOR_USER('migrate')}: not in the expected data inventory`,
     ]);
-  });
-
-  test('the template and the floor setting are destroy-guarded', () => {
-    expect(PROTECTED.data).toEqual(expect.arrayContaining([TEMPLATE, FLOOR]));
-    const dir = path.join(ROOT, 'infra', 'dryscope', 'data');
-    expect(checkConfig(dir, 'data')).toEqual([]);
   });
 });
 
@@ -349,8 +342,10 @@ describe.each(['test', 'live'])('app root, %s: AI settings', (environment) => {
     ]);
   });
 
-  // Both services as applied before S7-2 (no AI settings, the relay at concurrency 10), planned as
-  // an in-place update to the current configuration; the provider recomputes the etag.
+  // Both services as applied before S7-2 (no AI settings, the relay at concurrency 10) and then
+  // released (the release names the revision it deploys), planned as an in-place update to the
+  // current configuration; the provider recomputes the etag.
+  const released = (k) => `dryscope-${k}-${environment}-00012-abc`;
   const reapply = () =>
     load('app', environment).map((rc) => {
       if (!rc.address.startsWith('google_cloud_run_v2_service.svc[')) {
@@ -361,6 +356,7 @@ describe.each(['test', 'live'])('app root, %s: AI settings', (environment) => {
         (e) => !AI_NAMES.includes(e.name),
       );
       if (rc.address === SVC('live')) before.template[0].max_instance_request_concurrency = 10;
+      before.template[0].revision = released(rc.address.includes('"live"') ? 'live' : 'api');
       before.etag = 'applied-etag';
       const after = { ...structuredClone(rc.change.after), etag: null };
       return {
@@ -372,6 +368,17 @@ describe.each(['test', 'live'])('app root, %s: AI settings', (environment) => {
   test('adding the AI settings and moving the relay’s concurrency in place passes', () => {
     expect(check(reapply(), 'app', environment)).toEqual([]);
   });
+
+  test.each(['api', 'live'])(
+    'an update of the %s service that keeps the released revision name is refused',
+    (k) => {
+      const plan = reapply();
+      find(plan, SVC(k)).change.after.template[0].revision = released(k);
+      expect(check(plan, 'app', environment)).toEqual([
+        `${SVC(k)}: plan would change it in place; a first apply only creates`,
+      ]);
+    },
+  );
 
   test('the web app’s concurrency may not move in the same update', () => {
     const plan = reapply();

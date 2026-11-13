@@ -25,7 +25,9 @@
 // condition in place). A third covers an app root that is already applied: a Cloud Run service
 // may change in place only by adding or setting a NEW_SETTINGS variable, to the value in the
 // table, and (where the table holds it) moving its request concurrency to the table's value, with
-// every other attribute unchanged. A fourth covers a Cloud SQL instance already applied
+// every other attribute unchanged; the update must clear the revision name a release set, because
+// Cloud Run refuses to change an existing revision and makes a fresh one only for an unnamed
+// template. A fourth covers a Cloud SQL instance already applied
 // with a regional backup location: it may change in place, and only to the US multi-region (`us`),
 // with every other attribute unchanged. Nothing else may be deleted, replaced or updated.
 //
@@ -601,11 +603,13 @@ function checkPlan(resourceChanges, { root, environment, complete = true, reappl
   // the table holds it, to move its request concurrency (both checked against the table below). Apart
   // from those, the planned state must equal the current one; output-only top-level
   // fields the provider will recompute (marked unknown) are skipped. Anything unknown inside the
-  // template is not skipped, so such a plan is refused rather than guessed at.
+  // template is not skipped, so such a plan is refused rather than guessed at. The planned revision
+  // name must be empty, so the update makes a fresh revision; clearing a name a release set is
+  // the only change to it allowed.
   const settingsUpdate = (rc, actions) => {
     const { before, after, after_unknown: unknown = {} } = rc.change ?? {};
     if (!want.settings[rc.address] || actions.length !== 1 || actions[0] !== 'update') return false;
-    if (before == null || after == null) return false;
+    if (before == null || after == null || !empty(after.template?.[0]?.revision)) return false;
     const strip = (state) => {
       const copy = structuredClone(state);
       for (const key of Object.keys(unknown))
@@ -623,6 +627,7 @@ function checkPlan(resourceChanges, { root, environment, complete = true, reappl
       if (want.attrs[rc.address]?.[CONCURRENCY] !== undefined && copy.template?.[0]) {
         delete copy.template[0].max_instance_request_concurrency;
       }
+      if (copy.template?.[0]) delete copy.template[0].revision;
       return copy;
     };
     const canon = (v) =>
