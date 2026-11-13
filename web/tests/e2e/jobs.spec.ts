@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { hrefOf, type FieldView } from '../../src/lib/field/views';
 import { expectNoAxeViolations } from './a11y';
 import { JOBS_BASE_URL } from './jobs/backend';
-import { currentDraftOf, seedCompany, storedJobs, storedPhotos, type Company, type Person } from './jobs/seed';
+import { adminSql, currentDraftOf, seedCompany, storedJobs, storedPhotos, type Company, type Person } from './jobs/seed';
 import { adminDb } from './offline/world';
 import { idTokenFor } from './sign-in/emulator';
 import { PASSWORD } from './sign-in/seed';
@@ -227,6 +227,36 @@ test('office sees the job read-only; another estimator and another company canno
     await expect(main(stranger).getByRole('alert')).toHaveText('This job is not in your list.');
     await expect(stranger.getByRole('img')).toHaveCount(0);
   }
+});
+
+test('an office user changed to estimator mid-visit loses the loaded job at the next refused photo', async ({ page, browser }) => {
+  const company = await seedCompany('downgrade', { estimator: 'estimator', office: 'office' });
+  await signIn(page, company, company.people.estimator!);
+  await startJob(page, '8 Downgrade Drive');
+  await addRoom(page, 'Den');
+  await takePhoto(page, 'Den', 'Overview');
+  await expect(page.getByRole('heading', { name: 'Job photos (1)' })).toBeVisible();
+
+  const office = await newPage(browser);
+  await signIn(office, company, company.people.office!);
+  await main(office).getByRole('link', { name: '8 Downgrade Drive' }).click();
+  await expect(office.getByRole('heading', { name: '8 Downgrade Drive' })).toBeVisible();
+  await expect(office.getByLabel('Year built')).toBeVisible();
+
+  // The office person becomes an estimator who does not own this job, in the database and in their
+  // field database access record, while the job is open on Check Scope (Photos not opened yet).
+  const officeUid = company.people.office!.uid;
+  await adminSql()`
+    UPDATE memberships SET role = 'estimator'
+    WHERE company_id = ${company.id} AND actor_id = (SELECT id FROM actors WHERE company_id = ${company.id} AND uid = ${officeUid})
+  `;
+  await adminDb().doc(`companies/${company.id}/access/${officeUid}`).update({ role: 'estimator' });
+
+  await main(office).getByRole('link', { name: 'Photos' }).click();
+  await expect(main(office).getByRole('alert')).toHaveText('This job is not in your list.');
+  await expect(office.getByRole('heading', { name: '8 Downgrade Drive' })).toHaveCount(0);
+  await expect(office.getByLabel('Year built')).toHaveCount(0);
+  await expect(office.getByRole('img')).toHaveCount(0);
 });
 
 test('a dropped response after the server committed leaves one job and one photo', async ({ page }) => {

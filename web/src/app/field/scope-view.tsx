@@ -16,7 +16,7 @@ import {
   type FormValues,
 } from '@/lib/field/forms';
 import { MAX_NOTES } from '@/lib/field/schema';
-import { saveDraftField, type FieldDraft } from '@/lib/field/store';
+import { fieldRefusal, saveDraftField, type FieldDraft } from '@/lib/field/store';
 import type { JobContext } from './job-screens';
 import { RoomsSection } from './rooms-section';
 import { Box, Outcome, READ_AGAIN, Section, Tick } from './ui';
@@ -55,8 +55,9 @@ export function ScopeView({ job, draft }: { job: JobContext; draft: FieldDraft }
       setEdits((current) => editsAfterSave(current, sent));
       await job.reloadDraft();
       setNotice(Object.keys(changes).length === 0 ? 'Nothing to save.' : 'Scope saved.');
-    } catch {
+    } catch (error) {
       setError('The scope was not saved. Check the signal and save again.');
+      job.checkAccess(fieldRefusal(error));
     } finally {
       setBusy(false);
     }

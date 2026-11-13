@@ -19,6 +19,7 @@ import {
   writeBatch,
   type Firestore,
 } from 'firebase/firestore';
+import { answerMessage, type Refusal } from './api';
 import type { FieldChanges } from './forms';
 import { draftFieldSchema, photoFieldSchema, roomFieldSchema, type DraftField, type PhotoField, type RoomField } from './schema';
 
@@ -42,6 +43,16 @@ export class InvalidFieldData extends Error {
     super('stored field data does not match the field map');
     this.name = 'InvalidFieldData';
   }
+}
+
+// The field database's rules refusing this person (or a sign-in it no longer takes), put as the
+// jobs API would answer it; null for anything else (no signal, a timeout), which stays a failure to
+// try again.
+export function fieldRefusal(error: unknown): Refusal | null {
+  const code = (error as { code?: unknown } | null)?.code;
+  if (code === 'permission-denied') return { status: 403, message: answerMessage(404, { error: 'not_found' }) };
+  if (code === 'unauthenticated') return { status: 401, message: answerMessage(401, null) };
+  return null;
 }
 
 function mapOf<T>(schema: { safeParse: (value: unknown) => { success: boolean; data?: T } }, value: unknown): T {

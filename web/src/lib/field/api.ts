@@ -46,6 +46,8 @@ const receipt = z.object({ photoId: z.string(), sha256: z.string() });
 // stale_revision): the screen reads the job again. `denied` marks a refusal to show or change the job
 // to this person at all (401, 403, 404): the screen drops any copy of it it holds.
 export type Answer<T> = { ok: true; value: T } | { ok: false; status: number; message: string; stale?: true; denied?: true };
+// A refusal of the photo route or the field database, put as the jobs API answers one.
+export type Refusal = { status: number; message: string };
 
 const MESSAGES: Record<string, string> = {
   not_found: 'This job is not in your list.',
@@ -144,11 +146,15 @@ export async function sendPhoto(user: User, jobId: string, photoId: string, byte
   return answerOf(response.status, body, receipt, [200, 201]);
 }
 
-// A photo's bytes as a local address for an <img>, or null when they cannot be read now. The
-// caller revokes it when the photo leaves the screen.
-export async function photoAddress(user: User, jobId: string, photoId: string): Promise<string | null> {
+// A photo's bytes as a local address for an <img>; the server's refusal (401, 403, 404); or null
+// when they cannot be read now. The caller revokes the address when the photo leaves the screen.
+export async function photoAddress(user: User, jobId: string, photoId: string): Promise<string | Refusal | null> {
   const response = await authorized(user, `/api/jobs/${jobId}/photos/${photoId}?kind=photo`);
-  if (!response?.ok) return null;
+  if (!response) return null;
+  if (!response.ok) {
+    const answer = answerOf(response.status, await response.json().catch(() => null), z.never());
+    return !answer.ok && answer.denied ? { status: answer.status, message: answer.message } : null;
+  }
   const bytes = await response.blob().catch(() => null);
   return bytes ? URL.createObjectURL(bytes) : null;
 }

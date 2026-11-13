@@ -6,7 +6,7 @@ import { photoAddress, sendPhoto, SHOT_NAMES } from '@/lib/field/api';
 import { pending as unsent, usePending, type PendingPhoto } from '@/lib/field/pending';
 import { preparePhoto } from '@/lib/field/photo';
 import { SHOT_TAGS, type PhotoField } from '@/lib/field/schema';
-import { savePhotoRef, type FieldDraft } from '@/lib/field/store';
+import { fieldRefusal, savePhotoRef, type FieldDraft } from '@/lib/field/store';
 import type { JobContext } from './job-screens';
 import { Choice, Outcome, Section } from './ui';
 
@@ -49,7 +49,10 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
     if (!db) return;
     update(item.id, { step: 'sending', message: undefined });
     const sent = await sendPhoto(job.session.user, jobId, item.id, item.bytes);
-    if (!sent.ok) return update(item.id, { step: 'send-failed', message: sent.message });
+    if (!sent.ok) {
+      update(item.id, { step: 'send-failed', message: sent.message });
+      return job.checkAccess(sent);
+    }
     update(item.id, { step: 'saving' });
     try {
       await savePhotoRef(db, job.draftRef, item.id, item.field);
@@ -57,8 +60,9 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
       if (live.current) await job.reloadDraft();
       else unsent.draftChanged(jobId);
       unsent.removePhoto(jobId, item.id);
-    } catch {
+    } catch (error) {
       update(item.id, { step: 'save-failed', message: 'The photo is stored but its room and tag were not saved. Save again.' });
+      job.checkAccess(fieldRefusal(error));
     }
   }
 
@@ -145,17 +149,23 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
 function Thumbnail({ job, load, photoId, label }: { job: JobContext; load: boolean; photoId: string; label: string }) {
   const [address, setAddress] = useState<string | null | 'missing'>(null);
   const fetching = load && address === null;
+  const { checkAccess } = job;
   useEffect(() => {
     if (!fetching) return;
     let live = true;
     void photoAddress(job.session.user, job.detail.job.id, photoId).then((found) => {
-      if (live) setAddress(found ?? 'missing');
-      else if (found) URL.revokeObjectURL(found);
+      if (typeof found === 'string') {
+        if (live) setAddress(found);
+        else URL.revokeObjectURL(found);
+        return;
+      }
+      if (live) setAddress('missing');
+      checkAccess(found);
     });
     return () => {
       live = false;
     };
-  }, [fetching, job.session.user, job.detail.job.id, photoId]);
+  }, [fetching, job.session.user, job.detail.job.id, photoId, checkAccess]);
   useEffect(
     () => () => {
       if (address !== null && address !== 'missing') URL.revokeObjectURL(address);

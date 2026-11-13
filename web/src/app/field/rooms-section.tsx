@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { editsAfterSave, ROOM_FIELDS, roomChanges, roomName, withEdits, type FormValues } from '@/lib/field/forms';
 import { MAX_ROOMS, type RoomField } from '@/lib/field/schema';
-import { addRoom, removeRoom, saveRoomField, type FieldDraft } from '@/lib/field/store';
+import { addRoom, fieldRefusal, removeRoom, saveRoomField, type FieldDraft } from '@/lib/field/store';
 import type { JobContext } from './job-screens';
 import { Box, Choice, Outcome, READ_AGAIN, Section } from './ui';
 
@@ -34,8 +34,9 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
       await removeRoom(db, job.draftRef, roomId);
       await job.reloadDraft();
       setNotice(`${label} removed.`);
-    } catch {
+    } catch (error) {
       setError('The room was not removed. Check the signal and try again.');
+      job.checkAccess(fieldRefusal(error));
     }
   }
 
@@ -52,8 +53,9 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
       await job.reloadDraft();
       setName((current) => (current === name ? '' : current));
       setNotice(`${checked} added.`);
-    } catch {
+    } catch (error) {
       setError('The room was not added. Check the signal and add it again.');
+      job.checkAccess(fieldRefusal(error));
     } finally {
       setBusy(false);
     }
@@ -139,8 +141,9 @@ export function RoomCard({
       setEdits((current) => editsAfterSave(current, sent));
       await job.reloadDraft();
       setNotice(Object.keys(changes).length === 0 ? 'Nothing to save.' : 'Room saved.');
-    } catch {
+    } catch (error) {
       setError('The room was not saved. Check the signal and save again.');
+      job.checkAccess(fieldRefusal(error));
     } finally {
       setBusy(false);
     }

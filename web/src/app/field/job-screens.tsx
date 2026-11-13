@@ -2,10 +2,10 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { readJob, type JobDetail } from '@/lib/field/api';
+import { readJob, type JobDetail, type Refusal } from '@/lib/field/api';
 import { newerDetail, pending, usePending } from '@/lib/field/pending';
 import type { FieldSession } from '@/lib/field/session';
-import { canEditDraft, InvalidFieldData, loadDraft, type DraftRef, type FieldDraft } from '@/lib/field/store';
+import { canEditDraft, fieldRefusal, InvalidFieldData, loadDraft, type DraftRef, type FieldDraft } from '@/lib/field/store';
 import type { JobView } from '@/lib/field/views';
 import { CustomerView } from './customer-view';
 import { PhotosView } from './photos-view';
@@ -29,6 +29,9 @@ export type JobContext = {
   draft: FieldDraft | null;
   draftRef: DraftRef;
   reloadDraft: () => Promise<void>;
+  // Takes a refusal of the photo route or the field database (null for none): 401 or 403 drops the
+  // job from the screen; a 404 may be a missing photo, so the job is read again and that decides.
+  checkAccess: (refusal: Refusal | null) => void;
   // Whether this person may change the field work now (the rules' own test).
   editable: boolean;
   // The last read of the draft did not get through, so the draft on screen may be older than what is
@@ -61,6 +64,15 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   const [error, setError] = useState<string | null>(null);
   const [draftError, setDraftError] = useState<string | null>(null);
 
+  // The server refused the job to this person: every copy of it goes (src/lib/field/pending.ts).
+  const deny = useCallback(
+    (message: string) => {
+      pending.denyDetail(jobId, message);
+      setDraft(null);
+    },
+    [jobId],
+  );
+
   const reloadDraft = useCallback(
     async (current?: JobDetail) => {
       const job = current ?? detail;
@@ -70,6 +82,8 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
         setDraft(found);
         setDraftError(found ? null : 'The field work of this job is not there yet. Try again in a moment.');
       } catch (error) {
+        const refusal = fieldRefusal(error);
+        if (refusal) return deny(refusal.message);
         // A read that did not get through keeps the draft as last read on screen, and with it any
         // boxes the person has changed and not saved; field work the app cannot read is not shown.
         if (!(error instanceof InvalidFieldData)) {
@@ -82,7 +96,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
         );
       }
     },
-    [detail, session],
+    [detail, session, deny],
   );
 
   const apply = useCallback(
@@ -91,23 +105,33 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       setError(answer.ok ? null : answer.message);
       if (!answer.ok) {
         // A refusal to show the job drops every copy of it; no answer keeps the one on screen.
-        if (answer.denied) {
-          pending.denyDetail(jobId, answer.message);
-          setDraft(null);
-        }
+        if (answer.denied) deny(answer.message);
         return null;
       }
       setDetail(answer.value, sentAt);
       await reloadDraft(answer.value);
       return answer.value;
     },
-    [reloadDraft, setDetail, jobId],
+    [reloadDraft, setDetail, deny, jobId],
   );
 
   const reloadJob = useCallback(async () => {
     const sentAt = pending.mark(jobId);
     return apply(await readJob(session.user, jobId), sentAt);
   }, [apply, session, jobId]);
+
+  const checkAccess = useCallback(
+    (refusal: Refusal | null) => {
+      if (!refusal) return;
+      if (refusal.status === 401 || refusal.status === 403) return deny(refusal.message);
+      if (refusal.status !== 404) return;
+      const sentAt = pending.mark(jobId);
+      void readJob(session.user, jobId).then((answer) => {
+        if (!answer.ok && answer.denied && sentAt === pending.mark(jobId)) deny(answer.message);
+      });
+    },
+    [deny, jobId, session.user],
+  );
 
   // The first read; each job is its own component (keyed by the parent).
   useEffect(() => {
@@ -150,6 +174,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     draft,
     draftRef: { companyId: session.companyId, draftId: detail.job.currentDraftId },
     reloadDraft: () => reloadDraft(detail),
+    checkAccess,
     editable: draft !== null && canEditDraft(draft, session.user.uid, session.capabilities),
     stale: draft !== null && draftError !== null,
   };
