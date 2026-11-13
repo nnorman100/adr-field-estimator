@@ -91,7 +91,7 @@ Reason: the rebuild is parallel work across many stages. DryScope may use every 
 
 ### D-015: Pipeline reviewer is Grok 4.7, then ChatGPT; never the builder's family (Nov 9, 2026)
 
-Status: accepted (owner, Nov 9, 2026). Exception to the standard's choice of pipeline reviewer.
+Status: superseded by D-029 (owner, Nov 13, 2026). Kept as recorded. Exception to the standard's choice of pipeline reviewer.
 Reason: ChatGPT is unavailable for now. The pipeline reviewer is Grok 4.7 until ChatGPT returns (planned Nov 13, 2026), then ChatGPT. The reviewer is always a different model family from the builder.
 
 ### D-016: Company sign-in tenants are created by an owner- or operator-run command for the pilot (Nov 9, 2026)
@@ -168,3 +168,8 @@ Decision: no current GA Gemini Flash model is served from `us-central1`, so text
 
 Status: accepted (owner, Nov 12, 2026).
 Decision: no agent is built in S7. The first agent will be ADK TypeScript 2.x on Cloud Run, with its own service and account, fixed actions, an audit log, human approval, and Model Armor on its model calls. Agent Gateway and Agent Identity are not relied on, because they need the Google Cloud organization, which does not exist yet. A2UI is not adopted until an agent answers with screens and A2UI reaches 1.0. Detail: `docs/plans/S7.md` (decision V10).
+
+### D-029: Pipeline reviewer is ChatGPT (GPT-6 Astra); builders are Claude only (Nov 13, 2026, Standard 2.10)
+
+Status: accepted (owner, Nov 13, 2026, choice "A"). Supersedes D-015.
+Decision: the pipeline review agent is ChatGPT (GPT-6 Astra), with no Grok or Gemini fallback. Builders are Claude only, so the reviewer is always a different model family from the builder. Technology Standard 2.10 records the same change; the Standard is now at 2.10.
