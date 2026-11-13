@@ -3,6 +3,9 @@
 export const publicApiPaths: readonly string[] = [
   '/api/health', // liveness, environment, build commit and whether the database answers
   '/api/echo', // sample Zod boundary; stores nothing and returns only its validated input
+  // Browser and phone error reports (TC-2). Sign-in pages fail before anyone is signed in. Write-only,
+  // capped, reads nothing; what it writes is fixed fields, scrubbed (src/lib/client-error-intake.ts).
+  '/api/client-errors',
   // A company's name and sign-in tenant for its sign-in page, both public; `:address` matches one
   // sign-in address (src/lib/sign-in/directory.ts) and nothing else.
   '/api/sign-in/:address',

@@ -278,6 +278,12 @@ const OPEN: Record<string, OpenCheck> = {
     expect(JSON.parse(answer.text), where).toEqual({ message: 'hello' });
     expect(leaks(answer.text, victim), where).toEqual([]);
   },
+  // Write-only error reports: the answer is how many of the one report sent were logged, nothing else.
+  'POST api/client-errors': (answer, where, _attacker, victim) => {
+    expect(answer.status, where).toBe(202);
+    expect([{ accepted: 0 }, { accepted: 1 }], where).toContainEqual(JSON.parse(answer.text));
+    expect(leaks(answer.text, victim), where).toEqual([]);
+  },
 };
 
 describe('the route list', () => {
@@ -334,8 +340,8 @@ describe('the calls the suite makes', () => {
     ]);
   });
 
-  it('lists exactly four open answers: the caller’s own sign-in, the sign-in page, health and echo', () => {
-    expect(Object.keys(OPEN).sort()).toEqual(['GET api/health', 'GET api/me', 'GET api/sign-in/[address]', 'POST api/echo']);
+  it('lists exactly five open answers: the caller’s own sign-in, the sign-in page, health, echo and error reports', () => {
+    expect(Object.keys(OPEN).sort()).toEqual(['GET api/health', 'GET api/me', 'GET api/sign-in/[address]', 'POST api/client-errors', 'POST api/echo']);
   });
 });
 

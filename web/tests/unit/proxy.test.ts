@@ -11,8 +11,20 @@ describe('API sign-in gate', () => {
     expect(config.matcher).toBe('/api/:path*');
   });
 
-  it('keeps the public list to the three routes that hold nothing private', () => {
-    expect([...publicApiPaths].sort()).toEqual(['/api/echo', '/api/health', '/api/sign-in/:address']);
+  it('keeps the public list to the four routes that hold nothing private', () => {
+    expect([...publicApiPaths].sort()).toEqual([
+      '/api/client-errors',
+      '/api/echo',
+      '/api/health',
+      '/api/sign-in/:address',
+    ]);
+  });
+
+  it('lets a signed-out phone report an error, and only at that exact path', () => {
+    expect(call('/api/client-errors', 'POST').headers.get('x-middleware-next')).toBe('1');
+    for (const path of ['/api/client-errors/', '/api/client-errors/x', '/api/client-errors/..%2Fme', '/api/client-error']) {
+      expect({ path, status: call(path, 'POST').status }).toEqual({ path, status: 401 });
+    }
   });
 
   it('matches a sign-in address segment to one sign-in address and nothing else', () => {
