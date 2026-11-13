@@ -2,12 +2,14 @@ name: Web app
 
 # Separate from ci.yml so the existing jobs behave exactly as before. Covers only web/ (the
 # TypeScript rebuild skeleton); every job has a time limit.
+#
+# Every pull request runs every job, with no path filter, so `company-isolation` and `check` report
+# on each one and can be required checks. Pushes to master keep the path filter.
 on:
   push:
     branches: [master]
     paths: ['web/**', 'live-relay-placeholder/**', '.github/workflows/web.yml']
   pull_request:
-    paths: ['web/**', 'live-relay-placeholder/**', '.github/workflows/web.yml']
 
 permissions:
   contents: read
