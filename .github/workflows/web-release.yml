@@ -303,14 +303,17 @@ jobs:
           previous=$(gcloud run services describe "$SERVICE" --region="$REGION" --project="$PROJECT" --format=json \
             | jq -r '[.status.traffic[] | select((.percent // 0) > 0) | "\(.revisionName)=\(.percent)"] | join(",")')
           [ -n "$previous" ] || { echo "::error::Could not read the current traffic of $SERVICE."; exit 1; }
-          template=$(gcloud run services describe "$SERVICE" --region="$REGION" --project="$PROJECT" \
-            --format='value(spec.template.spec.containers[0].image,status.latestReadyRevisionName)') \
-            || { echo "::error::Could not read the current revision of $SERVICE."; exit 1; }
-          read -r image ready <<<"$template" || true
-          # A rerun after this release already took the traffic: its image is the service's, and the
-          # newest ready revision serves it all.
+          # A rerun after this release already took the traffic: one revision serves it all, and that
+          # revision runs this release's image (whatever newer revision was staged since).
           serving=false
-          if [ "$image" = "$IMAGE_REF" ] && [ "$previous" = "$ready=100" ]; then serving=true; fi
+          if [[ "$previous" =~ ^([a-z0-9-]+)=100$ ]]; then
+            serving_revision="${BASH_REMATCH[1]}"
+            image=$(gcloud run revisions list --filter="metadata.name=$serving_revision" \
+              --format='value(spec.containers[0].image)' --region="$REGION" --project="$PROJECT" --service "$SERVICE") \
+              && [ -n "$image" ] \
+              || { echo "::error::Could not read the image of $serving_revision."; exit 1; }
+            if [ "$image" = "$IMAGE_REF" ]; then serving=true; fi
+          fi
           echo "previous=$previous" >> "$GITHUB_OUTPUT"
           echo "serving=$serving" >> "$GITHUB_OUTPUT"
           echo "Serving before: \`$previous\`" >> "$GITHUB_STEP_SUMMARY"

@@ -817,45 +817,77 @@ describe('release record', () => {
   );
 
   // The deploy job's before step, with fake gcloud and jq: is this release's image already serving?
+  // The service template always names a newer revision on another image, so only the image of the
+  // revision that holds the traffic can decide.
   const SERVING = 'dryscope-api-test-00012-abc';
+  const OLDER = 'dryscope-api-test-00011-xyz';
+  const OTHER_IMAGE = IMAGE_REF.replace('c'.repeat(64), 'd'.repeat(64));
+  function beforeStep(traffic: string, images: Record<string, string>) {
+    const sh = shell();
+    const revisions = Object.entries(images)
+      .map(([name, image]) => `${name}) echo '${image}' ;;`)
+      .join(' ');
+    sh.fake('jq', `cat > /dev/null; echo '${traffic}'`);
+    sh.fake(
+      'gcloud',
+      `if [ "$2" = revisions ]; then case \${4#--filter=metadata.name=} in ${revisions} *) ;; esac; exit 0; fi
+[ "$7" = --format=json ] && exit 0
+printf '%s\\t%s\\n' '${OTHER_IMAGE}' dryscope-api-test-00013-new`,
+    );
+    const result = sh.run(step(jobs.deploy, 'before').run, { ...release.env, IMAGE_REF });
+    return { sh, result };
+  }
+  const describeRevision = (name: string) => [
+    'run',
+    'revisions',
+    'list',
+    `--filter=metadata.name=${name}`,
+    '--format=value(spec.containers[0].image)',
+    `--region=${release.env.REGION}`,
+    `--project=${release.env.PROJECT}`,
+    '--service',
+    release.env.SERVICE,
+  ];
+
   it.each([
-    ['a first run', 'other', `${SERVING}=100`, 'false'],
-    ['a rerun after the move', 'release', `${SERVING}=100`, 'true'],
+    ['a first run', `${SERVING}=100`, { [SERVING]: OTHER_IMAGE }, 'false'],
     [
-      'a rerun after a staged revision failed',
-      'release',
-      'dryscope-api-test-00011-xyz=100',
-      'false',
+      'a rerun after the move, a later release staged since',
+      `${SERVING}=100`,
+      { [SERVING]: IMAGE_REF },
+      'true',
     ],
     [
-      'a rerun with split traffic',
-      'release',
-      `${SERVING}=90,dryscope-api-test-00011-xyz=10`,
+      'a rerun after this release was staged but never took the traffic',
+      `${OLDER}=100`,
+      { [OLDER]: OTHER_IMAGE, [SERVING]: IMAGE_REF },
       'false',
     ],
   ])(
     'tells the record whether the release was already serving: %s',
-    (_label, image, traffic, serving) => {
-      const sh = shell();
-      const ref =
-        image === 'release' ? IMAGE_REF : IMAGE_REF.replace('c'.repeat(64), 'd'.repeat(64));
-      sh.fake('jq', `cat > /dev/null; echo '${traffic}'`);
-      sh.fake(
-        'gcloud',
-        `[ "$7" = --format=json ] && exit 0; printf '%s\\t%s\\n' '${ref}' '${SERVING}'`,
-      );
-      const result = sh.run(step(jobs.deploy, 'before').run, { ...release.env, IMAGE_REF });
+    (_label, traffic, images, serving) => {
+      const { sh, result } = beforeStep(traffic, images);
       expect(result.status, result.stdout + result.stderr).toBe(0);
       expect(sh.outputs()).toEqual({ previous: traffic, serving });
+      const holder = traffic.split('=')[0]!;
+      expect(sh.calls('gcloud').filter((args) => args[1] === 'revisions')).toEqual([
+        describeRevision(holder),
+      ]);
     },
   );
 
-  it('stops when the current revision cannot be read', () => {
-    const sh = shell();
-    sh.fake('jq', `cat > /dev/null; echo '${SERVING}=100'`);
-    sh.fake('gcloud', '[ "$7" = --format=json ] && exit 0; exit 1');
-    const result = sh.run(step(jobs.deploy, 'before').run, { ...release.env, IMAGE_REF });
+  it('never calls split traffic this release, without asking for any image', () => {
+    const traffic = `${SERVING}=90,${OLDER}=10`;
+    const { sh, result } = beforeStep(traffic, { [SERVING]: IMAGE_REF, [OLDER]: IMAGE_REF });
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(sh.outputs()).toEqual({ previous: traffic, serving: 'false' });
+    expect(sh.calls('gcloud').filter((args) => args[1] === 'revisions')).toEqual([]);
+  });
+
+  it('stops when the image of the serving revision cannot be read', () => {
+    const { result, sh } = beforeStep(`${SERVING}=100`, {});
     expect(result.status).not.toBe(0);
+    expect(result.stdout).toContain(`Could not read the image of ${SERVING}`);
     expect(sh.outputs()).toEqual({});
   });
 
