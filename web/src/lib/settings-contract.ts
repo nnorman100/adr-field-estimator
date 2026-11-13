@@ -70,6 +70,9 @@ export const SETTINGS = {
   // The commit a running app was built from. The image build sets it, and Cloud Run runs with that
   // value, so Terraform must not set it.
   APP_COMMIT: { source: 'tooling', services: NOT_SET, reader: 'web' },
+  // The release version (YYYY.MM.DD-N) the release build bakes in beside the commit; the same
+  // rule: the image sets it, Terraform must not.
+  APP_VERSION: { source: 'tooling', services: NOT_SET, reader: 'web' },
   // An older name for APP_ENV that config.ts still accepts. Terraform sets APP_ENV, never this.
   APP_ENVIRONMENT: { source: 'local', services: NOT_SET, reader: 'web' },
   // Request tracing (src/lib/telemetry). OTEL_SDK_DISABLED=true is the off switch (the standard

@@ -26,6 +26,7 @@ const lintScript = (): string =>
 describe('every workflow', () => {
   it('includes the expected workflows', () => {
     for (const name of [
+      'ai-evals.yml',
       'ci.yml',
       'codeql.yml',
       'deploy.yml',
@@ -92,6 +93,7 @@ describe('ci.yml', () => {
       'tests/test_web_release_workflow.ts',
       'tests/test_web_images.ts',
       'tests/test_web_workflow.ts',
+      'tests/test_ai_evals_workflow.ts',
       'tests/test_file_length_limit.ts',
       'tests/test_required_docs.js',
     ]) {

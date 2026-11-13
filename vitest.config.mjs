@@ -14,9 +14,11 @@ export default defineConfig({
       'tests/test_file_length_limit.ts',
       'tests/test_ci_workflows.ts',
       'tests/test_web_release_workflow.ts',
+      'tests/test_web_release_record.ts',
       'tests/test_web_images.ts',
       'tests/test_web_workflow.ts',
       'tests/test_test_guard.ts',
+      'tests/test_ai_evals_workflow.ts',
     ],
   },
 });

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { parseArgs, runSmoke, signedOutProbes, type SmokeOptions } from '../../scripts/smoke-release';
 
 const commit = '0123456789abcdef0123456789abcdef01234567';
+const version = '2026.11.13-3';
 
 type Answer = { status: number; body?: unknown } | Error;
 
@@ -21,6 +22,7 @@ function fakeFetch(health: Answer[], others: number) {
 const options = (f: typeof fetch): SmokeOptions => ({
   baseUrl: 'https://candidate---dryscope-api-test-abc-uc.a.run.app',
   commit,
+  version,
   env: 'test',
   requireDatabase: true,
   fetch: f,
@@ -28,7 +30,7 @@ const options = (f: typeof fetch): SmokeOptions => ({
   delayMs: 0,
 });
 
-const healthy = { status: 200, body: { status: 'ok', env: 'test', commit, database: 'ok' } };
+const healthy = { status: 200, body: { status: 'ok', env: 'test', commit, version, database: 'ok' } };
 
 describe('release smoke check', () => {
   it('passes a revision on the right commit that refuses signed-out callers', async () => {
@@ -54,7 +56,7 @@ describe('release smoke check', () => {
 
   it('fails a revision running another commit', async () => {
     const other = 'f'.repeat(40);
-    const { fn } = fakeFetch([{ status: 200, body: { status: 'ok', env: 'test', commit: other, database: 'ok' } }], 401);
+    const { fn } = fakeFetch([{ status: 200, body: { status: 'ok', env: 'test', commit: other, version, database: 'ok' } }], 401);
     expect(await runSmoke(options(fn))).toEqual([`health: commit is ${other}, expected ${commit}`]);
   });
 
@@ -63,16 +65,23 @@ describe('release smoke check', () => {
     expect(await runSmoke(options(fn))).toEqual([
       'health: env is live, expected test',
       `health: commit is undefined, expected ${commit}`,
+      `health: version is undefined, expected ${version}`,
     ]);
   });
 
+  it('fails a revision carrying another release version', async () => {
+    const body = { status: 'ok', env: 'test', commit, version: '2026.11.13-2', database: 'ok' };
+    const { fn } = fakeFetch([{ status: 200, body }], 401);
+    expect(await runSmoke(options(fn))).toEqual([`health: version is 2026.11.13-2, expected ${version}`]);
+  });
+
   it('fails a Cloud Run revision whose health did not prove its database login', async () => {
-    const { fn } = fakeFetch([{ status: 200, body: { status: 'ok', env: 'test', commit } }], 401);
+    const { fn } = fakeFetch([{ status: 200, body: { status: 'ok', env: 'test', commit, version } }], 401);
     expect(await runSmoke(options(fn))).toEqual(['health: database is undefined, expected ok']);
   });
 
   it('accepts no database only for the local container', async () => {
-    const { fn } = fakeFetch([{ status: 200, body: { status: 'ok', env: 'test', commit } }], 401);
+    const { fn } = fakeFetch([{ status: 200, body: { status: 'ok', env: 'test', commit, version } }], 401);
     expect(await runSmoke({ ...options(fn), requireDatabase: false })).toEqual([]);
   });
 
@@ -94,12 +103,22 @@ describe('release smoke check', () => {
 });
 
 describe('smoke arguments', () => {
-  const args = (url: string, c = commit, env = 'test') => ['--url', url, '--commit', c, '--env', env];
+  const args = (url: string, c = commit, env = 'test', v = version) => [
+    '--url',
+    url,
+    '--commit',
+    c,
+    '--version',
+    v,
+    '--env',
+    env,
+  ];
 
   it('reads the tagged URL, commit and environment', () => {
     expect(parseArgs(args('https://candidate---x.a.run.app/'))).toEqual({
       baseUrl: 'https://candidate---x.a.run.app',
       commit,
+      version,
       env: 'test',
       requireDatabase: true,
     });
@@ -119,6 +138,9 @@ describe('smoke arguments', () => {
     [args('https://x.run.app', commit, 'prod')],
     [args('https://x.run.app', commit, 'live')],
     [args('http://127.0.0.1:8080', commit, 'local')],
+    [['--url', 'https://x.run.app', '--commit', commit, '--env', 'test']],
+    [args('https://x.run.app', commit, 'test', '2026.11.13')],
+    [args('https://x.run.app', commit, 'test', '2026.11.13-0')],
   ])('refuses %j', (argv) => {
     expect(() => parseArgs(argv)).toThrow();
   });

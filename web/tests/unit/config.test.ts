@@ -37,6 +37,21 @@ describe('parseConfig', () => {
     });
   });
 
+  it('carries the release version when one is set', () => {
+    expect(parseConfig({ APP_ENV: 'test', APP_VERSION: '2026.11.13-12' })).toEqual({
+      appEnv: 'test',
+      databaseUrl: null,
+      version: '2026.11.13-12',
+    });
+  });
+
+  it.each([['2026.11.13'], ['2026.11.13-0'], ['2026.11.13-01'], ['v2026.11.13-1'], ['2026-11-13-1'], ['']])(
+    'refuses a malformed release version %j',
+    (value) => {
+      expect(() => parseConfig({ APP_ENV: 'test', APP_VERSION: value })).toThrow(/APP_VERSION/);
+    },
+  );
+
   it.each([['abc123'], ['A'.repeat(40)], [''], ['secret-value'.padEnd(40, 'x')]])(
     'refuses a malformed commit %s without echoing it',
     (value) => {

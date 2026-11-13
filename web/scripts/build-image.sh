@@ -5,11 +5,11 @@
 # in web/Dockerfile. The image holds no environment-specific values and no secrets: Cloud Run
 # supplies APP_ENV and the rest, and the app refuses to start without them.
 #
-#   web/scripts/build-image.sh web --commit <40-character commit> (--tag <ref> | --output <file>) [--stage <dir>]
+#   web/scripts/build-image.sh web --commit <40-character commit> --version <YYYY.MM.DD-N> (--tag <ref> | --output <file>) [--stage <dir>]
 #   web/scripts/build-image.sh live-placeholder (--tag <ref> | --output <file>) [--stage <dir>]
 #
 # web builds the Next.js standalone output with npm (run `npm ci` in web/ first) and bakes in the
-# commit, which /api/health reports. It also carries the migration job: /app/migrate.mjs (bundled by
+# commit and the release version (docs/plans/TC.md, TC-8), which /api/health reports. It also carries the migration job: /app/migrate.mjs (bundled by
 # scripts/build-migrate.mjs) and the numbered ledger in /app/migrations, which the Cloud Run job
 # starts with `node migrate.mjs` (infra/dryscope/app/migrate_job.tf), so every release migrates
 # with the same image, by digest, that it then deploys. live-placeholder is the 503 stand-in in
@@ -27,10 +27,11 @@ fail() { echo "build-image: $*" >&2; exit 1; }
 app=${1:-}
 [ "$app" = web ] || [ "$app" = live-placeholder ] || fail 'first argument must be web or live-placeholder'
 shift
-commit='' tag='' output='' stage=''
+commit='' version='' tag='' output='' stage=''
 while [ $# -gt 0 ]; do
   case $1 in
     --commit) commit=${2:-}; shift 2 ;;
+    --version) version=${2:-}; shift 2 ;;
     --tag) tag=${2:-}; shift 2 ;;
     --output) output=${2:-}; shift 2 ;;
     --stage) stage=${2:-}; shift 2 ;;
@@ -41,6 +42,9 @@ if [ -n "$tag" ] && [ -n "$output" ]; then fail 'give --tag or --output, not bot
 [ -n "$tag$output" ] || fail 'give --tag <ref> or --output <file>'
 if [ "$app" = web ]; then
   [[ $commit =~ ^[0-9a-f]{40}$ ]] || fail 'web needs --commit <40-character commit>'
+  [[ $version =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{2}-[1-9][0-9]{0,5}$ ]] || fail 'web needs --version <YYYY.MM.DD-N>'
+elif [ -n "$version" ]; then
+  fail 'only the web image carries a release version'
 fi
 "$TAR" --version 2>/dev/null | grep -q 'GNU tar' || fail 'needs GNU tar (on macOS: brew install gnu-tar, then TAR=gtar)'
 
@@ -60,7 +64,7 @@ if [ "$app" = web ]; then
   # The standalone output leaves public/ out: the icons and the field worker (/sw.js) are served from it.
   cp -a "$root/web/public" "$stage/app/public"
   (cd "$root/web" && npm run --silent build:migrate -- "$stage/app")
-  env+=(--env HOSTNAME=0.0.0.0 --env NEXT_TELEMETRY_DISABLED=1 --env "APP_COMMIT=$commit")
+  env+=(--env HOSTNAME=0.0.0.0 --env NEXT_TELEMETRY_DISABLED=1 --env "APP_COMMIT=$commit" --env "APP_VERSION=$version")
 else
   cp "$root/live-relay-placeholder/server.js" "$stage/app/server.js"
 fi

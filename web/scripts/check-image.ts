@@ -2,11 +2,11 @@
 // app workflow pipes the tarball's files in:
 //
 //   tar -xOf image.tar manifest.json | node scripts/check-image.ts config-path
-//   tar -xOf image.tar <config path> | node scripts/check-image.ts web --commit <commit>
+//   tar -xOf image.tar <config path> | node scripts/check-image.ts web --commit <commit> --version <YYYY.MM.DD-N>
 //   tar -xOf image.tar <config path> | node scripts/check-image.ts live-placeholder
 //
 // It refuses an image that would run as root, outside /app, on another platform or port, with
-// another command, without its commit, or with an environment name baked in (Cloud Run sets APP_ENV).
+// another command, without its commit or release version, or with an environment name baked in (Cloud Run sets APP_ENV).
 // Plain Node with type stripping; no installed packages.
 import { pathToFileURL } from 'node:url';
 
@@ -31,7 +31,12 @@ export function configPath(manifest: unknown): string {
 }
 
 // Returns one line per problem; an empty list means the image is fit to deploy.
-export function checkImage(image: ImageConfig, app: 'web' | 'live-placeholder', commit?: string): string[] {
+export function checkImage(
+  image: ImageConfig,
+  app: 'web' | 'live-placeholder',
+  commit?: string,
+  version?: string,
+): string[] {
   const problems: string[] = [];
   const c = image.config ?? {};
   const env = new Map((c.Env ?? []).map((pair) => [pair.split('=', 1)[0], pair.slice(pair.indexOf('=') + 1)]));
@@ -51,9 +56,13 @@ export function checkImage(image: ImageConfig, app: 'web' | 'live-placeholder', 
     if (!commit || env.get('APP_COMMIT') !== commit) {
       problems.push(`APP_COMMIT is ${String(env.get('APP_COMMIT'))}, expected ${String(commit)}`);
     }
+    if (!version || env.get('APP_VERSION') !== version) {
+      problems.push(`APP_VERSION is ${String(env.get('APP_VERSION'))}, expected ${String(version)}`);
+    }
     if (env.get('HOSTNAME') !== '0.0.0.0') problems.push('HOSTNAME is not 0.0.0.0');
-  } else if (env.has('APP_COMMIT')) {
-    problems.push('the placeholder carries APP_COMMIT');
+  } else {
+    if (env.has('APP_COMMIT')) problems.push('the placeholder carries APP_COMMIT');
+    if (env.has('APP_VERSION')) problems.push('the placeholder carries APP_VERSION');
   }
   return problems;
 }
@@ -68,8 +77,11 @@ async function main(argv: string[]) {
     return;
   }
   if (mode !== 'web' && mode !== 'live-placeholder') throw new Error('mode must be config-path, web or live-placeholder');
-  const i = argv.indexOf('--commit');
-  const problems = checkImage(parsed as ImageConfig, mode, i >= 0 ? argv[i + 1] : undefined);
+  const flag = (name: string) => {
+    const i = argv.indexOf(name);
+    return i >= 0 ? argv[i + 1] : undefined;
+  };
+  const problems = checkImage(parsed as ImageConfig, mode, flag('--commit'), flag('--version'));
   for (const problem of problems) console.error(`FAIL ${problem}`);
   if (problems.length > 0) process.exit(1);
   console.log(`image: ${mode} configuration ok`);

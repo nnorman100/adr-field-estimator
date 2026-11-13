@@ -1,0 +1,60 @@
+{"id":"mp-01","response":{"meter_detected":true,"meter_type":"pinless moisture meter","value":"39","classification":"reading","notes":""}}
+{"id":"mp-02","response":{"meter_detected":true,"meter_type":"thermo-hygrometer","value":"58.5","classification":"reading","notes":""}}
+{"id":"mp-03","response":{"meter_detected":true,"meter_type":"thermo-hygrometer","value":"63.8","classification":"reading","notes":""}}
+{"id":"mp-04","response":{"meter_detected":true,"meter_type":"pinless moisture meter","value":"24","classification":"reading","notes":""}}
+{"id":"mp-05","response":{"meter_detected":true,"meter_type":"pin moisture meter","value":"28.1","classification":"reading","notes":""}}
+{"id":"mp-06","response":{"meter_detected":true,"meter_type":"pinless moisture meter","value":"18","classification":"reading","notes":""}}
+{"id":"mp-07","response":{"meter_detected":true,"meter_type":"thermo-hygrometer","value":"83.3","classification":"reading","notes":""}}
+{"id":"mp-08","response":{"meter_detected":true,"meter_type":"thermo-hygrometer","value":"88.8","classification":"reading","notes":""}}
+{"id":"mp-09","response":{"meter_detected":true,"meter_type":"pinless moisture meter","value":"62","classification":"reading","notes":""}}
+{"id":"mp-10","response":{"meter_detected":true,"meter_type":"pin moisture meter","value":"36.2","classification":"reading","notes":""}}
+{"id":"mp-11","response":{"meter_detected":true,"meter_type":"pinless moisture meter","value":"29","classification":"reading","notes":""}}
+{"id":"mp-12","response":{"meter_detected":true,"meter_type":"thermo-hygrometer","value":"37.1","classification":"reading","notes":""}}
+{"id":"mp-13","response":{"meter_detected":true,"meter_type":"thermo-hygrometer","value":"62.9","classification":"reading","notes":""}}
+{"id":"mp-14","response":{"meter_detected":true,"meter_type":"pinless moisture meter","value":"19","classification":"reading","notes":""}}
+{"id":"mp-15","response":{"meter_detected":true,"meter_type":"pin moisture meter","value":"38.4","classification":"reading","notes":""}}
+{"id":"mp-16","response":{"meter_detected":true,"meter_type":"pinless moisture meter","value":"34.5","classification":"reading","notes":""}}
+{"id":"mp-17","response":{"meter_detected":true,"meter_type":"thermo-hygrometer","value":"72.5","classification":"reading","notes":""}}
+{"id":"mp-18","response":{"meter_detected":true,"meter_type":"thermo-hygrometer","value":"73.7","classification":"reading","notes":""}}
+{"id":"mp-19","response":{"meter_detected":true,"meter_type":"pinless moisture meter","value":"14","classification":"reading","notes":""}}
+{"id":"mp-20","response":{"meter_detected":true,"meter_type":"pin moisture meter","value":"30","classification":"reading","notes":""}}
+{"id":"mp-21","response":{"meter_detected":true,"meter_type":"pinless moisture meter","value":"29.2","classification":"reading","notes":""}}
+{"id":"mp-22","response":{"meter_detected":true,"meter_type":"thermo-hygrometer","value":"36.3","classification":"reading","notes":""}}
+{"id":"mp-23","response":{"meter_detected":true,"meter_type":"thermo-hygrometer","value":"84.4","classification":"reading","notes":""}}
+{"id":"mp-24","response":{"meter_detected":true,"meter_type":"pinless moisture meter","value":"78","classification":"reading","notes":""}}
+{"id":"mp-25","response":{"meter_detected":true,"meter_type":"pin moisture meter","value":"15.9","classification":"reading","notes":""}}
+{"id":"mp-26","response":{"meter_detected":true,"meter_type":"pinless moisture meter","value":"9","classification":"reading","notes":""}}
+{"id":"mp-27","response":{"meter_detected":true,"meter_type":"thermo-hygrometer","value":"64.0","classification":"reading","notes":""}}
+{"id":"mp-28","response":{"meter_detected":true,"meter_type":"thermo-hygrometer","value":"78.0","classification":"reading","notes":""}}
+{"id":"mp-29","response":{"meter_detected":true,"meter_type":"pinless moisture meter","value":"17","classification":"reading","notes":""}}
+{"id":"mp-30","response":{"meter_detected":true,"meter_type":"pin moisture meter","value":"39.0","classification":"reading","notes":""}}
+{"id":"mp-31","response":{"meter_detected":true,"meter_type":"pinless moisture meter","value":"35.0","classification":"reading","notes":""}}
+{"id":"mp-32","response":{"meter_detected":true,"meter_type":"thermo-hygrometer","value":"68.5","classification":"reading","notes":""}}
+{"id":"mp-33","response":{"meter_detected":true,"meter_type":"thermo-hygrometer","value":"85.9","classification":"reading","notes":""}}
+{"id":"mp-34","response":{"meter_detected":true,"meter_type":"pinless moisture meter","value":"72","classification":"reading","notes":""}}
+{"id":"mp-35","response":{"meter_detected":true,"meter_type":"pin moisture meter","value":"25","classification":"reading","notes":""}}
+{"id":"mp-36","response":{"meter_detected":true,"meter_type":"pinless moisture meter","value":"24.4","classification":"reading","notes":""}}
+{"id":"mp-37","response":{"meter_detected":true,"meter_type":"thermo-hygrometer","value":"71.8","classification":"reading","notes":""}}
+{"id":"mp-38","response":{"meter_detected":true,"meter_type":"thermo-hygrometer","value":"87.8","classification":"reading","notes":""}}
+{"id":"mp-39","response":{"meter_detected":true,"meter_type":"pinless moisture meter","value":"50","classification":"reading","notes":""}}
+{"id":"mp-40","response":{"meter_detected":true,"meter_type":"pin moisture meter","value":"43","classification":"reading","notes":""}}
+{"id":"mp-41","response":{"meter_detected":true,"meter_type":"pinless moisture meter","value":null,"classification":"unreadable","notes":""}}
+{"id":"mp-42","response":{"meter_detected":true,"meter_type":"thermo-hygrometer","value":null,"classification":"unreadable","notes":""}}
+{"id":"mp-43","response":{"meter_detected":true,"meter_type":"thermo-hygrometer","value":null,"classification":"unreadable","notes":""}}
+{"id":"mp-44","response":{"meter_detected":true,"meter_type":"pinless moisture meter","value":null,"classification":"unreadable","notes":""}}
+{"id":"mp-45","response":{"meter_detected":true,"meter_type":"pin moisture meter","value":null,"classification":"unreadable","notes":""}}
+{"id":"mp-46","response":{"meter_detected":false,"meter_type":null,"value":null,"classification":"unreadable","notes":""}}
+{"id":"mp-47","response":{"meter_detected":true,"meter_type":"thermo-hygrometer","value":null,"classification":"unreadable","notes":""}}
+{"id":"mp-48","response":{"meter_detected":true,"meter_type":"thermo-hygrometer","value":null,"classification":"unreadable","notes":""}}
+{"id":"mp-49","response":{"meter_detected":true,"meter_type":"pinless moisture meter","value":null,"classification":"unreadable","notes":""}}
+{"id":"mp-50","response":{"meter_detected":true,"meter_type":"pin moisture meter","value":null,"classification":"unreadable","notes":""}}
+{"id":"mp-51","response":{"meter_detected":true,"meter_type":"pinless moisture meter","value":null,"classification":"unreadable","notes":""}}
+{"id":"mp-52","response":{"meter_detected":true,"meter_type":"thermo-hygrometer","value":null,"classification":"unreadable","notes":""}}
+{"id":"mp-53","response":{"meter_detected":true,"meter_type":"thermo-hygrometer","value":null,"classification":"unreadable","notes":""}}
+{"id":"mp-54","response":{"meter_detected":true,"meter_type":"pinless moisture meter","value":null,"classification":"unreadable","notes":""}}
+{"id":"mp-55","response":{"meter_detected":true,"meter_type":"pin moisture meter","value":null,"classification":"unreadable","notes":""}}
+{"id":"mp-56","response":{"meter_detected":false,"meter_type":null,"value":null,"classification":"unreadable","notes":""}}
+{"id":"mp-57","response":{"meter_detected":true,"meter_type":"thermo-hygrometer","value":null,"classification":"unreadable","notes":""}}
+{"id":"mp-58","response":{"meter_detected":true,"meter_type":"thermo-hygrometer","value":null,"classification":"unreadable","notes":""}}
+{"id":"mp-59","response":{"meter_detected":true,"meter_type":"pinless moisture meter","value":null,"classification":"unreadable","notes":""}}
+{"id":"mp-60","response":{"meter_detected":true,"meter_type":"pin moisture meter","value":null,"classification":"unreadable","notes":""}}
