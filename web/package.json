@@ -23,7 +23,7 @@
     "probe:live": "tsx scripts/probe-live.ts",
     "eval:ai": "tsx scripts/eval-ai.ts",
     "eval:audio": "tsx scripts/make-eval-audio.ts",
-    "eval:photos": "tsx scripts/add-eval-photos.ts"
+    "eval:photos": "tsx scripts/render-eval-photos.ts"
   },
   "dependencies": {
     "@google-cloud/modelarmor": "0.11.0",

@@ -7,9 +7,10 @@ import {
   type AiModelPort,
   type AiRequest,
 } from '../../src/lib/ai/call';
-import { AI_REGISTRY, type AiFeature, type AiRegistry } from '../../src/lib/ai/registry';
+import { AI_REGISTRY, type AiFeature, type AiFeatureEntry, type AiRegistry } from '../../src/lib/ai/registry';
 import type { AiLogLine } from '../../src/lib/ai/telemetry';
-import { datasetSha256, loadDataset, type DatasetName, type InjectionCase, type Walkthrough } from './datasets';
+import { datasetSha256, loadDataset, type DatasetName, type InjectionCase } from './datasets';
+import { INJECTION_PROBE_PROMPT } from './injection-probe';
 import type { Answer, CaseScore, Metric, Score } from './score';
 import { scoreLive, scoreMeterReading, scoreVoiceNotes } from './score-media';
 import { scopeOutput, scoreInjection, scoreJobSummary, scoreScopeFill, scoreSummary } from './score-text';
@@ -23,11 +24,15 @@ import type { Suite } from './suites';
 // The run budget is the boundary's own budget port: every call reserves its conservative bound
 // (input bytes / 3 plus the output cap) against the run cap before it is sent, so a run can never
 // spend past the cap ($2 at most); the first refused reservation stops the run and the result is
-// incomplete. Model Armor sanitize calls are not in it (2 million tokens a month are free).
+// incomplete. Model Armor sanitize calls are not in it (2 million tokens a month are free). The
+// token budget works the same way in tokens: a call starts only when the tokens already used plus
+// its bound fit, and the first one that does not stops the run.
 
 // How a feature's step plugs its real request into the eval: build the boundary request from a
 // dataset case (the job facts the feature's route would send), and map the feature's output onto
-// the scorer's shape. Each feature step (S7-6 to S7-10) adds its adapter to ADAPTERS with its prompt.
+// the scorer's shape. Each feature step (S7-6 to S7-16) adds its adapter to ADAPTERS with its prompt;
+// until then its suite refuses as not built yet. The injection suite needs no adapter: it sends each
+// input to fill-scope through the boundary itself.
 export type EvalAdapter = {
   request(item: unknown): AiRequest<unknown>;
   response(output: unknown): unknown;
@@ -61,6 +66,8 @@ export const SUITE_DEFS: Readonly<Record<Suite, SuiteDef>> = {
 export class EvalRefusal extends Error {}
 
 export const MAX_RUN_MICRO_USD = 2_000_000; // V9 B: $2 a run
+// Input plus output tokens a run may use: a 40-case suite at its features' output caps fits.
+export const MAX_RUN_TOKENS = 1_000_000;
 
 // Synthetic caller for the boundary: no real company or person is ever named.
 const EVAL_COMPANY = '00000000-0000-4000-8000-0000000005e5';
@@ -116,7 +123,14 @@ export type EvalResult = {
   commit: string | null;
   startedAt: string;
   finishedAt: string;
-  cost: { capMicroUsd: number; settledMicroUsd: number; heldMicroUsd: number; inputTokens: number; outputTokens: number };
+  cost: {
+    capMicroUsd: number;
+    settledMicroUsd: number;
+    heldMicroUsd: number;
+    tokenBudget: number;
+    inputTokens: number;
+    outputTokens: number;
+  };
   counts: { cases: number; answered: number; refused: Record<string, number>; notRun: number };
   metrics: Metric[];
   incomplete: string[];
@@ -137,22 +151,44 @@ export function checkFiles(cases: readonly { id: string; file: string; sha256: s
   }
 }
 
-// An injection input as a walkthrough with no labelled change, for fill-scope.
-export function injectionWalkthrough(item: InjectionCase): Walkthrough {
-  return { id: item.id.replace('inj', 'wt'), turns: [{ speaker: 'technician', text: item.text }, { speaker: 'assistant', text: 'Noted.' }], expected: [], traps: [] };
+// The most tokens one call can use: its input bytes / 3 and the feature's output cap, the bound
+// the boundary reserves in dollars.
+export function tokenBound(entry: AiFeatureEntry, request: AiRequest<unknown>): number {
+  const bytes =
+    (entry.prompt ? Buffer.byteLength(entry.prompt.text) : 0) +
+    (request.facts ? Buffer.byteLength(request.facts) : 0) +
+    (request.image?.bytes.byteLength ?? 0) +
+    (request.audio?.bytes.byteLength ?? 0);
+  return Math.ceil(bytes / 3) + (entry.outputTokenCap ?? 0);
 }
 
-export async function runSuite(suite: Suite, capMicroUsd: number, ports: RunPorts): Promise<EvalResult> {
+// An injection input as fill-scope would get it: the technician's words.
+export const injectionRequest = (item: InjectionCase): AiRequest<unknown> => ({
+  feature: 'scope_fill',
+  facts: item.text,
+  schema: scopeOutput,
+});
+
+// Model Armor refusals: nothing reached the draft.
+const SCREENED: ReadonlySet<string> = new Set(['input_blocked', 'output_blocked', 'screen_unavailable']);
+
+export async function runSuite(suite: Suite, capMicroUsd: number, tokenBudget: number, ports: RunPorts): Promise<EvalResult> {
   if (!Number.isSafeInteger(capMicroUsd) || capMicroUsd <= 0 || capMicroUsd > MAX_RUN_MICRO_USD) {
     throw new EvalRefusal('The run cap must be more than $0 and at most $2.');
   }
+  if (!Number.isSafeInteger(tokenBudget) || tokenBudget <= 0 || tokenBudget > MAX_RUN_TOKENS) {
+    throw new EvalRefusal(`The token budget must be more than 0 and at most ${MAX_RUN_TOKENS}.`);
+  }
   const def = SUITE_DEFS[suite];
-  const registry = ports.registry ?? AI_REGISTRY;
+  const base = ports.registry ?? AI_REGISTRY;
+  const registry: AiRegistry =
+    suite === 'injection' && !base.scope_fill.prompt
+      ? { ...base, scope_fill: { ...base.scope_fill, prompt: INJECTION_PROBE_PROMPT } }
+      : base;
   const entry = registry[def.feature];
-  const adapters = ports.adapters ?? ADAPTERS;
-  const adapter = adapters[suite === 'injection' ? 'scope_fill' : suite];
+  const adapter = (ports.adapters ?? ADAPTERS)[suite];
   if (suite !== 'injection' && !adapter) {
-    throw new EvalRefusal(`The ${suite} suite is not wired yet: its feature adapter arrives with ${def.step}.`);
+    throw new EvalRefusal(`The ${suite} suite is not built yet: its feature arrives with ${def.step}.`);
   }
   const cases = loadDataset(def.dataset) as readonly ({ id: string } & Record<string, unknown>)[];
   if (def.files) checkFiles(cases as never, ports);
@@ -186,16 +222,30 @@ export async function runSuite(suite: Suite, capMicroUsd: number, ports: RunPort
 
   const answers = new Map<string, Answer>();
   const refused: Record<string, number> = {};
-  let stopped = false;
+  let stopped: 'run_cap_reached' | 'token_budget_reached' | null = null;
   let usedModel = false;
-  const call = async (request: AiRequest<unknown>): Promise<Answer> => {
+  let usedTokens = 0;
+  const call = async (request: AiRequest<unknown>): Promise<{ answer: Answer; verdict: string }> => {
+    const bound = tokenBound(entry, request);
+    if (usedTokens + bound > tokenBudget) {
+      stopped = 'token_budget_reached';
+      return { answer: { ok: false, outcome: 'not_run' }, verdict: 'not_screened' };
+    }
     raw = undefined;
     usedModel = true;
     const outcome = await boundary.call(context, request);
-    if (outcome.ok) return raw === undefined ? { ok: true, response: outcome.output } : { ok: true, response: outcome.output, raw };
+    const line = lines[lines.length - 1];
+    const reported = line ? line.inputTokens + line.outputTokens : 0;
+    // Tokens Google reported; with none reported after the model may have run, the whole bound.
+    const unknown = !outcome.ok && ['model_timeout', 'model_failed'].includes(outcome.refusal.code);
+    usedTokens += reported > 0 ? reported : unknown ? bound : 0;
+    const verdict = line?.verdict ?? 'not_screened';
+    if (outcome.ok) {
+      return { answer: raw === undefined ? { ok: true, response: outcome.output } : { ok: true, response: outcome.output, raw }, verdict };
+    }
     refused[outcome.refusal.code] = (refused[outcome.refusal.code] ?? 0) + 1;
-    if (outcome.refusal.code === 'budget') stopped = true;
-    return { ok: false, outcome: outcome.refusal.code };
+    if (outcome.refusal.code === 'budget') stopped = 'run_cap_reached';
+    return { answer: { ok: false, outcome: outcome.refusal.code }, verdict };
   };
 
   for (const item of cases) {
@@ -204,39 +254,25 @@ export async function runSuite(suite: Suite, capMicroUsd: number, ports: RunPort
       continue;
     }
     if (suite !== 'injection') {
-      const answer = await call(adapter!.request(item));
+      const { answer } = await call(adapter!.request(item));
       answers.set(item.id, answer.ok ? { ...answer, response: adapter!.response(answer.response) } : answer);
       continue;
     }
-    // Injection: the screen's verdict, then what fill-scope would propose for an input it let through.
-    const injection = item as unknown as InjectionCase;
-    let verdict: string;
-    try {
-      const screened = await ports.armor.screenPrompt({ text: injection.text });
-      verdict = screened.category;
-    } catch {
-      verdict = 'unavailable_error';
-    }
-    // A blocked or unscreened input is refused before the model, so it changes nothing.
-    if (verdict !== 'passed' || !adapter) {
-      answers.set(item.id, { ok: true, response: { verdict, changes: verdict !== 'passed' ? [] : null } });
-      continue;
-    }
-    const answer = await call(adapter.request(injectionWalkthrough(injection)));
-    // The boundary's own screens blocking it means nothing reaches the draft; any other refusal
-    // (not ready, model failure, run cap) leaves the question unanswered.
-    const changes = answer.ok
-      ? scopeOutput.parse(adapter.response(answer.response)).changes
-      : answer.outcome === 'input_blocked' || answer.outcome === 'output_blocked'
-        ? []
-        : null;
-    answers.set(item.id, { ok: true, response: { verdict, changes } });
+    // Injection: the input goes to fill-scope through the boundary, whose Model Armor screen runs
+    // before the model. A Model Armor refusal means nothing reached the draft; an input it let
+    // through is answered by fill-scope, whose proposed changes are what the draft would get. Any
+    // other refusal leaves the case unanswered, so the suite cannot pass on it.
+    const { answer, verdict } = await call(injectionRequest(item as unknown as InjectionCase));
+    if (answer.ok) {
+      const { changes } = scopeOutput.parse(answer.response);
+      answers.set(item.id, { ...answer, response: { verdict: 'passed', changes } });
+    } else if (SCREENED.has(answer.outcome)) {
+      answers.set(item.id, { ok: true, response: { verdict: answer.outcome === 'output_blocked' ? 'passed' : verdict, changes: [] } });
+    } else answers.set(item.id, answer);
   }
 
   const scored = def.score(cases, answers);
-  const incomplete: string[] = [];
-  if (stopped) incomplete.push('run_cap_reached');
-  if (suite === 'injection' && !adapter) incomplete.push('fill_scope_not_wired');
+  const incomplete: string[] = stopped ? [stopped] : [];
   const notRun = [...answers.values()].filter((a) => !a.ok && a.outcome === 'not_run').length;
   const tokens = lines.reduce(
     (sum, line) => ({ input: sum.input + (line.inputTokens ?? 0), output: sum.output + (line.outputTokens ?? 0) }),
@@ -252,7 +288,7 @@ export async function runSuite(suite: Suite, capMicroUsd: number, ports: RunPort
     commit: ports.commit,
     startedAt,
     finishedAt: now().toISOString(),
-    cost: { ...budget.totals(), inputTokens: tokens.input, outputTokens: tokens.output },
+    cost: { ...budget.totals(), tokenBudget, inputTokens: tokens.input, outputTokens: tokens.output },
     counts: {
       cases: cases.length,
       answered: [...answers.values()].filter((a) => a.ok).length,

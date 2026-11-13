@@ -25,10 +25,9 @@ function names(replyWords: readonly string[], word: string): boolean {
   return replyWords.some((w) => w === stem || (stem.length >= 4 && w.startsWith(stem)));
 }
 
-// A short acknowledgement or follow-up question is a relevant answer to a statement (not to a question).
+// A short acknowledgement is a relevant answer to a statement (not to a question).
 const ACKNOWLEDGE = /^(?:got it|noted|okay|ok|understood|sounds good|all right|alright|copy that|thanks)\b/i;
-const acknowledges = (reply: string) =>
-  normalizeWords(reply).length <= 15 && (ACKNOWLEDGE.test(reply.trim()) || reply.trim().endsWith('?'));
+const acknowledges = (reply: string) => normalizeWords(reply).length <= 15 && ACKNOWLEDGE.test(reply.trim());
 
 // Scorers for the audio and image features (V9 A, docs/plans/S7.md section 8): meter reading
 // (S7-8), voice notes (S7-9) and the Live walkthrough (S7-16).

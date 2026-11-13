@@ -156,12 +156,16 @@ export function numbersIn(text: string): Set<string> {
   return new Set(normalizeWords(text).filter(isDigits).map((n) => String(Number(n))));
 }
 
-// A number-like value as a number: 18.5, "18.5", "18.5%" and "18.50" are all 18.5.
+// A number-like value as a number: 18.5, "18.5", "18.5%" and "18.50" are all 18.5. A string is one
+// whole number, with thousands commas and at most one unit the datasets use (%, %MC, %RH, percent,
+// F, C, degrees, square feet); anything else, such as a range ("39-49") or other words, is null.
+const UNIT = /^(?:%|%\s*(?:mc|rh)|percent|°?\s*[fc]|degrees?(?:\s+[fc])?|sf|sq\.?\s*ft\.?|square\s+f(?:ee|oo)t)$/i;
 export function numberOf(value: unknown): number | null {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
   if (typeof value !== 'string') return null;
-  const match = /^\s*(-?\d+(?:\.\d+)?)/.exec(value.replace(/,/g, ''));
-  return match ? Number(match[1]) : null;
+  const match = /^\s*(-?\d{1,3}(?:,\d{3})+|-?\d+)(\.\d+)?\s*(.*?)\s*$/.exec(value);
+  if (!match || (match[3] !== '' && !UNIT.test(match[3]!))) return null;
+  return Number(`${match[1]!.replace(/,/g, '')}${match[2] ?? ''}`);
 }
 
 // For the exact-quote rule: case, spacing, quotes and edge punctuation do not matter.

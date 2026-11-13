@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { attemptBoundMicroUsd, liveUsage, type Attempt, type Speaker } from '@/lib/ai/eval-speech';
-import { addPhotos, parsePhotoArgs } from '../../scripts/add-eval-photos';
+import { readFileSync } from 'node:fs';
 import { AudioArgsError, checkAudioEnv, makeAudio, matchesScript, MAX_MICRO_USD, VOICES } from '../../scripts/make-eval-audio';
-import { DATA_DIR } from '../ai-evals/datasets';
+import { pngFile, renderAll, renderMeterPhoto } from '../../scripts/render-eval-photos';
+import { DATA_DIR, loadDataset } from '../ai-evals/datasets';
 import { photoProblem, resample24kTo16k, sha256, wavFile } from '../ai-evals/files';
 
 // The S7-5 binary datasets: Live-model speech for voice notes and Live turns, and the owner's meter
@@ -163,17 +164,41 @@ describe('meter photos', () => {
     expect(photoProblem(new Uint8Array(0))).toMatch(/4 MB/);
   });
 
-  it('adds the good photos by id, writing the bytes it checked, and counts the rest', () => {
-    const disk = new Map<string, Uint8Array>([
-      ['/in/mp-01.jpg', jpeg([app0])],
-      ['/in/mp-02.png', png(chunk('IHDR'), chunk('IEND'))],
-      ['/in/mp-03.jpg', jpeg([exif])],
-    ]);
-    const written = new Map<string, Uint8Array>();
-    const { counts, changes } = addPhotos('/in', { read: (p) => disk.get(p) ?? null, write: (p, b) => void written.set(p, b) });
-    expect(counts).toEqual({ added: 2, missing: 57, refused: { 'has an Exif or XMP block (strip metadata first)': 1 } });
-    expect(changes.get('mp-02')).toEqual({ file: 'meter-photos/mp-02.png', sha256: sha256(disk.get('/in/mp-02.png')!) });
-    expect([...written.keys()]).toEqual([`${DATA_DIR}meter-photos/mp-01.jpg`, `${DATA_DIR}meter-photos/mp-02.png`]);
-    expect(() => parsePhotoArgs([])).toThrow(/usage/);
+  const chunks = (bytes: Uint8Array) => {
+    const types: string[] = [];
+    for (let at = 8; at + 8 <= bytes.byteLength; ) {
+      const length = Buffer.from(bytes.subarray(at, at + 4)).readUInt32BE(0);
+      types.push(Buffer.from(bytes.subarray(at + 4, at + 8)).toString('ascii'));
+      at += 12 + length;
+    }
+    return types;
+  };
+
+  it('writes a plain RGB PNG: header, image data and end only, so no metadata', () => {
+    const bytes = pngFile({ width: 2, height: 1, rgb: new Uint8Array([255, 0, 0, 0, 0, 255]) });
+    expect([...bytes.subarray(0, 8)]).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    expect(chunks(bytes)).toEqual(['IHDR', 'IDAT', 'IEND']);
+    expect(photoProblem(bytes)).toBeNull();
+  });
+
+  it('draws the same bytes every time, and a different image for each shot', () => {
+    const photos = loadDataset('meterPhotos');
+    const twice = [renderAll(photos), renderAll(photos)];
+    expect(twice[0]!.map((p) => p.sha256)).toEqual(twice[1]!.map((p) => p.sha256));
+    expect(new Set(twice[0]!.map((p) => p.sha256)).size).toBe(60);
+    const readable = photos.find((p) => p.readable)!;
+    const blank = photos.find((p) => p.shot === 'display is blank')!;
+    expect(sha256(pngFile(renderMeterPhoto({ ...readable, value: '12.3' }, 0)))).not.toBe(sha256(pngFile(renderMeterPhoto(readable, 0))));
+    expect(() => renderMeterPhoto({ ...blank, shot: 'a shot nobody listed' }, 0)).toThrow(/no drawing/);
+  });
+
+  it('commits all 60 photos: each file is the drawing of its row, pinned by its SHA-256, under 4 MB', () => {
+    for (const photo of renderAll(loadDataset('meterPhotos'))) {
+      const row = loadDataset('meterPhotos').find((p) => p.id === photo.id)!;
+      expect(row).toMatchObject({ file: photo.file, sha256: photo.sha256 });
+      const committed = readFileSync(`${DATA_DIR}${row.file}`);
+      expect(sha256(committed), row.id).toBe(row.sha256);
+      expect(photoProblem(committed)).toBeNull();
+    }
   });
 });

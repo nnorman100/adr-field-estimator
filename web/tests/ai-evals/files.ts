@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { datasetPath, loadDataset, type DatasetName } from './datasets';
 
 // The binary half of the S7-5 datasets: voice-note and Live-turn audio (spoken by the Live model,
-// web/scripts/make-eval-audio.ts) and meter photos (taken by the owner, web/scripts/add-eval-photos.ts).
+// web/scripts/make-eval-audio.ts) and meter photos (drawn by web/scripts/render-eval-photos.ts).
 // Pure helpers, so CI tests them without a model or a camera.
 
 export const sha256 = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');

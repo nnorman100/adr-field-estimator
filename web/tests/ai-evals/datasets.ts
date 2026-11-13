@@ -5,8 +5,8 @@ import { z } from 'zod';
 
 // The S7-5 evaluation datasets (docs/plans/S7.md, S7-5): synthetic only, committed as JSON Lines
 // under ./data/ (one case per line). Binary inputs (voice-note audio, Live turn audio, meter photos)
-// are listed in their manifest with a file path and a SHA-256; the file is added later by
-// web/scripts/make-eval-audio.ts or web/scripts/add-eval-photos.ts and the hash pins it.
+// are listed in their manifest with a file path and a SHA-256 that pins it: the meter photos are
+// drawn by web/scripts/render-eval-photos.ts, the audio is spoken by web/scripts/make-eval-audio.ts.
 
 export const EVAL_DIR = fileURLToPath(new URL('./', import.meta.url));
 export const DATA_DIR = fileURLToPath(new URL('./data/', import.meta.url));
@@ -109,7 +109,7 @@ export const voiceNoteSchema = z.strictObject({
 });
 export type VoiceNote = z.infer<typeof voiceNoteSchema>;
 
-// ---- Meter photos (S7-8): 40 readable and 20 unreadable, owner-taken from this shot list.
+// ---- Meter photos (S7-8): 40 readable and 20 unreadable, drawn from this shot list.
 export const meterPhotoSchema = z.strictObject({
   id: id('mp'),
   readable: z.boolean(),

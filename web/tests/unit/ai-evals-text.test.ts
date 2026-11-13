@@ -57,6 +57,11 @@ describe('lookups', () => {
     expect(numberOf(42)).toBe(42);
     expect(numberOf('no reading')).toBeNull();
     expect(numberOf(null)).toBeNull();
+    expect(numberOf('1,200 sq ft')).toBe(1200);
+    expect(numberOf('58.5 %RH')).toBe(58.5);
+    expect(numberOf('63.8 F')).toBe(63.8);
+    expect(numberOf('240 square feet')).toBe(240);
+    for (const value of ['39-49', '240-300', '12 rooms', '18.5 or so', '1,2', '']) expect(numberOf(value), value).toBeNull();
   });
 
   it('compares quotes without case, spacing or edge punctuation', () => {

@@ -68,6 +68,44 @@ describe('findings summary (30 jobs: no price, pre-1978 30/30, faithful >= 28/30
     expect(decide((m) => (m.get(post)!.summary += ' Built after 1978, so no lead or asbestos testing is required.'))).toEqual([]);
   });
 
+  it('reads a negated exemption as advice: "do not skip asbestos testing"', () => {
+    const pre = jobs.find((j) => j.labels.pre1978)!.id;
+    const post = jobs.find((j) => !j.labels.pre1978)!.id;
+    const decide = (edit: (m: Map<string, Json>) => void) => failing(scoreSummary(jobs, answers('summary.jsonl', edit)));
+    expect(decide((m) => (m.get(pre)!.testing_advice = ['Do not skip asbestos testing.']))).toEqual([]);
+    expect(decide((m) => (m.get(pre)!.testing_advice = ["Lead testing isn't optional."]))).toEqual([]);
+    expect(decide((m) => (m.get(pre)!.summary += ' Never skip lead testing.'))).toEqual([]);
+    expect(decide((m) => (m.get(post)!.suggestions as string[]).push('Do not skip asbestos testing.'))).toEqual(['pre1978_right']);
+    expect(decide((m) => (m.get(post)!.unpriced_work as string[]).push('Lead testing is not optional.'))).toEqual(['pre1978_right']);
+  });
+
+  it('binds each number to its fact: a swapped part and whole is unfaithful', () => {
+    const swap = (m: Map<string, Json>, id: string) => {
+      const job = jobs.find((j) => j.id === id)!;
+      const room = job.facts.rooms[0]!;
+      const summary = m.get(id)!.summary as string;
+      const right = `${room.wetFloorSf} of ${room.floorSf} square feet`;
+      expect(summary).toContain(right);
+      m.get(id)!.summary = summary.replace(right, `${room.floorSf} of ${room.wetFloorSf} square feet`);
+    };
+    const one = scoreSummary(jobs, answers('summary.jsonl', (m) => swap(m, 'sj-01')));
+    expect(one.cases.find((c) => c.id === 'sj-01')!.checks.faithful).toBe(false);
+    expect(metric(one, 'faithful').value).toBe(29);
+    const differ = jobs.filter((j) => j.facts.rooms[0]!.wetFloorSf !== j.facts.rooms[0]!.floorSf).slice(0, 3);
+    const three = scoreSummary(jobs, answers('summary.jsonl', (m) => differ.forEach((j) => swap(m, j.id))));
+    expect(failing(three)).toEqual(['faithful']);
+  });
+
+  it("binds a room's numbers to that room, not to another room of the job", () => {
+    const two = jobs.find((j) => j.facts.rooms.length >= 2 && j.facts.rooms[0]!.floorSf !== j.facts.rooms[1]!.floorSf)!;
+    const [first, second] = two.facts.rooms;
+    const s = scoreSummary(
+      jobs,
+      answers('summary.jsonl', (m) => (m.get(two.id)!.summary += ` The ${first!.name.toLowerCase()} measures ${second!.floorSf} square feet.`)),
+    );
+    expect(s.cases.find((c) => c.id === two.id)!.checks.faithful).toBe(false);
+  });
+
   it('allows two unfaithful summaries and fails on the third: a missed room, a forbidden word, a new number', () => {
     const edit = (count: number) => (m: Map<string, Json>) => {
       const [a, b, c] = jobs;
@@ -204,16 +242,31 @@ describe('fill scope from words (quote for every change, value >= 95%, recall >=
     expect(failing(s)).toEqual(['recall']);
   });
 
-  it('matches rooms without case or a leading "the", and ignores room naming', () => {
+  it('matches rooms without case or a leading "the"', () => {
     const s = scoreScopeFill(
       walks,
       answers('scope-fill.jsonl', (m) => {
         const first = changesOf(m, 'wt-01').find((c) => c.room !== null)!;
         first.room = `The ${(first.room as string).toUpperCase()}`;
-        changesOf(m, 'wt-01').push({ room: 'Kitchen', field: 'name', value: 'Kitchen', quote: 'not said' });
       }),
     );
     expect(s.pass).toBe(true);
+  });
+
+  it('checks a room-name change like any other: a quote, and no count or price', () => {
+    const named = (change: Json) => scoreScopeFill(walks, answers('scope-fill.jsonl', (m) => changesOf(m, 'wt-01').push(change)));
+    expect(failing(named({ room: 'Kitchen', field: 'name', value: 'Kitchen', quote: 'not said' }))).toContain('quote_for_every_change');
+    expect(failing(named({ room: 'Kitchen', field: 'name', value: 'Kitchen for $900', quote: '' }))).toEqual(
+      expect.arrayContaining(['quote_for_every_change', 'counts_or_prices']),
+    );
+  });
+
+  it('fails on a price in a question, a room or the raw reply, even when the changes are clean', () => {
+    expect(failing(scoreScopeFill(walks, answers('scope-fill.jsonl', (m) => (m.get('wt-01')!.questions = ['This work costs $900. Proceed?']))))).toEqual(['counts_or_prices']);
+    expect(failing(scoreScopeFill(walks, answers('scope-fill.jsonl', (m) => (changesOf(m, 'wt-01')[1]!.room = 'Kitchen, $900 to dry'))))).toContain('counts_or_prices');
+    const raw = answers('scope-fill.jsonl');
+    raw.set('wt-02', { ...(raw.get('wt-02') as { ok: true; response: unknown }), raw: '{"changes":[],"questions":["Drying runs 1200 dollars."]}' });
+    expect(failing(scoreScopeFill(walks, raw))).toEqual(['counts_or_prices']);
   });
 });
 
@@ -256,6 +309,15 @@ describe('meter reading (>= 36/40 exact, 0/20 unreadable verified)', () => {
       ['readable_exact', 37],
       ['unreadable_verified', 0],
     ]);
+  });
+
+  it('never reads a range or other words as an exact value', () => {
+    const readable = photos.find((p) => p.readable && !p.value!.includes('.'))!;
+    const n = Number(readable.value);
+    for (const value of [`${n}-${n + 10}`, `${n} or so`, `about ${n}`]) {
+      const s = scoreMeterReading(photos, answers('meter-reading.jsonl', (m) => (m.get(readable.id)!.value = value)));
+      expect(s.cases.find((c) => c.id === readable.id)!.checks.exact, value).toBe(false);
+    }
   });
 
   it('fails at 35 exact, and reads "18.50 %" as 18.5', () => {
@@ -335,6 +397,13 @@ describe('Live (WER <= 10%, vocabulary >= 90%, relevance >= 27/30, no prices, p5
     const parroted = scoreLive(turns, answers('live.jsonl', (m) => question.forEach((t) => (m.get(t.id)!.reply = `Got it. ${t.say}`))), SESSION);
     expect(parroted.cases.filter((c) => c.checks.relevant === false).map((c) => c.id)).toEqual(question.map((t) => t.id));
     expect(failing(parroted)).toEqual(['relevant_replies']);
+  });
+
+  it('never takes an unrelated question as a relevant reply to a statement', () => {
+    const statements = turns.filter((t) => t.kind === 'statement');
+    const s = scoreLive(turns, answers('live.jsonl', (m) => statements.forEach((t) => (m.get(t.id)!.reply = 'What is your favorite movie?'))), SESSION);
+    expect(s.cases.filter((c) => c.checks.relevant === true).map((c) => c.id)).toEqual(turns.filter((t) => t.kind === 'question').map((t) => t.id));
+    expect(failing(s)).toEqual(['relevant_replies']);
   });
 
   it('matches a stem inside a longer word, but not a short word inside another', () => {

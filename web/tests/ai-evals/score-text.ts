@@ -12,7 +12,7 @@ import {
   type CaseScore,
   type Score,
 } from './score';
-import { looseText, numberOf, numbersIn, stringsIn } from './text';
+import { looseText, normalizeWords, numberOf, numbersIn, stringsIn } from './text';
 
 // Scorers for the text features (V9 A, docs/plans/S7.md section 8): findings summary (S7-6), job
 // summary (S7-10), fill scope from words (S7-7) and prompt injection. Each reads the smallest shape
@@ -34,17 +34,18 @@ export const summaryOutput = z.object({
 
 // The testing decision is judged on the clause that holds the testing action (a test or sample
 // for asbestos or lead), not on the whole sentence: in "do not disturb drywall until asbestos
-// testing is done" the "not" belongs to another clause. A testing clause with a denial word says no
-// testing; any other testing clause advises it.
+// testing is done" the "not" belongs to another clause. In the testing clause, each negation ("no",
+// "not", "n't") and each exemption ("skip", "optional", "unnecessary") turns the decision over, so
+// "testing can be skipped" says no testing and "do not skip asbestos testing" advises it.
 const TESTED = /\basbestos\b|\blead\b(?!\s+to\b)/i;
 const TEST_ACTION = /\b(?:test|tests|tested|testing|sample|samples|sampled|sampling)\b/i;
-const DENIAL =
-  /\b(?:no|not|never|none|without|skip|skips|skipped|skipping|optional|unnecessary|unneeded|waive|waived)\b|n't\b/i;
+const FLIP =
+  /\b(?:no|not|cannot|never|none|without|skip|skips|skipped|skipping|optional|unnecessary|unneeded|waive|waived|exempt)\b|n't\b/gi;
 const CLAUSE_BREAK = /[.!?;:,]+(?:\s+|$)|\s+(?:until|before|after|unless|once|so|but|because|since|while|then)\s+/i;
 const testingClauses = (texts: readonly string[]) =>
   texts.flatMap((text) => text.split(CLAUSE_BREAK)).filter((clause) => TESTED.test(clause) && TEST_ACTION.test(clause));
-const advisesTesting = (clause: string) => !DENIAL.test(clause);
-const deniesTesting = (clause: string) => DENIAL.test(clause);
+const deniesTesting = (clause: string) => (clause.match(FLIP) ?? []).length % 2 === 1;
+const advisesTesting = (clause: string) => !deniesTesting(clause);
 
 // Numbers a text states: every number written in digits, and spelled-out ones from ten up ("one"
 // and "two rooms" are ordinary words too often to count).
@@ -52,6 +53,51 @@ export function statedNumbers(text: string): Set<string> {
   const digits = (text.match(/\d[\d,]*(?:\.\d+)?/g) ?? []).map((n) => String(Number(n.replace(/,/g, ''))));
   const spelled = [...numbersIn(text)].filter((n) => Number(n) >= 10);
   return new Set([...digits, ...spelled]);
+}
+
+// Faithful numbers. A clause (a sentence or a part of one between semicolons) that names exactly
+// one of the job's rooms may state only that room's numbers and the job's own (year built,
+// equipment, days, photos, room count, 1978); any other clause only numbers the facts hold. A part
+// of a whole ("150 of 305 square feet") must be a room's wet floor area of its floor area, the
+// room's own when the clause names rooms, so "305 of 150 square feet" is wrong.
+const AREA_UNIT = (words: readonly string[], at: number) =>
+  (words[at] === 'square' && (words[at + 1] === 'feet' || words[at + 1] === 'foot')) ||
+  words[at] === 'sf' ||
+  (words[at] === 'sq' && words[at + 1] === 'ft');
+const isNumberWord = (word: string | undefined) => word !== undefined && /^\d+(?:\.\d+)?$/.test(word);
+
+export function partsOfWholes(clause: string): [string, string][] {
+  const words = normalizeWords(clause);
+  const pairs: [string, string][] = [];
+  for (let i = 0; i < words.length; i += 1) {
+    if (!isNumberWord(words[i])) continue;
+    let j = i + 1;
+    const partUnit = AREA_UNIT(words, j);
+    if (partUnit) j += words[j] === 'sf' ? 1 : 2;
+    if (words[j] !== 'of') continue;
+    j += words[j + 1] === 'the' ? 2 : 1;
+    if (!isNumberWord(words[j]) || !(partUnit || AREA_UNIT(words, j + 1))) continue;
+    pairs.push([String(Number(words[i])), String(Number(words[j]))]);
+  }
+  return pairs;
+}
+
+function faithfulNumbers(job: SummaryJob, summary: string): boolean {
+  const { rooms } = job.facts;
+  const jobNumbers = [...numbersIn(JSON.stringify({ ...job.facts, rooms: [] })), String(rooms.length), '1978'];
+  const anyFact = new Set([...numbersIn(JSON.stringify(job.facts)), ...jobNumbers]);
+  return summary.split(/[.;](?:\s+|$)/).every((clause) => {
+    const named = rooms.filter((room) => wordIn(clause, room.name));
+    const own = named.filter((room) => !named.some((other) => other !== room && wordIn(other.name, room.name)));
+    const allowed = own.length === 1 ? new Set([...jobNumbers, ...numbersIn(JSON.stringify(own[0]))]) : anyFact;
+    const candidates = own.length > 0 ? own : rooms;
+    return (
+      [...statedNumbers(clause)].every((n) => allowed.has(n)) &&
+      partsOfWholes(clause).every(([part, whole]) =>
+        candidates.some((room) => String(room.wetFloorSf) === part && String(room.floorSf) === whole),
+      )
+    );
+  });
 }
 
 export function scoreSummary(cases: readonly SummaryJob[], answers: Answers): Score {
@@ -71,13 +117,13 @@ export function scoreSummary(cases: readonly SummaryJob[], answers: Answers): Sc
       ? testingClauses(advice).some(advisesTesting) && !said.some(deniesTesting)
       : advice.length === 0 && !said.some(advisesTesting);
     // Faithful: the summary names every affected room and the cause, nothing it must not (another
-    // room, the wrong water category, mold on a water job), and no number the facts lack. Advice
-    // ("dry promptly to prevent mold") lives in the suggestions, so only the summary is scanned.
-    const allowed = new Set([...numbersIn(JSON.stringify(job.facts)), String(job.facts.rooms.length), '1978']);
+    // room, the wrong water category, mold on a water job), and each number it states belongs to
+    // the fact it is stated for. Advice ("dry promptly to prevent mold") lives in the suggestions,
+    // so only the summary is scanned.
     const isFaithful =
       job.labels.mustMention.every((group) => group.some((word) => wordIn(out.summary, word))) &&
       !job.labels.mustNotMention.some((word) => wordIn(out.summary, word)) &&
-      [...statedNumbers(out.summary)].every((n) => allowed.has(n));
+      faithfulNumbers(job, out.summary);
     if (price) priced += 1;
     if (rightTesting) pre1978 += 1;
     if (isFaithful) faithful += 1;
@@ -160,6 +206,7 @@ export function scoreScopeFill(cases: readonly Walkthrough[], answers: Answers):
   let changes = 0;
   let withQuote = 0;
   let forbidden = 0;
+  let pricedReplies = 0;
   let judged = 0;
   let right = 0;
   let expectedTotal = 0;
@@ -167,7 +214,7 @@ export function scoreScopeFill(cases: readonly Walkthrough[], answers: Answers):
   const scored: CaseScore[] = cases.map((walk) => {
     expectedTotal += walk.expected.length;
     const answer = responseFor(answers, walk.id, scopeOutput);
-    if (!answer.ok) return { id: walk.id, outcome: answer.outcome, checks: { quoted: null, right: 0, found: 0 } };
+    if (!answer.ok) return { id: walk.id, outcome: answer.outcome, checks: { quoted: null, right: 0, found: 0, price: null } };
     const technician = looseText(
       walk.turns
         .filter((turn) => turn.speaker === 'technician')
@@ -178,8 +225,11 @@ export function scoreScopeFill(cases: readonly Walkthrough[], answers: Answers):
     const hits = new Set<string>();
     let caseQuoted = true;
     let caseRight = 0;
+    // A price anywhere in the reply: the model's raw reply when there is one, so the server's
+    // price rule cannot hide it, or else every string the answer holds (questions and rooms too).
+    const priced = priceIn(answer.raw !== undefined ? [answer.raw] : stringsIn(answer.response));
+    if (priced) pricedReplies += 1;
     for (const change of answer.response.changes) {
-      if (change.field === 'name') continue; // naming a room is neither right nor wrong
       changes += 1;
       if (quoted(change, technician)) withQuote += 1;
       else caseQuoted = false;
@@ -196,14 +246,14 @@ export function scoreScopeFill(cases: readonly Walkthrough[], answers: Answers):
       }
     }
     found += hits.size;
-    return { id: walk.id, outcome: 'ok', checks: { quoted: caseQuoted, right: caseRight, found: hits.size } };
+    return { id: walk.id, outcome: 'ok', checks: { quoted: caseQuoted, right: caseRight, found: hits.size, price: priced } };
   });
   return score(
     [
       { ...shareAtLeast('quoted', withQuote, changes, 1), name: 'quote_for_every_change' },
       shareAtLeast('value_right', right, judged, 0.95),
       shareAtLeast('recall', found, expectedTotal, 0.8),
-      atMost('counts_or_prices', forbidden, changes, 0),
+      atMost('counts_or_prices', forbidden + pricedReplies, changes, 0),
     ],
     scored,
   );
