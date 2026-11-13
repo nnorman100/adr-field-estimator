@@ -257,6 +257,34 @@ describe('offline and leaving', () => {
     expect(page.fetchSpy.mock.calls[1]![1].keepalive).toBe(true);
   });
 
+  it.each(['visibilitychange', 'pagehide'])(
+    'keeps a report whose %s send could not reach the server, and sends it once when the page is visible again',
+    async (leaving) => {
+      let reachable = false;
+      const page = fakePage({
+        fetch: async () => {
+          if (!reachable) throw new TypeError('Failed to fetch');
+          return { ok: true };
+        },
+      });
+      installClientErrors(page);
+      page.fire('error', { error: new Error('cut off') });
+      page.set.visibility('hidden');
+      page.fire(leaving);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(page.fetchSpy).toHaveBeenCalledTimes(1);
+
+      reachable = true;
+      page.set.visibility('visible');
+      page.fire('visibilitychange');
+      await vi.advanceTimersByTimeAsync(SETTLE);
+      expect(page.fetchSpy).toHaveBeenCalledTimes(2);
+      expect(page.bodies()[1]!.reports).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(page.fetchSpy).toHaveBeenCalledTimes(2);
+    },
+  );
+
   it('drops what is still waiting offline when the page closes, and stores nothing', () => {
     const page = fakePage();
     installClientErrors(page);

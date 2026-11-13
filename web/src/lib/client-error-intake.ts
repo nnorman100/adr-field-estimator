@@ -14,8 +14,8 @@ import { emit } from './log';
 // POST /api/client-errors (TC-2, docs/plans/TC.md): the way a browser or phone error reaches Error
 // Reporting. Public, because the sign-in pages fail before anyone is signed in; so it is write-only
 // and reads nothing: no database, no Firestore, no identity (tests/unit/client-errors-route.test.ts
-// checks the imports). What it accepts is bounded three ways, and what it writes is built from fixed
-// fields only:
+// calls it with both trapped). What it accepts is bounded three ways, and what it writes is built
+// from fixed fields only:
 //   - the body: JSON, at most 8 KB (counted in bytes while it is read, never trusted from the
 //     header), at most 20 reports, every field bounded by the schema below;
 //   - the rate: each instance writes at most 60 reports a minute; the rest are answered 202 (the

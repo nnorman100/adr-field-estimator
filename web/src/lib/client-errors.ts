@@ -81,20 +81,24 @@ export function createReporter(options: ReporterOptions): Reporter {
     return batch;
   }
 
+  // Sends one batch; one that could not reach the server goes back to wait, oldest first.
+  async function sendBatch(batch: ClientErrorReport[]): Promise<boolean> {
+    const reached = await options.send(JSON.stringify({ reports: batch })).catch(() => false);
+    if (!reached) {
+      waiting.unshift(...batch);
+      waiting.splice(maxWaiting);
+      arm(RETRY_MS);
+    }
+    return reached;
+  }
+
   async function flush(): Promise<void> {
     disarm();
     if (sending) return;
     sending = true;
     try {
       while (waiting.length > 0 && options.isOnline()) {
-        const batch = nextBatch();
-        const reached = await options.send(JSON.stringify({ reports: batch }));
-        if (!reached) {
-          waiting.unshift(...batch);
-          waiting.splice(maxWaiting);
-          arm(RETRY_MS);
-          break;
-        }
+        if (!(await sendBatch(nextBatch()))) break;
       }
     } finally {
       sending = false;
@@ -104,7 +108,7 @@ export function createReporter(options: ReporterOptions): Reporter {
   function flushNow(): void {
     disarm();
     if (!options.isOnline()) return;
-    while (waiting.length > 0) void options.send(JSON.stringify({ reports: nextBatch() })).catch(() => {});
+    while (waiting.length > 0) void sendBatch(nextBatch());
   }
 
   function report(kind: ClientErrorKind, thrown: unknown): void {

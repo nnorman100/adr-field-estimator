@@ -1,8 +1,18 @@
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { POST } from '@/app/api/client-errors/route';
 import { limitedReports, resetClientErrorLimit } from '@/lib/client-error-intake';
+
+// Every way into Postgres or Firestore, trapped: a call to any of them is a read the route must not make.
+const trap = vi.hoisted(() => ({ postgres: vi.fn(), firebaseApp: vi.fn(), firestore: vi.fn() }));
+vi.mock('postgres', () => ({ default: trap.postgres }));
+vi.mock('firebase-admin/app', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('firebase-admin/app')>()),
+  initializeApp: trap.firebaseApp,
+}));
+vi.mock('firebase-admin/firestore', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('firebase-admin/firestore')>()),
+  getFirestore: trap.firestore,
+}));
 
 // The server side of TC-2 (docs/plans/TC.md): a public route that takes error reports from a browser
 // and writes each as an Error Reporting event. Nothing a caller sends may reach the log except the
@@ -217,17 +227,14 @@ describe('POST /api/client-errors: the cap', () => {
 });
 
 describe('POST /api/client-errors: what it reads', () => {
-  const read = (path: string) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), 'utf8');
-  const importsOf = (source: string) =>
-    [...source.matchAll(/(?:from|import)\s*\(?\s*['"]([^'"]+)['"]/g)].map((match) => match[1]!);
-
-  it('imports no database, Firestore, identity or storage code', () => {
-    expect(importsOf(read('../../src/lib/client-error-intake.ts')).sort()).toEqual(
-      ['./client-error-report', './log', 'zod'].sort(),
-    );
-    expect(importsOf(read('../../src/app/api/client-errors/route.ts')).sort()).toEqual(
-      ['@/lib/auth', '@/lib/client-error-intake'].sort(),
-    );
+  it('opens no Postgres connection and no Firestore client, whether it writes, refuses or caps', async () => {
+    expect((await send([report()])).status).toBe(202);
+    expect((await send([report({ kind: 'telemetry' })])).status).toBe(400);
+    for (let i = 0; i < 4; i++) await send(Array.from({ length: 20 }, () => report()));
+    expect(limitedReports()).toBeGreaterThan(0);
+    expect(trap.postgres).not.toHaveBeenCalled();
+    expect(trap.firebaseApp).not.toHaveBeenCalled();
+    expect(trap.firestore).not.toHaveBeenCalled();
   });
 
   it('answers without a database, Firestore or sign-in configured', async () => {
