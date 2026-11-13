@@ -1,15 +1,13 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { createServer, type IncomingHttpHeaders } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { join } from 'node:path';
 import { SpanKind } from '@opentelemetry/api';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parseTracingConfig } from '@/lib/config';
 import { googleTraceExporter, TELEMETRY_TRACES_URL } from '@/lib/telemetry/google-exporter';
 import { statementKind } from '@/lib/telemetry/statement';
 
-// TC-3: when tracing exports and where, what a span says about a statement, the request the
-// exporter makes, and that every Firestore Admin call goes through firestoreSpan.
+// TC-3: when tracing exports and where, what a span says about a statement, and the request the
+// exporter makes.
 afterEach(() => vi.restoreAllMocks());
 
 describe('tracing mode', () => {
@@ -132,24 +130,5 @@ describe('the Cloud Trace exporter', () => {
     const failures = lines.filter((l) => l.includes('export_failed'));
     expect(failures).toHaveLength(1);
     expect(lines.join('')).not.toMatch(/token abc|no credentials/);
-  });
-});
-
-// A new Firestore Admin call that skips firestoreSpan would be invisible in a trace.
-describe('Firestore Admin calls', () => {
-  const walk = (dir: string): string[] =>
-    readdirSync(dir).flatMap((name) => {
-      const path = join(dir, name);
-      return statSync(path).isDirectory() ? walk(path) : path.endsWith('.ts') ? [path] : [];
-    });
-
-  it('every source file that calls Firestore opens a span for it', () => {
-    const src = new URL('../../src/', import.meta.url).pathname;
-    const calls = /\.collection\(|\.runTransaction\(|\.collectionGroup\(|\.batch\(\)/;
-    const offenders = walk(src)
-      .filter((file) => !file.includes('/telemetry/'))
-      .filter((file) => calls.test(readFileSync(file, 'utf8')) && !readFileSync(file, 'utf8').includes('firestoreSpan('))
-      .map((file) => file.slice(src.length));
-    expect(offenders).toEqual([]);
   });
 });

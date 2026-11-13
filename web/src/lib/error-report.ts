@@ -1,4 +1,4 @@
-import { emit, traceFields, type HeaderSource } from './log';
+import { emit, type HeaderSource } from './log';
 
 // One Error Reporting event for an uncaught server error, written as a JSON log line
 // (docs.cloud.google.com/error-reporting/docs/formatting-error-messages): `serviceContext` marks it
@@ -58,6 +58,5 @@ export function reportServerError(error: unknown, request: RequestInfo | undefin
     message: stack,
     stack_trace: stack,
     context: { httpRequest: { method, url: route } },
-    ...(request?.headers ? traceFields(request.headers) : {}),
-  });
+  }, request?.headers);
 }

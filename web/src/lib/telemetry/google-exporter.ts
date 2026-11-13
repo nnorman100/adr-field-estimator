@@ -1,5 +1,5 @@
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto';
-import type { SpanExporter } from '@opentelemetry/sdk-trace';
+import type { SpanExporter } from '@opentelemetry/sdk-trace-node';
 import { GoogleAuth } from 'google-auth-library';
 
 // The in-process OTLP exporter to Cloud Trace's Telemetry API, as Google's guide for an

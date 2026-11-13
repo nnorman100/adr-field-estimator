@@ -1,6 +1,7 @@
 import { SpanKind, SpanStatusCode, trace } from '@opentelemetry/api';
-import { InMemorySpanExporter, type ReadableSpan, type SpanExporter } from '@opentelemetry/sdk-trace';
+import { InMemorySpanExporter, type ReadableSpan, type SpanExporter } from '@opentelemetry/sdk-trace-node';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { reportServerError } from '@/lib/error-report';
 import { log } from '@/lib/log';
 import { withAiSpan } from '@/lib/telemetry/ai-span';
 import { sanitizeAttributes, sanitizingExporter, scrubPaths } from '@/lib/telemetry/sanitize';
@@ -61,7 +62,7 @@ describe('the tracer provider', () => {
 
   it('starts nothing when switched off', () => {
     expect(startTracing({ mode: 'off', appEnv: 'test' })).toBeNull();
-    expect(trace.getTracerProvider().constructor.name).not.toBe('TracerProvider');
+    expect(trace.getTracer('x').startSpan('y').isRecording()).toBe(false);
   });
 });
 
@@ -69,14 +70,14 @@ describe('hand-written spans', () => {
   it('records the transaction scope and ends on a throw, with the class and no message', async () => {
     start();
     await expect(
-      transactionSpan('operator', async () => {
+      transactionSpan(async () => {
         throw new RangeError('jo@example.com failed with token abc');
       }),
     ).rejects.toThrow(RangeError);
     const [span] = finished();
-    expect(span!.name).toBe('withOperator transaction');
+    expect(span!.name).toBe('withCompany transaction');
     expect(span!.status).toEqual({ code: SpanStatusCode.ERROR });
-    expect(span!.attributes).toMatchObject({ 'dryscope.db.scope': 'operator', 'error.type': 'RangeError' });
+    expect(span!.attributes).toMatchObject({ 'dryscope.db.scope': 'company', 'error.type': 'RangeError' });
     expect(JSON.stringify(span)).not.toMatch(/jo@example|token abc/);
     expect(span!.events).toEqual([]);
   });
@@ -133,6 +134,12 @@ describe('what may leave the process', () => {
       'next.span_name': 'GET /api/jobs/3f2c0a1e-9b7d-4c1a-8e2f-5d6a7b8c9d0e?x=1',
       'db.operation.name': 'SELECT',
       'dryscope.note': 'sent to jo@example.com with Bearer abc123',
+      'dryscope.db.scope': 'company',
+      'db.statement': "SELECT * FROM jobs WHERE email = 'jo@example.com'",
+      'gen_ai.prompt': 'describe the damage at 12 Elm St',
+      'gen_ai.request.model': 'gemini-x',
+      'dryscope.ai.prompt_version': 'v1',
+      'gen_ai.usage.input_tokens': 120,
       'user.email': 'jo@example.com',
       'exception.message': 'password is hunter2',
       'enduser.id': 'uid-1',
@@ -145,8 +152,14 @@ describe('what may leave the process', () => {
       'http.route': '/api/jobs/[jobId]',
       'next.span_name': 'GET /api/jobs/[id]',
       'db.operation.name': 'SELECT',
-      'dryscope.note': 'sent to [redacted] with [redacted]',
+      'dryscope.db.scope': 'company',
+      'gen_ai.request.model': 'gemini-x',
+      'dryscope.ai.prompt_version': 'v1',
+      'gen_ai.usage.input_tokens': 120,
       'db.response.returned_rows': 3,
+    });
+    expect(sanitizeAttributes({ 'next.route': 'sent to jo@example.com with Bearer abc123' })).toEqual({
+      'next.route': 'sent to [redacted] with [redacted]',
     });
     expect(scrubPaths('GET /a/jo@example.com/b?x=1')).toBe('GET /a/[id]/b');
     expect(scrubPaths('GET /api/jobs/[jobId]')).toBe('GET /api/jobs/[jobId]');
@@ -167,6 +180,23 @@ describe('what may leave the process', () => {
     expect(out!.events).toEqual([]);
     expect(out!.status).toEqual({ code: SpanStatusCode.ERROR });
     expect(JSON.stringify(out)).not.toMatch(/example\.com|203\.0|abc\.def|3f2c0a1e/);
+  });
+
+  it('exports a request span without the incoming tracestate, keeping its trace and parent ids', async () => {
+    start();
+    const { propagation, context, ROOT_CONTEXT } = await import('@opentelemetry/api');
+    const trace32 = '4bf92f3577b34da6a3ce929d0e0e4736';
+    const incoming = propagation.extract(ROOT_CONTEXT, {
+      traceparent: `00-${trace32}-00f067aa0ba902b7-01`,
+      tracestate: 'vendor=jo@example.com',
+    });
+    expect(trace.getSpanContext(incoming)?.traceState?.serialize()).toBe('vendor=jo@example.com');
+    await context.with(incoming, () => inSpan('GET /api/health', SpanKind.SERVER, {}, async () => 1));
+    const [out] = finished();
+    expect(out!.spanContext()).toMatchObject({ traceId: trace32, traceFlags: 1 });
+    expect(out!.spanContext().traceState).toBeUndefined();
+    expect(out!.parentSpanContext).toMatchObject({ traceId: trace32, spanId: '00f067aa0ba902b7', traceFlags: 1 });
+    expect(out!.parentSpanContext?.traceState).toBeUndefined();
   });
 });
 
@@ -232,6 +262,26 @@ describe('the logger', () => {
     await inSpan('work', SpanKind.INTERNAL, {}, async (span) => {
       log('INFO', 'in span', {}, header);
       expect(JSON.parse(lines.at(-1)!)['logging.googleapis.com/spanId']).toBe(span.spanContext().spanId);
+    });
+  });
+
+  it('links an error report to the active span, and falls back to the request headers', async () => {
+    const headers = { traceparent: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01' };
+    const request = { method: 'GET', headers };
+    const context = { routePath: '/api/jobs' };
+    reportServerError(new Error('outside'), request, context);
+    const outside = JSON.parse(lines.at(-1)!);
+    expect(outside['logging.googleapis.com/trace']).toBe('projects/dryscope-test/traces/4bf92f3577b34da6a3ce929d0e0e4736');
+    expect(outside['logging.googleapis.com/spanId']).toBe('00f067aa0ba902b7');
+    start();
+    await inSpan('GET /api/jobs', SpanKind.SERVER, {}, async (span) => {
+      reportServerError(new Error('inside'), request, context);
+      const inside = JSON.parse(lines.at(-1)!);
+      const { traceId, spanId } = span.spanContext();
+      expect(inside['@type']).toContain('ReportedErrorEvent');
+      expect(inside['logging.googleapis.com/trace']).toBe(`projects/dryscope-test/traces/${traceId}`);
+      expect(inside['logging.googleapis.com/spanId']).toBe(spanId);
+      expect(inside['logging.googleapis.com/trace_sampled']).toBe(true);
     });
   });
 });

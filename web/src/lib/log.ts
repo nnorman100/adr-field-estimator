@@ -97,10 +97,14 @@ export function activeSpanFields(): TraceFields {
   };
 }
 
-// Writes one record as one line. Only this file and error-report.ts call it directly; the
-// Error Reporting event carries a stack trace, which log() would scrub and cut to MAX_TEXT.
-export function emit(record: Record<string, unknown>): void {
-  process.stdout.write(`${JSON.stringify(record)}\n`);
+// Writes one record as one line, linked to its trace: the active span first (it is the closest,
+// and the request's own trace), the request's headers when there is none (tracing off, or a line
+// written outside a span). Only this file and error-report.ts call it directly; the Error Reporting
+// event carries a stack trace, which log() would scrub and cut to MAX_TEXT.
+export function emit(record: Record<string, unknown>, headers?: HeaderSource): void {
+  const active = activeSpanFields();
+  const linked = Object.keys(active).length > 0 ? active : headers ? traceFields(headers) : {};
+  process.stdout.write(`${JSON.stringify({ ...record, ...linked })}\n`);
 }
 
 export function log(severity: Severity, message: string, fields: LogFields = {}, headers?: HeaderSource): void {
@@ -111,10 +115,5 @@ export function log(severity: Severity, message: string, fields: LogFields = {},
     else if (typeof value === 'number' && Number.isFinite(value)) line[name] = value;
     else if (typeof value === 'boolean') line[name] = value;
   }
-  // The active span first (it is the closest, and the request's own trace); the request's headers
-  // when there is none (tracing off, or a line written outside a span).
-  const linked = activeSpanFields();
-  if (Object.keys(linked).length > 0) Object.assign(line, linked);
-  else if (headers) Object.assign(line, traceFields(headers));
-  emit(line);
+  emit(line, headers);
 }

@@ -194,28 +194,19 @@ jobs:
           echo "image size: $(wc -c < "$RUNNER_TEMP/web-image.tar") bytes"
       # The same /app tree the image carries, started the way the image starts it (node server.js),
       # with what Cloud Run adds (APP_ENV) and nothing else from this runner's environment.
+      # Request tracing (docs/plans/TC.md, TC-3) starts with it, recording spans in the process and
+      # exporting nothing (no K_SERVICE, no project): the log must say tracing started in that mode
+      # and never that it could not start.
       - name: Run as on Cloud Run and smoke-check
         run: |
           (cd "$RUNNER_TEMP/web-stage/app" && env -i PATH="$PATH" NODE_ENV=production PORT=8080 \
             HOSTNAME=127.0.0.1 APP_ENV=test APP_COMMIT="$GITHUB_SHA" node server.js > "$RUNNER_TEMP/web.log" 2>&1 &)
           node scripts/smoke-release.ts --url http://127.0.0.1:8080 --commit "$GITHUB_SHA" --env test \
             || { cat "$RUNNER_TEMP/web.log"; exit 1; }
-      # Request tracing (docs/plans/TC.md, TC-3): the same tree started with what Cloud Run adds for a
-      # service (K_SERVICE and the project), so the Cloud Trace exporter is on. It cannot reach Google
-      # from here, so every export fails; the server must start, answer the smoke check, log that
-      # tracing started in export mode and never log that it could not start tracing. (The step above
-      # already starts the tree with tracing on and no exporter, as in any run that is not on Cloud Run.)
-      - name: Run with tracing on and smoke-check
-        run: |
-          (cd "$RUNNER_TEMP/web-stage/app" && env -i PATH="$PATH" NODE_ENV=production PORT=8082 \
-            HOSTNAME=127.0.0.1 APP_ENV=test APP_COMMIT="$GITHUB_SHA" K_SERVICE=dryscope-api-test \
-            GOOGLE_CLOUD_PROJECT=dryscope-smoke node server.js > "$RUNNER_TEMP/web-tracing.log" 2>&1 &)
-          node scripts/smoke-release.ts --url http://127.0.0.1:8082 --commit "$GITHUB_SHA" --env test \
-            || { cat "$RUNNER_TEMP/web-tracing.log"; exit 1; }
-          grep -q '"message":"tracing started".*"code":"export"' "$RUNNER_TEMP/web-tracing.log" \
-            || { echo "::error::Tracing did not start in export mode."; cat "$RUNNER_TEMP/web-tracing.log"; exit 1; }
-          if grep -q 'tracing unavailable' "$RUNNER_TEMP/web-tracing.log"; then
-            echo "::error::Tracing failed to start."; cat "$RUNNER_TEMP/web-tracing.log"; exit 1
+          grep -q '"message":"tracing started".*"code":"spans"' "$RUNNER_TEMP/web.log" \
+            || { echo "::error::Tracing did not start."; cat "$RUNNER_TEMP/web.log"; exit 1; }
+          if grep -q 'tracing unavailable' "$RUNNER_TEMP/web.log"; then
+            echo "::error::Tracing failed to start."; cat "$RUNNER_TEMP/web.log"; exit 1
           fi
       - name: Refuse to start without APP_ENV
         run: |

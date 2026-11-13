@@ -29,7 +29,7 @@ export async function withCompany<T>(
   if (typeof companyId !== 'string' || !UUID.test(companyId)) {
     throw new CompanyContextError('withCompany needs a company id that is a uuid');
   }
-  return transactionSpan('company', () =>
+  return transactionSpan(() =>
     db.transaction(async (tx) => {
       await tx.execute(sql`SELECT set_config('app.company_id', ${companyId.toLowerCase()}, true)`);
       return run(tx);
@@ -69,18 +69,16 @@ export async function withOperator<T>(
   if (companyId !== undefined && (typeof companyId !== 'string' || !UUID.test(companyId))) {
     throw new CompanyContextError('withOperator needs a company id that is a uuid');
   }
-  return transactionSpan('operator', () =>
-    db.transaction(
-      async (tx) => {
-        await tx.execute(sql`SELECT set_config('app.operator_id', ${operatorId.toLowerCase()}, true)`);
-        if (companyId !== undefined) {
-          await tx.execute(sql`SELECT set_config('app.company_id', ${companyId.toLowerCase()}, true)`);
-        }
-        const [row] = (await tx.execute(sql`SELECT app_operator_active() AS active`)) as unknown as { active: boolean }[];
-        if (row?.active !== true) throw new OperatorContextError('not an active platform operator');
-        return run(tx);
-      },
-      context.readOnly === true ? { accessMode: 'read only' } : undefined,
-    ),
+  return db.transaction(
+    async (tx) => {
+      await tx.execute(sql`SELECT set_config('app.operator_id', ${operatorId.toLowerCase()}, true)`);
+      if (companyId !== undefined) {
+        await tx.execute(sql`SELECT set_config('app.company_id', ${companyId.toLowerCase()}, true)`);
+      }
+      const [row] = (await tx.execute(sql`SELECT app_operator_active() AS active`)) as unknown as { active: boolean }[];
+      if (row?.active !== true) throw new OperatorContextError('not an active platform operator');
+      return run(tx);
+    },
+    context.readOnly === true ? { accessMode: 'read only' } : undefined,
   );
 }

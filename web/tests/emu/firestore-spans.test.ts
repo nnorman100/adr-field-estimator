@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { InMemorySpanExporter, type ReadableSpan } from '@opentelemetry/sdk-trace';
+import { InMemorySpanExporter, type ReadableSpan } from '@opentelemetry/sdk-trace-node';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { parseProjectionConfig } from '@/lib/config';
 import { firestoreDraftStore } from '@/lib/jobs/drafts';

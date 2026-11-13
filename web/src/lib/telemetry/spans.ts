@@ -44,14 +44,9 @@ export function inSpan<T>(
   });
 }
 
-// One database transaction of withCompany or withOperator. `scope` is a fixed word.
-export function transactionSpan<T>(scope: 'company' | 'operator', work: () => Promise<T>): Promise<T> {
-  return inSpan(
-    `${scope === 'company' ? 'withCompany' : 'withOperator'} transaction`,
-    SpanKind.INTERNAL,
-    { 'db.system.name': 'postgresql', 'dryscope.db.scope': scope },
-    work,
-  );
+// One withCompany database transaction.
+export function transactionSpan<T>(work: () => Promise<T>): Promise<T> {
+  return inSpan('withCompany transaction', SpanKind.INTERNAL, { 'db.system.name': 'postgresql', 'dryscope.db.scope': 'company' }, work);
 }
 
 export type FirestoreOperation = 'get' | 'create' | 'set' | 'update' | 'delete' | 'runTransaction';

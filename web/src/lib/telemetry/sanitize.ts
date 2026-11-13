@@ -1,6 +1,5 @@
-import type { Attributes } from '@opentelemetry/api';
-import type { ExportResult } from '@opentelemetry/core';
-import type { ReadableSpan, SpanExporter } from '@opentelemetry/sdk-trace';
+import type { Attributes, SpanContext } from '@opentelemetry/api';
+import type { ReadableSpan, SpanExporter } from '@opentelemetry/sdk-trace-node';
 import { scrub } from '@/lib/log';
 
 // The last check on everything that leaves the process for Cloud Trace (hard rule 6), applied to
@@ -10,15 +9,16 @@ import { scrub } from '@/lib/log';
 //     boolean; strings are scrubbed for emails, tokens and coordinates, and any path in them has its
 //     query cut and its id-shaped segments replaced;
 //   - span names get the same path treatment ("GET /api/jobs/<id>?x=1" -> "GET /api/jobs/[id]");
-//   - events (an exception event holds the error's message and stack), links and the status message
-//     are dropped.
+//   - events (an exception event holds the error's message and stack), links, the status message
+//     and the incoming tracestate are dropped.
 
 const ALLOWED_NAME = new RegExp(
   '^(?:' +
     [
-      String.raw`db\.[a-z_.]+`,
-      String.raw`dryscope\.[a-z_.]+`,
-      String.raw`gen_ai\.[a-z_.]+`,
+      String.raw`db\.(?:system\.name|operation\.name|collection\.name|response\.returned_rows)`,
+      String.raw`dryscope\.db\.scope`,
+      String.raw`dryscope\.ai\.(?:feature|prompt_version|latency_ms|outcome|verdict)`,
+      String.raw`gen_ai\.(?:request\.model|usage\.input_tokens|usage\.output_tokens)`,
       String.raw`next\.(?:span_name|span_type|route|page|rsc|bundler)`,
       String.raw`http\.(?:method|request\.method|route|status_code|response\.status_code)`,
       String.raw`error\.type`,
@@ -52,14 +52,16 @@ export function sanitizeAttributes(attributes: Attributes): Attributes {
   return out;
 }
 
+const withoutTraceState = (ids: SpanContext): SpanContext => ({ ...ids, traceState: undefined });
+
 function sanitizedSpan(span: ReadableSpan): ReadableSpan {
   const attributes = sanitizeAttributes(span.attributes);
   const dropped = Object.keys(span.attributes).length - Object.keys(attributes).length;
   return {
     name: clean(span.name),
     kind: span.kind,
-    spanContext: () => span.spanContext(),
-    parentSpanContext: span.parentSpanContext,
+    spanContext: () => withoutTraceState(span.spanContext()),
+    parentSpanContext: span.parentSpanContext && withoutTraceState(span.parentSpanContext),
     startTime: span.startTime,
     endTime: span.endTime,
     status: { code: span.status.code },
@@ -75,6 +77,8 @@ function sanitizedSpan(span: ReadableSpan): ReadableSpan {
     droppedLinksCount: span.droppedLinksCount + span.links.length,
   };
 }
+
+type ExportResult = Parameters<Parameters<SpanExporter['export']>[1]>[0];
 
 const FAILED = 1;
 

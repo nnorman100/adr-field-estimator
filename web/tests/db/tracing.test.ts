@@ -1,5 +1,5 @@
 import { SpanKind, trace } from '@opentelemetry/api';
-import { InMemorySpanExporter, type ReadableSpan } from '@opentelemetry/sdk-trace';
+import { InMemorySpanExporter, type ReadableSpan } from '@opentelemetry/sdk-trace-node';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FakeClaims, Harness } from './team-harness';
 
