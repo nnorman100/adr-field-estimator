@@ -310,6 +310,12 @@ export type BrowserSignInConfig = {
   projectId: string;
   // The Auth emulator's address for the browser, on a developer machine only; null elsewhere.
   authEmulatorUrl: string | null;
+  // What the browser's Firestore client needs for the field database (S6-1). Each is left out
+  // (not null) while the server does not know it, so sign-in works without them.
+  // The field database's id.
+  firestoreDatabaseId?: string;
+  // The Firestore emulator's address, on a developer machine only; never set elsewhere.
+  firestoreEmulatorUrl?: string;
 };
 
 // The emulator accepts any API key; this one is never valid on a real project.
@@ -323,6 +329,9 @@ export function parseBrowserSignInConfig(
   const data = checked(env);
   const projectId = data.GOOGLE_CLOUD_PROJECT;
   if (!projectId) return null;
+  const firestore = {
+    ...(data.FIRESTORE_DATABASE_ID !== undefined ? { firestoreDatabaseId: data.FIRESTORE_DATABASE_ID } : {}),
+  };
   const emulator = data.FIREBASE_AUTH_EMULATOR_HOST;
   if (emulator !== undefined) {
     return {
@@ -330,6 +339,10 @@ export function parseBrowserSignInConfig(
       authDomain: data.FIREBASE_AUTH_DOMAIN ?? `${projectId}.firebaseapp.com`,
       projectId,
       authEmulatorUrl: `http://${emulator}`,
+      ...firestore,
+      ...(data.FIRESTORE_EMULATOR_HOST !== undefined
+        ? { firestoreEmulatorUrl: `http://${data.FIRESTORE_EMULATOR_HOST}` }
+        : {}),
     };
   }
   if (!data.FIREBASE_WEB_API_KEY || !data.FIREBASE_AUTH_DOMAIN) return null;
@@ -338,6 +351,7 @@ export function parseBrowserSignInConfig(
     authDomain: data.FIREBASE_AUTH_DOMAIN,
     projectId,
     authEmulatorUrl: null,
+    ...firestore,
   };
 }
 

@@ -2,7 +2,7 @@
 
 `adr-field-estimator` exists so that a restoration technician can walk a water or mold loss once, talking and photographing as they go, and leave with an estimate the company can sign, defend and carry out.
 It serves Alert Disaster Restoration first, and other restoration companies in any state as paying subscribers in isolated company workspaces.
-It turns a confirmed inspection - rooms, measurements, categories, equipment, photos and the walkthrough recording - into four documents: a proposal with a low-high estimate, an itemized claim, a scope defense letter and a photo moisture log.
+It turns a confirmed inspection - rooms, measurements, categories, equipment, photos and the walkthrough transcript - into four documents: a proposal with a low-high estimate, an itemized claim, a scope defense letter and a photo moisture log.
 It owns exactly one thing: the path from one water or mold loss inspection to a signed, priced, evidence-backed agreement, delivered to the people who need it and scheduled into drying work.
 
 ## Prices come from the company's own price book
@@ -28,7 +28,7 @@ Audits and signatures bind to a saved revision and proposal hash, and any later 
 A homeowner may sign on site or from their own phone through a link, under the same revision and hash binding (the link signs as the technician who sent it, works once, expires after 7 days and stops working on any edit; it is shared by QR code, copied link or the phone's share sheet, delivery behavior is described in [document delivery](docs/company-workspaces.md#document-delivery)).
 Success is shown only after a durable server receipt.
 After signing, office staff may correct address, name and contact fields without re-signing, and each correction is recorded in an audit entry naming who changed what.
-Everything else in a signed agreement, its documents, its evidence and the walkthrough recording never changes; later coordination lives in separate sidecars.
+Everything else in a signed agreement, its documents, its evidence and the walkthrough transcript never changes; later coordination lives in separate sidecars.
 
 ## The agreement reaches everyone it involves
 
@@ -50,7 +50,7 @@ Browsers never reach the database or the model directly; the backend checks iden
 Each company sees only its own jobs, recordings and uploaded prices.
 Owners may see how their prices compare with anonymized aggregates drawn from five or more companies, never another company's name or jobs (not built yet; today the app computes no cross-company aggregates or price comparisons).
 ADR's superadmin, or a support role ADR assigns, may open a subscriber's jobs read-only to diagnose a problem; every access is logged and visible to that company's owner (superadmin read-only support access with an audit log is built, per `docs/company-workspaces.md`; a separate support role and showing the log to the company's owner are not built yet).
-The walkthrough is recorded from the start of Live, the signed proposal carries the recording notice, and the audio and frames are kept in the private evidence bucket, bound to the signed agreement (not built yet; today Live audio and offline voice notes are transcribed without the audio being stored, and the proposal has no recording notice, per `docs/firebase-isolation.md`).
+The walkthrough is not recorded: Live audio and offline voice notes are transcribed and the audio is not kept, and the screened transcript is the record, bound to the signed agreement through the submitted draft (S7 decision V8 A, 2026-11-12). Keeping the audio would need a lawyer's review of California Penal Code 632 first.
 Logs carry allowlisted fields only, never prompts, transcripts, emails, tokens or user paths.
 Every AI call is capped per user per day and per company per month, so a bug or a stolen session cannot run up the bill.
 The frontend stays a static web app with no build step and same-origin vendored dependencies.

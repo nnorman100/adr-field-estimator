@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { OperatorContextError } from '@/db/tenant';
 import { IdentityRefusal, type Operator } from '@/lib/auth';
 import { FlagRefusal } from '@/lib/flags';
+import { PricesError } from '@/lib/prices/service';
 import { TeamError, type TeamActor } from '@/lib/team/service';
 import { teamServices } from '@/lib/team/services';
 import { TenantUsersUnavailable } from '@/lib/team/users';
@@ -27,7 +28,7 @@ async function respond(run: () => Promise<Response>): Promise<Response> {
   try {
     return await run();
   } catch (error) {
-    if (error instanceof PlatformError || error instanceof TeamError || error instanceof IdentityRefusal) {
+    if (error instanceof PlatformError || error instanceof TeamError || error instanceof IdentityRefusal || error instanceof PricesError) {
       return json({ error: error.code }, error.status);
     }
     if (error instanceof BadRequest) return json({ error: 'invalid_request' }, 400);
@@ -151,6 +152,14 @@ export async function supportTeam(_request: Request, operator: Operator, context
   return respond(async () => {
     const companyId = await pathId(context, 'companyId');
     return json(await platformServices().supportTeam(operator.operatorId, companyId, new Date()));
+  });
+}
+
+// GET /api/platform/companies/{companyId}/prices: read-only, one audit row per view.
+export async function supportPrices(_request: Request, operator: Operator, context: RouteContext): Promise<Response> {
+  return respond(async () => {
+    const companyId = await pathId(context, 'companyId');
+    return json(await platformServices().supportPrices(operator.operatorId, companyId));
   });
 }
 

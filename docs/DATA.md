@@ -280,8 +280,8 @@ known names stay in code (`web/src/lib/flags/`), so a new flag needs no migratio
 the flag and one `feature_flag_changed` audit row naming the operator (`details` holds the new and
 previous value only) in one transaction, and refuses an unknown name before writing.
 
-`0009_price_tables` adds the company price tables (S4-5, `docs/plans/pricing.md`); no route uses them
-until S4-6. Both hold a company's rows only inside `withCompany`, with forced row-level security.
+`0009_price_tables` adds the company price tables (S4-5, `docs/plans/pricing.md`); the Prices API
+(S4-6, `docs/ACCESS.md`) reads and writes them. Both hold a company's rows only inside `withCompany`, with forced row-level security.
 
 | Table | What it holds | Runtime rights |
 | --- | --- | --- |

@@ -1,30 +1,24 @@
-import { randomBytes } from 'node:crypto';
 import postgres from 'postgres';
 import { openDatabase } from '@/db/client';
-import { applyMigrations, migrationsDirectory } from '@/db/migrate';
 import { databaseDirectory, databaseOperators } from '@/lib/auth/directory';
 import { IdentityRefusal, type TokenVerifier } from '@/lib/auth/identity';
 import type { IdentityServices, OperatorServices } from '@/lib/auth/services';
 import { jobsService, type JobsService } from '@/lib/jobs/service';
 import { photosService, type PhotosService } from '@/lib/photos/service';
 import { noEmailService, platformService, type PlatformService } from '@/lib/platform/service';
+import { pricesService, type PricesService } from '@/lib/prices/service';
 import type { PlatformUsers } from '@/lib/platform/users';
 import { teamService, type TeamService } from '@/lib/team/service';
 import { TenantUsersUnavailable } from '@/lib/team/users';
 import { fakeDrafts, type FakeDrafts } from './draft-fake';
 import { fakeDraftStates, fakeEvidence, type FakeDraftStates, type FakeEvidence } from './evidence-fake';
-import { emptyDiscardDatabase, startDisposablePostgres, type DisposablePostgres } from './postgres-harness';
+import { startMigratedDatabase, type MigratedDatabase, type SharedRole } from './postgres-harness';
 
 // The team and invitation routes against a real Postgres, as the app's runtime role with forced
 // row-level security, set up like a fresh Cloud SQL instance (see sign-in-lookup.test.ts): a
 // CREATEROLE migrator owns the tables and the API user inherits dryscope_runtime. Sign-in tokens
 // and the tenant's accounts are replaced by fakes; tests/emu/tenant-users.test.ts checks the real
 // account calls against the Auth emulator.
-const MIGRATOR = 'dryscope_migrator_ci';
-const API_USER = 'dryscope-api-ci@dryscope.iam';
-
-const migratorPassword = randomBytes(16).toString('hex');
-const apiPassword = randomBytes(16).toString('hex');
 
 export type Seed = {
   a: string;
@@ -42,7 +36,7 @@ export type Seed = {
 export type TenantCall = { call: 'ensureAccount' | 'revokeSessions' | 'resetSecondStep'; tenant: string; value: string };
 
 export type Harness = {
-  server: DisposablePostgres;
+  server: MigratedDatabase;
   admin: postgres.Sql;
   handle: ReturnType<typeof openDatabase>;
   // The runtime's login, for a test that needs a second connection.
@@ -58,6 +52,7 @@ export type Harness = {
   operators: OperatorServices;
   team: TeamService;
   platform: PlatformService;
+  prices: PricesService;
   // The jobs routes' service, over the same database and an in-memory stand-in for the field drafts.
   jobs: JobsService;
   drafts: FakeDrafts;
@@ -71,19 +66,16 @@ export type Harness = {
   projected: { companyId: string; actorId: string }[];
 };
 
-function urlAs(server: DisposablePostgres, user: string, password: string): string {
+function urlAs(server: MigratedDatabase, role: SharedRole): string {
   const url = new URL(server.databaseUrl);
-  url.username = user;
-  url.password = password;
+  url.username = role.name;
+  url.password = role.password;
   return url.toString();
 }
 
 export async function startTeamServer(): Promise<Pick<Harness, 'server' | 'admin'>> {
-  const server = await startDisposablePostgres({ APP_ENV: 'test' });
+  const server = await startMigratedDatabase();
   const admin = postgres(server.databaseUrl, { max: 1, connect_timeout: 10, onnotice: () => {} });
-  await admin.unsafe(`CREATE ROLE ${MIGRATOR} LOGIN CREATEROLE PASSWORD '${migratorPassword}'`);
-  await admin.unsafe(`GRANT CREATE ON DATABASE "${server.databaseName}" TO ${MIGRATOR}`);
-  await admin.unsafe(`CREATE ROLE "${API_USER}" LOGIN PASSWORD '${apiPassword}'`);
   return { server, admin };
 }
 
@@ -198,13 +190,15 @@ export async function resetTeamDatabase(
   previous: Harness | null,
 ): Promise<Harness> {
   await previous?.handle.close();
-  const { server, admin } = base;
-  await emptyDiscardDatabase(server.databaseUrl);
-  await admin.unsafe('GRANT USAGE ON SCHEMA public TO PUBLIC');
-  await admin.unsafe(`GRANT CREATE ON SCHEMA public TO ${MIGRATOR}`);
-  await applyMigrations(urlAs(server, MIGRATOR, migratorPassword), migrationsDirectory);
+  const { server } = base;
+  // A fresh copy of the migrated template: an empty public schema as a new database has it, every
+  // migration applied by the migrator, no rows. Its connections end with the old copy.
+  await base.admin.end({ timeout: 5 });
+  await server.reset();
+  const admin = postgres(server.databaseUrl, { max: 1, connect_timeout: 10, onnotice: () => {} });
+  base.admin = admin;
   const seed = await seedCompanies(admin);
-  const apiUrl = urlAs(server, API_USER, apiPassword);
+  const apiUrl = urlAs(server, server.roles.api);
   const handle = openDatabase({ APP_ENV: 'test', DATABASE_URL: apiUrl });
   const harness: Harness = {
     server,
@@ -219,12 +213,13 @@ export async function resetTeamDatabase(
     operators: { verifier: fakeVerifier(), operators: databaseOperators(handle.db) },
     team: null as unknown as TeamService,
     platform: null as unknown as PlatformService,
+    prices: pricesService(handle.db),
     jobs: null as unknown as JobsService,
     drafts: fakeDrafts(),
     photos: null as unknown as PhotosService,
     evidence: fakeEvidence(),
     draftStates: null as unknown as FakeDraftStates,
-    migratorUrl: urlAs(server, MIGRATOR, migratorPassword),
+    migratorUrl: urlAs(server, server.roles.migrator),
     projected: [],
   };
   const users: PlatformUsers = {

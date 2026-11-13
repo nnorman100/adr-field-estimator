@@ -183,9 +183,9 @@ on each, from the 2026-11-09 review, in plain words:
 - **Support role:** undecided. **[open]**
 - **Owner-visible access log:** could be beneficial, later.
 
-No decision yet on these three, still listed as not built: per-visit reading dispatch,
-walkthrough recording stored with the signed agreement, and anonymized cross-company price
-comparison.
+No decision yet on these two, still listed as not built: per-visit reading dispatch and
+anonymized cross-company price comparison. The walkthrough is not recorded: no audio is kept, and
+the screened transcript is the record (S7 decision V8 A, 2026-11-12).
 
 ## 6. Target (accepted, not built yet)
 
