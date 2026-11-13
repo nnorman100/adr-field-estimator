@@ -62,6 +62,15 @@ describe('log', () => {
     expect(found['logging.googleapis.com/trace']).toBe(`projects/dryscope-test/traces/${TRACE}`);
   });
 
+  it('reads trace headers from a plain record whatever the key case', () => {
+    expect(traceFields({ Traceparent: `00-${TRACE}-${SPAN}-01` })['logging.googleapis.com/trace']).toBe(
+      `projects/dryscope-test/traces/${TRACE}`,
+    );
+    expect(traceFields({ 'X-Cloud-Trace-Context': `${TRACE}/74;o=1` })['logging.googleapis.com/spanId']).toBe(
+      '000000000000004a',
+    );
+  });
+
   it('adds no trace field for a malformed header, an all-zero trace, or no project', () => {
     expect(traceFields(new Headers({ traceparent: 'garbage' }))).toEqual({});
     expect(traceFields(new Headers({ traceparent: `00-${'0'.repeat(32)}-${SPAN}-01` }))).toEqual({});
