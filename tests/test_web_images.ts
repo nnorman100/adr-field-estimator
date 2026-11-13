@@ -280,6 +280,42 @@ const WAIT_FOR_SERVER_LOG =
   '[ "$1" != server.js ] && for _ in $(seq 50); do [ -s "$RUNNER_TEMP/web.log" ] && break; sleep 0.1; done';
 const SERVER_THAT_STARTS_TRACING = `if [ "$1" = server.js ]; then echo "$APP_ENV $APP_COMMIT $NODE_ENV $PORT" > started; echo '${TRACING_STARTED}'; fi; ${WAIT_FOR_SERVER_LOG}; exit 0`;
 
+const TRACING_FAILURES = [
+  ['says nothing about tracing', 'listening on 8080', 'Tracing did not start'],
+  [
+    'reports tracing unavailable',
+    `${TRACING_STARTED}\\ntracing unavailable`,
+    'Tracing failed to start',
+  ],
+  [
+    'starts tracing with an exporter',
+    TRACING_STARTED.replace('"spans"', '"export"'),
+    'Tracing did not start',
+  ],
+];
+
+const BUILD_CASES = [
+  [
+    'the Web app image job',
+    imageJob,
+    'scripts',
+    (tmp: string) => [
+      ['web', '--output', `${tmp}/nocommit.tar`],
+      ['web', '--commit', SHA, '--output', `${tmp}/web-image.tar`, '--stage', `${tmp}/web-stage`],
+      ['live-placeholder', '--output', `${tmp}/live-image.tar`, '--stage', `${tmp}/live-stage`],
+    ],
+  ],
+  [
+    'the release build job',
+    () => release.jobs.build,
+    'web/scripts',
+    () => [
+      ['web', '--commit', SHA, '--tag', `${release.env.IMAGE}:${SHA}`],
+      ['live-placeholder', '--tag', `${release.env.PLACEHOLDER_IMAGE}:${SHA}`],
+    ],
+  ],
+];
+
 describe('the Web app image job', () => {
   it('starts the image tree as test and smoke-checks it', async () => {
     const sh = shell();
@@ -313,19 +349,7 @@ describe('the Web app image job', () => {
     ]);
   }, 15_000); // room for the 5 s wait for the background server, as pytest has no time limit
 
-  it.each([
-    ['says nothing about tracing', 'listening on 8080', 'Tracing did not start'],
-    [
-      'reports tracing unavailable',
-      `${TRACING_STARTED}\\ntracing unavailable`,
-      'Tracing failed to start',
-    ],
-    [
-      'starts tracing with an exporter',
-      TRACING_STARTED.replace('"spans"', '"export"'),
-      'Tracing did not start',
-    ],
-  ])('fails when the server %s', (_name, line, error) => {
+  it.each(TRACING_FAILURES)('fails when the server %s', (_name, line, error) => {
     const sh = shell();
     mkdirSync(path.join(sh.tmp, 'web-stage', 'app'), { recursive: true });
     sh.fake(
@@ -368,27 +392,7 @@ describe('the Web app image job', () => {
     },
   );
 
-  it.each([
-    [
-      'the Web app image job',
-      imageJob,
-      'scripts',
-      (tmp: string) => [
-        ['web', '--output', `${tmp}/nocommit.tar`],
-        ['web', '--commit', SHA, '--output', `${tmp}/web-image.tar`, '--stage', `${tmp}/web-stage`],
-        ['live-placeholder', '--output', `${tmp}/live-image.tar`, '--stage', `${tmp}/live-stage`],
-      ],
-    ],
-    [
-      'the release build job',
-      () => release.jobs.build,
-      'web/scripts',
-      () => [
-        ['web', '--commit', SHA, '--tag', `${release.env.IMAGE}:${SHA}`],
-        ['live-placeholder', '--tag', `${release.env.PLACEHOLDER_IMAGE}:${SHA}`],
-      ],
-    ],
-  ])(
+  it.each(BUILD_CASES)(
     'builds every image in %s through the script and never calls docker',
     (_name, job, scripts, built) => {
       const sh = shell();
