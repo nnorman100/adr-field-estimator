@@ -328,7 +328,10 @@ describe('the Web app image job', () => {
   ])('fails when the server %s', (_name, line, error) => {
     const sh = shell();
     mkdirSync(path.join(sh.tmp, 'web-stage', 'app'), { recursive: true });
-    sh.fake('node', `[ "$1" = server.js ] && printf '%b\\n' '${line}'; ${WAIT_FOR_SERVER_LOG}; exit 0`);
+    sh.fake(
+      'node',
+      `[ "$1" = server.js ] && printf '%b\\n' '${line}'; ${WAIT_FOR_SERVER_LOG}; exit 0`,
+    );
     const result = sh.run(commands(step(imageJob(), IMAGE_STEPS[0])), {
       GITHUB_SHA: SHA,
       RUNNER_TEMP: sh.tmp,
@@ -365,16 +368,79 @@ describe('the Web app image job', () => {
     },
   );
 
-  it('builds every image through the script and never calls docker', () => {
-    for (const job of [imageJob(), release.jobs.build]) {
-      for (const s of steps(job)) {
-        expect(/(^|\s)docker\s/.test(commands(s)), s.name ?? s.id).toBe(false);
+  it.each([
+    [
+      'the Web app image job',
+      imageJob,
+      'scripts',
+      (tmp: string) => [
+        ['web', '--output', `${tmp}/nocommit.tar`],
+        ['web', '--commit', SHA, '--output', `${tmp}/web-image.tar`, '--stage', `${tmp}/web-stage`],
+        ['live-placeholder', '--output', `${tmp}/live-image.tar`, '--stage', `${tmp}/live-stage`],
+      ],
+    ],
+    [
+      'the release build job',
+      () => release.jobs.build,
+      'web/scripts',
+      () => [
+        ['web', '--commit', SHA, '--tag', `${release.env.IMAGE}:${SHA}`],
+        ['live-placeholder', '--tag', `${release.env.PLACEHOLDER_IMAGE}:${SHA}`],
+      ],
+    ],
+  ])(
+    'builds every image in %s through the script and never calls docker',
+    (_name, job, scripts, built) => {
+      const sh = shell();
+      const state = path.join(sh.tmp, 'pushed');
+      sh.fake('docker');
+      sh.fake('npm');
+      sh.fake('gcloud');
+      sh.fake('tar');
+      sh.fake('install-crane');
+      sh.fake('crane', CRANE_REGISTRY);
+      sh.fake(
+        'node',
+        `case $1 in
+  server.js) [ -n "$APP_ENV" ] || exit 1; echo '${TRACING_STARTED}' ;;
+  scripts/smoke-release.ts) for _ in $(seq 50); do [ -s "$RUNNER_TEMP/web.log" ] && break; sleep 0.1; done ;;
+esac`,
+      );
+      sh.fake(
+        'build-image',
+        `[ "$1" = web ] && [ "$2" != --commit ] && exit 1
+prev=; for a in "$@"; do
+  case $prev in --output) : > "$a" ;; --stage) mkdir -p "$a/app" ;; --tag) touch "$STATE" ;; esac
+  prev=$a
+done`,
+      );
+      const dir = path.join(sh.tmp, scripts);
+      mkdirSync(dir, { recursive: true });
+      for (const [file, fake] of [
+        ['build-image.sh', 'build-image'],
+        ['install-crane.sh', 'install-crane'],
+      ]) {
+        writeFileSync(path.join(dir, file), `#!/bin/bash\nexec ${fake} "$@"\n`);
+        chmodSync(path.join(dir, file), 0o755);
       }
-    }
-    expect(commands(step(imageJob(), 'Build the image without Docker'))).toContain(
-      'scripts/build-image.sh web --commit "$GITHUB_SHA"',
-    );
-  });
+      const env = {
+        ...release.env,
+        COMMIT: SHA,
+        GITHUB_SHA: SHA,
+        GITHUB_PATH: path.join(sh.tmp, 'path'),
+        RUNNER_TEMP: sh.tmp,
+        STATE: state,
+      };
+      for (const s of steps(job()).filter((s) => s.run)) {
+        rmSync(state, { force: true });
+        const result = sh.run(commands(s), env);
+        expect(result.status, `${s.name ?? s.id}: ${result.stdout}${result.stderr}`).toBe(0);
+      }
+      expect(sh.calls('build-image')).toEqual(built(sh.tmp));
+      expect(sh.calls('docker')).toEqual([]);
+    },
+    15_000,
+  );
 
   it('has Dependabot keep the pinned base image current', () => {
     const docker = new Set<string>();
