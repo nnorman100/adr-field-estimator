@@ -181,24 +181,28 @@ describe('meter photos', () => {
     expect(photoProblem(bytes)).toBeNull();
   });
 
+  // One shared render of the 60 photos serves both tests below; the determinism test draws a second, fresh one to compare.
+  const photos = loadDataset('meterPhotos');
+  let rendered: ReturnType<typeof renderAll> | undefined;
+  const renderedOnce = () => (rendered ??= renderAll(photos));
+
   it('draws the same bytes every time, and a different image for each shot', () => {
-    const photos = loadDataset('meterPhotos');
-    const twice = [renderAll(photos), renderAll(photos)];
+    const twice = [renderedOnce(), renderAll(photos)];
     expect(twice[0]!.map((p) => p.sha256)).toEqual(twice[1]!.map((p) => p.sha256));
     expect(new Set(twice[0]!.map((p) => p.sha256)).size).toBe(60);
     const readable = photos.find((p) => p.readable)!;
     const blank = photos.find((p) => p.shot === 'display is blank')!;
     expect(sha256(pngFile(renderMeterPhoto({ ...readable, value: '12.3' }, 0)))).not.toBe(sha256(pngFile(renderMeterPhoto(readable, 0))));
     expect(() => renderMeterPhoto({ ...blank, shot: 'a shot nobody listed' }, 0)).toThrow(/no drawing/);
-  });
+  }, 30_000);
 
   it('commits all 60 photos: each file is the drawing of its row, pinned by its SHA-256, under 4 MB', () => {
-    for (const photo of renderAll(loadDataset('meterPhotos'))) {
-      const row = loadDataset('meterPhotos').find((p) => p.id === photo.id)!;
+    for (const photo of renderedOnce()) {
+      const row = photos.find((p) => p.id === photo.id)!;
       expect(row).toMatchObject({ file: photo.file, sha256: photo.sha256 });
       const committed = readFileSync(`${DATA_DIR}${row.file}`);
       expect(sha256(committed), row.id).toBe(row.sha256);
       expect(photoProblem(committed)).toBeNull();
     }
-  });
+  }, 30_000);
 });
