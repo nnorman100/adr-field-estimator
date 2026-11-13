@@ -43,20 +43,14 @@ const SECRET_TEXT = 'owner@example.com said 12 Main Street';
 const OK_ARGS = ['--impersonate', LIVE_TEST_ACCOUNT];
 
 describe('arguments and guards', () => {
-  it('accepts the owner command with the plan defaults', () => {
-    expect(parseProbeArgs(OK_ARGS, {})).toEqual({
-      project: 'dryscope',
-      impersonate: LIVE_TEST_ACCOUNT,
-      resumeMinutes: [2, 10, 30],
-      idleSeconds: 60,
-    });
-    expect(parseProbeArgs([...OK_ARGS, '--project', 'dryscope', '--resume-minutes', '1', '--idle-seconds', '20'], {}))
-      .toMatchObject({ resumeMinutes: [1], idleSeconds: 20 });
+  it('accepts the owner command', () => {
+    expect(parseProbeArgs(OK_ARGS, {})).toEqual({ impersonate: LIVE_TEST_ACCOUNT });
   });
 
-  it('refuses any project but dryscope', () => {
-    for (const project of ['alert-disaster-field-2026', 'demo-dryscope', 'dryscope-live', 'DRYSCOPE']) {
-      expect(() => parseProbeArgs([...OK_ARGS, '--project', project], {}), project).toThrow(/--project must be dryscope/);
+  it('takes no project: any --project is refused, dryscope included', () => {
+    for (const project of ['dryscope', 'alert-disaster-field-2026', 'demo-dryscope', 'dryscope-live']) {
+      expect(() => parseProbeArgs([...OK_ARGS, '--project', project], {}), project).toThrow(/unknown argument/);
+      expect(() => parseProbeArgs(['--project', project, ...OK_ARGS], {}), project).toThrow(/unknown argument/);
     }
   });
 
@@ -77,11 +71,11 @@ describe('arguments and guards', () => {
     }
   });
 
-  it('refuses unknown arguments and out-of-range waits', () => {
-    expect(() => parseProbeArgs([...OK_ARGS, '--location', 'us'], {})).toThrow(/unknown argument/);
-    expect(() => parseProbeArgs([...OK_ARGS, '--resume-minutes', '0,10'], {})).toThrow(/resume-minutes/);
-    expect(() => parseProbeArgs([...OK_ARGS, '--resume-minutes', '2,x'], {})).toThrow(/resume-minutes/);
-    expect(() => parseProbeArgs([...OK_ARGS, '--idle-seconds', '5'], {})).toThrow(/idle-seconds/);
+  it('refuses any other argument, including timing overrides', () => {
+    for (const extra of [['--location', 'us'], ['--resume-minutes', '1'], ['--idle-seconds', '20'], ['--impersonate']]) {
+      expect(() => parseProbeArgs([...OK_ARGS, ...extra], {}), extra.join(' ')).toThrow(/unknown argument/);
+    }
+    expect(() => parseProbeArgs(['--impersonate'], {})).toThrow(/--impersonate must be/);
   });
 });
 
@@ -244,12 +238,12 @@ describe('Live message handling', () => {
 
   it('builds the setup the plan names: audio, voice, transcription with vocabulary, transparent resumption', () => {
     expect(
-      liveConfig({ voice: 'Puck', handle: 'h', transparent: true, vocabulary: ['subfloor'], languageCodes: ['en-US'] }),
+      liveConfig({ voice: 'Puck', handle: 'h', transparent: true, vocabulary: ['subfloor'] }),
     ).toEqual({
       responseModalities: ['AUDIO'],
       speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } } },
       outputAudioTranscription: {},
-      inputAudioTranscription: { customVocabulary: ['subfloor'], languageCodes: ['en-US'] },
+      inputAudioTranscription: { customVocabulary: ['subfloor'] },
       sessionResumption: { handle: 'h', transparent: true },
     });
     expect(liveConfig({ voice: 'Charon' }).sessionResumption).toBeUndefined();
@@ -271,7 +265,6 @@ type FakeLive = {
   handleLifeMs?: number; // a handle older than this is refused
   refuseVoiceChange?: boolean;
   idleBilled?: boolean;
-  dropLanguageCodes?: boolean;
   usageAfterTurn?: boolean; // the usage report comes after turnComplete, on a later tick
 };
 
@@ -317,7 +310,6 @@ function fakeDialer(behaviour: FakeLive = {}): { dialer: LiveDialer; opened: Liv
       };
       let idleMs = 0;
       if (behaviour.refuse) close(behaviour.refuse.code, behaviour.refuse.permission);
-      else if (behaviour.dropLanguageCodes && options.languageCodes) close(1007);
       else if (options.handle !== undefined) {
         const known = issued.get(options.handle);
         if (!known || Date.now() - known.at > (behaviour.handleLifeMs ?? Infinity)) close(1008);
@@ -381,10 +373,10 @@ function ports(overrides: Partial<ProbePorts> = {}): ProbePorts {
 }
 
 // Runs the probe on fake timers: the 2, 10 and 30 minute waits pass instantly, in order.
-async function run(p: ProbePorts, args = OK_ARGS): Promise<string[]> {
+async function run(p: ProbePorts): Promise<string[]> {
   vi.useFakeTimers({ now: 1_000_000 });
   const lines: string[] = [];
-  const done = runProbe(parseProbeArgs(args, {}), p, (line) => lines.push(line));
+  const done = runProbe(p, (line) => lines.push(line));
   await vi.runAllTimersAsync();
   await done;
   return lines;
@@ -409,6 +401,13 @@ describe('the whole probe against a fake Live service', () => {
     expect(value(lines, 'live_context_update_then_turn')).toBe('yes');
     expect(value(lines, 'resume_other_voice')).toBe('yes');
     expect(value(lines, 'idle_billed')).toBe('no');
+    expect(value(lines, 'idle_seconds')).toBe('60');
+    expect(value(lines, 'expected_if_billed')).toBe('1500');
+    expect(lines.filter((l) => l.startsWith('(f)') && l.includes('_resumed:'))).toEqual([
+      '(f) after_2_min_resumed: yes',
+      '(f) after_10_min_resumed: yes',
+      '(f) after_30_min_resumed: yes',
+    ]);
     expect(value(lines, 'after_2_min_resumed')).toBe('yes');
     expect(value(lines, 'after_30_min_resumed')).toBe('yes');
     expect(Number(value(lines, 'after_30_min_waited_minutes'))).toBeGreaterThanOrEqual(30);
@@ -421,12 +420,11 @@ describe('the whole probe against a fake Live service', () => {
     expect(value(lines, 'floor_setting_read')).toBe('not_found');
   });
 
-  it('records expired handles, a refused voice change, idle billing and refused language codes', async () => {
+  it('records expired handles, a refused voice change and idle billing', async () => {
     const { dialer } = fakeDialer({
       handleLifeMs: 15 * 60_000,
       refuseVoiceChange: true,
       idleBilled: true,
-      dropLanguageCodes: true,
     });
     const lines = await run(ports({ dialer }));
     expect(value(lines, 'after_2_min_resumed')).toBe('yes');
@@ -437,7 +435,6 @@ describe('the whole probe against a fake Live service', () => {
     expect(value(lines, 'resume_other_voice')).toBe('no');
     expect(value(lines, 'other_voice_close_code')).toBe('1007');
     expect(value(lines, 'idle_billed')).toBe('yes');
-    expect(value(lines, 'live_language_codes_setup')).toBe('no');
   });
 
   it('when Live refuses the account, says so with the permission and still runs (g) and (h)', async () => {

@@ -33,7 +33,6 @@ export type LiveOptions = {
   handle?: string;
   transparent?: boolean;
   vocabulary?: string[];
-  languageCodes?: string[];
 };
 
 export type LiveConn = {
@@ -128,10 +127,7 @@ export function liveConfig(options: LiveOptions): LiveConnectConfig {
     responseModalities: [Modality.AUDIO],
     speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: options.voice } } },
     outputAudioTranscription: {},
-    inputAudioTranscription: {
-      ...(options.vocabulary ? { customVocabulary: options.vocabulary } : {}),
-      ...(options.languageCodes ? { languageCodes: options.languageCodes } : {}),
-    },
+    inputAudioTranscription: options.vocabulary ? { customVocabulary: options.vocabulary } : {},
   };
   if (options.handle !== undefined || options.transparent) {
     config.sessionResumption = {
@@ -311,7 +307,6 @@ export type SdkFieldsOnline = {
   transparent_and_vocabulary_setup: boolean;
   last_consumed_index_seen: boolean;
   context_update_then_turn: boolean;
-  language_codes_setup: boolean;
 };
 
 export type VoiceResult = {
@@ -328,7 +323,6 @@ export async function probeResumeAndVoice(dialer: LiveDialer): Promise<{ b: SdkF
     transparent_and_vocabulary_setup: false,
     last_consumed_index_seen: false,
     context_update_then_turn: false,
-    language_codes_setup: false,
   };
   const c: VoiceResult = {
     handle_received: false,
@@ -363,9 +357,6 @@ export async function probeResumeAndVoice(dialer: LiveDialer): Promise<{ b: SdkF
       } else same.conn.close();
     }
   }
-  const lang = await open(dialer, { voice: 'Charon', languageCodes: ['en-US'] });
-  b.language_codes_setup = lang.setup;
-  lang.conn.close();
   return { b, c };
 }
 

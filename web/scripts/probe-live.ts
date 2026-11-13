@@ -34,38 +34,25 @@ const CLOUD_PLATFORM = 'https://www.googleapis.com/auth/cloud-platform';
 // A refusal or usage error of our own; its message is safe to show.
 export class ProbeArgsError extends Error {}
 
-export type ProbeOptions = { project: string; impersonate: string; resumeMinutes: number[]; idleSeconds: number };
+// The plan's calibration: (f) resumes after 2, 10 and 30 minutes; (d) idles for 60 seconds.
+export const RESUME_MINUTES = [2, 10, 30] as const;
+export const IDLE_SECONDS = 60;
 
-// Refuses any project but dryscope, any account but the relay's test account, and any automated
-// runner: the probe runs under the relay's identity and is the owner's to run.
+export type ProbeOptions = { impersonate: string };
+
+// The project is always dryscope. Takes only --impersonate, and refuses any account but the relay's
+// test account, any other argument and any automated runner: the probe runs under the relay's
+// identity and is the owner's to run.
 export function parseProbeArgs(argv: string[], env: Record<string, string | undefined>): ProbeOptions {
   for (const name of ['CI', 'GITHUB_ACTIONS', 'K_SERVICE', 'CLOUD_RUN_JOB']) {
     if (env[name]) throw new ProbeArgsError(`refusing to run: ${name} is set (the probe is owner-run only, never automated)`);
   }
-  const value = (name: string): string | undefined => {
-    const i = argv.indexOf(`--${name}`);
-    if (i < 0) return undefined;
-    const v = argv[i + 1];
-    if (!v || v.startsWith('--')) throw new ProbeArgsError(`--${name} needs a value`);
-    return v;
-  };
-  const known = new Set(['--project', '--impersonate', '--resume-minutes', '--idle-seconds']);
-  for (let i = 0; i < argv.length; i += 2) {
-    if (!known.has(argv[i]!)) throw new ProbeArgsError('unknown argument (allowed: --impersonate, --project, --resume-minutes, --idle-seconds)');
+  const [flag, impersonate, ...rest] = argv;
+  if (flag !== '--impersonate' || rest.length > 0) {
+    throw new ProbeArgsError('unknown argument (the only argument is --impersonate <account>)');
   }
-  const project = value('project') ?? PROJECT;
-  if (project !== PROJECT) throw new ProbeArgsError(`refusing to run: --project must be ${PROJECT}`);
-  const impersonate = value('impersonate');
   if (impersonate !== LIVE_TEST_ACCOUNT) throw new ProbeArgsError(`refusing to run: --impersonate must be ${LIVE_TEST_ACCOUNT}`);
-  const minutes = (value('resume-minutes') ?? '2,10,30').split(',').map(Number);
-  if (minutes.length === 0 || minutes.some((m) => !Number.isInteger(m) || m < 1 || m > 50)) {
-    throw new ProbeArgsError('--resume-minutes must be whole minutes from 1 to 50, comma-separated');
-  }
-  const idleSeconds = Number(value('idle-seconds') ?? '60');
-  if (!Number.isInteger(idleSeconds) || idleSeconds < 10 || idleSeconds > 300) {
-    throw new ProbeArgsError('--idle-seconds must be a whole number from 10 to 300');
-  }
-  return { project, impersonate, resumeMinutes: minutes, idleSeconds };
+  return { impersonate };
 }
 
 // ---------- output: measurements only ----------
@@ -155,11 +142,7 @@ async function sanitize(ports: ProbePorts): Promise<string[]> {
   return out;
 }
 
-export async function runProbe(
-  options: ProbeOptions,
-  ports: ProbePorts,
-  print: (line: string) => void,
-): Promise<void> {
+export async function runProbe(ports: ProbePorts, print: (line: string) => void): Promise<void> {
   print(formatLine('(e)', 'concurrent_session_quota', 'owner_reads_quotas_page'));
   print(formatLine('(a)', 'impersonation', ports.impersonation));
 
@@ -174,10 +157,10 @@ export async function runProbe(
     if (connect.connected) {
       // (f) handles are taken first, so their clocks run while the other probes do.
       const handles = await Promise.all(
-        options.resumeMinutes.map(async () => ({ handle: await takeHandle(dialer), closedAt: ports.now() })),
+        RESUME_MINUTES.map(async () => ({ handle: await takeHandle(dialer), closedAt: ports.now() })),
       );
       const aged = Promise.all(
-        options.resumeMinutes.map(async (minutes, i) => {
+        RESUME_MINUTES.map(async (minutes, i) => {
           const { handle, closedAt } = handles[i]!;
           await ports.sleep(Math.max(0, closedAt + minutes * 60_000 - ports.now()));
           const result = await probeHandleAge(dialer, handle, minutes);
@@ -187,7 +170,7 @@ export async function runProbe(
       const { b, c } = await probeResumeAndVoice(dialer);
       for (const line of formatRecord('(b)', b, 'live_')) print(line);
       for (const line of formatRecord('(c)', c)) print(line);
-      const idle = await probeIdleBilling(dialer, { idleSeconds: options.idleSeconds, sleep: ports.sleep });
+      const idle = await probeIdleBilling(dialer, { idleSeconds: IDLE_SECONDS, sleep: ports.sleep });
       for (const line of formatRecord('(d)', idle)) print(line);
       for (const line of await sanitize(ports)) print(line);
       for (const line of await readBack(ports)) print(line);
@@ -229,7 +212,7 @@ async function realPorts(options: ProbeOptions): Promise<ProbePorts> {
   const ownerArmor = createArmorStreamClient({ template: SPIKE_TEMPLATE, authClient: owner });
   const liveTestArmor = createArmorStreamClient({ template: SPIKE_TEMPLATE, authClient: liveTest });
   return {
-    dialer: impersonation === 'ok' ? createLiveDialer({ project: options.project, authClient: liveTest }) : null,
+    dialer: impersonation === 'ok' ? createLiveDialer({ project: PROJECT, authClient: liveTest }) : null,
     impersonation,
     liveTestArmor,
     ownerArmor,
@@ -239,7 +222,7 @@ async function realPorts(options: ProbeOptions): Promise<ProbePorts> {
       const permissions = ['aiplatform.endpoints.predict', 'aiplatform.customJobs.create', 'aiplatform.endpoints.get'];
       try {
         const res = await liveTest.request<{ permissions?: string[] }>({
-          url: `https://cloudresourcemanager.googleapis.com/v3/projects/${options.project}:testIamPermissions`,
+          url: `https://cloudresourcemanager.googleapis.com/v3/projects/${PROJECT}:testIamPermissions`,
           method: 'POST',
           data: { permissions },
         });
@@ -264,8 +247,8 @@ async function realPorts(options: ProbeOptions): Promise<ProbePorts> {
 
 async function main() {
   const options = parseProbeArgs(process.argv.slice(2), process.env);
-  console.log(`S7-0 probe on ${PROJECT}: about ${Math.max(...options.resumeMinutes) + 2} minutes. Prints measurements only.`);
-  await runProbe(options, await realPorts(options), (line) => console.log(line));
+  console.log(`S7-0 probe on ${PROJECT}: about ${Math.max(...RESUME_MINUTES) + 2} minutes. Prints measurements only.`);
+  await runProbe(await realPorts(options), (line) => console.log(line));
   console.log('Done. Copy these lines into the S7-0 note, then remove your token-creator grant.');
 }
 
