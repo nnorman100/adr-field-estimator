@@ -45,3 +45,76 @@ describe('server start', () => {
     expect(String(logged.mock.calls[0]?.[0])).not.toMatch(/super-secret-db-password/);
   });
 });
+
+describe('server error reports', () => {
+  const TRACE = '4bf92f3577b34da6a3ce929d0e0e4736';
+  let lines: string[];
+  const request = (headers: Record<string, string> = {}) => ({ path: '/api/jobs/abc-123?x=1', method: 'POST', headers });
+  const context = { routerKind: 'App Router', routePath: '/api/jobs/[jobId]', routeType: 'route' } as never;
+
+  beforeEach(() => {
+    lines = [];
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk: string | Uint8Array) => {
+      lines.push(String(chunk));
+      return true;
+    });
+    vi.stubEnv('NEXT_RUNTIME', 'nodejs');
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'dryscope-test');
+    vi.stubEnv('APP_COMMIT', 'a'.repeat(40));
+  });
+
+  it('writes exactly one Error Reporting line for an uncaught error', async () => {
+    const { onRequestError } = await import('@/instrumentation');
+    const { IdentityRefusal } = await import('@/lib/auth/identity');
+    await onRequestError(new IdentityRefusal('no_tenant'), request(), context);
+    expect(lines).toHaveLength(1);
+    const line = JSON.parse(lines[0]!);
+    expect(line.severity).toBe('ERROR');
+    expect(line['@type']).toBe('type.googleapis.com/google.devtools.clouderrorreporting.v1beta1.ReportedErrorEvent');
+    expect(line.serviceContext).toEqual({ service: 'dryscope-api', version: 'a'.repeat(40) });
+    expect(line.context.httpRequest).toEqual({ method: 'POST', url: '/api/jobs/[jobId]' });
+    expect(line.message).toMatch(/^IdentityRefusal: no_tenant\n\s+at /);
+    expect(line.stack_trace).toBe(line.message);
+  });
+
+  it('adds the trace field from the request headers', async () => {
+    const { onRequestError } = await import('@/instrumentation');
+    await onRequestError(new Error('x'), request({ traceparent: `00-${TRACE}-00f067aa0ba902b7-01` }), context);
+    expect(JSON.parse(lines[0]!)['logging.googleapis.com/trace']).toBe(`projects/dryscope-test/traces/${TRACE}`);
+  });
+
+  it('never repeats the error message, the request path or a header value', async () => {
+    const { onRequestError } = await import('@/instrumentation');
+    const error = new Error('jo@example.com Bearer abc.def.ghi 34.0522, -118.2437');
+    error.name = 'PgError';
+    await onRequestError(error, request({ authorization: 'Bearer abc.def.ghi' }), context);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).not.toMatch(/jo@example\.com|abc\.def\.ghi|34\.0522|118\.2437|abc-123/);
+    expect(JSON.parse(lines[0]!).message).toMatch(/^PgError\n/);
+  });
+
+  it('does not let a message line shaped like a stack frame through', async () => {
+    const { onRequestError } = await import('@/instrumentation');
+    await onRequestError(new Error('x\n    at leak@example.com (file.js:1:1)'), request(), context);
+    expect(lines[0]).not.toMatch(/leak@example/);
+  });
+
+  it('reports a thrown non-error as a plain Error with no value in it', async () => {
+    const { onRequestError } = await import('@/instrumentation');
+    await onRequestError('secret@example.com', request(), context);
+    expect(lines[0]).not.toMatch(/secret@example/);
+    expect(JSON.parse(lines[0]!).message).toBe('Error');
+  });
+
+  it('writes nothing outside the Node runtime', async () => {
+    vi.stubEnv('NEXT_RUNTIME', 'edge');
+    const { onRequestError } = await import('@/instrumentation');
+    await onRequestError(new Error('x'), request(), context);
+    expect(lines).toHaveLength(0);
+  });
+
+  it('does not throw when it cannot report', async () => {
+    const { onRequestError } = await import('@/instrumentation');
+    await expect(onRequestError(new Error('x'), undefined as never, undefined as never)).resolves.toBeUndefined();
+  });
+});
