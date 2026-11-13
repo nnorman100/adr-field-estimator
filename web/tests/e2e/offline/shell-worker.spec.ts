@@ -5,7 +5,7 @@
 import { expect, test } from './fixture';
 import { missingFromPrecache } from '../../../scripts/build-sw';
 import { PROBE_PATH } from '../../../src/app/field/connection';
-import { buildIdOf, cacheNames, cachedPaths, COMPANY, nudge, openControlled, precacheOf, workerText } from './shell';
+import { buildIdOf, cacheNames, cachedPaths, COMPANY, keptAsFiles, keptEntries, nudge, openControlled, precacheOf, workerText } from './shell';
 
 test.use({ viewport: { width: 390, height: 844 } });
 
@@ -115,6 +115,8 @@ test.describe('a deployment', () => {
       return { current: await read(current), next: await read('ds-field-next-build') };
     }, `ds-field-${buildIdOf(worker)}`);
     expect(startUrls).toEqual({ current: '/field', next: '/field?next-build' });
+    // Each listed file is kept under its own address as the file itself: no redirect, no variant.
+    expect(await keptEntries(page, 'ds-field-next-build')).toEqual(keptAsFiles(precacheOf(worker)));
   });
 
   test('does not change a window that is running or one that opens before the person updates', async ({ context, lane }) => {

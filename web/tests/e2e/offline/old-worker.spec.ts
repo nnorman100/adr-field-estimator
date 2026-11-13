@@ -10,7 +10,7 @@ import { extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from './fixture';
 import type { NetworkLane, StaticFile } from './lane';
-import { COMPANY, precacheOf, seedMe, workerText } from './shell';
+import { COMPANY, keptAsFiles, keptEntries, precacheOf, seedMe, workerText } from './shell';
 
 const OLD_PUBLIC = fileURLToPath(new URL('../../../../public', import.meta.url));
 const TYPES: Record<string, string> = {
@@ -159,7 +159,8 @@ test('the new worker keeps the files of the new deployment, not the copies the o
 
   // The new app is deployed: /sw.js and every file its worker lists are the new app's own.
   lane.unserve('/sw.js');
-  for (const path of precacheOf(await workerText(lane))) lane.unserve(path);
+  const listed = precacheOf(await workerText(lane));
+  for (const path of listed) lane.unserve(path);
   await old.evaluate(async () => {
     await (await navigator.serviceWorker.getRegistration())!.update();
   });
@@ -174,6 +175,9 @@ test('the new worker keeps the files of the new deployment, not the copies the o
     return ((await manifest!.json()) as { start_url: string }).start_url;
   });
   expect(kept).toBe('/field');
+  // Each listed file is kept under its own address as the file itself: no redirect, no variant.
+  const name = await old.evaluate(async () => (await caches.keys()).find((key) => key.startsWith('ds-field-'))!);
+  expect(await keptEntries(old, name)).toEqual(keptAsFiles(listed));
 
   // Once the old window is closed and the new worker has taken over, a window gets the new manifest
   // from it, with no signal.
