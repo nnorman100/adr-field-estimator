@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
+import { ClientErrors } from './client-errors-mount';
 
 export const metadata: Metadata = {
   title: 'DryScope',
@@ -15,7 +16,10 @@ export const viewport: Viewport = { width: 'device-width', initialScale: 1, them
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body className="min-h-dvh antialiased">{children}</body>
+      <body className="min-h-dvh antialiased">
+        <ClientErrors />
+        {children}
+      </body>
     </html>
   );
 }
