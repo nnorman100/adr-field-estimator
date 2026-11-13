@@ -1,3 +1,4 @@
+import { format } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   PROBE_LIMIT_MS,
@@ -65,24 +66,41 @@ function expectNoSecrets(text: string) {
   expect(text).not.toMatch(/eyJ/);
 }
 
+function captureConsole() {
+  const lines: string[] = [];
+  const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((method) =>
+    vi.spyOn(console, method).mockImplementation((...args: unknown[]) => void lines.push(format(...args))),
+  );
+  return { lines, restore: () => spies.forEach((spy) => spy.mockRestore()) };
+}
+
 async function probeFails(fetch: typeof globalThis.fetch) {
   const events: ProbeEvent[] = [];
-  const failure = await failureOf(runProbe(config, { fetch, log: (e) => events.push(e) }));
-  expectNoSecrets(failure.message + (failure.stack ?? '') + JSON.stringify(events));
+  const output = captureConsole();
+  let failure: ProbeFailure;
+  try {
+    failure = await failureOf(runProbe(config, { fetch, log: (e) => events.push(e) }));
+  } finally {
+    output.restore();
+  }
+  expectNoSecrets(failure.message + (failure.stack ?? '') + JSON.stringify(events) + output.lines.join('\n'));
   return { failure, events };
 }
 
 function configFails(env: Record<string, string | undefined>): ProbeFailure {
+  const output = captureConsole();
   let failure: unknown;
   try {
     readProbeConfig(env);
   } catch (error) {
     failure = error;
+  } finally {
+    output.restore();
   }
   expect(failure).toBeInstanceOf(ProbeFailure);
   const probeFailure = failure as ProbeFailure;
   expect(probeFailure).toMatchObject({ step: 'config', code: 'invalid_config' });
-  expectNoSecrets(probeFailure.message + (probeFailure.stack ?? ''));
+  expectNoSecrets(probeFailure.message + (probeFailure.stack ?? '') + output.lines.join('\n'));
   return probeFailure;
 }
 
