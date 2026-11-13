@@ -48,6 +48,9 @@ locals {
     # Calls the internal job routes on a schedule (web/src/lib/auth/service-caller.ts accepts this
     # account only). It holds no role.
     scheduler = "dryscope-scheduler-${local.env}"
+    # Runs the manual AI evaluation workflow (docs/plans/S7.md, V9 B): predict and Model Armor
+    # sanitize only. Test only.
+    eval = "dryscope-eval-${local.env}"
   }
 
   # Fixed by the project_id check above; Cloud Run's deterministic address uses it.
@@ -118,6 +121,22 @@ output "scheduled_jobs" {
       audience = "dryscope-${local.env}-access-projection"
     }
   }
+}
+
+# Model Armor templates the services screen AI text and images with (docs/plans/S7.md, S7-2 and V3).
+# The text template is Terraform's (data root, ai.tf), in us-central1. The image template is in the
+# us multi-region and is created by the owner (the provider has no image-modality field).
+output "model_armor_templates" {
+  value = {
+    text  = "projects/${var.project_id}/locations/us-central1/templates/dryscope-text-${local.env}"
+    image = "projects/${var.project_id}/locations/us/templates/dryscope-image-${local.env}"
+  }
+}
+
+# The audience the Live relay's Google ID token carries when it calls the web app's relay routes
+# (relayRoute, docs/plans/S7.md section 4.1): dryscope-<env>-live.
+output "relay_audience" {
+  value = "dryscope-${local.env}-live"
 }
 
 output "cloud_run_job_names" {

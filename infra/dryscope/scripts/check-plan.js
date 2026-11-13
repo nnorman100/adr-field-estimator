@@ -24,7 +24,8 @@
 // previous reviewed condition to the current one (the provider cannot change an IAM member's
 // condition in place). A third covers an app root that is already applied: a Cloud Run service
 // may change in place only by adding or setting a NEW_SETTINGS variable, to the value in the
-// table, with every other attribute unchanged. A fourth covers a Cloud SQL instance already applied
+// table, and (where the table holds it) moving its request concurrency to the table's value, with
+// every other attribute unchanged. A fourth covers a Cloud SQL instance already applied
 // with a regional backup location: it may change in place, and only to the US multi-region (`us`),
 // with every other attribute unchanged. Nothing else may be deleted, replaced or updated.
 //
@@ -37,6 +38,7 @@
 // is every delete or replacement in either kind.
 const fs = require('node:fs');
 const readline = require('node:readline');
+const { addAiData, aiSettings, LIVE_CONCURRENCY } = require('./check-plan-ai.js');
 
 const PROJECT = 'dryscope';
 const PROJECT_NUMBER = '570228742694';
@@ -59,6 +61,7 @@ const APIS = [
   'firestore.googleapis.com',
   'iam.googleapis.com',
   'identitytoolkit.googleapis.com',
+  'modelarmor.googleapis.com',
   'secretmanager.googleapis.com',
   'sqladmin.googleapis.com',
   'storage.googleapis.com',
@@ -141,6 +144,7 @@ const PROJECTLESS = new Set([
   'google_service_account_iam_member',
   'google_storage_bucket_iam_member',
   'google_billing_budget',
+  'google_model_armor_floorsetting', // its parent (projects/dryscope) is checked instead
 ]);
 
 const title = (s) => s[0].toUpperCase() + s.slice(1);
@@ -364,6 +368,7 @@ function expectedPlan(root, env) {
         condition: null,
       };
     }
+    addAiData(env, { sa, others, grants, attrs, absent, optional, wif });
     lists['google_project_iam_custom_role.identity_users'] = { permissions: IDENTITY_PERMISSIONS };
     attrs['google_project_iam_custom_role.identity_users'] = {
       role_id: `dryscopeIdentity${title(env)}`,
@@ -389,12 +394,16 @@ function expectedPlan(root, env) {
       settings[`google_cloud_run_v2_service.svc["${k}"]`] = {
         // The environment's own web app address (app/envs/<env>.tfvars).
         ALLOWED_ORIGINS: `https://dryscope-api-${env}-${PROJECT_NUMBER}.${REGION}.run.app`,
+        ...aiSettings(env)[k],
       };
       attrs[`google_cloud_run_v2_service.svc["${k}"]`] = {
         name: `dryscope-${k}-${env}`,
         location: REGION,
         deletion_protection: true,
         'template.0.service_account': `dryscope-${k}-${env}@${PROJECT}.iam.gserviceaccount.com`,
+        ...(k === 'live'
+          ? { 'template.0.max_instance_request_concurrency': LIVE_CONCURRENCY[env] }
+          : {}),
       };
     }
     others.push(
@@ -516,8 +525,14 @@ const plainEnv = (state) =>
       .filter((e) => empty(e.value_source))
       .map((e) => [e.name, e.value]),
   );
-// Settings that an in-place update of an applied Cloud Run service may add or set.
-const NEW_SETTINGS = ['ALLOWED_ORIGINS'];
+// Settings that an in-place update of an applied Cloud Run service may add or set: ALLOWED_ORIGINS,
+// then the AI settings (S7-2). Their values are held to the table on every plan.
+const NEW_SETTINGS = [
+  'ALLOWED_ORIGINS',
+  ...new Set(Object.values(aiSettings('test')).flatMap((names) => Object.keys(names))),
+];
+// A request concurrency the table holds may move to the table's value in the same update.
+const CONCURRENCY = 'template.0.max_instance_request_concurrency';
 
 // Against existing state the provider returns some IAM member fields as full resource paths
 // instead of the short names a fresh plan holds. Each is accepted only when it resolves to
@@ -582,8 +597,9 @@ function checkPlan(resourceChanges, { root, environment, complete = true, reappl
     );
   };
 
-  // An applied Cloud Run service may be updated in place only to add or set NEW_SETTINGS. Apart
-  // from those env entries, the planned state must equal the current one; output-only top-level
+  // An applied Cloud Run service may be updated in place only to add or set NEW_SETTINGS and, where
+  // the table holds it, to move its request concurrency (both checked against the table below). Apart
+  // from those, the planned state must equal the current one; output-only top-level
   // fields the provider will recompute (marked unknown) are skipped. Anything unknown inside the
   // template is not skipped, so such a plan is refused rather than guessed at.
   const settingsUpdate = (rc, actions) => {
@@ -597,7 +613,16 @@ function checkPlan(resourceChanges, { root, environment, complete = true, reappl
           delete copy[key];
         }
       const container = copy.template?.[0]?.containers?.[0];
-      if (container) container.env = envOf(copy).filter((e) => !NEW_SETTINGS.includes(e.name));
+      // Only the NEW_SETTINGS the table gives this service: another service's setting still differs.
+      const own = Object.keys(want.settings[rc.address]);
+      if (container) {
+        container.env = envOf(copy).filter(
+          (e) => !(NEW_SETTINGS.includes(e.name) && own.includes(e.name)),
+        );
+      }
+      if (want.attrs[rc.address]?.[CONCURRENCY] !== undefined && copy.template?.[0]) {
+        delete copy.template[0].max_instance_request_concurrency;
+      }
       return copy;
     };
     const canon = (v) =>

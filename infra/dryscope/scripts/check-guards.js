@@ -40,6 +40,9 @@ const PROTECTED = {
     'google_secret_manager_secret.app["stripe-secret-key"]',
     'google_secret_manager_secret.app["maps-api-key"]',
     'google_secret_manager_secret.app["link-signing-key"]',
+    // Screening fails closed, so losing the template or the floor setting stops every AI call.
+    'google_model_armor_template.text',
+    'google_model_armor_floorsetting.project[0]',
   ],
   app: [
     'google_cloud_run_v2_service.svc["api"]',

@@ -31,6 +31,28 @@ locals {
     ALLOWED_ORIGINS = join(",", var.allowed_origins)
   }
 
+  # AI settings, per service (docs/plans/S7.md, S7-2). Text AI runs on the us multi-region endpoint
+  # (V4: no current GA Gemini Flash model is served from us-central1); Live runs in us-central1.
+  # Templates are full resource names: the text one is the data root's, the image one the owner's.
+  ai_env = {
+    api = {
+      AI_TEXT_LOCATION           = "us"
+      AI_TEXT_MODEL              = "gemini-3.8-flash"
+      AI_TRANSCRIBE_MODEL        = "gemini-3.5-transcribe"
+      MODEL_ARMOR_TEXT_TEMPLATE  = local.n.model_armor_templates["text"]
+      MODEL_ARMOR_IMAGE_TEMPLATE = local.n.model_armor_templates["image"]
+    }
+    live = {
+      LIVE_MODEL                = "gemini-3.8-live"
+      LIVE_LOCATION             = var.region
+      MODEL_ARMOR_TEXT_TEMPLATE = local.n.model_armor_templates["text"]
+      # The relay reaches the web app's relay routes at its own environment's address, with a
+      # Google ID token for this audience.
+      API_INTERNAL_URL = local.n.api_url
+      RELAY_AUDIENCE   = local.n.relay_audience
+    }
+  }
+
   # Secrets each service may read, from the same table the data root grants from.
   service_secrets = {
     for svc in keys(local.services) : svc => [
@@ -98,6 +120,14 @@ resource "google_cloud_run_v2_service" "svc" {
 
       dynamic "env" {
         for_each = local.common_env
+        content {
+          name  = env.key
+          value = env.value
+        }
+      }
+
+      dynamic "env" {
+        for_each = local.ai_env[each.key]
         content {
           name  = env.key
           value = env.value

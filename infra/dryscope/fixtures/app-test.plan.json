@@ -177,6 +177,21 @@
          "depends_on": null,
          "env": [
           {
+           "name": "AI_TEXT_LOCATION",
+           "value": "us",
+           "value_source": []
+          },
+          {
+           "name": "AI_TEXT_MODEL",
+           "value": "gemini-3.8-flash",
+           "value_source": []
+          },
+          {
+           "name": "AI_TRANSCRIBE_MODEL",
+           "value": "gemini-3.5-transcribe",
+           "value_source": []
+          },
+          {
            "name": "ALLOWED_ORIGINS",
            "value": "https://dryscope-api-test-570228742694.us-central1.run.app",
            "value_source": []
@@ -233,6 +248,16 @@
              ]
             }
            ]
+          },
+          {
+           "name": "MODEL_ARMOR_IMAGE_TEMPLATE",
+           "value": "projects/dryscope/locations/us/templates/dryscope-image-test",
+           "value_source": []
+          },
+          {
+           "name": "MODEL_ARMOR_TEXT_TEMPLATE",
+           "value": "projects/dryscope/locations/us-central1/templates/dryscope-text-test",
+           "value_source": []
           },
           {
            "name": "RESEND_API_KEY",
@@ -399,6 +424,11 @@
            "value_source": []
           },
           {
+           "name": "API_INTERNAL_URL",
+           "value": "https://dryscope-api-test-570228742694.us-central1.run.app",
+           "value_source": []
+          },
+          {
            "name": "APP_ENV",
            "value": "test",
            "value_source": []
@@ -436,6 +466,26 @@
              ]
             }
            ]
+          },
+          {
+           "name": "LIVE_LOCATION",
+           "value": "us-central1",
+           "value_source": []
+          },
+          {
+           "name": "LIVE_MODEL",
+           "value": "gemini-3.8-live",
+           "value_source": []
+          },
+          {
+           "name": "MODEL_ARMOR_TEXT_TEMPLATE",
+           "value": "projects/dryscope/locations/us-central1/templates/dryscope-text-test",
+           "value_source": []
+          },
+          {
+           "name": "RELAY_AUDIENCE",
+           "value": "dryscope-test-live",
+           "value_source": []
           },
           {
            "name": "SQL_CONNECTION_NAME",
@@ -489,7 +539,7 @@
        "gpu_zonal_redundancy_disabled": null,
        "health_check_disabled": null,
        "labels": null,
-       "max_instance_request_concurrency": 10,
+       "max_instance_request_concurrency": 20,
        "node_selector": [],
        "revision": null,
        "sandboxes": [],
