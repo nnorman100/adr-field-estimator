@@ -232,9 +232,12 @@ describe('runtime role and row-level security (migration 0003)', () => {
       access_projection_outbox: ['INSERT', 'SELECT', 'UPDATE'],
       actors: ['INSERT', 'SELECT', 'UPDATE'],
       agreements: ['INSERT', 'SELECT'],
+      ai_ledger: ['INSERT', 'SELECT'],
+      ai_results: ['INSERT', 'SELECT'],
       audit_events: ['INSERT', 'SELECT'],
       auth_tenants: ['SELECT'],
       companies: ['SELECT'],
+      company_ai_settings: ['SELECT'],
       company_feature_flags: ['SELECT'],
       evidence_objects: ['INSERT', 'SELECT'],
       invitations: ['INSERT', 'SELECT', 'UPDATE'],
@@ -244,10 +247,15 @@ describe('runtime role and row-level security (migration 0003)', () => {
       job_price_pins: ['INSERT', 'SELECT'],
       job_submissions: ['INSERT', 'SELECT'],
       jobs: ['INSERT', 'SELECT'],
+      live_sessions: ['INSERT', 'SELECT'],
+      live_turns: ['INSERT', 'SELECT'],
+      live_usage: ['INSERT', 'SELECT'],
+      member_voice_settings: ['SELECT'],
       memberships: ['INSERT', 'SELECT', 'UPDATE'],
       platform_admins: ['SELECT'],
       price_table_versions: ['INSERT', 'SELECT'],
       price_table_working_copies: ['INSERT', 'SELECT'],
+      voice_notes: ['INSERT', 'SELECT'],
     });
   });
 
@@ -502,7 +510,7 @@ describe('runtime role and row-level security (migration 0003)', () => {
     const migrator = connect(MIGRATOR, migratorPassword);
     try {
       expect(await migrator`SELECT * FROM companies`).toHaveLength(0);
-      expect(await migrator`SELECT * FROM migration_ledger`).toHaveLength(11);
+      expect(await migrator`SELECT * FROM migration_ledger`).toHaveLength(12);
     } finally {
       await migrator.end({ timeout: 5 });
     }

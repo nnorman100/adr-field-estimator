@@ -6,6 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import postgres from 'postgres';
 import { openDatabase } from '@/db/client';
 import { applyMigrations, migrationsDirectory } from '@/db/migrate';
+import { aiSchema } from '@/db/ai-schema';
 import { actors, authTenants, companies, memberships, schema } from '@/db/schema';
 import { emptyDiscardDatabase, startDisposablePostgres, type DisposablePostgres } from './postgres-harness';
 
@@ -104,6 +105,7 @@ describe('identity tables (migration 0002)', () => {
       '0009_price_tables',
       '0010_core_job_tables',
       '0011_submissions_agreements',
+      '0012_ai_live_tables',
     ]);
 
     const rows = await sql<
@@ -378,7 +380,8 @@ describe('identity tables (migration 0002)', () => {
       ORDER BY table_name, column_name
     `;
     const database = rows.map((row) => `${row.table_name}.${row.column_name}:${row.is_nullable === 'NO'}`).sort();
-    const typed = Object.values(schema as Record<string, PgTable>)
+    // Every typed table: the main view and the AI and Live view (0012) beside it.
+    const typed = Object.values({ ...schema, ...aiSchema } as Record<string, PgTable>)
       .flatMap((table) => {
         const config = getTableConfig(table);
         return config.columns.map((column) => `${config.name}.${column.name}:${column.notNull}`);
