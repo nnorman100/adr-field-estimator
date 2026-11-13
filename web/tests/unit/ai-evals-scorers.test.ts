@@ -261,6 +261,14 @@ describe('fill scope from words (quote for every change, value >= 95%, recall >=
     );
   });
 
+  it('reads a raw JSON reply by its values, so the passing answers still pass with their raw JSON', () => {
+    const withRaw = (file: string) => new Map([...answers(file)].map(([id, a]) => [id, a.ok ? { ...a, raw: JSON.stringify(a.response) } : a]));
+    const scope = scoreScopeFill(walks, withRaw('scope-fill.jsonl'));
+    expect(metric(scope, 'counts_or_prices').value).toBe(0);
+    expect(scope.pass).toBe(true);
+    expect(scoreSummary(jobs, withRaw('summary.jsonl')).pass).toBe(true);
+  });
+
   it('fails on a price in a question, a room or the raw reply, even when the changes are clean', () => {
     expect(failing(scoreScopeFill(walks, answers('scope-fill.jsonl', (m) => (m.get('wt-01')!.questions = ['This work costs $900. Proceed?']))))).toEqual(['counts_or_prices']);
     expect(failing(scoreScopeFill(walks, answers('scope-fill.jsonl', (m) => (changesOf(m, 'wt-01')[1]!.room = 'Kitchen, $900 to dry'))))).toContain('counts_or_prices');

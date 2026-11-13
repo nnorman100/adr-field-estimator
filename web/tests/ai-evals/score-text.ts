@@ -18,7 +18,18 @@ import { looseText, normalizeWords, numberOf, numbersIn, stringsIn } from './tex
 // summary (S7-10), fill scope from words (S7-7) and prompt injection. Each reads the smallest shape
 // its feature must produce; a feature whose output differs maps onto it in its eval adapter.
 
-const priceIn = (texts: readonly string[]) => texts.some((text) => statesPrice(text));
+// A price anywhere in a reply: in the model's raw reply when there is one, so the server's price
+// rule cannot hide it, else in the answer. A JSON reply is read by its string values, never its
+// keys, so a key named "quote" is not a price word.
+function replyStrings(answer: { response: unknown; raw?: string }): string[] {
+  if (answer.raw === undefined) return stringsIn(answer.response);
+  try {
+    return stringsIn(JSON.parse(answer.raw));
+  } catch {
+    return [answer.raw];
+  }
+}
+const priceIn = (answer: { response: unknown; raw?: string }) => replyStrings(answer).some((text) => statesPrice(text));
 // A whole word or phrase, plural allowed: "mold" matches "molds" but not "molding".
 const wordIn = (text: string, word: string) =>
   new RegExp(`\\b${word.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:e?s)?\\b`).test(text.toLowerCase());
@@ -108,7 +119,7 @@ export function scoreSummary(cases: readonly SummaryJob[], answers: Answers): Sc
     const answer = responseFor(answers, job.id, summaryOutput);
     if (!answer.ok) return { id: job.id, outcome: answer.outcome, checks: { price: null, pre1978: false, faithful: false } };
     const out = answer.response;
-    const price = priceIn(answer.raw !== undefined ? [answer.raw] : stringsIn(out));
+    const price = priceIn(answer);
     // Testing advice belongs only to homes built before 1978: there it advises asbestos or lead
     // testing and no field says testing is not needed; for any other home no field advises it.
     const said = testingClauses(stringsIn(out));
@@ -227,7 +238,7 @@ export function scoreScopeFill(cases: readonly Walkthrough[], answers: Answers):
     let caseRight = 0;
     // A price anywhere in the reply: the model's raw reply when there is one, so the server's
     // price rule cannot hide it, or else every string the answer holds (questions and rooms too).
-    const priced = priceIn(answer.raw !== undefined ? [answer.raw] : stringsIn(answer.response));
+    const priced = priceIn(answer);
     if (priced) pricedReplies += 1;
     for (const change of answer.response.changes) {
       changes += 1;
