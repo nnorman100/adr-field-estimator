@@ -1,14 +1,5 @@
-import type { AiTelemetry } from './log';
-
-// The span around one model call. TC-3 (tracing) is not on master yet, so withAiSpan runs the work
-// with a span that records nothing; when TC-3 lands it opens a real span named "ai.call" here and
-// nothing else changes. Attributes are the checked telemetry fields of log.ts, never text
-// (hard rule 6).
-
-export type AiSpanAttributes = Partial<AiTelemetry>;
-export type AiSpan = { setAttributes(attributes: AiSpanAttributes): void };
-export type AiSpanRunner = <T>(attributes: AiSpanAttributes, work: (span: AiSpan) => Promise<T>) => Promise<T>;
-
-const NO_SPAN: AiSpan = Object.freeze({ setAttributes: () => undefined });
-
-export const withAiSpan: AiSpanRunner = (_attributes, work) => work(NO_SPAN);
+// The span around one model call: the real tracing helper (TC-3, src/lib/telemetry/ai-span.ts). It
+// opens a span named "ai.call" and records only the checked telemetry fields of log.ts, as closed
+// words and counts, never text (hard rule 6). Before tracing started, or with OTEL_SDK_DISABLED=true,
+// it runs the work and records nothing.
+export { withAiSpan, type AiSpan, type AiSpanAttributes, type AiSpanRunner } from '@/lib/telemetry/ai-span';

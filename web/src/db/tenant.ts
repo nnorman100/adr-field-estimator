@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
+import { transactionSpan } from '../lib/telemetry/spans';
 import type { schema } from './schema';
 
 export type Database = PostgresJsDatabase<typeof schema>;
@@ -28,10 +29,12 @@ export async function withCompany<T>(
   if (typeof companyId !== 'string' || !UUID.test(companyId)) {
     throw new CompanyContextError('withCompany needs a company id that is a uuid');
   }
-  return db.transaction(async (tx) => {
-    await tx.execute(sql`SELECT set_config('app.company_id', ${companyId.toLowerCase()}, true)`);
-    return run(tx);
-  });
+  return transactionSpan(() =>
+    db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT set_config('app.company_id', ${companyId.toLowerCase()}, true)`);
+      return run(tx);
+    }),
+  );
 }
 
 export class OperatorContextError extends Error {

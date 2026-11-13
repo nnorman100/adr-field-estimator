@@ -272,15 +272,57 @@ describe('the release image', () => {
   });
 });
 
+// What the image's server prints to its log at start (src/lib/telemetry/start.ts) with tracing on and
+// no exporter: the one line the step looks for.
+const TRACING_STARTED =
+  '{"severity":"INFO","message":"tracing started","component":"tracing","event":"started","code":"spans"}';
+// scripts/smoke-release.ts waits for the server to answer; the fake waits for its first log line.
+const WAIT_FOR_SERVER_LOG =
+  '[ "$1" != server.js ] && for _ in $(seq 50); do [ -s "$RUNNER_TEMP/web.log" ] && break; sleep 0.1; done';
+const SERVER_THAT_STARTS_TRACING = `if [ "$1" = server.js ]; then echo "$APP_ENV $APP_COMMIT $NODE_ENV $PORT" > started; echo '${TRACING_STARTED}'; fi; ${WAIT_FOR_SERVER_LOG}; exit 0`;
+
+const TRACING_FAILURES = [
+  ['says nothing about tracing', 'listening on 8080', 'Tracing did not start'],
+  [
+    'reports tracing unavailable',
+    `${TRACING_STARTED}\\ntracing unavailable`,
+    'Tracing failed to start',
+  ],
+  [
+    'starts tracing with an exporter',
+    TRACING_STARTED.replace('"spans"', '"export"'),
+    'Tracing did not start',
+  ],
+];
+
+const BUILD_CASES = [
+  [
+    'the Web app image job',
+    imageJob,
+    'scripts',
+    (tmp: string) => [
+      ['web', '--output', `${tmp}/nocommit.tar`],
+      ['web', '--commit', SHA, '--output', `${tmp}/web-image.tar`, '--stage', `${tmp}/web-stage`],
+      ['live-placeholder', '--output', `${tmp}/live-image.tar`, '--stage', `${tmp}/live-stage`],
+    ],
+  ],
+  [
+    'the release build job',
+    () => release.jobs.build,
+    'web/scripts',
+    () => [
+      ['web', '--commit', SHA, '--tag', `${release.env.IMAGE}:${SHA}`],
+      ['live-placeholder', '--tag', `${release.env.PLACEHOLDER_IMAGE}:${SHA}`],
+    ],
+  ],
+];
+
 describe('the Web app image job', () => {
   it('starts the image tree as test and smoke-checks it', async () => {
     const sh = shell();
     const app = path.join(sh.tmp, 'web-stage', 'app');
     mkdirSync(app, { recursive: true });
-    sh.fake(
-      'node',
-      '[ "$1" = server.js ] && echo "$APP_ENV $APP_COMMIT $NODE_ENV $PORT" > started; exit 0',
-    );
+    sh.fake('node', SERVER_THAT_STARTS_TRACING);
     const result = sh.run(commands(step(imageJob(), IMAGE_STEPS[0])), {
       GITHUB_SHA: SHA,
       RUNNER_TEMP: sh.tmp,
@@ -307,6 +349,21 @@ describe('the Web app image job', () => {
       '8080',
     ]);
   }, 15_000); // room for the 5 s wait for the background server, as pytest has no time limit
+
+  it.each(TRACING_FAILURES)('fails when the server %s', (_name, line, error) => {
+    const sh = shell();
+    mkdirSync(path.join(sh.tmp, 'web-stage', 'app'), { recursive: true });
+    sh.fake(
+      'node',
+      `[ "$1" = server.js ] && printf '%b\\n' '${line}'; ${WAIT_FOR_SERVER_LOG}; exit 0`,
+    );
+    const result = sh.run(commands(step(imageJob(), IMAGE_STEPS[0])), {
+      GITHUB_SHA: SHA,
+      RUNNER_TEMP: sh.tmp,
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toContain(error);
+  });
 
   it('fails and shows the server log when the smoke check fails', () => {
     const sh = shell();
@@ -336,16 +393,59 @@ describe('the Web app image job', () => {
     },
   );
 
-  it('builds every image through the script and never calls docker', () => {
-    for (const job of [imageJob(), release.jobs.build]) {
-      for (const s of steps(job)) {
-        expect(/(^|\s)docker\s/.test(commands(s)), s.name ?? s.id).toBe(false);
+  it.each(BUILD_CASES)(
+    'builds every image in %s through the script and never calls docker',
+    (_name, job, scripts, built) => {
+      const sh = shell();
+      const state = path.join(sh.tmp, 'pushed');
+      sh.fake('docker');
+      sh.fake('npm');
+      sh.fake('gcloud');
+      sh.fake('tar');
+      sh.fake('install-crane');
+      sh.fake('crane', CRANE_REGISTRY);
+      sh.fake(
+        'node',
+        `case $1 in
+  server.js) [ -n "$APP_ENV" ] || exit 1; echo '${TRACING_STARTED}' ;;
+  scripts/smoke-release.ts) for _ in $(seq 50); do [ -s "$RUNNER_TEMP/web.log" ] && break; sleep 0.1; done ;;
+esac`,
+      );
+      sh.fake(
+        'build-image',
+        `[ "$1" = web ] && [ "$2" != --commit ] && exit 1
+prev=; for a in "$@"; do
+  case $prev in --output) : > "$a" ;; --stage) mkdir -p "$a/app" ;; --tag) touch "$STATE" ;; esac
+  prev=$a
+done`,
+      );
+      const dir = path.join(sh.tmp, scripts);
+      mkdirSync(dir, { recursive: true });
+      for (const [file, fake] of [
+        ['build-image.sh', 'build-image'],
+        ['install-crane.sh', 'install-crane'],
+      ]) {
+        writeFileSync(path.join(dir, file), `#!/bin/bash\nexec ${fake} "$@"\n`);
+        chmodSync(path.join(dir, file), 0o755);
       }
-    }
-    expect(commands(step(imageJob(), 'Build the image without Docker'))).toContain(
-      'scripts/build-image.sh web --commit "$GITHUB_SHA"',
-    );
-  });
+      const env = {
+        ...release.env,
+        COMMIT: SHA,
+        GITHUB_SHA: SHA,
+        GITHUB_PATH: path.join(sh.tmp, 'path'),
+        RUNNER_TEMP: sh.tmp,
+        STATE: state,
+      };
+      for (const s of steps(job()).filter((s) => s.run)) {
+        rmSync(state, { force: true });
+        const result = sh.run(commands(s), env);
+        expect(result.status, `${s.name ?? s.id}: ${result.stdout}${result.stderr}`).toBe(0);
+      }
+      expect(sh.calls('build-image')).toEqual(built(sh.tmp));
+      expect(sh.calls('docker')).toEqual([]);
+    },
+    15_000,
+  );
 
   it('has Dependabot keep the pinned base image current', () => {
     const docker = new Set<string>();

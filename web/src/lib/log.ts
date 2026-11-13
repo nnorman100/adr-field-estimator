@@ -8,6 +8,8 @@
 //     as a second line behind callers that already pass fixed text.
 // Server runtime only (it writes to process.stdout); import it from Node code, not the browser.
 
+import { isSpanContextValid, trace } from '@opentelemetry/api';
+
 export type Severity = 'DEBUG' | 'INFO' | 'NOTICE' | 'WARNING' | 'ERROR' | 'CRITICAL';
 
 // The fixed field allowlist. Add a name here only when it can never hold personal data.
@@ -81,10 +83,28 @@ export function traceFields(headers: HeaderSource): TraceFields {
   return out;
 }
 
-// Writes one record as one line. Only this file and error-report.ts call it directly; the
-// Error Reporting event carries a stack trace, which log() would scrub and cut to MAX_TEXT.
-export function emit(record: Record<string, unknown>): void {
-  process.stdout.write(`${JSON.stringify(record)}\n`);
+// Links a line to the span that is active where it is written (src/lib/telemetry), so a log line
+// opens the exact span in Cloud Trace. Nothing while no span is active, which is always the case
+// until tracing starts or with OTEL_SDK_DISABLED=true. Needs GOOGLE_CLOUD_PROJECT, as traceFields does.
+export function activeSpanFields(): TraceFields {
+  const project = process.env.GOOGLE_CLOUD_PROJECT;
+  const context = project ? trace.getActiveSpan()?.spanContext() : undefined;
+  if (!project || !context || !isSpanContextValid(context)) return {};
+  return {
+    [TRACE_KEY]: `projects/${project}/traces/${context.traceId}`,
+    [SPAN_KEY]: context.spanId,
+    [SAMPLED_KEY]: (context.traceFlags & 1) === 1,
+  };
+}
+
+// Writes one record as one line, linked to its trace: the active span first (it is the closest,
+// and the request's own trace), the request's headers when there is none (tracing off, or a line
+// written outside a span). Only this file and error-report.ts call it directly; the Error Reporting
+// event carries a stack trace, which log() would scrub and cut to MAX_TEXT.
+export function emit(record: Record<string, unknown>, headers?: HeaderSource): void {
+  const active = activeSpanFields();
+  const linked = Object.keys(active).length > 0 ? active : headers ? traceFields(headers) : {};
+  process.stdout.write(`${JSON.stringify({ ...record, ...linked })}\n`);
 }
 
 export function log(severity: Severity, message: string, fields: LogFields = {}, headers?: HeaderSource): void {
@@ -95,6 +115,5 @@ export function log(severity: Severity, message: string, fields: LogFields = {},
     else if (typeof value === 'number' && Number.isFinite(value)) line[name] = value;
     else if (typeof value === 'boolean') line[name] = value;
   }
-  if (headers) Object.assign(line, traceFields(headers));
-  emit(line);
+  emit(line, headers);
 }
