@@ -1,0 +1,4016 @@
+{
+ "resource_changes": [
+  {
+   "address": "google_cloud_run_v2_job.migrate",
+   "type": "google_cloud_run_v2_job",
+   "change": {
+    "actions": [
+     "no-op"
+    ],
+    "before": {
+     "annotations": {},
+     "binary_authorization": [],
+     "client": "gcloud",
+     "client_version": "591.0.0",
+     "conditions": [],
+     "create_time": "2026-01-01T00:00:00Z",
+     "creator": "owner@example.com",
+     "delete_time": "",
+     "deletion_policy": "DELETE",
+     "deletion_protection": true,
+     "effective_annotations": {},
+     "effective_labels": {
+      "app": "dryscope",
+      "environment": "test",
+      "goog-terraform-provisioned": "true",
+      "managed_by": "terraform"
+     },
+     "etag": "synthetic-etag-1",
+     "execution_count": 29,
+     "expire_time": "",
+     "generation": "30",
+     "id": "projects/dryscope/locations/us-central1/jobs/dryscope-migrate-test",
+     "labels": {
+      "app": "dryscope",
+      "environment": "test",
+      "managed_by": "terraform"
+     },
+     "last_modifier": "dryscope-deploy-test@dryscope.iam.gserviceaccount.com",
+     "latest_created_execution": [
+      {
+       "completion_time": "2026-01-01T00:00:01Z",
+       "create_time": "2026-01-01T00:00:02Z",
+       "name": "dryscope-migrate-test-synth"
+      }
+     ],
+     "launch_stage": "GA",
+     "location": "us-central1",
+     "name": "dryscope-migrate-test",
+     "observed_generation": "30",
+     "project": "dryscope",
+     "reconciling": false,
+     "run_execution_token": "",
+     "start_execution_token": "",
+     "tags": null,
+     "template": [
+      {
+       "annotations": {},
+       "labels": {},
+       "parallelism": 1,
+       "task_count": 1,
+       "template": [
+        {
+         "containers": [
+          {
+           "args": [
+            "migrate.mjs"
+           ],
+           "command": [
+            "node"
+           ],
+           "depends_on": [],
+           "env": [
+            {
+             "name": "APP_ENV",
+             "value": "test",
+             "value_source": []
+            },
+            {
+             "name": "SQL_CONNECTION_NAME",
+             "value": "dryscope:us-central1:dryscope-test-pg",
+             "value_source": []
+            },
+            {
+             "name": "SQL_DATABASE_NAME",
+             "value": "dryscope",
+             "value_source": []
+            },
+            {
+             "name": "SQL_IAM_USER",
+             "value": "dryscope-migrate-test@dryscope.iam",
+             "value_source": []
+            }
+           ],
+           "image": "us-central1-docker.pkg.dev/dryscope/dryscope-test/web@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+           "name": "",
+           "ports": [],
+           "resources": [
+            {
+             "limits": {
+              "cpu": "1",
+              "memory": "512Mi"
+             }
+            }
+           ],
+           "startup_probe": [],
+           "volume_mounts": [
+            {
+             "mount_path": "/cloudsql",
+             "name": "cloudsql",
+             "sub_path": ""
+            }
+           ],
+           "working_dir": ""
+          }
+         ],
+         "encryption_key": "",
+         "execution_environment": "EXECUTION_ENVIRONMENT_GEN2",
+         "gpu_zonal_redundancy_disabled": false,
+         "max_retries": 0,
+         "node_selector": [],
+         "service_account": "dryscope-migrate-test@dryscope.iam.gserviceaccount.com",
+         "timeout": "600s",
+         "volumes": [
+          {
+           "cloud_sql_instance": [
+            {
+             "instances": [
+              "dryscope:us-central1:dryscope-test-pg"
+             ]
+            }
+           ],
+           "empty_dir": [],
+           "gcs": [],
+           "name": "cloudsql",
+           "nfs": [],
+           "secret": []
+          }
+         ],
+         "vpc_access": []
+        }
+       ]
+      }
+     ],
+     "terminal_condition": [
+      {
+       "execution_reason": "",
+       "last_transition_time": "",
+       "message": "",
+       "reason": "",
+       "revision_reason": "",
+       "severity": "",
+       "state": "CONDITION_SUCCEEDED",
+       "type": "Ready"
+      }
+     ],
+     "terraform_labels": {
+      "app": "dryscope",
+      "environment": "test",
+      "goog-terraform-provisioned": "true",
+      "managed_by": "terraform"
+     },
+     "timeouts": null,
+     "uid": "00000000-0000-4000-8000-000000000001",
+     "update_time": "2026-01-01T00:00:03Z"
+    },
+    "after": {
+     "annotations": {},
+     "binary_authorization": [],
+     "client": "gcloud",
+     "client_version": "591.0.0",
+     "conditions": [],
+     "create_time": "2026-01-01T00:00:00Z",
+     "creator": "owner@example.com",
+     "delete_time": "",
+     "deletion_policy": "DELETE",
+     "deletion_protection": true,
+     "effective_annotations": {},
+     "effective_labels": {
+      "app": "dryscope",
+      "environment": "test",
+      "goog-terraform-provisioned": "true",
+      "managed_by": "terraform"
+     },
+     "etag": "synthetic-etag-1",
+     "execution_count": 29,
+     "expire_time": "",
+     "generation": "30",
+     "id": "projects/dryscope/locations/us-central1/jobs/dryscope-migrate-test",
+     "labels": {
+      "app": "dryscope",
+      "environment": "test",
+      "managed_by": "terraform"
+     },
+     "last_modifier": "dryscope-deploy-test@dryscope.iam.gserviceaccount.com",
+     "latest_created_execution": [
+      {
+       "completion_time": "2026-01-01T00:00:01Z",
+       "create_time": "2026-01-01T00:00:02Z",
+       "name": "dryscope-migrate-test-synth"
+      }
+     ],
+     "launch_stage": "GA",
+     "location": "us-central1",
+     "name": "dryscope-migrate-test",
+     "observed_generation": "30",
+     "project": "dryscope",
+     "reconciling": false,
+     "run_execution_token": "",
+     "start_execution_token": "",
+     "tags": null,
+     "template": [
+      {
+       "annotations": {},
+       "labels": {},
+       "parallelism": 1,
+       "task_count": 1,
+       "template": [
+        {
+         "containers": [
+          {
+           "args": [
+            "migrate.mjs"
+           ],
+           "command": [
+            "node"
+           ],
+           "depends_on": [],
+           "env": [
+            {
+             "name": "APP_ENV",
+             "value": "test",
+             "value_source": []
+            },
+            {
+             "name": "SQL_CONNECTION_NAME",
+             "value": "dryscope:us-central1:dryscope-test-pg",
+             "value_source": []
+            },
+            {
+             "name": "SQL_DATABASE_NAME",
+             "value": "dryscope",
+             "value_source": []
+            },
+            {
+             "name": "SQL_IAM_USER",
+             "value": "dryscope-migrate-test@dryscope.iam",
+             "value_source": []
+            }
+           ],
+           "image": "us-central1-docker.pkg.dev/dryscope/dryscope-test/web@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+           "name": "",
+           "ports": [],
+           "resources": [
+            {
+             "limits": {
+              "cpu": "1",
+              "memory": "512Mi"
+             }
+            }
+           ],
+           "startup_probe": [],
+           "volume_mounts": [
+            {
+             "mount_path": "/cloudsql",
+             "name": "cloudsql",
+             "sub_path": ""
+            }
+           ],
+           "working_dir": ""
+          }
+         ],
+         "encryption_key": "",
+         "execution_environment": "EXECUTION_ENVIRONMENT_GEN2",
+         "gpu_zonal_redundancy_disabled": false,
+         "max_retries": 0,
+         "node_selector": [],
+         "service_account": "dryscope-migrate-test@dryscope.iam.gserviceaccount.com",
+         "timeout": "600s",
+         "volumes": [
+          {
+           "cloud_sql_instance": [
+            {
+             "instances": [
+              "dryscope:us-central1:dryscope-test-pg"
+             ]
+            }
+           ],
+           "empty_dir": [],
+           "gcs": [],
+           "name": "cloudsql",
+           "nfs": [],
+           "secret": []
+          }
+         ],
+         "vpc_access": []
+        }
+       ]
+      }
+     ],
+     "terminal_condition": [
+      {
+       "execution_reason": "",
+       "last_transition_time": "",
+       "message": "",
+       "reason": "",
+       "revision_reason": "",
+       "severity": "",
+       "state": "CONDITION_SUCCEEDED",
+       "type": "Ready"
+      }
+     ],
+     "terraform_labels": {
+      "app": "dryscope",
+      "environment": "test",
+      "goog-terraform-provisioned": "true",
+      "managed_by": "terraform"
+     },
+     "timeouts": null,
+     "uid": "00000000-0000-4000-8000-000000000001",
+     "update_time": "2026-01-01T00:00:03Z"
+    },
+    "after_unknown": {},
+    "before_sensitive": {
+     "annotations": {},
+     "binary_authorization": [],
+     "conditions": [],
+     "effective_annotations": {},
+     "effective_labels": {},
+     "labels": {},
+     "latest_created_execution": [
+      {}
+     ],
+     "template": [
+      {
+       "annotations": {},
+       "labels": {},
+       "template": [
+        {
+         "containers": [
+          {
+           "args": [
+            false
+           ],
+           "command": [
+            false
+           ],
+           "depends_on": [],
+           "env": [
+            {
+             "value_source": []
+            },
+            {
+             "value_source": []
+            },
+            {
+             "value_source": []
+            },
+            {
+             "value_source": []
+            }
+           ],
+           "ports": [],
+           "resources": [
+            {
+             "limits": {}
+            }
+           ],
+           "startup_probe": [],
+           "volume_mounts": [
+            {}
+           ]
+          }
+         ],
+         "node_selector": [],
+         "volumes": [
+          {
+           "cloud_sql_instance": [
+            {
+             "instances": [
+              false
+             ]
+            }
+           ],
+           "empty_dir": [],
+           "gcs": [],
+           "nfs": [],
+           "secret": []
+          }
+         ],
+         "vpc_access": []
+        }
+       ]
+      }
+     ],
+     "terminal_condition": [
+      {}
+     ],
+     "terraform_labels": {}
+    },
+    "after_sensitive": {
+     "annotations": {},
+     "binary_authorization": [],
+     "conditions": [],
+     "effective_annotations": {},
+     "effective_labels": {},
+     "labels": {},
+     "latest_created_execution": [
+      {}
+     ],
+     "template": [
+      {
+       "annotations": {},
+       "labels": {},
+       "template": [
+        {
+         "containers": [
+          {
+           "args": [
+            false
+           ],
+           "command": [
+            false
+           ],
+           "depends_on": [],
+           "env": [
+            {
+             "value_source": []
+            },
+            {
+             "value_source": []
+            },
+            {
+             "value_source": []
+            },
+            {
+             "value_source": []
+            }
+           ],
+           "ports": [],
+           "resources": [
+            {
+             "limits": {}
+            }
+           ],
+           "startup_probe": [],
+           "volume_mounts": [
+            {}
+           ]
+          }
+         ],
+         "node_selector": [],
+         "volumes": [
+          {
+           "cloud_sql_instance": [
+            {
+             "instances": [
+              false
+             ]
+            }
+           ],
+           "empty_dir": [],
+           "gcs": [],
+           "nfs": [],
+           "secret": []
+          }
+         ],
+         "vpc_access": []
+        }
+       ]
+      }
+     ],
+     "terminal_condition": [
+      {}
+     ],
+     "terraform_labels": {}
+    },
+    "before_identity": {
+     "location": "us-central1",
+     "name": "dryscope-migrate-test",
+     "project": "dryscope"
+    },
+    "after_identity": {
+     "location": "us-central1",
+     "name": "dryscope-migrate-test",
+     "project": "dryscope"
+    }
+   }
+  },
+  {
+   "address": "google_cloud_run_v2_job_iam_member.deploy",
+   "type": "google_cloud_run_v2_job_iam_member",
+   "change": {
+    "actions": [
+     "no-op"
+    ],
+    "before": {
+     "condition": [],
+     "etag": "synthetic-etag-2",
+     "id": "projects/dryscope/locations/us-central1/jobs/dryscope-migrate-test/projects/dryscope/roles/dryscopeMigrateJobTest/serviceAccount:dryscope-deploy-test@dryscope.iam.gserviceaccount.com",
+     "location": "us-central1",
+     "member": "serviceAccount:dryscope-deploy-test@dryscope.iam.gserviceaccount.com",
+     "name": "projects/dryscope/locations/us-central1/jobs/dryscope-migrate-test",
+     "project": "dryscope",
+     "role": "projects/dryscope/roles/dryscopeMigrateJobTest"
+    },
+    "after": {
+     "condition": [],
+     "etag": "synthetic-etag-2",
+     "id": "projects/dryscope/locations/us-central1/jobs/dryscope-migrate-test/projects/dryscope/roles/dryscopeMigrateJobTest/serviceAccount:dryscope-deploy-test@dryscope.iam.gserviceaccount.com",
+     "location": "us-central1",
+     "member": "serviceAccount:dryscope-deploy-test@dryscope.iam.gserviceaccount.com",
+     "name": "projects/dryscope/locations/us-central1/jobs/dryscope-migrate-test",
+     "project": "dryscope",
+     "role": "projects/dryscope/roles/dryscopeMigrateJobTest"
+    },
+    "after_unknown": {},
+    "before_sensitive": {
+     "condition": []
+    },
+    "after_sensitive": {
+     "condition": []
+    },
+    "before_identity": {
+     "condition_title": null,
+     "location": "us-central1",
+     "member": "serviceAccount:dryscope-deploy-test@dryscope.iam.gserviceaccount.com",
+     "name": "projects/dryscope/locations/us-central1/jobs/dryscope-migrate-test",
+     "project": "dryscope",
+     "role": "projects/dryscope/roles/dryscopeMigrateJobTest"
+    },
+    "after_identity": {
+     "condition_title": null,
+     "location": "us-central1",
+     "member": "serviceAccount:dryscope-deploy-test@dryscope.iam.gserviceaccount.com",
+     "name": "projects/dryscope/locations/us-central1/jobs/dryscope-migrate-test",
+     "project": "dryscope",
+     "role": "projects/dryscope/roles/dryscopeMigrateJobTest"
+    }
+   }
+  },
+  {
+   "address": "google_cloud_run_v2_service.svc[\"api\"]",
+   "type": "google_cloud_run_v2_service",
+   "change": {
+    "actions": [
+     "update"
+    ],
+    "before": {
+     "annotations": {},
+     "binary_authorization": [],
+     "build_config": [],
+     "client": "gcloud",
+     "client_version": "591.0.0",
+     "conditions": [
+      {
+       "execution_reason": "",
+       "last_transition_time": "2026-01-01T00:00:04Z",
+       "message": "",
+       "reason": "",
+       "revision_reason": "",
+       "severity": "",
+       "state": "CONDITION_SUCCEEDED",
+       "type": "RoutesReady"
+      },
+      {
+       "execution_reason": "",
+       "last_transition_time": "2026-01-01T00:00:05Z",
+       "message": "",
+       "reason": "",
+       "revision_reason": "",
+       "severity": "",
+       "state": "CONDITION_SUCCEEDED",
+       "type": "ConfigurationsReady"
+      }
+     ],
+     "create_time": "2026-01-01T00:00:06Z",
+     "creator": "owner@example.com",
+     "custom_audiences": [],
+     "default_uri_disabled": false,
+     "delete_time": "",
+     "deletion_policy": "DELETE",
+     "deletion_protection": true,
+     "description": "",
+     "effective_annotations": {},
+     "effective_labels": {
+      "app": "dryscope",
+      "environment": "test",
+      "goog-terraform-provisioned": "true",
+      "managed_by": "terraform"
+     },
+     "etag": "synthetic-etag-3",
+     "expire_time": "",
+     "generation": "57",
+     "iap_enabled": false,
+     "id": "projects/dryscope/locations/us-central1/services/dryscope-api-test",
+     "ingress": "INGRESS_TRAFFIC_ALL",
+     "invoker_iam_disabled": false,
+     "labels": {
+      "app": "dryscope",
+      "environment": "test",
+      "managed_by": "terraform"
+     },
+     "last_modifier": "dryscope-deploy-test@dryscope.iam.gserviceaccount.com",
+     "latest_created_revision": "projects/dryscope/locations/us-central1/services/dryscope-api-test/revisions/dryscope-api-test-00056-syn",
+     "latest_ready_revision": "projects/dryscope/locations/us-central1/services/dryscope-api-test/revisions/dryscope-api-test-00056-syn",
+     "launch_stage": "GA",
+     "location": "us-central1",
+     "multi_region_settings": [],
+     "name": "dryscope-api-test",
+     "observed_generation": "57",
+     "project": "dryscope",
+     "reconciling": false,
+     "scaling": [
+      {
+       "manual_instance_count": 0,
+       "max_instance_count": 12,
+       "min_instance_count": 0,
+       "scaling_mode": ""
+      }
+     ],
+     "tags": null,
+     "template": [
+      {
+       "annotations": {},
+       "containers": [
+        {
+         "args": [],
+         "base_image_uri": "",
+         "build_info": [],
+         "command": [],
+         "depends_on": [],
+         "env": [
+          {
+           "name": "ALLOWED_ORIGINS",
+           "value": "https://dryscope-api-test-570228742694.us-central1.run.app",
+           "value_source": []
+          },
+          {
+           "name": "APP_ENV",
+           "value": "test",
+           "value_source": []
+          },
+          {
+           "name": "EVIDENCE_BUCKET",
+           "value": "dryscope-evidence-test",
+           "value_source": []
+          },
+          {
+           "name": "FIRESTORE_DATABASE_ID",
+           "value": "dryscope-field-test",
+           "value_source": []
+          },
+          {
+           "name": "GOOGLE_CLOUD_LOCATION",
+           "value": "us-central1",
+           "value_source": []
+          },
+          {
+           "name": "GOOGLE_CLOUD_PROJECT",
+           "value": "dryscope",
+           "value_source": []
+          },
+          {
+           "name": "LINK_SIGNING_KEY",
+           "value": "",
+           "value_source": [
+            {
+             "secret_key_ref": [
+              {
+               "secret": "dryscope-test-link-signing-key",
+               "version": "latest"
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "name": "MAPS_API_KEY",
+           "value": "",
+           "value_source": [
+            {
+             "secret_key_ref": [
+              {
+               "secret": "dryscope-test-maps-api-key",
+               "version": "latest"
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "name": "RESEND_API_KEY",
+           "value": "",
+           "value_source": [
+            {
+             "secret_key_ref": [
+              {
+               "secret": "dryscope-test-resend-api-key",
+               "version": "latest"
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "name": "SQL_CONNECTION_NAME",
+           "value": "dryscope:us-central1:dryscope-test-pg",
+           "value_source": []
+          },
+          {
+           "name": "SQL_DATABASE_NAME",
+           "value": "dryscope",
+           "value_source": []
+          },
+          {
+           "name": "SQL_IAM_USER",
+           "value": "dryscope-api-test@dryscope.iam",
+           "value_source": []
+          },
+          {
+           "name": "STRIPE_SECRET_KEY",
+           "value": "",
+           "value_source": [
+            {
+             "secret_key_ref": [
+              {
+               "secret": "dryscope-test-stripe-secret-key",
+               "version": "latest"
+              }
+             ]
+            }
+           ]
+          }
+         ],
+         "image": "us-central1-docker.pkg.dev/dryscope/dryscope-test/web@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+         "liveness_probe": [],
+         "name": "",
+         "ports": [
+          {
+           "container_port": 8080,
+           "name": "http1"
+          }
+         ],
+         "readiness_probe": [],
+         "resources": [
+          {
+           "cpu_idle": true,
+           "limits": {
+            "cpu": "1",
+            "memory": "1Gi"
+           },
+           "startup_cpu_boost": true
+          }
+         ],
+         "sandbox_launcher": false,
+         "startup_probe": [
+          {
+           "failure_threshold": 1,
+           "grpc": [],
+           "http_get": [],
+           "initial_delay_seconds": 0,
+           "period_seconds": 240,
+           "tcp_socket": [
+            {
+             "port": 8080
+            }
+           ],
+           "timeout_seconds": 240
+          }
+         ],
+         "volume_mounts": [
+          {
+           "mount_path": "/cloudsql",
+           "name": "cloudsql",
+           "sub_path": ""
+          }
+         ],
+         "working_dir": ""
+        }
+       ],
+       "encryption_key": "",
+       "execution_environment": "",
+       "gpu_zonal_redundancy_disabled": false,
+       "health_check_disabled": false,
+       "labels": {},
+       "max_instance_request_concurrency": 40,
+       "node_selector": [],
+       "revision": "dryscope-api-test-00056-syn",
+       "sandboxes": [],
+       "scaling": [
+        {
+         "max_instance_count": 3,
+         "min_instance_count": 0
+        }
+       ],
+       "service_account": "dryscope-api-test@dryscope.iam.gserviceaccount.com",
+       "session_affinity": false,
+       "timeout": "300s",
+       "volumes": [
+        {
+         "cloud_sql_instance": [
+          {
+           "instances": [
+            "dryscope:us-central1:dryscope-test-pg"
+           ]
+          }
+         ],
+         "empty_dir": [],
+         "gcs": [],
+         "name": "cloudsql",
+         "nfs": [],
+         "secret": []
+        }
+       ],
+       "vpc_access": []
+      }
+     ],
+     "terminal_condition": [
+      {
+       "execution_reason": "",
+       "last_transition_time": "2026-01-01T00:00:07Z",
+       "message": "",
+       "reason": "",
+       "revision_reason": "",
+       "severity": "",
+       "state": "CONDITION_SUCCEEDED",
+       "type": "Ready"
+      }
+     ],
+     "terraform_labels": {
+      "app": "dryscope",
+      "environment": "test",
+      "goog-terraform-provisioned": "true",
+      "managed_by": "terraform"
+     },
+     "timeouts": null,
+     "traffic": [
+      {
+       "percent": 100,
+       "revision": "dryscope-api-test-00056-syn",
+       "tag": "",
+       "type": "TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION"
+      },
+      {
+       "percent": 0,
+       "revision": "dryscope-api-test-00056-syn",
+       "tag": "candidate",
+       "type": "TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION"
+      }
+     ],
+     "traffic_statuses": [
+      {
+       "percent": 100,
+       "revision": "dryscope-api-test-00056-syn",
+       "tag": "candidate",
+       "type": "TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION",
+       "uri": "https://candidate---dryscope-api-test-synthhash0-uc.a.run.app"
+      }
+     ],
+     "uid": "00000000-0000-4000-8000-000000000002",
+     "update_time": "2026-01-01T00:00:08Z",
+     "uri": "https://dryscope-api-test-synthhash0-uc.a.run.app",
+     "urls": [
+      "https://dryscope-api-test-570228742694.us-central1.run.app",
+      "https://dryscope-api-test-synthhash0-uc.a.run.app"
+     ]
+    },
+    "after": {
+     "annotations": {},
+     "binary_authorization": [],
+     "build_config": [],
+     "client": "gcloud",
+     "client_version": "591.0.0",
+     "conditions": [
+      {
+       "execution_reason": "",
+       "last_transition_time": "2026-01-01T00:00:04Z",
+       "message": "",
+       "reason": "",
+       "revision_reason": "",
+       "severity": "",
+       "state": "CONDITION_SUCCEEDED",
+       "type": "RoutesReady"
+      },
+      {
+       "execution_reason": "",
+       "last_transition_time": "2026-01-01T00:00:05Z",
+       "message": "",
+       "reason": "",
+       "revision_reason": "",
+       "severity": "",
+       "state": "CONDITION_SUCCEEDED",
+       "type": "ConfigurationsReady"
+      }
+     ],
+     "create_time": "2026-01-01T00:00:06Z",
+     "creator": "owner@example.com",
+     "custom_audiences": [],
+     "default_uri_disabled": false,
+     "delete_time": "",
+     "deletion_policy": "DELETE",
+     "deletion_protection": true,
+     "description": "",
+     "effective_annotations": {},
+     "effective_labels": {
+      "app": "dryscope",
+      "environment": "test",
+      "goog-terraform-provisioned": "true",
+      "managed_by": "terraform"
+     },
+     "etag": "synthetic-etag-3",
+     "expire_time": "",
+     "generation": "57",
+     "iap_enabled": false,
+     "id": "projects/dryscope/locations/us-central1/services/dryscope-api-test",
+     "ingress": "INGRESS_TRAFFIC_ALL",
+     "invoker_iam_disabled": false,
+     "labels": {
+      "app": "dryscope",
+      "environment": "test",
+      "managed_by": "terraform"
+     },
+     "last_modifier": "dryscope-deploy-test@dryscope.iam.gserviceaccount.com",
+     "latest_created_revision": "projects/dryscope/locations/us-central1/services/dryscope-api-test/revisions/dryscope-api-test-00056-syn",
+     "latest_ready_revision": "projects/dryscope/locations/us-central1/services/dryscope-api-test/revisions/dryscope-api-test-00056-syn",
+     "launch_stage": "GA",
+     "location": "us-central1",
+     "multi_region_settings": [],
+     "name": "dryscope-api-test",
+     "observed_generation": "57",
+     "project": "dryscope",
+     "reconciling": false,
+     "scaling": [
+      {
+       "manual_instance_count": 0,
+       "max_instance_count": 12,
+       "min_instance_count": 0,
+       "scaling_mode": ""
+      }
+     ],
+     "tags": null,
+     "template": [
+      {
+       "annotations": {},
+       "containers": [
+        {
+         "args": [],
+         "base_image_uri": "",
+         "build_info": [],
+         "command": [],
+         "depends_on": [],
+         "env": [
+          {
+           "name": "AI_TEXT_LOCATION",
+           "value": "us",
+           "value_source": []
+          },
+          {
+           "name": "AI_TEXT_MODEL",
+           "value": "gemini-3.8-flash",
+           "value_source": []
+          },
+          {
+           "name": "AI_TRANSCRIBE_MODEL",
+           "value": "gemini-3.5-transcribe",
+           "value_source": []
+          },
+          {
+           "name": "ALLOWED_ORIGINS",
+           "value": "https://dryscope-api-test-570228742694.us-central1.run.app",
+           "value_source": []
+          },
+          {
+           "name": "APP_ENV",
+           "value": "test",
+           "value_source": []
+          },
+          {
+           "name": "EVIDENCE_BUCKET",
+           "value": "dryscope-evidence-test",
+           "value_source": []
+          },
+          {
+           "name": "FIRESTORE_DATABASE_ID",
+           "value": "dryscope-field-test",
+           "value_source": []
+          },
+          {
+           "name": "GOOGLE_CLOUD_LOCATION",
+           "value": "us-central1",
+           "value_source": []
+          },
+          {
+           "name": "GOOGLE_CLOUD_PROJECT",
+           "value": "dryscope",
+           "value_source": []
+          },
+          {
+           "name": "LINK_SIGNING_KEY",
+           "value": "",
+           "value_source": [
+            {
+             "secret_key_ref": [
+              {
+               "secret": "dryscope-test-link-signing-key",
+               "version": "latest"
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "name": "MAPS_API_KEY",
+           "value": "",
+           "value_source": [
+            {
+             "secret_key_ref": [
+              {
+               "secret": "dryscope-test-maps-api-key",
+               "version": "latest"
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "name": "MODEL_ARMOR_IMAGE_TEMPLATE",
+           "value": "projects/dryscope/locations/us/templates/dryscope-image-test",
+           "value_source": []
+          },
+          {
+           "name": "MODEL_ARMOR_TEXT_TEMPLATE",
+           "value": "projects/dryscope/locations/us-central1/templates/dryscope-text-test",
+           "value_source": []
+          },
+          {
+           "name": "RESEND_API_KEY",
+           "value": "",
+           "value_source": [
+            {
+             "secret_key_ref": [
+              {
+               "secret": "dryscope-test-resend-api-key",
+               "version": "latest"
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "name": "SQL_CONNECTION_NAME",
+           "value": "dryscope:us-central1:dryscope-test-pg",
+           "value_source": []
+          },
+          {
+           "name": "SQL_DATABASE_NAME",
+           "value": "dryscope",
+           "value_source": []
+          },
+          {
+           "name": "SQL_IAM_USER",
+           "value": "dryscope-api-test@dryscope.iam",
+           "value_source": []
+          },
+          {
+           "name": "STRIPE_SECRET_KEY",
+           "value": "",
+           "value_source": [
+            {
+             "secret_key_ref": [
+              {
+               "secret": "dryscope-test-stripe-secret-key",
+               "version": "latest"
+              }
+             ]
+            }
+           ]
+          }
+         ],
+         "image": "us-central1-docker.pkg.dev/dryscope/dryscope-test/web@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+         "liveness_probe": [],
+         "name": "",
+         "ports": [
+          {
+           "container_port": 8080,
+           "name": "http1"
+          }
+         ],
+         "readiness_probe": [],
+         "resources": [
+          {
+           "cpu_idle": true,
+           "limits": {
+            "cpu": "1",
+            "memory": "1Gi"
+           },
+           "startup_cpu_boost": true
+          }
+         ],
+         "sandbox_launcher": false,
+         "startup_probe": [
+          {
+           "failure_threshold": 1,
+           "grpc": [],
+           "http_get": [],
+           "initial_delay_seconds": 0,
+           "period_seconds": 240,
+           "tcp_socket": [
+            {
+             "port": 8080
+            }
+           ],
+           "timeout_seconds": 240
+          }
+         ],
+         "volume_mounts": [
+          {
+           "mount_path": "/cloudsql",
+           "name": "cloudsql",
+           "sub_path": ""
+          }
+         ],
+         "working_dir": ""
+        }
+       ],
+       "encryption_key": "",
+       "execution_environment": "",
+       "gpu_zonal_redundancy_disabled": false,
+       "health_check_disabled": false,
+       "labels": {},
+       "max_instance_request_concurrency": 40,
+       "node_selector": [],
+       "revision": null,
+       "sandboxes": [],
+       "scaling": [
+        {
+         "max_instance_count": 3,
+         "min_instance_count": 0
+        }
+       ],
+       "service_account": "dryscope-api-test@dryscope.iam.gserviceaccount.com",
+       "session_affinity": false,
+       "timeout": "300s",
+       "volumes": [
+        {
+         "cloud_sql_instance": [
+          {
+           "instances": [
+            "dryscope:us-central1:dryscope-test-pg"
+           ]
+          }
+         ],
+         "empty_dir": [],
+         "gcs": [],
+         "name": "cloudsql",
+         "nfs": [],
+         "secret": []
+        }
+       ],
+       "vpc_access": []
+      }
+     ],
+     "terminal_condition": [
+      {
+       "execution_reason": "",
+       "last_transition_time": "2026-01-01T00:00:07Z",
+       "message": "",
+       "reason": "",
+       "revision_reason": "",
+       "severity": "",
+       "state": "CONDITION_SUCCEEDED",
+       "type": "Ready"
+      }
+     ],
+     "terraform_labels": {
+      "app": "dryscope",
+      "environment": "test",
+      "goog-terraform-provisioned": "true",
+      "managed_by": "terraform"
+     },
+     "timeouts": null,
+     "traffic": [
+      {
+       "percent": 100,
+       "revision": "dryscope-api-test-00056-syn",
+       "tag": "",
+       "type": "TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION"
+      },
+      {
+       "percent": 0,
+       "revision": "dryscope-api-test-00056-syn",
+       "tag": "candidate",
+       "type": "TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION"
+      }
+     ],
+     "traffic_statuses": [
+      {
+       "percent": 100,
+       "revision": "dryscope-api-test-00056-syn",
+       "tag": "candidate",
+       "type": "TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION",
+       "uri": "https://candidate---dryscope-api-test-synthhash0-uc.a.run.app"
+      }
+     ],
+     "uid": "00000000-0000-4000-8000-000000000002",
+     "update_time": "2026-01-01T00:00:08Z",
+     "uri": "https://dryscope-api-test-synthhash0-uc.a.run.app",
+     "urls": [
+      "https://dryscope-api-test-570228742694.us-central1.run.app",
+      "https://dryscope-api-test-synthhash0-uc.a.run.app"
+     ]
+    },
+    "after_unknown": {},
+    "before_sensitive": {
+     "annotations": {},
+     "binary_authorization": [],
+     "build_config": [],
+     "conditions": [
+      {},
+      {}
+     ],
+     "custom_audiences": [],
+     "effective_annotations": {},
+     "effective_labels": {},
+     "labels": {},
+     "multi_region_settings": [],
+     "scaling": [
+      {}
+     ],
+     "template": [
+      {
+       "annotations": {},
+       "containers": [
+        {
+         "args": [],
+         "build_info": [],
+         "command": [],
+         "depends_on": [],
+         "env": [
+          {
+           "value_source": []
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": [
+            {
+             "secret_key_ref": [
+              {}
+             ]
+            }
+           ]
+          },
+          {
+           "value_source": [
+            {
+             "secret_key_ref": [
+              {}
+             ]
+            }
+           ]
+          },
+          {
+           "value_source": [
+            {
+             "secret_key_ref": [
+              {}
+             ]
+            }
+           ]
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": [
+            {
+             "secret_key_ref": [
+              {}
+             ]
+            }
+           ]
+          }
+         ],
+         "liveness_probe": [],
+         "ports": [
+          {}
+         ],
+         "readiness_probe": [],
+         "resources": [
+          {
+           "limits": {}
+          }
+         ],
+         "startup_probe": [
+          {
+           "grpc": [],
+           "http_get": [],
+           "tcp_socket": [
+            {}
+           ]
+          }
+         ],
+         "volume_mounts": [
+          {}
+         ]
+        }
+       ],
+       "labels": {},
+       "node_selector": [],
+       "sandboxes": [],
+       "scaling": [
+        {}
+       ],
+       "volumes": [
+        {
+         "cloud_sql_instance": [
+          {
+           "instances": [
+            false
+           ]
+          }
+         ],
+         "empty_dir": [],
+         "gcs": [],
+         "nfs": [],
+         "secret": []
+        }
+       ],
+       "vpc_access": []
+      }
+     ],
+     "terminal_condition": [
+      {}
+     ],
+     "terraform_labels": {},
+     "traffic": [
+      {},
+      {}
+     ],
+     "traffic_statuses": [
+      {}
+     ],
+     "urls": [
+      false,
+      false
+     ]
+    },
+    "after_sensitive": {
+     "annotations": {},
+     "binary_authorization": [],
+     "build_config": [],
+     "conditions": [
+      {},
+      {}
+     ],
+     "custom_audiences": [],
+     "effective_annotations": {},
+     "effective_labels": {},
+     "labels": {},
+     "multi_region_settings": [],
+     "scaling": [
+      {}
+     ],
+     "template": [
+      {
+       "annotations": {},
+       "containers": [
+        {
+         "args": [],
+         "build_info": [],
+         "command": [],
+         "depends_on": [],
+         "env": [
+          {
+           "value_source": []
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": [
+            {
+             "secret_key_ref": [
+              {}
+             ]
+            }
+           ]
+          },
+          {
+           "value_source": [
+            {
+             "secret_key_ref": [
+              {}
+             ]
+            }
+           ]
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": [
+            {
+             "secret_key_ref": [
+              {}
+             ]
+            }
+           ]
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": [
+            {
+             "secret_key_ref": [
+              {}
+             ]
+            }
+           ]
+          }
+         ],
+         "liveness_probe": [],
+         "ports": [
+          {}
+         ],
+         "readiness_probe": [],
+         "resources": [
+          {
+           "limits": {}
+          }
+         ],
+         "startup_probe": [
+          {
+           "grpc": [],
+           "http_get": [],
+           "tcp_socket": [
+            {}
+           ]
+          }
+         ],
+         "volume_mounts": [
+          {}
+         ]
+        }
+       ],
+       "labels": {},
+       "node_selector": [],
+       "sandboxes": [],
+       "scaling": [
+        {}
+       ],
+       "volumes": [
+        {
+         "cloud_sql_instance": [
+          {
+           "instances": [
+            false
+           ]
+          }
+         ],
+         "empty_dir": [],
+         "gcs": [],
+         "nfs": [],
+         "secret": []
+        }
+       ],
+       "vpc_access": []
+      }
+     ],
+     "terminal_condition": [
+      {}
+     ],
+     "terraform_labels": {},
+     "traffic": [
+      {},
+      {}
+     ],
+     "traffic_statuses": [
+      {}
+     ],
+     "urls": [
+      false,
+      false
+     ]
+    },
+    "before_identity": {
+     "location": "us-central1",
+     "name": "dryscope-api-test",
+     "project": "dryscope"
+    },
+    "after_identity": {
+     "location": "us-central1",
+     "name": "dryscope-api-test",
+     "project": "dryscope"
+    }
+   }
+  },
+  {
+   "address": "google_cloud_run_v2_service.svc[\"live\"]",
+   "type": "google_cloud_run_v2_service",
+   "change": {
+    "actions": [
+     "update"
+    ],
+    "before": {
+     "annotations": {},
+     "binary_authorization": [],
+     "build_config": [],
+     "client": "",
+     "client_version": "",
+     "conditions": [
+      {
+       "execution_reason": "",
+       "last_transition_time": "2026-01-01T00:00:09Z",
+       "message": "",
+       "reason": "",
+       "revision_reason": "",
+       "severity": "",
+       "state": "CONDITION_SUCCEEDED",
+       "type": "RoutesReady"
+      },
+      {
+       "execution_reason": "",
+       "last_transition_time": "2026-01-01T00:00:10Z",
+       "message": "",
+       "reason": "",
+       "revision_reason": "",
+       "severity": "",
+       "state": "CONDITION_SUCCEEDED",
+       "type": "ConfigurationsReady"
+      }
+     ],
+     "create_time": "2026-01-01T00:00:11Z",
+     "creator": "owner@example.com",
+     "custom_audiences": [],
+     "default_uri_disabled": false,
+     "delete_time": "",
+     "deletion_policy": "DELETE",
+     "deletion_protection": true,
+     "description": "",
+     "effective_annotations": {},
+     "effective_labels": {
+      "app": "dryscope",
+      "environment": "test",
+      "goog-terraform-provisioned": "true",
+      "managed_by": "terraform"
+     },
+     "etag": "synthetic-etag-4",
+     "expire_time": "",
+     "generation": "1",
+     "iap_enabled": false,
+     "id": "projects/dryscope/locations/us-central1/services/dryscope-live-test",
+     "ingress": "INGRESS_TRAFFIC_ALL",
+     "invoker_iam_disabled": false,
+     "labels": {
+      "app": "dryscope",
+      "environment": "test",
+      "managed_by": "terraform"
+     },
+     "last_modifier": "owner@example.com",
+     "latest_created_revision": "projects/dryscope/locations/us-central1/services/dryscope-live-test/revisions/dryscope-live-test-00001-syn",
+     "latest_ready_revision": "projects/dryscope/locations/us-central1/services/dryscope-live-test/revisions/dryscope-live-test-00001-syn",
+     "launch_stage": "GA",
+     "location": "us-central1",
+     "multi_region_settings": [],
+     "name": "dryscope-live-test",
+     "observed_generation": "1",
+     "project": "dryscope",
+     "reconciling": false,
+     "scaling": [
+      {
+       "manual_instance_count": 0,
+       "max_instance_count": 12,
+       "min_instance_count": 0,
+       "scaling_mode": ""
+      }
+     ],
+     "tags": null,
+     "template": [
+      {
+       "annotations": {},
+       "containers": [
+        {
+         "args": [],
+         "base_image_uri": "",
+         "build_info": [],
+         "command": [],
+         "depends_on": [],
+         "env": [
+          {
+           "name": "ALLOWED_ORIGINS",
+           "value": "https://dryscope-api-test-570228742694.us-central1.run.app",
+           "value_source": []
+          },
+          {
+           "name": "APP_ENV",
+           "value": "test",
+           "value_source": []
+          },
+          {
+           "name": "EVIDENCE_BUCKET",
+           "value": "dryscope-evidence-test",
+           "value_source": []
+          },
+          {
+           "name": "FIRESTORE_DATABASE_ID",
+           "value": "dryscope-field-test",
+           "value_source": []
+          },
+          {
+           "name": "GOOGLE_CLOUD_LOCATION",
+           "value": "us-central1",
+           "value_source": []
+          },
+          {
+           "name": "GOOGLE_CLOUD_PROJECT",
+           "value": "dryscope",
+           "value_source": []
+          },
+          {
+           "name": "LINK_SIGNING_KEY",
+           "value": "",
+           "value_source": [
+            {
+             "secret_key_ref": [
+              {
+               "secret": "dryscope-test-link-signing-key",
+               "version": "latest"
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "name": "SQL_CONNECTION_NAME",
+           "value": "dryscope:us-central1:dryscope-test-pg",
+           "value_source": []
+          },
+          {
+           "name": "SQL_DATABASE_NAME",
+           "value": "dryscope",
+           "value_source": []
+          },
+          {
+           "name": "SQL_IAM_USER",
+           "value": "dryscope-live-test@dryscope.iam",
+           "value_source": []
+          }
+         ],
+         "image": "us-central1-docker.pkg.dev/dryscope/dryscope-test/live-placeholder@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+         "liveness_probe": [],
+         "name": "",
+         "ports": [
+          {
+           "container_port": 8080,
+           "name": "http1"
+          }
+         ],
+         "readiness_probe": [],
+         "resources": [
+          {
+           "cpu_idle": false,
+           "limits": {
+            "cpu": "1",
+            "memory": "1Gi"
+           },
+           "startup_cpu_boost": true
+          }
+         ],
+         "sandbox_launcher": false,
+         "startup_probe": [
+          {
+           "failure_threshold": 1,
+           "grpc": [],
+           "http_get": [],
+           "initial_delay_seconds": 0,
+           "period_seconds": 240,
+           "tcp_socket": [
+            {
+             "port": 8080
+            }
+           ],
+           "timeout_seconds": 240
+          }
+         ],
+         "volume_mounts": [
+          {
+           "mount_path": "/cloudsql",
+           "name": "cloudsql",
+           "sub_path": ""
+          }
+         ],
+         "working_dir": ""
+        }
+       ],
+       "encryption_key": "",
+       "execution_environment": "",
+       "gpu_zonal_redundancy_disabled": false,
+       "health_check_disabled": false,
+       "labels": {},
+       "max_instance_request_concurrency": 10,
+       "node_selector": [],
+       "revision": "",
+       "sandboxes": [],
+       "scaling": [
+        {
+         "max_instance_count": 2,
+         "min_instance_count": 0
+        }
+       ],
+       "service_account": "dryscope-live-test@dryscope.iam.gserviceaccount.com",
+       "session_affinity": true,
+       "timeout": "3600s",
+       "volumes": [
+        {
+         "cloud_sql_instance": [
+          {
+           "instances": [
+            "dryscope:us-central1:dryscope-test-pg"
+           ]
+          }
+         ],
+         "empty_dir": [],
+         "gcs": [],
+         "name": "cloudsql",
+         "nfs": [],
+         "secret": []
+        }
+       ],
+       "vpc_access": []
+      }
+     ],
+     "terminal_condition": [
+      {
+       "execution_reason": "",
+       "last_transition_time": "2026-01-01T00:00:12Z",
+       "message": "",
+       "reason": "",
+       "revision_reason": "",
+       "severity": "",
+       "state": "CONDITION_SUCCEEDED",
+       "type": "Ready"
+      }
+     ],
+     "terraform_labels": {
+      "app": "dryscope",
+      "environment": "test",
+      "goog-terraform-provisioned": "true",
+      "managed_by": "terraform"
+     },
+     "timeouts": null,
+     "traffic": [
+      {
+       "percent": 100,
+       "revision": "",
+       "tag": "",
+       "type": "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST"
+      }
+     ],
+     "traffic_statuses": [
+      {
+       "percent": 100,
+       "revision": "dryscope-live-test-00001-syn",
+       "tag": "",
+       "type": "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST",
+       "uri": ""
+      }
+     ],
+     "uid": "00000000-0000-4000-8000-000000000003",
+     "update_time": "2026-01-01T00:00:11Z",
+     "uri": "https://dryscope-live-test-synthhash0-uc.a.run.app",
+     "urls": [
+      "https://dryscope-live-test-570228742694.us-central1.run.app",
+      "https://dryscope-live-test-synthhash0-uc.a.run.app"
+     ]
+    },
+    "after": {
+     "annotations": {},
+     "binary_authorization": [],
+     "build_config": [],
+     "client": "",
+     "client_version": "",
+     "conditions": [
+      {
+       "execution_reason": "",
+       "last_transition_time": "2026-01-01T00:00:09Z",
+       "message": "",
+       "reason": "",
+       "revision_reason": "",
+       "severity": "",
+       "state": "CONDITION_SUCCEEDED",
+       "type": "RoutesReady"
+      },
+      {
+       "execution_reason": "",
+       "last_transition_time": "2026-01-01T00:00:10Z",
+       "message": "",
+       "reason": "",
+       "revision_reason": "",
+       "severity": "",
+       "state": "CONDITION_SUCCEEDED",
+       "type": "ConfigurationsReady"
+      }
+     ],
+     "create_time": "2026-01-01T00:00:11Z",
+     "creator": "owner@example.com",
+     "custom_audiences": [],
+     "default_uri_disabled": false,
+     "delete_time": "",
+     "deletion_policy": "DELETE",
+     "deletion_protection": true,
+     "description": "",
+     "effective_annotations": {},
+     "effective_labels": {
+      "app": "dryscope",
+      "environment": "test",
+      "goog-terraform-provisioned": "true",
+      "managed_by": "terraform"
+     },
+     "etag": "synthetic-etag-4",
+     "expire_time": "",
+     "generation": "1",
+     "iap_enabled": false,
+     "id": "projects/dryscope/locations/us-central1/services/dryscope-live-test",
+     "ingress": "INGRESS_TRAFFIC_ALL",
+     "invoker_iam_disabled": false,
+     "labels": {
+      "app": "dryscope",
+      "environment": "test",
+      "managed_by": "terraform"
+     },
+     "last_modifier": "owner@example.com",
+     "latest_created_revision": "projects/dryscope/locations/us-central1/services/dryscope-live-test/revisions/dryscope-live-test-00001-syn",
+     "latest_ready_revision": "projects/dryscope/locations/us-central1/services/dryscope-live-test/revisions/dryscope-live-test-00001-syn",
+     "launch_stage": "GA",
+     "location": "us-central1",
+     "multi_region_settings": [],
+     "name": "dryscope-live-test",
+     "observed_generation": "1",
+     "project": "dryscope",
+     "reconciling": false,
+     "scaling": [
+      {
+       "manual_instance_count": 0,
+       "max_instance_count": 12,
+       "min_instance_count": 0,
+       "scaling_mode": ""
+      }
+     ],
+     "tags": null,
+     "template": [
+      {
+       "annotations": {},
+       "containers": [
+        {
+         "args": [],
+         "base_image_uri": "",
+         "build_info": [],
+         "command": [],
+         "depends_on": [],
+         "env": [
+          {
+           "name": "ALLOWED_ORIGINS",
+           "value": "https://dryscope-api-test-570228742694.us-central1.run.app",
+           "value_source": []
+          },
+          {
+           "name": "API_INTERNAL_URL",
+           "value": "https://dryscope-api-test-570228742694.us-central1.run.app",
+           "value_source": []
+          },
+          {
+           "name": "APP_ENV",
+           "value": "test",
+           "value_source": []
+          },
+          {
+           "name": "EVIDENCE_BUCKET",
+           "value": "dryscope-evidence-test",
+           "value_source": []
+          },
+          {
+           "name": "FIRESTORE_DATABASE_ID",
+           "value": "dryscope-field-test",
+           "value_source": []
+          },
+          {
+           "name": "GOOGLE_CLOUD_LOCATION",
+           "value": "us-central1",
+           "value_source": []
+          },
+          {
+           "name": "GOOGLE_CLOUD_PROJECT",
+           "value": "dryscope",
+           "value_source": []
+          },
+          {
+           "name": "LINK_SIGNING_KEY",
+           "value": "",
+           "value_source": [
+            {
+             "secret_key_ref": [
+              {
+               "secret": "dryscope-test-link-signing-key",
+               "version": "latest"
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "name": "LIVE_LOCATION",
+           "value": "us-central1",
+           "value_source": []
+          },
+          {
+           "name": "LIVE_MODEL",
+           "value": "gemini-3.8-live",
+           "value_source": []
+          },
+          {
+           "name": "MODEL_ARMOR_TEXT_TEMPLATE",
+           "value": "projects/dryscope/locations/us-central1/templates/dryscope-text-test",
+           "value_source": []
+          },
+          {
+           "name": "RELAY_AUDIENCE",
+           "value": "dryscope-test-live",
+           "value_source": []
+          },
+          {
+           "name": "SQL_CONNECTION_NAME",
+           "value": "dryscope:us-central1:dryscope-test-pg",
+           "value_source": []
+          },
+          {
+           "name": "SQL_DATABASE_NAME",
+           "value": "dryscope",
+           "value_source": []
+          },
+          {
+           "name": "SQL_IAM_USER",
+           "value": "dryscope-live-test@dryscope.iam",
+           "value_source": []
+          }
+         ],
+         "image": "us-central1-docker.pkg.dev/dryscope/dryscope-test/live-placeholder@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+         "liveness_probe": [],
+         "name": "",
+         "ports": [
+          {
+           "container_port": 8080,
+           "name": "http1"
+          }
+         ],
+         "readiness_probe": [],
+         "resources": [
+          {
+           "cpu_idle": false,
+           "limits": {
+            "cpu": "1",
+            "memory": "1Gi"
+           },
+           "startup_cpu_boost": true
+          }
+         ],
+         "sandbox_launcher": false,
+         "startup_probe": [
+          {
+           "failure_threshold": 1,
+           "grpc": [],
+           "http_get": [],
+           "initial_delay_seconds": 0,
+           "period_seconds": 240,
+           "tcp_socket": [
+            {
+             "port": 8080
+            }
+           ],
+           "timeout_seconds": 240
+          }
+         ],
+         "volume_mounts": [
+          {
+           "mount_path": "/cloudsql",
+           "name": "cloudsql",
+           "sub_path": ""
+          }
+         ],
+         "working_dir": ""
+        }
+       ],
+       "encryption_key": "",
+       "execution_environment": "",
+       "gpu_zonal_redundancy_disabled": false,
+       "health_check_disabled": false,
+       "labels": {},
+       "max_instance_request_concurrency": 20,
+       "node_selector": [],
+       "revision": "",
+       "sandboxes": [],
+       "scaling": [
+        {
+         "max_instance_count": 2,
+         "min_instance_count": 0
+        }
+       ],
+       "service_account": "dryscope-live-test@dryscope.iam.gserviceaccount.com",
+       "session_affinity": true,
+       "timeout": "3600s",
+       "volumes": [
+        {
+         "cloud_sql_instance": [
+          {
+           "instances": [
+            "dryscope:us-central1:dryscope-test-pg"
+           ]
+          }
+         ],
+         "empty_dir": [],
+         "gcs": [],
+         "name": "cloudsql",
+         "nfs": [],
+         "secret": []
+        }
+       ],
+       "vpc_access": []
+      }
+     ],
+     "terminal_condition": [
+      {
+       "execution_reason": "",
+       "last_transition_time": "2026-01-01T00:00:12Z",
+       "message": "",
+       "reason": "",
+       "revision_reason": "",
+       "severity": "",
+       "state": "CONDITION_SUCCEEDED",
+       "type": "Ready"
+      }
+     ],
+     "terraform_labels": {
+      "app": "dryscope",
+      "environment": "test",
+      "goog-terraform-provisioned": "true",
+      "managed_by": "terraform"
+     },
+     "timeouts": null,
+     "traffic": [
+      {
+       "percent": 100,
+       "revision": "",
+       "tag": "",
+       "type": "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST"
+      }
+     ],
+     "traffic_statuses": [
+      {
+       "percent": 100,
+       "revision": "dryscope-live-test-00001-syn",
+       "tag": "",
+       "type": "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST",
+       "uri": ""
+      }
+     ],
+     "uid": "00000000-0000-4000-8000-000000000003",
+     "update_time": "2026-01-01T00:00:11Z",
+     "uri": "https://dryscope-live-test-synthhash0-uc.a.run.app",
+     "urls": [
+      "https://dryscope-live-test-570228742694.us-central1.run.app",
+      "https://dryscope-live-test-synthhash0-uc.a.run.app"
+     ]
+    },
+    "after_unknown": {},
+    "before_sensitive": {
+     "annotations": {},
+     "binary_authorization": [],
+     "build_config": [],
+     "conditions": [
+      {},
+      {}
+     ],
+     "custom_audiences": [],
+     "effective_annotations": {},
+     "effective_labels": {},
+     "labels": {},
+     "multi_region_settings": [],
+     "scaling": [
+      {}
+     ],
+     "template": [
+      {
+       "annotations": {},
+       "containers": [
+        {
+         "args": [],
+         "build_info": [],
+         "command": [],
+         "depends_on": [],
+         "env": [
+          {
+           "value_source": []
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": [
+            {
+             "secret_key_ref": [
+              {}
+             ]
+            }
+           ]
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": []
+          }
+         ],
+         "liveness_probe": [],
+         "ports": [
+          {}
+         ],
+         "readiness_probe": [],
+         "resources": [
+          {
+           "limits": {}
+          }
+         ],
+         "startup_probe": [
+          {
+           "grpc": [],
+           "http_get": [],
+           "tcp_socket": [
+            {}
+           ]
+          }
+         ],
+         "volume_mounts": [
+          {}
+         ]
+        }
+       ],
+       "labels": {},
+       "node_selector": [],
+       "sandboxes": [],
+       "scaling": [
+        {}
+       ],
+       "volumes": [
+        {
+         "cloud_sql_instance": [
+          {
+           "instances": [
+            false
+           ]
+          }
+         ],
+         "empty_dir": [],
+         "gcs": [],
+         "nfs": [],
+         "secret": []
+        }
+       ],
+       "vpc_access": []
+      }
+     ],
+     "terminal_condition": [
+      {}
+     ],
+     "terraform_labels": {},
+     "traffic": [
+      {}
+     ],
+     "traffic_statuses": [
+      {}
+     ],
+     "urls": [
+      false,
+      false
+     ]
+    },
+    "after_sensitive": {
+     "annotations": {},
+     "binary_authorization": [],
+     "build_config": [],
+     "conditions": [
+      {},
+      {}
+     ],
+     "custom_audiences": [],
+     "effective_annotations": {},
+     "effective_labels": {},
+     "labels": {},
+     "multi_region_settings": [],
+     "scaling": [
+      {}
+     ],
+     "template": [
+      {
+       "annotations": {},
+       "containers": [
+        {
+         "args": [],
+         "build_info": [],
+         "command": [],
+         "depends_on": [],
+         "env": [
+          {
+           "value_source": []
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": [
+            {
+             "secret_key_ref": [
+              {}
+             ]
+            }
+           ]
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": []
+          },
+          {
+           "value_source": []
+          }
+         ],
+         "liveness_probe": [],
+         "ports": [
+          {}
+         ],
+         "readiness_probe": [],
+         "resources": [
+          {
+           "limits": {}
+          }
+         ],
+         "startup_probe": [
+          {
+           "grpc": [],
+           "http_get": [],
+           "tcp_socket": [
+            {}
+           ]
+          }
+         ],
+         "volume_mounts": [
+          {}
+         ]
+        }
+       ],
+       "labels": {},
+       "node_selector": [],
+       "sandboxes": [],
+       "scaling": [
+        {}
+       ],
+       "volumes": [
+        {
+         "cloud_sql_instance": [
+          {
+           "instances": [
+            false
+           ]
+          }
+         ],
+         "empty_dir": [],
+         "gcs": [],
+         "nfs": [],
+         "secret": []
+        }
+       ],
+       "vpc_access": []
+      }
+     ],
+     "terminal_condition": [
+      {}
+     ],
+     "terraform_labels": {},
+     "traffic": [
+      {}
+     ],
+     "traffic_statuses": [
+      {}
+     ],
+     "urls": [
+      false,
+      false
+     ]
+    },
+    "before_identity": {
+     "location": "us-central1",
+     "name": "dryscope-live-test",
+     "project": "dryscope"
+    },
+    "after_identity": {
+     "location": "us-central1",
+     "name": "dryscope-live-test",
+     "project": "dryscope"
+    }
+   }
+  },
+  {
+   "address": "google_cloud_run_v2_service_iam_member.deploy[\"api\"]",
+   "type": "google_cloud_run_v2_service_iam_member",
+   "change": {
+    "actions": [
+     "no-op"
+    ],
+    "before": {
+     "condition": [],
+     "etag": "synthetic-etag-5",
+     "id": "projects/dryscope/locations/us-central1/services/dryscope-api-test/projects/dryscope/roles/dryscopeDeployTest/serviceAccount:dryscope-deploy-test@dryscope.iam.gserviceaccount.com",
+     "location": "us-central1",
+     "member": "serviceAccount:dryscope-deploy-test@dryscope.iam.gserviceaccount.com",
+     "name": "projects/dryscope/locations/us-central1/services/dryscope-api-test",
+     "project": "dryscope",
+     "role": "projects/dryscope/roles/dryscopeDeployTest"
+    },
+    "after": {
+     "condition": [],
+     "etag": "synthetic-etag-5",
+     "id": "projects/dryscope/locations/us-central1/services/dryscope-api-test/projects/dryscope/roles/dryscopeDeployTest/serviceAccount:dryscope-deploy-test@dryscope.iam.gserviceaccount.com",
+     "location": "us-central1",
+     "member": "serviceAccount:dryscope-deploy-test@dryscope.iam.gserviceaccount.com",
+     "name": "projects/dryscope/locations/us-central1/services/dryscope-api-test",
+     "project": "dryscope",
+     "role": "projects/dryscope/roles/dryscopeDeployTest"
+    },
+    "after_unknown": {},
+    "before_sensitive": {
+     "condition": []
+    },
+    "after_sensitive": {
+     "condition": []
+    },
+    "before_identity": {
+     "condition_title": null,
+     "location": "us-central1",
+     "member": "serviceAccount:dryscope-deploy-test@dryscope.iam.gserviceaccount.com",
+     "name": "projects/dryscope/locations/us-central1/services/dryscope-api-test",
+     "project": "dryscope",
+     "role": "projects/dryscope/roles/dryscopeDeployTest"
+    },
+    "after_identity": {
+     "condition_title": null,
+     "location": "us-central1",
+     "member": "serviceAccount:dryscope-deploy-test@dryscope.iam.gserviceaccount.com",
+     "name": "projects/dryscope/locations/us-central1/services/dryscope-api-test",
+     "project": "dryscope",
+     "role": "projects/dryscope/roles/dryscopeDeployTest"
+    }
+   }
+  },
+  {
+   "address": "google_cloud_run_v2_service_iam_member.deploy[\"live\"]",
+   "type": "google_cloud_run_v2_service_iam_member",
+   "change": {
+    "actions": [
+     "no-op"
+    ],
+    "before": {
+     "condition": [],
+     "etag": "synthetic-etag-6",
+     "id": "projects/dryscope/locations/us-central1/services/dryscope-live-test/projects/dryscope/roles/dryscopeDeployTest/serviceAccount:dryscope-deploy-test@dryscope.iam.gserviceaccount.com",
+     "location": "us-central1",
+     "member": "serviceAccount:dryscope-deploy-test@dryscope.iam.gserviceaccount.com",
+     "name": "projects/dryscope/locations/us-central1/services/dryscope-live-test",
+     "project": "dryscope",
+     "role": "projects/dryscope/roles/dryscopeDeployTest"
+    },
+    "after": {
+     "condition": [],
+     "etag": "synthetic-etag-6",
+     "id": "projects/dryscope/locations/us-central1/services/dryscope-live-test/projects/dryscope/roles/dryscopeDeployTest/serviceAccount:dryscope-deploy-test@dryscope.iam.gserviceaccount.com",
+     "location": "us-central1",
+     "member": "serviceAccount:dryscope-deploy-test@dryscope.iam.gserviceaccount.com",
+     "name": "projects/dryscope/locations/us-central1/services/dryscope-live-test",
+     "project": "dryscope",
+     "role": "projects/dryscope/roles/dryscopeDeployTest"
+    },
+    "after_unknown": {},
+    "before_sensitive": {
+     "condition": []
+    },
+    "after_sensitive": {
+     "condition": []
+    },
+    "before_identity": {
+     "condition_title": null,
+     "location": "us-central1",
+     "member": "serviceAccount:dryscope-deploy-test@dryscope.iam.gserviceaccount.com",
+     "name": "projects/dryscope/locations/us-central1/services/dryscope-live-test",
+     "project": "dryscope",
+     "role": "projects/dryscope/roles/dryscopeDeployTest"
+    },
+    "after_identity": {
+     "condition_title": null,
+     "location": "us-central1",
+     "member": "serviceAccount:dryscope-deploy-test@dryscope.iam.gserviceaccount.com",
+     "name": "projects/dryscope/locations/us-central1/services/dryscope-live-test",
+     "project": "dryscope",
+     "role": "projects/dryscope/roles/dryscopeDeployTest"
+    }
+   }
+  },
+  {
+   "address": "google_cloud_run_v2_service_iam_member.public[\"api\"]",
+   "type": "google_cloud_run_v2_service_iam_member",
+   "change": {
+    "actions": [
+     "no-op"
+    ],
+    "before": {
+     "condition": [],
+     "etag": "synthetic-etag-5",
+     "id": "projects/dryscope/locations/us-central1/services/dryscope-api-test/roles/run.invoker/allUsers",
+     "location": "us-central1",
+     "member": "allUsers",
+     "name": "projects/dryscope/locations/us-central1/services/dryscope-api-test",
+     "project": "dryscope",
+     "role": "roles/run.invoker"
+    },
+    "after": {
+     "condition": [],
+     "etag": "synthetic-etag-5",
+     "id": "projects/dryscope/locations/us-central1/services/dryscope-api-test/roles/run.invoker/allUsers",
+     "location": "us-central1",
+     "member": "allUsers",
+     "name": "projects/dryscope/locations/us-central1/services/dryscope-api-test",
+     "project": "dryscope",
+     "role": "roles/run.invoker"
+    },
+    "after_unknown": {},
+    "before_sensitive": {
+     "condition": []
+    },
+    "after_sensitive": {
+     "condition": []
+    },
+    "before_identity": {
+     "condition_title": null,
+     "location": "us-central1",
+     "member": "allUsers",
+     "name": "projects/dryscope/locations/us-central1/services/dryscope-api-test",
+     "project": "dryscope",
+     "role": "roles/run.invoker"
+    },
+    "after_identity": {
+     "condition_title": null,
+     "location": "us-central1",
+     "member": "allUsers",
+     "name": "projects/dryscope/locations/us-central1/services/dryscope-api-test",
+     "project": "dryscope",
+     "role": "roles/run.invoker"
+    }
+   }
+  },
+  {
+   "address": "google_cloud_run_v2_service_iam_member.public[\"live\"]",
+   "type": "google_cloud_run_v2_service_iam_member",
+   "change": {
+    "actions": [
+     "no-op"
+    ],
+    "before": {
+     "condition": [],
+     "etag": "synthetic-etag-6",
+     "id": "projects/dryscope/locations/us-central1/services/dryscope-live-test/roles/run.invoker/allUsers",
+     "location": "us-central1",
+     "member": "allUsers",
+     "name": "projects/dryscope/locations/us-central1/services/dryscope-live-test",
+     "project": "dryscope",
+     "role": "roles/run.invoker"
+    },
+    "after": {
+     "condition": [],
+     "etag": "synthetic-etag-6",
+     "id": "projects/dryscope/locations/us-central1/services/dryscope-live-test/roles/run.invoker/allUsers",
+     "location": "us-central1",
+     "member": "allUsers",
+     "name": "projects/dryscope/locations/us-central1/services/dryscope-live-test",
+     "project": "dryscope",
+     "role": "roles/run.invoker"
+    },
+    "after_unknown": {},
+    "before_sensitive": {
+     "condition": []
+    },
+    "after_sensitive": {
+     "condition": []
+    },
+    "before_identity": {
+     "condition_title": null,
+     "location": "us-central1",
+     "member": "allUsers",
+     "name": "projects/dryscope/locations/us-central1/services/dryscope-live-test",
+     "project": "dryscope",
+     "role": "roles/run.invoker"
+    },
+    "after_identity": {
+     "condition_title": null,
+     "location": "us-central1",
+     "member": "allUsers",
+     "name": "projects/dryscope/locations/us-central1/services/dryscope-live-test",
+     "project": "dryscope",
+     "role": "roles/run.invoker"
+    }
+   }
+  },
+  {
+   "address": "google_cloud_scheduler_job.jobs[\"access-projection\"]",
+   "type": "google_cloud_scheduler_job",
+   "change": {
+    "actions": [
+     "no-op"
+    ],
+    "before": {
+     "app_engine_http_target": [],
+     "attempt_deadline": "180s",
+     "deletion_policy": "DELETE",
+     "description": "DryScope test: POST /api/internal/access-projection as the scheduler account.",
+     "http_target": [
+      {
+       "body": "",
+       "headers": {},
+       "http_method": "POST",
+       "oauth_token": [],
+       "oidc_token": [
+        {
+         "audience": "dryscope-test-access-projection",
+         "service_account_email": "dryscope-scheduler-test@dryscope.iam.gserviceaccount.com"
+        }
+       ],
+       "uri": "https://dryscope-api-test-570228742694.us-central1.run.app/api/internal/access-projection"
+      }
+     ],
+     "id": "projects/dryscope/locations/us-central1/jobs/dryscope-access-projection-test",
+     "name": "dryscope-access-projection-test",
+     "paused": false,
+     "project": "dryscope",
+     "pubsub_target": [],
+     "region": "us-central1",
+     "retry_config": [],
+     "schedule": "*/5 * * * *",
+     "state": "ENABLED",
+     "time_zone": "Etc/UTC",
+     "timeouts": null
+    },
+    "after": {
+     "app_engine_http_target": [],
+     "attempt_deadline": "180s",
+     "deletion_policy": "DELETE",
+     "description": "DryScope test: POST /api/internal/access-projection as the scheduler account.",
+     "http_target": [
+      {
+       "body": "",
+       "headers": {},
+       "http_method": "POST",
+       "oauth_token": [],
+       "oidc_token": [
+        {
+         "audience": "dryscope-test-access-projection",
+         "service_account_email": "dryscope-scheduler-test@dryscope.iam.gserviceaccount.com"
+        }
+       ],
+       "uri": "https://dryscope-api-test-570228742694.us-central1.run.app/api/internal/access-projection"
+      }
+     ],
+     "id": "projects/dryscope/locations/us-central1/jobs/dryscope-access-projection-test",
+     "name": "dryscope-access-projection-test",
+     "paused": false,
+     "project": "dryscope",
+     "pubsub_target": [],
+     "region": "us-central1",
+     "retry_config": [],
+     "schedule": "*/5 * * * *",
+     "state": "ENABLED",
+     "time_zone": "Etc/UTC",
+     "timeouts": null
+    },
+    "after_unknown": {},
+    "before_sensitive": {
+     "app_engine_http_target": [],
+     "http_target": [
+      {
+       "headers": {},
+       "oauth_token": [],
+       "oidc_token": [
+        {}
+       ]
+      }
+     ],
+     "pubsub_target": [],
+     "retry_config": []
+    },
+    "after_sensitive": {
+     "app_engine_http_target": [],
+     "http_target": [
+      {
+       "headers": {},
+       "oauth_token": [],
+       "oidc_token": [
+        {}
+       ]
+      }
+     ],
+     "pubsub_target": [],
+     "retry_config": []
+    },
+    "before_identity": {
+     "name": "dryscope-access-projection-test",
+     "project": "dryscope",
+     "region": "us-central1"
+    },
+    "after_identity": {
+     "name": "dryscope-access-projection-test",
+     "project": "dryscope",
+     "region": "us-central1"
+    }
+   }
+  },
+  {
+   "address": "google_monitoring_alert_policy.api_latency",
+   "type": "google_monitoring_alert_policy",
+   "change": {
+    "actions": [
+     "no-op"
+    ],
+    "before": {
+     "alert_strategy": [],
+     "combiner": "OR",
+     "conditions": [
+      {
+       "condition_absent": [],
+       "condition_matched_log": [],
+       "condition_monitoring_query_language": [],
+       "condition_prometheus_query_language": [],
+       "condition_sql": [],
+       "condition_threshold": [
+        {
+         "aggregations": [
+          {
+           "alignment_period": "300s",
+           "cross_series_reducer": "REDUCE_MAX",
+           "group_by_fields": [],
+           "per_series_aligner": "ALIGN_PERCENTILE_95"
+          }
+         ],
+         "comparison": "COMPARISON_GT",
+         "denominator_aggregations": [],
+         "denominator_filter": "",
+         "duration": "600s",
+         "evaluation_missing_data": "",
+         "filter": "resource.type = \"cloud_run_revision\" AND resource.labels.service_name = \"dryscope-api-test\" AND metric.type = \"run.googleapis.com/request_latencies\"",
+         "forecast_options": [],
+         "threshold_value": 5000,
+         "trigger": []
+        }
+       ],
+       "display_name": "p95 request latency above 5000 ms for 10 minutes",
+       "name": "projects/dryscope/alertPolicies/1000000000000000001/conditions/1000000000000000002"
+      }
+     ],
+     "creation_record": [
+      {
+       "mutate_time": "2026-01-01T00:00:13Z",
+       "mutated_by": "owner@example.com"
+      }
+     ],
+     "deletion_policy": "DELETE",
+     "display_name": "DryScope test: web app slow",
+     "documentation": [],
+     "enabled": true,
+     "id": "projects/dryscope/alertPolicies/1000000000000000001",
+     "name": "projects/dryscope/alertPolicies/1000000000000000001",
+     "notification_channels": [
+      "projects/dryscope/notificationChannels/1000000000000000003"
+     ],
+     "project": "dryscope",
+     "severity": "",
+     "timeouts": null,
+     "user_labels": {
+      "app": "dryscope",
+      "environment": "test",
+      "managed_by": "terraform"
+     }
+    },
+    "after": {
+     "alert_strategy": [],
+     "combiner": "OR",
+     "conditions": [
+      {
+       "condition_absent": [],
+       "condition_matched_log": [],
+       "condition_monitoring_query_language": [],
+       "condition_prometheus_query_language": [],
+       "condition_sql": [],
+       "condition_threshold": [
+        {
+         "aggregations": [
+          {
+           "alignment_period": "300s",
+           "cross_series_reducer": "REDUCE_MAX",
+           "group_by_fields": [],
+           "per_series_aligner": "ALIGN_PERCENTILE_95"
+          }
+         ],
+         "comparison": "COMPARISON_GT",
+         "denominator_aggregations": [],
+         "denominator_filter": "",
+         "duration": "600s",
+         "evaluation_missing_data": "",
+         "filter": "resource.type = \"cloud_run_revision\" AND resource.labels.service_name = \"dryscope-api-test\" AND metric.type = \"run.googleapis.com/request_latencies\"",
+         "forecast_options": [],
+         "threshold_value": 5000,
+         "trigger": []
+        }
+       ],
+       "display_name": "p95 request latency above 5000 ms for 10 minutes",
+       "name": "projects/dryscope/alertPolicies/1000000000000000001/conditions/1000000000000000002"
+      }
+     ],
+     "creation_record": [
+      {
+       "mutate_time": "2026-01-01T00:00:13Z",
+       "mutated_by": "owner@example.com"
+      }
+     ],
+     "deletion_policy": "DELETE",
+     "display_name": "DryScope test: web app slow",
+     "documentation": [],
+     "enabled": true,
+     "id": "projects/dryscope/alertPolicies/1000000000000000001",
+     "name": "projects/dryscope/alertPolicies/1000000000000000001",
+     "notification_channels": [
+      "projects/dryscope/notificationChannels/1000000000000000003"
+     ],
+     "project": "dryscope",
+     "severity": "",
+     "timeouts": null,
+     "user_labels": {
+      "app": "dryscope",
+      "environment": "test",
+      "managed_by": "terraform"
+     }
+    },
+    "after_unknown": {},
+    "before_sensitive": {
+     "alert_strategy": [],
+     "conditions": [
+      {
+       "condition_absent": [],
+       "condition_matched_log": [],
+       "condition_monitoring_query_language": [],
+       "condition_prometheus_query_language": [],
+       "condition_sql": [],
+       "condition_threshold": [
+        {
+         "aggregations": [
+          {
+           "group_by_fields": []
+          }
+         ],
+         "denominator_aggregations": [],
+         "forecast_options": [],
+         "trigger": []
+        }
+       ]
+      }
+     ],
+     "creation_record": [
+      {}
+     ],
+     "documentation": [],
+     "notification_channels": [
+      false
+     ],
+     "user_labels": {}
+    },
+    "after_sensitive": {
+     "alert_strategy": [],
+     "conditions": [
+      {
+       "condition_absent": [],
+       "condition_matched_log": [],
+       "condition_monitoring_query_language": [],
+       "condition_prometheus_query_language": [],
+       "condition_sql": [],
+       "condition_threshold": [
+        {
+         "aggregations": [
+          {
+           "group_by_fields": []
+          }
+         ],
+         "denominator_aggregations": [],
+         "forecast_options": [],
+         "trigger": []
+        }
+       ]
+      }
+     ],
+     "creation_record": [
+      {}
+     ],
+     "documentation": [],
+     "notification_channels": [
+      false
+     ],
+     "user_labels": {}
+    },
+    "before_identity": {
+     "name": "projects/dryscope/alertPolicies/1000000000000000001",
+     "project": "dryscope"
+    },
+    "after_identity": {
+     "name": "projects/dryscope/alertPolicies/1000000000000000001",
+     "project": "dryscope"
+    }
+   }
+  },
+  {
+   "address": "google_monitoring_alert_policy.server_errors[\"api\"]",
+   "type": "google_monitoring_alert_policy",
+   "change": {
+    "actions": [
+     "no-op"
+    ],
+    "before": {
+     "alert_strategy": [],
+     "combiner": "OR",
+     "conditions": [
+      {
+       "condition_absent": [],
+       "condition_matched_log": [],
+       "condition_monitoring_query_language": [],
+       "condition_prometheus_query_language": [],
+       "condition_sql": [],
+       "condition_threshold": [
+        {
+         "aggregations": [
+          {
+           "alignment_period": "600s",
+           "cross_series_reducer": "REDUCE_SUM",
+           "group_by_fields": [],
+           "per_series_aligner": "ALIGN_SUM"
+          }
+         ],
+         "comparison": "COMPARISON_GT",
+         "denominator_aggregations": [],
+         "denominator_filter": "",
+         "duration": "0s",
+         "evaluation_missing_data": "",
+         "filter": "resource.type = \"cloud_run_revision\" AND resource.labels.service_name = \"dryscope-api-test\" AND metric.type = \"run.googleapis.com/request_count\" AND metric.labels.response_code_class = \"5xx\"",
+         "forecast_options": [],
+         "threshold_value": 5,
+         "trigger": []
+        }
+       ],
+       "display_name": "More than 5 responses with a 5xx status in 10 minutes",
+       "name": "projects/dryscope/alertPolicies/1000000000000000004/conditions/1000000000000000005"
+      }
+     ],
+     "creation_record": [
+      {
+       "mutate_time": "2026-01-01T00:00:14Z",
+       "mutated_by": "owner@example.com"
+      }
+     ],
+     "deletion_policy": "DELETE",
+     "display_name": "DryScope test: dryscope-api-test server errors",
+     "documentation": [
+      {
+       "content": "Open the service in Cloud Run (us-central1) and read its latest revision logs. Roll traffic back if this began with a deploy.",
+       "links": [],
+       "mime_type": "text/markdown",
+       "subject": ""
+      }
+     ],
+     "enabled": true,
+     "id": "projects/dryscope/alertPolicies/1000000000000000004",
+     "name": "projects/dryscope/alertPolicies/1000000000000000004",
+     "notification_channels": [
+      "projects/dryscope/notificationChannels/1000000000000000003"
+     ],
+     "project": "dryscope",
+     "severity": "",
+     "timeouts": null,
+     "user_labels": {
+      "app": "dryscope",
+      "environment": "test",
+      "managed_by": "terraform"
+     }
+    },
+    "after": {
+     "alert_strategy": [],
+     "combiner": "OR",
+     "conditions": [
+      {
+       "condition_absent": [],
+       "condition_matched_log": [],
+       "condition_monitoring_query_language": [],
+       "condition_prometheus_query_language": [],
+       "condition_sql": [],
+       "condition_threshold": [
+        {
+         "aggregations": [
+          {
+           "alignment_period": "600s",
+           "cross_series_reducer": "REDUCE_SUM",
+           "group_by_fields": [],
+           "per_series_aligner": "ALIGN_SUM"
+          }
+         ],
+         "comparison": "COMPARISON_GT",
+         "denominator_aggregations": [],
+         "denominator_filter": "",
+         "duration": "0s",
+         "evaluation_missing_data": "",
+         "filter": "resource.type = \"cloud_run_revision\" AND resource.labels.service_name = \"dryscope-api-test\" AND metric.type = \"run.googleapis.com/request_count\" AND metric.labels.response_code_class = \"5xx\"",
+         "forecast_options": [],
+         "threshold_value": 5,
+         "trigger": []
+        }
+       ],
+       "display_name": "More than 5 responses with a 5xx status in 10 minutes",
+       "name": "projects/dryscope/alertPolicies/1000000000000000004/conditions/1000000000000000005"
+      }
+     ],
+     "creation_record": [
+      {
+       "mutate_time": "2026-01-01T00:00:14Z",
+       "mutated_by": "owner@example.com"
+      }
+     ],
+     "deletion_policy": "DELETE",
+     "display_name": "DryScope test: dryscope-api-test server errors",
+     "documentation": [
+      {
+       "content": "Open the service in Cloud Run (us-central1) and read its latest revision logs. Roll traffic back if this began with a deploy.",
+       "links": [],
+       "mime_type": "text/markdown",
+       "subject": ""
+      }
+     ],
+     "enabled": true,
+     "id": "projects/dryscope/alertPolicies/1000000000000000004",
+     "name": "projects/dryscope/alertPolicies/1000000000000000004",
+     "notification_channels": [
+      "projects/dryscope/notificationChannels/1000000000000000003"
+     ],
+     "project": "dryscope",
+     "severity": "",
+     "timeouts": null,
+     "user_labels": {
+      "app": "dryscope",
+      "environment": "test",
+      "managed_by": "terraform"
+     }
+    },
+    "after_unknown": {},
+    "before_sensitive": {
+     "alert_strategy": [],
+     "conditions": [
+      {
+       "condition_absent": [],
+       "condition_matched_log": [],
+       "condition_monitoring_query_language": [],
+       "condition_prometheus_query_language": [],
+       "condition_sql": [],
+       "condition_threshold": [
+        {
+         "aggregations": [
+          {
+           "group_by_fields": []
+          }
+         ],
+         "denominator_aggregations": [],
+         "forecast_options": [],
+         "trigger": []
+        }
+       ]
+      }
+     ],
+     "creation_record": [
+      {}
+     ],
+     "documentation": [
+      {
+       "links": []
+      }
+     ],
+     "notification_channels": [
+      false
+     ],
+     "user_labels": {}
+    },
+    "after_sensitive": {
+     "alert_strategy": [],
+     "conditions": [
+      {
+       "condition_absent": [],
+       "condition_matched_log": [],
+       "condition_monitoring_query_language": [],
+       "condition_prometheus_query_language": [],
+       "condition_sql": [],
+       "condition_threshold": [
+        {
+         "aggregations": [
+          {
+           "group_by_fields": []
+          }
+         ],
+         "denominator_aggregations": [],
+         "forecast_options": [],
+         "trigger": []
+        }
+       ]
+      }
+     ],
+     "creation_record": [
+      {}
+     ],
+     "documentation": [
+      {
+       "links": []
+      }
+     ],
+     "notification_channels": [
+      false
+     ],
+     "user_labels": {}
+    },
+    "before_identity": {
+     "name": "projects/dryscope/alertPolicies/1000000000000000004",
+     "project": "dryscope"
+    },
+    "after_identity": {
+     "name": "projects/dryscope/alertPolicies/1000000000000000004",
+     "project": "dryscope"
+    }
+   }
+  },
+  {
+   "address": "google_monitoring_alert_policy.server_errors[\"live\"]",
+   "type": "google_monitoring_alert_policy",
+   "change": {
+    "actions": [
+     "no-op"
+    ],
+    "before": {
+     "alert_strategy": [],
+     "combiner": "OR",
+     "conditions": [
+      {
+       "condition_absent": [],
+       "condition_matched_log": [],
+       "condition_monitoring_query_language": [],
+       "condition_prometheus_query_language": [],
+       "condition_sql": [],
+       "condition_threshold": [
+        {
+         "aggregations": [
+          {
+           "alignment_period": "600s",
+           "cross_series_reducer": "REDUCE_SUM",
+           "group_by_fields": [],
+           "per_series_aligner": "ALIGN_SUM"
+          }
+         ],
+         "comparison": "COMPARISON_GT",
+         "denominator_aggregations": [],
+         "denominator_filter": "",
+         "duration": "0s",
+         "evaluation_missing_data": "",
+         "filter": "resource.type = \"cloud_run_revision\" AND resource.labels.service_name = \"dryscope-live-test\" AND metric.type = \"run.googleapis.com/request_count\" AND metric.labels.response_code_class = \"5xx\"",
+         "forecast_options": [],
+         "threshold_value": 5,
+         "trigger": []
+        }
+       ],
+       "display_name": "More than 5 responses with a 5xx status in 10 minutes",
+       "name": "projects/dryscope/alertPolicies/1000000000000000006/conditions/1000000000000000007"
+      }
+     ],
+     "creation_record": [
+      {
+       "mutate_time": "2026-01-01T00:00:15Z",
+       "mutated_by": "owner@example.com"
+      }
+     ],
+     "deletion_policy": "DELETE",
+     "display_name": "DryScope test: dryscope-live-test server errors",
+     "documentation": [
+      {
+       "content": "Open the service in Cloud Run (us-central1) and read its latest revision logs. Roll traffic back if this began with a deploy.",
+       "links": [],
+       "mime_type": "text/markdown",
+       "subject": ""
+      }
+     ],
+     "enabled": true,
+     "id": "projects/dryscope/alertPolicies/1000000000000000006",
+     "name": "projects/dryscope/alertPolicies/1000000000000000006",
+     "notification_channels": [
+      "projects/dryscope/notificationChannels/1000000000000000003"
+     ],
+     "project": "dryscope",
+     "severity": "",
+     "timeouts": null,
+     "user_labels": {
+      "app": "dryscope",
+      "environment": "test",
+      "managed_by": "terraform"
+     }
+    },
+    "after": {
+     "alert_strategy": [],
+     "combiner": "OR",
+     "conditions": [
+      {
+       "condition_absent": [],
+       "condition_matched_log": [],
+       "condition_monitoring_query_language": [],
+       "condition_prometheus_query_language": [],
+       "condition_sql": [],
+       "condition_threshold": [
+        {
+         "aggregations": [
+          {
+           "alignment_period": "600s",
+           "cross_series_reducer": "REDUCE_SUM",
+           "group_by_fields": [],
+           "per_series_aligner": "ALIGN_SUM"
+          }
+         ],
+         "comparison": "COMPARISON_GT",
+         "denominator_aggregations": [],
+         "denominator_filter": "",
+         "duration": "0s",
+         "evaluation_missing_data": "",
+         "filter": "resource.type = \"cloud_run_revision\" AND resource.labels.service_name = \"dryscope-live-test\" AND metric.type = \"run.googleapis.com/request_count\" AND metric.labels.response_code_class = \"5xx\"",
+         "forecast_options": [],
+         "threshold_value": 5,
+         "trigger": []
+        }
+       ],
+       "display_name": "More than 5 responses with a 5xx status in 10 minutes",
+       "name": "projects/dryscope/alertPolicies/1000000000000000006/conditions/1000000000000000007"
+      }
+     ],
+     "creation_record": [
+      {
+       "mutate_time": "2026-01-01T00:00:15Z",
+       "mutated_by": "owner@example.com"
+      }
+     ],
+     "deletion_policy": "DELETE",
+     "display_name": "DryScope test: dryscope-live-test server errors",
+     "documentation": [
+      {
+       "content": "Open the service in Cloud Run (us-central1) and read its latest revision logs. Roll traffic back if this began with a deploy.",
+       "links": [],
+       "mime_type": "text/markdown",
+       "subject": ""
+      }
+     ],
+     "enabled": true,
+     "id": "projects/dryscope/alertPolicies/1000000000000000006",
+     "name": "projects/dryscope/alertPolicies/1000000000000000006",
+     "notification_channels": [
+      "projects/dryscope/notificationChannels/1000000000000000003"
+     ],
+     "project": "dryscope",
+     "severity": "",
+     "timeouts": null,
+     "user_labels": {
+      "app": "dryscope",
+      "environment": "test",
+      "managed_by": "terraform"
+     }
+    },
+    "after_unknown": {},
+    "before_sensitive": {
+     "alert_strategy": [],
+     "conditions": [
+      {
+       "condition_absent": [],
+       "condition_matched_log": [],
+       "condition_monitoring_query_language": [],
+       "condition_prometheus_query_language": [],
+       "condition_sql": [],
+       "condition_threshold": [
+        {
+         "aggregations": [
+          {
+           "group_by_fields": []
+          }
+         ],
+         "denominator_aggregations": [],
+         "forecast_options": [],
+         "trigger": []
+        }
+       ]
+      }
+     ],
+     "creation_record": [
+      {}
+     ],
+     "documentation": [
+      {
+       "links": []
+      }
+     ],
+     "notification_channels": [
+      false
+     ],
+     "user_labels": {}
+    },
+    "after_sensitive": {
+     "alert_strategy": [],
+     "conditions": [
+      {
+       "condition_absent": [],
+       "condition_matched_log": [],
+       "condition_monitoring_query_language": [],
+       "condition_prometheus_query_language": [],
+       "condition_sql": [],
+       "condition_threshold": [
+        {
+         "aggregations": [
+          {
+           "group_by_fields": []
+          }
+         ],
+         "denominator_aggregations": [],
+         "forecast_options": [],
+         "trigger": []
+        }
+       ]
+      }
+     ],
+     "creation_record": [
+      {}
+     ],
+     "documentation": [
+      {
+       "links": []
+      }
+     ],
+     "notification_channels": [
+      false
+     ],
+     "user_labels": {}
+    },
+    "before_identity": {
+     "name": "projects/dryscope/alertPolicies/1000000000000000006",
+     "project": "dryscope"
+    },
+    "after_identity": {
+     "name": "projects/dryscope/alertPolicies/1000000000000000006",
+     "project": "dryscope"
+    }
+   }
+  },
+  {
+   "address": "google_monitoring_alert_policy.sql[\"cpu\"]",
+   "type": "google_monitoring_alert_policy",
+   "change": {
+    "actions": [
+     "no-op"
+    ],
+    "before": {
+     "alert_strategy": [],
+     "combiner": "OR",
+     "conditions": [
+      {
+       "condition_absent": [],
+       "condition_matched_log": [],
+       "condition_monitoring_query_language": [],
+       "condition_prometheus_query_language": [],
+       "condition_sql": [],
+       "condition_threshold": [
+        {
+         "aggregations": [
+          {
+           "alignment_period": "300s",
+           "cross_series_reducer": "",
+           "group_by_fields": [],
+           "per_series_aligner": "ALIGN_MEAN"
+          }
+         ],
+         "comparison": "COMPARISON_GT",
+         "denominator_aggregations": [],
+         "denominator_filter": "",
+         "duration": "900s",
+         "evaluation_missing_data": "",
+         "filter": "resource.type = \"cloudsql_database\" AND resource.labels.database_id = \"dryscope:dryscope-test-pg\" AND metric.type = \"cloudsql.googleapis.com/database/cpu/utilization\"",
+         "forecast_options": [],
+         "threshold_value": 0.8,
+         "trigger": []
+        }
+       ],
+       "display_name": "CPU above 80% for 15 minutes",
+       "name": "projects/dryscope/alertPolicies/1000000000000000008/conditions/1000000000000000009"
+      }
+     ],
+     "creation_record": [
+      {
+       "mutate_time": "2026-01-01T00:00:16Z",
+       "mutated_by": "owner@example.com"
+      }
+     ],
+     "deletion_policy": "DELETE",
+     "display_name": "DryScope test: database cpu",
+     "documentation": [],
+     "enabled": true,
+     "id": "projects/dryscope/alertPolicies/1000000000000000008",
+     "name": "projects/dryscope/alertPolicies/1000000000000000008",
+     "notification_channels": [
+      "projects/dryscope/notificationChannels/1000000000000000003"
+     ],
+     "project": "dryscope",
+     "severity": "",
+     "timeouts": null,
+     "user_labels": {
+      "app": "dryscope",
+      "environment": "test",
+      "managed_by": "terraform"
+     }
+    },
+    "after": {
+     "alert_strategy": [],
+     "combiner": "OR",
+     "conditions": [
+      {
+       "condition_absent": [],
+       "condition_matched_log": [],
+       "condition_monitoring_query_language": [],
+       "condition_prometheus_query_language": [],
+       "condition_sql": [],
+       "condition_threshold": [
+        {
+         "aggregations": [
+          {
+           "alignment_period": "300s",
+           "cross_series_reducer": "",
+           "group_by_fields": [],
+           "per_series_aligner": "ALIGN_MEAN"
+          }
+         ],
+         "comparison": "COMPARISON_GT",
+         "denominator_aggregations": [],
+         "denominator_filter": "",
+         "duration": "900s",
+         "evaluation_missing_data": "",
+         "filter": "resource.type = \"cloudsql_database\" AND resource.labels.database_id = \"dryscope:dryscope-test-pg\" AND metric.type = \"cloudsql.googleapis.com/database/cpu/utilization\"",
+         "forecast_options": [],
+         "threshold_value": 0.8,
+         "trigger": []
+        }
+       ],
+       "display_name": "CPU above 80% for 15 minutes",
+       "name": "projects/dryscope/alertPolicies/1000000000000000008/conditions/1000000000000000009"
+      }
+     ],
+     "creation_record": [
+      {
+       "mutate_time": "2026-01-01T00:00:16Z",
+       "mutated_by": "owner@example.com"
+      }
+     ],
+     "deletion_policy": "DELETE",
+     "display_name": "DryScope test: database cpu",
+     "documentation": [],
+     "enabled": true,
+     "id": "projects/dryscope/alertPolicies/1000000000000000008",
+     "name": "projects/dryscope/alertPolicies/1000000000000000008",
+     "notification_channels": [
+      "projects/dryscope/notificationChannels/1000000000000000003"
+     ],
+     "project": "dryscope",
+     "severity": "",
+     "timeouts": null,
+     "user_labels": {
+      "app": "dryscope",
+      "environment": "test",
+      "managed_by": "terraform"
+     }
+    },
+    "after_unknown": {},
+    "before_sensitive": {
+     "alert_strategy": [],
+     "conditions": [
+      {
+       "condition_absent": [],
+       "condition_matched_log": [],
+       "condition_monitoring_query_language": [],
+       "condition_prometheus_query_language": [],
+       "condition_sql": [],
+       "condition_threshold": [
+        {
+         "aggregations": [
+          {
+           "group_by_fields": []
+          }
+         ],
+         "denominator_aggregations": [],
+         "forecast_options": [],
+         "trigger": []
+        }
+       ]
+      }
+     ],
+     "creation_record": [
+      {}
+     ],
+     "documentation": [],
+     "notification_channels": [
+      false
+     ],
+     "user_labels": {}
+    },
+    "after_sensitive": {
+     "alert_strategy": [],
+     "conditions": [
+      {
+       "condition_absent": [],
+       "condition_matched_log": [],
+       "condition_monitoring_query_language": [],
+       "condition_prometheus_query_language": [],
+       "condition_sql": [],
+       "condition_threshold": [
+        {
+         "aggregations": [
+          {
+           "group_by_fields": []
+          }
+         ],
+         "denominator_aggregations": [],
+         "forecast_options": [],
+         "trigger": []
+        }
+       ]
+      }
+     ],
+     "creation_record": [
+      {}
+     ],
+     "documentation": [],
+     "notification_channels": [
+      false
+     ],
+     "user_labels": {}
+    },
+    "before_identity": {
+     "name": "projects/dryscope/alertPolicies/1000000000000000008",
+     "project": "dryscope"
+    },
+    "after_identity": {
+     "name": "projects/dryscope/alertPolicies/1000000000000000008",
+     "project": "dryscope"
+    }
+   }
+  },
+  {
+   "address": "google_monitoring_alert_policy.sql[\"disk\"]",
+   "type": "google_monitoring_alert_policy",
+   "change": {
+    "actions": [
+     "no-op"
+    ],
+    "before": {
+     "alert_strategy": [],
+     "combiner": "OR",
+     "conditions": [
+      {
+       "condition_absent": [],
+       "condition_matched_log": [],
+       "condition_monitoring_query_language": [],
+       "condition_prometheus_query_language": [],
+       "condition_sql": [],
+       "condition_threshold": [
+        {
+         "aggregations": [
+          {
+           "alignment_period": "300s",
+           "cross_series_reducer": "",
+           "group_by_fields": [],
+           "per_series_aligner": "ALIGN_MEAN"
+          }
+         ],
+         "comparison": "COMPARISON_GT",
+         "denominator_aggregations": [],
+         "denominator_filter": "",
+         "duration": "300s",
+         "evaluation_missing_data": "",
+         "filter": "resource.type = \"cloudsql_database\" AND resource.labels.database_id = \"dryscope:dryscope-test-pg\" AND metric.type = \"cloudsql.googleapis.com/database/disk/utilization\"",
+         "forecast_options": [],
+         "threshold_value": 0.85,
+         "trigger": []
+        }
+       ],
+       "display_name": "disk above 85% full",
+       "name": "projects/dryscope/alertPolicies/1000000000000000010/conditions/1000000000000000011"
+      }
+     ],
+     "creation_record": [
+      {
+       "mutate_time": "2026-01-01T00:00:17Z",
+       "mutated_by": "owner@example.com"
+      }
+     ],
+     "deletion_policy": "DELETE",
+     "display_name": "DryScope test: database disk",
+     "documentation": [],
+     "enabled": true,
+     "id": "projects/dryscope/alertPolicies/1000000000000000010",
+     "name": "projects/dryscope/alertPolicies/1000000000000000010",
+     "notification_channels": [
+      "projects/dryscope/notificationChannels/1000000000000000003"
+     ],
+     "project": "dryscope",
+     "severity": "",
+     "timeouts": null,
+     "user_labels": {
+      "app": "dryscope",
+      "environment": "test",
+      "managed_by": "terraform"
+     }
+    },
+    "after": {
+     "alert_strategy": [],
+     "combiner": "OR",
+     "conditions": [
+      {
+       "condition_absent": [],
+       "condition_matched_log": [],
+       "condition_monitoring_query_language": [],
+       "condition_prometheus_query_language": [],
+       "condition_sql": [],
+       "condition_threshold": [
+        {
+         "aggregations": [
+          {
+           "alignment_period": "300s",
+           "cross_series_reducer": "",
+           "group_by_fields": [],
+           "per_series_aligner": "ALIGN_MEAN"
+          }
+         ],
+         "comparison": "COMPARISON_GT",
+         "denominator_aggregations": [],
+         "denominator_filter": "",
+         "duration": "300s",
+         "evaluation_missing_data": "",
+         "filter": "resource.type = \"cloudsql_database\" AND resource.labels.database_id = \"dryscope:dryscope-test-pg\" AND metric.type = \"cloudsql.googleapis.com/database/disk/utilization\"",
+         "forecast_options": [],
+         "threshold_value": 0.85,
+         "trigger": []
+        }
+       ],
+       "display_name": "disk above 85% full",
+       "name": "projects/dryscope/alertPolicies/1000000000000000010/conditions/1000000000000000011"
+      }
+     ],
+     "creation_record": [
+      {
+       "mutate_time": "2026-01-01T00:00:17Z",
+       "mutated_by": "owner@example.com"
+      }
+     ],
+     "deletion_policy": "DELETE",
+     "display_name": "DryScope test: database disk",
+     "documentation": [],
+     "enabled": true,
+     "id": "projects/dryscope/alertPolicies/1000000000000000010",
+     "name": "projects/dryscope/alertPolicies/1000000000000000010",
+     "notification_channels": [
+      "projects/dryscope/notificationChannels/1000000000000000003"
+     ],
+     "project": "dryscope",
+     "severity": "",
+     "timeouts": null,
+     "user_labels": {
+      "app": "dryscope",
+      "environment": "test",
+      "managed_by": "terraform"
+     }
+    },
+    "after_unknown": {},
+    "before_sensitive": {
+     "alert_strategy": [],
+     "conditions": [
+      {
+       "condition_absent": [],
+       "condition_matched_log": [],
+       "condition_monitoring_query_language": [],
+       "condition_prometheus_query_language": [],
+       "condition_sql": [],
+       "condition_threshold": [
+        {
+         "aggregations": [
+          {
+           "group_by_fields": []
+          }
+         ],
+         "denominator_aggregations": [],
+         "forecast_options": [],
+         "trigger": []
+        }
+       ]
+      }
+     ],
+     "creation_record": [
+      {}
+     ],
+     "documentation": [],
+     "notification_channels": [
+      false
+     ],
+     "user_labels": {}
+    },
+    "after_sensitive": {
+     "alert_strategy": [],
+     "conditions": [
+      {
+       "condition_absent": [],
+       "condition_matched_log": [],
+       "condition_monitoring_query_language": [],
+       "condition_prometheus_query_language": [],
+       "condition_sql": [],
+       "condition_threshold": [
+        {
+         "aggregations": [
+          {
+           "group_by_fields": []
+          }
+         ],
+         "denominator_aggregations": [],
+         "forecast_options": [],
+         "trigger": []
+        }
+       ]
+      }
+     ],
+     "creation_record": [
+      {}
+     ],
+     "documentation": [],
+     "notification_channels": [
+      false
+     ],
+     "user_labels": {}
+    },
+    "before_identity": {
+     "name": "projects/dryscope/alertPolicies/1000000000000000010",
+     "project": "dryscope"
+    },
+    "after_identity": {
+     "name": "projects/dryscope/alertPolicies/1000000000000000010",
+     "project": "dryscope"
+    }
+   }
+  },
+  {
+   "address": "google_monitoring_notification_channel.email",
+   "type": "google_monitoring_notification_channel",
+   "change": {
+    "actions": [
+     "no-op"
+    ],
+    "before": {
+     "deletion_policy": "DELETE",
+     "description": "",
+     "display_name": "DryScope test alerts",
+     "enabled": true,
+     "force_delete": false,
+     "id": "projects/dryscope/notificationChannels/1000000000000000003",
+     "labels": {
+      "email_address": "owner@example.com"
+     },
+     "name": "projects/dryscope/notificationChannels/1000000000000000003",
+     "project": "dryscope",
+     "sensitive_labels": [],
+     "timeouts": null,
+     "type": "email",
+     "user_labels": {},
+     "verification_status": ""
+    },
+    "after": {
+     "deletion_policy": "DELETE",
+     "description": "",
+     "display_name": "DryScope test alerts",
+     "enabled": true,
+     "force_delete": false,
+     "id": "projects/dryscope/notificationChannels/1000000000000000003",
+     "labels": {
+      "email_address": "owner@example.com"
+     },
+     "name": "projects/dryscope/notificationChannels/1000000000000000003",
+     "project": "dryscope",
+     "sensitive_labels": [],
+     "timeouts": null,
+     "type": "email",
+     "user_labels": {},
+     "verification_status": ""
+    },
+    "after_unknown": {},
+    "before_sensitive": {
+     "labels": {
+      "email_address": true
+     },
+     "sensitive_labels": [],
+     "user_labels": {}
+    },
+    "after_sensitive": {
+     "labels": {
+      "email_address": true
+     },
+     "sensitive_labels": [],
+     "user_labels": {}
+    },
+    "before_identity": {
+     "name": "projects/dryscope/notificationChannels/1000000000000000003"
+    },
+    "after_identity": {
+     "name": "projects/dryscope/notificationChannels/1000000000000000003"
+    }
+   }
+  },
+  {
+   "address": "google_project_iam_custom_role.deploy",
+   "type": "google_project_iam_custom_role",
+   "change": {
+    "actions": [
+     "no-op"
+    ],
+    "before": {
+     "deleted": false,
+     "deletion_policy": "DELETE",
+     "description": "Deploy revisions and move traffic on the DryScope test Cloud Run services. No delete.",
+     "id": "projects/dryscope/roles/dryscopeDeployTest",
+     "name": "projects/dryscope/roles/dryscopeDeployTest",
+     "permissions": [
+      "run.configurations.get",
+      "run.configurations.list",
+      "run.operations.get",
+      "run.operations.list",
+      "run.revisions.get",
+      "run.revisions.list",
+      "run.routes.get",
+      "run.routes.list",
+      "run.services.get",
+      "run.services.list",
+      "run.services.update"
+     ],
+     "project": "dryscope",
+     "role_id": "dryscopeDeployTest",
+     "stage": "GA",
+     "title": "DryScope test deploy"
+    },
+    "after": {
+     "deleted": false,
+     "deletion_policy": "DELETE",
+     "description": "Deploy revisions and move traffic on the DryScope test Cloud Run services. No delete.",
+     "id": "projects/dryscope/roles/dryscopeDeployTest",
+     "name": "projects/dryscope/roles/dryscopeDeployTest",
+     "permissions": [
+      "run.configurations.get",
+      "run.configurations.list",
+      "run.operations.get",
+      "run.operations.list",
+      "run.revisions.get",
+      "run.revisions.list",
+      "run.routes.get",
+      "run.routes.list",
+      "run.services.get",
+      "run.services.list",
+      "run.services.update"
+     ],
+     "project": "dryscope",
+     "role_id": "dryscopeDeployTest",
+     "stage": "GA",
+     "title": "DryScope test deploy"
+    },
+    "after_unknown": {},
+    "before_sensitive": {
+     "permissions": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+     ]
+    },
+    "after_sensitive": {
+     "permissions": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+     ]
+    },
+    "before_identity": {
+     "project": "dryscope",
+     "role_id": "dryscopeDeployTest"
+    },
+    "after_identity": {
+     "project": "dryscope",
+     "role_id": "dryscopeDeployTest"
+    }
+   }
+  },
+  {
+   "address": "google_project_iam_custom_role.migrate_job",
+   "type": "google_project_iam_custom_role",
+   "change": {
+    "actions": [
+     "no-op"
+    ],
+    "before": {
+     "deleted": false,
+     "deletion_policy": "DELETE",
+     "description": "Set the image of the DryScope test migration job, execute it and read its executions. No create, delete or overrides.",
+     "id": "projects/dryscope/roles/dryscopeMigrateJobTest",
+     "name": "projects/dryscope/roles/dryscopeMigrateJobTest",
+     "permissions": [
+      "run.executions.get",
+      "run.executions.list",
+      "run.jobs.get",
+      "run.jobs.run",
+      "run.jobs.update",
+      "run.operations.get",
+      "run.tasks.get",
+      "run.tasks.list"
+     ],
+     "project": "dryscope",
+     "role_id": "dryscopeMigrateJobTest",
+     "stage": "GA",
+     "title": "DryScope test migration job"
+    },
+    "after": {
+     "deleted": false,
+     "deletion_policy": "DELETE",
+     "description": "Set the image of the DryScope test migration job, execute it and read its executions. No create, delete or overrides.",
+     "id": "projects/dryscope/roles/dryscopeMigrateJobTest",
+     "name": "projects/dryscope/roles/dryscopeMigrateJobTest",
+     "permissions": [
+      "run.executions.get",
+      "run.executions.list",
+      "run.jobs.get",
+      "run.jobs.run",
+      "run.jobs.update",
+      "run.operations.get",
+      "run.tasks.get",
+      "run.tasks.list"
+     ],
+     "project": "dryscope",
+     "role_id": "dryscopeMigrateJobTest",
+     "stage": "GA",
+     "title": "DryScope test migration job"
+    },
+    "after_unknown": {},
+    "before_sensitive": {
+     "permissions": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+     ]
+    },
+    "after_sensitive": {
+     "permissions": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+     ]
+    },
+    "before_identity": {
+     "project": "dryscope",
+     "role_id": "dryscopeMigrateJobTest"
+    },
+    "after_identity": {
+     "project": "dryscope",
+     "role_id": "dryscopeMigrateJobTest"
+    }
+   }
+  }
+ ]
+}
