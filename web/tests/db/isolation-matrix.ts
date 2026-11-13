@@ -75,6 +75,8 @@ const STALE = 999_999;
 
 export const MATRIX: readonly MatrixRow[] = [
   row(`${COMPANY}/team`, 'GET', 'company', { own: 'list' }),
+  row(`${COMPANY}/profile`, 'GET', 'company', { own: 'list' }),
+  row(`${COMPANY}/profile`, 'PUT', 'company', { body: { address: 'Planted Street', phone: '555-0100', email: 'planted@example.test', license: 'PLANTED', signoff: 'Planted Name' } }),
   row(`${COMPANY}/invitations`, 'POST', 'company', { body: { email: 'new-person@example.test', role: 'estimator' } }),
   row(`${COMPANY}/invitations/[invitationId]/cancel`, 'POST', 'company', { own: 'cross' }),
   row(`${COMPANY}/invitations/[invitationId]/clear`, 'POST', 'company', { own: 'cross' }),

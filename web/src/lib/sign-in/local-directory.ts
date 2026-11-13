@@ -29,6 +29,10 @@ const fixtureSchema = z.object({
       signInAddress: z.string().refine(isSignInAddress),
       tenantId: z.string().regex(/^[A-Za-z0-9-]{1,128}$/),
       status: z.enum(['active', 'suspended', 'archived']),
+      // The company profile of the settings screen (S5a-4); a company of an older fixture has none.
+      profile: z
+        .object({ address: z.string(), phone: z.string(), email: z.string(), license: z.string(), signoff: z.string() })
+        .optional(),
     }),
   ),
   members: z.array(

@@ -2,6 +2,7 @@
 
 import { z } from 'zod';
 
+import { companySetupMissing } from './company-setup';
 import { Dec, HUNDRED, money, percentText } from './decimal';
 import type { JObj, Json } from './json';
 import type { Inspection } from './inspection';
@@ -337,16 +338,7 @@ export function makeDocuments(input: {
   const data = input.data;
   const companyName = identity?.name ?? '';
   const clauseCompany = companyName.trim() || 'the contractor';
-  const setup = identity
-    ? (
-        [
-          ['name', 'Company name'],
-          ['address', 'Company address'],
-          ['license', 'CSLB license'],
-          ['signoff', 'Document sign-off'],
-        ] as const
-      ).flatMap(([key, label]) => (identity[key].trim() ? [] : [label]))
-    : [];
+  const setup = identity ? companySetupMissing(identity) : [];
   if (!data.address.trim() || data.yearBuilt === null || data.rooms.length === 0) {
     fail('Enter the address, year built and rooms before auditing.');
   }

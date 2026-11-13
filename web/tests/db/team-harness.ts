@@ -7,6 +7,7 @@ import { jobsService, type JobsService } from '@/lib/jobs/service';
 import { photosService, type PhotosService } from '@/lib/photos/service';
 import { noEmailService, platformService, type PlatformService } from '@/lib/platform/service';
 import { pricesService, type PricesService } from '@/lib/prices/service';
+import { profileService, type ProfileService } from '@/lib/profile/service';
 import type { PlatformUsers } from '@/lib/platform/users';
 import { teamService, type TeamService } from '@/lib/team/service';
 import { TenantUsersUnavailable } from '@/lib/team/users';
@@ -53,6 +54,8 @@ export type Harness = {
   team: TeamService;
   platform: PlatformService;
   prices: PricesService;
+  // The company profile routes' service (S5a-4).
+  profile: ProfileService;
   // The jobs routes' service, over the same database and an in-memory stand-in for the field drafts.
   jobs: JobsService;
   drafts: FakeDrafts;
@@ -214,6 +217,7 @@ export async function resetTeamDatabase(
     team: null as unknown as TeamService,
     platform: null as unknown as PlatformService,
     prices: pricesService(handle.db),
+    profile: profileService(handle.db),
     jobs: null as unknown as JobsService,
     drafts: fakeDrafts(),
     photos: null as unknown as PhotosService,

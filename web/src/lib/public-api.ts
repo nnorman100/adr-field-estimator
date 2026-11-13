@@ -14,6 +14,7 @@ export const publicApiPaths: readonly string[] = [
 export const memberApiPaths: readonly string[] = [
   '/api/me',
   '/api/companies/:id/team',
+  '/api/companies/:id/profile',
   '/api/companies/:id/invitations',
   '/api/companies/:id/invitations/:id/resend',
   '/api/companies/:id/invitations/:id/cancel',
