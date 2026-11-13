@@ -167,6 +167,10 @@ jobs:
   image:
     runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
     timeout-minutes: 20
+    env:
+      # A release version for this check build only (releases number theirs in web-release.yml); the
+      # image must carry it and health must report it, as on a real release.
+      CHECK_VERSION: 0000.00.00-1
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -188,11 +192,11 @@ jobs:
             echo "::error::The image built without a commit."; exit 1
           fi
       - name: Build the image without Docker
-        run: scripts/build-image.sh web --commit "$GITHUB_SHA" --output "$RUNNER_TEMP/web-image.tar" --stage "$RUNNER_TEMP/web-stage"
+        run: scripts/build-image.sh web --commit "$GITHUB_SHA" --version "$CHECK_VERSION" --output "$RUNNER_TEMP/web-image.tar" --stage "$RUNNER_TEMP/web-stage"
       - name: Check the image configuration
         run: |
           config=$(tar -xOf "$RUNNER_TEMP/web-image.tar" manifest.json | node scripts/check-image.ts config-path)
-          tar -xOf "$RUNNER_TEMP/web-image.tar" "$config" | node scripts/check-image.ts web --commit "$GITHUB_SHA"
+          tar -xOf "$RUNNER_TEMP/web-image.tar" "$config" | node scripts/check-image.ts web --commit "$GITHUB_SHA" --version "$CHECK_VERSION"
           echo "image size: $(wc -c < "$RUNNER_TEMP/web-image.tar") bytes"
       # The same /app tree the image carries, started the way the image starts it (node server.js),
       # with what Cloud Run adds (APP_ENV) and nothing else from this runner's environment.
@@ -202,8 +206,8 @@ jobs:
       - name: Run as on Cloud Run and smoke-check
         run: |
           (cd "$RUNNER_TEMP/web-stage/app" && env -i PATH="$PATH" NODE_ENV=production PORT=8080 \
-            HOSTNAME=127.0.0.1 APP_ENV=test APP_COMMIT="$GITHUB_SHA" node server.js > "$RUNNER_TEMP/web.log" 2>&1 &)
-          node scripts/smoke-release.ts --url http://127.0.0.1:8080 --commit "$GITHUB_SHA" --env test \
+            HOSTNAME=127.0.0.1 APP_ENV=test APP_COMMIT="$GITHUB_SHA" APP_VERSION="$CHECK_VERSION" node server.js > "$RUNNER_TEMP/web.log" 2>&1 &)
+          node scripts/smoke-release.ts --url http://127.0.0.1:8080 --commit "$GITHUB_SHA" --version "$CHECK_VERSION" --env test \
             || { cat "$RUNNER_TEMP/web.log"; exit 1; }
           grep -q '"message":"tracing started".*"code":"spans"' "$RUNNER_TEMP/web.log" \
             || { echo "::error::Tracing did not start."; cat "$RUNNER_TEMP/web.log"; exit 1; }

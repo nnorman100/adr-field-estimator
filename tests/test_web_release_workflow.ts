@@ -114,8 +114,13 @@ describe('triggers and gate', () => {
     expect(release.permissions).toEqual({});
     for (const [name, job] of Object.entries(jobs as Record<string, Data>)) {
       const perms: Record<string, string> = job.permissions ?? {};
+      // The record job alone may write contents (its tag and GitHub Release); TC-8.
+      const allowed =
+        name === 'record'
+          ? ['contents=write', 'id-token=write']
+          : ['contents=read', 'id-token=write'];
       for (const pair of Object.entries(perms)) {
-        expect(['contents=read', 'id-token=write'], name).toContain(pair.join('='));
+        expect(allowed, name).toContain(pair.join('='));
       }
       if (perms['id-token'] === 'write') expect(job.environment, name).toBe('test');
     }
@@ -144,6 +149,7 @@ describe('triggers and gate', () => {
       build: '${{ vars.DRYSCOPE_TEST_DEPLOY_SA }}',
       migrate: '${{ vars.DRYSCOPE_TEST_DEPLOY_SA }}',
       deploy: '${{ vars.DRYSCOPE_TEST_DEPLOY_SA }}',
+      record: '${{ vars.DRYSCOPE_TEST_DEPLOY_SA }}',
     });
     for (const s of allSteps(release)) expect(s.with ?? {}).not.toHaveProperty('credentials_json');
   });
@@ -591,9 +597,12 @@ describe('traffic', () => {
       '$CANDIDATE_URL',
       '--commit',
       '$COMMIT',
+      '--version',
+      '$VERSION',
       '--env',
       'test',
     ]);
+    expect(jobs.deploy.env.VERSION).toBe('${{ needs.build.outputs.version }}');
     expect(deploy[smoke].if ?? null).toBeNull();
     expect(deploy[promote].if ?? null).toBeNull();
     expect(deploy[rollback].env).toEqual({ PREVIOUS: '${{ steps.before.outputs.previous }}' });
@@ -644,6 +653,130 @@ describe('traffic', () => {
         '--quiet',
       ]),
     );
+  });
+});
+
+// The release record (docs/plans/TC.md, TC-8): a tag, a GitHub Release with the manifest, and one
+// Cloud Logging line for every failure past the gate.
+const record = () => jobs.record;
+const FAILURE_STEPS = [
+  'google-github-actions/auth',
+  'google-github-actions/setup-gcloud',
+  'failed',
+];
+const SUCCESS = "needs.deploy.result == 'success'";
+
+/** The record job's context: each earlier job's result, the gate's answer and the job's status. */
+function recordContext(results: Record<string, string>, { ready = 'true', failed = false } = {}) {
+  const needs: Data = { gate: { result: 'success', outputs: { ready } } };
+  for (const name of ['build', 'migrate', 'deploy'])
+    needs[name] = { result: results[name] ?? 'skipped' };
+  return { needs, always: () => true, failure: () => failed, cancelled: () => false };
+}
+const recordStep = (key: string) =>
+  steps(record()).find((s: Data) => (s.id ?? s.name ?? String(s.uses ?? '').split('@')[0]) === key);
+
+const FAILURE_PATHS: Record<string, string>[] = [
+  { build: 'failure' },
+  { build: 'cancelled' },
+  { build: 'success', migrate: 'failure' },
+  { build: 'success', migrate: 'cancelled' },
+  { build: 'success', migrate: 'success', deploy: 'failure' },
+  { build: 'success', migrate: 'skipped', deploy: 'failure' },
+  { build: 'success', migrate: 'success', deploy: 'cancelled' },
+];
+const RELEASED = { build: 'success', migrate: 'success', deploy: 'success' };
+
+describe('release record', () => {
+  it('runs after deploy, with the version, image, revision and replaced traffic handed on', () => {
+    expect(new Set(record().needs)).toEqual(new Set(['gate', 'build', 'migrate', 'deploy']));
+    expect(release.jobs.build.outputs.version).toBe('${{ steps.version.outputs.version }}');
+    expect(jobs.deploy.outputs).toEqual({
+      revision: '${{ steps.stage.outputs.revision }}',
+      previous: '${{ steps.before.outputs.previous }}',
+    });
+    expect(record().env.VERSION).toBe('${{ needs.build.outputs.version }}');
+    expect(recordStep('manifest').env).toEqual({
+      IMAGE_REF: '${{ needs.build.outputs.image }}',
+      REVISION: '${{ needs.deploy.outputs.revision }}',
+      PREVIOUS: '${{ needs.deploy.outputs.previous }}',
+    });
+  });
+
+  it('is the only job that can write, and only its tag and Release steps hold the token', () => {
+    const writers = Object.entries(jobs as Record<string, Data>)
+      .filter(([, job]) =>
+        Object.entries(job.permissions ?? {}).some(([k, v]) => k !== 'id-token' && v !== 'read'),
+      )
+      .map(([name]) => name);
+    expect(writers).toEqual(['record']);
+    expect(record().permissions).toEqual({ contents: 'write', 'id-token': 'write' });
+    const holders = Object.values(jobs as Record<string, Data>)
+      .flatMap((job) => steps(job))
+      .filter(
+        (s) => JSON.stringify(s).includes('github.token') || JSON.stringify(s).includes('secrets.'),
+      )
+      .map((s) => s.id);
+    expect(holders).toEqual(['tag', 'release']);
+    for (const s of steps(record())) {
+      if (String(s.uses ?? '').startsWith('actions/checkout@')) {
+        expect(s.with['persist-credentials']).toBe(false);
+      }
+    }
+  });
+
+  it.each([
+    [RELEASED, 'true', true],
+    ...FAILURE_PATHS.map((r) => [r, 'true', true] as const),
+    [{ build: 'success' }, 'true', false], // first images only: nothing released, nothing failed
+    [{ build: 'failure' }, 'false', false], // the gate stopped it: before the gate
+    [{}, '', false],
+  ])('runs for %j with the gate ready %j: %s', (results, ready, runs) => {
+    expect(truthy(evaluate(record().if, recordContext(results, { ready })))).toBe(runs);
+  });
+
+  it('pushes the tag only after the traffic move and the smoke checks passed', () => {
+    const order = steps(record()).map((s: Data) => s.id ?? s.name ?? s.uses);
+    expect(order.indexOf('manifest')).toBeLessThan(order.indexOf('tag'));
+    expect(order.indexOf('tag')).toBeLessThan(order.indexOf('release'));
+    for (const key of ['manifest', 'tag', 'release']) {
+      // No status function, so a failed step above stops it as well.
+      expect(recordStep(key).if, key).toBe(SUCCESS);
+      for (const results of FAILURE_PATHS) {
+        expect(truthy(evaluate(recordStep(key).if, recordContext(results))), key).toBe(false);
+      }
+    }
+    // deploy succeeds only when the move and both smoke checks did: none of them can be skipped.
+    for (const key of [
+      'stage',
+      'Smoke-check the staged revision',
+      'promote',
+      'Smoke-check the service URL',
+    ]) {
+      expect(step(jobs.deploy, key).if ?? null, key).toBeNull();
+      expect(step(jobs.deploy, key)['continue-on-error'] ?? false, key).toBe(false);
+    }
+  });
+
+  it.each([
+    ...FAILURE_PATHS.map((r) => [r, false] as const),
+    [RELEASED, true], // a record step itself failed
+  ])(
+    'writes the failure line on the failure path %j (record step failed: %s)',
+    (results, failed) => {
+      expect(truthy(evaluate(record().if, recordContext(results)))).toBe(true);
+      for (const key of FAILURE_STEPS) {
+        expect(truthy(evaluate(recordStep(key).if, recordContext(results, { failed }))), key).toBe(
+          true,
+        );
+      }
+    },
+  );
+
+  it('writes no failure line after a clean release', () => {
+    for (const key of FAILURE_STEPS) {
+      expect(truthy(evaluate(recordStep(key).if, recordContext(RELEASED))), key).toBe(false);
+    }
   });
 });
 

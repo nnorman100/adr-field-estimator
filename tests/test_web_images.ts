@@ -22,12 +22,14 @@ import {
   ROOT,
   Shell,
   step,
+  type Ran,
   steps,
   WEB,
   type Data,
 } from './workflow_support.ts';
 
 const SHA = 'a'.repeat(40);
+const VERSION = '2026.11.13-2';
 const BASE_PIN = /^node:[\w.-]+@sha256:[0-9a-f]{64}$/;
 const FAKE_BUILD = `if [ "$2" = --silent ] && [ "$3" = build:migrate ]; then
   mkdir -p "$5/migrations"; echo job > "$5/migrate.mjs"; echo sql > "$5/migrations/0001_foundation.sql"
@@ -38,6 +40,7 @@ echo server > .next/standalone/server.js
 echo chunk > .next/static/chunks/main.js`;
 const CRANE_REGISTRY = `case $1 in
   digest) if [ -e "$STATE" ]; then echo sha256:${'b'.repeat(64)}; else exit 1; fi ;;
+  config) if [ -e "$STATE" ]; then echo '{"config":{"Env":["APP_VERSION=${VERSION}"]}}'; else exit 1; fi ;;
 esac`;
 const IMAGE_STEPS = ['Run as on Cloud Run and smoke-check', 'Refuse to start without APP_ENV'];
 
@@ -119,7 +122,7 @@ describe('building images', () => {
     sh.fake('npm', FAKE_BUILD);
     const stage = path.join(sh.tmp, 'stage');
     const result = sh.run(
-      `"${root}/web/scripts/build-image.sh" web --commit ${SHA} --output out.tar --stage "${stage}"`,
+      `"${root}/web/scripts/build-image.sh" web --commit ${SHA} --version ${VERSION} --output out.tar --stage "${stage}"`,
     );
     expect(result.status, result.stderr).toBe(0);
     // The Next.js build, then the migration job bundle into the same /app tree.
@@ -139,6 +142,7 @@ describe('building images', () => {
     expect(pairs['--output']).toBe('out.tar');
     const envs = mutate.flatMap((arg, i) => (arg === '--env' ? [mutate[i + 1]] : []));
     expect(envs).toContain(`APP_COMMIT=${SHA}`);
+    expect(envs).toContain(`APP_VERSION=${VERSION}`);
     expect(envs).toContain('PORT=8080');
     expect(envs).toContain('NODE_ENV=production');
     expect(envs.filter((e) => e.startsWith('APP_ENV='))).toEqual([]);
@@ -167,12 +171,35 @@ describe('building images', () => {
       const root = repo(sh);
       craneFake(sh);
       sh.fake('npm', FAKE_BUILD);
-      const script = `"${root}/web/scripts/build-image.sh" web --commit "${commit}" --output out.tar`;
+      const script = `"${root}/web/scripts/build-image.sh" web --commit "${commit}" --version ${VERSION} --output out.tar`;
       expect(sh.run(script).status).not.toBe(0);
       expect(sh.calls('npm')).toEqual([]);
       expect(sh.calls('crane')).toEqual([]);
     },
   );
+
+  it.each(['', '2026.11.13', '2026.11.13-0', '2026.11.13-01', 'v2026.11.13-1', '2026.11.13-1;x'])(
+    'refuses to build the web image without a release version (%j)',
+    (version) => {
+      const sh = shell();
+      const root = repo(sh);
+      craneFake(sh);
+      sh.fake('npm', FAKE_BUILD);
+      const script = `"${root}/web/scripts/build-image.sh" web --commit ${SHA} --version "${version}" --output out.tar`;
+      expect(sh.run(script).status).not.toBe(0);
+      expect(sh.calls('npm')).toEqual([]);
+      expect(sh.calls('crane')).toEqual([]);
+    },
+  );
+
+  it('refuses a release version on the placeholder', () => {
+    const sh = shell();
+    const root = repo(sh);
+    craneFake(sh);
+    const script = `"${root}/web/scripts/build-image.sh" live-placeholder --version ${VERSION} --output out.tar`;
+    expect(sh.run(script).status).not.toBe(0);
+    expect(sh.calls('crane')).toEqual([]);
+  });
 
   it('refuses an unpinned base', () => {
     const sh = shell();
@@ -244,7 +271,7 @@ describe('the release image', () => {
       const build = path.join(scripts, 'build-image.sh');
       writeFileSync(build, `#!/bin/bash\necho "$@" >> "${sh.tmp}/built"\ntouch "${state}"\n`);
       chmodSync(build, 0o755);
-      const env = { ...release.env, COMMIT: SHA, STATE: state };
+      const env = { ...release.env, COMMIT: SHA, STATE: state, VERSION };
       const result = sh.run(image.run, env, sh.tmp);
       expect(result.status, result.stderr).toBe(0);
       const built = path.join(sh.tmp, 'built');
@@ -255,6 +282,8 @@ describe('the release image', () => {
           'web',
           '--commit',
           SHA,
+          '--version',
+          VERSION,
           '--tag',
           `${release.env.IMAGE}:${SHA}`,
         ]);
@@ -262,6 +291,83 @@ describe('the release image', () => {
       expect(sh.outputs()).toEqual({ ref: `${release.env.IMAGE}@sha256:${'b'.repeat(64)}` });
     },
   );
+
+  // The version step with the real numbering script (web/scripts/release-version.ts) and fake
+  // git, crane and date: the old app's tags count, and a rerun keeps the image's own version.
+  const OLD_TAGS = [
+    '2026.11.04-1',
+    '2026.11.04-9',
+    '2026.11.04-10',
+    '2026.11.05-4',
+    'infra-test-app-2026.11.04-3',
+  ];
+  function versionStep(sh: Shell, crane: string, today = '2026.11.04'): Ran {
+    sh.fake('crane', crane);
+    sh.fake('git', `[ "$1 $2" = 'tag --list' ] || exit 9; printf '%s\\n' ${OLD_TAGS.join(' ')}`);
+    sh.fake('date', `[ "$1 $2" = '-u +%Y.%m.%d' ] || exit 9; echo ${today}`);
+    return sh.run(step(release.jobs.build, 'version').run, { ...release.env, COMMIT: SHA }, ROOT);
+  }
+
+  it.each([
+    ['2026.11.04', '2026.11.04-11'],
+    ['2026.11.05', '2026.11.05-5'],
+    ['2026.11.13', '2026.11.13-1'],
+  ])('numbers a new commit after every tag of the day, old app included (%s)', (today, version) => {
+    const sh = shell();
+    const result = versionStep(sh, 'exit 1', today);
+    expect(result.status, result.stderr).toBe(0);
+    expect(sh.outputs()).toEqual({ version });
+    expect(sh.calls('crane')).toEqual([['config', `${release.env.IMAGE}:${SHA}`]]);
+    expect(sh.calls('git')).toEqual([['tag', '--list']]);
+  });
+
+  it('keeps the version baked into the image a rerun reuses', () => {
+    const sh = shell();
+    const result = versionStep(
+      sh,
+      `echo '{"config":{"Env":["PATH=/bin","APP_VERSION=2026.11.03-2"]}}'`,
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(sh.outputs()).toEqual({ version: '2026.11.03-2' });
+    expect(sh.calls('git')).toEqual([]);
+  });
+
+  it.each([
+    `echo '{"config":{"Env":["PATH=/bin"]}}'`,
+    `echo '{"config":{"Env":["APP_VERSION=1"]}}'`,
+  ])('stops when the image a rerun would reuse has no release version: %s', (crane) => {
+    const sh = shell();
+    const result = versionStep(sh, crane);
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toContain('carries no release version');
+    expect(sh.outputs()).toEqual({});
+  });
+
+  it('stops when the tags cannot be read', () => {
+    const sh = shell();
+    sh.fake('crane', 'exit 1');
+    sh.fake('git', 'exit 128');
+    const result = sh.run(
+      step(release.jobs.build, 'version').run,
+      { ...release.env, COMMIT: SHA },
+      ROOT,
+    );
+    expect(result.status).not.toBe(0);
+    expect(sh.outputs()).toEqual({});
+  });
+
+  it('numbers from the tags of the commit it checks out', () => {
+    const checkout = steps(release.jobs.build).find((s: Data) =>
+      String(s.uses ?? '').startsWith('actions/checkout@'),
+    );
+    expect(checkout.with['fetch-tags']).toBe(true);
+    const order = steps(release.jobs.build).map((s: Data) => s.id ?? s.name ?? s.uses);
+    expect(order.indexOf('version')).toBeLessThan(order.indexOf('image'));
+    expect(step(release.jobs.build, 'image').env).toEqual({
+      VERSION: '${{ steps.version.outputs.version }}',
+    });
+    expect(release.jobs.build.outputs.version).toBe('${{ steps.version.outputs.version }}');
+  });
 
   it('refuses an unexpected image reference', () => {
     const sh = shell();
@@ -279,7 +385,7 @@ const TRACING_STARTED =
 // scripts/smoke-release.ts waits for the server to answer; the fake waits for its first log line.
 const WAIT_FOR_SERVER_LOG =
   '[ "$1" != server.js ] && for _ in $(seq 50); do [ -s "$RUNNER_TEMP/web.log" ] && break; sleep 0.1; done';
-const SERVER_THAT_STARTS_TRACING = `if [ "$1" = server.js ]; then echo "$APP_ENV $APP_COMMIT $NODE_ENV $PORT" > started; echo '${TRACING_STARTED}'; fi; ${WAIT_FOR_SERVER_LOG}; exit 0`;
+const SERVER_THAT_STARTS_TRACING = `if [ "$1" = server.js ]; then echo "$APP_ENV $APP_COMMIT $APP_VERSION $NODE_ENV $PORT" > started; echo '${TRACING_STARTED}'; fi; ${WAIT_FOR_SERVER_LOG}; exit 0`;
 
 const TRACING_FAILURES = [
   ['says nothing about tracing', 'listening on 8080', 'Tracing did not start'],
@@ -302,7 +408,17 @@ const BUILD_CASES = [
     'scripts',
     (tmp: string) => [
       ['web', '--output', `${tmp}/nocommit.tar`],
-      ['web', '--commit', SHA, '--output', `${tmp}/web-image.tar`, '--stage', `${tmp}/web-stage`],
+      [
+        'web',
+        '--commit',
+        SHA,
+        '--version',
+        imageJob().env.CHECK_VERSION,
+        '--output',
+        `${tmp}/web-image.tar`,
+        '--stage',
+        `${tmp}/web-stage`,
+      ],
       ['live-placeholder', '--output', `${tmp}/live-image.tar`, '--stage', `${tmp}/live-stage`],
     ],
   ],
@@ -311,7 +427,7 @@ const BUILD_CASES = [
     () => release.jobs.build,
     'web/scripts',
     () => [
-      ['web', '--commit', SHA, '--tag', `${release.env.IMAGE}:${SHA}`],
+      ['web', '--commit', SHA, '--version', VERSION, '--tag', `${release.env.IMAGE}:${SHA}`],
       ['live-placeholder', '--tag', `${release.env.PLACEHOLDER_IMAGE}:${SHA}`],
     ],
   ],
@@ -323,9 +439,12 @@ describe('the Web app image job', () => {
     const app = path.join(sh.tmp, 'web-stage', 'app');
     mkdirSync(app, { recursive: true });
     sh.fake('node', SERVER_THAT_STARTS_TRACING);
+    const check = imageJob().env.CHECK_VERSION;
+    expect(check).toMatch(/^\d{4}\.\d{2}\.\d{2}-[1-9]\d*$/);
     const result = sh.run(commands(step(imageJob(), IMAGE_STEPS[0])), {
       GITHUB_SHA: SHA,
       RUNNER_TEMP: sh.tmp,
+      CHECK_VERSION: check,
     });
     expect(result.status, result.stderr).toBe(0);
     const smoke = sh.calls('node').filter((args) => args[0] !== 'server.js');
@@ -336,6 +455,8 @@ describe('the Web app image job', () => {
         'http://127.0.0.1:8080',
         '--commit',
         SHA,
+        '--version',
+        check,
         '--env',
         'test',
       ],
@@ -345,6 +466,7 @@ describe('the Web app image job', () => {
     expect(readFileSync(started, 'utf8').trim().split(/\s+/)).toEqual([
       'test',
       SHA,
+      check,
       'production',
       '8080',
     ]);
@@ -402,6 +524,7 @@ describe('the Web app image job', () => {
       sh.fake('npm');
       sh.fake('gcloud');
       sh.fake('tar');
+      sh.fake('git', 'echo 2026.11.13-1');
       sh.fake('install-crane');
       sh.fake('crane', CRANE_REGISTRY);
       sh.fake(
@@ -409,6 +532,7 @@ describe('the Web app image job', () => {
         `case $1 in
   server.js) [ -n "$APP_ENV" ] || exit 1; echo '${TRACING_STARTED}' ;;
   scripts/smoke-release.ts) for _ in $(seq 50); do [ -s "$RUNNER_TEMP/web.log" ] && break; sleep 0.1; done ;;
+  web/scripts/release-version.ts) cat > /dev/null; echo ${VERSION} ;;
 esac`,
       );
       sh.fake(
@@ -430,6 +554,8 @@ done`,
       }
       const env = {
         ...release.env,
+        ...job().env,
+        VERSION,
         COMMIT: SHA,
         GITHUB_SHA: SHA,
         GITHUB_PATH: path.join(sh.tmp, 'path'),

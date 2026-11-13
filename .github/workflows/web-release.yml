@@ -6,7 +6,10 @@ name: Web release (test)
 # Google), release web/firestore.rules to the field database dryscope-field-test when the file
 # changed (web/scripts/release-rules.ts), stage a 0% revision of dryscope-api-test, smoke-check it
 # on its own tagged URL, then move all traffic to it, putting the previous traffic back if anything
-# after that fails. Live is not released from here. Keyless: workload identity federation from the
+# after that fails. Then the record job tags the released commit with its version (YYYY.MM.DD-N),
+# publishes a pre-release GitHub Release with manifest.json and the rollback command, or, after any
+# failure past the gate, writes one error line to Cloud Logging for the failed-release alert
+# (docs/plans/TC.md, TC-8). Live is not released from here. Keyless: workload identity federation from the
 # dryscope-test pool, as the deploy account, which can set the image on the services and the job,
 # run the job and release rules, but holds no database role and cannot delete. No job connects to
 # Cloud SQL from this runner: it only calls Google APIs over HTTPS. It skips with a notice until
@@ -90,11 +93,14 @@ jobs:
     outputs:
       service_ready: ${{ steps.service.outputs.ready }}
       image: ${{ steps.image.outputs.ref }}
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.COMMIT }}
           persist-credentials: false
+          # The version counts every same-day tag, the old app's included.
+          fetch-tags: true
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: lts/*
@@ -124,14 +130,35 @@ jobs:
           web/scripts/install-crane.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
           gcloud auth print-access-token | "$RUNNER_TEMP/bin/crane" auth login us-central1-docker.pkg.dev -u oauth2accesstoken --password-stdin
+      # The release version, YYYY.MM.DD-N (UTC date; N is one more than the highest tag for that date,
+      # counting the old app's tags). A rerun of a commit keeps the version baked into the image it
+      # already pushed.
+      - id: version
+        run: |
+          if config=$(crane config "$IMAGE:$COMMIT" 2>/dev/null); then
+            if ! version=$(node web/scripts/release-version.ts from-image <<<"$config"); then
+              echo "::error::The image already pushed for $COMMIT carries no release version, and its tag cannot be replaced. Release a newer commit."
+              exit 1
+            fi
+            echo "Reusing release version $version from the image already pushed for $COMMIT"
+          elif ! version=$(git tag --list | node web/scripts/release-version.ts next --date "$(date -u +%Y.%m.%d)"); then
+            echo "::error::Could not number this release from the repository's tags."
+            exit 1
+          fi
+          [[ "$version" =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{2}-[1-9][0-9]{0,5}$ ]] \
+            || { echo "::error::Unexpected release version: $version"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Release version: \`$version\`" >> "$GITHUB_STEP_SUMMARY"
       # Tags are immutable in this repository, so a rerun reuses the image already pushed for this
       # commit instead of failing on the tag.
       - id: image
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           if digest=$(crane digest "$IMAGE:$COMMIT" 2>/dev/null); then
             echo "Reusing the image already pushed for $COMMIT"
           else
-            web/scripts/build-image.sh web --commit "$COMMIT" --tag "$IMAGE:$COMMIT"
+            web/scripts/build-image.sh web --commit "$COMMIT" --version "$VERSION" --tag "$IMAGE:$COMMIT"
             digest=$(crane digest "$IMAGE:$COMMIT")
           fi
           ref="$IMAGE@$digest"
@@ -227,8 +254,13 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    # For the release record: the revision now serving and the traffic it replaced.
+    outputs:
+      revision: ${{ steps.stage.outputs.revision }}
+      previous: ${{ steps.before.outputs.previous }}
     env:
       IMAGE_REF: ${{ needs.build.outputs.image }}
+      VERSION: ${{ needs.build.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -289,7 +321,7 @@ jobs:
       - name: Smoke-check the staged revision
         env:
           CANDIDATE_URL: ${{ steps.stage.outputs.url }}
-        run: node web/scripts/smoke-release.ts --url "$CANDIDATE_URL" --commit "$COMMIT" --env test
+        run: node web/scripts/smoke-release.ts --url "$CANDIDATE_URL" --commit "$COMMIT" --version "$VERSION" --env test
       - id: promote
         env:
           REVISION: ${{ steps.stage.outputs.revision }}
@@ -300,7 +332,7 @@ jobs:
           REVISION: ${{ steps.stage.outputs.revision }}
         run: |
           url=$(gcloud run services describe "$SERVICE" --region="$REGION" --project="$PROJECT" --format='value(status.url)')
-          node web/scripts/smoke-release.ts --url "$url" --commit "$COMMIT" --env test
+          node web/scripts/smoke-release.ts --url "$url" --commit "$COMMIT" --version "$VERSION" --env test
           echo "Serving: \`$REVISION\` at 100% for $COMMIT" >> "$GITHUB_STEP_SUMMARY"
       # The move ran (it succeeded, failed, or was cancelled midway and may have landed): put the
       # remembered traffic back; restoring a split that never changed is harmless. Before the
@@ -313,3 +345,129 @@ jobs:
           gcloud run services update-traffic "$SERVICE" --to-revisions="$PREVIOUS" --region="$REGION" --project="$PROJECT" --quiet
           echo "Rolled back to \`$PREVIOUS\`" >> "$GITHUB_STEP_SUMMARY"
           echo "::error::Release failed after the traffic move; traffic is back on $PREVIOUS."
+
+  # The release record (docs/plans/TC.md, TC-8). After a release that moved traffic and passed both
+  # smoke checks: the manifest, the version tag at the released commit and a pre-release GitHub
+  # Release carrying manifest.json, with the rollback command in its notes. After any failure past
+  # the gate (here or in an earlier job): one ERROR line in the dryscope-release log for the
+  # failed-release alert (TC-11, C11), which needs roles/logging.logWriter for the deploy account
+  # (TC-9). The workflow's only write permission is this job's, and only the tag and Release steps
+  # hold the token.
+  record:
+    needs: [gate, build, migrate, deploy]
+    if: >-
+      always() && needs.gate.outputs.ready == 'true' && (
+        needs.deploy.result == 'success' ||
+        needs.build.result == 'failure' || needs.build.result == 'cancelled' ||
+        needs.migrate.result == 'failure' || needs.migrate.result == 'cancelled' ||
+        needs.deploy.result == 'failure' || needs.deploy.result == 'cancelled'
+      )
+    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
+    timeout-minutes: 10
+    environment: test
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.deploy.result == 'success'
+        with:
+          ref: ${{ env.COMMIT }}
+          persist-credentials: false
+          sparse-checkout: web
+          # The manifest names the newest infra-test-<root>-* tag per Terraform root (C6).
+          fetch-tags: true
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: needs.deploy.result == 'success'
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - if: needs.deploy.result == 'success'
+        run: npm ci
+        working-directory: web
+      - id: manifest
+        if: needs.deploy.result == 'success'
+        working-directory: web
+        env:
+          IMAGE_REF: ${{ needs.build.outputs.image }}
+          REVISION: ${{ needs.deploy.outputs.revision }}
+          PREVIOUS: ${{ needs.deploy.outputs.previous }}
+        run: |
+          git tag --list 'infra-test-*' | npx tsx scripts/release-manifest.ts --version "$VERSION" --commit "$COMMIT" \
+            --image "$IMAGE_REF" --revision "$REVISION" --replaced "$PREVIOUS" --run "$RUN_URL" \
+            --out "$RUNNER_TEMP/manifest.json" --notes "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md" >> "$GITHUB_STEP_SUMMARY"
+      # The self-hosted runner's container has no gh, so install a pinned, checksum-checked release
+      # (as deploy.yml does).
+      - name: Install GitHub CLI
+        if: needs.deploy.result == 'success'
+        env:
+          GH_VERSION: 2.103.2
+          GH_SHA256: 62ccf747115ddc61237efffdde66a3c8f70ba249433dc64f70801089b59c59c8
+        run: |
+          if ! command -v gh > /dev/null; then
+            archive="$RUNNER_TEMP/gh.tar.gz"
+            curl -fsSL --retry 3 -o "$archive" \
+              "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz"
+            echo "${GH_SHA256}  $archive" | sha256sum -c -
+            tar -xzf "$archive" -C "$RUNNER_TEMP"
+            echo "$RUNNER_TEMP/gh_${GH_VERSION}_linux_amd64/bin" >> "$GITHUB_PATH"
+          fi
+      # The version tag, at the released commit. A tag is never moved: one already on this commit (a
+      # rerun) is kept, and one on another commit stops the record.
+      - id: tag
+        if: needs.deploy.result == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if tagged=$(gh api "repos/$GH_REPO/git/ref/tags/$VERSION" --jq '.object.sha' 2>/dev/null); then
+            if [ "$tagged" != "$COMMIT" ]; then
+              echo "::error::Version tag $VERSION already points to $tagged, and a tag is never moved. Release a newer commit."
+              exit 1
+            fi
+            echo "Version tag $VERSION is already at $COMMIT"
+          else
+            gh api "repos/$GH_REPO/git/refs" -f ref="refs/tags/$VERSION" -f sha="$COMMIT" --silent
+            echo "Tagged \`$VERSION\` at $COMMIT" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - id: release
+        if: needs.deploy.result == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release view "$VERSION" > /dev/null 2>&1; then
+            echo "::notice title=Release kept::GitHub Release $VERSION already exists; it is left as it is."
+          else
+            gh release create "$VERSION" "$RUNNER_TEMP/manifest.json" --verify-tag --prerelease \
+              --title "$VERSION (test)" --notes-file "$RUNNER_TEMP/notes.md"
+            echo "Published GitHub Release \`$VERSION\` with manifest.json" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      # Every failure path past the gate ends here: an earlier job failed or was cancelled, or a
+      # record step above failed.
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        if: always() && (needs.deploy.result != 'success' || failure())
+        with:
+          workload_identity_provider: ${{ vars.DRYSCOPE_TEST_WIF_PROVIDER }}
+          service_account: ${{ vars.DRYSCOPE_TEST_DEPLOY_SA }}
+          project_id: dryscope
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+        if: always() && (needs.deploy.result != 'success' || failure())
+      - id: failed
+        name: Write the failed-release line
+        if: always() && (needs.deploy.result != 'success' || failure())
+        run: |
+          version=null
+          if [[ "$VERSION" =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{2}-[1-9][0-9]{0,5}$ ]]; then version="\"$VERSION\""; fi
+          [[ "$RUN_URL" =~ ^https://[A-Za-z0-9./_-]+$ ]] || { echo "::error::Unexpected run URL."; exit 1; }
+          line=$(printf '{"env":"test","version":%s,"result":"failed","run":"%s"}' "$version" "$RUN_URL")
+          echo "::error title=Test release failed::$line"
+          if ! gcloud logging write dryscope-release "$line" --payload-type=json --severity=ERROR --project="$PROJECT"; then
+            echo "::error::Could not write the failed-release line to Cloud Logging. The deploy account needs roles/logging.logWriter (docs/plans/TC.md, TC-9)."
+            exit 1
+          fi

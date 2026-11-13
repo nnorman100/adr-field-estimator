@@ -5,12 +5,17 @@ import { parseConfig } from '@/lib/config';
 export const dynamic = 'force-dynamic';
 
 // Liveness and config check for the platform and for CI. Reports no secrets or user data. A built
-// image also reports its commit, so the release smoke check can prove which code a revision runs.
+// image also reports its commit and release version (YYYY.MM.DD-N), so the release smoke check can
+// prove which code and which release a revision runs.
 // When a database is configured it must answer this service's login: then health reports
 // database ok, and a revision that cannot reach Postgres answers 503 instead.
 export const GET = publicRoute(async () => {
   const config = parseConfig(process.env);
-  const identity = config.commit ? { env: config.appEnv, commit: config.commit } : { env: config.appEnv };
+  const identity = {
+    env: config.appEnv,
+    ...(config.commit ? { commit: config.commit } : {}),
+    ...(config.version ? { version: config.version } : {}),
+  };
   if (!config.cloudSql && !config.databaseUrl) return Response.json({ status: 'ok', ...identity });
   try {
     await checkDatabase(config);
