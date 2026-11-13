@@ -3,10 +3,11 @@
 import { useEffect, useState } from 'react';
 import { readLatestMe, type DsMe } from '@/lib/field/ds-me';
 import { registerFieldWorker } from '@/lib/field/register-worker';
+import { offlineCaptureAllowed } from '@/lib/field/platform';
 import { rememberedSignInAddress } from '@/lib/sign-in/remember';
 import { NotSavedBanner, OfflineBanner } from './banners';
 import { useReachable } from './connection';
-import { InstallSheet, useInstallable } from './install-sheet';
+import { HomeScreenSheet, useFieldSurface } from './home-screen-sheet';
 
 // The field shell (S6-2): the one page every field screen lives in. The server renders nothing of
 // a person's here, so the page is built once, the service worker keeps that copy, and the Home
@@ -24,7 +25,7 @@ type Boot =
 export function FieldShell() {
   const [boot, setBoot] = useState<Boot>({ kind: 'starting' });
   const reachable = useReachable();
-  const installable = useInstallable();
+  const surface = useFieldSurface();
 
   useEffect(() => {
     registerFieldWorker();
@@ -51,8 +52,16 @@ export function FieldShell() {
   }, []);
 
   return (
-    <div className="mx-auto flex min-h-dvh max-w-md flex-col" data-shell="field">
-      <OfflineBanner offline={!reachable && (boot.kind === 'ready' || boot.kind === 'signed-out')} />
+    <div
+      className="mx-auto flex min-h-dvh max-w-md flex-col"
+      data-shell="field"
+      // Capture screens (S5a-6, S6-5) must ask offlineCaptureAllowed, never decide for themselves.
+      data-offline-capture={offlineCaptureAllowed(surface) ? 'allowed' : 'blocked'}
+    >
+      <OfflineBanner
+        offline={!reachable && (boot.kind === 'ready' || boot.kind === 'signed-out')}
+        onlineOnly={surface === 'ios-tab'}
+      />
       <NotSavedBanner unavailable={boot.kind === 'no-storage'} />
       <main className="flex flex-1 flex-col gap-4 p-6">
         <p className="text-sm font-semibold tracking-wide">DryScope</p>
@@ -77,7 +86,7 @@ export function FieldShell() {
             ) : null}
           </>
         ) : null}
-        {installable ? <InstallSheet openFirstTime={boot.kind !== 'starting'} /> : null}
+        {surface === 'ios-tab' ? <HomeScreenSheet openFirstTime={boot.kind !== 'starting'} /> : null}
       </main>
     </div>
   );

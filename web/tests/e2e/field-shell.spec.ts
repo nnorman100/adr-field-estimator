@@ -2,6 +2,7 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 import { NOT_SAVED_TEXT, OFFLINE_TEXT } from '../../src/app/field/banners';
 import { PROBE_PATH } from '../../src/app/field/connection';
+import { HOME_SCREEN_HELP, HOME_SCREEN_TITLE } from '../../src/app/field/home-screen-text';
 import { ME_DB, ME_DB_VERSION, ME_STORE } from '../../src/lib/field/ds-me';
 import { PASSWORD, readSeed, type ProjectSeed } from './sign-in/seed';
 
@@ -41,7 +42,8 @@ test('the shell starts from the sign-in the phone saved, and signing out removes
   await page.getByRole('link', { name: 'Open the field app' }).click();
   await expect(page).toHaveURL(/\/field$/);
   await expect(page.getByRole('heading', { name: A })).toBeVisible();
-  await page.getByRole('button', { name: 'Got it' }).click();
+  // A computer browser is not asked to save DryScope to the Home Screen (D-025).
+  await expect(page.getByRole('dialog')).toHaveCount(0);
   await expectAccessible(page);
 
   await page.goBack();
@@ -230,22 +232,31 @@ test('a shell brought back from the back-forward cache reads the phone again', a
   await expect(page.getByRole('heading', { name: 'Sign in to continue' })).toBeVisible();
 });
 
-test('the install sheet opens once with the Share-menu steps and its help line, then from its button', async ({ page }) => {
-  await page.goto('/field');
-  const sheet = page.getByRole('dialog', { name: 'Install to your Home Screen' });
-  await expect(sheet).toBeVisible();
-  await expect(sheet.getByText('Tap the Share button')).toBeVisible();
-  await expect(sheet.getByText('Scroll down and tap Add to Home Screen.')).toBeVisible();
-  await expect(sheet.getByText('installing later starts empty and signed out')).toBeVisible();
-  await expectAccessible(page);
-  await sheet.getByRole('button', { name: 'Got it' }).click();
-  await expect(sheet).toBeHidden();
+// An iPhone in a Safari tab (D-025); the rest of the rule is in offline/home-screen.spec.ts.
+test.describe('on an iPhone in a Safari tab', () => {
+  test.use({
+    userAgent:
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 18_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3 Mobile/15E148 Safari/604.1',
+    hasTouch: true,
+  });
 
-  await page.reload();
-  await expect(page.getByRole('heading', { name: 'Sign in to continue' })).toBeVisible();
-  await expect(sheet).toBeHidden();
-  await page.getByRole('button', { name: 'Install to your Home Screen' }).click();
-  await expect(sheet).toBeVisible();
+  test('the Home Screen sheet opens once with the Share-menu steps and its help line, then from its button', async ({ page }) => {
+    await page.goto('/field');
+    const sheet = page.getByRole('dialog', { name: HOME_SCREEN_TITLE });
+    await expect(sheet).toBeVisible();
+    await expect(sheet.getByText('Tap the Share button')).toBeVisible();
+    await expect(sheet.getByText('Scroll down and tap Add to Home Screen.')).toBeVisible();
+    await expect(sheet.getByText(HOME_SCREEN_HELP)).toBeVisible();
+    await expectAccessible(page);
+    await sheet.getByRole('button', { name: 'Got it' }).click();
+    await expect(sheet).toBeHidden();
+
+    await page.reload();
+    await expect(page.getByRole('heading', { name: 'Sign in to continue' })).toBeVisible();
+    await expect(sheet).toBeHidden();
+    await page.getByRole('button', { name: HOME_SCREEN_TITLE }).click();
+    await expect(sheet).toBeVisible();
+  });
 });
 
 test('a phone that keeps no data says it is not saved', async ({ page }) => {
