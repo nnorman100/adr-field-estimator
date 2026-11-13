@@ -1,5 +1,6 @@
 export {
   exportPrices,
+  importPrices,
   listVersions,
   previewPrices,
   publishPrices,
@@ -18,6 +19,7 @@ export {
   readVersionList,
   readerTable,
   type PricesErrorCode,
+  type Imported,
   type PricesService,
   type PricesView,
   type Preview,

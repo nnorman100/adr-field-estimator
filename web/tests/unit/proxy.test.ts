@@ -51,6 +51,7 @@ describe('API sign-in gate', () => {
       '/api/prices/preview',
       '/api/prices/publish',
       '/api/prices/export',
+      '/api/prices/import',
       '/api/prices/versions',
       '/api/prices/versions/:id',
       '/api/prices/versions/:id/restore',
