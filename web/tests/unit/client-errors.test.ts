@@ -237,6 +237,38 @@ describe('offline and leaving', () => {
     expect(page.bodies()[1]!.reports).toHaveLength(1);
   });
 
+  it.each([
+    ['online, while the batch is on its way', 'visible', 'online'],
+    ['the page coming back, while the hide-time batch is on its way', 'hidden', 'visibilitychange'],
+  ] as const)('sends again after a failed request when %s', async (_name, start, again) => {
+    const fails: ((reason: Error) => void)[] = [];
+    let reachable = false;
+    const page = fakePage({
+      fetch: () => (reachable ? Promise.resolve({ ok: true }) : new Promise((_resolve, reject) => fails.push(reject))),
+    });
+    installClientErrors(page);
+    page.fire('error', { error: new Error('in flight') });
+    if (start === 'hidden') {
+      page.set.visibility('hidden');
+      page.fire('visibilitychange');
+    }
+    await vi.advanceTimersByTimeAsync(SETTLE);
+    expect(page.fetchSpy).toHaveBeenCalledTimes(1);
+
+    reachable = true;
+    page.set.visibility('visible');
+    page.fire(again);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(page.fetchSpy).toHaveBeenCalledTimes(1);
+
+    fails[0]!(new TypeError('Failed to fetch'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(page.fetchSpy).toHaveBeenCalledTimes(2);
+    expect(page.bodies()[1]!.reports).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(page.fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
   it('does not try again on a timer when the server cannot be reached, only on online or visible', async () => {
     const page = fakePage({
       fetch: async () => {

@@ -54,7 +54,11 @@ export function createReporter(options: ReporterOptions): Reporter {
   const waiting: ClientErrorReport[] = [];
   let counted = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let sending = false;
+  // Sends not yet answered; whether a flush loop is running; whether a flush was asked for (online,
+  // visible, a new report) while a send was out, to run once the sends have settled.
+  let pending = 0;
+  let flushing = false;
+  let requested = false;
 
   function disarm() {
     if (timer !== undefined) clearTimeout(timer);
@@ -81,25 +85,33 @@ export function createReporter(options: ReporterOptions): Reporter {
 
   // Sends one batch; one that could not reach the server goes back to wait, oldest first.
   async function sendBatch(batch: ClientErrorReport[]): Promise<boolean> {
+    pending += 1;
     const reached = await options.send(JSON.stringify({ reports: batch })).catch(() => false);
+    pending -= 1;
     if (!reached) {
       waiting.unshift(...batch);
       waiting.splice(maxWaiting);
     }
+    if (pending === 0 && requested && !flushing) void flush();
     return reached;
   }
 
   async function flush(): Promise<void> {
     disarm();
-    if (sending) return;
-    sending = true;
+    if (flushing || pending > 0) {
+      requested = true;
+      return;
+    }
+    flushing = true;
+    requested = false;
     try {
       while (waiting.length > 0 && options.isOnline()) {
         if (!(await sendBatch(nextBatch()))) break;
       }
     } finally {
-      sending = false;
+      flushing = false;
     }
+    if (requested) void flush();
   }
 
   function flushNow(): void {
