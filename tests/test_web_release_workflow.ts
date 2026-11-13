@@ -114,8 +114,13 @@ describe('triggers and gate', () => {
     expect(release.permissions).toEqual({});
     for (const [name, job] of Object.entries(jobs as Record<string, Data>)) {
       const perms: Record<string, string> = job.permissions ?? {};
+      // The record job alone may write contents (its tag and GitHub Release); TC-8.
+      const allowed =
+        name === 'record'
+          ? ['contents=write', 'id-token=write']
+          : ['contents=read', 'id-token=write'];
       for (const pair of Object.entries(perms)) {
-        expect(['contents=read', 'id-token=write'], name).toContain(pair.join('='));
+        expect(allowed, name).toContain(pair.join('='));
       }
       if (perms['id-token'] === 'write') expect(job.environment, name).toBe('test');
     }
@@ -144,6 +149,7 @@ describe('triggers and gate', () => {
       build: '${{ vars.DRYSCOPE_TEST_DEPLOY_SA }}',
       migrate: '${{ vars.DRYSCOPE_TEST_DEPLOY_SA }}',
       deploy: '${{ vars.DRYSCOPE_TEST_DEPLOY_SA }}',
+      record: '${{ vars.DRYSCOPE_TEST_DEPLOY_SA }}',
     });
     for (const s of allSteps(release)) expect(s.with ?? {}).not.toHaveProperty('credentials_json');
   });
@@ -584,16 +590,8 @@ describe('traffic', () => {
     expect(smoke).toBeLessThan(promote);
     expect(promote).toBeLessThan(after);
     expect(after).toBeLessThan(rollback);
-    expect(shlex(commands(deploy[smoke]))).toEqual([
-      'node',
-      'web/scripts/smoke-release.ts',
-      '--url',
-      '$CANDIDATE_URL',
-      '--commit',
-      '$COMMIT',
-      '--env',
-      'test',
-    ]);
+    expect(deploy[smoke].env).toEqual({ CANDIDATE_URL: '${{ steps.stage.outputs.url }}' });
+    expect(jobs.deploy.env.VERSION).toBe('${{ needs.build.outputs.version }}');
     expect(deploy[smoke].if ?? null).toBeNull();
     expect(deploy[promote].if ?? null).toBeNull();
     expect(deploy[rollback].env).toEqual({ PREVIOUS: '${{ steps.before.outputs.previous }}' });
@@ -601,6 +599,37 @@ describe('traffic', () => {
     const checkout = deploy[0];
     expect(checkout.uses.startsWith('actions/checkout@')).toBe(true);
     expect(checkout.with['sparse-checkout']).toBe('web');
+  });
+
+  it.each([
+    ['Smoke-check the staged revision', 'https://candidate---dryscope-api-test.run.app'],
+    ['Smoke-check the service URL', 'https://dryscope-api-test.run.app'],
+  ])('%s checks the commit and the release version at %s', (key, url) => {
+    const sh = shell();
+    sh.fake('gcloud', `echo ${url}`);
+    sh.fake('node');
+    const commit = 'a'.repeat(40);
+    const result = sh.run(commands(step(jobs.deploy, key)), {
+      ...release.env,
+      CANDIDATE_URL: url,
+      COMMIT: commit,
+      VERSION: '2026.11.13-2',
+      REVISION: 'dryscope-api-test-00012-abc',
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(sh.calls('node')).toEqual([
+      [
+        'web/scripts/smoke-release.ts',
+        '--url',
+        url,
+        '--commit',
+        commit,
+        '--version',
+        '2026.11.13-2',
+        '--env',
+        'test',
+      ],
+    ]);
   });
 
   it.each([
@@ -644,6 +673,230 @@ describe('traffic', () => {
         '--quiet',
       ]),
     );
+  });
+});
+
+// The release record (docs/plans/TC.md, TC-8): a tag, a GitHub Release with the manifest, and one
+// Cloud Logging line for every failure past the gate.
+const record = () => jobs.record;
+const FAILURE_STEPS = [
+  'google-github-actions/auth',
+  'google-github-actions/setup-gcloud',
+  'failed',
+];
+const SUCCESS = "needs.deploy.result == 'success'";
+
+/** The record job's context: each earlier job's result, the gate's answer and the job's status. */
+function recordContext(
+  results: Record<string, string>,
+  { ready = 'true', failed = false, cancelled = false } = {},
+) {
+  const needs: Data = { gate: { result: 'success', outputs: { ready } } };
+  for (const name of ['build', 'migrate', 'deploy'])
+    needs[name] = { result: results[name] ?? 'skipped' };
+  return { needs, always: () => true, failure: () => failed, cancelled: () => cancelled };
+}
+const CREDENTIAL = '\u0000credential\u0000';
+/** Whether any expression a step interpolates (its run, env or with) yields the token or a secret. */
+function bindsCredential(s: Data): boolean {
+  const secrets = new Proxy(
+    {},
+    {
+      getOwnPropertyDescriptor: () => ({ value: CREDENTIAL, configurable: true, enumerable: true }),
+      get: () => CREDENTIAL,
+    },
+  );
+  const context = { github: { token: CREDENTIAL }, secrets };
+  const values = [s.run, ...Object.values(s.env ?? {}), ...Object.values(s.with ?? {})];
+  return values.some((value) =>
+    [...String(value ?? '').matchAll(/\$\{\{(.*?)\}\}/gs)].some(
+      ([, expression]) => evaluate(expression, context) === CREDENTIAL,
+    ),
+  );
+}
+const recordStep = (key: string) =>
+  steps(record()).find((s: Data) => (s.id ?? s.name ?? String(s.uses ?? '').split('@')[0]) === key);
+
+const FAILURE_PATHS: Record<string, string>[] = [
+  { build: 'failure' },
+  { build: 'cancelled' },
+  { build: 'success', migrate: 'failure' },
+  { build: 'success', migrate: 'cancelled' },
+  { build: 'success', migrate: 'success', deploy: 'failure' },
+  { build: 'success', migrate: 'skipped', deploy: 'failure' },
+  { build: 'success', migrate: 'success', deploy: 'cancelled' },
+];
+const RELEASED = { build: 'success', migrate: 'success', deploy: 'success' };
+
+describe('release record', () => {
+  it('runs after deploy, with the version, image, revision and replaced traffic handed on', () => {
+    expect(new Set(record().needs)).toEqual(new Set(['gate', 'build', 'migrate', 'deploy']));
+    expect(release.jobs.build.outputs.version).toBe('${{ steps.version.outputs.version }}');
+    expect(jobs.deploy.outputs).toEqual({
+      revision: '${{ steps.stage.outputs.revision }}',
+      previous: '${{ steps.before.outputs.previous }}',
+      serving: '${{ steps.before.outputs.serving }}',
+    });
+    expect(record().env.VERSION).toBe('${{ needs.build.outputs.version }}');
+    expect(recordStep('manifest').env).toEqual({
+      IMAGE_REF: '${{ needs.build.outputs.image }}',
+      REVISION: '${{ needs.deploy.outputs.revision }}',
+      PREVIOUS: '${{ needs.deploy.outputs.previous }}',
+      EARLIER: '${{ steps.earlier.outputs.manifest }}',
+      FIRST: '${{ steps.earlier.outputs.first }}',
+      EXISTING: '${{ steps.existing.outputs.state }}',
+    });
+  });
+
+  it('is the only job that can write, and only its Release lookups, tag and Release steps hold the token', () => {
+    const writers = Object.entries(jobs as Record<string, Data>)
+      .filter(([, job]) =>
+        Object.entries(job.permissions ?? {}).some(([k, v]) => k !== 'id-token' && v !== 'read'),
+      )
+      .map(([name]) => name);
+    expect(writers).toEqual(['record']);
+    expect(record().permissions).toEqual({ contents: 'write', 'id-token': 'write' });
+    const holders = Object.values(jobs as Record<string, Data>)
+      .flatMap((job) => steps(job))
+      .filter((s) => bindsCredential(s))
+      .map((s) => s.id);
+    expect(holders).toEqual(['existing', 'earlier', 'tag', 'release']);
+    for (const s of steps(record())) {
+      if (String(s.uses ?? '').startsWith('actions/checkout@')) {
+        expect(s.with['persist-credentials']).toBe(false);
+      }
+    }
+  });
+
+  it.each([
+    [RELEASED, 'true', true],
+    ...FAILURE_PATHS.map((r) => [r, 'true', true] as const),
+    [{ build: 'success' }, 'true', false], // first images only: nothing released, nothing failed
+    [{ build: 'failure' }, 'false', false], // the gate stopped it: before the gate
+    [{}, '', false],
+  ])('runs for %j with the gate ready %j: %s', (results, ready, runs) => {
+    expect(truthy(evaluate(record().if, recordContext(results, { ready })))).toBe(runs);
+  });
+
+  it('pushes the tag only after the traffic move and the smoke checks passed', () => {
+    const order = steps(record()).map((s: Data) => s.id ?? s.name ?? s.uses);
+    expect(order.indexOf('manifest')).toBeLessThan(order.indexOf('tag'));
+    expect(order.indexOf('tag')).toBeLessThan(order.indexOf('release'));
+    for (const key of ['manifest', 'tag', 'release']) {
+      // No status function, so a failed step above stops it as well.
+      expect(recordStep(key).if, key).toBe(SUCCESS);
+      for (const results of FAILURE_PATHS) {
+        expect(truthy(evaluate(recordStep(key).if, recordContext(results))), key).toBe(false);
+      }
+    }
+    // deploy succeeds only when the move and both smoke checks did: none of them can be skipped.
+    for (const key of [
+      'stage',
+      'Smoke-check the staged revision',
+      'promote',
+      'Smoke-check the service URL',
+    ]) {
+      expect(step(jobs.deploy, key).if ?? null, key).toBeNull();
+      expect(step(jobs.deploy, key)['continue-on-error'] ?? false, key).toBe(false);
+    }
+  });
+
+  it.each([
+    ...FAILURE_PATHS.map((r) => [r, false, false] as const),
+    [RELEASED, true, false], // a record step itself failed
+    [RELEASED, false, true], // the record job itself was cancelled
+  ])(
+    'writes the failure line on the failure path %j (record step failed: %s, record cancelled: %s)',
+    (results, failed, cancelled) => {
+      expect(truthy(evaluate(record().if, recordContext(results)))).toBe(true);
+      for (const key of FAILURE_STEPS) {
+        expect(
+          truthy(evaluate(recordStep(key).if, recordContext(results, { failed, cancelled }))),
+          key,
+        ).toBe(true);
+      }
+    },
+  );
+
+  // The deploy job's before step, with fake gcloud and jq: is this release's image already serving?
+  // The service template always names a newer revision on another image, so only the image of the
+  // revision that holds the traffic can decide.
+  const SERVING = 'dryscope-api-test-00012-abc';
+  const OLDER = 'dryscope-api-test-00011-xyz';
+  const OTHER_IMAGE = IMAGE_REF.replace('c'.repeat(64), 'd'.repeat(64));
+  function beforeStep(traffic: string, images: Record<string, string>) {
+    const sh = shell();
+    const revisions = Object.entries(images)
+      .map(([name, image]) => `${name}) echo '${image}' ;;`)
+      .join(' ');
+    sh.fake('jq', `cat > /dev/null; echo '${traffic}'`);
+    sh.fake(
+      'gcloud',
+      `if [ "$2" = revisions ]; then case \${4#--filter=metadata.name=} in ${revisions} *) ;; esac; exit 0; fi
+[ "$7" = --format=json ] && exit 0
+printf '%s\\t%s\\n' '${OTHER_IMAGE}' dryscope-api-test-00013-new`,
+    );
+    const result = sh.run(step(jobs.deploy, 'before').run, { ...release.env, IMAGE_REF });
+    return { sh, result };
+  }
+  const describeRevision = (name: string) => [
+    'run',
+    'revisions',
+    'list',
+    `--filter=metadata.name=${name}`,
+    '--format=value(spec.containers[0].image)',
+    `--region=${release.env.REGION}`,
+    `--project=${release.env.PROJECT}`,
+    '--service',
+    release.env.SERVICE,
+  ];
+
+  it.each([
+    ['a first run', `${SERVING}=100`, { [SERVING]: OTHER_IMAGE }, 'false'],
+    [
+      'a rerun after the move, a later release staged since',
+      `${SERVING}=100`,
+      { [SERVING]: IMAGE_REF },
+      'true',
+    ],
+    [
+      'a rerun after this release was staged but never took the traffic',
+      `${OLDER}=100`,
+      { [OLDER]: OTHER_IMAGE, [SERVING]: IMAGE_REF },
+      'false',
+    ],
+  ])(
+    'tells the record whether the release was already serving: %s',
+    (_label, traffic, images, serving) => {
+      const { sh, result } = beforeStep(traffic, images);
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      expect(sh.outputs()).toEqual({ previous: traffic, serving });
+      const holder = traffic.split('=')[0]!;
+      expect(sh.calls('gcloud').filter((args) => args[1] === 'revisions')).toEqual([
+        describeRevision(holder),
+      ]);
+    },
+  );
+
+  it('never calls split traffic this release, without asking for any image', () => {
+    const traffic = `${SERVING}=90,${OLDER}=10`;
+    const { sh, result } = beforeStep(traffic, { [SERVING]: IMAGE_REF, [OLDER]: IMAGE_REF });
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(sh.outputs()).toEqual({ previous: traffic, serving: 'false' });
+    expect(sh.calls('gcloud').filter((args) => args[1] === 'revisions')).toEqual([]);
+  });
+
+  it('stops when the image of the serving revision cannot be read', () => {
+    const { result, sh } = beforeStep(`${SERVING}=100`, {});
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toContain(`Could not read the image of ${SERVING}`);
+    expect(sh.outputs()).toEqual({});
+  });
+
+  it('writes no failure line after a clean release', () => {
+    for (const key of FAILURE_STEPS) {
+      expect(truthy(evaluate(recordStep(key).if, recordContext(RELEASED))), key).toBe(false);
+    }
   });
 });
 

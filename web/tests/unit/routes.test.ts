@@ -42,6 +42,15 @@ describe('health route', () => {
     expect(await res.json()).toEqual({ status: 'ok', env: 'test', commit });
   });
 
+  it('reports the release version beside the commit when the image carries both', async () => {
+    const commit = '0123456789abcdef0123456789abcdef01234567';
+    vi.stubEnv('APP_ENV', 'test');
+    vi.stubEnv('APP_COMMIT', commit);
+    vi.stubEnv('APP_VERSION', '2026.11.13-2');
+    const res = await GET();
+    expect(await res.json()).toEqual({ status: 'ok', env: 'test', commit, version: '2026.11.13-2' });
+  });
+
   it('answers 503 without echoing settings when the Cloud SQL login cannot be made', async () => {
     vi.stubEnv('APP_ENV', 'test');
     vi.stubEnv('SQL_CONNECTION_NAME', 'dryscope:us-central1:dryscope-test-pg');

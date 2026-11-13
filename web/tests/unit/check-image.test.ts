@@ -6,6 +6,7 @@ type Image = Parameters<typeof checkImage>[0] & {
 };
 
 const commit = '0123456789abcdef0123456789abcdef01234567';
+const version = '2026.11.13-1';
 
 const web = (): Image => ({
   architecture: 'amd64',
@@ -21,6 +22,7 @@ const web = (): Image => ({
       'PORT=8080',
       'HOSTNAME=0.0.0.0',
       `APP_COMMIT=${commit}`,
+      `APP_VERSION=${version}`,
     ],
   },
 });
@@ -34,7 +36,7 @@ describe('image tarball check', () => {
   });
 
   it('passes the web image the build script makes', () => {
-    expect(checkImage(web(), 'web', commit)).toEqual([]);
+    expect(checkImage(web(), 'web', commit, version)).toEqual([]);
   });
 
   it.each([
@@ -45,15 +47,21 @@ describe('image tarball check', () => {
     ['no port', (i: Image) => (i.config.ExposedPorts = {}), /8080\/tcp/],
     ['an environment name', (i: Image) => i.config.Env.push('APP_ENV=test'), /APP_ENV is baked in/],
     ['another commit', (i: Image) => (i.config.Env[4] = 'APP_COMMIT=' + 'f'.repeat(40)), /APP_COMMIT/],
+    ['another version', (i: Image) => (i.config.Env[5] = 'APP_VERSION=2026.11.13-2'), /APP_VERSION/],
+    ['no version', (i: Image) => i.config.Env.pop(), /APP_VERSION is undefined/],
   ])('refuses an image with %s', (_label, change, problem) => {
     const image = web();
     change(image);
-    expect(checkImage(image, 'web', commit).join('\n')).toMatch(problem);
+    expect(checkImage(image, 'web', commit, version).join('\n')).toMatch(problem);
   });
 
   it('refuses a web image when no commit is expected, and a placeholder that carries one', () => {
     expect(checkImage(web(), 'web').join('\n')).toMatch(/APP_COMMIT/);
-    expect(checkImage(web(), 'live-placeholder')).toEqual(['the placeholder carries APP_COMMIT']);
+    expect(checkImage(web(), 'web', commit).join('\n')).toMatch(/APP_VERSION/);
+    expect(checkImage(web(), 'live-placeholder')).toEqual([
+      'the placeholder carries APP_COMMIT',
+      'the placeholder carries APP_VERSION',
+    ]);
   });
 
   it('passes the placeholder without a commit or hostname', () => {

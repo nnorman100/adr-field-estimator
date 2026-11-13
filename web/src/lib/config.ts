@@ -62,6 +62,12 @@ const shape = {
     .string()
     .regex(/^[0-9a-f]{40}$/, { error: 'APP_COMMIT must be a 40-character commit hash' })
     .optional(),
+  // The release version (YYYY.MM.DD-N, docs/plans/TC.md TC-8) the release build bakes in beside the
+  // commit; local runs and the Web app check leave it unset or give their own.
+  APP_VERSION: z
+    .string()
+    .regex(/^\d{4}\.\d{2}\.\d{2}-[1-9]\d{0,5}$/, { error: 'APP_VERSION must be YYYY.MM.DD-N' })
+    .optional(),
   // Tracing: the standard off switch, and the name Cloud Run gives a running service. Both are read
   // only by parseTracingConfig; neither is required.
   // Like the OpenTelemetry SDK, any value but true (in any case) leaves tracing on, so a typo in the
@@ -185,6 +191,7 @@ export type AppConfig = {
   appEnv: z.infer<typeof schema>['APP_ENV'];
   databaseUrl: string | null;
   commit?: string;
+  version?: string;
   cloudSql?: CloudSqlConfig;
 };
 
@@ -220,6 +227,7 @@ export function parseConfig(env: Record<string, string | undefined>): AppConfig 
   const data = checked(env);
   const config: AppConfig = { appEnv: data.APP_ENV, databaseUrl: data.DATABASE_URL ?? null };
   if (data.APP_COMMIT !== undefined) config.commit = data.APP_COMMIT;
+  if (data.APP_VERSION !== undefined) config.version = data.APP_VERSION;
 
   const missing = SQL_KEYS.filter((key) => data[key] === undefined);
   if (missing.length < SQL_KEYS.length) {

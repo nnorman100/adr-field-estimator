@@ -3,9 +3,10 @@
 // traffic, and the image job in the Web app workflow runs it against a local container. Traffic
 // moves only if it passes.
 //
-//   node scripts/smoke-release.ts --url <base URL> --commit <40-character commit> --env test
+//   node scripts/smoke-release.ts --url <base URL> --commit <40-character commit> --version <YYYY.MM.DD-N> --env test
 //
-// Against Cloud Run, health must report database ok, which the app says only after its own database
+// Health must report the commit and the release version the image was built with (TC-8). Against
+// Cloud Run, health must also report database ok, which the app says only after its own database
 // login worked; the local container in the Web app workflow has no database, so localhost is exempt.
 //
 // Test only: its signed-out probes include a POST, so it must never run against live. Live checks
@@ -17,6 +18,7 @@ import { pathToFileURL } from 'node:url';
 export type SmokeOptions = {
   baseUrl: string;
   commit: string;
+  version: string;
   env: 'test';
   requireDatabase: boolean;
   fetch?: typeof fetch;
@@ -49,8 +51,10 @@ export function parseArgs(argv: string[]): SmokeOptions {
   }
   const commit = value('commit');
   if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error('--commit must be a 40-character commit hash');
+  const version = value('version');
+  if (!/^\d{4}\.\d{2}\.\d{2}-[1-9]\d{0,5}$/.test(version)) throw new Error('--version must be YYYY.MM.DD-N');
   if (value('env') !== 'test') throw new Error('--env must be test (live checks are not built yet)');
-  return { baseUrl, commit, env: 'test', requireDatabase: !local };
+  return { baseUrl, commit, version, env: 'test', requireDatabase: !local };
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -92,11 +96,14 @@ export async function runSmoke(options: SmokeOptions, log: (line: string) => voi
     if (h.commit !== options.commit) {
       failures.push(`health: commit is ${String(h.commit)}, expected ${options.commit}`);
     }
+    if (h.version !== options.version) {
+      failures.push(`health: version is ${String(h.version)}, expected ${options.version}`);
+    }
     if (options.requireDatabase && h.database !== 'ok') {
       failures.push(`health: database is ${String(h.database)}, expected ok`);
     }
     log(
-      `health: status=${String(h.status)} env=${String(h.env)} commit=${String(h.commit)} database=${String(h.database)}`,
+      `health: status=${String(h.status)} env=${String(h.env)} commit=${String(h.commit)} version=${String(h.version)} database=${String(h.database)}`,
     );
   }
 
