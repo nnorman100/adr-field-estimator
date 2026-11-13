@@ -6,14 +6,13 @@
 // A report holds only:
 //   - the error NAME, scrubbed, if it is still an identifier;
 //   - the MESSAGE, scrubbed and cut to 300 characters;
-//   - stack FRAMES from the app's own scripts (/_next/static/...): the function name, scrubbed, the
-//     line and column, and the path only if it has the shape of the app's own bundle (otherwise
-//     [path]); never the page address or another site's script;
+//   - stack FRAMES from the app's own scripts (/_next/static/...): the function name, scrubbed, and
+//     the line and column, with the fixed name app.js in place of the script's path; a frame from
+//     another script is dropped, and no path or page address is ever written;
 //   - the route PATTERN of the page (/sign-in/[address]), never the address itself;
 //   - the browser FAMILY, one word.
 // Nothing about the person, company, job or address (hard rule 6).
 
-export type ClientErrorKind = 'error' | 'rejection' | 'boundary';
 export type BrowserFamily = 'chrome' | 'safari' | 'firefox' | 'edge' | 'other';
 
 export type ClientErrorReport = {
@@ -102,23 +101,20 @@ export function errorName(name: unknown): string {
 }
 
 const PATH = String.raw`\/_next\/static\/[\w\-./%~@[\]]{1,150}`;
-// The app's own bundle: /_next/static/, up to four folders (chunks, the build id, or a route's source
-// path such as app/sign-in/[address]), and a hashed chunk name.
-const BUNDLE = /^\/_next\/static\/(?:[A-Za-z0-9_\-[\]]{1,40}\/){1,4}[A-Za-z0-9_\-[\]]{1,80}(?:\._)?\.js$/;
-const OTHER_PATH = '[path]';
+// Written in place of every script path: the path itself is never kept.
+const APP_SCRIPT = 'app.js';
 const FUNCTION_NAME = /^[\w$.<>[\] #]{1,80}$/;
 // A frame as found in a browser's stack text: V8 "at fn (url:line:col)", Safari and Firefox
-// "fn@url:line:col". The query a script URL may carry (?dpl=...) is skipped.
-const FRAME = new RegExp(`(${PATH}?\\.js)(?:[?#][^\\s:)]*)?:(\\d{1,7}):(\\d{1,7})`);
+// "fn@url:line:col". Only a frame in one of the app's own scripts is found; the query a script URL
+// may carry (?dpl=...) is skipped.
+const FRAME = new RegExp(`${PATH}?\\.js(?:[?#][^\\s:)]*)?:(\\d{1,7}):(\\d{1,7})`);
 // The one shape a stored frame has, V8-style, which is what Error Reporting reads for JavaScript.
-const WHERE = String.raw`(${PATH}\.js|\[path\]):(\d{1,7}):(\d{1,7})`;
-const CANONICAL = new RegExp(`^ {4}at (?:([\\w$.<>[\\] #]{1,80}) \\(${WHERE}\\)|${WHERE})$`);
+const CANONICAL = /^ {4}at (?:([\w$.<>[\] #]{1,80}) \(app\.js:(\d{1,7}):(\d{1,7})\)|app\.js:(\d{1,7}):(\d{1,7}))$/;
 
-// The canonical frame: the function name scrubbed, the line and column, and the path if it is the
-// app's own bundle.
-function canonicalFrame(fn: string, path: string, line: string, column: string): string {
+// The canonical frame: the function name scrubbed, and the line and column.
+function canonicalFrame(fn: string, line: string, column: string): string {
   const name = scrubText(fn);
-  const where = `${BUNDLE.test(path) ? path : OTHER_PATH}:${line}:${column}`;
+  const where = `${APP_SCRIPT}:${line}:${column}`;
   return FUNCTION_NAME.test(name) ? `    at ${name} (${where})` : `    at ${where}`;
 }
 
@@ -127,7 +123,7 @@ function frameOf(line: string): string | null {
   if (!found) return null;
   const head = line.slice(0, found.index).replace(/https?:\/\/[^\s/()@]*$/, '');
   const fn = head.replace(/^\s*at\s+/, '').replace(/[\s@(]+$/, '').trim();
-  return canonicalFrame(fn, found[1]!, found[2]!, found[3]!);
+  return canonicalFrame(fn, found[1]!, found[2]!);
 }
 
 // The app's own frames from a stack text, rewritten into the canonical shape. The header line (which
@@ -149,7 +145,7 @@ export function cleanFrames(lines: readonly string[]): string[] {
   const out: string[] = [];
   for (const line of lines) {
     const found = CANONICAL.exec(line);
-    if (found) out.push(canonicalFrame(found[1] ?? '', (found[2] ?? found[5])!, (found[3] ?? found[6])!, (found[4] ?? found[7])!));
+    if (found) out.push(canonicalFrame(found[1] ?? '', (found[2] ?? found[4])!, (found[3] ?? found[5])!));
     if (out.length >= MAX_FRAMES) break;
   }
   return out;
@@ -170,14 +166,14 @@ function errorLike(value: unknown): value is { name?: unknown; message: string; 
 }
 
 // A report from whatever was thrown or rejected. Only the fields above are read from it, so an
-// object that happens to carry a token or an email contributes nothing.
+// object that happens to carry a token or an email contributes nothing. `fallbackName` names what
+// was thrown when it is not an Error (an unhandled rejection of a plain value, say).
 export function buildReport(
-  kind: ClientErrorKind,
   thrown: unknown,
   where: { pathname: string; userAgent: string },
+  fallbackName = 'Error',
 ): ClientErrorReport {
-  const fallback = kind === 'rejection' ? 'UnhandledRejection' : 'Error';
-  let name = fallback;
+  let name = fallbackName;
   let message = '';
   let stack: string[] = [];
   if (errorLike(thrown)) {

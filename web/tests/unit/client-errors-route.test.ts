@@ -45,7 +45,7 @@ afterEach(() => {
 const report = (extra: Record<string, unknown> = {}) => ({
   name: 'TypeError',
   message: 'x is not a function',
-  stack: ['    at fn (/_next/static/chunks/app-0123.js:10:20)', '    at /_next/static/chunks/main.js:3:4'],
+  stack: ['    at fn (app.js:10:20)', '    at app.js:3:4'],
   route: '/sign-in/[address]',
   browser: 'safari',
   ...extra,
@@ -78,7 +78,7 @@ describe('POST /api/client-errors: what it writes', () => {
       '@type': 'type.googleapis.com/google.devtools.clouderrorreporting.v1beta1.ReportedErrorEvent',
       severity: 'ERROR',
       serviceContext: { service: 'dryscope-web-client', version: COMMIT },
-      message: 'TypeError: x is not a function\n    at fn (/_next/static/chunks/app-0123.js:10:20)\n    at /_next/static/chunks/main.js:3:4',
+      message: 'TypeError: x is not a function\n    at fn (app.js:10:20)\n    at app.js:3:4',
       context: { httpRequest: { url: '/sign-in/[address]' } },
       browser: 'safari',
       'logging.googleapis.com/trace': 'projects/dryscope-test/traces/4bf92f3577b34da6a3ce929d0e0e4736',
@@ -89,7 +89,7 @@ describe('POST /api/client-errors: what it writes', () => {
   });
 
   it('writes only the fixed fields, whatever else the body carries', async () => {
-    await send([{ ...report(), kind: 'error', user: EMAIL, headers: { authorization: BEARER }, extra: { deep: COORDS } }]);
+    await send([{ ...report(), user: EMAIL, headers: { authorization: BEARER }, extra: { deep: COORDS } }]);
     expect(Object.keys(events()[0]!).sort()).toEqual(
       ['@type', 'browser', 'context', 'message', 'serviceContext', 'severity', 'stack_trace'].sort(),
     );
@@ -102,10 +102,10 @@ describe('POST /api/client-errors: what it writes', () => {
         name: EMAIL,
         message: `failed for ${EMAIL} with ${BEARER} at ${COORDS} job 123e4567-e89b-12d3-a456-426614174000 ?token=abc`,
         stack: [
-          `    at ${EMAIL} (/_next/static/chunks/a.js:1:2)`,
+          `    at ${EMAIL} (app.js:1:2)`,
           '    at fn (https://evil.example/_next/static/chunks/a.js:1:2)',
           `free text ${COORDS}`,
-          '    at fn (/_next/static/chunks/ok.js:5:6)',
+          '    at fn (app.js:5:6)',
         ],
         route: `/sign-in/acme-restoration`,
         browser: 'safari',
@@ -118,7 +118,7 @@ describe('POST /api/client-errors: what it writes', () => {
       context: { httpRequest: { url: 'unknown' } },
       message: expect.stringMatching(/^Error: failed for \[email\]/) as string,
     });
-    expect((event as { message: string }).message).toContain('    at fn (/_next/static/chunks/ok.js:5:6)');
+    expect((event as { message: string }).message).toContain('    at fn (app.js:5:6)');
   });
 
   it('scrubs a token-shaped name, a street address and an email in a script path', async () => {
@@ -127,28 +127,30 @@ describe('POST /api/client-errors: what it writes', () => {
       report({
         name: token,
         message: 'Failed at 123 Main Street',
-        stack: ['    at /_next/static/chunks/jane@example.com.js:1:2', `    at ${token} (/_next/static/chunks/ok.js:5:6)`],
+        stack: ['    at /_next/static/chunks/jane@example.com.js:1:2', `    at ${token} (app.js:5:6)`],
       }),
     ]);
     const text = lines.join('');
     expect(text).not.toMatch(/A1b2C3d4|123 Main|jane|example\.com/);
-    expect((events()[0] as { message: string }).message).toBe(
-      'Error: Failed at # Main Street\n    at [path]:1:2\n    at [token] (/_next/static/chunks/ok.js:5:6)',
-    );
+    expect((events()[0] as { message: string }).message).toBe('Error: Failed at # Main Street\n    at [token] (app.js:5:6)');
   });
 
-  it('scrubs a short phone number, a short coordinate and a percent-encoded email in a script path', async () => {
+  it('scrubs a short phone number, a short coordinate and a percent-encoded email, and logs no script path', async () => {
     await send([
       report({
-        message: 'call 555-0100 at latitude 34.052',
-        stack: ['    at /_next/static/chunks/jane%40example.com.js:1:2', '    at jane%40example (/_next/static/chunks/ok.js:5:6)'],
+        message: 'call 555-0100 at latitude 34.052 for jane%40example.com',
+        stack: [
+          '    at /_next/static/chunks/jane%40example.com.js:1:2',
+          '    at jane%40example (app.js:5:6)',
+          '    at fn (/_next/static/chunks/123-Main-Street.js:1:2)',
+          `    at /_next/static/chunks/${'Zq9x'.repeat(10)}.js:3:4`,
+          '    at f555 (app.js:7:8)',
+        ],
       }),
     ]);
     const text = lines.join('');
-    expect(text).not.toMatch(/555|0100|34\.052|jane|example/);
-    expect((events()[0] as { message: string }).message).toBe(
-      'TypeError: call #-# at latitude #.#\n    at [path]:1:2',
-    );
+    expect(text).not.toMatch(/555|0100|34\.052|jane|example|Main|Street|Zq9x|_next/);
+    expect((events()[0] as { message: string }).message).toBe('TypeError: call #-# at latitude #.# for [email]\n    at f# (app.js:7:8)');
   });
 
   it('cuts a long message to 300 characters', async () => {

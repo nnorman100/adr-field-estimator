@@ -17,7 +17,7 @@
 // `online` event or when the page is visible again. An answer from the server, of any status, ends
 // that report's story: nothing is retried into a refusal.
 
-import { buildReport, type ClientErrorKind, type ClientErrorReport } from './client-error-report';
+import { buildReport, type ClientErrorReport } from './client-error-report';
 
 export const CLIENT_ERRORS_PATH = '/api/client-errors';
 export const MAX_REPORTS_PER_LOAD = 10;
@@ -39,7 +39,7 @@ type ReporterOptions = {
 };
 
 export type Reporter = {
-  report: (kind: ClientErrorKind, thrown: unknown) => void;
+  report: (thrown: unknown, fallbackName?: string) => void;
   flush: () => Promise<void>;
   // Start every waiting request now, without waiting for answers: the page is hiding or closing.
   flushNow: () => void;
@@ -120,11 +120,11 @@ export function createReporter(options: ReporterOptions): Reporter {
     while (waiting.length > 0) void sendBatch(nextBatch());
   }
 
-  function report(kind: ClientErrorKind, thrown: unknown): void {
+  function report(thrown: unknown, fallbackName?: string): void {
     if (counted >= maxPerLoad) return;
     counted += 1;
     if (waiting.length >= maxWaiting) return;
-    waiting.push(buildReport(kind, thrown, options.where()));
+    waiting.push(buildReport(thrown, options.where(), fallbackName));
     arm(options.isVisible() ? SETTLE_MS : 0);
   }
 
@@ -196,8 +196,8 @@ export function installClientErrors(env: ClientEnv = browserEnv()): () => void {
     }
   };
   const onError = (event: { error?: unknown; message?: unknown }) =>
-    guard(() => reporter.report('error', event.error ?? event.message))();
-  const onRejection = (event: { reason?: unknown }) => guard(() => reporter.report('rejection', event.reason))();
+    guard(() => reporter.report(event.error ?? event.message))();
+  const onRejection = (event: { reason?: unknown }) => guard(() => reporter.report(event.reason, 'UnhandledRejection'))();
   const onPageHide = guard(() => reporter.flushNow());
   const onOnline = guard(() => void reporter.flush());
   const onVisibility = guard(() => {
@@ -224,7 +224,7 @@ export function installClientErrors(env: ClientEnv = browserEnv()): () => void {
 export function reportBoundaryError(error: unknown, env: ClientEnv = browserEnv()): void {
   try {
     installClientErrors(env);
-    reporterFor(env).report('boundary', error);
+    reporterFor(env).report(error);
   } catch {
     // Nothing about the fault is safe to repeat.
   }

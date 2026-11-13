@@ -169,7 +169,7 @@ describe('caps', () => {
     for (let i = 0; i < 30; i++) {
       const error = new Error(`message ${i} ${'padding '.repeat(60)}`);
       error.stack = Array.from({ length: 12 }, (_, f) => `    at fn${f} (https://a.example/_next/static/chunks/${'long-name-'.repeat(8)}${f}.js:${i + 1}:${f + 1})`).join('\n');
-      reporter.report('error', error);
+      reporter.report(error);
     }
     expect(reporter.waiting()).toBe(20);
     online = true;

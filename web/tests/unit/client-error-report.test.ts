@@ -99,38 +99,36 @@ describe('ownFrames', () => {
     '    at fourth (https://app.example/not-ours/script.js:5:6)',
   ].join('\n');
 
-  it('keeps only frames from the app’s own scripts, with the origin and query removed', () => {
-    expect(ownFrames(V8)).toEqual([
-      '    at fn (/_next/static/chunks/app-0123abcd.js:10:20)',
-      '    at /_next/static/chunks/main.js:3:4',
-    ]);
+  it('keeps only frames from the app’s own scripts, with app.js in place of the path', () => {
+    expect(ownFrames(V8)).toEqual(['    at fn (app.js:10:20)', '    at app.js:3:4']);
   });
 
   it('reads the Safari and Firefox frame shape', () => {
     const stack = ['fn@https://app.example/_next/static/chunks/a.js:7:8', '@https://app.example/_next/static/chunks/b.js:9:1', 'native code'].join('\n');
-    expect(ownFrames(stack)).toEqual([
-      '    at fn (/_next/static/chunks/a.js:7:8)',
-      '    at /_next/static/chunks/b.js:9:1',
-    ]);
+    expect(ownFrames(stack)).toEqual(['    at fn (app.js:7:8)', '    at app.js:9:1']);
   });
 
-  it('scrubs the function name and keeps a path only when it has the shape of the app’s own bundle', () => {
+  it('scrubs the function name and never keeps a script path, whatever it holds', () => {
     const token = 'A1b2'.repeat(10);
     const stack = [
       `    at ${token} (https://app.example/_next/static/chunks/a.js:1:2)`,
       '    at https://app.example/_next/static/chunks/jane@example.com.js:1:2',
       '    at https://app.example/_next/static/chunks/jane%40example.com.js:3:4',
       '    at f12 (https://app.example/_next/static/chunks/0gy1dczh8t-w0.js:5:6)',
-      '    at https://app.example/_next/static/chunks/app/sign-in/[address]/page-0123abcd.js:7:8',
+      '    at https://app.example/_next/static/chunks/123-Main-Street.js:7:8',
+      `    at https://app.example/_next/static/chunks/${'Zq9x'.repeat(10)}.js:9:1`,
+      '    at https://app.example/_next/static/555-0100/latitude-34.052/page.js:2:3',
     ].join('\n');
     expect(ownFrames(stack)).toEqual([
-      '    at [token] (/_next/static/chunks/a.js:1:2)',
-      '    at [path]:1:2',
-      '    at [path]:3:4',
-      '    at f# (/_next/static/chunks/0gy1dczh8t-w0.js:5:6)',
-      '    at /_next/static/chunks/app/sign-in/[address]/page-0123abcd.js:7:8',
+      '    at [token] (app.js:1:2)',
+      '    at app.js:1:2',
+      '    at app.js:3:4',
+      '    at f# (app.js:5:6)',
+      '    at app.js:7:8',
+      '    at app.js:9:1',
+      '    at app.js:2:3',
     ]);
-    expect(ownFrames(stack).join('\n')).not.toMatch(/jane|example|A1b2/);
+    expect(ownFrames(stack).join('\n')).not.toMatch(/jane|example|A1b2|Main|Street|Zq9x|555|0100|34\.052|_next/);
   });
 
   it('does not carry the error message or a function name that is not an identifier', () => {
@@ -151,25 +149,28 @@ describe('cleanFrames', () => {
   it('keeps a frame in the canonical shape and drops anything else', () => {
     expect(
       cleanFrames([
+        '    at fn (app.js:1:2)',
+        '    at app.js:3:4',
         '    at fn (/_next/static/chunks/a.js:1:2)',
-        '    at /_next/static/chunks/b.js:3:4',
         '    at fn (https://evil.example/_next/static/chunks/a.js:1:2)',
-        `    at ${EMAIL} (/_next/static/chunks/a.js:1:2)`,
+        `    at ${EMAIL} (app.js:1:2)`,
         'free text jane@example.com',
-        '    at fn (/_next/static/chunks/a.js?token=x:1:2)',
+        '    at fn (app.js?token=x:1:2)',
+        '    at fn (/_next/static/chunks/123-Main-Street.js:1:2)',
       ]),
-    ).toEqual(['    at fn (/_next/static/chunks/a.js:1:2)', '    at /_next/static/chunks/b.js:3:4']);
+    ).toEqual(['    at fn (app.js:1:2)', '    at app.js:3:4']);
   });
 
-  it('applies the scrub rules again to the function name and the path of a canonical frame', () => {
+  it('applies the scrub rules again to the function name of a canonical frame', () => {
     expect(
       cleanFrames([
         '    at /_next/static/chunks/jane@example.com.js:1:2',
-        `    at ${'A1b2'.repeat(10)} (/_next/static/chunks/a.js:1:2)`,
+        `    at ${'A1b2'.repeat(10)} (app.js:1:2)`,
         '    at /_next/static/chunks/jane%40example.com.js:3:4',
-        '    at jane%40example (/_next/static/chunks/a.js:5:6)',
+        '    at jane%40example (app.js:5:6)',
+        '    at f555 (app.js:7:8)',
       ]),
-    ).toEqual(['    at [path]:1:2', '    at [token] (/_next/static/chunks/a.js:1:2)', '    at [path]:3:4']);
+    ).toEqual(['    at [token] (app.js:1:2)', '    at f# (app.js:7:8)']);
   });
 
   it('gives the server back exactly what the browser built', () => {
@@ -235,7 +236,7 @@ describe('buildReport', () => {
 
   it('builds the C13 fields from an Error and nothing else', () => {
     const error = new TypeError(`bad value for ${EMAIL} ${BEARER} at ${COORDS}`);
-    const report = buildReport('error', error, where);
+    const report = buildReport(error, where);
     expect(Object.keys(report).sort()).toEqual(['browser', 'message', 'name', 'route', 'stack']);
     expect(report).toMatchObject({ name: 'TypeError', route: '/sign-in/[address]', browser: 'chrome' });
     const text = JSON.stringify(report);
@@ -246,8 +247,8 @@ describe('buildReport', () => {
   });
 
   it('reads a thrown string and a rejected object without keeping the object', () => {
-    expect(buildReport('error', `boom ${EMAIL}`, where).message).not.toContain('example.com');
-    const rejected = buildReport('rejection', { token: BEARER, email: EMAIL }, where);
+    expect(buildReport(`boom ${EMAIL}`, where).message).not.toContain('example.com');
+    const rejected = buildReport({ token: BEARER, email: EMAIL }, where, 'UnhandledRejection');
     expect(rejected.name).toBe('UnhandledRejection');
     expect(JSON.stringify(rejected)).not.toMatch(/example\.com|abcdef/);
   });
