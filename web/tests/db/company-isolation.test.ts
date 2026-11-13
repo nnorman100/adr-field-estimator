@@ -152,6 +152,10 @@ async function seedSides(): Promise<void> {
     }
     return ids;
   };
+  // Each company's profile holds markers too, so a clean answer from the profile route is not an empty one.
+  for (const [company, suffix] of [[h.seed.a, 'a'], [h.seed.b, 'b']] as const) {
+    await h.admin`UPDATE companies SET profile_address = ${`Profile Line ${suffix}`}, profile_signoff = ${`Signoff ${suffix}`}, profile_license = ${`Licence ${suffix}`} WHERE id = ${company}`;
+  }
   const jobA = await job(h.seed.a, h.seed.ownerA.actor, 'a');
   const jobB = await job(h.seed.b, h.seed.ownerB.actor, 'b');
   const side = (
@@ -172,7 +176,7 @@ async function seedSides(): Promise<void> {
       companyId,
       ids: { membershipId, invitationId, address: `company-${suffix}`, versionId, ...job },
       people: { owner: person(`owner-${suffix}`), estimator: person(`estimator-${suffix}`), office: person(`office-${suffix}`) },
-      markers: [companyId, membershipId, invitationId, versionId, `zz-price-marker-${suffix}`, `zz-reason-${suffix}`, tenant, `company-${suffix}`, `-${suffix}@example.test`, ...ids, ...extra, job.jobId, job.draftId, job.photoId, `Property Line ${suffix}`, `Customer ${suffix}`, `Carrier ${suffix}`, `Claim ${suffix}`].map((value) =>
+      markers: [companyId, membershipId, invitationId, versionId, `zz-price-marker-${suffix}`, `zz-reason-${suffix}`, tenant, `company-${suffix}`, `-${suffix}@example.test`, ...ids, ...extra, job.jobId, job.draftId, job.photoId, `Property Line ${suffix}`, `Customer ${suffix}`, `Carrier ${suffix}`, `Claim ${suffix}`, `Profile Line ${suffix}`, `Signoff ${suffix}`, `Licence ${suffix}`].map((value) =>
         value.toLowerCase(),
       ),
     };

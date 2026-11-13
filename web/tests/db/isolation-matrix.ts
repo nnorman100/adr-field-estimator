@@ -59,6 +59,7 @@ const row = (route: string, method: Method, kind: RouteKind, extra: Pick<MatrixR
 // Bodies that are valid for the job routes, so a refusal is the access rule's (the ids in them are
 // the suite's own; the path carries the other company's job).
 const JOB_CUSTOMER = { revision: 1, changeId: '5b7c1e0a-3f6d-4a52-9d1e-7a0c2b4f8e61', name: 'Planted Name', phone: '555-0100', email: 'planted@example.test', propertyAddress: '1 Planted Way' };
+const PROFILE = { revision: '2000-01-01T00:00:00.000000Z', changeId: '3e9a7c52-8b14-4f06-9d2a-6c1b5e8f0a37', address: 'Planted Street', phone: '555-0100', email: 'planted@example.test', license: 'PLANTED', signoff: 'Planted Name' };
 const JOB_CLAIM = { revision: 1, changeId: '8d2f4a90-61b3-4c7e-a5d8-0e9b3c1f7a24', carrier: 'Planted Mutual', claimNumber: 'PL-1', policyNumber: 'PL-2', dateOfLoss: null, lossCause: '', adjusterName: '', adjusterEmail: '', adjusterPhone: '', deductible: '' };
 
 // A body the photo route accepts as an image (its first bytes are a PNG's), so a refusal is the
@@ -75,6 +76,8 @@ const STALE = 999_999;
 
 export const MATRIX: readonly MatrixRow[] = [
   row(`${COMPANY}/team`, 'GET', 'company', { own: 'list' }),
+  row(`${COMPANY}/profile`, 'GET', 'company', { own: 'list' }),
+  row(`${COMPANY}/profile`, 'PUT', 'company', { body: PROFILE }),
   row(`${COMPANY}/invitations`, 'POST', 'company', { body: { email: 'new-person@example.test', role: 'estimator' } }),
   row(`${COMPANY}/invitations/[invitationId]/cancel`, 'POST', 'company', { own: 'cross' }),
   row(`${COMPANY}/invitations/[invitationId]/clear`, 'POST', 'company', { own: 'cross' }),
