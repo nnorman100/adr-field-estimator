@@ -1,6 +1,6 @@
 import { defineConfig } from '@playwright/test';
 import { AUTH_EMULATOR_HOST, E2E_PROJECT } from './tests/e2e/sign-in/emulator';
-import { FIRESTORE_EMULATOR_HOST } from './tests/e2e/offline/emulators';
+import { FIELD_DATABASE, FIRESTORE_EMULATOR_HOST } from './tests/e2e/offline/emulators';
 import { SERVER_LOG, SERVER_LOG_DIR } from './tests/e2e/server-log';
 import { FIXTURE_PATH } from './tests/e2e/sign-in/seed';
 
@@ -50,6 +50,10 @@ export default defineConfig({
         APP_ENV: 'local',
         GOOGLE_CLOUD_PROJECT: E2E_PROJECT,
         FIREBASE_AUTH_EMULATOR_HOST: AUTH_EMULATOR_HOST,
+        // The field database, for the screens that read a draft in the browser (Finish and review,
+        // tests/e2e/finish.spec.ts): the browser gets the emulator's address from the server.
+        FIRESTORE_DATABASE_ID: FIELD_DATABASE,
+        FIRESTORE_EMULATOR_HOST,
         LOCAL_SIGN_IN_FIXTURE: FIXTURE_PATH,
       },
       // A server started by hand would lack the emulator settings above.

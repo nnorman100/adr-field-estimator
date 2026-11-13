@@ -29,6 +29,10 @@ vi.mock('@/lib/team/services', () => ({ teamServices: () => live.harness!.team }
 vi.mock('@/lib/prices/services', () => ({ pricesServices: () => live.harness!.prices }));
 vi.mock('@/lib/jobs/services', () => ({ jobsServices: () => live.harness!.jobs }));
 vi.mock('@/lib/photos/services', () => ({ photosServices: () => live.harness!.photos }));
+vi.mock('@/lib/submissions/services', () => ({
+  submissionsServices: () => live.harness!.submissions,
+  runQueuedSubmissionRepair: async () => ({ aborted: 0, marked: 0, failed: 0 }),
+}));
 vi.mock('@/lib/platform/services', () => ({ platformServices: () => live.harness!.platform }));
 vi.mock('@/lib/sign-in/services', async () => {
   const { databaseSignInDirectory } = await import('@/lib/sign-in/database-directory');

@@ -8,12 +8,14 @@ import { photosService, type PhotosService } from '@/lib/photos/service';
 import { noEmailService, platformService, type PlatformService } from '@/lib/platform/service';
 import { pricesService, type PricesService } from '@/lib/prices/service';
 import { profileService, type ProfileService } from '@/lib/profile/service';
+import { submissionsService, type SubmissionsService } from '@/lib/submissions/service';
 import type { PlatformUsers } from '@/lib/platform/users';
 import { teamService, type TeamService } from '@/lib/team/service';
 import { TenantUsersUnavailable } from '@/lib/team/users';
 import { fakeDrafts, type FakeDrafts } from './draft-fake';
 import { fakeDraftStates, fakeEvidence, type FakeDraftStates, type FakeEvidence } from './evidence-fake';
 import { startMigratedDatabase, type MigratedDatabase, type SharedRole } from './postgres-harness';
+import { fakeField, memoryBacking, type FakeField } from '../submissions/field-fake';
 
 // The team and invitation routes against a real Postgres, as the app's runtime role with forced
 // row-level security, set up like a fresh Cloud SQL instance (see sign-in-lookup.test.ts): a
@@ -63,6 +65,10 @@ export type Harness = {
   photos: PhotosService;
   evidence: FakeEvidence;
   draftStates: FakeDraftStates;
+  // Submit and Back to editing (S5a-8), over the same database and a stand-in for the field drafts
+  // linked to the two above: a draft the jobs service made is here, and the photo route sees its state.
+  submissions: SubmissionsService;
+  field: FakeField;
   // The migrator's login (the table owner), for the owner-run command.
   migratorUrl: string;
   // Each member the team service asked to project, in order, after its change committed.
@@ -223,6 +229,8 @@ export async function resetTeamDatabase(
     photos: null as unknown as PhotosService,
     evidence: fakeEvidence(),
     draftStates: null as unknown as FakeDraftStates,
+    submissions: null as unknown as SubmissionsService,
+    field: null as unknown as FakeField,
     migratorUrl: urlAs(server, server.roles.migrator),
     projected: [],
   };
@@ -258,6 +266,8 @@ export async function resetTeamDatabase(
   harness.jobs = jobsService(handle.db, harness.drafts);
   harness.draftStates = fakeDraftStates(harness.drafts);
   harness.photos = photosService(handle.db, harness.evidence, harness.draftStates);
+  harness.field = fakeField(memoryBacking(), { drafts: harness.drafts, states: harness.draftStates });
+  harness.submissions = submissionsService(handle.db, harness.field);
   return harness;
 }
 
