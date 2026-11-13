@@ -158,8 +158,8 @@ export function numbersIn(text: string): Set<string> {
 
 // A number-like value as a number: 18.5, "18.5", "18.5%" and "18.50" are all 18.5. A string is one
 // whole number, with thousands commas and at most one unit the datasets use (%, %MC, %RH, percent,
-// F, C, degrees, square feet); anything else, such as a range ("39-49") or other words, is null.
-const UNIT = /^(?:%|%\s*(?:mc|rh)|percent|°?\s*[fc]|degrees?(?:\s+[fc])?|sf|sq\.?\s*ft\.?|square\s+f(?:ee|oo)t)$/i;
+// REL, F, C, degrees, square feet); anything else, such as a range ("39-49") or other words, is null.
+const UNIT = /^(?:%|%\s*(?:mc|rh)|percent|rel|°?\s*[fc]|degrees?(?:\s+[fc])?|sf|sq\.?\s*ft\.?|square\s+f(?:ee|oo)t)$/i;
 export function numberOf(value: unknown): number | null {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
   if (typeof value !== 'string') return null;

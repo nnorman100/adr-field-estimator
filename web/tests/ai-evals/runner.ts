@@ -10,7 +10,6 @@ import {
 import { AI_REGISTRY, type AiFeature, type AiFeatureEntry, type AiRegistry } from '../../src/lib/ai/registry';
 import type { AiLogLine } from '../../src/lib/ai/telemetry';
 import { datasetSha256, loadDataset, type DatasetName, type InjectionCase } from './datasets';
-import { INJECTION_PROBE_PROMPT } from './injection-probe';
 import type { Answer, CaseScore, Metric, Score } from './score';
 import { scoreLive, scoreMeterReading, scoreVoiceNotes } from './score-media';
 import { scopeOutput, scoreInjection, scoreJobSummary, scoreScopeFill, scoreSummary } from './score-text';
@@ -31,8 +30,9 @@ import type { Suite } from './suites';
 // How a feature's step plugs its real request into the eval: build the boundary request from a
 // dataset case (the job facts the feature's route would send), and map the feature's output onto
 // the scorer's shape. Each feature step (S7-6 to S7-16) adds its adapter to ADAPTERS with its prompt;
-// until then its suite refuses as not built yet. The injection suite needs no adapter: it sends each
-// input to fill-scope through the boundary itself.
+// until then its suite refuses as not built yet. The injection suite needs no adapter: once fill-scope
+// has its prompt (S7-7) it sends each input to fill-scope through the boundary itself; until then it
+// screens each input with Model Armor alone and its no-draft-change half is not measured.
 export type EvalAdapter = {
   request(item: unknown): AiRequest<unknown>;
   response(output: unknown): unknown;
@@ -184,12 +184,9 @@ export async function runSuite(suite: Suite, capMicroUsd: number, tokenBudget: n
     throw new EvalRefusal(`The token budget must be more than 0 and at most ${MAX_RUN_TOKENS}.`);
   }
   const def = SUITE_DEFS[suite];
-  const base = ports.registry ?? AI_REGISTRY;
-  const registry: AiRegistry =
-    suite === 'injection' && !base.scope_fill.prompt
-      ? { ...base, scope_fill: { ...base.scope_fill, prompt: INJECTION_PROBE_PROMPT } }
-      : base;
+  const registry = ports.registry ?? AI_REGISTRY;
   const entry = registry[def.feature];
+  const fillScopeBuilt = registry.scope_fill.prompt !== null;
   const adapter = (ports.adapters ?? ADAPTERS)[suite];
   if (suite !== 'injection' && !adapter) {
     throw new EvalRefusal(`The ${suite} suite is not built yet: its feature arrives with ${def.step}.`);
@@ -268,11 +265,25 @@ export async function runSuite(suite: Suite, capMicroUsd: number, tokenBudget: n
       answers.set(item.id, answer.ok ? { ...answer, response: adapter!.response(answer.response) } : answer);
       continue;
     }
-    // Injection: the input goes to fill-scope through the boundary, whose Model Armor screen runs
-    // before the model. A Model Armor refusal means nothing reached the draft; an input it let
-    // through is answered by fill-scope, whose proposed changes are what the draft would get. Any
-    // other refusal leaves the case unanswered, so the suite cannot pass on it.
-    const { answer, verdict } = await call(injectionRequest(item as unknown as InjectionCase));
+    // Injection before S7-7: Model Armor alone, failing closed (a screen that fails is not a flag).
+    // A screened-out input reaches nothing; one it lets through has no fill-scope to answer it yet,
+    // so its draft change is not measured.
+    const injection = item as unknown as InjectionCase;
+    if (!fillScopeBuilt) {
+      let verdict: string;
+      try {
+        verdict = (await ports.armor.screenPrompt({ text: injection.text })).category;
+      } catch {
+        verdict = 'unavailable_error';
+      }
+      answers.set(item.id, { ok: true, response: { verdict, changes: verdict === 'passed' ? null : [] } });
+      continue;
+    }
+    // Injection from S7-7: the input goes to fill-scope through the boundary, whose Model Armor
+    // screen runs before the model. A Model Armor refusal means nothing reached the draft; an input
+    // it let through is answered by fill-scope, whose proposed changes are what the draft would get.
+    // Any other refusal leaves the case unanswered, so the suite cannot pass on it.
+    const { answer, verdict } = await call(injectionRequest(injection));
     if (answer.ok) {
       const { changes } = scopeOutput.parse(answer.response);
       answers.set(item.id, { ...answer, response: { verdict: 'passed', changes } });
@@ -283,6 +294,7 @@ export async function runSuite(suite: Suite, capMicroUsd: number, tokenBudget: n
 
   const scored = def.score(cases, answers);
   const incomplete: string[] = stopped ? [stopped] : [];
+  if (suite === 'injection' && !fillScopeBuilt) incomplete.push('fill_scope_not_built');
   const notRun = [...answers.values()].filter((a) => !a.ok && a.outcome === 'not_run').length;
   const tokens = lines.reduce(
     (sum, line) => ({ input: sum.input + (line.inputTokens ?? 0), output: sum.output + (line.outputTokens ?? 0) }),

@@ -61,6 +61,8 @@ describe('lookups', () => {
     expect(numberOf('58.5 %RH')).toBe(58.5);
     expect(numberOf('63.8 F')).toBe(63.8);
     expect(numberOf('240 square feet')).toBe(240);
+    expect(numberOf('24 REL')).toBe(24);
+    expect(numberOf('18.5 rel')).toBe(18.5);
     for (const value of ['39-49', '240-300', '12 rooms', '18.5 or so', '1,2', '']) expect(numberOf(value), value).toBeNull();
   });
 

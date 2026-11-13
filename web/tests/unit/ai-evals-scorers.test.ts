@@ -311,6 +311,13 @@ describe('meter reading (>= 36/40 exact, 0/20 unreadable verified)', () => {
     ]);
   });
 
+  it('reads a value given with its displayed unit, REL included, as exact', () => {
+    const rel = photos.filter((p) => p.readable && p.unit === 'REL');
+    expect(rel).toHaveLength(8);
+    const s = scoreMeterReading(photos, answers('meter-reading.jsonl', (m) => photos.filter((p) => p.readable).forEach((p) => (m.get(p.id)!.value = `${p.value} ${p.unit}`))));
+    for (const p of rel) expect(s.cases.find((c) => c.id === p.id)!.checks.exact, p.id).toBe(true);
+  });
+
   it('never reads a range or other words as an exact value', () => {
     const readable = photos.find((p) => p.readable && !p.value!.includes('.'))!;
     const n = Number(readable.value);
