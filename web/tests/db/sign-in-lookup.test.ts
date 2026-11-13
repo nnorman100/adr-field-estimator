@@ -3,6 +3,7 @@ import postgres from 'postgres';
 import { openDatabase } from '@/db/client';
 import { withCompany } from '@/db/tenant';
 import { databaseDirectory } from '@/lib/auth/directory';
+import { ALL_OFF } from '@/lib/flags';
 import { databaseSignInDirectory } from '@/lib/sign-in/database-directory';
 import { IdentityRefusal, resolveIdentity, type TokenVerifier } from '@/lib/auth/identity';
 import { sharedRoles, startMigratedDatabase, type MigratedDatabase } from './postgres-harness';
@@ -420,7 +421,7 @@ describe('request identity against the database', () => {
 
   it('reads each company\'s own feature flags: A on leaves B off, and unknown names stay off', async () => {
     const off = await resolve(signedIn('tenant-a', 'owner-a'));
-    expect(off.flags).toEqual({ price_books: false });
+    expect(off.flags).toEqual(ALL_OFF);
     expect(off.capabilities).not.toContain('prices_manage');
 
     await admin`
@@ -428,11 +429,11 @@ describe('request identity against the database', () => {
         (${seed.a}, 'price_books', true), (${seed.a}, 'retired_feature', true), (${seed.b}, 'price_books', false)
     `;
     const owner = await resolve(signedIn('tenant-a', 'owner-a'));
-    expect(owner.flags).toEqual({ price_books: true });
+    expect(owner.flags).toEqual({ ...ALL_OFF, price_books: true });
     expect(owner.capabilities).toEqual(expect.arrayContaining(['prices_read', 'prices_manage']));
 
     const estimator = await resolve(signedIn('tenant-b', 'owner-a'));
-    expect(estimator.flags).toEqual({ price_books: false });
+    expect(estimator.flags).toEqual(ALL_OFF);
     expect(estimator.capabilities).not.toContain('prices_read');
 
     // The runtime reads only the current company's rows. A company transaction cannot change them:

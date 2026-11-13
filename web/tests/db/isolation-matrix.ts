@@ -78,6 +78,8 @@ export const MATRIX: readonly MatrixRow[] = [
   row(`${COMPANY}/team`, 'GET', 'company', { own: 'list' }),
   row(`${COMPANY}/profile`, 'GET', 'company', { own: 'list' }),
   row(`${COMPANY}/profile`, 'PUT', 'company', { body: PROFILE }),
+  // S7-4: the owner's AI use; another company's id is 404 and an estimator or office user 403.
+  row(`${COMPANY}/ai-usage`, 'GET', 'company', { own: 'list' }),
   row(`${COMPANY}/invitations`, 'POST', 'company', { body: { email: 'new-person@example.test', role: 'estimator' } }),
   row(`${COMPANY}/invitations/[invitationId]/cancel`, 'POST', 'company', { own: 'cross' }),
   row(`${COMPANY}/invitations/[invitationId]/clear`, 'POST', 'company', { own: 'cross' }),
@@ -124,6 +126,7 @@ export const MATRIX: readonly MatrixRow[] = [
   row(PLATFORM, 'GET', 'operator'),
   row(PLATFORM, 'POST', 'operator', { body: { name: 'Another Co', signInSlug: 'another-co' } }),
   row(`${PLATFORM_ONE}/flags`, 'POST', 'operator', { body: { flag: 'price_books', enabled: true } }),
+  row(`${PLATFORM_ONE}/ai-settings`, 'PUT', 'operator', { body: { dailyCeilingMicroUsd: 1_000_000, monthlyCeilingMicroUsd: 10_000_000 } }),
   row(`${PLATFORM_ONE}/status`, 'POST', 'operator', { body: { status: 'suspended' } }),
   row(`${PLATFORM_ONE}/tenant`, 'POST', 'operator', { body: { tenantId: 'tenant-x' } }),
   row(`${PLATFORM_ONE}/owner`, 'POST', 'operator', { body: { email: 'boss@example.test', replace: true } }),
