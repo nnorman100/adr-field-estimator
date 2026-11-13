@@ -59,6 +59,7 @@ describe('API sign-in gate', () => {
       '/api/jobs/:id',
       '/api/jobs/:id/customer',
       '/api/jobs/:id/claim',
+      '/api/jobs/:id/photos/:id',
     ]);
     expect(call('/api/me').headers.get('x-middleware-next')).toBe('1');
     expect(call('/api/me/extra').status).toBe(401);
@@ -75,6 +76,7 @@ describe('API sign-in gate', () => {
     expect(call(`/api/companies/${id}/members/${id.toUpperCase()}/disable`, 'POST').headers.get('x-middleware-next')).toBe('1');
     expect(call(`/api/invitations/${id}/accept`, 'POST').headers.get('x-middleware-next')).toBe('1');
     expect(call(`/api/jobs/${id}/customer`, 'PUT').headers.get('x-middleware-next')).toBe('1');
+    expect(call(`/api/jobs/${id}/photos/${id}`, 'PUT').headers.get('x-middleware-next')).toBe('1');
     for (const path of [
       '/api/companies/current/team',
       `/api/companies/${id}/team/extra`,
@@ -84,6 +86,9 @@ describe('API sign-in gate', () => {
       `/api/invitations/${id}/accept/`,
       `/api/jobs/${id}/archive`,
       `/api/jobs/${id}/customer/`,
+      `/api/jobs/${id}/photos`,
+      `/api/jobs/${id}/photos/${id}/original`,
+      `/api/jobs/${id}/photos/${id}/`,
       '/api/invitations/..%2Fme',
     ]) {
       expect({ path, status: call(path).status }).toEqual({ path, status: 401 });

@@ -332,7 +332,7 @@ previous value only) in one transaction, and refuses an unknown name before writ
   prices when a table is written and read, and the hash is checked again on read.
 
 `0010_core_job_tables` adds the job header, customer, claim and evidence registry tables and the company
-profile columns (S5a-2, `docs/plans/S5.md`); the jobs routes (S5a-3, `docs/ACCESS.md`) read and write `jobs`, `job_customers` and `job_claims`, and nothing uses `evidence_objects` until S5a-5. All four tables hold a
+profile columns (S5a-2, `docs/plans/S5.md`); the jobs routes (S5a-3, `docs/ACCESS.md`) read and write `jobs`, `job_customers` and `job_claims`, and the photo routes (S5a-5, `docs/ACCESS.md` "Photo routes") insert and read `evidence_objects`. All four tables hold a
 company's rows only inside `withCompany`, with forced row-level security. A key between rows always carries
 `company_id`, so a row can never point at another company's job or person.
 
@@ -358,6 +358,13 @@ company's rows only inside `withCompany`, with forced row-level security. A key 
   letters, digits and `. _ - /` (no uid, no person's name, no dot segments), so a row can never register
   another company's or job's bytes. Unique per job, object and kind, and per object name, so a retried
   receipt finds its row. `(company_id, id)` is a unique key so a later agreement can name its signature.
+- The photo routes register a photo and its full-size original as two rows of one `object_id`, named
+  `companies/<company id>/jobs/<job id>/photos/<photo id>` and `.../originals/<photo id>` (no hash, type or
+  extension in the name: one photo id is one object, and a second upload of it is refused by the bucket's
+  create-only precondition). `sha256` is the hash the server computed, `generation` the bucket's, and
+  `content_type` one of `image/jpeg`, `image/png`, `image/webp`, told from the bytes. The object carries its
+  own `sha256` in its metadata, so a first attempt that stored the bytes and lost its place is registered by
+  the retry. The row is inserted once and never changed.
 - A platform operator reads a company's rows through `withOperator` with that company set, and every write
   policy refuses an active operator, so an operator never changes a job, its customer or claim, the registry
   or a company's profile.
