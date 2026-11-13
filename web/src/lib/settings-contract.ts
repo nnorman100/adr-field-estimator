@@ -52,6 +52,21 @@ export const SETTINGS = {
   STRIPE_SECRET_KEY: { source: 'terraform', services: ['api'], reader: 'planned' },
   MAPS_API_KEY: { source: 'terraform', services: ['api'], reader: 'planned' },
   LINK_SIGNING_KEY: { source: 'terraform', services: SERVING, reader: 'planned' },
+  // AI (docs/plans/S7.md, S7-2): where and with which models the web app's text AI runs (the `us`
+  // multi-region, V4), and the full resource names of the Model Armor templates it screens with.
+  // Nothing reads them yet; web/src/lib/ai/ (S7-1) is given them through config.ts later.
+  AI_TEXT_LOCATION: { source: 'terraform', services: ['api'], reader: 'planned' },
+  AI_TEXT_MODEL: { source: 'terraform', services: ['api'], reader: 'planned' },
+  AI_TRANSCRIBE_MODEL: { source: 'terraform', services: ['api'], reader: 'planned' },
+  MODEL_ARMOR_TEXT_TEMPLATE: { source: 'terraform', services: SERVING, reader: 'planned' },
+  MODEL_ARMOR_IMAGE_TEMPLATE: { source: 'terraform', services: ['api'], reader: 'planned' },
+  // The Live relay's model and location (us-central1), the web app address it calls for admission,
+  // turns and settlement, and the audience of its Google ID token there (relayRoute). The relay is
+  // still the placeholder, which reads none of them.
+  LIVE_MODEL: { source: 'terraform', services: ['live'], reader: 'planned' },
+  LIVE_LOCATION: { source: 'terraform', services: ['live'], reader: 'planned' },
+  API_INTERNAL_URL: { source: 'terraform', services: ['live'], reader: 'planned' },
+  RELAY_AUDIENCE: { source: 'terraform', services: ['live'], reader: 'planned' },
   // The commit a running app was built from. The image build sets it, and Cloud Run runs with that
   // value, so Terraform must not set it.
   APP_COMMIT: { source: 'tooling', services: NOT_SET, reader: 'web' },

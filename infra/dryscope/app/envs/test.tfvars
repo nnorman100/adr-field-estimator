@@ -16,12 +16,14 @@ api_scaling = {
   timeout_s     = 300
 }
 
+# Concurrency 20: the relay holds sockets and moves audio, so one instance carries 20 walkthroughs
+# (docs/plans/S7.md, S7-2; measured in S7-16 before live changes).
 live_scaling = {
   min_instances = 0
   max_instances = 2
   cpu           = "1"
   memory        = "1Gi"
-  concurrency   = 10
+  concurrency   = 20
   timeout_s     = 3600
 }
 

@@ -36,6 +36,7 @@ resource "google_project_service" "apis" {
     "firestore.googleapis.com",
     "iam.googleapis.com",
     "identitytoolkit.googleapis.com",
+    "modelarmor.googleapis.com",
     "secretmanager.googleapis.com",
     "sqladmin.googleapis.com",
     "storage.googleapis.com",

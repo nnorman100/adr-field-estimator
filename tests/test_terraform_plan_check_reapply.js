@@ -15,9 +15,7 @@ const require = createRequire(import.meta.url);
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SCRIPT = path.join(ROOT, 'infra', 'dryscope', 'scripts', 'check-plan.js');
 const { checkPlan } = require(SCRIPT);
-const { checkConfig, REQUIRED_IGNORED } = require(
-  path.join(ROOT, 'infra', 'dryscope', 'scripts', 'check-guards.js'),
-);
+const { checkConfig } = require(path.join(ROOT, 'infra', 'dryscope', 'scripts', 'check-guards.js'));
 
 const load = (root, environment) =>
   JSON.parse(
@@ -148,13 +146,23 @@ describe('app root, test: in-place changes in a re-apply', () => {
     expect(check(plan, 'app', environment)).toEqual([`${SERVICE}: ${REFUSED}`]);
   });
 
-  test('dropping the release revision name from the service is an update the check refuses', () => {
-    // What the owner's plan showed before template[0].revision was ignored.
+  test('clearing the release revision name, so Cloud Run makes a fresh revision, passes', () => {
     const plan = applied('app', environment);
     const rc = find(plan, SERVICE);
     rc.change.before.template[0].revision = 'dryscope-api-test-00012-abc';
     rc.change.actions = ['update'];
-    expect(check(plan, 'app', environment)).toHaveLength(1);
+    expect(check(plan, 'app', environment)).toEqual([]);
+  });
+
+  test.each([
+    ['keeps', 'dryscope-api-test-00012-abc'],
+    ['renames', 'dryscope-api-test-terraform'],
+  ])('an update that %s the release revision name is refused', (_, name) => {
+    const plan = applied('app', environment);
+    const rc = find(plan, SERVICE);
+    rc.change.before.template[0].revision = 'dryscope-api-test-00012-abc';
+    update(rc, (after) => (after.template[0].revision = name));
+    expect(check(plan, 'app', environment)).toEqual([`${SERVICE}: ${REFUSED}`]);
   });
 
   test('a plan with no existing resource is a first apply: every update is refused', () => {
@@ -203,15 +211,11 @@ describe('app root: what a release sets is ignored by the next apply', () => {
     return dir;
   };
 
-  test('the real configuration ignores the image, the revision name and traffic', () => {
+  test('the real configuration ignores the image and traffic', () => {
     expect(checkConfig(real, 'app')).toEqual([]);
-    expect(REQUIRED_IGNORED.app['google_cloud_run_v2_service.svc']).toContain(
-      'template[0].revision',
-    );
   });
 
   test.each([
-    ['template[0].revision', 'google_cloud_run_v2_service.svc'],
     ['template[0].containers[0].image', 'google_cloud_run_v2_service.svc'],
     ['traffic', 'google_cloud_run_v2_service.svc'],
     ['template[0].template[0].containers[0].image', 'google_cloud_run_v2_job.migrate'],

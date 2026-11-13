@@ -76,6 +76,179 @@
    }
   },
   {
+   "address": "google_model_armor_floorsetting.project[0]",
+   "type": "google_model_armor_floorsetting",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "ai_platform_floor_setting": [
+      {
+       "enable_cloud_logging": false,
+       "inspect_and_block": true,
+       "inspect_only": null
+      }
+     ],
+     "enable_floor_setting_enforcement": true,
+     "filter_config": [
+      {
+       "malicious_uri_filter_settings": [
+        {
+         "filter_enforcement": "ENABLED"
+        }
+       ],
+       "pi_and_jailbreak_filter_settings": [
+        {
+         "confidence_level": "MEDIUM_AND_ABOVE",
+         "filter_enforcement": "ENABLED"
+        }
+       ],
+       "rai_settings": [
+        {
+         "rai_filters": [
+          {
+           "confidence_level": "MEDIUM_AND_ABOVE",
+           "filter_type": "DANGEROUS"
+          },
+          {
+           "confidence_level": "MEDIUM_AND_ABOVE",
+           "filter_type": "HARASSMENT"
+          },
+          {
+           "confidence_level": "MEDIUM_AND_ABOVE",
+           "filter_type": "HATE_SPEECH"
+          },
+          {
+           "confidence_level": "MEDIUM_AND_ABOVE",
+           "filter_type": "SEXUALLY_EXPLICIT"
+          }
+         ]
+        }
+       ],
+       "sdp_settings": [
+        {
+         "advanced_config": [],
+         "basic_config": [
+          {
+           "filter_enforcement": "ENABLED"
+          }
+         ]
+        }
+       ]
+      }
+     ],
+     "floor_setting_metadata": [
+      {
+       "multi_language_detection": [
+        {
+         "enable_multi_language_detection": true
+        }
+       ]
+      }
+     ],
+     "google_mcp_server_floor_setting": [],
+     "integrated_services": [
+      "AI_PLATFORM"
+     ],
+     "location": "global",
+     "parent": "projects/dryscope",
+     "timeouts": null
+    }
+   }
+  },
+  {
+   "address": "google_model_armor_template.text",
+   "type": "google_model_armor_template",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "deletion_policy": "PREVENT",
+     "filter_config": [
+      {
+       "malicious_uri_filter_settings": [
+        {
+         "filter_enforcement": "ENABLED"
+        }
+       ],
+       "pi_and_jailbreak_filter_settings": [
+        {
+         "confidence_level": "MEDIUM_AND_ABOVE",
+         "filter_enforcement": "ENABLED"
+        }
+       ],
+       "rai_settings": [
+        {
+         "rai_filters": [
+          {
+           "confidence_level": "MEDIUM_AND_ABOVE",
+           "filter_type": "DANGEROUS"
+          },
+          {
+           "confidence_level": "MEDIUM_AND_ABOVE",
+           "filter_type": "HARASSMENT"
+          },
+          {
+           "confidence_level": "MEDIUM_AND_ABOVE",
+           "filter_type": "HATE_SPEECH"
+          },
+          {
+           "confidence_level": "MEDIUM_AND_ABOVE",
+           "filter_type": "SEXUALLY_EXPLICIT"
+          }
+         ]
+        }
+       ],
+       "sdp_settings": [
+        {
+         "advanced_config": [],
+         "basic_config": [
+          {
+           "filter_enforcement": "ENABLED"
+          }
+         ]
+        }
+       ]
+      }
+     ],
+     "labels": {
+      "app": "dryscope",
+      "environment": "test",
+      "managed_by": "terraform"
+     },
+     "location": "us-central1",
+     "project": "dryscope",
+     "template_id": "dryscope-text-test",
+     "template_metadata": [
+      {
+       "custom_llm_response_safety_error_code": null,
+       "custom_llm_response_safety_error_message": null,
+       "custom_prompt_safety_error_code": null,
+       "custom_prompt_safety_error_message": null,
+       "enforcement_type": "INSPECT_AND_BLOCK",
+       "filter_version_selector": [
+        {
+         "alias": null,
+         "version": "v3"
+        }
+       ],
+       "ignore_partial_invocation_failures": null,
+       "log_sanitize_operations": false,
+       "log_template_operations": false,
+       "multi_language_detection": [
+        {
+         "enable_multi_language_detection": true
+        }
+       ]
+      }
+     ],
+     "timeouts": null
+    }
+   }
+  },
+  {
    "address": "google_project_iam_custom_role.gemini_caller",
    "type": "google_project_iam_custom_role",
    "change": {
@@ -155,6 +328,36 @@
    }
   },
   {
+   "address": "google_project_iam_member.eval[\"modelarmor\"]",
+   "type": "google_project_iam_member",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "condition": [],
+     "member": "serviceAccount:dryscope-eval-test@dryscope.iam.gserviceaccount.com",
+     "project": "dryscope",
+     "role": "roles/modelarmor.user"
+    }
+   }
+  },
+  {
+   "address": "google_project_iam_member.eval[\"predict\"]",
+   "type": "google_project_iam_member",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "condition": [],
+     "member": "serviceAccount:dryscope-eval-test@dryscope.iam.gserviceaccount.com",
+     "project": "dryscope",
+     "role": "projects/dryscope/roles/dryscopeGeminiTest"
+    }
+   }
+  },
+  {
    "address": "google_project_iam_member.firestore_user[\"api\"]",
    "type": "google_project_iam_member",
    "change": {
@@ -202,6 +405,36 @@
      "member": "serviceAccount:dryscope-live-test@dryscope.iam.gserviceaccount.com",
      "project": "dryscope",
      "role": "projects/dryscope/roles/dryscopeGeminiTest"
+    }
+   }
+  },
+  {
+   "address": "google_project_iam_member.modelarmor_user[\"api\"]",
+   "type": "google_project_iam_member",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "condition": [],
+     "member": "serviceAccount:dryscope-api-test@dryscope.iam.gserviceaccount.com",
+     "project": "dryscope",
+     "role": "roles/modelarmor.user"
+    }
+   }
+  },
+  {
+   "address": "google_project_iam_member.modelarmor_user[\"live\"]",
+   "type": "google_project_iam_member",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "condition": [],
+     "member": "serviceAccount:dryscope-live-test@dryscope.iam.gserviceaccount.com",
+     "project": "dryscope",
+     "role": "roles/modelarmor.user"
     }
    }
   },
@@ -413,6 +646,22 @@
      "disable_on_destroy": false,
      "project": "dryscope",
      "service": "identitytoolkit.googleapis.com",
+     "timeouts": null
+    }
+   }
+  },
+  {
+   "address": "google_project_service.apis[\"modelarmor.googleapis.com\"]",
+   "type": "google_project_service",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "disable_dependent_services": false,
+     "disable_on_destroy": false,
+     "project": "dryscope",
+     "service": "modelarmor.googleapis.com",
      "timeouts": null
     }
    }
@@ -726,6 +975,24 @@
      "description": null,
      "disabled": null,
      "display_name": "DryScope test deploy",
+     "project": "dryscope",
+     "timeouts": null
+    }
+   }
+  },
+  {
+   "address": "google_service_account.eval[0]",
+   "type": "google_service_account",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "account_id": "dryscope-eval-test",
+     "create_ignore_already_exists": null,
+     "description": null,
+     "disabled": null,
+     "display_name": "DryScope test AI evaluations",
      "project": "dryscope",
      "timeouts": null
     }

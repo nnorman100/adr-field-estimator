@@ -48,6 +48,7 @@ module.exports = [
       'tests/test_terraform_plan_check_migrate_job.js',
       'tests/test_terraform_plan_check_scheduler_rules.js',
       'tests/test_terraform_plan_check_reapply.js',
+      'tests/test_terraform_plan_check_ai.js',
     ],
     languageOptions: { sourceType: 'module' },
   },
