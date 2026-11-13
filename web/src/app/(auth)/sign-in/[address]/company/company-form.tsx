@@ -122,6 +122,7 @@ export function CompanyForm({
             maxLength={500}
             autoComplete="off"
             aria-describedby="profile-address-hint"
+            disabled={busy}
             value={values.address}
             onChange={set('address')}
           />
@@ -141,6 +142,7 @@ export function CompanyForm({
             inputMode="tel"
             maxLength={80}
             autoComplete="work tel"
+            disabled={busy}
             value={values.phone}
             onChange={set('phone')}
           />
@@ -160,6 +162,7 @@ export function CompanyForm({
             autoCorrect="off"
             spellCheck={false}
             autoComplete="work email"
+            disabled={busy}
             value={values.email}
             onChange={set('email')}
           />
@@ -179,6 +182,7 @@ export function CompanyForm({
             spellCheck={false}
             autoComplete="off"
             aria-describedby="profile-license-hint"
+            disabled={busy}
             value={values.license}
             onChange={set('license')}
           />
@@ -198,6 +202,7 @@ export function CompanyForm({
             maxLength={150}
             autoComplete="off"
             aria-describedby="profile-signoff-hint"
+            disabled={busy}
             value={values.signoff}
             onChange={set('signoff')}
           />

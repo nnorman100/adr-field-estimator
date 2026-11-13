@@ -115,6 +115,46 @@ test('clearing the licence puts it back on the missing list', async ({ page, req
   ).toHaveText(['CSLB license']);
 });
 
+test('the lines cannot be changed while a save is on its way', async ({ page, request }) => {
+  await setProfile(request, EMPTY);
+  await signInTo(page, team.owner);
+  await openSettings(page);
+
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  let reached!: () => void;
+  const arrived = new Promise<void>((resolve) => (reached = resolve));
+  await page.route(`**/api/companies/${team.companyId}/profile`, async (route) => {
+    if (route.request().method() !== 'PUT') return route.continue();
+    reached();
+    await held;
+    await route.continue();
+  });
+
+  await page.getByLabel('Company address').fill(FULL.address);
+  await page.getByLabel('Company phone').fill(FULL.phone);
+  await page.getByLabel('Company email').fill(FULL.email);
+  await page.getByLabel('CSLB license number').fill(FULL.license);
+  await page.getByLabel('Document sign-off').fill(FULL.signoff);
+  await page.getByRole('button', { name: 'Save company settings' }).click();
+  await arrived;
+
+  for (const label of [
+    'Company address',
+    'Company phone',
+    'Company email',
+    'CSLB license number',
+    'Document sign-off',
+  ]) {
+    await expect(page.getByLabel(label)).toBeDisabled();
+  }
+
+  release();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved.' })).toBeVisible();
+  await expect(page.getByLabel('Company phone')).toBeEnabled();
+  await expect(page.getByLabel('Company phone')).toHaveValue(FULL.phone);
+});
+
 test('a line the server refuses is explained and keeps what was typed', async ({
   page,
   request,
