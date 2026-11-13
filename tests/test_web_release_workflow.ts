@@ -590,18 +590,7 @@ describe('traffic', () => {
     expect(smoke).toBeLessThan(promote);
     expect(promote).toBeLessThan(after);
     expect(after).toBeLessThan(rollback);
-    expect(shlex(commands(deploy[smoke]))).toEqual([
-      'node',
-      'web/scripts/smoke-release.ts',
-      '--url',
-      '$CANDIDATE_URL',
-      '--commit',
-      '$COMMIT',
-      '--version',
-      '$VERSION',
-      '--env',
-      'test',
-    ]);
+    expect(deploy[smoke].env).toEqual({ CANDIDATE_URL: '${{ steps.stage.outputs.url }}' });
     expect(jobs.deploy.env.VERSION).toBe('${{ needs.build.outputs.version }}');
     expect(deploy[smoke].if ?? null).toBeNull();
     expect(deploy[promote].if ?? null).toBeNull();
@@ -610,6 +599,37 @@ describe('traffic', () => {
     const checkout = deploy[0];
     expect(checkout.uses.startsWith('actions/checkout@')).toBe(true);
     expect(checkout.with['sparse-checkout']).toBe('web');
+  });
+
+  it.each([
+    ['Smoke-check the staged revision', 'https://candidate---dryscope-api-test.run.app'],
+    ['Smoke-check the service URL', 'https://dryscope-api-test.run.app'],
+  ])('%s checks the commit and the release version at %s', (key, url) => {
+    const sh = shell();
+    sh.fake('gcloud', `echo ${url}`);
+    sh.fake('node');
+    const commit = 'a'.repeat(40);
+    const result = sh.run(commands(step(jobs.deploy, key)), {
+      ...release.env,
+      CANDIDATE_URL: url,
+      COMMIT: commit,
+      VERSION: '2026.11.13-2',
+      REVISION: 'dryscope-api-test-00012-abc',
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(sh.calls('node')).toEqual([
+      [
+        'web/scripts/smoke-release.ts',
+        '--url',
+        url,
+        '--commit',
+        commit,
+        '--version',
+        '2026.11.13-2',
+        '--env',
+        'test',
+      ],
+    ]);
   });
 
   it.each([
@@ -673,6 +693,24 @@ function recordContext(results: Record<string, string>, { ready = 'true', failed
     needs[name] = { result: results[name] ?? 'skipped' };
   return { needs, always: () => true, failure: () => failed, cancelled: () => false };
 }
+const CREDENTIAL = '\u0000credential\u0000';
+/** Whether any expression a step interpolates (its run, env or with) yields the token or a secret. */
+function bindsCredential(s: Data): boolean {
+  const secrets = new Proxy(
+    {},
+    {
+      getOwnPropertyDescriptor: () => ({ value: CREDENTIAL, configurable: true, enumerable: true }),
+      get: () => CREDENTIAL,
+    },
+  );
+  const context = { github: { token: CREDENTIAL }, secrets };
+  const values = [s.run, ...Object.values(s.env ?? {}), ...Object.values(s.with ?? {})];
+  return values.some((value) =>
+    [...String(value ?? '').matchAll(/\$\{\{(.*?)\}\}/gs)].some(
+      ([, expression]) => evaluate(expression, context) === CREDENTIAL,
+    ),
+  );
+}
 const recordStep = (key: string) =>
   steps(record()).find((s: Data) => (s.id ?? s.name ?? String(s.uses ?? '').split('@')[0]) === key);
 
@@ -713,9 +751,7 @@ describe('release record', () => {
     expect(record().permissions).toEqual({ contents: 'write', 'id-token': 'write' });
     const holders = Object.values(jobs as Record<string, Data>)
       .flatMap((job) => steps(job))
-      .filter(
-        (s) => JSON.stringify(s).includes('github.token') || JSON.stringify(s).includes('secrets.'),
-      )
+      .filter((s) => bindsCredential(s))
       .map((s) => s.id);
     expect(holders).toEqual(['tag', 'release']);
     for (const s of steps(record())) {

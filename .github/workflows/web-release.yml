@@ -132,12 +132,16 @@ jobs:
           gcloud auth print-access-token | "$RUNNER_TEMP/bin/crane" auth login us-central1-docker.pkg.dev -u oauth2accesstoken --password-stdin
       # The release version, YYYY.MM.DD-N (UTC date; N is one more than the highest tag for that date,
       # counting the old app's tags). A rerun of a commit keeps the version baked into the image it
-      # already pushed.
+      # already pushed, unless another commit has since been tagged with it.
       - id: version
         run: |
           if config=$(crane config "$IMAGE:$COMMIT" 2>/dev/null); then
             if ! version=$(node web/scripts/release-version.ts from-image <<<"$config"); then
               echo "::error::The image already pushed for $COMMIT carries no release version, and its tag cannot be replaced. Release a newer commit."
+              exit 1
+            fi
+            if tagged=$(git rev-parse -q --verify "refs/tags/$version^{commit}") && [ "$tagged" != "$COMMIT" ]; then
+              echo "::error::Version $version already belongs to $tagged, so the image already pushed for $COMMIT cannot be released under it. Release a newer commit."
               exit 1
             fi
             echo "Reusing release version $version from the image already pushed for $COMMIT"

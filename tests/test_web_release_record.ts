@@ -2,10 +2,12 @@
 // the GitHub Release, the manifest step and the pinned gh install of the record job in
 // .github/workflows/web-release.yml, run with fake commands. The job's structure (what it needs, who
 // can write, when the tag and the failure line happen) is checked in tests/test_web_release_workflow.ts.
-import { readFileSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { commands, load, RELEASE, Shell, steps, type Data } from './workflow_support.ts';
+import { load, type Ran, RELEASE, Shell, steps, type Data } from './workflow_support.ts';
 
 const release: Data = load(RELEASE);
 const record = release.jobs.record;
@@ -187,14 +189,77 @@ describe('the release record job', () => {
     expect(readFileSync(sh.summary, 'utf8')).toBe('notes\n');
   });
 
-  it('installs the same pinned, checksum-checked gh as deploy.yml', () => {
+  it('installs the same pinned gh as deploy.yml, only after a release', () => {
     const old = steps(load(path.join(path.dirname(RELEASE), 'deploy.yml')).jobs.deploy).find(
       (s: Data) => s.name === 'Install GitHub CLI',
     );
     const install = recordStep('Install GitHub CLI');
     expect(install.env).toEqual(old.env);
     expect(install.env.GH_SHA256).toMatch(/^[0-9a-f]{64}$/);
-    expect(commands(install)).toContain('sha256sum -c -');
     expect(install.if).toBe(SUCCESS);
+  });
+
+  // The install step with fake curl and tar and the real sha256sum, on a PATH without gh.
+  const ARCHIVE = 'fake gh archive\n';
+  function install(sh: Shell, sha256: string, withGh = false): Ran {
+    for (const tool of ['bash', 'sha256sum']) {
+      const found = spawnSync('bash', ['-c', `command -v ${tool}`], { encoding: 'utf8' });
+      symlinkSync(found.stdout.trim(), path.join(sh.bin, tool));
+    }
+    sh.fake(
+      'curl',
+      `prev=; for a in "$@"; do [ "$prev" = -o ] && printf '${ARCHIVE}' > "$a"; prev=$a; done`,
+    );
+    sh.fake('tar');
+    if (withGh) sh.fake('gh');
+    const step = recordStep('Install GitHub CLI');
+    return sh.run(step.run, {
+      ...step.env,
+      GH_SHA256: sha256,
+      PATH: sh.bin,
+      RUNNER_TEMP: sh.tmp,
+      GITHUB_PATH: path.join(sh.tmp, 'path'),
+    });
+  }
+  const gotPath = (sh: Shell) => {
+    const file = path.join(sh.tmp, 'path');
+    return existsSync(file) ? readFileSync(file, 'utf8') : '';
+  };
+
+  it('installs the pinned release when its checksum matches', () => {
+    const sh = shell();
+    const result = install(sh, createHash('sha256').update(ARCHIVE).digest('hex'));
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    const version = recordStep('Install GitHub CLI').env.GH_VERSION;
+    expect(sh.calls('curl')).toEqual([
+      [
+        '-fsSL',
+        '--retry',
+        '3',
+        '-o',
+        `${sh.tmp}/gh.tar.gz`,
+        `https://github.com/cli/cli/releases/download/v${version}/gh_${version}_linux_amd64.tar.gz`,
+      ],
+    ]);
+    expect(sh.calls('tar')).toEqual([['-xzf', `${sh.tmp}/gh.tar.gz`, '-C', sh.tmp]]);
+    expect(gotPath(sh)).toBe(`${sh.tmp}/gh_${version}_linux_amd64/bin\n`);
+  });
+
+  it('installs nothing when the download does not match the pinned checksum', () => {
+    const sh = shell();
+    const result = install(sh, recordStep('Install GitHub CLI').env.GH_SHA256);
+    expect(result.status).not.toBe(0);
+    expect(sh.calls('curl')).toHaveLength(1);
+    expect(sh.calls('tar')).toEqual([]);
+    expect(gotPath(sh)).toBe('');
+  });
+
+  it('keeps a gh the runner already has', () => {
+    const sh = shell();
+    const result = install(sh, 'unused', true);
+    expect(result.status, result.stderr).toBe(0);
+    expect(sh.calls('curl')).toEqual([]);
+    expect(sh.calls('tar')).toEqual([]);
+    expect(gotPath(sh)).toBe('');
   });
 });

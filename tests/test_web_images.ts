@@ -301,9 +301,12 @@ describe('the release image', () => {
     '2026.11.05-4',
     'infra-test-app-2026.11.04-3',
   ];
-  function versionStep(sh: Shell, crane: string, today = '2026.11.04'): Ran {
+  function versionStep(sh: Shell, crane: string, today = '2026.11.04', tagged = 'exit 1'): Ran {
     sh.fake('crane', crane);
-    sh.fake('git', `[ "$1 $2" = 'tag --list' ] || exit 9; printf '%s\\n' ${OLD_TAGS.join(' ')}`);
+    sh.fake(
+      'git',
+      `[ "$1" = rev-parse ] && { ${tagged}; exit $?; }; [ "$1 $2" = 'tag --list' ] || exit 9; printf '%s\\n' ${OLD_TAGS.join(' ')}`,
+    );
     sh.fake('date', `[ "$1 $2" = '-u +%Y.%m.%d' ] || exit 9; echo ${today}`);
     return sh.run(step(release.jobs.build, 'version').run, { ...release.env, COMMIT: SHA }, ROOT);
   }
@@ -321,15 +324,27 @@ describe('the release image', () => {
     expect(sh.calls('git')).toEqual([['tag', '--list']]);
   });
 
-  it('keeps the version baked into the image a rerun reuses', () => {
+  const REUSED = `echo '{"config":{"Env":["PATH=/bin","APP_VERSION=2026.11.03-2"]}}'`;
+  const TAG_LOOKUP = ['rev-parse', '-q', '--verify', 'refs/tags/2026.11.03-2^{commit}'];
+
+  it.each([
+    ['not tagged yet', 'exit 1'],
+    ['tagged at this commit', `echo ${SHA}`],
+  ])('keeps the version baked into the image a rerun reuses (%s)', (_label, tagged) => {
     const sh = shell();
-    const result = versionStep(
-      sh,
-      `echo '{"config":{"Env":["PATH=/bin","APP_VERSION=2026.11.03-2"]}}'`,
-    );
+    const result = versionStep(sh, REUSED, '2026.11.04', tagged);
     expect(result.status, result.stderr).toBe(0);
     expect(sh.outputs()).toEqual({ version: '2026.11.03-2' });
-    expect(sh.calls('git')).toEqual([]);
+    expect(sh.calls('git')).toEqual([TAG_LOOKUP]);
+  });
+
+  it('stops a rerun whose version another commit has since been tagged with', () => {
+    const sh = shell();
+    const result = versionStep(sh, REUSED, '2026.11.04', `echo ${'d'.repeat(40)}`);
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toContain(`already belongs to ${'d'.repeat(40)}`);
+    expect(sh.outputs()).toEqual({});
+    expect(sh.calls('git')).toEqual([TAG_LOOKUP]);
   });
 
   it.each([
