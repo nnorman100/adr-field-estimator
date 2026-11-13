@@ -50,7 +50,7 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
     try {
       await addRoom(db, job.draftRef, crypto.randomUUID(), checked);
       await job.reloadDraft();
-      setName('');
+      setName((current) => (current === name ? '' : current));
       setNotice(`${checked} added.`);
     } catch {
       setError('The room was not added. Check the signal and add it again.');

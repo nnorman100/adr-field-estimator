@@ -97,7 +97,7 @@ async function addRoom(page: Page, name: string) {
 
 async function takePhoto(page: Page, room: string, shot: string) {
   await main(page).getByRole('link', { name: 'Photos' }).click();
-  await page.getByLabel('Room').selectOption({ label: room });
+  await page.getByLabel('Room', { exact: true }).selectOption({ label: room });
   await page.getByLabel('Shot').selectOption({ label: shot });
   await page.getByLabel('Take photo').setInputFiles(PICTURE);
 }

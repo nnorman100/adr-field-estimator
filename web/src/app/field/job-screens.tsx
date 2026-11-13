@@ -142,9 +142,13 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
           </Button>
         </div>
       ) : null}
-      {view === 'scope' && draft ? <ScopeView job={context} draft={draft} /> : null}
-      {view === 'photos' && draft ? <PhotosView job={context} draft={draft} /> : null}
-      {view === 'customer' ? <CustomerView job={context} /> : null}
+      {/* The views of one job stay mounted and only the open one shows, so moving between them
+          keeps what the person has typed and not saved. */}
+      <div hidden={view !== 'scope'}>{draft ? <ScopeView job={context} draft={draft} /> : null}</div>
+      <div hidden={view !== 'photos'}>{draft ? <PhotosView job={context} draft={draft} /> : null}</div>
+      <div hidden={view !== 'customer'}>
+        <CustomerView job={context} />
+      </div>
     </div>
   );
 }
