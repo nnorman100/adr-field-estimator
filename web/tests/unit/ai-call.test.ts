@@ -11,7 +11,7 @@ import {
   type AiQuotaPort,
   type BoundaryDeps,
 } from '@/lib/ai/call';
-import type { AiLogLine } from '@/lib/ai/log';
+import type { AiLogLine } from '@/lib/ai/telemetry';
 import { AI_REGISTRY, definePrompt, type AiRegistry } from '@/lib/ai/registry';
 import type { AiSpanAttributes } from '@/lib/ai/span';
 
@@ -494,7 +494,7 @@ describe('no personal data in logs or spans', () => {
   });
 
   it('writes only the allowlisted fields to stdout through the default log sink', async () => {
-    const { aiLog } = await import('@/lib/ai/log');
+    const { aiLog } = await import('@/lib/ai/telemetry');
     const lines: string[] = [];
     const write = process.stdout.write.bind(process.stdout);
     process.stdout.write = ((chunk: string) => {

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Armor, ArmorVerdict } from './armor';
 import type { AiRefusalCode } from './codes';
-import { aiLog, aiTelemetry, type AiLogLine, type AiVerdict } from './log';
+import { aiLog, aiTelemetry, type AiLogLine, type AiVerdict } from './telemetry';
 import {
   costMicroUsd,
   reserveMicroUsd,

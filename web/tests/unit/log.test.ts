@@ -35,8 +35,42 @@ describe('log', () => {
   });
 
   it('drops a field that is not on the allowlist', () => {
-    log('INFO', 'x', { component: 'api', body: 'secret', headers: { authorization: 'x' } } as never);
+    log('INFO', 'x', {
+      component: 'api',
+      body: 'secret',
+      headers: { authorization: 'x' },
+    } as never);
     expect(Object.keys(JSON.parse(lines[0]!)).sort()).toEqual(['component', 'message', 'severity']);
+  });
+
+  it('keeps the AI call fields and still drops anything else', () => {
+    log('INFO', 'ai_call', {
+      component: 'ai',
+      feature: 'summary_draft',
+      model: 'gemini-3.8-flash',
+      promptVersion: 'a'.repeat(64),
+      inputTokens: 1,
+      outputTokens: 2,
+      latencyMs: 3,
+      outcome: 'ok',
+      verdict: 'passed',
+      prompt: 'secret',
+    } as never);
+    expect(Object.keys(JSON.parse(lines[0]!)).sort()).toEqual(
+      [
+        'component',
+        'feature',
+        'inputTokens',
+        'latencyMs',
+        'message',
+        'model',
+        'outcome',
+        'outputTokens',
+        'promptVersion',
+        'severity',
+        'verdict',
+      ].sort(),
+    );
   });
 
   it('adds the trace and span from a traceparent header', () => {
@@ -58,22 +92,27 @@ describe('log', () => {
 
   it('prefers traceparent over X-Cloud-Trace-Context', () => {
     const other = 'a'.repeat(32);
-    const found = traceFields({ traceparent: `00-${TRACE}-${SPAN}-00`, 'x-cloud-trace-context': `${other}/1;o=1` });
+    const found = traceFields({
+      traceparent: `00-${TRACE}-${SPAN}-00`,
+      'x-cloud-trace-context': `${other}/1;o=1`,
+    });
     expect(found['logging.googleapis.com/trace']).toBe(`projects/dryscope-test/traces/${TRACE}`);
   });
 
   it('reads trace headers from a plain record whatever the key case', () => {
-    expect(traceFields({ Traceparent: `00-${TRACE}-${SPAN}-01` })['logging.googleapis.com/trace']).toBe(
-      `projects/dryscope-test/traces/${TRACE}`,
-    );
-    expect(traceFields({ 'X-Cloud-Trace-Context': `${TRACE}/74;o=1` })['logging.googleapis.com/spanId']).toBe(
-      '000000000000004a',
-    );
+    expect(
+      traceFields({ Traceparent: `00-${TRACE}-${SPAN}-01` })['logging.googleapis.com/trace'],
+    ).toBe(`projects/dryscope-test/traces/${TRACE}`);
+    expect(
+      traceFields({ 'X-Cloud-Trace-Context': `${TRACE}/74;o=1` })['logging.googleapis.com/spanId'],
+    ).toBe('000000000000004a');
   });
 
   it('adds no trace field for a malformed header, an all-zero trace, or no project', () => {
     expect(traceFields(new Headers({ traceparent: 'garbage' }))).toEqual({});
-    expect(traceFields(new Headers({ traceparent: `00-${'0'.repeat(32)}-${SPAN}-01` }))).toEqual({});
+    expect(traceFields(new Headers({ traceparent: `00-${'0'.repeat(32)}-${SPAN}-01` }))).toEqual(
+      {},
+    );
     expect(traceFields(new Headers({ 'x-cloud-trace-context': 'x/y;o=1' }))).toEqual({});
     vi.stubEnv('GOOGLE_CLOUD_PROJECT', undefined);
     expect(traceFields(new Headers({ traceparent: `00-${TRACE}-${SPAN}-01` }))).toEqual({});
