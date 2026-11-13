@@ -291,12 +291,14 @@ const STATUS_FUNCTIONS = new Set(['always', 'success', 'failure', 'cancelled']);
 /**
  * A step `if:` for the expression subset the CI workflows use (evaluate_step_condition in
  * tests/test_ci_config.py), with Actions' rules: case-insensitive string equality, null equal to
- * '', and an implied success() when no status function is called.
+ * '', and an implied success() when no status function is called. `extra` adds contexts beside
+ * steps.scope, such as `needs` for a job-level `if:`.
  */
 export function evaluateStep(
   condition: string,
   scopeOutputs: Record<string, string>,
   jobFailed: boolean,
+  extra: Record<string, unknown> = {},
 ): boolean {
   let expr = condition.trim();
   if (expr.startsWith('${{') && expr.endsWith('}}')) expr = expr.slice(3, -2).trim();
@@ -316,7 +318,7 @@ export function evaluateStep(
     else tokens.push(['id', ident]);
     pos = STEP_TOKEN.lastIndex;
   }
-  const context = { steps: { scope: { outputs: scopeOutputs } } };
+  const context = { ...extra, steps: { scope: { outputs: scopeOutputs } } };
   const called = new Set<string>();
   let index = 0;
   const peek = (): [string | null, string | null] =>

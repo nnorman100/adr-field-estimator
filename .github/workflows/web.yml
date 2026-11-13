@@ -2,12 +2,17 @@ name: Web app
 
 # Separate from ci.yml so the existing jobs behave exactly as before. Covers only web/ (the
 # TypeScript rebuild skeleton); every job has a time limit.
+#
+# Runs on every pull request so `company-isolation` and `check` always report and can be required
+# checks: the `changes` job decides whether web/, live-relay-placeholder/ or this file changed, and
+# the other jobs are skipped (not run) when nothing did. `check` then passes only after confirming
+# the skip; when the jobs ran it requires them exactly as before. Pushes to master keep the path
+# filter and always run everything.
 on:
   push:
     branches: [master]
     paths: ['web/**', 'live-relay-placeholder/**', '.github/workflows/web.yml']
   pull_request:
-    paths: ['web/**', 'live-relay-placeholder/**', '.github/workflows/web.yml']
 
 permissions:
   contents: read
@@ -21,9 +26,52 @@ defaults:
     working-directory: web
 
 jobs:
+  # web=false only when a pull request is known to leave web/, live-relay-placeholder/ and this file
+  # alone. A push, or a merge commit it cannot read, gives web=true, and when this job fails the
+  # jobs below still run (their `if` is not 'false') while `check` fails on its result.
+  changes:
+    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
+    timeout-minutes: 5
+    outputs:
+      web: ${{ steps.diff.outputs.web }}
+    steps:
+      # A pull request's checkout is its merge commit: parent 1 is the base branch, so a two-commit
+      # history is enough to diff what merging it would change.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Find web changes
+        id: diff
+        working-directory: .
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          web=true
+          if [ "$EVENT_NAME" != pull_request ]; then
+            echo "Not a pull request ($EVENT_NAME): running the web jobs."
+          elif ! git rev-parse -q --verify 'HEAD^2' > /dev/null; then
+            echo "::warning::HEAD is not a pull request merge commit: running the web jobs."
+          else
+            status=0
+            git diff --quiet --no-renames 'HEAD^1' HEAD -- \
+              web live-relay-placeholder .github/workflows/web.yml || status=$?
+            if [ "$status" = 0 ]; then
+              web=false
+              echo "Nothing under web/, live-relay-placeholder/ or .github/workflows/web.yml changed: skipping the web jobs."
+            elif [ "$status" = 1 ]; then
+              echo "Web files changed: running the web jobs."
+            else
+              echo "::warning::git diff failed ($status): running the web jobs."
+            fi
+          fi
+          echo "web=$web" >> "$GITHUB_OUTPUT"
+
   # Throwaway Postgres, then migrations from empty. `check` below fails when this job does,
   # so the existing web check cannot pass without it.
   database:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.web != 'false' }}
     runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
     timeout-minutes: 25
     env:
@@ -55,6 +103,8 @@ jobs:
   # Firebase Auth and Firestore emulators under a demo- project id only (tests/emu/run.ts
   # refuses any other id). `check` below fails when this job does.
   emulators:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.web != 'false' }}
     runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
     timeout-minutes: 10
     steps:
@@ -77,6 +127,8 @@ jobs:
   # gate"). It also runs inside `database` and `emulators`; this job gives it a check of its own.
   # `check` below fails when this job does, so that check cannot pass without it.
   company-isolation:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.web != 'false' }}
     runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
     timeout-minutes: 25
     env:
@@ -106,33 +158,56 @@ jobs:
       - run: npm ci
       - run: npm run test:isolation
 
+  # Reports on every pull request. With web=false it passes only once it has seen that the three
+  # jobs were skipped; otherwise it requires each of them and runs its own steps, as before.
   check:
-    needs: [database, emulators, company-isolation]
+    needs: [changes, database, emulators, company-isolation]
     if: always() && !cancelled()
     runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
     timeout-minutes: 15
     steps:
+      - name: Require the changes job
+        run: test "${{ needs.changes.result }}" = "success"
+      - name: Confirm the web jobs were skipped
+        if: needs.changes.outputs.web == 'false'
+        run: |
+          test "${{ needs.database.result }}" = "skipped"
+          test "${{ needs.emulators.result }}" = "skipped"
+          test "${{ needs.company-isolation.result }}" = "skipped"
+          echo "No web changes: database, emulators and company-isolation were skipped."
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.changes.outputs.web != 'false'
       - name: Require the database job
+        if: needs.changes.outputs.web != 'false'
         run: test "${{ needs.database.result }}" = "success"
       - name: Require the emulator job
+        if: needs.changes.outputs.web != 'false'
         run: test "${{ needs.emulators.result }}" = "success"
       - name: Require the company-isolation job
+        if: needs.changes.outputs.web != 'false'
         run: test "${{ needs.company-isolation.result }}" = "success"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: needs.changes.outputs.web != 'false'
         with:
           node-version: lts/*
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci
+        if: needs.changes.outputs.web != 'false'
       - run: npm run typecheck
+        if: needs.changes.outputs.web != 'false'
       - run: npm run lint
+        if: needs.changes.outputs.web != 'false'
       - run: npm test
+        if: needs.changes.outputs.web != 'false'
       - run: npm run build
+        if: needs.changes.outputs.web != 'false'
         env:
           APP_ENV: test
 
   e2e:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.web != 'false' }}
     runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
     timeout-minutes: 20
     steps:
@@ -163,6 +238,8 @@ jobs:
   # web/scripts/build-image.sh: check its configuration, run its /app tree the way the image does and
   # run the release smoke check against it, so a broken build or start fails here, not at release.
   image:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.web != 'false' }}
     runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
     timeout-minutes: 20
     steps:
