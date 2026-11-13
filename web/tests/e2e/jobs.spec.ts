@@ -341,6 +341,54 @@ test('photos are downloaded only while Photos is open, and kept after', async ({
   expect(downloads).toHaveLength(fetched);
 });
 
+// Holds each matching request before it reaches the server, until `release`: the server has not
+// made the change while the test does something else.
+async function holdRequests(page: Page, url: string, method: string) {
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route(url, async (route) => {
+    if (route.request().method() !== method) return route.fallback();
+    await held;
+    await route.fulfill({ response: await route.fetch() });
+  });
+  return { release };
+}
+
+test('a save and a photo that settle after the job is left and reopened land on the reopened screen', async ({ page }) => {
+  const company = await seedCompany('late', { estimator: 'estimator' });
+  await signIn(page, company, company.people.estimator!);
+  await startJob(page, '17 Late Answer Lane');
+  await addRoom(page, 'Garage');
+  const reopen = async () => {
+    await main(page).getByRole('link', { name: 'Back to jobs' }).click();
+    await main(page).getByRole('link', { name: '17 Late Answer Lane' }).click();
+    await expect(page.getByLabel('Year built')).toBeVisible();
+  };
+
+  // A customer save the server makes only after the job was left and opened again.
+  const customer = await holdRequests(page, '**/api/jobs/*/customer', 'PUT');
+  await main(page).getByRole('link', { name: 'Customer and claim' }).click();
+  await page.getByLabel('Customer name').fill('Robin Late');
+  await page.getByRole('button', { name: 'Save customer' }).click();
+  await reopen();
+  customer.release();
+  await main(page).getByRole('link', { name: 'Customer and claim' }).click();
+  await expect(page.getByRole('button', { name: 'Save customer' })).toBeEnabled();
+  await expect(page.getByLabel('Customer name')).toHaveValue('Robin Late');
+
+  // A photo the server stores only after the job was left and opened again.
+  const photo = await holdRequests(page, '**/api/jobs/*/photos/*', 'PUT');
+  await takePhoto(page, 'Garage', 'Overview');
+  await expect(page.getByText('Sending the photo…')).toBeVisible();
+  await reopen();
+  photo.release();
+  await main(page).getByRole('link', { name: 'Photos' }).click();
+  await expect(page.getByRole('heading', { name: 'Job photos (1)' })).toBeVisible();
+  await expectPhoto(page, 'Photo 1, Garage, Overview');
+});
+
 test('every field view passes axe', async ({ page }) => {
   const company = await seedCompany('axe', { estimator: 'estimator' });
   await signIn(page, company, company.people.estimator!);

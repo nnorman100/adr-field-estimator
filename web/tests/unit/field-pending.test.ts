@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { pending, type PendingRecord } from '@/lib/field/pending';
+import { newerDetail, pending, type PendingRecord } from '@/lib/field/pending';
+import type { JobDetail } from '@/lib/jobs/service';
 
 // Unsent work of the job screens (S5a-6): it belongs to one signed-in person of one company, a
 // send in flight is marked so it cannot go twice, and an answer settles only its own request.
@@ -74,5 +75,33 @@ describe('unsent work', () => {
 
     pending.openFor('company-a/user-g');
     expect(pending.jobRefusal()).toBeNull();
+  });
+});
+
+describe('what a late send posts for the open screen of its job', () => {
+  const at = (revision: number, name: string): JobDetail =>
+    ({ job: { id: 'job-late', revision }, customer: { name, phone: '', email: '' } }) as unknown as JobDetail;
+
+  it('keeps the newest job the server answered, and an older answer never replaces it', () => {
+    pending.openFor('company-a/user-late');
+    expect(pending.detail('job-late')).toBeNull();
+    pending.publishDetail('job-late', at(3, 'third'));
+    pending.publishDetail('job-late', at(2, 'second, answered late'));
+    expect(pending.detail('job-late')?.customer.name).toBe('third');
+    pending.publishDetail('job-late', at(4, 'fourth'));
+    expect(pending.detail('job-late')?.customer.name).toBe('fourth');
+    expect(newerDetail(at(5, 'read'), pending.detail('job-late'))?.customer.name).toBe('read');
+    expect(newerDetail(null, pending.detail('job-late'))?.customer.name).toBe('fourth');
+  });
+
+  it('counts draft changes per job, and starts empty for another sign-in', () => {
+    pending.openFor('company-a/user-late');
+    const before = pending.draftChanges('job-late');
+    pending.draftChanged('job-late');
+    expect(pending.draftChanges('job-late')).toBe(before + 1);
+    expect(pending.draftChanges('job-other')).toBe(0);
+    pending.openFor('company-a/user-other');
+    expect(pending.draftChanges('job-late')).toBe(0);
+    expect(pending.detail('job-late')).toBeNull();
   });
 });

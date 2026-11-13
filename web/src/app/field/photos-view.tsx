@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { photoAddress, sendPhoto, SHOT_NAMES } from '@/lib/field/api';
 import { pending as unsent, usePending, type PendingPhoto } from '@/lib/field/pending';
@@ -29,6 +29,14 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
   // leaving this screen never drops one: its id and bytes stay for "Send again".
   const jobId = job.detail.job.id;
   const pending = usePending(() => unsent.photos(jobId));
+  // Whether this screen is still open when a send settles.
+  const live = useRef(true);
+  useEffect(() => {
+    live.current = true;
+    return () => {
+      live.current = false;
+    };
+  }, []);
   const [error, setError] = useState<string | null>(null);
   const canTake = job.editable && job.session.capabilities.includes('photos');
   const roomOptions = [{ value: '', label: 'No room' }, ...draft.rooms.map((room) => ({ value: room.id, label: room.field.name ?? 'Room' }))];
@@ -45,7 +53,9 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
     update(item.id, { step: 'saving' });
     try {
       await savePhotoRef(db, job.draftRef, item.id, item.field);
-      await job.reloadDraft();
+      // The screen that sent it may have closed since: then the open one is told to read the draft.
+      if (live.current) await job.reloadDraft();
+      else unsent.draftChanged(jobId);
       unsent.removePhoto(jobId, item.id);
     } catch {
       update(item.id, { step: 'save-failed', message: 'The photo is stored but its room and tag were not saved. Save again.' });

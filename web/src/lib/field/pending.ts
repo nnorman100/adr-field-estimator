@@ -13,9 +13,13 @@
 // way cannot send it a second time; an answer settles only the request that still holds its slot.
 // A refusal frees the slot but keeps what the person entered and the server's reason, for the
 // screen to show whenever it is open next.
+// A send can settle after its screen was closed and the job opened again in a new one. So what a
+// settled send learned is posted here per job, for whichever screen of that job is open now: the
+// job as the server answered it, and a mark that the field draft changed and must be read again.
 // All of it belongs to one signed-in person of one company (`openFor`): another sign-in on the same
 // page starts empty.
 import { useSyncExternalStore } from 'react';
+import type { JobDetail } from '@/lib/jobs/service';
 import type { PhotoField } from './schema';
 
 export type PendingJob = { id: string; draftId: string; propertyAddress: string; sending: boolean };
@@ -49,9 +53,13 @@ type State = {
   // By job and record kind.
   refusals: Record<string, RecordRefusal>;
   photos: Record<string, PendingPhoto[]>;
+  // By job: the newest job the server answered, and how many times its draft was changed by a send
+  // that settled after its screen closed.
+  details: Record<string, JobDetail>;
+  draftChanges: Record<string, number>;
 };
 
-const EMPTY = { job: null, jobRefusal: null, records: {}, refusals: {}, photos: {} };
+const EMPTY = { job: null, jobRefusal: null, records: {}, refusals: {}, photos: {}, details: {}, draftChanges: {} };
 let state: State = { owner: null, ...EMPTY };
 const listeners = new Set<() => void>();
 
@@ -124,7 +132,26 @@ export const pending = {
   removePhoto(jobId: string, photoId: string) {
     change({ photos: { ...state.photos, [jobId]: pending.photos(jobId).filter((photo) => photo.id !== photoId) } });
   },
+  // The job as the server last answered it; an older revision never replaces a newer one.
+  detail: (jobId: string): JobDetail | null => state.details[jobId] ?? null,
+  publishDetail(jobId: string, detail: JobDetail) {
+    const known = state.details[jobId];
+    if (known && known.job.revision >= detail.job.revision) return;
+    change({ details: { ...state.details, [jobId]: detail } });
+  },
+  draftChanges: (jobId: string): number => state.draftChanges[jobId] ?? 0,
+  // A send changed the job's field draft after its screen closed: the open screen reads it again.
+  draftChanged(jobId: string) {
+    change({ draftChanges: { ...state.draftChanges, [jobId]: pending.draftChanges(jobId) + 1 } });
+  },
 };
+
+// The newer of two copies of a job, by revision; either may be missing.
+export function newerDetail(a: JobDetail | null, b: JobDetail | null): JobDetail | null {
+  if (!a) return b;
+  if (!b) return a;
+  return b.job.revision > a.job.revision ? b : a;
+}
 
 // Re-renders the caller whenever unsent work changes, and answers `read` now.
 export function usePending<T>(read: () => T): T {

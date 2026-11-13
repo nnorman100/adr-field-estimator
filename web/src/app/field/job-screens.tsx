@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { readJob, type JobDetail } from '@/lib/field/api';
+import { newerDetail, pending, usePending } from '@/lib/field/pending';
 import type { FieldSession } from '@/lib/field/session';
 import { canEditDraft, InvalidFieldData, loadDraft, type DraftRef, type FieldDraft } from '@/lib/field/store';
 import type { JobView } from '@/lib/field/views';
@@ -40,7 +41,19 @@ export type JobContext = {
 // is stored. Office, the owner who is not the field owner, and anyone once the draft is no longer
 // being edited see the field work read-only, as the rules hold it.
 export function JobScreens({ session, jobId, view }: { session: FieldSession; jobId: string; view: JobView }) {
-  const [detail, setDetail] = useState<JobDetail | null>(null);
+  const [read, setRead] = useState<JobDetail | null>(null);
+  // A save that settled after an earlier screen of this job closed posts the job it got back
+  // (src/lib/field/pending.ts); the newer of that and this screen's own read is the job shown.
+  const posted = usePending(() => pending.detail(jobId));
+  const detail = newerDetail(read, posted);
+  const setDetail = useCallback(
+    (next: JobDetail) => {
+      setRead(next);
+      pending.publishDetail(jobId, next);
+    },
+    [jobId],
+  );
+  const draftChanges = usePending(() => pending.draftChanges(jobId));
   const [draft, setDraft] = useState<FieldDraft | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [draftError, setDraftError] = useState<string | null>(null);
@@ -77,7 +90,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       await reloadDraft(answer.value);
       return answer.value;
     },
-    [reloadDraft],
+    [reloadDraft, setDetail],
   );
 
   const reloadJob = useCallback(async () => apply(await readJob(session.user, jobId)), [apply, session, jobId]);
@@ -93,6 +106,13 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // A photo that settled after an earlier screen of this job closed changed the draft: read it again.
+  useEffect(() => {
+    // Read after this render, as an answer to the change the store posted.
+    if (draftChanges > 0) void Promise.resolve().then(() => reloadDraft());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftChanges]);
 
   if (error && !detail) {
     return (
