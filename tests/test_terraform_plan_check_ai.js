@@ -408,3 +408,103 @@ describe.each(['test', 'live'])('app root, %s: AI settings', (environment) => {
     ]);
   });
 });
+
+// The real S7-2 test plan: `terraform show -json` of the app root after the data root was applied,
+// with every run-specific value (etags, ids, timestamps, digests, revision suffixes, the alert email)
+// swapped for a synthetic one and only resource_changes kept. Two provider shapes the mocked plans
+// never show: the relay was never released, so its revision name is "" on both sides (nothing to
+// clear), and the scheduler job, a no-op, reports `headers = {}` and `body = ""`.
+describe('app root, test: the real S7-2 re-apply plan', () => {
+  const SVC = (k) => `google_cloud_run_v2_service.svc["${k}"]`;
+  const JOB = 'google_cloud_scheduler_job.jobs["access-projection"]';
+  const IN_PLACE = (address) =>
+    `${address}: plan would change it in place; a first apply only creates`;
+  const real = () => {
+    const file = path.join(
+      ROOT,
+      'infra',
+      'dryscope',
+      'fixtures',
+      'app-test.s7-2-reapply.plan.json',
+    );
+    return JSON.parse(fs.readFileSync(file, 'utf8')).resource_changes;
+  };
+  const template = (plan, k, side = 'after') => find(plan, SVC(k)).change[side].template[0];
+  const target = (plan) => find(plan, JOB).change.after.http_target[0];
+
+  test('the plan has the shape the owner saw: two in-place updates, everything else no-op', () => {
+    const plan = real();
+    const updates = plan.filter((rc) => rc.change.actions.join() === 'update');
+    expect(updates.map((rc) => rc.address)).toEqual([SVC('api'), SVC('live')]);
+    expect(plan.every((rc) => ['update', 'no-op'].includes(rc.change.actions.join()))).toBe(true);
+    expect(template(plan, 'api', 'before').revision).toMatch(/^dryscope-api-test-\d{5}-/);
+    expect(template(plan, 'api').revision).toBeNull();
+    expect(template(plan, 'live', 'before').revision).toBe('');
+    expect(template(plan, 'live').revision).toBe('');
+    expect(template(plan, 'live', 'before').max_instance_request_concurrency).toBe(10);
+    expect(template(plan, 'live').max_instance_request_concurrency).toBe(20);
+    expect(target(plan).headers).toEqual({});
+    expect(target(plan).body).toBe('');
+  });
+
+  test('it passes', () => {
+    expect(check(real(), 'app', 'test')).toEqual([]);
+  });
+
+  test.each([
+    [
+      'sets a revision name on the relay',
+      (plan) => (template(plan, 'live').revision = 'dryscope-live-test-00002-new'),
+      'live',
+    ],
+    [
+      'keeps the web app’s released revision name',
+      (plan) => (template(plan, 'api').revision = template(plan, 'api', 'before').revision),
+      'api',
+    ],
+    ['changes another relay attribute', (plan) => (template(plan, 'live').timeout = '60s'), 'live'],
+    [
+      'moves the web app’s concurrency',
+      (plan) => (template(plan, 'api').max_instance_request_concurrency += 1),
+      'api',
+    ],
+  ])('an update that %s is refused', (_, edit, k) => {
+    const plan = real();
+    edit(plan);
+    expect(check(plan, 'app', 'test')).toEqual([IN_PLACE(SVC(k))]);
+  });
+
+  test('a relay AI setting other than the table’s is refused', () => {
+    const plan = real();
+    const env = template(plan, 'live').containers[0].env;
+    env.find((e) => e.name === 'LIVE_MODEL').value = 'gemini-3.8-flash';
+    expect(check(plan, 'app', 'test')).toContain(
+      `${SVC('live')}: env LIVE_MODEL is "gemini-3.8-flash", expected gemini-3.8-live`,
+    );
+  });
+
+  test('the same plan checked as live is refused (concurrency 20 is test only)', () => {
+    expect(check(real(), 'app', 'live')).toContain(
+      `${SVC('live')}: template.0.max_instance_request_concurrency is 20, expected 10`,
+    );
+  });
+
+  test.each([
+    ['a header', (t) => (t.headers = { Authorization: 'Bearer x' }), 'headers'],
+    ['a body', (t) => (t.body = 'e30='), 'body'],
+  ])('the scheduler job with %s is still refused', (_, edit, field) => {
+    const plan = real();
+    edit(target(plan));
+    expect(check(plan, 'app', 'test')).toEqual([`${JOB}: http_target.0.${field} must be empty`]);
+  });
+
+  test.each([SVC('live'), JOB])('deleting or replacing %s is still refused', (address) => {
+    for (const actions of [['delete'], ['delete', 'create'], ['create', 'delete']]) {
+      const plan = real();
+      find(plan, address).change.actions = actions;
+      expect(check(plan, 'app', 'test')).toContain(
+        `${address}: plan would delete or replace it (${actions.join(', ')})`,
+      );
+    }
+  });
+});

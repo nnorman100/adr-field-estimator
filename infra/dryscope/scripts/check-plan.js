@@ -25,7 +25,7 @@
 // condition in place). A third covers an app root that is already applied: a Cloud Run service
 // may change in place only by adding or setting a NEW_SETTINGS variable, to the value in the
 // table, and (where the table holds it) moving its request concurrency to the table's value, with
-// every other attribute unchanged; the update must clear the revision name a release set, because
+// every other attribute unchanged; the update must clear any revision name a release set, because
 // Cloud Run refuses to change an existing revision and makes a fresh one only for an unnamed
 // template. A fourth covers a Cloud SQL instance already applied
 // with a regional backup location: it may change in place, and only to the US multi-region (`us`),
@@ -518,7 +518,12 @@ const same = (want, got) =>
   want instanceof RegExp
     ? typeof got === 'string' && want.test(got)
     : JSON.stringify(want) === JSON.stringify(got);
-const empty = (v) => v == null || (Array.isArray(v) && v.length === 0);
+// Unset, as the provider reports it against real state: null, an empty list or map, or "" (a
+// scheduler job's `headers = {}` and `body = ""`, a never-released service's revision name).
+const empty = (v) =>
+  v == null ||
+  v === '' ||
+  (Array.isArray(v) ? v.length === 0 : typeof v === 'object' && Object.keys(v).length === 0);
 // Plain (not secret) env settings of a Cloud Run service's first container, by name.
 const envOf = (state) => state?.template?.[0]?.containers?.[0]?.env ?? [];
 const plainEnv = (state) =>
@@ -604,8 +609,8 @@ function checkPlan(resourceChanges, { root, environment, complete = true, reappl
   // from those, the planned state must equal the current one; output-only top-level
   // fields the provider will recompute (marked unknown) are skipped. Anything unknown inside the
   // template is not skipped, so such a plan is refused rather than guessed at. The planned revision
-  // name must be empty, so the update makes a fresh revision; clearing a name a release set is
-  // the only change to it allowed.
+  // name must be empty (null, or "" for a service no release has named), so the update makes a
+  // fresh revision; clearing a name a release set is the only change to it allowed.
   const settingsUpdate = (rc, actions) => {
     const { before, after, after_unknown: unknown = {} } = rc.change ?? {};
     if (!want.settings[rc.address] || actions.length !== 1 || actions[0] !== 'update') return false;
