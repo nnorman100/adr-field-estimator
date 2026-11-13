@@ -8,3 +8,6 @@ playwright-report/
 coverage/
 .env
 .env.*
+
+# The service worker is generated from sw/sw.js by scripts/build-sw.ts after next build (S6-2).
+public/sw.js

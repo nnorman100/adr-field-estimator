@@ -16,9 +16,10 @@ import {
   sendVerifyEmail,
   signInWithGoogle,
   signInWithPassword,
-  signOutCompany,
   type SecondStepChallenge,
 } from '@/lib/firebase-client';
+import { saveMe } from '@/lib/field/ds-me';
+import { signOutOfCompany } from '@/lib/field/sign-out';
 import { endsSession, errorCode, signInErrorMessage, type MeOutcome } from '@/lib/sign-in/outcome';
 import { rememberSignInAddress } from '@/lib/sign-in/remember';
 import { offersTeamScreen } from '@/lib/team/screen';
@@ -87,11 +88,11 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
 
   const endSession = useCallback(async (message: string | null) => {
     const auth = authRef.current;
-    if (auth) await signOutCompany(auth);
+    if (auth) await signOutOfCompany(auth, tenantId);
     setError(null);
     setNotice(message);
     setScreen({ name: 'signed-out' });
-  }, []);
+  }, [tenantId]);
 
   const refuse = useCallback(
     async (message: string) => {
@@ -136,9 +137,16 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
         await refuse(message);
         return;
       }
+      // The field shell starts from this row with no signal (S6-2), so it is saved before the screen
+      // that opens the shell; a phone that cannot keep it still signs in, and the shell says it is
+      // not saved.
+      if (outcome.kind === 'signed-in') {
+        await saveMe({ tenantId, uid: user.uid, companyName: outcome.companyName, address, config });
+        if ((authRef.current?.currentUser ?? null) !== user) return;
+      }
       setScreen({ name: 'outcome', outcome: outcome as Extract<Screen, { name: 'outcome' }>['outcome'] });
     },
-    [companyName, refuse, showSignedOut],
+    [address, companyName, config, refuse, showSignedOut, tenantId],
   );
 
   useEffect(() => {
@@ -296,6 +304,11 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
                 onAdd={(existing) => setScreen({ name: 'add-authenticator', existing })}
               />
             ) : null}
+            {busy ? null : (
+              <Button asChild>
+                <a href="/field">Open the field app</a>
+              </Button>
+            )}
             {offersTeamScreen(outcome.role) ? (
               <Button asChild>
                 <Link href={`/sign-in/${address}/team`}>Team and invitations</Link>
