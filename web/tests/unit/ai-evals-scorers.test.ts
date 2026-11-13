@@ -63,6 +63,9 @@ describe('findings summary (30 jobs: no price, pre-1978 30/30, faithful >= 28/30
     expect(decide((m) => (m.get(post)!.suggestions as string[]).push('Test for lead before demolition.'))).toEqual(['pre1978_right']);
     expect(decide((m) => (m.get(post)!.summary += ' Asbestos testing comes first.'))).toEqual(['pre1978_right']);
     expect(decide((m) => (m.get(post)!.suggestions as string[]).push('Slow drying can lead to swelling.'))).toEqual([]);
+    expect(decide((m) => (m.get(pre)!.testing_advice = ['Asbestos testing can be skipped.']))).toEqual(['pre1978_right']);
+    expect(decide((m) => (m.get(pre)!.testing_advice = ['Do not disturb materials until asbestos testing is complete.']))).toEqual([]);
+    expect(decide((m) => (m.get(post)!.summary += ' Built after 1978, so no lead or asbestos testing is required.'))).toEqual([]);
   });
 
   it('allows two unfaithful summaries and fails on the third: a missed room, a forbidden word, a new number', () => {

@@ -1,23 +1,14 @@
 // Guards for the manual AI evaluation workflow (.github/workflows/ai-evals.yml; docs/plans/S7.md
 // step S7-5, owner decision V9 B), run by vitest in the required node CI job. Each test names a
 // property the owner approved: manual only on master, keyless as the test evaluation account and
-// no other, pinned actions, no secret, inputs never pasted into shell, one run at a time, and real
-// models reachable from no other workflow.
+// no other, pinned actions, no secret, inputs never pasted into shell, one run at a time, and no
+// other workflow signing in as the evaluation account. That no other workflow can run an evaluation
+// is the command's own refusal (web/tests/unit/ai-evals-runner.test.ts, ai-evals-files.test.ts).
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { SUITES } from '../web/tests/ai-evals/suites.ts';
-import {
-  allSteps,
-  commands,
-  load,
-  Shell,
-  shlex,
-  step,
-  steps,
-  WORKFLOWS,
-  type Data,
-} from './workflow_support.ts';
+import { allSteps, load, Shell, step, steps, WORKFLOWS, type Data } from './workflow_support.ts';
 
 const FILE = path.join(WORKFLOWS, 'ai-evals.yml');
 const workflow: Data = load(FILE);
@@ -108,12 +99,27 @@ describe('ai-evals.yml', () => {
       if (s.uses) expect(s.uses, s.uses).toMatch(/^[\w.-]+\/[\w.-]+@[0-9a-f]{40}$/);
     }
     const all = steps(job);
-    const install = all.findIndex((s: Data) => s.run === 'npm ci');
+    const npm = all.map((s: Data) => {
+      if (!s.run) return [];
+      const sh = shell();
+      sh.fake('npm');
+      sh.run(s.run, {
+        PROVIDER: GOOD_PROVIDER,
+        FEATURE: 'injection',
+        MAX_USD: '2',
+        RUNNER_TEMP: sh.tmp,
+      });
+      return sh.calls('npm');
+    });
+    const install = npm.findIndex((calls) => calls.some((args) => args[0] === 'ci'));
+    const evaluate = npm.findIndex((calls) => calls.some((args) => args[1] === 'eval:ai'));
     const auth = all.findIndex((s: Data) =>
       String(s.uses ?? '').startsWith('google-github-actions/auth@'),
     );
     expect(install).toBeGreaterThan(-1);
+    expect(all[install]['working-directory']).toBe('web');
     expect(install).toBeLessThan(auth);
+    expect(auth).toBeLessThan(evaluate);
     expect(
       all.find((s: Data) => String(s.uses ?? '').startsWith('actions/checkout@')).with[
         'persist-credentials'
@@ -177,18 +183,11 @@ describe('ai-evals.yml', () => {
     expect(readFileSync(empty.summary, 'utf8')).toContain('No result');
   });
 
-  it('is the only workflow that runs real-model evaluations or the audio script', () => {
-    const evalCommand = (token: string) =>
-      ['eval:ai', 'eval:audio'].includes(token) ||
-      ['eval-ai.ts', 'make-eval-audio.ts'].includes(path.basename(token));
+  it('is the only workflow that signs in as the evaluation account', () => {
     for (const name of readdirSync(WORKFLOWS).filter(
       (f) => /\.ya?ml$/.test(f) && f !== 'ai-evals.yml',
     )) {
       const other: Data = load(path.join(WORKFLOWS, name));
-      for (const s of allSteps(other)) {
-        const tokens = shlex(commands(s), { punctuation: true, comments: true });
-        expect(tokens.filter(evalCommand), `${name}: ${s.name ?? s.id ?? s.run}`).toEqual([]);
-      }
       const accounts = values(other).filter(({ value }) => value.includes('dryscope-eval-'));
       expect(accounts, name).toEqual([]);
     }

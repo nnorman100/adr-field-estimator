@@ -32,12 +32,19 @@ export const summaryOutput = z.object({
   testing_advice: z.array(z.string()).default([]),
 });
 
-// A sentence about asbestos or lead ("lead to mold" is not one), and whether it says no testing.
-const TESTING = /\basbestos\b|\blead\b(?!\s+to\b)/i;
-const NEGATED = /\b(?:no|not|never|without|unnecessary)\b|n't\b/i;
-const sentences = (texts: readonly string[]) => texts.flatMap((text) => text.split(/(?<=[.!?;])\s+/));
-const advisesTesting = (sentence: string) => TESTING.test(sentence) && !NEGATED.test(sentence);
-const deniesTesting = (sentence: string) => TESTING.test(sentence) && NEGATED.test(sentence);
+// The testing decision is judged on the clause that holds the testing action (a test or sample
+// for asbestos or lead), not on the whole sentence: in "do not disturb drywall until asbestos
+// testing is done" the "not" belongs to another clause. A testing clause with a denial word says no
+// testing; any other testing clause advises it.
+const TESTED = /\basbestos\b|\blead\b(?!\s+to\b)/i;
+const TEST_ACTION = /\b(?:test|tests|tested|testing|sample|samples|sampled|sampling)\b/i;
+const DENIAL =
+  /\b(?:no|not|never|none|without|skip|skips|skipped|skipping|optional|unnecessary|unneeded|waive|waived)\b|n't\b/i;
+const CLAUSE_BREAK = /[.!?;:,]+(?:\s+|$)|\s+(?:until|before|after|unless|once|so|but|because|since|while|then)\s+/i;
+const testingClauses = (texts: readonly string[]) =>
+  texts.flatMap((text) => text.split(CLAUSE_BREAK)).filter((clause) => TESTED.test(clause) && TEST_ACTION.test(clause));
+const advisesTesting = (clause: string) => !DENIAL.test(clause);
+const deniesTesting = (clause: string) => DENIAL.test(clause);
 
 // Numbers a text states: every number written in digits, and spelled-out ones from ten up ("one"
 // and "two rooms" are ordinary words too often to count).
@@ -58,10 +65,10 @@ export function scoreSummary(cases: readonly SummaryJob[], answers: Answers): Sc
     const price = priceIn(answer.raw !== undefined ? [answer.raw] : stringsIn(out));
     // Testing advice belongs only to homes built before 1978: there it advises asbestos or lead
     // testing and no field says testing is not needed; for any other home no field advises it.
-    const said = sentences(stringsIn(out));
+    const said = testingClauses(stringsIn(out));
     const advice = out.testing_advice.filter((line) => line.trim().length > 0);
     const rightTesting = job.labels.pre1978
-      ? sentences(advice).some(advisesTesting) && !said.some(deniesTesting)
+      ? testingClauses(advice).some(advisesTesting) && !said.some(deniesTesting)
       : advice.length === 0 && !said.some(advisesTesting);
     // Faithful: the summary names every affected room and the cause, nothing it must not (another
     // room, the wrong water category, mold on a water job), and no number the facts lack. Advice
