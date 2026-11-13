@@ -1,10 +1,12 @@
+import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Harness } from './team-harness';
 
 // S5a-4, the company profile API through the real route file as the runtime role against Postgres
 // (see team-members.test.ts for the setup): only the company's owner reads or changes the profile,
 // another company's owner is told it does not exist, a refused request writes nothing (audit row
-// included), and the profile's missing licence or sign-off is listed by the engine's setup check.
+// included), the profile's missing licence or sign-off is listed by the engine's setup check, and a
+// save made from a revision that is no longer the stored one is refused unless it changes nothing.
 const live = vi.hoisted(() => ({ harness: null as Harness | null }));
 vi.mock('@/lib/auth/services', () => ({
   identityServices: () => live.harness!.identity,
@@ -52,10 +54,20 @@ const get = async (claims: FakeClaims | null, companyId: string) => {
   const response = await readProfile(request(claims, `/api/companies/${companyId}/profile`), params({ companyId }));
   return { status: response.status, body: (await response.json().catch(() => null)) as Json | null, response };
 };
-const put = async (claims: FakeClaims | null, companyId: string, body: unknown) => {
+const send = async (claims: FakeClaims | null, companyId: string, body: unknown) => {
   const response = await saveProfile(request(claims, `/api/companies/${companyId}/profile`, { method: 'PUT', body }), params({ companyId }));
   return { status: response.status, body: (await response.json().catch(() => null)) as Json | null, response };
 };
+// The revision the company's own owner reads now.
+const revisionNow = async (companyId: string): Promise<string> => (await get(companyId === h.seed.b ? ownerB : owner(), companyId)).body!.revision;
+// A save based on the current revision with a new change id, as the screen sends it.
+const put = async (claims: FakeClaims | null, companyId: string, body: unknown) =>
+  send(
+    claims,
+    companyId,
+    body !== null && typeof body === 'object' && !Array.isArray(body) ? { revision: await revisionNow(companyId), changeId: randomUUID(), ...body } : body,
+  );
+const REVISION = expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/);
 const rowOf = async (companyId: string) =>
   (
     await h.admin<Json[]>`
@@ -72,6 +84,7 @@ describe('reading the profile', () => {
     expect(body).toEqual({
       companyId: h.seed.a,
       name: 'Company company-a',
+      revision: REVISION,
       address: '',
       phone: '',
       email: '',
@@ -112,7 +125,7 @@ describe('saving the profile', () => {
   it('lets the owner save the five fields, then reads them back with an empty setup list', async () => {
     const saved = await put(owner(), h.seed.a, { ...FULL, email: 'Office@Example.Test' });
     expect(saved.status).toBe(200);
-    expect(saved.body).toEqual({ companyId: h.seed.a, name: 'Company company-a', ...FULL, setupMissing: [] });
+    expect(saved.body).toEqual({ companyId: h.seed.a, name: 'Company company-a', revision: REVISION, ...FULL, setupMissing: [] });
     expect((await get(owner(), h.seed.a)).body).toEqual(saved.body);
     const row = await rowOf(h.seed.a);
     expect(row).toMatchObject({
@@ -134,11 +147,18 @@ describe('saving the profile', () => {
     expect((await put(owner(), h.seed.a, FULL)).body?.setupMissing).toEqual([]);
   });
 
-  it('writes one audit row that names the actor and holds no value', async () => {
-    await put(owner(), h.seed.a, FULL);
+  it('writes one audit row that names the actor and the change and holds no value', async () => {
+    const changeId = randomUUID();
+    await send(owner(), h.seed.a, { revision: await revisionNow(h.seed.a), changeId, ...FULL });
     const rows = await audits();
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ company_id: h.seed.a, actor_id: h.seed.ownerA.actor, target: h.seed.a, details: { fields_changed: 5 } });
+    expect(rows[0]).toEqual({
+      company_id: h.seed.a,
+      actor_id: h.seed.ownerA.actor,
+      action: 'company_profile_saved',
+      target: h.seed.a,
+      details: { fields_changed: 5, change_id: changeId },
+    });
     const text = JSON.stringify(rows);
     for (const value of Object.values(FULL)) expect(text).not.toContain(value);
   });
@@ -169,6 +189,50 @@ describe('saving the profile', () => {
     const cleared = await put(owner(), h.seed.a, { ...FULL, license: '' });
     expect(cleared.body?.license).toBe('');
     expect((await rowOf(h.seed.a)).profile_license).toBe('');
+  });
+});
+
+describe('saving from an older revision', () => {
+  it('gives each save a new revision, which the next read returns', async () => {
+    const first = await revisionNow(h.seed.a);
+    const saved = await put(owner(), h.seed.a, FULL);
+    expect(saved.body?.revision).not.toBe(first);
+    expect(await revisionNow(h.seed.a)).toBe(saved.body?.revision);
+    const again = await put(owner(), h.seed.a, { ...FULL, phone: '(555) 010-0199' });
+    expect(again.body?.revision).not.toBe(saved.body?.revision);
+  });
+
+  it('refuses a stale save from a second device with 409 and the current profile, keeping the newer values', async () => {
+    await put(owner(), h.seed.a, FULL);
+    const read = await revisionNow(h.seed.a);
+    // Device one saves a new phone from the revision both devices read.
+    const one = await send(owner(), h.seed.a, { revision: read, changeId: randomUUID(), ...FULL, phone: '(555) 010-0199' });
+    expect(one.status).toBe(200);
+    const before = await everything(h.admin);
+    // Device two then saves a new sign-off from the same, now stale, revision.
+    const two = await send(owner(), h.seed.a, { revision: read, changeId: randomUUID(), ...FULL, signoff: 'Robin Example' });
+    expect(two.status).toBe(409);
+    expect(two.body).toEqual({ error: 'stale_revision', profile: one.body });
+    expect(await everything(h.admin)).toBe(before);
+    expect(await rowOf(h.seed.a)).toMatchObject({ profile_phone: '(555) 010-0199', profile_signoff: FULL.signoff });
+  });
+
+  it('answers 200 with the current revision to a retry of a save whose answer was lost', async () => {
+    const body = { revision: await revisionNow(h.seed.a), changeId: randomUUID(), ...FULL };
+    const first = await send(owner(), h.seed.a, body);
+    expect(first.status).toBe(200);
+    const retry = await send(owner(), h.seed.a, body);
+    expect(retry.status).toBe(200);
+    expect(retry.body).toEqual(first.body);
+    expect(await audits()).toHaveLength(1);
+  });
+
+  it('answers 200 to a stale save that asks for exactly what is stored', async () => {
+    const read = await revisionNow(h.seed.a);
+    const saved = await put(owner(), h.seed.a, FULL);
+    const same = await send(owner(), h.seed.a, { revision: read, changeId: randomUUID(), ...FULL });
+    expect(same.status).toBe(200);
+    expect(same.body).toEqual(saved.body);
   });
 });
 
@@ -218,6 +282,17 @@ describe('a refused request writes nothing', () => {
   ])('answers 400 to %s and writes nothing', async (_what, body) => {
     const before = await everything(h.admin);
     expect(await put(owner(), h.seed.a, body)).toMatchObject({ status: 400, body: { error: 'invalid_request' } });
+    expect(await everything(h.admin)).toBe(before);
+  });
+
+  it.each([
+    ['no revision', { changeId: randomUUID(), ...FULL }],
+    ['no change id', { revision: '2026-01-01T00:00:00.000000Z', ...FULL }],
+    ['a revision of another shape', { revision: '2026-01-01T00:00:00Z', changeId: randomUUID(), ...FULL }],
+    ['a change id that is not a uuid', { revision: '2026-01-01T00:00:00.000000Z', changeId: 'change-1', ...FULL }],
+  ])('answers 400 to a body with %s and writes nothing', async (_what, body) => {
+    const before = await everything(h.admin);
+    expect(await send(owner(), h.seed.a, body)).toMatchObject({ status: 400, body: { error: 'invalid_request' } });
     expect(await everything(h.admin)).toBe(before);
   });
 

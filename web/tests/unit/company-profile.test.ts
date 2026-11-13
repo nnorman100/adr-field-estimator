@@ -1,27 +1,31 @@
 import { describe, expect, it } from 'vitest';
 import { PROFILE_FIELDS, profileInput } from '@/lib/profile/schema';
-import { offersCompanyScreen, profileMessage, profileView, signedInProfileManager } from '@/lib/profile/screen';
+import { changedProfile, offersCompanyScreen, profileMessage, profileView, signedInProfileManager } from '@/lib/profile/screen';
 
 // S5a-4, the company profile's request body and the pure helpers of its screen. The limits are the
 // ones migration 0010 holds as check constraints, so a body that passes here is never refused by the
 // database. tests/db/company-profile.test.ts drives the routes against Postgres.
 
-const GOOD = {
+const BASE = { revision: '2026-11-13T10:20:30.123456Z', changeId: '3E9A7C52-8B14-4F06-9D2A-6C1B5E8F0A37' };
+const VALUES = {
   address: '12 Example Street, Testville, CA 90000',
   phone: '(555) 010-0100',
   email: 'Office@Example.Test',
   license: '000001',
   signoff: 'Pat Example',
 };
+const GOOD = { ...BASE, ...VALUES };
 
 describe('the profile body', () => {
   it('accepts the five fields, trims them and writes the email in lower case', () => {
     const parsed = profileInput.parse({ ...GOOD, address: `  ${GOOD.address}  `, signoff: ' Pat Example ' });
-    expect(parsed).toEqual({ ...GOOD, email: 'office@example.test' });
+    expect(parsed).toEqual({ ...GOOD, changeId: BASE.changeId.toLowerCase(), email: 'office@example.test' });
   });
 
   it('accepts empty fields (empty means not set)', () => {
-    expect(profileInput.parse({ address: '', phone: '', email: '', license: '', signoff: '' })).toEqual({
+    expect(profileInput.parse({ ...BASE, address: '', phone: '', email: '', license: '', signoff: '' })).toEqual({
+      revision: BASE.revision,
+      changeId: BASE.changeId.toLowerCase(),
       address: '',
       phone: '',
       email: '',
@@ -40,6 +44,16 @@ describe('the profile body', () => {
       expect(profileInput.safeParse({ ...GOOD, [key]: 'x' }).success).toBe(false);
     },
   );
+
+  it.each([
+    ['revision', undefined],
+    ['changeId', undefined],
+    ['revision', '2026-11-13T10:20:30Z'],
+    ['revision', 7],
+    ['changeId', 'change-1'],
+  ])('refuses a save whose %s is %j (every save names the revision it was based on and its own change id)', (key, value) => {
+    expect(profileInput.safeParse({ ...GOOD, [key]: value }).success).toBe(false);
+  });
 
   it('refuses a missing field and a field that is not text', () => {
     const without: Record<string, string> = { ...GOOD };
@@ -103,17 +117,27 @@ describe('the company settings screen helpers', () => {
   });
 
   it('reads the profile answer, and nothing of an unexpected shape', () => {
-    const view = { companyId: 'c1', name: 'Co', ...GOOD, setupMissing: ['CSLB license'] };
+    const view = { companyId: 'c1', name: 'Co', revision: BASE.revision, ...VALUES, setupMissing: ['CSLB license'] };
     expect(profileView(view)).toEqual(view);
+    expect(profileView({ ...view, revision: undefined })).toBeNull();
     expect(profileView({ ...view, setupMissing: 'x' })).toBeNull();
     expect(profileView({ ...view, phone: 5 })).toBeNull();
     expect(profileView(null)).toBeNull();
+  });
+
+  it('reads the current profile from a 409 to a stale save, and from nothing else', () => {
+    const view = { companyId: 'c1', name: 'Co', revision: BASE.revision, ...VALUES, setupMissing: [] };
+    expect(changedProfile(409, { error: 'stale_revision', profile: view })).toEqual(view);
+    expect(changedProfile(200, view)).toBeNull();
+    expect(changedProfile(409, { error: 'stale_revision' })).toBeNull();
+    expect(changedProfile(400, { error: 'invalid_request', profile: view })).toBeNull();
   });
 
   it('turns the server’s codes into fixed words, never echoing what was typed', () => {
     expect(profileMessage(403, { error: 'not_allowed' })).toMatch(/owner/i);
     expect(profileMessage(400, { error: 'invalid_request' })).toMatch(/check/i);
     expect(profileMessage(404, { error: 'not_found' })).toMatch(/reload/i);
+    expect(profileMessage(409, { error: 'stale_revision' })).toMatch(/changed somewhere else/i);
     expect(profileMessage(503, { error: 'profile_unavailable' })).toMatch(/try again/i);
     expect(profileMessage(500, null)).toMatch(/try again/i);
   });

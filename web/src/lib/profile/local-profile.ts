@@ -9,10 +9,11 @@ import { ProfileError, profileOf, type ProfileService } from './service';
 // configuration allows it only on a developer machine (src/lib/config.ts).
 
 const EMPTY = { address: '', phone: '', email: '', license: '', signoff: '' };
+const FIRST_REVISION = '2026-01-01T00:00:00.000000Z';
 
 export function localProfileService(path: string): ProfileService {
   const view = (company: ReturnType<typeof readFixtureSync>['companies'][number]) =>
-    profileOf({ id: company.id, name: company.name, ...EMPTY, ...company.profile });
+    profileOf({ id: company.id, name: company.name, revision: company.profileRevision ?? FIRST_REVISION, ...EMPTY, ...company.profile });
 
   return {
     async read(companyId) {
@@ -24,8 +25,12 @@ export function localProfileService(path: string): ProfileService {
       return updateFixture(path, (data) => {
         const company = data.companies.find((c) => c.id === companyId);
         if (!company) throw new ProfileError('not_found');
-        const current = { ...EMPTY, ...company.profile };
-        if (PROFILE_FIELDS.some((field) => current[field] !== input[field])) company.profile = { ...input };
+        const current = view(company);
+        if (PROFILE_FIELDS.every((field) => current[field] === input[field])) return current;
+        if (current.revision !== input.revision) throw new ProfileError('stale_revision', { profile: current });
+        const { address, phone, email, license, signoff } = input;
+        company.profile = { address, phone, email, license, signoff };
+        company.profileRevision = new Date().toISOString().replace('Z', '000Z');
         return view(company);
       });
     },

@@ -26,7 +26,8 @@ async function respond(run: () => Promise<Response>): Promise<Response> {
   try {
     return await run();
   } catch (error) {
-    if (error instanceof ProfileError || error instanceof IdentityRefusal) return json({ error: error.code }, error.status);
+    if (error instanceof ProfileError) return json({ error: error.code, ...error.extra }, error.status);
+    if (error instanceof IdentityRefusal) return json({ error: error.code }, error.status);
     if (error instanceof BadRequest) return json({ error: 'invalid_request' }, 400);
     // Fixed text only: an error from the database may quote an address or an email.
     console.error('company profile unavailable', error instanceof Error ? error.name : 'unknown');
@@ -76,7 +77,8 @@ export async function readProfile(_request: Request, identity: Identity, context
   });
 }
 
-// PUT /api/companies/{companyId}/profile  { address, phone, email, license, signoff }
+// PUT /api/companies/{companyId}/profile  { revision, changeId, address, phone, email, license, signoff }:
+// 409 stale_revision with the current profile when it changed since that revision.
 export async function saveProfile(request: Request, identity: Identity, context: RouteContext): Promise<Response> {
   return respond(async () => {
     const companyId = await ownCompany(context, identity);

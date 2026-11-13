@@ -32,19 +32,26 @@ export function signedInProfileManager(body: unknown): SignedInProfileManager | 
 export function profileView(body: unknown): ProfileView | null {
   const companyId = field(body, 'companyId');
   const name = field(body, 'name');
+  const revision = field(body, 'revision');
   const setupMissing = field(body, 'setupMissing');
-  if (typeof companyId !== 'string' || typeof name !== 'string') return null;
+  if (typeof companyId !== 'string' || typeof name !== 'string' || typeof revision !== 'string') return null;
   if (!Array.isArray(setupMissing) || !setupMissing.every((item) => typeof item === 'string')) return null;
   const values = PROFILE_FIELDS.map((key) => field(body, key));
   if (!values.every((value) => typeof value === 'string')) return null;
   const [address, phone, email, license, signoff] = values as string[];
-  return { companyId, name, address: address!, phone: phone!, email: email!, license: license!, signoff: signoff!, setupMissing };
+  return { companyId, name, revision, address: address!, phone: phone!, email: email!, license: license!, signoff: signoff!, setupMissing };
+}
+
+// A 409 to a save: the profile the server holds now, which changed since the screen read it.
+export function changedProfile(status: number, body: unknown): ProfileView | null {
+  return status === 409 && field(body, 'error') === 'stale_revision' ? profileView(field(body, 'profile')) : null;
 }
 
 const MESSAGES: Record<string, string> = {
   not_allowed: 'Only the company owner can change the company settings.',
   invalid_request: 'Check each line and try again. Every line must fit on one row and stay within its length limit.',
   not_found: 'The company could not be found. Reload the page.',
+  stale_revision: 'The company settings were changed somewhere else. This screen now shows what is saved; make your change again.',
 };
 
 export function profileMessage(_status: number, body: unknown): string {

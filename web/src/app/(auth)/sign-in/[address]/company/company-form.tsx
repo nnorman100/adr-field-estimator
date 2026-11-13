@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { callApi } from '@/lib/firebase-client';
-import { profileMessage, profileView } from '@/lib/profile/screen';
+import { changedProfile, profileMessage, profileView } from '@/lib/profile/screen';
 import type { ProfileView } from '@/lib/profile/service';
 import { FocusedPanel } from '../../../focused-panel';
 
@@ -22,8 +22,10 @@ const valuesOf = ({ address, phone, email, license, signoff }: ProfileView): Val
 
 // The owner's company settings on one screen at phone width: the lines the four documents print
 // (letterhead and sign-off), and what is still missing before documents can be issued. One save
-// sends the five lines; the screen then shows what the server holds. The company name is set by
-// DryScope when the company is made, and the logo is a later step, so the letterhead is text.
+// sends the five lines with the revision they were read at; the screen then shows what the server
+// holds, and when the profile changed elsewhere meanwhile, it shows that and says so. The company
+// name is set by DryScope when the company is made, and the logo is a later step, so the letterhead
+// is text.
 export function CompanyForm({
   address: signInAddress,
   user,
@@ -53,8 +55,13 @@ export function CompanyForm({
     try {
       const answer = await callApi(user, `/api/companies/${companyId}/profile`, {
         method: 'PUT',
-        json: values,
+        json: { ...values, revision: saved.revision, changeId: crypto.randomUUID() },
       });
+      const current = changedProfile(answer.status, answer.body);
+      if (current) {
+        setSaved(current);
+        setValues(valuesOf(current));
+      }
       const next = answer.status === 200 ? profileView(answer.body) : null;
       if (!next) return setError(profileMessage(answer.status, answer.body));
       setSaved(next);

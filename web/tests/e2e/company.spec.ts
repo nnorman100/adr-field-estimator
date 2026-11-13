@@ -4,6 +4,7 @@ import {
   type APIRequestContext,
   type Page,
 } from '@playwright/test';
+import { randomUUID } from 'node:crypto';
 import { expectNoAxeViolations } from './a11y';
 import { idTokenFor } from './sign-in/emulator';
 import { PASSWORD, readSeed, type TeamAccount, type TeamSeed } from './sign-in/seed';
@@ -37,11 +38,16 @@ const FULL = {
   signoff: 'Pat Example',
 };
 
+// Saves the profile as another of the owner's devices would: read the revision, then save from it.
 async function setProfile(request: APIRequestContext, profile: typeof FULL) {
   const token = await idTokenFor(team.tenantId, team.owner.email, PASSWORD);
+  const headers = { Authorization: `Bearer ${token}` };
+  const read = await request.get(`/api/companies/${team.companyId}/profile`, { headers });
+  expect(read.status()).toBe(200);
+  const { revision } = await read.json();
   const response = await request.put(`/api/companies/${team.companyId}/profile`, {
-    headers: { Authorization: `Bearer ${token}` },
-    data: profile,
+    headers,
+    data: { revision, changeId: randomUUID(), ...profile },
   });
   expect(response.status()).toBe(200);
 }
@@ -155,6 +161,37 @@ test('the lines cannot be changed while a save is on its way', async ({ page, re
   await expect(page.getByLabel('Company phone')).toHaveValue(FULL.phone);
 });
 
+test('a save after the profile changed elsewhere is refused and shows what is saved now', async ({
+  page,
+  request,
+}) => {
+  await setProfile(request, FULL);
+  await signInTo(page, team.owner);
+  await openSettings(page);
+  await expect(page.getByLabel('Company phone')).toHaveValue(FULL.phone);
+
+  // Another device saves a new phone after this screen read the profile ...
+  await setProfile(request, { ...FULL, phone: '(555) 010-0199' });
+
+  // ... so this screen's sign-off change, made from the older profile, is not saved over it.
+  await page.getByLabel('Document sign-off').fill('Robin Example');
+  await page.getByRole('button', { name: 'Save company settings' }).click();
+  await expect(
+    page.getByRole('alert').filter({ hasText: 'changed somewhere else' }),
+  ).toBeVisible();
+  await expect(page.getByLabel('Company phone')).toHaveValue('(555) 010-0199');
+  await expect(page.getByLabel('Document sign-off')).toHaveValue(FULL.signoff);
+  await expectNoAxeViolations(page);
+
+  // Made again from what is saved now, the change is saved and keeps the other device's phone.
+  await page.getByLabel('Document sign-off').fill('Robin Example');
+  await page.getByRole('button', { name: 'Save company settings' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Saved.' })).toBeVisible();
+  await page.reload();
+  await expect(page.getByLabel('Company phone')).toHaveValue('(555) 010-0199');
+  await expect(page.getByLabel('Document sign-off')).toHaveValue('Robin Example');
+});
+
 test('a line the server refuses is explained and keeps what was typed', async ({
   page,
   request,
@@ -200,16 +237,18 @@ for (const [kind, who] of [
     const read = await request.get(`/api/companies/${team.companyId}/profile`, { headers });
     expect(read.status()).toBe(403);
     expect(await read.json()).toEqual({ error: 'not_allowed' });
+    const owner = await idTokenFor(team.tenantId, team.owner.email, PASSWORD);
+    const ownerRead = () =>
+      request.get(`/api/companies/${team.companyId}/profile`, {
+        headers: { Authorization: `Bearer ${owner}` },
+      });
+    const { revision } = await (await ownerRead()).json();
     const write = await request.put(`/api/companies/${team.companyId}/profile`, {
       headers,
-      data: { ...FULL, signoff: 'Someone Else' },
+      data: { revision, changeId: randomUUID(), ...FULL, signoff: 'Someone Else' },
     });
     expect(write.status()).toBe(403);
-    const owner = await idTokenFor(team.tenantId, team.owner.email, PASSWORD);
-    const kept = await request.get(`/api/companies/${team.companyId}/profile`, {
-      headers: { Authorization: `Bearer ${owner}` },
-    });
-    expect((await kept.json()).signoff).toBe(FULL.signoff);
+    expect((await (await ownerRead()).json()).signoff).toBe(FULL.signoff);
   });
 }
 

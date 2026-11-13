@@ -77,10 +77,12 @@ The five lines the four documents print: address, phone, email, licence and sign
 
 | Route | Key | Writes |
 |---|---|---|
-| `GET /api/companies/{id}/profile` | `profile_manage` | nothing; the answer also lists what the engine's setup check says is missing (company name, address, CSLB licence, document sign-off) |
-| `PUT /api/companies/{id}/profile` | `profile_manage` | the five profile columns of the company's own row; audit `company_profile_saved` holding the actor and the number of fields changed, never a value, and none when nothing changed |
+| `GET /api/companies/{id}/profile` | `profile_manage` | nothing; the answer also holds the profile's `revision` and lists what the engine's setup check says is missing (company name, address, CSLB licence, document sign-off) |
+| `PUT /api/companies/{id}/profile` | `profile_manage` | the five profile columns of the company's own row, only while the `revision` the save names is still the stored one; audit `company_profile_saved` holding the actor, the change id and the number of fields changed, never a value, and none when nothing changed |
 
 An empty line means not set. The limits are those of migration 0010's check constraints (address 500, phone 80, email 254, licence 80, sign-off 150 characters; no control characters; the email is stored in lower case). A platform operator cannot change a company's profile (the 0010 trigger), and no support action does.
+
+Every save carries the `revision` it was based on (the company row's `updated_at`, as the read returns it; no new column) and a `changeId` made on the phone (a uuid). A save that asks for exactly what is stored answers 200 with the current revision, so a retry after a lost answer is not a conflict. Otherwise, a save whose revision is no longer the stored one writes nothing and answers 409 `stale_revision` with the current profile, and the Company settings screen shows that profile and tells the owner it was changed somewhere else.
 
 ## Non-role access
 - **Anonymous**: `GET /health` and `GET /api/health` (status, schema version, release version, source commit). `GET /api/health/details` needs a signed-in member. In the rebuilt app (`web/`), also `GET /api/sign-in/{address}`: a company's name and sign-in tenant for its sign-in page, both public; an unknown, inactive, tenant-less or malformed address answers 404.

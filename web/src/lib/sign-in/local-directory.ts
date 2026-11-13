@@ -33,6 +33,7 @@ const fixtureSchema = z.object({
       profile: z
         .object({ address: z.string(), phone: z.string(), email: z.string(), license: z.string(), signoff: z.string() })
         .optional(),
+      profileRevision: z.string().optional(),
     }),
   ),
   members: z.array(

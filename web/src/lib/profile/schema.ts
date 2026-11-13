@@ -23,7 +23,17 @@ const line = (max: number) =>
     .max(max)
     .refine((value) => !CONTROL.test(value));
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// The profile's revision: the company row's updated_at as the server sends it (UTC, microseconds).
+export const PROFILE_REVISION = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
+
+// `revision` is the one the screen last read; `changeId` is this change's own id, made on the phone.
 export const profileInput = z.strictObject({
+  revision: z.string().regex(PROFILE_REVISION),
+  changeId: z
+    .string()
+    .regex(UUID)
+    .transform((value) => value.toLowerCase()),
   address: line(500),
   phone: line(80),
   email: z
@@ -37,3 +47,4 @@ export const profileInput = z.strictObject({
 });
 
 export type ProfileInput = z.output<typeof profileInput>;
+export type ProfileValues = Pick<ProfileInput, ProfileField>;
