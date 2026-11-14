@@ -16,6 +16,11 @@ import { meOutcome, type MeOutcome } from '@/lib/sign-in/outcome';
 // refused after the owner turns them back on: the person signs in again, and the work is sent then.
 // With no answer at all the phone works offline from `ds-me`.
 //
+// No wait here is open-ended (S6-3b): /api/me and the App Check token each get a time limit, an
+// answer that does not come is asked for again after growing waits, and a poke (the signal back, the
+// page shown again, a new sign-in) calls off whatever the current check is waiting for and asks
+// afresh at once, so a stalled request can never hold the gate shut.
+//
 // App Check (TC-7, docs/plans/TC.md): once the access record is current, the gate gets a fresh
 // App Check token before the network goes on. In monitor mode a failure or a 5-second wait does not
 // hold it; under enforcement it waits ("Checking this phone") and tries again. Either way nothing
@@ -93,17 +98,19 @@ export const APP_CHECK_MONITOR_WAIT_MS = 5_000;
 // answer is not acted on, and the next check asks again.
 export const ASK_WITHIN_MS = 15_000;
 export const APP_CHECK_ENFORCE_WITHIN_MS = 10_000;
-
-function within<T>(promise: Promise<T>, ms: number, otherwise: T): Promise<T> {
-  return Promise.race([promise, new Promise<T>((done) => setTimeout(() => done(otherwise), ms))]);
-}
+// With no answer, the gate asks again after this, doubling up to the second (a poke asks at once).
+export const OFFLINE_RETRY_MS = 10_000;
+export const OFFLINE_RETRY_MAX_MS = 60_000;
+const NO_ANSWER: MeAnswer = { status: 0, body: null };
+// What a wait answers once a poke, the signal going, the page hidden or a stop has called it off.
+const CALLED_OFF = Symbol('called off');
 // The network is on only while the access record the server last confirmed has this much left, so
 // no write reaches the rules after the record has run out.
 export const EXPIRY_MARGIN_MS = 10_000;
 const accessCurrent = (expiresAt: number, now: number): boolean => expiresAt - EXPIRY_MARGIN_MS > now;
+// Waits for a renewal, and for an App Check token under enforcement: doubling from the first.
 const RENEW_FIRST_MS = 3_000;
 const RENEW_MAX_MS = 30_000;
-const OFFLINE_RETRY_MS = 10_000;
 const LOCKED_RETRY_MS = 15_000;
 // Ask again a minute before the record runs out, for a window left open that long.
 const BEFORE_EXPIRY_MS = 60_000;
@@ -126,6 +133,12 @@ export type GateDeps = {
   // person's ds-me row). Asked after every answer, before the network goes on, and by
   // checkSession(); when it is not, the gate is 'expired'.
   sessionValid?: (now: number) => boolean;
+  // Told of every refusal the server gives this sign-in, before its age or anything else is judged,
+  // so the phone's refusal bookkeeping (O5) never depends on the sign-in still counting.
+  onRefused?: (reason: Extract<GateState, { kind: 'locked' }>['reason']) => void;
+  // Asked just before the network would go on: false when the work on the phone may no longer be
+  // sent (its lock outlived the O5 limit). The gate then stops, and the network stays off.
+  mayOpen?: () => boolean;
 };
 
 // Runs the gate for one field client. Foreground only: it asks on start, on poke() (the app
@@ -138,7 +151,11 @@ export class SyncGate {
   private again = false;
   private stopped = false;
   private renewWait = RENEW_FIRST_MS;
+  private offlineWait = OFFLINE_RETRY_MS;
+  private phoneWait = RENEW_FIRST_MS;
   private networkOn = false;
+  // What the running check is waiting for, each a function that calls the wait off.
+  private waits = new Set<() => void>();
   // Bumped when the signal goes, the page is hidden or the gate stops: an answer asked for before
   // then is not acted on.
   private epoch = 0;
@@ -165,6 +182,7 @@ export class SyncGate {
   checkSession(): void {
     if (this.stopped || this.state.kind === 'expired' || this.sessionOk()) return;
     this.epoch += 1;
+    this.callOff();
     void this.closeNetwork();
     this.set({ kind: 'expired' });
   }
@@ -193,15 +211,18 @@ export class SyncGate {
   stop(): void {
     this.stopped = true;
     this.epoch += 1;
+    this.callOff();
     clearTimeout(this.timer);
     clearTimeout(this.deadline);
   }
 
-  // Ask now (an `online` event, the app shown again, a tap).
+  // Ask now (an `online` event, the app shown again, a tap): a check still waiting for an answer is
+  // called off, and a new one starts at once.
   poke(): void {
     if (this.stopped) return;
     if (this.running) {
       this.again = true;
+      this.callOff();
       return;
     }
     clearTimeout(this.timer);
@@ -213,6 +234,7 @@ export class SyncGate {
   async networkLost(): Promise<void> {
     if (this.stopped) return;
     this.epoch += 1;
+    this.callOff();
     await this.closeNetwork();
     if (this.state.kind === 'open') this.set({ kind: 'offline' });
   }
@@ -220,6 +242,26 @@ export class SyncGate {
   private set(state: GateState): void {
     this.state = state;
     this.deps.onState(state);
+  }
+
+  // `promise`'s answer, `otherwise` when it fails or has not answered within `ms`, and CALLED_OFF
+  // once callOff() is called first.
+  private wait<T>(promise: Promise<T>, ms: number, otherwise: T): Promise<T | typeof CALLED_OFF> {
+    return new Promise((done) => {
+      const finish = (value: T | typeof CALLED_OFF) => {
+        clearTimeout(timer);
+        this.waits.delete(off);
+        done(value);
+      };
+      const off = () => finish(CALLED_OFF);
+      const timer = setTimeout(() => finish(otherwise), ms);
+      this.waits.add(off);
+      promise.then(finish, () => finish(otherwise));
+    });
+  }
+
+  private callOff(): void {
+    for (const off of [...this.waits]) off();
   }
 
   private later(ms: number): void {
@@ -247,28 +289,17 @@ export class SyncGate {
   }
 
   // True when the network may go on as far as App Check is concerned.
-  private async appCheckPasses(): Promise<boolean> {
+  private async appCheckPasses(): Promise<boolean | typeof CALLED_OFF> {
     const seam = this.deps.appCheck;
     if (!seam) return true;
+    const token = seam.token().then(() => true);
     if (seam.mode === 'monitor') {
-      const got = await Promise.race([
-        seam.token().then(
-          () => true,
-          () => false,
-        ),
-        new Promise<boolean>((done) => setTimeout(() => done(false), APP_CHECK_MONITOR_WAIT_MS)),
-      ]);
+      const got = await this.wait(token, APP_CHECK_MONITOR_WAIT_MS, false);
+      if (got === CALLED_OFF) return got;
       if (!got) this.appCheckMisses += 1;
       return true;
     }
-    return within(
-      seam.token().then(
-        () => true,
-        () => false,
-      ),
-      APP_CHECK_ENFORCE_WITHIN_MS,
-      false,
-    );
+    return this.wait(token, APP_CHECK_ENFORCE_WITHIN_MS, false);
   }
 
   private async check(): Promise<void> {
@@ -287,24 +318,42 @@ export class SyncGate {
         await this.closeNetwork();
         if (!stale()) this.set({ kind: 'expired' });
       };
-      let verdict = judgeMe(await within(this.deps.ask(), ASK_WITHIN_MS, { status: 0, body: null }), this.now());
+      // A wait called off asks again at once (finally, below), with nothing published.
+      const calledOff = () => {
+        this.again = true;
+      };
+      const answer = await this.wait(this.deps.ask(), ASK_WITHIN_MS, NO_ANSWER);
+      if (answer === CALLED_OFF) return calledOff();
       if (stale()) return;
+      let verdict = judgeMe(answer, this.now());
+      if (verdict.kind === 'locked') {
+        this.deps.onRefused?.(verdict.reason);
+        if (stale()) return;
+      }
       if (!this.sessionOk()) return await expire();
+      if (verdict.kind !== 'offline') this.offlineWait = OFFLINE_RETRY_MS;
       if (verdict.kind === 'open') {
         const passes = await this.appCheckPasses();
+        if (passes === CALLED_OFF) return calledOff();
         if (stale()) return;
         if (!this.sessionOk()) return await expire();
         if (!passes) {
+          // Under enforcement nothing is sent without a token, an already open network included.
+          await this.closeNetwork();
+          if (stale()) return;
           this.renewWait = RENEW_FIRST_MS;
           this.set({ kind: 'checking-phone' });
-          this.later(RENEW_FIRST_MS);
+          this.later(this.phoneWait);
+          this.phoneWait = Math.min(this.phoneWait * 2, RENEW_MAX_MS);
           return;
         }
+        this.phoneWait = RENEW_FIRST_MS;
         if (!accessCurrent(verdict.facts.expiresAt, this.now())) verdict = { kind: 'renewing' };
       }
       if (verdict.kind === 'offline') {
         if (this.state.kind !== 'open' && this.state.kind !== 'locked') this.set({ kind: 'offline' });
-        this.later(OFFLINE_RETRY_MS);
+        this.later(this.offlineWait);
+        this.offlineWait = Math.min(this.offlineWait * 2, OFFLINE_RETRY_MAX_MS);
         return;
       }
       if (verdict.kind === 'renewing') {
@@ -323,6 +372,11 @@ export class SyncGate {
         // A disabled member or an inactive company can be let back in by the owner; the other
         // refusals need the person to sign in again, which starts a new gate.
         if (verdict.reason === 'member-disabled' || verdict.reason === 'company-inactive') this.later(LOCKED_RETRY_MS);
+        return;
+      }
+      if (this.deps.mayOpen?.() === false) {
+        this.stop();
+        await this.closeNetwork().catch(() => undefined);
         return;
       }
       if (!this.networkOn) {

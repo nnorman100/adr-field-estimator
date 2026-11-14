@@ -21,7 +21,8 @@ import {
 import { saveMe } from '@/lib/field/ds-me';
 import { prepareFieldShell } from '@/lib/field/register-worker';
 import { meFacts } from '@/lib/field/sync-gate';
-import { noteUnlocked } from '@/lib/field/unsent';
+import { letIn, removeOutlivedWork } from '@/lib/field/retention';
+import { lockReasonOf, type LockReason } from '@/lib/field/unsent';
 import { hasUnsentWork, signOutDiscarding, signOutOfCompany } from '@/lib/field/sign-out';
 import { endsSession, errorCode, signInErrorMessage, type MeOutcome } from '@/lib/sign-in/outcome';
 import { rememberSignInAddress } from '@/lib/sign-in/remember';
@@ -97,18 +98,19 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
     );
   }, []);
 
-  const endSession = useCallback(async (message: string | null) => {
+  // `refusal`: the server's refusal that ends the session, kept for the 30-day limit (O5).
+  const endSession = useCallback(async (message: string | null, refusal: LockReason | null = null) => {
     const auth = authRef.current;
-    if (auth) await signOutOfCompany(auth, tenantId);
+    if (auth) await signOutOfCompany(auth, tenantId, refusal);
     setError(null);
     setNotice(message);
     setScreen({ name: 'signed-out' });
   }, [tenantId]);
 
   const refuse = useCallback(
-    async (message: string) => {
+    async (message: string, refusal: LockReason | null = null) => {
       try {
-        await endSession(message);
+        await endSession(message, refusal);
       } catch {
         setScreen({ name: 'outcome', outcome: { kind: 'unavailable' } });
       }
@@ -145,7 +147,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
             : outcome.kind === 'account-disabled'
               ? `This account is turned off. Ask the owner of ${companyName}.`
               : 'Please sign in again.';
-        await refuse(message);
+        await refuse(message, lockReasonOf(outcome.kind));
         return;
       }
       // The field shell starts from this row with no signal (S6-2), so it is saved before the screen
@@ -154,9 +156,10 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
       // is not saved. The field worker is installed here too, and the signed-in screen waits for
       // it ("Getting DryScope ready…"), so a phone that loses signal before ever opening the field
       // app can still open it; when that does not finish in time, the screen says so. The server
-      // just let this person in, so a refusal saved on the phone for them is lifted.
+      // just let this person in, so a refusal saved on the phone for them is lifted, unless it is
+      // past the 30-day limit (O5): that work is removed instead, never sent (retention.ts).
       if (outcome.kind === 'signed-in') {
-        noteUnlocked(tenantId, user.uid);
+        await letIn({ tenantId, uid: user.uid, config });
         const authTime = await user.getIdTokenResult().then(
           (result) => Date.parse(result.authTime),
           () => NaN,
@@ -184,6 +187,8 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
 
   useEffect(() => {
     rememberSignInAddress(address);
+    // Work locked past the 30-day limit (O5), of anyone in this company on this phone (S6-3b).
+    void removeOutlivedWork(tenantId, config);
     const auth = companyAuth({ config, tenantId });
     authRef.current = auth;
     return onAuthStateChanged(auth, (user) => {

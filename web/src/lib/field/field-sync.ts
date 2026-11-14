@@ -4,24 +4,24 @@ import { callApi } from '@/lib/firebase-client';
 import { appCheckSeam, discardFieldWork, fieldUser, settle, type FieldClient } from '@/lib/field-db';
 import { forgetMe, readMe, updateMe, type DsMe } from './ds-me';
 import { sessionValid, SyncGate, type GateState, type MeFacts } from './sync-gate';
-import { noteLocked, noteUnlocked, RETAINED_REASONS, savedLock } from './unsent';
+import { lockOutlived, noteLocked, noteUnlocked, savedLock, type LockReason } from './unsent';
 
 // Runs the sync gate for one person's started field client (S6-3), and does what each of its
 // answers asks of the phone:
 // - open: the server let this person in, so any earlier lock is cleared, the unsent mark is
 //   cleared once the queue has been sent, and the ds-me row gets the company id, role,
 //   capabilities and sign-in time for the next offline start;
-// - locked: the work stays, locked, and the refusal is saved on the phone, so a start with no answer
-//   is locked too, through this same handling; a phone that cannot save it forgets the offline
-//   sign-in instead. A disabled member's, inactive company's or signed-out (revoked or ended)
-//   sign-in's work is removed only after 30 days of refusals (owner decision O5).
+// - a refusal: the work stays, locked, and the refusal is saved on the phone, so a start with no
+//   answer is locked too; a phone that cannot save it forgets the offline sign-in instead. It is
+//   saved whatever the sign-in's age, so a phone reopened past the role's limit still starts the
+//   clock (S6-3b). A disabled member's, inactive company's or signed-out (revoked or ended)
+//   sign-in's work is removed after 30 days of refusals (owner decision O5), and never sent once
+//   past that, even when the server lets the person in again.
 // The gate starts paused when the page is hidden by the time the client has started; showing the
 // page resumes it (field-store.tsx).
 // The gate judges the person's ds-me row (read again before each check) against the role's session
 // limit, the same check the shell makes before it shows anything. An answer for a sign-in that has
 // changed while it was awaited is dropped (sync-gate.ts).
-
-export const LOCKED_LIMIT_MS = 30 * 24 * 60 * 60 * 1000;
 
 // `me`: the row saved for the next offline start after an online check let the person in.
 export type SyncEvent = { state: GateState } | { removed: true } | { me: DsMe };
@@ -54,6 +54,8 @@ export function runFieldSync(
     initial,
     session: () => fieldUser(person),
     sessionValid: (at) => sessionValid(row, at),
+    onRefused: refused,
+    mayOpen: () => !retire(),
     startSuspended: typeof document !== 'undefined' && document.visibilityState === 'hidden',
     onState: apply,
   });
@@ -65,20 +67,24 @@ export function runFieldSync(
       void settle(client).catch(() => undefined);
       void remember(row, state.facts);
     }
-    if (state.kind === 'locked') {
-      const since = noteLocked(person.tenantId, person.uid, state.reason, now());
-      if (since === null) {
-        void forgetMe(person.tenantId, person.uid);
-        return;
-      }
-      const reason = savedLock(person.tenantId, person.uid);
-      if (reason !== null && RETAINED_REASONS.has(reason) && now() - since > LOCKED_LIMIT_MS) {
-        gate.stop();
-        void discardFieldWork(person, { lockHeld: true }).then((result) => {
-          if (result === 'discarded') onEvent({ removed: true });
-        });
-      }
+  }
+
+  function refused(reason: LockReason): void {
+    if (noteLocked(person.tenantId, person.uid, reason, now()) === null) {
+      void forgetMe(person.tenantId, person.uid);
+      return;
     }
+    retire();
+  }
+
+  // Past the O5 limit, the work is removed and the gate stops for good: true when it was.
+  function retire(): boolean {
+    if (!lockOutlived(person.tenantId, person.uid, now())) return false;
+    gate.stop();
+    void discardFieldWork(person, { lockHeld: true }).then((result) => {
+      if (result === 'discarded') onEvent({ removed: true });
+    });
+    return true;
   }
 
   async function remember(base: DsMe, facts: MeFacts): Promise<void> {
@@ -107,7 +113,10 @@ export function runFieldSync(
     }
   }
 
-  if (initial) apply(initial);
+  if (initial) {
+    apply(initial);
+    refused(initial.reason);
+  }
   gate.start();
   return gate;
 }

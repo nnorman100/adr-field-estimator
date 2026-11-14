@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import type { BrowserSignInConfig } from '@/lib/config';
 import { manifestDigest, type FieldManifest } from '@/lib/field/canonical';
 import { signOutOfCompany } from '@/lib/field/sign-out';
+import { lockReasonOf } from '@/lib/field/unsent';
 import { belongsTo, callApi, companyAuth } from '@/lib/firebase-client';
 import { endsSession, meOutcome } from '@/lib/sign-in/outcome';
 import { fieldDatabase, readShownDraft } from '@/lib/submissions/field-reader';
@@ -61,7 +62,7 @@ function Finish({ address, companyName, tenantId, jobId, config }: FinishScreenP
       if (stale()) return;
       const outcome = meOutcome(me.status, me.body);
       if (endsSession(outcome)) {
-        await signOutOfCompany(authRef.current!, tenantId).catch(() => setPhase({ name: 'unavailable' }));
+        await signOutOfCompany(authRef.current!, tenantId, lockReasonOf(outcome.kind)).catch(() => setPhase({ name: 'unavailable' }));
         return;
       }
       if (outcome.kind === 'unavailable') return setPhase({ name: 'unavailable' });

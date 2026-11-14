@@ -3,7 +3,7 @@ import type { BrowserSignInConfig } from '@/lib/config';
 import { signOutCompany } from '@/lib/firebase-client';
 import { discardFieldWork, stopFieldClient } from '@/lib/field-db';
 import { forgetMe, saveMe } from './ds-me';
-import { unsentWork } from './unsent';
+import { noteLocked, unsentWork, type LockReason } from './unsent';
 
 // Ends this company's sign-in on the phone (S6-2). The field shell must not start from it again, so
 // its ds-me row goes first. Throws, and the person stays signed in with the row in place, when the
@@ -13,8 +13,14 @@ import { unsentWork } from './unsent';
 // did not ask for uses (a sign-in that must be made again, a refusal), because unsent work is kept
 // through a re-sign-in (D7) and the same person signing in again sends it. Their cache is a
 // database of its own (field-db.ts), which no other person's client opens.
-export async function signOutOfCompany(auth: Auth, tenantId: string): Promise<void> {
+//
+// `refusal`: the server's refusal that made the app sign the person out. It is saved with their
+// unsent-work mark, which outlives the saved sign-in, so the 30-day limit for locked work (O5)
+// starts now even though the field shell will not start for this person again (S6-3b): the sign-in
+// page acts on it (retention.ts).
+export async function signOutOfCompany(auth: Auth, tenantId: string, refusal?: LockReason | null): Promise<void> {
   const user = auth.currentUser;
+  if (user && refusal) noteLocked(tenantId, user.uid, refusal);
   const removed = user ? await forgetMe(tenantId, user.uid) : null;
   if (removed === false) throw new Error('the saved sign-in may still be on this phone');
   try {

@@ -45,6 +45,15 @@ export const RETAINED_REASONS: ReadonlySet<LockReason> = new Set<LockReason>([
   'sign-in-again',
 ]);
 
+// How long work stays locked on the phone under a refusal in RETAINED_REASONS before it is removed.
+export const LOCKED_LIMIT_MS = 30 * 24 * 60 * 60 * 1000;
+
+// The lock this refusal (a sign-in outcome's kind) puts on the person's work, or null when it is not
+// a refusal.
+export function lockReasonOf(kind: string): LockReason | null {
+  return Object.hasOwn(LOCK_REASONS, kind) ? (kind as LockReason) : null;
+}
+
 export type UnsentMark = {
   // Bumped by every write, so a clearing that started before a later write cannot clear it.
   writes: number;
@@ -162,6 +171,33 @@ export function savedLock(tenantId: string, uid: string): LockReason | null {
   const mark = readUnsent(tenantId, uid);
   if (mark === 'unreadable') return 'sign-in-again';
   return mark.lockedSince === null ? null : (mark.lockedReason ?? 'sign-in-again');
+}
+
+// True when this person's work has been locked under a refusal in RETAINED_REASONS for longer than
+// LOCKED_LIMIT_MS (O5): it may no longer be sent, and is removed. Judged from the mark alone, so it
+// holds after the saved sign-in is gone. A mark that cannot be read never counts.
+export function lockOutlived(tenantId: string, uid: string, now: number): boolean {
+  const mark = readUnsent(tenantId, uid);
+  if (mark === 'unreadable' || mark.lockedSince === null) return false;
+  return RETAINED_REASONS.has(mark.lockedReason ?? 'sign-in-again') && now - mark.lockedSince > LOCKED_LIMIT_MS;
+}
+
+// Every person of this company whose lock outlived the limit on this phone, signed in or not.
+export function outlivedLocks(tenantId: string, now: number): string[] {
+  const prefix = unsentKey(tenantId, '');
+  const found: string[] = [];
+  try {
+    const storage = window.localStorage;
+    for (let index = 0; index < storage.length; index += 1) {
+      const key = storage.key(index);
+      if (key === null || !key.startsWith(prefix)) continue;
+      const uid = key.slice(prefix.length);
+      if (uid.length > 0 && !uid.includes('/') && lockOutlived(tenantId, uid, now)) found.push(uid);
+    }
+  } catch {
+    return [];
+  }
+  return found;
 }
 
 export function noteUnlocked(tenantId: string, uid: string): void {

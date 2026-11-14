@@ -9,6 +9,7 @@ import type { BrowserSignInConfig } from '@/lib/config';
 import { canReadAiUsage } from '@/lib/ai/usage-screen';
 import { belongsTo, callApi, companyAuth } from '@/lib/firebase-client';
 import { signOutOfCompany } from '@/lib/field/sign-out';
+import { lockReasonOf, type LockReason } from '@/lib/field/unsent';
 import { pricesAccess } from '@/lib/prices/screen';
 import { profileView, signedInProfileManager } from '@/lib/profile/screen';
 import type { ProfileView } from '@/lib/profile/service';
@@ -60,8 +61,8 @@ function CompanySettings({
     authRef.current = auth;
     // The latest sign-in wins: an answer for a user who has since signed out is dropped.
     const stale = (user: User) => authRef.current?.currentUser !== user;
-    const signOutOrUnavailable = () =>
-      signOutOfCompany(auth, tenantId).catch(() => setPhase({ name: 'unavailable' }));
+    const signOutOrUnavailable = (refusal: LockReason | null = null) =>
+      signOutOfCompany(auth, tenantId, refusal).catch(() => setPhase({ name: 'unavailable' }));
 
     async function open(user: User) {
       setPhase({ name: 'checking' });
@@ -69,7 +70,7 @@ function CompanySettings({
       if (stale(user)) return;
       const outcome = meOutcome(me.status, me.body);
       if (endsSession(outcome)) {
-        await signOutOrUnavailable();
+        await signOutOrUnavailable(lockReasonOf(outcome.kind));
         return;
       }
       if (outcome.kind === 'unavailable') return setPhase({ name: 'unavailable' });
