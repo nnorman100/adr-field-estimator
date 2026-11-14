@@ -11,8 +11,8 @@ import { companyAuth } from '../../../../src/lib/firebase-client';
 import { fieldWrite, mirrorSignIn, setAppCheckSeam, startFieldClient, stopFieldClient, type CacheKind, type FieldClient } from '../../../../src/lib/field-db';
 import { readLatestMe, saveMe, updateMe, type DsMe } from '../../../../src/lib/field/ds-me';
 import { runFieldSync } from '../../../../src/lib/field/field-sync';
-import { letIn, removeOutlivedWork } from '../../../../src/lib/field/retention';
-import { signOutDiscarding, signOutOfCompany } from '../../../../src/lib/field/sign-out';
+import { letIn, runRetention } from '../../../../src/lib/field/retention';
+import { signOutDiscarding, signOutKeeping, signOutOnRefusal } from '../../../../src/lib/field/sign-out';
 import type { GateState, SyncGate } from '../../../../src/lib/field/sync-gate';
 import { readUnsent, unsentKey, type LockReason } from '../../../../src/lib/field/unsent';
 
@@ -72,11 +72,13 @@ const f = {
   // the app sign the person out.
   async signOutKeep(person: Person, refusal?: LockReason): Promise<void> {
     running.delete(key(person));
-    await signOutOfCompany(companyAuth(person), person.tenantId, refusal);
+    const auth = companyAuth(person);
+    await (refusal ? signOutOnRefusal(auth, person.tenantId, person.config, refusal) : signOutKeeping(auth, person.tenantId));
   },
-  // What the sign-in page does with the work on the phone (S6-3b): removes the company's work whose
-  // lock outlived 30 days as it opens, and, when the server lets the person in, lifts their lock.
-  removeOutlived: (person: Pick<Person, 'tenantId' | 'config'>) => removeOutlivedWork(person.tenantId, person.config),
+  // What the field shell with no saved sign-in, and the sign-in page, do as they open (S6-3b):
+  // remove the work of anyone on this phone whose lock outlived 30 days, from what the phone kept
+  // with the lock alone. The sign-in page also lifts a person's lock when the server lets them in.
+  removeOutlived: () => runRetention(),
   letIn: (person: Person) => letIn(person),
   async signOutDiscard(person: Person): Promise<string> {
     running.delete(key(person));
@@ -106,6 +108,13 @@ const f = {
   },
   poke(person: Pick<Person, 'tenantId' | 'uid'>): void {
     get(person).gate?.poke();
+  },
+  // The page hidden and shown again, as field-store.tsx tells the gate.
+  async suspend(person: Pick<Person, 'tenantId' | 'uid'>): Promise<void> {
+    await get(person).gate?.suspend();
+  },
+  resume(person: Pick<Person, 'tenantId' | 'uid'>): void {
+    get(person).gate?.resume();
   },
   async stop(person: Person): Promise<void> {
     get(person).gate?.stop();

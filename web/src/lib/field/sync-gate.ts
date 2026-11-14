@@ -17,7 +17,7 @@ import { meOutcome, type MeOutcome } from '@/lib/sign-in/outcome';
 // With no answer at all the phone works offline from `ds-me`.
 //
 // No wait here is open-ended (S6-3b): /api/me and the App Check token each get a time limit, an
-// answer that does not come is asked for again after growing waits, and a poke (the signal back, the
+// answer that does not come is asked for again on the usual retry, and a poke (the signal back, the
 // page shown again, a new sign-in) calls off whatever the current check is waiting for and asks
 // afresh at once, so a stalled request can never hold the gate shut.
 //
@@ -98,9 +98,8 @@ export const APP_CHECK_MONITOR_WAIT_MS = 5_000;
 // answer is not acted on, and the next check asks again.
 export const ASK_WITHIN_MS = 15_000;
 export const APP_CHECK_ENFORCE_WITHIN_MS = 10_000;
-// With no answer, the gate asks again after this, doubling up to the second (a poke asks at once).
+// With no answer, the gate asks again after this (a poke asks at once).
 export const OFFLINE_RETRY_MS = 10_000;
-export const OFFLINE_RETRY_MAX_MS = 60_000;
 const NO_ANSWER: MeAnswer = { status: 0, body: null };
 // What a wait answers once a poke, the signal going, the page hidden or a stop has called it off.
 const CALLED_OFF = Symbol('called off');
@@ -108,7 +107,7 @@ const CALLED_OFF = Symbol('called off');
 // no write reaches the rules after the record has run out.
 export const EXPIRY_MARGIN_MS = 10_000;
 const accessCurrent = (expiresAt: number, now: number): boolean => expiresAt - EXPIRY_MARGIN_MS > now;
-// Waits for a renewal, and for an App Check token under enforcement: doubling from the first.
+// Waits for a renewal (doubling from the first) and for an App Check token under enforcement.
 const RENEW_FIRST_MS = 3_000;
 const RENEW_MAX_MS = 30_000;
 const LOCKED_RETRY_MS = 15_000;
@@ -136,8 +135,10 @@ export type GateDeps = {
   // Told of every refusal the server gives this sign-in, before its age or anything else is judged,
   // so the phone's refusal bookkeeping (O5) never depends on the sign-in still counting.
   onRefused?: (reason: Extract<GateState, { kind: 'locked' }>['reason']) => void;
-  // Asked just before the network would go on: false when the work on the phone may no longer be
-  // sent (its lock outlived the O5 limit). The gate then stops, and the network stays off.
+  // False when the work on the phone may no longer be sent (its lock outlived the O5 limit). Asked
+  // after every answer, by checkSession() (the page shown again, every minute) and just before the
+  // network would go on, whatever the answer or the sign-in's age; the gate then stops for good, with
+  // the network off.
   mayOpen?: () => boolean;
 };
 
@@ -151,8 +152,6 @@ export class SyncGate {
   private again = false;
   private stopped = false;
   private renewWait = RENEW_FIRST_MS;
-  private offlineWait = OFFLINE_RETRY_MS;
-  private phoneWait = RENEW_FIRST_MS;
   private networkOn = false;
   // What the running check is waiting for, each a function that calls the wait off.
   private waits = new Set<() => void>();
@@ -180,7 +179,7 @@ export class SyncGate {
   // The saved sign-in's age, judged now (a timer, the page shown again): past the role's limit,
   // the network goes off and the gate is 'expired', whatever it was.
   checkSession(): void {
-    if (this.stopped || this.state.kind === 'expired' || this.sessionOk()) return;
+    if (this.retired() || this.state.kind === 'expired' || this.sessionOk()) return;
     this.epoch += 1;
     this.callOff();
     void this.closeNetwork();
@@ -237,6 +236,15 @@ export class SyncGate {
     this.callOff();
     await this.closeNetwork();
     if (this.state.kind === 'open') this.set({ kind: 'offline' });
+  }
+
+  // True when the gate has stopped, or stops now because the work may no longer be sent (mayOpen).
+  private retired(): boolean {
+    if (this.stopped) return true;
+    if (this.deps.mayOpen?.() !== false) return false;
+    this.stop();
+    void this.closeNetwork().catch(() => undefined);
+    return true;
   }
 
   private set(state: GateState): void {
@@ -324,14 +332,13 @@ export class SyncGate {
       };
       const answer = await this.wait(this.deps.ask(), ASK_WITHIN_MS, NO_ANSWER);
       if (answer === CALLED_OFF) return calledOff();
-      if (stale()) return;
+      if (stale() || this.retired()) return;
       let verdict = judgeMe(answer, this.now());
       if (verdict.kind === 'locked') {
         this.deps.onRefused?.(verdict.reason);
         if (stale()) return;
       }
       if (!this.sessionOk()) return await expire();
-      if (verdict.kind !== 'offline') this.offlineWait = OFFLINE_RETRY_MS;
       if (verdict.kind === 'open') {
         const passes = await this.appCheckPasses();
         if (passes === CALLED_OFF) return calledOff();
@@ -343,17 +350,14 @@ export class SyncGate {
           if (stale()) return;
           this.renewWait = RENEW_FIRST_MS;
           this.set({ kind: 'checking-phone' });
-          this.later(this.phoneWait);
-          this.phoneWait = Math.min(this.phoneWait * 2, RENEW_MAX_MS);
+          this.later(RENEW_FIRST_MS);
           return;
         }
-        this.phoneWait = RENEW_FIRST_MS;
         if (!accessCurrent(verdict.facts.expiresAt, this.now())) verdict = { kind: 'renewing' };
       }
       if (verdict.kind === 'offline') {
         if (this.state.kind !== 'open' && this.state.kind !== 'locked') this.set({ kind: 'offline' });
-        this.later(this.offlineWait);
-        this.offlineWait = Math.min(this.offlineWait * 2, OFFLINE_RETRY_MAX_MS);
+        this.later(OFFLINE_RETRY_MS);
         return;
       }
       if (verdict.kind === 'renewing') {
@@ -374,11 +378,7 @@ export class SyncGate {
         if (verdict.reason === 'member-disabled' || verdict.reason === 'company-inactive') this.later(LOCKED_RETRY_MS);
         return;
       }
-      if (this.deps.mayOpen?.() === false) {
-        this.stop();
-        await this.closeNetwork().catch(() => undefined);
-        return;
-      }
+      if (this.retired()) return;
       if (!this.networkOn) {
         this.networkOn = true;
         await this.deps.enableNetwork();

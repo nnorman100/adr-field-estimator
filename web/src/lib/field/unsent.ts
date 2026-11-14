@@ -48,12 +48,6 @@ export const RETAINED_REASONS: ReadonlySet<LockReason> = new Set<LockReason>([
 // How long work stays locked on the phone under a refusal in RETAINED_REASONS before it is removed.
 export const LOCKED_LIMIT_MS = 30 * 24 * 60 * 60 * 1000;
 
-// The lock this refusal (a sign-in outcome's kind) puts on the person's work, or null when it is not
-// a refusal.
-export function lockReasonOf(kind: string): LockReason | null {
-  return Object.hasOwn(LOCK_REASONS, kind) ? (kind as LockReason) : null;
-}
-
 export type UnsentMark = {
   // Bumped by every write, so a clearing that started before a later write cannot clear it.
   writes: number;

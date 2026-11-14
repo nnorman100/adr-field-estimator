@@ -238,7 +238,7 @@ test.describe('locked work on every sign-in-again path (O5)', () => {
     await context.close();
   });
 
-  test('a sign-out the app makes on a refusal keeps the clock with no saved sign-in, and the sign-in page removes the work at 31 days', async ({ browser, lane }) => {
+  test('a sign-out the app makes on a refusal keeps the clock with no saved sign-in, and reopening signed out removes the work at 31 days', async ({ browser, lane }) => {
     const context = await browser.newContext();
     const world = await seedCompany();
     const phone = await FieldPhone.open(context, lane);
@@ -255,15 +255,36 @@ test.describe('locked work on every sign-in-again path (O5)', () => {
 
     // Locked 29 days: the sign-in page keeps it.
     await phone.call('setMark', person, { ...(saved as object), lockedSince: Date.now() - 29 * DAY });
-    await phone.call('removeOutlived', person);
+    await phone.call('removeOutlived');
     expect(await phone.call('unsent', person)).toMatchObject({ unsentSince: expect.any(Number) });
     expect(await ourDatabases(phone, person)).not.toHaveLength(0);
 
-    // Locked 31 days: the sign-in page removes it, though no saved sign-in names the person.
+    // Locked 31 days: reopening (the field shell signed out, or the sign-in page) removes it, though
+    // no saved sign-in names the person or the company's field database.
     await phone.call('setMark', person, { ...(saved as object), lockedSince: Date.now() - 31 * DAY });
-    await phone.call('removeOutlived', person);
+    await phone.call('removeOutlived');
     expect(await phone.call('unsent', person)).toEqual({ writes: 0, unsentSince: null, lockedSince: null });
     expect(await ourDatabases(phone, person)).toHaveLength(0);
+    await context.close();
+  });
+
+  test('a page hidden on day 29 of a lock and shown again on day 31, offline and past the sign-in limit, removes the work', async ({ browser, lane }) => {
+    const context = await browser.newContext();
+    const world = await seedCompany();
+    const phone = await FieldPhone.open(context, lane);
+    const person = await phone.signIn(world, world.owner);
+    lane.drop('/api/me');
+    const locked = { writes: 1, unsentSince: Date.now(), lockedReason: 'company-inactive' };
+    expect(await phone.call('start', person, 'persistent')).toBe('persistent');
+    await phone.call('setMark', person, { ...locked, lockedSince: Date.now() - 29 * DAY });
+    await phone.call('sync', person, 31);
+    await expect.poll(() => phone.call('gate', person), { timeout: 20_000 }).toBe('expired');
+    await phone.call('suspend', person);
+
+    await phone.call('setMark', person, { ...locked, lockedSince: Date.now() - 31 * DAY });
+    await phone.call('resume', person);
+    await expect.poll(() => phone.call('gate', person)).toBe('removed');
+    expect(await phone.call('unsent', person)).toEqual({ writes: 0, unsentSince: null, lockedSince: null });
     await context.close();
   });
 

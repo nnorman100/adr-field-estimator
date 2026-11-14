@@ -4,7 +4,6 @@ import {
   forgetUnsent,
   LOCKED_LIMIT_MS,
   lockOutlived,
-  lockReasonOf,
   mayHaveUnsent,
   noteLocked,
   noteUnlocked,
@@ -192,14 +191,6 @@ describe('unsent work marks', () => {
       },
     });
     expect(outlivedLocks('t-a', Date.now())).toEqual([]);
-  });
-
-  it('name the refusals the server gives as locks, and nothing else', () => {
-    expect(lockReasonOf('sign-in-again')).toBe('sign-in-again');
-    expect(lockReasonOf('account-disabled')).toBe('account-disabled');
-    expect(lockReasonOf('signed-in')).toBeNull();
-    expect(lockReasonOf('unavailable')).toBeNull();
-    expect(lockReasonOf('toString')).toBeNull();
   });
 
   it('hold counts and times only', () => {

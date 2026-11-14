@@ -5,8 +5,9 @@ import { createContext, useContext, useEffect, useRef, useState, type ReactNode 
 import { Button } from '@/components/ui/button';
 import { companyAuth } from '@/lib/firebase-client';
 import { mirrorSignIn, startFieldClient, type CacheKind, type FieldClient } from '@/lib/field-db';
-import type { DsMe } from '@/lib/field/ds-me';
+import { meKey, type DsMe } from '@/lib/field/ds-me';
 import { runFieldSync } from '@/lib/field/field-sync';
+import { runRetention } from '@/lib/field/retention';
 import { askToPersist, keepAnswer, saveKeepAnswer, type KeepAnswer } from '@/lib/field/keep-consent';
 import type { FieldSurface } from '@/lib/field/platform';
 import { sessionValid, type GateState, type SyncGate } from '@/lib/field/sync-gate';
@@ -142,6 +143,11 @@ export function FieldStore({
         return setPhase({ kind: 'no-lock' });
       }
       release = lock.release;
+      // Work locked past the 30-day limit (O5, S6-3b), this person's included, before anything
+      // starts: this window holds the lock, so no other window holds any of it.
+      const removed = await runRetention(Date.now(), { lockHeld: true });
+      if (!live) return;
+      if (removed.includes(meKey(me.tenantId, me.uid))) return setPhase({ kind: 'removed' });
       await mirrorSignIn(person).catch(() => false);
       const started = await startFieldClient(person, cache);
       if (!live) return;

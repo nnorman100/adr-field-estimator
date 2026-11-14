@@ -8,8 +8,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import type { BrowserSignInConfig } from '@/lib/config';
 import { belongsTo, callApi, companyAuth } from '@/lib/firebase-client';
-import { signOutOfCompany } from '@/lib/field/sign-out';
-import { lockReasonOf, type LockReason } from '@/lib/field/unsent';
+import { signOutOnRefusal } from '@/lib/field/sign-out';
+import type { LockReason } from '@/lib/field/unsent';
 import { endsSession, meOutcome } from '@/lib/sign-in/outcome';
 import { fullTeam, signedInMember } from '@/lib/team/screen';
 import type { TeamView } from '@/lib/team/service';
@@ -56,8 +56,8 @@ function CompanyTeam({ address, companyName, tenantId, config }: TeamScreenProps
     authRef.current = auth;
     // The latest sign-in wins: an answer for a user who has since signed out is dropped.
     const stale = (user: User) => authRef.current?.currentUser !== user;
-    const signOutOrUnavailable = (refusal: LockReason | null = null) =>
-      signOutOfCompany(auth, tenantId, refusal).catch(() => setPhase({ name: 'unavailable' }));
+    const signOutOrUnavailable = (refusal: LockReason) =>
+      signOutOnRefusal(auth, tenantId, config, refusal).catch(() => setPhase({ name: 'unavailable' }));
 
     async function open(user: User) {
       setPhase({ name: 'checking' });
@@ -65,7 +65,7 @@ function CompanyTeam({ address, companyName, tenantId, config }: TeamScreenProps
       if (stale(user)) return;
       const outcome = meOutcome(me.status, me.body);
       if (endsSession(outcome)) {
-        await signOutOrUnavailable(lockReasonOf(outcome.kind));
+        await signOutOrUnavailable(outcome.kind);
         return;
       }
       if (outcome.kind === 'unavailable') return setPhase({ name: 'unavailable' });
@@ -84,7 +84,7 @@ function CompanyTeam({ address, companyName, tenantId, config }: TeamScreenProps
     return onAuthStateChanged(auth, (user) => {
       if (!user) return setPhase({ name: 'signed-out' });
       // This company's Auth instance only ever holds this tenant's sign-in.
-      if (!belongsTo(user, tenantId)) return void signOutOrUnavailable();
+      if (!belongsTo(user, tenantId)) return void signOutOrUnavailable('not-this-company');
       void open(user);
     });
   }, [config, tenantId]);
@@ -141,7 +141,7 @@ function CompanyTeam({ address, companyName, tenantId, config }: TeamScreenProps
           initial={phase.team}
           onSignInAgain={async () => {
             try {
-              if (authRef.current) await signOutOfCompany(authRef.current, tenantId);
+              if (authRef.current) await signOutOnRefusal(authRef.current, tenantId, config, 'sign-in-again');
             } catch {
               return setPhase({ name: 'unavailable' });
             }

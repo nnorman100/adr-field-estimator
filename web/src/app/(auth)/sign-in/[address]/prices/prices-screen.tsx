@@ -8,8 +8,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import type { BrowserSignInConfig } from '@/lib/config';
 import { belongsTo, callApi, companyAuth } from '@/lib/firebase-client';
-import { signOutOfCompany } from '@/lib/field/sign-out';
-import { lockReasonOf, type LockReason } from '@/lib/field/unsent';
+import { signOutOnRefusal } from '@/lib/field/sign-out';
+import type { LockReason } from '@/lib/field/unsent';
 import { pricesAccess, pricesView, type OwnerPrices, type ReaderPrices } from '@/lib/prices/screen';
 import { endsSession, meOutcome } from '@/lib/sign-in/outcome';
 import { FocusedPanel } from '../../../focused-panel';
@@ -58,8 +58,8 @@ function CompanyPrices({ address, companyName, tenantId, config }: PricesScreenP
     authRef.current = auth;
     // The latest sign-in wins: an answer for a user who has since signed out is dropped.
     const stale = (user: User) => authRef.current?.currentUser !== user;
-    const signOutOrUnavailable = (refusal: LockReason | null = null) =>
-      signOutOfCompany(auth, tenantId, refusal).catch(() => setPhase({ name: 'unavailable' }));
+    const signOutOrUnavailable = (refusal: LockReason) =>
+      signOutOnRefusal(auth, tenantId, config, refusal).catch(() => setPhase({ name: 'unavailable' }));
 
     async function open(user: User) {
       setPhase({ name: 'checking' });
@@ -67,7 +67,7 @@ function CompanyPrices({ address, companyName, tenantId, config }: PricesScreenP
       if (stale(user)) return;
       const outcome = meOutcome(me.status, me.body);
       if (endsSession(outcome)) {
-        await signOutOrUnavailable(lockReasonOf(outcome.kind));
+        await signOutOrUnavailable(outcome.kind);
         return;
       }
       if (outcome.kind === 'unavailable') return setPhase({ name: 'unavailable' });
@@ -86,7 +86,7 @@ function CompanyPrices({ address, companyName, tenantId, config }: PricesScreenP
 
     return onAuthStateChanged(auth, (user) => {
       if (!user) return setPhase({ name: 'signed-out' });
-      if (!belongsTo(user, tenantId)) return void signOutOrUnavailable();
+      if (!belongsTo(user, tenantId)) return void signOutOrUnavailable('not-this-company');
       void open(user);
     });
   }, [config, tenantId]);
@@ -142,7 +142,7 @@ function CompanyPrices({ address, companyName, tenantId, config }: PricesScreenP
             initialCurrent={phase.prices.current}
             onSignInAgain={async () => {
               try {
-                if (authRef.current) await signOutOfCompany(authRef.current, tenantId);
+                if (authRef.current) await signOutOnRefusal(authRef.current, tenantId, config, 'sign-in-again');
               } catch {
                 return setPhase({ name: 'unavailable' });
               }

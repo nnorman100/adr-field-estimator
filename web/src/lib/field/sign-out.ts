@@ -3,24 +3,18 @@ import type { BrowserSignInConfig } from '@/lib/config';
 import { signOutCompany } from '@/lib/firebase-client';
 import { discardFieldWork, stopFieldClient } from '@/lib/field-db';
 import { forgetMe, saveMe } from './ds-me';
-import { noteLocked, unsentWork, type LockReason } from './unsent';
+import { lockWork } from './retention';
+import { unsentWork, type LockReason } from './unsent';
 
 // Ends this company's sign-in on the phone (S6-2). The field shell must not start from it again, so
 // its ds-me row goes first. Throws, and the person stays signed in with the row in place, when the
 // row may still be there or Firebase cannot sign out (the removed row is then saved again).
 //
-// This keeps the person's field cache and unsent work (S6-3): it is what every sign-out the person
-// did not ask for uses (a sign-in that must be made again, a refusal), because unsent work is kept
-// through a re-sign-in (D7) and the same person signing in again sends it. Their cache is a
+// Both sign-outs here keep the person's field cache and unsent work (S6-3), because unsent work is
+// kept through a re-sign-in (D7) and the same person signing in again sends it. Their cache is a
 // database of its own (field-db.ts), which no other person's client opens.
-//
-// `refusal`: the server's refusal that made the app sign the person out. It is saved with their
-// unsent-work mark, which outlives the saved sign-in, so the 30-day limit for locked work (O5)
-// starts now even though the field shell will not start for this person again (S6-3b): the sign-in
-// page acts on it (retention.ts).
-export async function signOutOfCompany(auth: Auth, tenantId: string, refusal?: LockReason | null): Promise<void> {
+async function leave(auth: Auth, tenantId: string): Promise<void> {
   const user = auth.currentUser;
-  if (user && refusal) noteLocked(tenantId, user.uid, refusal);
   const removed = user ? await forgetMe(tenantId, user.uid) : null;
   if (removed === false) throw new Error('the saved sign-in may still be on this phone');
   try {
@@ -30,6 +24,21 @@ export async function signOutOfCompany(auth: Auth, tenantId: string, refusal?: L
     if (removed) await saveMe(removed);
     throw error;
   }
+}
+
+// Every sign-out the person did not ask for: the server refused them (sign in again, a second step,
+// another company's sign-in, an account turned off). The refusal is saved with their unsent-work
+// mark, apart from the saved sign-in, before that goes, so the 30-day limit for locked work (O5)
+// runs from now even though the field shell will not start for this person again (S6-3b).
+export async function signOutOnRefusal(auth: Auth, tenantId: string, config: BrowserSignInConfig, refusal: LockReason): Promise<void> {
+  const user = auth.currentUser;
+  if (user) lockWork({ tenantId, uid: user.uid, config }, refusal);
+  await leave(auth, tenantId);
+}
+
+// The person's own "Sign out" when they chose Keep: nothing refused them, so nothing is locked.
+export async function signOutKeeping(auth: Auth, tenantId: string): Promise<void> {
+  await leave(auth, tenantId);
 }
 
 // Whether the signed-in person may have field edits that the server does not have yet, in this
@@ -52,6 +61,6 @@ export async function signOutDiscarding(auth: Auth, tenantId: string, config: Br
     const result = await discardFieldWork({ tenantId, uid: user.uid, config });
     if (result !== 'discarded') return result;
   }
-  await signOutOfCompany(auth, tenantId);
+  await leave(auth, tenantId);
   return 'signed-out';
 }

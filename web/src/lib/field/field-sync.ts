@@ -4,7 +4,8 @@ import { callApi } from '@/lib/firebase-client';
 import { appCheckSeam, discardFieldWork, fieldUser, settle, type FieldClient } from '@/lib/field-db';
 import { forgetMe, readMe, updateMe, type DsMe } from './ds-me';
 import { sessionValid, SyncGate, type GateState, type MeFacts } from './sync-gate';
-import { lockOutlived, noteLocked, noteUnlocked, savedLock, type LockReason } from './unsent';
+import { lockWork } from './retention';
+import { lockOutlived, noteUnlocked, savedLock, type LockReason } from './unsent';
 
 // Runs the sync gate for one person's started field client (S6-3), and does what each of its
 // answers asks of the phone:
@@ -16,7 +17,9 @@ import { lockOutlived, noteLocked, noteUnlocked, savedLock, type LockReason } fr
 //   saved whatever the sign-in's age, so a phone reopened past the role's limit still starts the
 //   clock (S6-3b). A disabled member's, inactive company's or signed-out (revoked or ended)
 //   sign-in's work is removed after 30 days of refusals (owner decision O5), and never sent once
-//   past that, even when the server lets the person in again.
+//   past that, even when the server lets the person in again. The gate asks whether it is past that
+//   after every answer, whenever the page is shown again and every minute, whatever the answer or
+//   the sign-in's age (S6-3b).
 // The gate starts paused when the page is hidden by the time the client has started; showing the
 // page resumes it (field-store.tsx).
 // The gate judges the person's ds-me row (read again before each check) against the role's session
@@ -70,7 +73,7 @@ export function runFieldSync(
   }
 
   function refused(reason: LockReason): void {
-    if (noteLocked(person.tenantId, person.uid, reason, now()) === null) {
+    if (lockWork(person, reason, now()) === null) {
       void forgetMe(person.tenantId, person.uid);
       return;
     }

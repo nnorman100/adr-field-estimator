@@ -21,9 +21,9 @@ import {
 import { saveMe } from '@/lib/field/ds-me';
 import { prepareFieldShell } from '@/lib/field/register-worker';
 import { meFacts } from '@/lib/field/sync-gate';
-import { letIn, removeOutlivedWork } from '@/lib/field/retention';
-import { lockReasonOf, type LockReason } from '@/lib/field/unsent';
-import { hasUnsentWork, signOutDiscarding, signOutOfCompany } from '@/lib/field/sign-out';
+import { keepCleanupContext, letIn, runRetention } from '@/lib/field/retention';
+import type { LockReason } from '@/lib/field/unsent';
+import { hasUnsentWork, signOutDiscarding, signOutKeeping, signOutOnRefusal } from '@/lib/field/sign-out';
 import { endsSession, errorCode, signInErrorMessage, type MeOutcome } from '@/lib/sign-in/outcome';
 import { rememberSignInAddress } from '@/lib/sign-in/remember';
 import { offersCompanyScreen } from '@/lib/profile/screen';
@@ -98,17 +98,21 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
     );
   }, []);
 
-  // `refusal`: the server's refusal that ends the session, kept for the 30-day limit (O5).
-  const endSession = useCallback(async (message: string | null, refusal: LockReason | null = null) => {
-    const auth = authRef.current;
-    if (auth) await signOutOfCompany(auth, tenantId, refusal);
-    setError(null);
-    setNotice(message);
-    setScreen({ name: 'signed-out' });
-  }, [tenantId]);
+  // `refusal`: why the app ends the session, kept for the 30-day limit (O5); 'kept' for the person's
+  // own sign-out that keeps their work.
+  const endSession = useCallback(
+    async (message: string | null, refusal: LockReason | 'kept') => {
+      const auth = authRef.current;
+      if (auth) await (refusal === 'kept' ? signOutKeeping(auth, tenantId) : signOutOnRefusal(auth, tenantId, config, refusal));
+      setError(null);
+      setNotice(message);
+      setScreen({ name: 'signed-out' });
+    },
+    [config, tenantId],
+  );
 
   const refuse = useCallback(
-    async (message: string, refusal: LockReason | null = null) => {
+    async (message: string, refusal: LockReason) => {
       try {
         await endSession(message, refusal);
       } catch {
@@ -137,7 +141,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
         return;
       }
       if (authenticators > 0) {
-        await refuse('Your authenticator app is set up. Sign in again and enter its code.');
+        await refuse('Your authenticator app is set up. Sign in again and enter its code.', 'sign-in-again');
         return;
       }
       if (endsSession(outcome)) {
@@ -147,7 +151,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
             : outcome.kind === 'account-disabled'
               ? `This account is turned off. Ask the owner of ${companyName}.`
               : 'Please sign in again.';
-        await refuse(message, lockReasonOf(outcome.kind));
+        await refuse(message, outcome.kind);
         return;
       }
       // The field shell starts from this row with no signal (S6-2), so it is saved before the screen
@@ -187,8 +191,9 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
 
   useEffect(() => {
     rememberSignInAddress(address);
-    // Work locked past the 30-day limit (O5), of anyone in this company on this phone (S6-3b).
-    void removeOutlivedWork(tenantId, config);
+    // Work locked past the 30-day limit (O5), of anyone on this phone (S6-3b).
+    keepCleanupContext(tenantId, config);
+    void runRetention();
     const auth = companyAuth({ config, tenantId });
     authRef.current = auth;
     return onAuthStateChanged(auth, (user) => {
@@ -199,7 +204,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
       }
       // Belt and braces: this company's Auth instance only ever holds this tenant's sign-in.
       if (!belongsTo(user, tenantId)) {
-        void refuse(`That sign-in is not for ${companyName}.`);
+        void refuse(`That sign-in is not for ${companyName}.`, 'not-this-company');
         return;
       }
       void check(user);
@@ -220,7 +225,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
 
   // Firebase wants a newer sign-in before it changes a second step.
   const needsFreshSignIn = useCallback(() => {
-    void refuse('For your safety, sign in again before changing your second step.');
+    void refuse('For your safety, sign in again before changing your second step.', 'sign-in-again');
   }, [refuse]);
 
   const auth = () => authRef.current!;
@@ -232,7 +237,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
   // in a window's memory (Online only) is not kept by anything, so nothing is promised for it.
   const signOutChosen = (choice: UnsentChoice) =>
     run(async () => {
-      if (choice === 'keep') return endSession('You are signed out. Your unsent work is kept on this phone.');
+      if (choice === 'keep') return endSession('You are signed out. Your unsent work is kept on this phone.', 'kept');
       const result = await signOutDiscarding(auth(), tenantId, config);
       if (result === 'elsewhere') return setError('DryScope is open in another window. Close it there, then sign out.');
       if (result === 'failed') return setError('Your work on this phone could not be removed. Try again.');
@@ -486,7 +491,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
               void check(user);
             }}
             onNeedsSignIn={needsFreshSignIn}
-            onLeave={() => void refuse('You are signed out.')}
+            onLeave={() => void refuse('You are signed out.', 'second-step')}
           />
         );
       }
@@ -500,7 +505,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
                 run(async () => {
                   const user = currentUser();
                   if (user) await check(user, true);
-                  else await endSession(null);
+                  else await endSession(null, 'sign-in-again');
                 })
               }
             >
