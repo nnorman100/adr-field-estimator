@@ -1,10 +1,8 @@
 import { serverDatabase } from '@/lib/auth/services';
 import { scopeListsService, type ScopeListsService } from './service';
 
-let service: ScopeListsService | null = null;
-
-// Built on the first request over the server's database, then reused.
+// Built on every call over the server's database (itself a process singleton), so the service never
+// holds on to an earlier database handle.
 export function scopeListsServices(): ScopeListsService {
-  service ??= scopeListsService(serverDatabase());
-  return service;
+  return scopeListsService(serverDatabase());
 }
