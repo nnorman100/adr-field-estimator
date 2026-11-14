@@ -101,7 +101,7 @@ describe('operatorRoute', () => {
 });
 
 describe('the owner-run tenant command', () => {
-  it('creates a tenant with password sign-in, no public sign-up, authenticator-app second steps, a 12-character password rule and email enumeration protection', async () => {
+  it('creates a tenant with password sign-in, no public sign-up, authenticator-app second steps, a 12-character password rule, email enumeration protection and sign-in reCAPTCHA in audit mode', async () => {
     const fetch = vi.fn(async () => Response.json({ name: 'projects/dryscope/tenants/test-company-a-x1y2z' }));
     const id = await createTenant(parseTenantArgs(['--project', 'dryscope', '--name', 'test-company-a']), {
       accessToken: async () => 'token',
@@ -125,6 +125,8 @@ describe('the owner-run tenant command', () => {
         passwordPolicyVersions: [{ customStrengthOptions: { minPasswordLength: 12 } }],
       },
       emailPrivacyConfig: { enableImprovedEmailPrivacy: true },
+      // TC-6: sign-in reCAPTCHA in audit mode (assesses, never blocks).
+      recaptchaConfig: { emailPasswordEnforcementState: 'AUDIT' },
     });
     expect(tenantBody('x')).not.toHaveProperty('enableAnonymousUser');
   });
