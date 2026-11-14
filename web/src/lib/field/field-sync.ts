@@ -5,7 +5,7 @@ import { appCheckSeam, fieldUser, settle, type FieldClient } from '@/lib/field-d
 import { meKey, readMe, updateMe, type DsMe } from './ds-me';
 import { sessionValid, SyncGate, type GateState, type MeFacts } from './sync-gate';
 import { evaluate, onWorkRemoved, type RetentionEvent } from './retention';
-import { savedReason } from './unsent';
+import { savedLock, savedReason } from './unsent';
 
 // Runs the sync gate for one person's started field client (S6-3), and does what each of its
 // answers asks of the phone:
@@ -20,7 +20,8 @@ import { savedReason } from './unsent';
 //   answered. A phone that cannot save it keeps everything as it is, the gate stays shut, and it
 //   asks again.
 // - The server letting the person in lifts the lock, unless the work is past the limit: that work is
-//   never sent. The gate asks after every answer, whenever the page is shown again and every minute,
+//   never sent. A phone that cannot save the lifting keeps the lock shown, the network off, and
+//   asks again. The gate asks after every answer, whenever the page is shown again and every minute,
 //   and stops for good once it is.
 // - When that routine removes this person's work, from whichever of the phone's entry points, the
 //   gate stops and the shell is told ('removed').
@@ -72,7 +73,11 @@ export function runFieldSync(
     sessionValid: (at) => sessionValid(row, at),
     onRefused: (reason) => tell({ kind: 'refused', person, reason }) !== 'unsaved',
     onExpired: () => tell({ kind: 'refused', person, reason: 'sign-in-expired' }) !== 'unsaved',
-    mayOpen: (opening) => tell(opening ? { kind: 'let-in', person } : { kind: 'entry', person, saved: row }) !== 'expired',
+    mayOpen: (opening) => {
+      const state = tell(opening ? { kind: 'let-in', person } : { kind: 'entry', person, saved: row });
+      if (state !== 'unsaved') return state !== 'expired';
+      return { kind: 'locked', reason: savedLock(person.tenantId, person.uid) ?? 'sign-in-again' };
+    },
     onStopped: stopWatching,
     startSuspended: typeof document !== 'undefined' && document.visibilityState === 'hidden',
     onState: apply,

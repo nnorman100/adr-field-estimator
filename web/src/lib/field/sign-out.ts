@@ -2,7 +2,7 @@ import type { Auth, User } from 'firebase/auth';
 import type { BrowserSignInConfig } from '@/lib/config';
 import { signOutCompany } from '@/lib/firebase-client';
 import { discardFieldWork, stopFieldClient } from '@/lib/field-db';
-import { forgetMe, saveMe } from './ds-me';
+import { forgetMe, readMe, restoreMe } from './ds-me';
 import { evaluate } from './retention';
 import { unsentWork, type LockReason } from './unsent';
 
@@ -19,14 +19,16 @@ import { unsentWork, type LockReason } from './unsent';
 // sign-in are left alone: the sign-in this was for has ended already.
 async function leave(auth: Auth, tenantId: string, from: Session): Promise<void> {
   const { user } = from;
+  const found = user ? await readMe(tenantId, user.uid) : null;
   if (!stillSignedIn(auth, from)) return;
-  const removed = user ? await forgetMe(tenantId, user.uid) : null;
+  const removed = user ? await forgetMe(tenantId, user.uid, found?.savedAt ?? null) : null;
+  if (!stillSignedIn(auth, from)) return;
   if (removed === false) throw new Error('the saved sign-in may still be on this phone');
   try {
     if (user) await stopFieldClient({ tenantId, uid: user.uid });
     if (stillSignedIn(auth, from)) await signOutCompany(auth);
   } catch (error) {
-    if (removed) await saveMe(removed);
+    if (removed) await restoreMe(removed);
     throw error;
   }
 }
@@ -48,7 +50,8 @@ function stillSignedIn(auth: Auth, from: Session): boolean {
 }
 
 // The refusal could not be saved on the phone: nothing was signed out or removed, and the screen
-// asks the person to try again. `retry` is the same sign-out for the same person and refusal.
+// asks the person to try again. `retry` is the same sign-out for the same person and refusal; it
+// does nothing once anyone has signed in since.
 export class WorkNotSecuredError extends Error {
   constructor(readonly retry: () => Promise<void>) {
     super('the refusal could not be saved on this phone');
@@ -82,6 +85,7 @@ export function signOutOnRefusal(auth: Auth, tenantId: string, config: BrowserSi
 }
 
 async function refuse(auth: Auth, from: Session, tenantId: string, config: BrowserSignInConfig, refusal: LockReason): Promise<void> {
+  if (!stillSignedIn(auth, from)) return;
   const { user } = from;
   if (user) {
     const { state, done } = evaluate(Date.now(), { kind: 'refused', person: { tenantId, uid: user.uid, config }, reason: refusal });

@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { meKey, parseMe } from '../../src/lib/field/ds-me';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { forgetMe, meKey, parseMe, restoreMe } from '../../src/lib/field/ds-me';
 
 const ROW = {
   key: 'tenant-1/uid-1',
@@ -51,5 +51,79 @@ describe('ds-me rows with the S6-3 facts', () => {
     ['a sign-in time that is not a number', { ...FACTS, authTime: '2' }],
   ])('are skipped when damaged: %s', (_name, value) => {
     expect(parseMe(value)).toBeNull();
+  });
+});
+
+// An IndexedDB holding the ds-me store, as far as these functions use it: requests answer in turn,
+// and a transaction completes once none is left.
+function fakeIndexedDb(rows: Map<string, unknown>) {
+  const answer = <T>(onDone: (request: { result?: T; onsuccess?: () => void }) => void) => {
+    const request: { result?: T; onsuccess?: () => void } = {};
+    setTimeout(() => onDone(request));
+    return request;
+  };
+  const database = {
+    close: () => undefined,
+    transaction() {
+      let pending = 0;
+      const transaction: { oncomplete?: () => void; objectStore: () => unknown } = { objectStore: () => store };
+      const run = <T>(work: () => T) => {
+        pending += 1;
+        return answer<T>((request) => {
+          request.result = work();
+          request.onsuccess?.();
+          pending -= 1;
+          setTimeout(() => {
+            if (pending === 0) transaction.oncomplete?.();
+          });
+        });
+      };
+      const store = {
+        get: (key: string) => run(() => rows.get(key)),
+        delete: (key: string) => run(() => void rows.delete(key)),
+        put: (value: { key: string }) => run(() => void rows.set(value.key, value)),
+        count: (key: string) => run(() => (rows.has(key) ? 1 : 0)),
+      };
+      return transaction;
+    },
+  };
+  return {
+    open: () =>
+      answer<typeof database>((request) => {
+        request.result = database;
+        request.onsuccess?.();
+      }),
+  };
+}
+
+// S6-3b: a sign-out removes the saved sign-in it found, never one a newer sign-in saved since.
+describe('removing and putting back a saved sign-in', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const ours = { ...ROW, savedAt: 1 };
+  const newer = { ...ROW, savedAt: 2 };
+
+  it('removes the row the sign-out found', async () => {
+    const rows = new Map<string, unknown>([[ROW.key, ours]]);
+    vi.stubGlobal('indexedDB', fakeIndexedDb(rows));
+    expect(await forgetMe('tenant-1', 'uid-1', 1)).toEqual(ours);
+    expect(rows.has(ROW.key)).toBe(false);
+  });
+
+  it('leaves a row a newer sign-in saved since, and says a row is still there', async () => {
+    const rows = new Map<string, unknown>([[ROW.key, newer]]);
+    vi.stubGlobal('indexedDB', fakeIndexedDb(rows));
+    expect(await forgetMe('tenant-1', 'uid-1', 1)).toBe(false);
+    expect(await forgetMe('tenant-1', 'uid-1', null)).toBe(false);
+    expect(rows.get(ROW.key)).toEqual(newer);
+  });
+
+  it('puts the removed row back only when no newer sign-in has saved one', async () => {
+    const rows = new Map<string, unknown>([[ROW.key, newer]]);
+    vi.stubGlobal('indexedDB', fakeIndexedDb(rows));
+    expect(await restoreMe(ours)).toBe(false);
+    expect(rows.get(ROW.key)).toEqual(newer);
+    rows.clear();
+    expect(await restoreMe(ours)).toBe(true);
+    expect(rows.get(ROW.key)).toEqual(ours);
   });
 });

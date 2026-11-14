@@ -225,6 +225,30 @@ describe('the sync gate of an open field shell', () => {
 
 const signedInAs = (uid: string, at = 'Fri, 13 Nov 2026 09:00:00 GMT') => ({ uid, metadata: { lastSignInTime: at } });
 
+describe('the server letting the person in, on a phone that cannot save it', () => {
+  it('keeps the lock shown and the network off, asks again every 15 seconds, and opens once it is saved', async () => {
+    items.set(unsentKey('t-a', 'ana'), lockedMark(5, 'sign-in-again'));
+    server = letIn();
+    full = true;
+    const run = sync();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(run.states.at(-1)).toBe('locked');
+    expect(callApi).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(callApi).toHaveBeenCalledTimes(2);
+    expect(run.states.at(-1)).toBe('locked');
+    expect(enableNetwork).not.toHaveBeenCalled();
+    expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: NOW - 5 * DAY });
+
+    full = false;
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(run.states.at(-1)).toBe('open');
+    expect(enableNetwork).toHaveBeenCalledOnce();
+    expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: null });
+    run.stop();
+  });
+});
+
 describe('"Try again" after a sign-out that could not save the refusal', () => {
   const auth = { currentUser: signedInAs('ana') } as unknown as Auth;
 
@@ -250,7 +274,7 @@ describe('"Try again" after a sign-out that could not save the refusal', () => {
     await (shown[1] as Extract<FailedSignOut, { name: 'not-secured' }>).retry();
     expect(shown).toHaveLength(2);
     expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: NOW, lockedReason: 'sign-in-again' });
-    expect(forgetMe).toHaveBeenCalledWith('t-a', 'ana');
+    expect(forgetMe).toHaveBeenCalledWith('t-a', 'ana', null);
     expect(signOutCompany).toHaveBeenCalledOnce();
     expect(after).toHaveBeenCalledOnce();
   });
@@ -275,7 +299,7 @@ describe('a forced sign-out when someone else signs in meanwhile (another tab)',
     expect(signOutCompany).not.toHaveBeenCalled();
   });
 
-  it('"Try again" saves the refusal for the person it was for, not whoever is signed in now', async () => {
+  it('"Try again" does nothing once someone else has signed in: no refusal saved, nobody signed out', async () => {
     const auth = { currentUser: signedInAs('ana') };
     const shown: FailedSignOut[] = [];
     const after = vi.fn();
@@ -287,7 +311,8 @@ describe('a forced sign-out when someone else signs in meanwhile (another tab)',
     full = false;
     await (shown[0] as Extract<FailedSignOut, { name: 'not-secured' }>).retry();
     expect(shown).toHaveLength(1);
-    expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: NOW, lockedReason: 'sign-in-again' });
+    expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: null });
+    expect(readUnsent('t-a', 'ben')).toMatchObject({ lockedSince: null });
     expect(forgetMe).not.toHaveBeenCalled();
     expect(signOutCompany).not.toHaveBeenCalled();
     expect(after).toHaveBeenCalledOnce();
@@ -313,6 +338,8 @@ describe('a forced sign-out when someone else signs in meanwhile (another tab)',
     auth.currentUser = signedInAs('ana', 'Sat, 14 Nov 2026 09:00:00 GMT');
     full = false;
     await (shown[0] as Extract<FailedSignOut, { name: 'not-secured' }>).retry();
+    // Her newer sign-in counts: the old refusal is not saved over it.
+    expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: null });
     expect(forgetMe).not.toHaveBeenCalled();
     expect(signOutCompany).not.toHaveBeenCalled();
   });

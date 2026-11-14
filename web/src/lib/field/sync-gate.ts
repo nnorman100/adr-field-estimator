@@ -144,7 +144,9 @@ export type GateDeps = {
   //   after every answer, by checkSession() (the page shown again, every minute) and, with
   //   `opening`, just before the network would go on because the server let the person in,
   //   whatever the answer or the sign-in's age; the gate then stops for good, with the network off.
-  mayOpen?: (opening: boolean) => boolean;
+  //   With `opening`, the lock that still stands when the phone could not save that it is lifted:
+  //   the network stays off, the gate shows the lock and asks again after LOCKED_RETRY_MS.
+  mayOpen?: (opening: boolean) => boolean | Extract<GateState, { kind: 'locked' }>;
   // The gate's owner stopped it (stop()); not called when the gate stops itself on mayOpen.
   onStopped?: () => void;
 };
@@ -258,10 +260,13 @@ export class SyncGate {
     if (this.state.kind === 'open') this.set({ kind: 'offline' });
   }
 
-  // True when the gate has stopped, or stops now because the work may no longer be sent (mayOpen).
-  private retired(opening = false): boolean {
+  // True when the gate has stopped, or stops now because the work may no longer be sent (mayOpen);
+  // the lock mayOpen says still stands.
+  private retired(opening = false): boolean | Extract<GateState, { kind: 'locked' }> {
     if (this.stopped) return true;
-    if (this.deps.mayOpen?.(opening) !== false) return false;
+    const may = this.deps.mayOpen?.(opening) ?? true;
+    if (may === true) return false;
+    if (may !== false) return may;
     this.halt();
     void this.closeNetwork().catch(() => undefined);
     return true;
@@ -401,7 +406,15 @@ export class SyncGate {
         if (!refusalSaved || verdict.reason === 'member-disabled' || verdict.reason === 'company-inactive') this.later(LOCKED_RETRY_MS);
         return;
       }
-      if (this.retired(true)) return;
+      const still = this.retired(true);
+      if (still === true) return;
+      if (still) {
+        await this.closeNetwork();
+        if (stale()) return;
+        this.set(still);
+        this.later(LOCKED_RETRY_MS);
+        return;
+      }
       if (!this.networkOn) {
         this.networkOn = true;
         await this.deps.enableNetwork();

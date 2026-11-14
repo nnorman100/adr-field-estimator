@@ -263,18 +263,41 @@ export function updateMe(me: Omit<DsMe, 'savedAt'>): Promise<boolean> {
 }
 
 // Removes this sign-in's row (the phone is signed out of this company). Only this (tenant, person)'s
-// row: another company's stays. Resolves to the row it removed (null when there was none, or the
-// phone's storage cannot be opened at all), or false when the row may still be there.
-export async function forgetMe(tenantId: string, uid: string): Promise<DsMe | null | false> {
+// row: another company's stays. `savedAt` is that of the row the sign-out found (null: none), and
+// only that row goes: one saved since, by a newer sign-in, stays. Resolves to the row it removed
+// (null when there was none, or the phone's storage cannot be opened at all), or false when a row
+// may still be there.
+export async function forgetMe(tenantId: string, uid: string, savedAt: number | null): Promise<DsMe | null | false> {
   const key = meKey(tenantId, uid);
   let removed: unknown = null;
+  let newer = false;
   const gone = await write((store) => {
     const row = store.get(key);
     row.onsuccess = () => {
+      if ((parseMe(row.result)?.savedAt ?? null) !== savedAt) {
+        newer = true;
+        return;
+      }
       removed = row.result;
+      store.delete(key);
     };
-    store.delete(key);
   });
+  if (newer) return false;
   if (gone) return parseMe(removed);
   return (await mayHold(key)) ? false : null;
+}
+
+// Puts back a row forgetMe removed, when the sign-out it was part of failed, unless a newer
+// sign-in has saved one since. True when it was put back.
+export function restoreMe(me: DsMe): Promise<boolean> {
+  let saved = false;
+  return write((store) => {
+    const key = meKey(me.tenantId, me.uid);
+    const row = store.get(key);
+    row.onsuccess = () => {
+      if (parseMe(row.result)) return;
+      store.put({ ...me, key });
+      saved = true;
+    };
+  }).then((committed) => committed && saved);
 }

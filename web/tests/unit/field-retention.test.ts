@@ -113,7 +113,7 @@ describe('a sign-out the app makes on a refusal', () => {
     storage.failOn(null);
     await signOutOnRefusal(auth, 't-a', config, 'sign-in-again');
     expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: expect.any(Number), lockedReason: 'sign-in-again' });
-    expect(forgetMe).toHaveBeenCalledWith('t-a', 'ana');
+    expect(forgetMe).toHaveBeenCalledWith('t-a', 'ana', null);
     expect(signOutCompany).toHaveBeenCalledOnce();
   });
 });

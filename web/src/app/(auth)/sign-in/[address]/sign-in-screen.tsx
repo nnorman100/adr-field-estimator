@@ -174,7 +174,8 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
       // just let this person in, so once the row is saved a refusal saved on the phone for them is
       // lifted, unless it is past the 30-day limit (O5): that work is removed instead, never sent
       // (retention.ts), while this screen goes on. The row goes first, so the phone never finds an
-      // old sign-in with no lock.
+      // old sign-in with no lock. A phone that cannot save the lifting offers nothing of the field
+      // app: "Try again" lifts it again.
       if (outcome.kind === 'signed-in') {
         const authTime = await user.getIdTokenResult().then(
           (result) => Date.parse(result.authTime),
@@ -190,12 +191,18 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
           ...(meFacts(body) ?? {}),
           ...(Number.isFinite(authTime) ? { authTime } : {}),
         });
-        evaluate(Date.now(), { kind: 'let-in', person: { tenantId, uid: user.uid, config } });
-        if ((authRef.current?.currentUser ?? null) !== user) return;
-        setScreen({ name: 'preparing' });
-        const ready = await prepareFieldShell();
-        if ((authRef.current?.currentUser ?? null) !== user) return;
-        setOfflineReady(ready);
+        const signedIn = outcome;
+        async function openField(): Promise<void> {
+          const { state } = evaluate(Date.now(), { kind: 'let-in', person: { tenantId, uid: user.uid, config } });
+          if ((authRef.current?.currentUser ?? null) !== user) return;
+          if (state === 'unsaved') return setScreen({ name: 'not-secured', retry: openField });
+          setScreen({ name: 'preparing' });
+          const ready = await prepareFieldShell();
+          if ((authRef.current?.currentUser ?? null) !== user) return;
+          setOfflineReady(ready);
+          setScreen({ name: 'outcome', outcome: signedIn });
+        }
+        return openField();
       }
       setScreen({ name: 'outcome', outcome: outcome as Extract<Screen, { name: 'outcome' }>['outcome'] });
     },

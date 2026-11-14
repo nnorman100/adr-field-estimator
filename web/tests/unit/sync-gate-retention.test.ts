@@ -142,6 +142,27 @@ describe('what the gate tells the retention routine', () => {
   });
 });
 
+describe('a let-in the phone could not save', () => {
+  it('keeps the lock shown and the network off, and asks again every 15 seconds until it is saved', async () => {
+    answer = async () => open();
+    let saved = false;
+    const g = gate({ mayOpen: (opening) => (!opening || saved ? true : { kind: 'locked', reason: 'sign-in-again' }) });
+    g.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(g.current()).toEqual({ kind: 'locked', reason: 'sign-in-again' });
+    expect(calls).toEqual(['ask']);
+    await vi.advanceTimersByTimeAsync(LOCKED_RETRY_MS);
+    expect(asks()).toBe(2);
+    expect(calls).not.toContain('enable');
+
+    saved = true;
+    await vi.advanceTimersByTimeAsync(LOCKED_RETRY_MS);
+    expect(g.current().kind).toBe('open');
+    expect(calls.at(-1)).toBe('enable');
+    g.stop();
+  });
+});
+
 describe('a refusal the phone could not save', () => {
   it.each([
     ['sign_in_again', 401],

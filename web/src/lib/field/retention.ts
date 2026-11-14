@@ -2,7 +2,7 @@ import type { BrowserSignInConfig } from '@/lib/config';
 import { discardFieldWork, type FieldPerson } from '@/lib/field-db';
 import { meKey, readAllMe } from './ds-me';
 import { sessionValid } from './sync-gate';
-import { allOutlivedLocks, lockOutlived, noteLocked, noteUnlocked, readUnsent, savedReason, type SavedReason } from './unsent';
+import { allOutlivedLocks, lockOutlived, noteLocked, noteUnlocked, savedReason, type SavedReason } from './unsent';
 import { holdsWindow } from './window-lock';
 
 // Locked work and the 30-day limit (owner decision O5), as one routine (S6-3b). Everything on the
@@ -20,7 +20,7 @@ import { holdsWindow } from './window-lock';
 //   refused                  locked (now)    locked (first time kept)   expired
 //   a saved sign-in past     locked (now)    locked (first time kept)   expired
 //     its role's limit
-//   let-in                   none            none                       expired
+//   let-in                   none            none (when saved)          expired
 //   a saved sign-in that     none            none, when only its age    expired
 //     counts again                             had locked it
 //   entry                    none            locked                     expired
@@ -91,21 +91,25 @@ function stateOf({ tenantId, uid }: Pick<FieldPerson, 'tenantId' | 'uid'>, now: 
   return savedReason(tenantId, uid) === null ? 'none' : 'locked';
 }
 
-// Saves the lock of a refusal, after what removes the work later, so a lock is never saved without
-// it. Returns when the refusals began, or null when the phone holds no lock with a time for this
-// person afterwards: the caller must then leave their sign-in and their work exactly as they are.
-// evaluate's own step; exported for its tests only.
-export function lockWork(person: FieldPerson, reason: SavedReason, now = Date.now()): number | null {
-  if (!keepCleanupContext(person) && cleanupContext(person.tenantId) === null) return null;
-  const since = noteLocked(person.tenantId, person.uid, reason, now);
-  if (since !== null) return since;
-  const mark = readUnsent(person.tenantId, person.uid);
-  return mark === 'unreadable' ? null : mark.lockedSince;
+// True when the phone holds the company's settings that remove its locked work.
+function settingsKept(company: Company): boolean {
+  return keepCleanupContext(company) || cleanupContext(company.tenantId) !== null;
 }
 
-// The "refused" row of the table: true when the phone holds the person's lock afterwards.
+// Saves the lock of a refusal, after what removes the work later, so a lock is never saved without
+// it. Returns when the refusals began, or null when either could not be saved: the caller must then
+// leave the person's sign-in and their work exactly as they are. evaluate's own step; exported for
+// its tests only.
+export function lockWork(person: FieldPerson, reason: SavedReason, now = Date.now()): number | null {
+  if (!settingsKept(person)) return null;
+  return noteLocked(person.tenantId, person.uid, reason, now);
+}
+
+// The "refused" row of the table: true when the phone holds the person's lock afterwards, and for
+// work past the limit, the settings that remove it.
 function refuse(person: FieldPerson, reason: SavedReason, now: number): boolean {
-  return stateOf(person, now) === 'expired' || lockWork(person, reason, now) !== null;
+  if (stateOf(person, now) === 'expired') return settingsKept(person);
+  return lockWork(person, reason, now) !== null;
 }
 
 // What the phone saved of a sign-in, as far as its age goes (a ds-me row).
@@ -132,8 +136,9 @@ export type RetentionEvent =
   | { kind: 'let-in'; person: FieldPerson };
 
 export type Evaluation = {
-  // The event's person afterwards. 'unsaved': they were refused and the phone could not save it, so
-  // nothing of theirs may be signed out or removed, and the caller tries again.
+  // The event's person afterwards. 'unsaved': they were refused, or let in, and the phone could not
+  // save it: on a refusal nothing of theirs may be signed out or removed; on a let-in their lock
+  // still stands and nothing may open. Either way the caller tries again.
   state: RetentionState | 'unsaved';
   // Settles when this evaluate's sweep is over, with everyone whose work it removed (meKey).
   done: Promise<string[]>;
@@ -195,9 +200,10 @@ export function evaluate(now: number, event: RetentionEvent): Evaluation {
     if (event.person) state = stateOf(event.person, now);
   } else if (event.kind === 'refused') {
     state = refuse(event.person, event.reason, now) ? stateOf(event.person, now) : 'unsaved';
+  } else if (stateOf(event.person, now) === 'expired') {
+    state = 'expired';
   } else {
-    if (stateOf(event.person, now) !== 'expired') noteUnlocked(event.person.tenantId, event.person.uid);
-    state = stateOf(event.person, now);
+    state = noteUnlocked(event.person.tenantId, event.person.uid) ? 'none' : 'unsaved';
   }
   const done = sweeping.then(() => sweep(now));
   sweeping = done;

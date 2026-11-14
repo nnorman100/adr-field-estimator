@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { keepAnswer, saveKeepAnswer } from '@/lib/field/keep-consent';
 import {
+  allOutlivedLocks,
   forgetUnsent,
   LOCKED_LIMIT_MS,
   lockOutlived,
@@ -8,7 +9,6 @@ import {
   noteLocked,
   noteUnlocked,
   noteWrite,
-  outlivedLocks,
   readUnsent,
   savedLock,
   unsentWork,
@@ -179,9 +179,11 @@ describe('unsent work marks', () => {
     expect(lockOutlived('t-a', 'gus', now)).toBe(false);
     // A mark that cannot be read is never taken as permission to remove anything.
     expect(lockOutlived('t-a', 'hal', now)).toBe(false);
-    expect(outlivedLocks('t-a', now)).toEqual(['ana', 'eve']);
-    expect(outlivedLocks('t-ab', now)).toEqual(['fay']);
-    expect(outlivedLocks('t-b', now)).toEqual([]);
+    const outlived = allOutlivedLocks(now);
+    const ofCompany = (tenantId: string) => outlived.filter((who) => who.tenantId === tenantId).map((who) => who.uid);
+    expect(ofCompany('t-a')).toEqual(['ana', 'eve']);
+    expect(ofCompany('t-ab')).toEqual(['fay']);
+    expect(ofCompany('t-b')).toEqual([]);
   });
 
   it('find nobody when the phone\'s storage cannot be listed', () => {
@@ -190,7 +192,7 @@ describe('unsent work marks', () => {
         throw new DOMException('denied', 'SecurityError');
       },
     });
-    expect(outlivedLocks('t-a', Date.now())).toEqual([]);
+    expect(allOutlivedLocks(Date.now())).toEqual([]);
   });
 
   it('hold counts and times only', () => {

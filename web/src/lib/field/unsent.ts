@@ -212,17 +212,12 @@ export function allOutlivedLocks(now: number): { tenantId: string; uid: string }
   return found;
 }
 
-// Every person of this company whose lock outlived the limit on this phone, signed in or not.
-export function outlivedLocks(tenantId: string, now: number): string[] {
-  return allOutlivedLocks(now)
-    .filter((person) => person.tenantId === tenantId)
-    .map((person) => person.uid);
-}
-
-export function noteUnlocked(tenantId: string, uid: string): void {
+// The server let the person in: their lock is lifted. False when it could not be saved (the lock
+// still stands).
+export function noteUnlocked(tenantId: string, uid: string): boolean {
   const mark = readUnsent(tenantId, uid);
-  if (mark !== 'unreadable' && mark.lockedSince === null) return;
-  change(tenantId, uid, ({ lockedReason: _reason, ...current }) => {
+  if (mark !== 'unreadable' && mark.lockedSince === null) return true;
+  return change(tenantId, uid, ({ lockedReason: _reason, ...current }) => {
     void _reason;
     return { ...current, lockedSince: null };
   });
