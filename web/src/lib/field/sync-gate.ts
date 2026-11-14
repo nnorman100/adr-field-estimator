@@ -132,14 +132,21 @@ export type GateDeps = {
   // person's ds-me row). Asked after every answer, before the network goes on, and by
   // checkSession(); when it is not, the gate is 'expired'.
   sessionValid?: (now: number) => boolean;
-  // Told of every refusal the server gives this sign-in, before its age or anything else is judged,
-  // so the phone's refusal bookkeeping (O5) never depends on the sign-in still counting.
-  onRefused?: (reason: Extract<GateState, { kind: 'locked' }>['reason']) => void;
-  // False when the work on the phone may no longer be sent (its lock outlived the O5 limit). Asked
-  // after every answer, by checkSession() (the page shown again, every minute) and just before the
-  // network would go on, whatever the answer or the sign-in's age; the gate then stops for good, with
-  // the network off.
-  mayOpen?: () => boolean;
+  // The three things the gate tells the phone's refusal bookkeeping (O5; retention.ts), so that it
+  // never depends on the sign-in still counting or on the server having answered:
+  // - every refusal the server gives this sign-in, before its age or anything else is judged;
+  // - every time the saved sign-in is found past its role's limit, answer or no answer.
+  // Either answers false when the phone could not save it: the gate then asks again after
+  // LOCKED_RETRY_MS, whatever the refusal, until it can.
+  onRefused?: (reason: Extract<GateState, { kind: 'locked' }>['reason']) => boolean | void;
+  onExpired?: () => boolean | void;
+  // - False when the work on the phone may no longer be sent (its lock outlived the O5 limit). Asked
+  //   after every answer, by checkSession() (the page shown again, every minute) and, with
+  //   `opening`, just before the network would go on because the server let the person in,
+  //   whatever the answer or the sign-in's age; the gate then stops for good, with the network off.
+  mayOpen?: (opening: boolean) => boolean;
+  // The gate's owner stopped it (stop()); not called when the gate stops itself on mayOpen.
+  onStopped?: () => void;
 };
 
 // Runs the gate for one field client. Foreground only: it asks on start, on poke() (the app
@@ -179,7 +186,9 @@ export class SyncGate {
   // The saved sign-in's age, judged now (a timer, the page shown again): past the role's limit,
   // the network goes off and the gate is 'expired', whatever it was.
   checkSession(): void {
-    if (this.retired() || this.state.kind === 'expired' || this.sessionOk()) return;
+    if (this.retired() || this.sessionOk()) return;
+    this.noteExpired();
+    if (this.state.kind === 'expired') return;
     this.epoch += 1;
     this.callOff();
     void this.closeNetwork();
@@ -208,11 +217,22 @@ export class SyncGate {
   }
 
   stop(): void {
+    this.halt();
+    this.deps.onStopped?.();
+  }
+
+  private halt(): void {
     this.stopped = true;
     this.epoch += 1;
     this.callOff();
     clearTimeout(this.timer);
     clearTimeout(this.deadline);
+  }
+
+  // The saved sign-in is past its role's limit: said every time it is found so, and asked about
+  // again when the phone could not save it.
+  private noteExpired(): void {
+    if (this.deps.onExpired?.() === false) this.later(LOCKED_RETRY_MS);
   }
 
   // Ask now (an `online` event, the app shown again, a tap): a check still waiting for an answer is
@@ -239,10 +259,10 @@ export class SyncGate {
   }
 
   // True when the gate has stopped, or stops now because the work may no longer be sent (mayOpen).
-  private retired(): boolean {
+  private retired(opening = false): boolean {
     if (this.stopped) return true;
-    if (this.deps.mayOpen?.() !== false) return false;
-    this.stop();
+    if (this.deps.mayOpen?.(opening) !== false) return false;
+    this.halt();
     void this.closeNetwork().catch(() => undefined);
     return true;
   }
@@ -323,6 +343,7 @@ export class SyncGate {
         return true;
       };
       const expire = async (): Promise<void> => {
+        this.noteExpired();
         await this.closeNetwork();
         if (!stale()) this.set({ kind: 'expired' });
       };
@@ -334,8 +355,9 @@ export class SyncGate {
       if (answer === CALLED_OFF) return calledOff();
       if (stale() || this.retired()) return;
       let verdict = judgeMe(answer, this.now());
+      let refusalSaved = true;
       if (verdict.kind === 'locked') {
-        this.deps.onRefused?.(verdict.reason);
+        refusalSaved = this.deps.onRefused?.(verdict.reason) !== false;
         if (stale()) return;
       }
       if (!this.sessionOk()) return await expire();
@@ -374,11 +396,12 @@ export class SyncGate {
         if (stale()) return;
         this.set(verdict);
         // A disabled member or an inactive company can be let back in by the owner; the other
-        // refusals need the person to sign in again, which starts a new gate.
-        if (verdict.reason === 'member-disabled' || verdict.reason === 'company-inactive') this.later(LOCKED_RETRY_MS);
+        // refusals need the person to sign in again, which starts a new gate. A refusal the phone
+        // could not save is asked for again whichever it is.
+        if (!refusalSaved || verdict.reason === 'member-disabled' || verdict.reason === 'company-inactive') this.later(LOCKED_RETRY_MS);
         return;
       }
-      if (this.retired()) return;
+      if (this.retired(true)) return;
       if (!this.networkOn) {
         this.networkOn = true;
         await this.deps.enableNetwork();

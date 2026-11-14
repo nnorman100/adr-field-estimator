@@ -8,12 +8,12 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import type { BrowserSignInConfig } from '@/lib/config';
 import { belongsTo, callApi, companyAuth } from '@/lib/firebase-client';
-import { signOutOnRefusal } from '@/lib/field/sign-out';
+import { signOutOnRefusal, signOutOrShow, type FailedSignOut } from '@/lib/field/sign-out';
 import type { LockReason } from '@/lib/field/unsent';
 import { pricesAccess, pricesView, type OwnerPrices, type ReaderPrices } from '@/lib/prices/screen';
 import { endsSession, meOutcome } from '@/lib/sign-in/outcome';
 import { FocusedPanel } from '../../../focused-panel';
-import { failedSignOut, WorkNotSecured } from '../work-not-secured';
+import { WorkNotSecured } from '../work-not-secured';
 import { Panel } from '../../../panel';
 import { ReadOnlyItems } from './price-list';
 import { PricesEditor } from './prices-editor';
@@ -34,8 +34,7 @@ type Phase =
   // The company's prices are not open to this sign-in: the price_books switch is off for the
   // company (or the role holds no prices key). Nothing about prices is requested or shown.
   | { name: 'hidden' }
-  | { name: 'unavailable' }
-  | { name: 'not-secured' }
+  | FailedSignOut
   | { name: 'owner'; user: User; prices: OwnerPrices }
   | { name: 'reader'; prices: ReaderPrices };
 
@@ -60,8 +59,7 @@ function CompanyPrices({ address, companyName, tenantId, config }: PricesScreenP
     authRef.current = auth;
     // The latest sign-in wins: an answer for a user who has since signed out is dropped.
     const stale = (user: User) => authRef.current?.currentUser !== user;
-    const signOutOrUnavailable = (refusal: LockReason) =>
-      signOutOnRefusal(auth, tenantId, config, refusal).catch((error) => setPhase(failedSignOut(error)));
+    const signOutOrUnavailable = (refusal: LockReason) => signOutOrShow(() => signOutOnRefusal(auth, tenantId, config, refusal), setPhase);
 
     async function open(user: User) {
       setPhase({ name: 'checking' });
@@ -128,7 +126,7 @@ function CompanyPrices({ address, companyName, tenantId, config }: PricesScreenP
         </FocusedPanel>
       );
     case 'not-secured':
-      return <WorkNotSecured />;
+      return <WorkNotSecured retry={phase.retry} />;
     case 'unavailable':
       return (
         <FocusedPanel title="We could not open the prices">
@@ -145,12 +143,9 @@ function CompanyPrices({ address, companyName, tenantId, config }: PricesScreenP
             initialWorking={phase.prices.workingCopy}
             initialCurrent={phase.prices.current}
             onSignInAgain={async () => {
-              try {
-                if (authRef.current) await signOutOnRefusal(authRef.current, tenantId, config, 'sign-in-again');
-              } catch (error) {
-                return setPhase(failedSignOut(error));
-              }
-              router.push(`/sign-in/${address}`);
+              const auth = authRef.current;
+              const toSignIn = () => router.push(`/sign-in/${address}`);
+              return auth ? signOutOrShow(() => signOutOnRefusal(auth, tenantId, config, 'sign-in-again'), setPhase, toSignIn) : toSignIn();
             }}
           />
         </PricesFrame>

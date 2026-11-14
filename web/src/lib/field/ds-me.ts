@@ -134,6 +134,33 @@ export async function readMe(tenantId: string, uid: string): Promise<DsMe | null
   }
 }
 
+// Every readable row, for judging each saved sign-in's age (retention.ts). None when the phone's
+// storage cannot be read or does not answer within WRITE_WITHIN_MS: a row that cannot be read is
+// never judged.
+export function readAllMe(): Promise<DsMe[]> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve([]), WRITE_WITHIN_MS);
+    const answer = (rows: DsMe[]) => {
+      clearTimeout(timer);
+      resolve(rows);
+    };
+    openDb().then(
+      (db) => {
+        try {
+          const request = db.transaction(ME_STORE, 'readonly').objectStore(ME_STORE).getAll();
+          request.onsuccess = () => answer((request.result as unknown[]).map(parseMe).filter((row): row is DsMe => row !== null));
+          request.onerror = () => answer([]);
+        } catch {
+          answer([]);
+        } finally {
+          db.close();
+        }
+      },
+      () => answer([]),
+    );
+  });
+}
+
 // A change to the rows, settled when the transaction has committed (not when its request was
 // accepted: a page that navigates away first loses it) or has failed. True when it committed. A
 // phone whose storage does not answer within WRITE_WITHIN_MS gets false, and false is final: the

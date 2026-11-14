@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useState, type ReactNode } from 'react';
 import { meKey, readLatestMe, type DsMe } from '@/lib/field/ds-me';
 import { registerFieldWorker } from '@/lib/field/register-worker';
-import { runRetention, whenShownAgain } from '@/lib/field/retention';
+import { watchRetention } from '@/lib/field/retention';
 import { offlineCaptureAllowed } from '@/lib/field/platform';
 import { rememberedSignInAddress } from '@/lib/sign-in/remember';
 import { NotSavedBanner, OfflineBanner } from './banners';
@@ -76,15 +76,11 @@ export function FieldShell() {
     };
   }, []);
 
-  // With no saved sign-in no field window starts here, so this page removes work locked past the
-  // 30-day limit (O5, S6-3b) as it opens and each time it is shown again; a signed-in shell does it
-  // while it holds the window lock (field-store.tsx).
-  const signedOut = boot.kind === 'signed-out' || boot.kind === 'no-storage';
-  useEffect(() => {
-    if (!signedOut) return;
-    void runRetention();
-    return whenShownAgain(() => void runRetention());
-  }, [signedOut]);
+  // The phone's retention routine (O5, S6-3b; retention.ts) runs as the shell opens and each time it
+  // is shown again, whatever the shell then shows: signed in or not, the question about keeping
+  // jobs answered or not, a field client started or not. It covers everyone on the phone, this
+  // person included; FieldStore hears when it removes this person's work.
+  useEffect(() => watchRetention(), []);
 
   const homeScreen = surface === 'ios-tab' ? <HomeScreenSheet openFirstTime={boot.kind !== 'starting'} /> : null;
 

@@ -7,7 +7,7 @@ import { companyAuth } from '@/lib/firebase-client';
 import { mirrorSignIn, startFieldClient, type CacheKind, type FieldClient } from '@/lib/field-db';
 import { meKey, type DsMe } from '@/lib/field/ds-me';
 import { runFieldSync } from '@/lib/field/field-sync';
-import { runRetention, whenShownAgain } from '@/lib/field/retention';
+import { evaluate, onWorkRemoved, takeRemoved } from '@/lib/field/retention';
 import { askToPersist, keepAnswer, saveKeepAnswer, type KeepAnswer } from '@/lib/field/keep-consent';
 import type { FieldSurface } from '@/lib/field/platform';
 import { sessionValid, type GateState, type SyncGate } from '@/lib/field/sync-gate';
@@ -41,7 +41,9 @@ type Phase =
   | { kind: 'no-lock' }
   | { kind: 'reopen' }
   | { kind: 'ready'; client: FieldClient }
-  | { kind: 'removed' };
+  | { kind: 'removed' }
+  // Past the 30-day limit, and the phone could not remove the work now: nothing of it is opened.
+  | { kind: 'not-removed' };
 
 function Notice({ title, children }: { title?: string; children: ReactNode }) {
   return (
@@ -133,8 +135,20 @@ export function FieldStore({
     if (!hasDatabase || cache === null) return;
     let live = true;
     let release = () => undefined as void;
-    let stopRetention = () => undefined as void;
     const person = { tenantId: me.tenantId, uid: me.uid, config: me.config };
+    const own = meKey(me.tenantId, me.uid);
+    // The retention routine removed this person's work (past the 30-day limit, O5), from whichever
+    // of the phone's entry points, before this started or while it runs: the shell says so, nothing
+    // of it shows, and nothing more is started for it.
+    let gone = false;
+    const removed = (): boolean => {
+      if (takeRemoved(own)) {
+        gone = true;
+        if (live) setPhase({ kind: 'removed' });
+      }
+      return gone;
+    };
+    const stopWatching = onWorkRemoved(removed);
     void (async () => {
       const lock = await holdWindow();
       if (!live) return lock.result === 'held' ? lock.release() : undefined;
@@ -144,17 +158,16 @@ export function FieldStore({
         return setPhase({ kind: 'no-lock' });
       }
       release = lock.release;
-      // Work locked past the 30-day limit (O5, S6-3b), this person's included, before anything
-      // starts: this window holds the lock, so no other window holds any of it.
-      const own = meKey(me.tenantId, me.uid);
-      const removed = await runRetention(Date.now(), { lockHeld: true });
-      if (!live) return;
-      if (removed.includes(own)) return setPhase({ kind: 'removed' });
-      // Everyone else's, each time the page is shown again; this person's own is the gate's.
-      stopRetention = whenShownAgain(() => void runRetention(Date.now(), { lockHeld: true, skip: own }));
+      // Work locked past the 30-day limit (O5, S6-3b), this person's included, goes before anything
+      // of it starts: this window holds the lock, so no other window holds any of it. Work that is
+      // past the limit and could not be removed now is not opened; the next entry point tries again.
+      const entry = evaluate(Date.now(), { kind: 'entry', person, saved: me });
+      await entry.done;
+      if (!live || removed()) return;
+      if (entry.state === 'expired') return setPhase({ kind: 'not-removed' });
       await mirrorSignIn(person).catch(() => false);
       const started = await startFieldClient(person, cache);
-      if (!live) return;
+      if (!live || removed()) return;
       if (started.kind === 'no-database') return;
       if (started.kind === 'reopen') return setPhase({ kind: 'reopen' });
       onStorage(started.client.cache === 'persistent' ? 'kept' : started.fellBack ? 'not-saved' : 'online-only');
@@ -185,7 +198,7 @@ export function FieldStore({
     window.addEventListener('offline', offline);
     return () => {
       live = false;
-      stopRetention();
+      stopWatching();
       stopAuth();
       document.removeEventListener('visibilitychange', shown);
       window.removeEventListener('offline', offline);
@@ -205,9 +218,10 @@ export function FieldStore({
   }, [reachable]);
 
   useEffect(() => {
+    // A hidden page asks nothing and removes nothing; shown again, the gate is resumed (above).
     const tick = setInterval(() => {
       setNow(Date.now());
-      gateRef.current?.checkSession();
+      if (document.visibilityState === 'visible') gateRef.current?.checkSession();
     }, 60_000);
     return () => clearInterval(tick);
   }, []);
@@ -258,10 +272,10 @@ export function FieldStore({
       </Notice>
     );
   }
-  if (phase.kind === 'removed') {
+  if (phase.kind === 'removed' || phase.kind === 'not-removed') {
     return (
       <Notice>
-        <p className="text-base">{text.REMOVED_TEXT}</p>
+        <p className="text-base">{phase.kind === 'removed' ? text.REMOVED_TEXT : text.NOT_REMOVED_TEXT}</p>
       </Notice>
     );
   }

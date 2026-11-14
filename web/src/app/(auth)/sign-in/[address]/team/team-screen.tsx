@@ -8,13 +8,13 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import type { BrowserSignInConfig } from '@/lib/config';
 import { belongsTo, callApi, companyAuth } from '@/lib/firebase-client';
-import { signOutOnRefusal } from '@/lib/field/sign-out';
+import { signOutOnRefusal, signOutOrShow, type FailedSignOut } from '@/lib/field/sign-out';
 import type { LockReason } from '@/lib/field/unsent';
 import { endsSession, meOutcome } from '@/lib/sign-in/outcome';
 import { fullTeam, signedInMember } from '@/lib/team/screen';
 import type { TeamView } from '@/lib/team/service';
 import { FocusedPanel } from '../../../focused-panel';
-import { failedSignOut, WorkNotSecured } from '../work-not-secured';
+import { WorkNotSecured } from '../work-not-secured';
 import { Panel } from '../../../panel';
 import { TeamBoard } from './team-board';
 
@@ -33,8 +33,7 @@ type Phase =
   // the company's sign-in page says what to do.
   | { name: 'finish-sign-in' }
   | { name: 'not-owner' }
-  | { name: 'unavailable' }
-  | { name: 'not-secured' }
+  | FailedSignOut
   | { name: 'ready'; user: User; companyId: string; team: Extract<TeamView, { view: 'full' }> };
 
 export function TeamScreen(props: TeamScreenProps) {
@@ -58,8 +57,7 @@ function CompanyTeam({ address, companyName, tenantId, config }: TeamScreenProps
     authRef.current = auth;
     // The latest sign-in wins: an answer for a user who has since signed out is dropped.
     const stale = (user: User) => authRef.current?.currentUser !== user;
-    const signOutOrUnavailable = (refusal: LockReason) =>
-      signOutOnRefusal(auth, tenantId, config, refusal).catch((error) => setPhase(failedSignOut(error)));
+    const signOutOrUnavailable = (refusal: LockReason) => signOutOrShow(() => signOutOnRefusal(auth, tenantId, config, refusal), setPhase);
 
     async function open(user: User) {
       setPhase({ name: 'checking' });
@@ -126,7 +124,7 @@ function CompanyTeam({ address, companyName, tenantId, config }: TeamScreenProps
         </FocusedPanel>
       );
     case 'not-secured':
-      return <WorkNotSecured />;
+      return <WorkNotSecured retry={phase.retry} />;
     case 'unavailable':
       return (
         <FocusedPanel title="We could not open the team">
@@ -144,12 +142,9 @@ function CompanyTeam({ address, companyName, tenantId, config }: TeamScreenProps
           companyId={phase.companyId}
           initial={phase.team}
           onSignInAgain={async () => {
-            try {
-              if (authRef.current) await signOutOnRefusal(authRef.current, tenantId, config, 'sign-in-again');
-            } catch (error) {
-              return setPhase(failedSignOut(error));
-            }
-            router.push(`/sign-in/${address}`);
+            const auth = authRef.current;
+            const toSignIn = () => router.push(`/sign-in/${address}`);
+            return auth ? signOutOrShow(() => signOutOnRefusal(auth, tenantId, config, 'sign-in-again'), setPhase, toSignIn) : toSignIn();
           }}
         />
       );

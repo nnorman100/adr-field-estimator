@@ -371,6 +371,59 @@ test('a sign-in the team screen cannot remove keeps the field app signed in', as
   await expect(page.getByRole('heading', { name: team.companyName })).toBeVisible();
 });
 
+// S6-3b: the refusal is saved on the phone before the sign-in ends. A phone that cannot save it
+// keeps the person signed in and out of the screens, and "Try again" makes that same sign-out
+// again: a reload would open the team, because GET /api/me does not ask for a fresh sign-in.
+test('"Try again" after the phone could not save the refusal ends the sign-in it was told to end', async ({ page }) => {
+  await signInTo(page, team.owner);
+  await openTeam(page);
+  await page.route(`**/api/companies/${team.companyId}/invitations`, (route) =>
+    route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: 'sign_in_again' }) }),
+  );
+  await page.getByLabel('Email address to invite').fill(uniqueEmail('too-late'));
+  await page.getByRole('button', { name: 'Create invitation' }).click();
+  await expect(page.getByRole('button', { name: 'Sign in again' })).toBeVisible();
+  // The phone has no room for what keeps unsent work safe.
+  await page.evaluate(() => {
+    const phone = window as unknown as { full: boolean };
+    phone.full = true;
+    const set = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (this: Storage, key: string, value: string) {
+      if (phone.full && (key.startsWith('ds-sync/') || key.startsWith('ds-retain/'))) throw new DOMException('full', 'QuotaExceededError');
+      return set.call(this, key, value);
+    };
+  });
+  const locks = () =>
+    page.evaluate(() =>
+      Object.keys(window.localStorage)
+        .filter((key) => key.startsWith('ds-sync/'))
+        .map((key) => JSON.parse(window.localStorage.getItem(key)!) as Record<string, unknown>),
+    );
+  const notSecured = page.getByRole('heading', { name: /secure your saved work/ });
+
+  await page.getByRole('button', { name: 'Sign in again' }).click();
+  await expect(notSecured).toBeVisible();
+  await expectAccessible(page);
+  await expect(page.getByRole('heading', { name: 'Members', exact: true })).toHaveCount(0);
+
+  // Still no room: the same screen, nothing signed out, nothing saved.
+  await page.getByRole('button', { name: 'Try again' }).click();
+  await expect(page.getByRole('button', { name: 'Try again' })).toBeEnabled();
+  await expect(notSecured).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/sign-in/${team.address}/team$`));
+  expect(await locks()).toEqual([]);
+
+  // Room again: the sign-in ends, with the refusal saved first, and the sign-in page opens.
+  await page.evaluate(() => {
+    (window as unknown as { full: boolean }).full = false;
+  });
+  await page.getByRole('button', { name: 'Try again' }).click();
+  await expect(page).toHaveURL(new RegExp(`/sign-in/${team.address}$`));
+  await expect(page.getByLabel('Password')).toBeVisible();
+  expect(await locks()).toEqual([expect.objectContaining({ lockedSince: expect.any(Number), lockedReason: 'sign-in-again' })]);
+  await expectFieldSignedOut(page);
+});
+
 test('a team change after the sign-in has grown old asks the owner to sign in again', async ({ page }) => {
   await signInTo(page, team.owner);
   await openTeam(page);

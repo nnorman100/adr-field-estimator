@@ -1,25 +1,29 @@
 import { disableNetwork, enableNetwork } from 'firebase/firestore';
 import { getIdTokenResult } from 'firebase/auth';
 import { callApi } from '@/lib/firebase-client';
-import { appCheckSeam, discardFieldWork, fieldUser, settle, type FieldClient } from '@/lib/field-db';
-import { readMe, updateMe, type DsMe } from './ds-me';
+import { appCheckSeam, fieldUser, settle, type FieldClient } from '@/lib/field-db';
+import { meKey, readMe, updateMe, type DsMe } from './ds-me';
 import { sessionValid, SyncGate, type GateState, type MeFacts } from './sync-gate';
-import { lockWork } from './retention';
-import { lockOutlived, noteUnlocked, savedLock, type LockReason } from './unsent';
+import { evaluate, onWorkRemoved, type RetentionEvent } from './retention';
+import { savedReason } from './unsent';
 
 // Runs the sync gate for one person's started field client (S6-3), and does what each of its
 // answers asks of the phone:
-// - open: the server let this person in, so any earlier lock is cleared, the unsent mark is
-//   cleared once the queue has been sent, and the ds-me row gets the company id, role,
-//   capabilities and sign-in time for the next offline start;
-// - a refusal: the work stays, locked, and the refusal is saved on the phone, so a start with no
-//   answer is locked too; a phone that cannot save it keeps everything as it is, the gate stays
-//   shut, and the next refusal tries again. It is saved whatever the sign-in's age, so a phone reopened past the role's limit still starts the
-//   clock (S6-3b). A disabled member's, inactive company's or signed-out (revoked or ended)
-//   sign-in's work is removed after 30 days of refusals (owner decision O5), and never sent once
-//   past that, even when the server lets the person in again. The gate asks whether it is past that
-//   after every answer, whenever the page is shown again and every minute, whatever the answer or
-//   the sign-in's age (S6-3b).
+// - open: the unsent mark is cleared once the queue has been sent, and the ds-me row gets the
+//   company id, role, capabilities and sign-in time for the next offline start;
+// - a refusal: the work stays, locked, so a start with no answer is locked too.
+// Whether the work is locked, and whether it may still be sent at all, is not decided here: every
+// decision of the gate is told to the phone's one retention routine (retention.ts, S6-3b), which
+// answers with the person's state.
+// - A refusal, and a saved sign-in found past its role's limit, are told before anything else is
+//   judged, so the 30-day clock (O5) starts whatever the sign-in's age and whether or not the server
+//   answered. A phone that cannot save it keeps everything as it is, the gate stays shut, and it
+//   asks again.
+// - The server letting the person in lifts the lock, unless the work is past the limit: that work is
+//   never sent. The gate asks after every answer, whenever the page is shown again and every minute,
+//   and stops for good once it is.
+// - When that routine removes this person's work, from whichever of the phone's entry points, the
+//   gate stops and the shell is told ('removed').
 // The gate starts paused when the page is hidden by the time the client has started; showing the
 // page resumes it (field-store.tsx).
 // The gate judges the person's ds-me row (read again before each check) against the role's session
@@ -36,9 +40,18 @@ export function runFieldSync(
   now: () => number = Date.now,
 ): SyncGate {
   const { person } = client;
-  const lock = savedLock(person.tenantId, person.uid);
-  const initial = lock === null ? undefined : ({ kind: 'locked', reason: lock } as const);
   let row = saved;
+  const tell = (event: RetentionEvent) => evaluate(now(), event).state;
+  // The saved sign-in is judged first: one that counts again lifts a lock only its age had made.
+  tell({ kind: 'entry', person, saved });
+  const lock = savedReason(person.tenantId, person.uid);
+  // A sign-in past its limit shows as "sign in again".
+  const initial = lock === null ? undefined : ({ kind: 'locked', reason: lock === 'sign-in-expired' ? 'sign-in-again' : lock } as const);
+  const stopWatching = onWorkRemoved((removed) => {
+    if (removed !== meKey(person.tenantId, person.uid)) return;
+    gate.stop();
+    onEvent({ removed: true });
+  });
   const gate: SyncGate = new SyncGate({
     async ask() {
       const newer = await readMe(person.tenantId, person.uid);
@@ -57,8 +70,10 @@ export function runFieldSync(
     initial,
     session: () => fieldUser(person),
     sessionValid: (at) => sessionValid(row, at),
-    onRefused: refused,
-    mayOpen: () => !retire(),
+    onRefused: (reason) => tell({ kind: 'refused', person, reason }) !== 'unsaved',
+    onExpired: () => tell({ kind: 'refused', person, reason: 'sign-in-expired' }) !== 'unsaved',
+    mayOpen: (opening) => tell(opening ? { kind: 'let-in', person } : { kind: 'entry', person, saved: row }) !== 'expired',
+    onStopped: stopWatching,
     startSuspended: typeof document !== 'undefined' && document.visibilityState === 'hidden',
     onState: apply,
   });
@@ -66,24 +81,9 @@ export function runFieldSync(
   function apply(state: GateState): void {
     onEvent({ state });
     if (state.kind === 'open') {
-      noteUnlocked(person.tenantId, person.uid);
       void settle(client).catch(() => undefined);
       void remember(row, state.facts);
     }
-  }
-
-  function refused(reason: LockReason): void {
-    if (lockWork(person, reason, now()) !== null) retire();
-  }
-
-  // Past the O5 limit, the work is removed and the gate stops for good: true when it was.
-  function retire(): boolean {
-    if (!lockOutlived(person.tenantId, person.uid, now())) return false;
-    gate.stop();
-    void discardFieldWork(person, { lockHeld: true }).then((result) => {
-      if (result === 'discarded') onEvent({ removed: true });
-    });
-    return true;
   }
 
   async function remember(base: DsMe, facts: MeFacts): Promise<void> {
@@ -112,10 +112,9 @@ export function runFieldSync(
     }
   }
 
-  if (initial) {
-    apply(initial);
-    refused(initial.reason);
-  }
-  gate.start();
+  // A lock saved by an earlier refusal goes through the same handling as a new one. Work already
+  // past the limit is not asked about: the routine removes it.
+  if (initial) apply(initial);
+  if (tell(lock ? { kind: 'refused', person, reason: lock } : { kind: 'entry', person }) !== 'expired') gate.start();
   return gate;
 }

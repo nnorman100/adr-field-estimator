@@ -413,4 +413,92 @@ test.describe('the field shell removes outlived locked work when it is shown aga
     await hideFromDay29ToDay31(page, world, ben);
     await expect(page.getByText('Your jobs will show here.')).toBeVisible();
   });
+
+  test('open for the person whose work it is: the shell says it was removed', async ({ context, page, lane }) => {
+    const world = await seedCompany();
+    const harness = await FieldPhone.open(context, lane);
+    const person = await harness.signIn(world, world.owner);
+    expect(await harness.call('start', person, 'persistent')).toBe('persistent');
+    await harness.call('setMark', person, { writes: 1, unsentSince: Date.now(), lockedSince: Date.now() - 20 * DAY, lockedReason: 'company-inactive' });
+    await harness.page.close();
+    lane.drop('/api/me');
+    await controlVisibility(page);
+    await page.clock.install();
+    await openShell(page, lane, world, world.owner);
+    await expect(page.getByText(text.LOCKED_INACTIVE_TEXT)).toBeVisible();
+    await hideFromDay29ToDay31(page, world, world.owner);
+    await expect(page.getByText(text.REMOVED_TEXT)).toBeVisible();
+    await expect(page.getByText(text.LOCKED_INACTIVE_TEXT)).toHaveCount(0);
+  });
+
+  test('open on another company\'s "Keep jobs on this phone?" question', async ({ context, page, lane }) => {
+    const [one, two] = [await seedCompany({ people: ['owner', 'ben'] }), await seedCompany()];
+    const ben = one.people.ben!;
+    const harness = await FieldPhone.open(context, lane);
+    await lockedAndSignedOut(harness, one, ben);
+    await harness.page.close();
+    await controlVisibility(page);
+    await page.clock.install();
+    await page.goto(`${lane.appUrl}/field`);
+    await saveRow(page, lane, two, two.owner, 'Company Two');
+    await page.reload();
+    await expect(page.getByRole('heading', { name: text.KEEP_TITLE })).toBeVisible();
+    await hideFromDay29ToDay31(page, one, ben);
+    await expect(page.getByRole('heading', { name: text.KEEP_TITLE })).toBeVisible();
+  });
+
+  test('left open and shown across the limit, with nothing hidden or shown again', async ({ context, page, lane }) => {
+    const world = await seedCompany();
+    const harness = await FieldPhone.open(context, lane);
+    await lockedAndSignedOut(harness, world, world.owner);
+    await harness.page.close();
+    await page.clock.install();
+    await page.goto(`${lane.appUrl}/field`);
+    await expect(page.getByRole('heading', { name: 'Sign in to continue' })).toBeVisible();
+    const key = unsentKey(world.tenantId, world.owner.uid);
+    const mark = JSON.parse((await getLocal(page, key))!) as Record<string, unknown>;
+    await setLocal(page, key, JSON.stringify({ ...mark, lockedSince: Date.now() - 29 * DAY }));
+    await page.clock.fastForward('48:00:00');
+    await expect.poll(() => hasDatabase(page, world.owner.uid)).toBe(false);
+    expect(await getLocal(page, key)).toBeNull();
+  });
+
+  // A saved sign-in past its role's limit starts the 30 days with no refusal from any server.
+  test('a sign-in past its role\'s limit, opened with no signal and no refusal saved, is locked out from then; shown again 30 days later, the work is removed', async ({ context, page, lane }) => {
+    const world = await seedCompany();
+    const harness = await FieldPhone.open(context, lane);
+    const person = await harness.signIn(world, world.owner);
+    expect(await harness.call('start', person, 'persistent')).toBe('persistent');
+    await harness.call('setMark', person, { writes: 1, unsentSince: Date.now(), lockedSince: null });
+    await harness.page.close();
+    lane.drop('/api/me');
+    const key = unsentKey(world.tenantId, world.owner.uid);
+    const mark = async () => JSON.parse((await getLocal(page, key)) ?? 'null') as Record<string, unknown> | null;
+    await controlVisibility(page);
+    await page.clock.install();
+    const opened = Date.now();
+    await openShell(page, lane, world, world.owner, 31);
+    await expect(page.getByRole('heading', { name: text.ONLINE_ONCE_TITLE })).toBeVisible();
+    await expect.poll(mark).toMatchObject({ unsentSince: expect.any(Number), lockedSince: expect.any(Number), lockedReason: 'sign-in-expired' });
+    const since = (await mark())!.lockedSince as number;
+    expect(Math.abs(since - opened)).toBeLessThan(60_000);
+
+    // 29 days on, hidden and shown: still there, and the first time stands.
+    await setShown(page, false);
+    await page.clock.fastForward(29 * DAY);
+    await setShown(page, true);
+    await page.waitForTimeout(1000);
+    expect(await hasDatabase(page, world.owner.uid)).toBe(true);
+    expect(await mark()).toMatchObject({ lockedSince: since });
+
+    await setShown(page, false);
+    await page.clock.fastForward(2 * DAY);
+    await setShown(page, true);
+    await expect.poll(() => hasDatabase(page, world.owner.uid)).toBe(false);
+    await expect(page.getByText(text.REMOVED_TEXT)).toBeVisible();
+    // Nothing of the work is left. The saved sign-in is still past its limit, so the person stays
+    // locked out, from now.
+    await expect.poll(mark).toMatchObject({ writes: 0, unsentSince: null, lockedReason: 'sign-in-expired' });
+    expect((await mark())!.lockedSince as number).toBeGreaterThan(since + 30 * DAY);
+  });
 });

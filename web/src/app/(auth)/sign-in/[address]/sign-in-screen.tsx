@@ -21,9 +21,9 @@ import {
 import { saveMe } from '@/lib/field/ds-me';
 import { prepareFieldShell } from '@/lib/field/register-worker';
 import { meFacts } from '@/lib/field/sync-gate';
-import { keepCleanupContext, letIn, runRetention, whenShownAgain } from '@/lib/field/retention';
+import { evaluate, watchRetention } from '@/lib/field/retention';
 import type { LockReason } from '@/lib/field/unsent';
-import { hasUnsentWork, signOutDiscarding, signOutKeeping, signOutOnRefusal } from '@/lib/field/sign-out';
+import { hasUnsentWork, signOutDiscarding, signOutKeeping, signOutOnRefusal, signOutOrShow } from '@/lib/field/sign-out';
 import { endsSession, errorCode, signInErrorMessage, type MeOutcome } from '@/lib/sign-in/outcome';
 import { rememberSignInAddress } from '@/lib/sign-in/remember';
 import { offersCompanyScreen } from '@/lib/profile/screen';
@@ -37,7 +37,7 @@ import { SecondStepSection } from '../../second-step/second-step-section';
 import { InvitationScreen } from './invitation-screen';
 import { UnsentSignOutDialog, type UnsentChoice } from './unsent-sign-out-dialog';
 import { NOT_READY_OFFLINE_TEXT, PREPARING_TEXT } from './offline-ready-text';
-import { failedSignOut, WorkNotSecured } from './work-not-secured';
+import { WorkNotSecured } from './work-not-secured';
 
 export type SignInScreenProps = {
   address: string;
@@ -57,8 +57,9 @@ type Screen =
   | { name: 'checking' }
   // Signed in: the field worker is being installed so the field app opens with no signal.
   | { name: 'preparing' }
-  // A sign-out the app had to make could not save the refusal first: nothing was signed out.
-  | { name: 'not-secured' }
+  // A sign-out the app had to make could not save the refusal first: nothing was signed out, and
+  // `retry` makes that sign-out again.
+  | { name: 'not-secured'; retry: () => Promise<void> }
   // The password or Google account was right and the person has a second step: the code is next.
   | { name: 'code'; challenge: SecondStepChallenge }
   // A signed-in person adds an authenticator app (the required first setup is the outcome below).
@@ -115,13 +116,11 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
   );
 
   const refuse = useCallback(
-    async (message: string, refusal: LockReason) => {
-      try {
-        await endSession(message, refusal);
-      } catch (error) {
-        setScreen(failedSignOut(error).name === 'not-secured' ? { name: 'not-secured' } : { name: 'outcome', outcome: { kind: 'unavailable' } });
-      }
-    },
+    (message: string, refusal: LockReason) =>
+      signOutOrShow(
+        () => endSession(message, refusal),
+        (failed) => setScreen(failed.name === 'not-secured' ? failed : { name: 'outcome', outcome: { kind: 'unavailable' } }),
+      ),
     [endSession],
   );
 
@@ -163,10 +162,11 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
       // is not saved. The field worker is installed here too, and the signed-in screen waits for
       // it ("Getting DryScope ready…"), so a phone that loses signal before ever opening the field
       // app can still open it; when that does not finish in time, the screen says so. The server
-      // just let this person in, so a refusal saved on the phone for them is lifted, unless it is
-      // past the 30-day limit (O5): that work is removed instead, never sent (retention.ts).
+      // just let this person in, so once the row is saved a refusal saved on the phone for them is
+      // lifted, unless it is past the 30-day limit (O5): that work is removed instead, never sent
+      // (retention.ts), while this screen goes on. The row goes first, so the phone never finds an
+      // old sign-in with no lock.
       if (outcome.kind === 'signed-in') {
-        await letIn({ tenantId, uid: user.uid, config });
         const authTime = await user.getIdTokenResult().then(
           (result) => Date.parse(result.authTime),
           () => NaN,
@@ -181,6 +181,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
           ...(meFacts(body) ?? {}),
           ...(Number.isFinite(authTime) ? { authTime } : {}),
         });
+        evaluate(Date.now(), { kind: 'let-in', person: { tenantId, uid: user.uid, config } });
         if ((authRef.current?.currentUser ?? null) !== user) return;
         setScreen({ name: 'preparing' });
         const ready = await prepareFieldShell();
@@ -192,13 +193,9 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
     [address, companyName, config, refuse, showSignedOut, tenantId],
   );
 
-  // Work locked past the 30-day limit (O5), of anyone on this phone (S6-3b): as the page opens and
-  // each time it is shown again.
-  useEffect(() => {
-    keepCleanupContext(tenantId, config);
-    void runRetention();
-    return whenShownAgain(() => void runRetention());
-  }, [config, tenantId]);
+  // The phone's retention routine (O5, S6-3b), for anyone on this phone: as the page opens and each
+  // time it is shown again.
+  useEffect(() => watchRetention({ tenantId, config }), [config, tenantId]);
 
   useEffect(() => {
     rememberSignInAddress(address);
@@ -282,7 +279,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
     );
   }
 
-  if (screen.name === 'not-secured') return <WorkNotSecured />;
+  if (screen.name === 'not-secured') return <WorkNotSecured retry={screen.retry} />;
 
   if (screen.name === 'preparing') {
     return (

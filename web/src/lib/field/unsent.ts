@@ -20,6 +20,10 @@
 import type { GateState } from './sync-gate';
 
 export type LockReason = Extract<GateState, { kind: 'locked' }>['reason'];
+// What a lock is saved under: a refusal, or 'sign-in-expired' when nothing refused the person and
+// their saved sign-in ran past its role's limit (S6-3b). The shell shows that one as "sign in
+// again"; unlike a refusal, a newer saved sign-in that counts lifts it (retention.ts).
+export type SavedReason = LockReason | 'sign-in-expired';
 
 const LOCK_REASONS: Record<LockReason, true> = {
   'verify-email': true,
@@ -36,13 +40,15 @@ const LOCK_REASONS: Record<LockReason, true> = {
 // The refusals whose locked work is removed after 30 days (O5): the owner turned the person or the
 // company off, or the sign-in must be made again. Disabling a member revokes their sign-in, which
 // the phone may see as the server's "revoked" or, when Firebase ends the sign-in itself first, as no
-// sign-in at all ("sign in again"); every one of those paths counts. A later plain "sign in again"
-// does not replace a more specific saved reason.
-export const RETAINED_REASONS: ReadonlySet<LockReason> = new Set<LockReason>([
+// sign-in at all ("sign in again"), or as a saved sign-in past its limit that no server was asked
+// about; every one of those paths counts. A later plain "sign in again" does not replace a more
+// specific saved reason, and a sign-in's age replaces none of these.
+export const RETAINED_REASONS: ReadonlySet<SavedReason> = new Set<SavedReason>([
   'member-disabled',
   'company-inactive',
   'session-revoked',
   'sign-in-again',
+  'sign-in-expired',
 ]);
 
 // How long work stays locked on the phone under a refusal in RETAINED_REASONS before it is removed.
@@ -56,7 +62,7 @@ export type UnsentMark = {
   // When the server first refused this person since they last got through; null when it has not.
   lockedSince: number | null;
   // Which refusal it was, while lockedSince is set.
-  lockedReason?: LockReason;
+  lockedReason?: SavedReason;
   // Every unsent write was made in a memory cache (Online only, an iPhone browser tab, the
   // fallback): nothing of it is kept once that window closes.
   memoryOnly?: true;
@@ -64,7 +70,8 @@ export type UnsentMark = {
 
 const EMPTY: UnsentMark = { writes: 0, unsentSince: null, lockedSince: null };
 
-export const unsentKey = (tenantId: string, uid: string): string => `ds-sync/${tenantId}/${uid}`;
+const UNSENT_PREFIX = 'ds-sync/';
+export const unsentKey = (tenantId: string, uid: string): string => `${UNSENT_PREFIX}${tenantId}/${uid}`;
 
 function parse(raw: string | null): UnsentMark | null {
   if (raw === null) return { ...EMPTY };
@@ -78,7 +85,8 @@ function parse(raw: string | null): UnsentMark | null {
     if (unsentSince !== null && value.memoryOnly === true) mark.memoryOnly = true;
     if (lockedSince !== null) {
       const reason = value.lockedReason;
-      mark.lockedReason = typeof reason === 'string' && Object.hasOwn(LOCK_REASONS, reason) ? (reason as LockReason) : 'sign-in-again';
+      const known = typeof reason === 'string' && (Object.hasOwn(LOCK_REASONS, reason) || reason === 'sign-in-expired');
+      mark.lockedReason = known ? (reason as SavedReason) : 'sign-in-again';
     }
     return mark;
   } catch {
@@ -150,21 +158,31 @@ export function settled(tenantId: string, uid: string, writes: number): void {
 
 // The server refused this person (O5). Returns when the refusals began, or null when the lock could
 // not be saved.
-export function noteLocked(tenantId: string, uid: string, reason: LockReason, now = Date.now()): number | null {
+export function noteLocked(tenantId: string, uid: string, reason: SavedReason, now = Date.now()): number | null {
   let since = now;
   const saved = change(tenantId, uid, (mark) => {
     since = mark.lockedSince ?? now;
-    const kept = reason === 'sign-in-again' && mark.lockedReason !== undefined && RETAINED_REASONS.has(mark.lockedReason);
+    const before = mark.lockedReason;
+    const kept =
+      before !== undefined &&
+      RETAINED_REASONS.has(before) &&
+      (reason === 'sign-in-expired' || (reason === 'sign-in-again' && before !== 'sign-in-expired'));
     return { ...mark, lockedSince: since, lockedReason: kept ? mark.lockedReason : reason };
   });
   return saved ? since : null;
 }
 
-// The refusal this person's work is locked under on this phone, or null when it is not locked.
-export function savedLock(tenantId: string, uid: string): LockReason | null {
+// What this person's work is locked under on this phone, or null when it is not locked.
+export function savedReason(tenantId: string, uid: string): SavedReason | null {
   const mark = readUnsent(tenantId, uid);
   if (mark === 'unreadable') return 'sign-in-again';
   return mark.lockedSince === null ? null : (mark.lockedReason ?? 'sign-in-again');
+}
+
+// The same as the shell shows it: a sign-in past its limit is "sign in again".
+export function savedLock(tenantId: string, uid: string): LockReason | null {
+  const reason = savedReason(tenantId, uid);
+  return reason === 'sign-in-expired' ? 'sign-in-again' : reason;
 }
 
 // True when this person's work has been locked under a refusal in RETAINED_REASONS for longer than
@@ -176,22 +194,29 @@ export function lockOutlived(tenantId: string, uid: string, now: number): boolea
   return RETAINED_REASONS.has(mark.lockedReason ?? 'sign-in-again') && now - mark.lockedSince > LOCKED_LIMIT_MS;
 }
 
-// Every person of this company whose lock outlived the limit on this phone, signed in or not.
-export function outlivedLocks(tenantId: string, now: number): string[] {
-  const prefix = unsentKey(tenantId, '');
-  const found: string[] = [];
+// Everyone on this phone, in every company, whose lock outlived the limit, signed in or not.
+export function allOutlivedLocks(now: number): { tenantId: string; uid: string }[] {
+  const found: { tenantId: string; uid: string }[] = [];
   try {
     const storage = window.localStorage;
     for (let index = 0; index < storage.length; index += 1) {
       const key = storage.key(index);
-      if (key === null || !key.startsWith(prefix)) continue;
-      const uid = key.slice(prefix.length);
-      if (uid.length > 0 && !uid.includes('/') && lockOutlived(tenantId, uid, now)) found.push(uid);
+      if (key === null || !key.startsWith(UNSENT_PREFIX)) continue;
+      const [tenantId, uid, ...more] = key.slice(UNSENT_PREFIX.length).split('/');
+      if (!tenantId || !uid || more.length > 0) continue;
+      if (lockOutlived(tenantId, uid, now)) found.push({ tenantId, uid });
     }
   } catch {
     return [];
   }
   return found;
+}
+
+// Every person of this company whose lock outlived the limit on this phone, signed in or not.
+export function outlivedLocks(tenantId: string, now: number): string[] {
+  return allOutlivedLocks(now)
+    .filter((person) => person.tenantId === tenantId)
+    .map((person) => person.uid);
 }
 
 export function noteUnlocked(tenantId: string, uid: string): void {

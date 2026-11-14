@@ -7,13 +7,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import type { BrowserSignInConfig } from '@/lib/config';
 import { manifestDigest, type FieldManifest } from '@/lib/field/canonical';
-import { signOutOnRefusal } from '@/lib/field/sign-out';
+import { signOutOnRefusal, signOutOrShow, type FailedSignOut } from '@/lib/field/sign-out';
 import { belongsTo, callApi, companyAuth } from '@/lib/firebase-client';
 import { endsSession, meOutcome } from '@/lib/sign-in/outcome';
 import { fieldDatabase, readShownDraft } from '@/lib/submissions/field-reader';
 import { draftSummary, finisherOf, jobOf, outcomeOf, type JobOnScreen, type Next } from '@/lib/submissions/screen';
 import { FocusedPanel } from '../../../../../focused-panel';
-import { failedSignOut, WorkNotSecured } from '../../../work-not-secured';
+import { WorkNotSecured } from '../../../work-not-secured';
 import { Panel } from '../../../../../panel';
 
 export type FinishScreenProps = {
@@ -31,8 +31,7 @@ type Phase =
   | { name: 'checking' }
   | { name: 'signed-out' }
   | { name: 'finish-sign-in' }
-  | { name: 'unavailable' }
-  | { name: 'not-secured' }
+  | FailedSignOut
   | { name: 'not-found' }
   | ({ name: 'ready' } & Ready);
 
@@ -63,7 +62,8 @@ function Finish({ address, companyName, tenantId, jobId, config }: FinishScreenP
       if (stale()) return;
       const outcome = meOutcome(me.status, me.body);
       if (endsSession(outcome)) {
-        await signOutOnRefusal(authRef.current!, tenantId, config, outcome.kind).catch((error) => setPhase(failedSignOut(error)));
+        const auth = authRef.current!;
+        await signOutOrShow(() => signOutOnRefusal(auth, tenantId, config, outcome.kind), setPhase);
         return;
       }
       if (outcome.kind === 'unavailable') return setPhase({ name: 'unavailable' });
@@ -93,7 +93,7 @@ function Finish({ address, companyName, tenantId, jobId, config }: FinishScreenP
     authRef.current = auth;
     return onAuthStateChanged(auth, (user) => {
       if (!user) return setPhase({ name: 'signed-out' });
-      if (!belongsTo(user, tenantId)) return void signOutOnRefusal(auth, tenantId, config, 'not-this-company').catch((error) => setPhase(failedSignOut(error)));
+      if (!belongsTo(user, tenantId)) return void signOutOrShow(() => signOutOnRefusal(auth, tenantId, config, 'not-this-company'), setPhase);
       void load(user);
     });
   }, [config, tenantId, load]);
@@ -133,7 +133,7 @@ function Finish({ address, companyName, tenantId, jobId, config }: FinishScreenP
         </FocusedPanel>
       );
     case 'not-secured':
-      return <WorkNotSecured />;
+      return <WorkNotSecured retry={phase.retry} />;
     case 'unavailable':
       return (
         <FocusedPanel title="We could not open this job">

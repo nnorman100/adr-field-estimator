@@ -3,7 +3,7 @@ import type { BrowserSignInConfig } from '@/lib/config';
 import { signOutCompany } from '@/lib/firebase-client';
 import { discardFieldWork, stopFieldClient } from '@/lib/field-db';
 import { forgetMe, saveMe } from './ds-me';
-import { lockWork } from './retention';
+import { evaluate } from './retention';
 import { unsentWork, type LockReason } from './unsent';
 
 // Ends this company's sign-in on the phone (S6-2). The field shell must not start from it again, so
@@ -34,14 +34,37 @@ export class WorkNotSecuredError extends Error {
   }
 }
 
+export type FailedSignOut = { name: 'not-secured'; retry: () => Promise<void> } | { name: 'unavailable' };
+
+// Makes a sign-out the server's refusal asks for (signOutOnRefusal), then `after`. When it fails,
+// `show` gets the screen to show: 'not-secured' when the refusal could not be saved, whose retry is
+// this whole call again (the same sign-out for the same refusal, then the same `after`), so the
+// refusal is saved before anything of the company can open again; otherwise the screen's own
+// "could not open".
+export async function signOutOrShow(signOut: () => Promise<void>, show: (failed: FailedSignOut) => void, after?: () => void): Promise<void> {
+  try {
+    await signOut();
+  } catch (error) {
+    show(error instanceof WorkNotSecuredError ? { name: 'not-secured', retry: () => signOutOrShow(signOut, show, after) } : { name: 'unavailable' });
+    return;
+  }
+  after?.();
+}
+
 // Every sign-out the person did not ask for: the server refused them (sign in again, a second step,
-// another company's sign-in, an account turned off). The refusal is saved with their unsent-work
-// mark, apart from the saved sign-in, before that goes, so the 30-day limit for locked work (O5)
-// runs from now even though the field shell will not start for this person again (S6-3b). Throws
-// WorkNotSecuredError, with the saved sign-in and the work left as they were, when it cannot be.
+// another company's sign-in, an account turned off). The refusal goes to the phone's retention
+// routine (retention.ts) first, which saves it apart from the saved sign-in, so the 30-day limit
+// for locked work (O5) runs from now even though the field shell will not start for this person
+// again (S6-3b). Throws WorkNotSecuredError, with the saved sign-in and the work left as they
+// were, when the phone could not save it; calling it again is the retry.
 export async function signOutOnRefusal(auth: Auth, tenantId: string, config: BrowserSignInConfig, refusal: LockReason): Promise<void> {
   const user = auth.currentUser;
-  if (user && lockWork({ tenantId, uid: user.uid, config }, refusal) === null) throw new WorkNotSecuredError();
+  if (user) {
+    const { state, done } = evaluate(Date.now(), { kind: 'refused', person: { tenantId, uid: user.uid, config }, reason: refusal });
+    if (state === 'unsaved') throw new WorkNotSecuredError();
+    // Work already past the limit is removed before the sign-in that names it goes.
+    await done;
+  }
   await leave(auth, tenantId);
 }
 

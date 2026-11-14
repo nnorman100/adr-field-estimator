@@ -1,22 +1,30 @@
+'use client';
+
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { WorkNotSecuredError } from '@/lib/field/sign-out';
 import { FocusedPanel } from '../../focused-panel';
 
 // A sign-out the app had to make could not first save the refusal on this phone (S6-3b): nothing
-// was signed out or removed, nothing of the company shows, and trying again repeats it.
+// was signed out or removed, nothing of the company shows, and "Try again" makes that same sign-out
+// again (signOutOrShow in src/lib/field/sign-out.ts), so the refusal is saved before anything else
+// can open.
 export const NOT_SECURED_TITLE = 'We couldn’t secure your saved work';
 export const NOT_SECURED_TEXT = 'This phone could not save what keeps your unsent work safe. Nothing was removed. Try again.';
 
-// The screen a failed sign-out leads to: this one when the refusal could not be saved, otherwise
-// the screen's own "could not open".
-export const failedSignOut = (error: unknown): { name: 'not-secured' } | { name: 'unavailable' } =>
-  error instanceof WorkNotSecuredError ? { name: 'not-secured' } : { name: 'unavailable' };
-
-export function WorkNotSecured() {
+export function WorkNotSecured({ retry }: { retry: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
   return (
     <FocusedPanel title={NOT_SECURED_TITLE}>
       <p>{NOT_SECURED_TEXT}</p>
-      <Button onClick={() => window.location.reload()}>Try again</Button>
+      <Button
+        disabled={busy}
+        onClick={() => {
+          setBusy(true);
+          void retry().finally(() => setBusy(false));
+        }}
+      >
+        Try again
+      </Button>
     </FocusedPanel>
   );
 }
