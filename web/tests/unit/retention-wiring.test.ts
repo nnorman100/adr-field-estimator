@@ -261,3 +261,33 @@ describe('"Try again" after a sign-out that could not save the refusal', () => {
     expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: NOW, lockedReason: 'account-disabled' });
   });
 });
+
+describe('a forced sign-out when someone else signs in meanwhile (another tab)', () => {
+  it('saves the refusal for the person refused and leaves the newer sign-in alone', async () => {
+    const auth: { currentUser: { uid: string } } = { currentUser: { uid: 'ana' } };
+    const leaving = signOutOnRefusal(auth as unknown as Auth, 't-a', config, 'sign-in-again');
+    auth.currentUser = { uid: 'ben' };
+    await leaving;
+    expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: NOW, lockedReason: 'sign-in-again' });
+    expect(forgetMe).not.toHaveBeenCalled();
+    expect(signOutCompany).not.toHaveBeenCalled();
+  });
+
+  it('"Try again" saves the refusal for the person it was for, not whoever is signed in now', async () => {
+    const auth: { currentUser: { uid: string } } = { currentUser: { uid: 'ana' } };
+    const shown: FailedSignOut[] = [];
+    const after = vi.fn();
+    full = true;
+    await signOutOrShow(() => signOutOnRefusal(auth as unknown as Auth, 't-a', config, 'sign-in-again'), (failed) => shown.push(failed), after);
+    expect(shown.map((failed) => failed.name)).toEqual(['not-secured']);
+
+    auth.currentUser = { uid: 'ben' };
+    full = false;
+    await (shown[0] as Extract<FailedSignOut, { name: 'not-secured' }>).retry();
+    expect(shown).toHaveLength(1);
+    expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: NOW, lockedReason: 'sign-in-again' });
+    expect(forgetMe).not.toHaveBeenCalled();
+    expect(signOutCompany).not.toHaveBeenCalled();
+    expect(after).toHaveBeenCalledOnce();
+  });
+});

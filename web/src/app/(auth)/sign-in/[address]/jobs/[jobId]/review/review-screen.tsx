@@ -8,11 +8,12 @@ import { Button } from '@/components/ui/button';
 import type { BrowserSignInConfig } from '@/lib/config';
 import type { EstimateView } from '@/lib/estimates/result';
 import { notReadyReasons, outcomeOf, reviewAnswerOf, reviewerOf, type Next, type ReviewJob, type Reviewer } from '@/lib/estimates/screen';
-import { signOutOfCompany } from '@/lib/field/sign-out';
+import { signOutOnRefusal, signOutOrShow, type FailedSignOut } from '@/lib/field/sign-out';
 import { belongsTo, callApi, companyAuth } from '@/lib/firebase-client';
 import { endsSession, meOutcome } from '@/lib/sign-in/outcome';
 import { FocusedPanel } from '../../../../../focused-panel';
 import { Panel } from '../../../../../panel';
+import { WorkNotSecured } from '../../../work-not-secured';
 import { EstimateDocuments, EstimatePrice, StaffNotes } from './review-documents';
 
 export type ReviewScreenProps = {
@@ -30,7 +31,7 @@ type Phase =
   | { name: 'checking' }
   | { name: 'signed-out' }
   | { name: 'finish-sign-in' }
-  | { name: 'unavailable' }
+  | FailedSignOut
   | { name: 'not-found' }
   | { name: 'prices-off' }
   | ({ name: 'ready' } & Ready);
@@ -59,7 +60,8 @@ function Review({ address, companyName, tenantId, jobId, config }: ReviewScreenP
       if (stale()) return;
       const outcome = meOutcome(me.status, me.body);
       if (endsSession(outcome)) {
-        await signOutOfCompany(authRef.current!, tenantId).catch(() => setPhase({ name: 'unavailable' }));
+        const auth = authRef.current!;
+        await signOutOrShow(() => signOutOnRefusal(auth, tenantId, config, outcome.kind), setPhase);
         return;
       }
       if (outcome.kind === 'unavailable') return setPhase({ name: 'unavailable' });
@@ -79,7 +81,7 @@ function Review({ address, companyName, tenantId, jobId, config }: ReviewScreenP
       if (!read) return setPhase({ name: 'unavailable' });
       setPhase({ name: 'ready', user, reviewer, ...read });
     },
-    [jobId, tenantId],
+    [config, jobId, tenantId],
   );
 
   useEffect(() => {
@@ -87,7 +89,7 @@ function Review({ address, companyName, tenantId, jobId, config }: ReviewScreenP
     authRef.current = auth;
     return onAuthStateChanged(auth, (user) => {
       if (!user) return setPhase({ name: 'signed-out' });
-      if (!belongsTo(user, tenantId)) return void signOutOfCompany(auth, tenantId).catch(() => setPhase({ name: 'unavailable' }));
+      if (!belongsTo(user, tenantId)) return void signOutOrShow(() => signOutOnRefusal(auth, tenantId, config, 'not-this-company'), setPhase);
       void load(user);
     });
   }, [config, tenantId, load]);
@@ -119,6 +121,8 @@ function Review({ address, companyName, tenantId, jobId, config }: ReviewScreenP
           {signInLink}
         </FocusedPanel>
       );
+    case 'not-secured':
+      return <WorkNotSecured retry={phase.retry} />;
     case 'not-found':
       return (
         <FocusedPanel title="This job could not be found">

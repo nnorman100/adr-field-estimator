@@ -104,24 +104,33 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
 
   // `refusal`: why the app ends the session, kept for the 30-day limit (O5); 'kept' for the person's
   // own sign-out that keeps their work.
+  const signedOut = useCallback((message: string | null) => {
+    setError(null);
+    setNotice(message);
+    setScreen({ name: 'signed-out' });
+  }, []);
+
   const endSession = useCallback(
     async (message: string | null, refusal: LockReason | 'kept') => {
       const auth = authRef.current;
       if (auth) await (refusal === 'kept' ? signOutKeeping(auth, tenantId) : signOutOnRefusal(auth, tenantId, config, refusal));
-      setError(null);
-      setNotice(message);
-      setScreen({ name: 'signed-out' });
+      signedOut(message);
     },
-    [config, tenantId],
+    [config, signedOut, tenantId],
   );
 
   const refuse = useCallback(
-    (message: string, refusal: LockReason) =>
-      signOutOrShow(
-        () => endSession(message, refusal),
+    (message: string, refusal: LockReason) => {
+      const auth = authRef.current;
+      return signOutOrShow(
+        async () => {
+          if (auth) await signOutOnRefusal(auth, tenantId, config, refusal);
+        },
         (failed) => setScreen(failed.name === 'not-secured' ? failed : { name: 'outcome', outcome: { kind: 'unavailable' } }),
-      ),
-    [endSession],
+        () => signedOut(message),
+      );
+    },
+    [config, signedOut, tenantId],
   );
 
   // When the server still wants the second step, Firebase is asked how many authenticator apps the

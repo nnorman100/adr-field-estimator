@@ -1,4 +1,4 @@
-import type { Auth } from 'firebase/auth';
+import type { Auth, User } from 'firebase/auth';
 import type { BrowserSignInConfig } from '@/lib/config';
 import { signOutCompany } from '@/lib/firebase-client';
 import { discardFieldWork, stopFieldClient } from '@/lib/field-db';
@@ -13,23 +13,30 @@ import { unsentWork, type LockReason } from './unsent';
 // Both sign-outs here keep the person's field cache and unsent work (S6-3), because unsent work is
 // kept through a re-sign-in (D7) and the same person signing in again sends it. Their cache is a
 // database of its own (field-db.ts), which no other person's client opens.
-async function leave(auth: Auth, tenantId: string): Promise<void> {
-  const user = auth.currentUser;
+//
+// `user` is who the sign-out was started for. When someone else has signed in since (another tab),
+// their sign-in and saved sign-in are left alone: the person this was for is signed out already.
+async function leave(auth: Auth, tenantId: string, user: User | null): Promise<void> {
+  if (!stillSignedIn(auth, user)) return;
   const removed = user ? await forgetMe(tenantId, user.uid) : null;
   if (removed === false) throw new Error('the saved sign-in may still be on this phone');
   try {
     if (user) await stopFieldClient({ tenantId, uid: user.uid });
-    await signOutCompany(auth);
+    if (stillSignedIn(auth, user)) await signOutCompany(auth);
   } catch (error) {
     if (removed) await saveMe(removed);
     throw error;
   }
 }
 
+function stillSignedIn(auth: Auth, user: User | null): boolean {
+  return (auth.currentUser?.uid ?? null) === (user?.uid ?? null);
+}
+
 // The refusal could not be saved on the phone: nothing was signed out or removed, and the screen
-// asks the person to try again.
+// asks the person to try again. `retry` is the same sign-out for the same person and refusal.
 export class WorkNotSecuredError extends Error {
-  constructor() {
+  constructor(readonly retry: () => Promise<void>) {
     super('the refusal could not be saved on this phone');
   }
 }
@@ -38,14 +45,13 @@ export type FailedSignOut = { name: 'not-secured'; retry: () => Promise<void> } 
 
 // Makes a sign-out the server's refusal asks for (signOutOnRefusal), then `after`. When it fails,
 // `show` gets the screen to show: 'not-secured' when the refusal could not be saved, whose retry is
-// this whole call again (the same sign-out for the same refusal, then the same `after`), so the
-// refusal is saved before anything of the company can open again; otherwise the screen's own
-// "could not open".
+// the same sign-out for the same person and refusal, then the same `after`, so the refusal is saved
+// before anything of the company can open again; otherwise the screen's own "could not open".
 export async function signOutOrShow(signOut: () => Promise<void>, show: (failed: FailedSignOut) => void, after?: () => void): Promise<void> {
   try {
     await signOut();
   } catch (error) {
-    show(error instanceof WorkNotSecuredError ? { name: 'not-secured', retry: () => signOutOrShow(signOut, show, after) } : { name: 'unavailable' });
+    show(error instanceof WorkNotSecuredError ? { name: 'not-secured', retry: () => signOutOrShow(error.retry, show, after) } : { name: 'unavailable' });
     return;
   }
   after?.();
@@ -56,21 +62,24 @@ export async function signOutOrShow(signOut: () => Promise<void>, show: (failed:
 // routine (retention.ts) first, which saves it apart from the saved sign-in, so the 30-day limit
 // for locked work (O5) runs from now even though the field shell will not start for this person
 // again (S6-3b). Throws WorkNotSecuredError, with the saved sign-in and the work left as they
-// were, when the phone could not save it; calling it again is the retry.
-export async function signOutOnRefusal(auth: Auth, tenantId: string, config: BrowserSignInConfig, refusal: LockReason): Promise<void> {
-  const user = auth.currentUser;
+// were, when the phone could not save it; its `retry` is the retry.
+export function signOutOnRefusal(auth: Auth, tenantId: string, config: BrowserSignInConfig, refusal: LockReason): Promise<void> {
+  return refuse(auth, auth.currentUser, tenantId, config, refusal);
+}
+
+async function refuse(auth: Auth, user: User | null, tenantId: string, config: BrowserSignInConfig, refusal: LockReason): Promise<void> {
   if (user) {
     const { state, done } = evaluate(Date.now(), { kind: 'refused', person: { tenantId, uid: user.uid, config }, reason: refusal });
-    if (state === 'unsaved') throw new WorkNotSecuredError();
+    if (state === 'unsaved') throw new WorkNotSecuredError(() => refuse(auth, user, tenantId, config, refusal));
     // Work already past the limit is removed before the sign-in that names it goes.
     await done;
   }
-  await leave(auth, tenantId);
+  await leave(auth, tenantId, user);
 }
 
 // The person's own "Sign out" when they chose Keep: nothing refused them, so nothing is locked.
 export async function signOutKeeping(auth: Auth, tenantId: string): Promise<void> {
-  await leave(auth, tenantId);
+  await leave(auth, tenantId, auth.currentUser);
 }
 
 // Whether the signed-in person may have field edits that the server does not have yet, in this
@@ -93,6 +102,6 @@ export async function signOutDiscarding(auth: Auth, tenantId: string, config: Br
     const result = await discardFieldWork({ tenantId, uid: user.uid, config });
     if (result !== 'discarded') return result;
   }
-  await leave(auth, tenantId);
+  await leave(auth, tenantId, user);
   return 'signed-out';
 }
