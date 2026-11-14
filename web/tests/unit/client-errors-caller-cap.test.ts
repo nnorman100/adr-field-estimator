@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { POST } from '@/app/api/client-errors/route';
 import {
+  MAX_CALLERS,
   REPORTS_PER_CALLER_PER_MINUTE,
   callerLimitedReports,
+  callerTableSize,
   limitedReports,
   resetClientErrorLimit,
 } from '@/lib/client-error-intake';
@@ -139,11 +141,14 @@ describe('POST /api/client-errors: the per-caller cap', () => {
   });
 
   it('does not grow without bound under many different callers', async () => {
-    for (let i = 0; i < 12_000; i++) await send([report()], { ip: `10.${i >> 8}.${i & 255}.1`, agent: 'x' });
+    for (let i = 0; i < MAX_CALLERS + 50; i++) {
+      await send([report()], { ip: `10.${i >> 8}.${i & 255}.1`, agent: 'x' });
+      expect(callerTableSize()).toBeLessThanOrEqual(MAX_CALLERS);
+    }
     // The answers stay correct after the table was trimmed: a caller still gets its own share.
     vi.setSystemTime(new Date('2026-11-14T12:05:00Z'));
     expect(await accepted(await send(batch(20), { ip: '203.0.113.1', agent: 'x' }))).toBe(20);
-  });
+  }, 30_000);
 });
 
 describe('POST /api/client-errors: the line when a caller is capped', () => {

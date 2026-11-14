@@ -36,7 +36,7 @@ export const MAX_BODY_BYTES = 8192;
 export const MAX_REPORTS = 20;
 export const REPORTS_PER_MINUTE = 60;
 export const REPORTS_PER_CALLER_PER_MINUTE = 20;
-const MAX_CALLERS = 5000;
+export const MAX_CALLERS = 5000;
 
 const reportSchema = z.object({
   name: z.string().max(64),
@@ -100,6 +100,11 @@ let capLoggedAt = -Infinity;
 // Reports left unwritten by a caller's own cap since the instance started. Counted, never logged.
 export function callerLimitedReports(): number {
   return callerLimited;
+}
+
+// Callers held right now, for the test that proves the table stays bounded.
+export function callerTableSize(): number {
+  return callers.size;
 }
 
 function callerKey(headers: Headers): string | null {
