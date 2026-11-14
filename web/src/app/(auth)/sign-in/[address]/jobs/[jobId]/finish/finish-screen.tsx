@@ -139,11 +139,11 @@ function Finish({ address, companyName, tenantId, jobId, config }: FinishScreenP
         </FocusedPanel>
       );
     case 'ready':
-      return <FinishActions {...phase} reload={() => void load(phase.user)} />;
+      return <FinishActions {...phase} reviewHref={`/sign-in/${address}/jobs/${encodeURIComponent(jobId)}/review`} reload={() => void load(phase.user)} />;
   }
 }
 
-function FinishActions({ user, canFinish, job, manifest, reload }: Ready & { reload: () => void }) {
+function FinishActions({ user, canFinish, job, manifest, reviewHref, reload }: Ready & { reviewHref: string; reload: () => void }) {
   const [current, setCurrent] = useState<JobOnScreen>(job);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<Problem | null>(null);
@@ -254,6 +254,9 @@ function FinishActions({ user, canFinish, job, manifest, reload }: Ready & { rel
       {submitted ? (
         <>
           <p>This draft is recorded and locked. Nobody can change it.</p>
+          <Button asChild>
+            <Link href={reviewHref}>Review the estimate</Link>
+          </Button>
           {canFinish ? (
             <>
               <p className="text-sm">
