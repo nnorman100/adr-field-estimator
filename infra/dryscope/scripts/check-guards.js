@@ -43,6 +43,10 @@ const PROTECTED = {
     // Screening fails closed, so losing the template or the floor setting stops every AI call.
     'google_model_armor_template.text',
     'google_model_armor_floorsetting.project[0]',
+    // Stage TC (TC-9): the synthetic monitor's password secret (test only), and the App Check key,
+    // whose loss turns App Check off for every phone until a new key ships in the app.
+    'google_secret_manager_secret.synthetic_password[0]',
+    'google_recaptcha_enterprise_key.web',
   ],
   app: [
     'google_cloud_run_v2_service.svc["api"]',

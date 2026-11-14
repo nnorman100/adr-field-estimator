@@ -19,3 +19,14 @@ resource "google_firestore_database" "field" {
 
   depends_on = [google_project_service.apis]
 }
+
+# D-023, the 35-day backup window: a daily backup of the field database, each kept 14 days
+# (Firestore allows up to 14 weeks: documents/firebase.google.com/docs/firestore/backups). Backups
+# are billed by stored size. The plan check refuses deleting the schedule.
+resource "google_firestore_backup_schedule" "field_daily" {
+  project   = var.project_id
+  database  = google_firestore_database.field.name
+  retention = "1209600s" # 14 days
+
+  daily_recurrence {}
+}
