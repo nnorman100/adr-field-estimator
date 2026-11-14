@@ -3,7 +3,7 @@
 
 import { Dec, money } from './decimal';
 import { isObj, type JObj, type Json } from './json';
-import { checkOverrides, distinctRooms, validateInspection, type Inspection } from './inspection';
+import { checkOverrides, checkRoomItems, distinctRooms, validateInspection, type Inspection } from './inspection';
 import { checkPublishable, contentHash, effectiveTable, parseTable, type Table } from './table';
 import { priceAndRange, type End, type Priced } from './totals';
 import { advisoryWarnings } from './warnings';
@@ -212,11 +212,12 @@ export function checkTable(
   }
 }
 
-/** Load a saved draft as the server does: validate it, then check room names and overrides. */
-function savedInspection(raw: Json): Inspection {
+/** Load a saved draft as the server does: validate it, then check room names, overrides and room item ids. */
+function savedInspection(raw: Json, table: Table): Inspection {
   const data = validateInspection(raw);
   distinctRooms(data);
   checkOverrides(data);
+  checkRoomItems(data, new Set(table.items.filter((item) => item.quantity_source === 'room:typed').map((item) => item.item_id)));
   return data;
 }
 
@@ -233,7 +234,7 @@ export function priceEstimate(table: Json, job: EstimateJob): Estimate | Refusal
   }
   let data: Inspection;
   try {
-    data = savedInspection(job.inspection);
+    data = savedInspection(job.inspection, used);
   } catch (error) {
     return { ok: false, stage: 'inspection', error: message(error) };
   }
