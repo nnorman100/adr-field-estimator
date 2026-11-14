@@ -32,6 +32,15 @@ test('pages and API answers carry the security headers', async ({ page, request 
   expectHeaders((await request.get('/sw.js')).headers());
 });
 
+test('the photo download path gets the other headers but no app-wide content policy, so its own sandboxed one wins', async ({ request }) => {
+  const path = '/api/jobs/5f0c6d0e-1b1a-4c55-9a43-1d2f7c9b0a11/photos/0b7d2c4e-8f61-4a4f-b3c2-6e9a1f0d5c22';
+  for (const query of ['?kind=photo', '?kind=original']) {
+    const headers = (await request.get(`${path}${query}`)).headers(); // refused with 401: no sign-in
+    expect(headers).toMatchObject(COMMON);
+    expect(headers['content-security-policy']).toBeUndefined();
+  }
+});
+
 test('the field worker keeps its own cache rule beside the security headers', async ({ request }) => {
   const response = await request.get('/sw.js');
   expect(response.headers()['cache-control']).toBe('no-cache, no-store, must-revalidate');

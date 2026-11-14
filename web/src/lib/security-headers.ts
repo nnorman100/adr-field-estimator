@@ -5,14 +5,27 @@
 // it names a source Google serves, so it cannot break sign-in. A full script and connect policy is
 // a follow-up (docs/ARCHITECTURE.md, "Browser security headers"). X-Frame-Options repeats the
 // framing ban for browsers that predate frame-ancestors.
+//
+// Next sets these before the route answers and then drops a route's own header of the same name.
+// The photo download (src/lib/photos/http.ts) sends a stricter policy of its own, so the content
+// policy rule skips that path and the route's policy is the one the browser gets.
 
-const CONTENT_SECURITY_POLICY = "frame-ancestors 'none'; object-src 'none'; base-uri 'self'";
+type Header = { key: string; value: string };
 
-export const SECURITY_HEADERS: readonly { key: string; value: string }[] = [
-  { key: 'Content-Security-Policy', value: CONTENT_SECURITY_POLICY },
+export const SECURITY_HEADERS: readonly Header[] = [
   { key: 'X-Frame-Options', value: 'DENY' },
   { key: 'X-Content-Type-Options', value: 'nosniff' },
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
   // One year, this host only. No includeSubDomains or preload: those are hard to take back.
   { key: 'Strict-Transport-Security', value: 'max-age=31536000' },
+];
+
+export const CONTENT_SECURITY_POLICY: Header = {
+  key: 'Content-Security-Policy',
+  value: "frame-ancestors 'none'; object-src 'none'; base-uri 'self'",
+};
+
+export const SECURITY_HEADER_RULES: { source: string; headers: Header[] }[] = [
+  { source: '/:path*', headers: [...SECURITY_HEADERS] },
+  { source: '/:path((?!api/jobs/[^/]+/photos/[^/]+/?$).*)', headers: [CONTENT_SECURITY_POLICY] },
 ];

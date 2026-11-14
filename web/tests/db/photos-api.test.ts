@@ -20,6 +20,7 @@ vi.mock('@/lib/photos/services', () => ({ photosServices: () => live.harness!.ph
 const jobsRoute = await import('@/app/api/jobs/route');
 const photoRoute = await import('@/app/api/jobs/[jobId]/photos/[photoId]/route');
 const { MAX_PHOTO_BYTES } = await import('@/lib/photos/image');
+const { servedHeaders } = await import('../support/next-headers');
 const { everything, params, request, resetTeamDatabase, startTeamServer } = await import('./team-harness');
 
 let base: Awaited<ReturnType<typeof startTeamServer>>;
@@ -432,6 +433,16 @@ describe('reading a photo', () => {
       expect(response.headers.get('x-content-type-options')).toBe('nosniff');
       expect(response.headers.get('content-security-policy')).toContain('sandbox');
       expect(Buffer.from(await bytesOf(response)).equals(Buffer.from(bytes))).toBe(true);
+    }
+  });
+
+  it('reaches the browser with its own sandboxed policy, not the app-wide one, for the photo and the original', async () => {
+    const { jobId, photoId } = await stored();
+    for (const query of ['?kind=photo', '?kind=original']) {
+      const sent = await servedHeaders(`/api/jobs/${jobId}/photos/${photoId}${query}`, await get(ESTIMATOR_A, jobId, photoId, query));
+      expect({ query, csp: sent.get('content-security-policy') }).toEqual({ query, csp: "default-src 'none'; sandbox" });
+      expect(sent.get('x-frame-options')).toBe('DENY');
+      expect(sent.get('strict-transport-security')).toBe('max-age=31536000');
     }
   });
 
