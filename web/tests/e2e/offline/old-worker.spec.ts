@@ -12,6 +12,9 @@ import { expect, test } from './fixture';
 import type { NetworkLane, StaticFile } from './lane';
 import { COMPANY, keptAsFiles, keptEntries, precacheOf, seedMe, workerText } from './shell';
 
+// Offline and worker tests need the service worker, which the suite blocks by default.
+test.use({ serviceWorkers: 'allow' });
+
 const OLD_PUBLIC = fileURLToPath(new URL('../../../../public', import.meta.url));
 const TYPES: Record<string, string> = {
   '.js': 'text/javascript; charset=utf-8',

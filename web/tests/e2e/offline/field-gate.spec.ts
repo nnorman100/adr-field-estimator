@@ -7,6 +7,9 @@ import { FieldPhone, inDays, revokeSessions, serveCheckedMe, serveMe } from './f
 import type { Person as FieldPerson } from './harness/field';
 import { readDraft, removeAccess, seedCompany, setAccessExpiry, type World } from './world';
 
+// Offline and worker tests need the service worker, which the suite blocks by default.
+test.use({ serviceWorkers: 'allow' });
+
 const sent = async (world: World) => (await readDraft(world)).field.airMovers;
 const DAY = 24 * 60 * 60 * 1000;
 

@@ -14,6 +14,9 @@ import { FieldPhone, inDays, serveMe } from './field-phone';
 import type { NetworkLane } from './lane';
 import { seedCompany, type Person, type World } from './world';
 
+// Offline and worker tests need the service worker, which the suite blocks by default.
+test.use({ serviceWorkers: 'allow' });
+
 test.use({ viewport: { width: 390, height: 844 } });
 
 const DAY = 24 * 60 * 60 * 1000;

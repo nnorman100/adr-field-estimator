@@ -6,6 +6,15 @@ import { expect, test } from './fixture';
 import { missingFromPrecache } from '../../../scripts/build-sw';
 import { PROBE_PATH } from '../../../src/app/field/connection';
 import { buildIdOf, cacheNames, cachedPaths, COMPANY, keptAsFiles, keptEntries, nudge, openControlled, precacheOf, workerText } from './shell';
+import { expectWorkerRuns } from '../service-workers';
+
+// Offline and worker tests need the service worker, which the suite blocks by default.
+test.use({ serviceWorkers: 'allow' });
+
+test('the offline suite runs with the service worker allowed', async ({ page, lane }) => {
+  await page.goto(`${lane.appUrl}/field`);
+  await expectWorkerRuns(page);
+});
 
 test.use({ viewport: { width: 390, height: 844 } });
 

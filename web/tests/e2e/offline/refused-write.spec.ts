@@ -6,6 +6,9 @@ import { expect, expectNothingSent, test, Phone } from './fixture';
 import { fenceDraft, readDraft, removeAccess, seedCompany, type World } from './world';
 import { adminDb } from './world';
 
+// Offline and worker tests need the service worker, which the suite blocks by default.
+test.use({ serviceWorkers: 'allow' });
+
 // Why the rules refuse, and whether the person can still read the draft afterwards. A refusal that
 // also takes away the read ends the listener with an error; one that only closes the draft does not.
 const reasons: Record<string, { refuse: (world: World) => Promise<void>; stillReadable: boolean }> = {

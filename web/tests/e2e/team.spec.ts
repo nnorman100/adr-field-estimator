@@ -81,32 +81,23 @@ test('a visitor who is not signed in is asked to sign in', async ({ page }) => {
   await expectAccessible(page);
 });
 
-// These tests stand in for the server's answer to GET /api/me with page.route. Since S6-3 the
-// sign-in page installs the field service worker (scope /), which then controls later sign-in and
-// team pages, and Playwright's WebKit cannot route a page a service worker controls. They cover
-// server refusals, not the offline shell, so the worker is blocked for them only; the offline
-// shell and its worker are tested in field-shell.spec.ts and tests/e2e/offline.
-test.describe('with the field worker blocked', () => {
-  test.use({ serviceWorkers: 'block' });
-
-  test('a refused sign-in that cannot be removed from the phone leaves a way out', async ({ page }) => {
-    await signInTo(page, team.owner);
-    // The server ends the sign-in, and the phone cannot delete its saved copy.
-    await page.route('**/api/me', (route) =>
-      route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: 'sign_in_revoked' }) }),
-    );
-    await page.addInitScript(() => {
-      const remove = IDBObjectStore.prototype.delete;
-      IDBObjectStore.prototype.delete = function (this: IDBObjectStore, key: IDBValidKey | IDBKeyRange) {
-        if (String(key).startsWith('firebase:authUser')) throw new DOMException('blocked', 'UnknownError');
-        return remove.call(this, key);
-      };
-    });
-    await page.goto(`/sign-in/${team.address}/team`);
-    await expect(page.getByRole('heading', { name: 'We could not open the team' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible();
-    await expect(page.getByRole('link', { name: `Go to the ${team.companyName} sign-in page` })).toBeVisible();
+test('a refused sign-in that cannot be removed from the phone leaves a way out', async ({ page }) => {
+  await signInTo(page, team.owner);
+  // The server ends the sign-in, and the phone cannot delete its saved copy.
+  await page.route('**/api/me', (route) =>
+    route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: 'sign_in_revoked' }) }),
+  );
+  await page.addInitScript(() => {
+    const remove = IDBObjectStore.prototype.delete;
+    IDBObjectStore.prototype.delete = function (this: IDBObjectStore, key: IDBValidKey | IDBKeyRange) {
+      if (String(key).startsWith('firebase:authUser')) throw new DOMException('blocked', 'UnknownError');
+      return remove.call(this, key);
+    };
   });
+  await page.goto(`/sign-in/${team.address}/team`);
+  await expect(page.getByRole('heading', { name: 'We could not open the team' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible();
+  await expect(page.getByRole('link', { name: `Go to the ${team.companyName} sign-in page` })).toBeVisible();
 });
 
 for (const [kind, who] of [
@@ -336,23 +327,14 @@ async function expectFieldSignedOut(page: Page) {
   await expect(page.getByRole('heading', { name: 'Sign in to continue' })).toBeVisible();
 }
 
-// These tests stand in for the server's answer to GET /api/me with page.route. Since S6-3 the
-// sign-in page installs the field service worker (scope /), which then controls later sign-in and
-// team pages, and Playwright's WebKit cannot route a page a service worker controls. They cover
-// server refusals, not the offline shell, so the worker is blocked for them only; the offline
-// shell and its worker are tested in field-shell.spec.ts and tests/e2e/offline.
-test.describe('with the field worker blocked', () => {
-  test.use({ serviceWorkers: 'block' });
-
-  test('a sign-in the server ends on the team screen is removed from the field app too', async ({ page }) => {
-    await signInTo(page, team.owner);
-    await page.route('**/api/me', (route) =>
-      route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: 'sign_in_revoked' }) }),
-    );
-    await page.goto(`/sign-in/${team.address}/team`);
-    await expect(page.getByRole('heading', { name: 'Sign in to see your team' })).toBeVisible();
-    await expectFieldSignedOut(page);
-  });
+test('a sign-in the server ends on the team screen is removed from the field app too', async ({ page }) => {
+  await signInTo(page, team.owner);
+  await page.route('**/api/me', (route) =>
+    route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: 'sign_in_revoked' }) }),
+  );
+  await page.goto(`/sign-in/${team.address}/team`);
+  await expect(page.getByRole('heading', { name: 'Sign in to see your team' })).toBeVisible();
+  await expectFieldSignedOut(page);
 });
 
 test('signing in again from the team screen removes the sign-in from the field app', async ({ page }) => {

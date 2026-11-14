@@ -8,6 +8,8 @@ import { NOT_READY_OFFLINE_TEXT, PREPARING_TEXT } from '../../src/app/(auth)/sig
 import { ME_DB, ME_DB_VERSION, ME_STORE } from '../../src/lib/field/ds-me';
 import { sessionValid } from '../../src/lib/field/sync-gate';
 import { unsentKey } from '../../src/lib/field/unsent';
+import { KEEP_YES } from '../../src/app/field/field-store-text';
+import { expectWorkerRuns } from './service-workers';
 import { PASSWORD, readSeed, type ProjectSeed } from './sign-in/seed';
 
 // The field shell's own screens (S6-2) in Chromium and WebKit at phone width: it starts from the
@@ -17,6 +19,13 @@ import { PASSWORD, readSeed, type ProjectSeed } from './sign-in/seed';
 const A = 'Company A Restoration';
 
 test.use({ viewport: { width: 390, height: 844 } });
+// The field shell's specs need its service worker, which the suite blocks by default.
+test.use({ serviceWorkers: 'allow' });
+
+test('runs with the field service worker allowed', async ({ page }) => {
+  await page.goto('/field');
+  await expectWorkerRuns(page);
+});
 
 let mine: ProjectSeed;
 test.beforeEach(({}, testInfo) => {
@@ -351,6 +360,8 @@ test('a sign-in taken offline before the field shell opens can stand in offline'
   // With no signal, the field app opens for the first time on this phone.
   await page.goto('/field');
   await expect(page.getByRole('heading', { name: A })).toBeVisible();
+  // The first time on this phone the shell asks whether to keep jobs here; the person says yes.
+  await page.getByRole('button', { name: KEEP_YES }).click();
   await expect(page.getByText('Your jobs will show here.')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Sign in to continue' })).toHaveCount(0);
   await context.setOffline(false);

@@ -6,6 +6,9 @@ import { FieldPhone, inDays, serveMe } from './field-phone';
 import type { Person as FieldPerson } from './harness/field';
 import { readDraft, seedCompany, type Person, type World } from './world';
 
+// Offline and worker tests need the service worker, which the suite blocks by default.
+test.use({ serviceWorkers: 'allow' });
+
 const sent = async (world: World) => (await readDraft(world)).field.airMovers;
 
 // Signed in as `who`, the gate open and the draft cached.
