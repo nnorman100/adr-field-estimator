@@ -170,7 +170,7 @@ describe('the route pattern', () => {
       '/api/companies/[companyId]/invitations/[invitationId]/cancel',
     );
     expect(routePattern('https://a.example/api/jobs/j1/')).toBe('/api/jobs/[jobId]');
-    expect(routePattern('https://a.example/api/files/a/b/c')).toBe('unknown');
+    expect(routePattern('https://a.example/api/not-a-route')).toBe('unknown');
     expect(routePattern('not a url')).toBe('unknown');
   });
 
@@ -179,6 +179,12 @@ describe('the route pattern', () => {
     expect(routePattern('https://a.example/api/sign-in/sign-in')).toBe('/api/sign-in/[address]');
     expect(routePattern('https://a.example/api/jobs/claim/claim')).toBe('/api/jobs/[jobId]/claim');
     expect(routePattern('https://a.example/api/prices/versions/restore/restore')).toBe('/api/prices/versions/[versionId]/restore');
+  });
+
+  it('gives each route its own pattern: no two patterns match one address', () => {
+    for (const pattern of API_ROUTES) {
+      expect(routePattern(`https://a.example${pattern.replace(/\[[^\]]+\]/g, 'x')}`), pattern).toBe(pattern);
+    }
   });
 
   it('covers every API route file', () => {

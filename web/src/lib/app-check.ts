@@ -135,9 +135,10 @@ export const API_ROUTES: readonly string[] = [
 ];
 
 // The route pattern a call's address matches, or 'unknown'; the query is never included. A `[name]`
-// segment stands for any one non-empty segment, and where two patterns match, the one with a fixed
-// segment earlier wins, as in Next.js routing (/api/jobs/3f2…/claim becomes /api/jobs/[jobId]/claim,
-// and /api/sign-in/api becomes /api/sign-in/[address]).
+// segment stands for any one non-empty segment and a fixed segment must match exactly, so a
+// parameter spelt like a fixed part of the address stays a parameter (/api/jobs/3f2…/claim becomes
+// /api/jobs/[jobId]/claim, and /api/sign-in/api becomes /api/sign-in/[address]). No two patterns
+// in API_ROUTES match the same address, so the first match is the route.
 export function routePattern(url: string): string {
   let path: string;
   try {
@@ -146,21 +147,11 @@ export function routePattern(url: string): string {
     return 'unknown';
   }
   const parts = path.replace(/\/+$/, '').split('/');
-  let found: string[] | undefined;
-  for (const pattern of API_ROUTES) {
+  const found = API_ROUTES.find((pattern) => {
     const want = pattern.split('/');
-    const same = want.length === parts.length && want.every((part, i) => (isParam(part) ? parts[i]!.length > 0 : part === parts[i]));
-    if (same && (found === undefined || moreFixed(want, found))) found = want;
-  }
-  return found ? found.join('/') : 'unknown';
-}
-
-const isParam = (part: string) => part.startsWith('[');
-
-// At the first segment where two patterns differ in kind, a fixed segment beats a parameter.
-function moreFixed(a: string[], b: string[]): boolean {
-  const i = a.findIndex((part, j) => isParam(part) !== isParam(b[j]!));
-  return i >= 0 && !isParam(a[i]!);
+    return want.length === parts.length && want.every((part, i) => (part.startsWith('[') ? parts[i]!.length > 0 : part === parts[i]));
+  });
+  return found ?? 'unknown';
 }
 
 // Runs a route's handler and, in monitor mode, writes the App Check line for the call. The check

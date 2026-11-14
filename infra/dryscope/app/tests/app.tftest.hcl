@@ -450,3 +450,26 @@ run "access_projection_is_called_as_the_scheduler_account_in_test_only" {
     error_message = "The job sends an ID token, never an OAuth access token."
   }
 }
+
+# App Check stays off until both browser values are known (TC-5): with the empty defaults neither is
+# set, while the server's monitor mode is set either way.
+run "app_check_values_are_left_out_until_known" {
+  command = plan
+
+  variables {
+    firebase_app_id    = ""
+    app_check_site_key = ""
+  }
+
+  assert {
+    condition = alltrue([
+      for k, s in google_cloud_run_v2_service.svc :
+      length([for e in s.template[0].containers[0].env : e.name if contains(["FIREBASE_APP_ID", "APP_CHECK_SITE_KEY"], e.name)]) == 0
+    ])
+    error_message = "With no app id and site key, the services must not get App Check browser settings."
+  }
+  assert {
+    condition     = alltrue([for k, s in google_cloud_run_v2_service.svc : contains([for e in s.template[0].containers[0].env : e.value if e.name == "APP_CHECK_MODE"], "monitor")])
+    error_message = "Every service runs App Check in monitor mode."
+  }
+}

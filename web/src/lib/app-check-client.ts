@@ -1,4 +1,4 @@
-import type { FirebaseApp } from 'firebase/app';
+import { getApps, type FirebaseApp } from 'firebase/app';
 import { getToken, initializeAppCheck, ReCaptchaEnterpriseProvider, type AppCheck } from 'firebase/app-check';
 import type { BrowserSignInConfig } from '@/lib/config';
 
@@ -101,31 +101,46 @@ export function appCheckSettings(config: BrowserSignInConfig): { appId: string; 
   return config.appId && config.appCheckSiteKey ? { appId: config.appId, siteKey: config.appCheckSiteKey } : null;
 }
 
-const started = new Map<string, AppCheck>();
-let active: AppCheck | null = null;
+// Started instances, by app: an app deleted and made again (field-db.ts's Discard) gets a new one.
+const started = new WeakMap<FirebaseApp, AppCheck>();
+// Most recently started last; the /api header uses the newest whose app still exists. Any
+// instance's token is good for this web app, whichever company or person app it came from.
+const recent: AppCheck[] = [];
+
+function newest(appCheck: AppCheck): AppCheck {
+  const at = recent.indexOf(appCheck);
+  if (at >= 0) recent.splice(at, 1);
+  recent.push(appCheck);
+  return appCheck;
+}
 
 // Starts App Check on this Firebase app, once; null when App Check is not set up or cannot start
 // here (no window, or the SDK refused), and sign-in then goes on without it.
 export function startAppCheck(app: FirebaseApp, config: BrowserSignInConfig): AppCheck | null {
   const settings = appCheckSettings(config);
   if (!settings || typeof window === 'undefined') return null;
-  const found = started.get(app.name);
-  if (found) {
-    active = found;
-    return found;
-  }
+  const found = started.get(app);
+  if (found) return newest(found);
   keepDebugTokenOnlyLocally();
   try {
     const appCheck = initializeAppCheck(app, {
       provider: new BoundedRecaptchaProvider(settings.siteKey),
       isTokenAutoRefreshEnabled: true,
     });
-    started.set(app.name, appCheck);
-    active = appCheck;
-    return appCheck;
+    started.set(app, appCheck);
+    return newest(appCheck);
   } catch {
     return null;
   }
+}
+
+function activeAppCheck(): AppCheck | null {
+  const apps = new Set(getApps());
+  for (let i = recent.length - 1; i >= 0; i -= 1) {
+    if (apps.has(recent[i]!.app)) return recent[i]!;
+    recent.splice(i, 1);
+  }
+  return null;
 }
 
 // A header source with its own "a token request is still running" state.
@@ -159,7 +174,7 @@ const headerSources = new WeakMap<AppCheck, () => Promise<Record<string, string>
 // The App Check header for one of this app's /api calls: the token when one comes within
 // TOKEN_WAIT_MS, otherwise nothing. Never throws.
 export async function appCheckHeaders(): Promise<Record<string, string>> {
-  const appCheck = active;
+  const appCheck = activeAppCheck();
   if (!appCheck) return {};
   let source = headerSources.get(appCheck);
   if (!source) {

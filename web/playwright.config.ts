@@ -5,9 +5,9 @@ import { AUTH_EMULATOR_HOST, E2E_PROJECT } from './tests/e2e/sign-in/emulator';
 import { FIELD_DATABASE, FIRESTORE_EMULATOR_HOST } from './tests/e2e/offline/emulators';
 import { SERVER_LOG, SERVER_LOG_DIR } from './tests/e2e/server-log';
 import { FIXTURE_PATH } from './tests/e2e/sign-in/seed';
-import { JOBS_BASE_URL, STORAGE_CONFIG, STORAGE_EMULATOR_HOST } from './tests/e2e/jobs/backend';
+import { STORAGE_CONFIG, STORAGE_EMULATOR_HOST } from './tests/e2e/jobs/backend';
 import { parseShard } from './tests/e2e/shard';
-import { APP_CHECK_ENV, APP_CHECK_PORT, APP_CHECK_SERVER_LOG } from './tests/e2e/app-check/server';
+import { APP_CHECK_ENV, APP_CHECK_JOBS_BASE_URL, APP_CHECK_PORT, APP_CHECK_SERVER_LOG } from './tests/e2e/app-check/server';
 
 const port = 3100;
 
@@ -116,7 +116,9 @@ export default defineConfig({
     {
       // Starts after the build above (Playwright starts these one after another) and reuses it.
       command: 'npx tsx tests/e2e/jobs/server.ts',
-      url: `${JOBS_BASE_URL}/api/health`,
+      // It starts the App Check copy (tests/e2e/app-check) after the jobs server answers, so this
+      // one answering means both are up.
+      url: `${APP_CHECK_JOBS_BASE_URL}/api/health`,
       reuseExistingServer: false,
       timeout: 180_000,
       // SIGTERM lets it stop the app and remove its database; a kill would leave PostgreSQL running.

@@ -22,6 +22,7 @@ import {
   waitForPendingWrites,
   type Firestore,
 } from 'firebase/firestore';
+import { appCheckSettings, startAppCheck } from '@/lib/app-check-client';
 import type { BrowserSignInConfig } from '@/lib/config';
 import { companyAuth } from '@/lib/firebase-client';
 import { forgetUnsent, mayHaveUnsent, noteWrite, settled, writesNow } from '@/lib/field/unsent';
@@ -80,10 +81,17 @@ export function appCheckSeam(): AppCheckSeam | null {
 }
 const auths = new Map<string, Auth>();
 
+// App Check (TC-5) starts on the person app as on the company app, before its Auth and Firestore
+// are used, when the server has given both the app id and the site key; off otherwise.
 function fieldApp(person: FieldPerson): FirebaseApp {
   const name = fieldAppName(person.tenantId, person.uid);
   const { apiKey, authDomain, projectId } = person.config;
-  return getApps().find((app) => app.name === name) ?? initializeApp({ apiKey, authDomain, projectId }, name);
+  const appCheck = appCheckSettings(person.config);
+  const app =
+    getApps().find((existing) => existing.name === name) ??
+    initializeApp({ apiKey, authDomain, projectId, ...(appCheck ? { appId: appCheck.appId } : {}) }, name);
+  startAppCheck(app, person.config);
+  return app;
 }
 
 // The person app's Auth: in memory only, set to the company's tenant. Made before Firestore, which

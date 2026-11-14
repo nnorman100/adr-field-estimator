@@ -93,14 +93,14 @@ export const SETTINGS = {
   FIREBASE_WEB_API_KEY: { source: 'local', services: NOT_SET, reader: 'web' },
   FIREBASE_AUTH_DOMAIN: { source: 'local', services: NOT_SET, reader: 'web' },
   LOCAL_SIGN_IN_FIXTURE: { source: 'local', services: NOT_SET, reader: 'web' },
-  // App Check in monitor mode (docs/plans/TC.md, TC-5): the web app's Firebase app id and the
-  // reCAPTCHA Enterprise site key (public values from TC-9), and what the route wrappers do with the
-  // token (monitor when unset). Terraform does not set them yet: TC-11 adds them to the app root's
-  // common_env and moves them to source terraform on api and live in the same PR. Until then App
-  // Check is off in the browser everywhere but a developer machine.
-  FIREBASE_APP_ID: { source: 'local', services: NOT_SET, reader: 'web' },
-  APP_CHECK_SITE_KEY: { source: 'local', services: NOT_SET, reader: 'web' },
-  APP_CHECK_MODE: { source: 'local', services: NOT_SET, reader: 'web' },
+  // App Check in monitor mode (docs/plans/TC.md, TC-5), in the app root's common_env: what the route
+  // wrappers do with the token (monitor), and the web app's Firebase app id and the reCAPTCHA
+  // Enterprise site key (public values from owner step 8 and TC-9). Terraform sets the last two only
+  // once both are passed (TC-11's apply); until then they are left out and App Check stays off in
+  // the browser. The committed plan carries stand-in values (app/tests/images-<env>.tfvars).
+  APP_CHECK_MODE: { source: 'terraform', services: SERVING, reader: 'web' },
+  FIREBASE_APP_ID: { source: 'terraform', services: SERVING, reader: 'web' },
+  APP_CHECK_SITE_KEY: { source: 'terraform', services: SERVING, reader: 'web' },
 } as const satisfies Record<string, Setting>;
 
 export type SettingName = keyof typeof SETTINGS;

@@ -131,3 +131,29 @@ variable "budget_usd" {
   description = "Monthly budget for the alert stub, in US dollars."
   default     = 300
 }
+
+# App Check in monitor mode (docs/plans/TC.md, TC-5). Public values the browser receives: the web
+# app id from owner step 8 and the reCAPTCHA Enterprise key id the data root creates (TC-9). Both
+# empty by default, which leaves them out of the services' settings: App Check then stays off in the
+# browser. Set both (TF_VAR_* at apply, TC-11) to turn it on.
+variable "firebase_app_id" {
+  type        = string
+  description = "This environment's Firebase web app id (1:<project number>:web:<hex>), or empty while App Check is off."
+  default     = ""
+
+  validation {
+    condition     = var.firebase_app_id == "" || can(regex("^[0-9]{1,3}:[0-9]{1,20}:web:[0-9a-f]{1,64}$", var.firebase_app_id))
+    error_message = "Pass the web app id Firebase shows for this project's registered web app, or leave it empty."
+  }
+}
+
+variable "app_check_site_key" {
+  type        = string
+  description = "The reCAPTCHA Enterprise site key App Check is registered with (the data root's key id), or empty while App Check is off."
+  default     = ""
+
+  validation {
+    condition     = var.app_check_site_key == "" || can(regex("^[A-Za-z0-9_-]{20,100}$", var.app_check_site_key))
+    error_message = "Pass the reCAPTCHA Enterprise key id, or leave it empty."
+  }
+}

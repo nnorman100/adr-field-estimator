@@ -14,6 +14,12 @@ export const APP_CHECK_ENV = {
   APP_CHECK_SITE_KEY: 'e2e-not-a-real-recaptcha-site-key',
 };
 
+// The same again for the screens that need the real database (the field app, Finish and review):
+// tests/e2e/jobs/server.ts starts a second app on this port, beside the jobs server and on its
+// database, with App Check set up.
+export const APP_CHECK_JOBS_PORT = 3104;
+export const APP_CHECK_JOBS_BASE_URL = `http://localhost:${APP_CHECK_JOBS_PORT}`;
+
 // Its standard output, where its App Check lines go (beside the main server's, under test-results/).
 export const APP_CHECK_SERVER_LOG = join(SERVER_LOG_DIR, 'app-check.log');
 
