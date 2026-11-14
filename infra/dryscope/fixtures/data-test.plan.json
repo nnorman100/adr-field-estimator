@@ -31,7 +31,11 @@
      "repository_id": "dryscope-test",
      "timeouts": null,
      "virtual_repository_config": [],
-     "vulnerability_scanning_config": []
+     "vulnerability_scanning_config": [
+      {
+       "enablement_config": "INHERITED"
+      }
+     ]
     }
    }
   },
@@ -49,6 +53,25 @@
      "project": "dryscope",
      "repository": "dryscope-test",
      "role": "roles/artifactregistry.writer"
+    }
+   }
+  },
+  {
+   "address": "google_firestore_backup_schedule.field_daily",
+   "type": "google_firestore_backup_schedule",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "daily_recurrence": [
+      {}
+     ],
+     "database": "dryscope-field-test",
+     "project": "dryscope",
+     "retention": "1209600s",
+     "timeouts": null,
+     "weekly_recurrence": []
     }
    }
   },
@@ -313,6 +336,21 @@
    }
   },
   {
+   "address": "google_project_iam_member.deploy_log_writer[0]",
+   "type": "google_project_iam_member",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "condition": [],
+     "member": "serviceAccount:dryscope-deploy-test@dryscope.iam.gserviceaccount.com",
+     "project": "dryscope",
+     "role": "roles/logging.logWriter"
+    }
+   }
+  },
+  {
    "address": "google_project_iam_member.deploy_rules_release[0]",
    "type": "google_project_iam_member",
    "change": {
@@ -523,6 +561,21 @@
    }
   },
   {
+   "address": "google_project_iam_member.traces_writer[\"api\"]",
+   "type": "google_project_iam_member",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "condition": [],
+     "member": "serviceAccount:dryscope-api-test@dryscope.iam.gserviceaccount.com",
+     "project": "dryscope",
+     "role": "roles/telemetry.tracesWriter"
+    }
+   }
+  },
+  {
    "address": "google_project_service.apis[\"aiplatform.googleapis.com\"]",
    "type": "google_project_service",
    "change": {
@@ -555,6 +608,70 @@
    }
   },
   {
+   "address": "google_project_service.apis[\"billingbudgets.googleapis.com\"]",
+   "type": "google_project_service",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "disable_dependent_services": false,
+     "disable_on_destroy": false,
+     "project": "dryscope",
+     "service": "billingbudgets.googleapis.com",
+     "timeouts": null
+    }
+   }
+  },
+  {
+   "address": "google_project_service.apis[\"cloudbuild.googleapis.com\"]",
+   "type": "google_project_service",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "disable_dependent_services": false,
+     "disable_on_destroy": false,
+     "project": "dryscope",
+     "service": "cloudbuild.googleapis.com",
+     "timeouts": null
+    }
+   }
+  },
+  {
+   "address": "google_project_service.apis[\"clouderrorreporting.googleapis.com\"]",
+   "type": "google_project_service",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "disable_dependent_services": false,
+     "disable_on_destroy": false,
+     "project": "dryscope",
+     "service": "clouderrorreporting.googleapis.com",
+     "timeouts": null
+    }
+   }
+  },
+  {
+   "address": "google_project_service.apis[\"cloudfunctions.googleapis.com\"]",
+   "type": "google_project_service",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "disable_dependent_services": false,
+     "disable_on_destroy": false,
+     "project": "dryscope",
+     "service": "cloudfunctions.googleapis.com",
+     "timeouts": null
+    }
+   }
+  },
+  {
    "address": "google_project_service.apis[\"cloudresourcemanager.googleapis.com\"]",
    "type": "google_project_service",
    "change": {
@@ -582,6 +699,54 @@
      "disable_on_destroy": false,
      "project": "dryscope",
      "service": "cloudscheduler.googleapis.com",
+     "timeouts": null
+    }
+   }
+  },
+  {
+   "address": "google_project_service.apis[\"cloudtrace.googleapis.com\"]",
+   "type": "google_project_service",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "disable_dependent_services": false,
+     "disable_on_destroy": false,
+     "project": "dryscope",
+     "service": "cloudtrace.googleapis.com",
+     "timeouts": null
+    }
+   }
+  },
+  {
+   "address": "google_project_service.apis[\"containerscanning.googleapis.com\"]",
+   "type": "google_project_service",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "disable_dependent_services": false,
+     "disable_on_destroy": false,
+     "project": "dryscope",
+     "service": "containerscanning.googleapis.com",
+     "timeouts": null
+    }
+   }
+  },
+  {
+   "address": "google_project_service.apis[\"firebaseappcheck.googleapis.com\"]",
+   "type": "google_project_service",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "disable_dependent_services": false,
+     "disable_on_destroy": false,
+     "project": "dryscope",
+     "service": "firebaseappcheck.googleapis.com",
      "timeouts": null
     }
    }
@@ -667,6 +832,54 @@
    }
   },
   {
+   "address": "google_project_service.apis[\"monitoring.googleapis.com\"]",
+   "type": "google_project_service",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "disable_dependent_services": false,
+     "disable_on_destroy": false,
+     "project": "dryscope",
+     "service": "monitoring.googleapis.com",
+     "timeouts": null
+    }
+   }
+  },
+  {
+   "address": "google_project_service.apis[\"recaptchaenterprise.googleapis.com\"]",
+   "type": "google_project_service",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "disable_dependent_services": false,
+     "disable_on_destroy": false,
+     "project": "dryscope",
+     "service": "recaptchaenterprise.googleapis.com",
+     "timeouts": null
+    }
+   }
+  },
+  {
+   "address": "google_project_service.apis[\"run.googleapis.com\"]",
+   "type": "google_project_service",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "disable_dependent_services": false,
+     "disable_on_destroy": false,
+     "project": "dryscope",
+     "service": "run.googleapis.com",
+     "timeouts": null
+    }
+   }
+  },
+  {
    "address": "google_project_service.apis[\"secretmanager.googleapis.com\"]",
    "type": "google_project_service",
    "change": {
@@ -711,6 +924,57 @@
      "project": "dryscope",
      "service": "storage.googleapis.com",
      "timeouts": null
+    }
+   }
+  },
+  {
+   "address": "google_project_service.apis[\"telemetry.googleapis.com\"]",
+   "type": "google_project_service",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "disable_dependent_services": false,
+     "disable_on_destroy": false,
+     "project": "dryscope",
+     "service": "telemetry.googleapis.com",
+     "timeouts": null
+    }
+   }
+  },
+  {
+   "address": "google_recaptcha_enterprise_key.web",
+   "type": "google_recaptcha_enterprise_key",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "android_settings": [],
+     "deletion_policy": "PREVENT",
+     "display_name": "DryScope test web app",
+     "ios_settings": [],
+     "labels": {
+      "app": "dryscope",
+      "environment": "test",
+      "managed_by": "terraform"
+     },
+     "project": "dryscope",
+     "testing_options": [],
+     "timeouts": null,
+     "waf_settings": [],
+     "web_settings": [
+      {
+       "allow_all_domains": false,
+       "allow_amp_traffic": false,
+       "allowed_domains": [
+        "dryscope-api-test-570228742694.us-central1.run.app"
+       ],
+       "challenge_settings": [],
+       "integration_type": "SCORE"
+      }
+     ]
     }
    }
   },
@@ -883,6 +1147,48 @@
    }
   },
   {
+   "address": "google_secret_manager_secret.synthetic_password[0]",
+   "type": "google_secret_manager_secret",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "annotations": null,
+     "deletion_protection": null,
+     "labels": {
+      "app": "dryscope",
+      "environment": "test",
+      "managed_by": "terraform"
+     },
+     "project": "dryscope",
+     "replication": [
+      {
+       "auto": [],
+       "user_managed": [
+        {
+         "replicas": [
+          {
+           "customer_managed_encryption": [],
+           "location": "us-central1"
+          }
+         ]
+        }
+       ]
+      }
+     ],
+     "rotation": [],
+     "secret_id": "dryscope-test-synthetic-password",
+     "tags": null,
+     "timeouts": null,
+     "topics": [],
+     "ttl": null,
+     "version_aliases": null,
+     "version_destroy_ttl": null
+    }
+   }
+  },
+  {
    "address": "google_secret_manager_secret_iam_member.accessor[\"link-signing-key/api\"]",
    "type": "google_secret_manager_secret_iam_member",
    "change": {
@@ -959,6 +1265,22 @@
      "project": "dryscope",
      "role": "roles/secretmanager.secretAccessor",
      "secret_id": "dryscope-test-stripe-secret-key"
+    }
+   }
+  },
+  {
+   "address": "google_secret_manager_secret_iam_member.synthetic_password[0]",
+   "type": "google_secret_manager_secret_iam_member",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "condition": [],
+     "member": "serviceAccount:dryscope-synthetic-test@dryscope.iam.gserviceaccount.com",
+     "project": "dryscope",
+     "role": "roles/secretmanager.secretAccessor",
+     "secret_id": "dryscope-test-synthetic-password"
     }
    }
   },
@@ -1065,6 +1387,24 @@
      "description": null,
      "disabled": null,
      "display_name": "DryScope test scheduled jobs caller",
+     "project": "dryscope",
+     "timeouts": null
+    }
+   }
+  },
+  {
+   "address": "google_service_account.synthetic[0]",
+   "type": "google_service_account",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "account_id": "dryscope-synthetic-test",
+     "create_ignore_already_exists": null,
+     "description": null,
+     "disabled": null,
+     "display_name": "DryScope test synthetic monitor",
      "project": "dryscope",
      "timeouts": null
     }
@@ -1335,7 +1675,37 @@
       "environment": "test",
       "managed_by": "terraform"
      },
-     "lifecycle_rule": [],
+     "lifecycle_rule": [
+      {
+       "action": [
+        {
+         "storage_class": null,
+         "type": "Delete"
+        }
+       ],
+       "condition": [
+        {
+         "age": null,
+         "created_before": null,
+         "custom_time_before": null,
+         "days_since_custom_time": null,
+         "days_since_noncurrent_time": 28,
+         "matches_prefix": null,
+         "matches_storage_class": null,
+         "matches_suffix": null,
+         "noncurrent_time_before": null,
+         "num_newer_versions": null,
+         "send_age_if_zero": null,
+         "send_days_since_custom_time_if_zero": null,
+         "send_days_since_noncurrent_time_if_zero": null,
+         "send_num_newer_versions_if_zero": null,
+         "size_above_bytes": null,
+         "size_below_bytes": null,
+         "with_state": "ARCHIVED"
+        }
+       ]
+      }
+     ],
      "location": "US-CENTRAL1",
      "logging": [],
      "name": "dryscope-evidence-test",

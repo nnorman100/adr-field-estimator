@@ -13,6 +13,13 @@ resource "google_artifact_registry_repository" "images" {
     immutable_tags = true
   }
 
+  # Container scanning (docs/plans/TC.md, C5 A): follow the project's Container Scanning API, which
+  # this root turns on, so every new image is scanned once on push. Set explicitly so a repository
+  # switched to DISABLED by hand comes back in the next plan.
+  vulnerability_scanning_config {
+    enablement_config = "INHERITED"
+  }
+
   lifecycle {
     prevent_destroy = true
   }

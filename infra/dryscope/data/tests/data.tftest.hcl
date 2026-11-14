@@ -120,8 +120,12 @@ run "evidence_bucket_is_private_versioned_and_not_the_legacy_bucket" {
     error_message = "The legacy evidence bucket must not be managed here."
   }
   assert {
-    condition     = length(google_storage_bucket.evidence.retention_policy) == 0 && length(google_storage_bucket.evidence.lifecycle_rule) == 0
-    error_message = "No retention lock and no deleting lifecycle rule without the owner's approval."
+    condition     = length(google_storage_bucket.evidence.retention_policy) == 0
+    error_message = "No retention lock without the owner's approval."
+  }
+  assert {
+    condition     = length(google_storage_bucket.evidence.lifecycle_rule) == 1 && one(google_storage_bucket.evidence.lifecycle_rule[0].action).type == "Delete" && one(google_storage_bucket.evidence.lifecycle_rule[0].condition).with_state == "ARCHIVED" && one(google_storage_bucket.evidence.lifecycle_rule[0].condition).days_since_noncurrent_time == 28 && one(google_storage_bucket.evidence.lifecycle_rule[0].condition).age == null
+    error_message = "The only lifecycle rule is the owner-approved one (D-023): delete a noncurrent version 28 days after it stopped being live, never a live object."
   }
   assert {
     condition     = google_storage_bucket_iam_member.api_create.role == "roles/storage.objectCreator" && google_storage_bucket_iam_member.api_view.role == "roles/storage.objectViewer"
