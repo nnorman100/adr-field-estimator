@@ -6,7 +6,7 @@ Two pricing engines exist while the app is rebuilt. The rebuilt app's engine is 
 
 ## The rebuilt app (`web/`, engine `dryscope-v3`)
 
-The engine is in `web/src/engine/`. The price tables are stored (migration `0009`) and the Prices API reads, saves, previews, publishes and restores them (`web/src/lib/prices/`, `docs/ACCESS.md`, "Prices API"); no estimate route or screen calls the engine yet (pins, the priced estimate and the Prices screens come in later steps of the [pricing plan](plans/pricing.md)). Its entry points are in `estimate.ts`:
+The engine is in `web/src/engine/`. The price tables are stored (migration `0009`) and the Prices API reads, saves, previews, publishes and restores them (`web/src/lib/prices/`, `docs/ACCESS.md`, "Prices API"); the estimate routes and the Review screen call it for a job's submitted record (S5a-9, `docs/ACCESS.md` "Estimate and review"; the Prices screens and reprice come in later steps of the [pricing plan](plans/pricing.md)). Its entry points are in `estimate.ts`:
 
 - `priceEstimate(table, job)` prices a saved draft from a published table: plain JSON in and out, money as Decimal strings. It returns the lines, both ends of the range, the warnings, `engine_version: "dryscope-v3"` and `table_sha256`, the SHA-256 of the parsed table's canonical JSON with items in id order. A refusal names its stage (`table`, `inspection`, `pricing` or `documents`).
 - `checkTable(table, acknowledgements)` is the publish check: a blank price on an enabled item blocks publishing, and a zero price needs the item's `allow_zero` and its id or code in `acknowledgements`.
