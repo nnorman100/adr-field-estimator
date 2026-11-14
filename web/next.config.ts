@@ -1,4 +1,5 @@
 import type { NextConfig } from 'next';
+import { SECURITY_HEADER_RULES } from './src/lib/security-headers';
 
 // The repo root has its own package-lock.json; pin the app root so Next does not guess.
 const root = import.meta.dirname;
@@ -11,6 +12,8 @@ const nextConfig: NextConfig = {
   outputFileTracingRoot: root,
   async headers() {
     return [
+      // Browser security headers on every page and API response (F7, src/lib/security-headers.ts).
+      ...SECURITY_HEADER_RULES,
       // The field worker (S6-2). A browser that kept an old copy of it could never learn of a new
       // build, so it is never stored.
       {
