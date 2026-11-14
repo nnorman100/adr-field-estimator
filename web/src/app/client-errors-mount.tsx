@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect } from 'react';
-import '@/lib/zod-browser';
 import { installClientErrors } from '@/lib/client-errors';
 
 // Starts the browser and phone error reports (src/lib/client-errors.ts) once for the whole app.
