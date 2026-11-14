@@ -139,6 +139,20 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The job-screen tests (tests/e2e/jobs.spec.ts) start a throwaway PostgreSQL 16 as test:db does:
+      # the postgres:16 image when a Docker daemon answers (GitHub's Ubuntu image), otherwise
+      # initdb/pg_ctl from /usr/lib/postgresql/16/bin. The self-hosted runner's container has neither, so only there
+      # this installs the Ubuntu postgresql-16 package, without creating or starting a cluster.
+      - name: Install PostgreSQL 16 when there is no Docker daemon
+        run: |
+          if ! docker version --format '{{.Server.Version}}' > /dev/null 2>&1 &&
+            [ ! -x /usr/lib/postgresql/16/bin/initdb ]; then
+            sudo mkdir -p /etc/postgresql-common
+            echo 'create_main_cluster = false' | sudo tee /etc/postgresql-common/createcluster.conf > /dev/null
+            sudo apt-get update -q
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
+              -o Dpkg::Options::=--force-confold postgresql-16
+          fi
       # The offline tests (tests/e2e/offline) start the Firestore emulator, which needs Java 21 or later.
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:

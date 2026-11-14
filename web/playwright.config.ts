@@ -3,6 +3,7 @@ import { AUTH_EMULATOR_HOST, E2E_PROJECT } from './tests/e2e/sign-in/emulator';
 import { FIELD_DATABASE, FIRESTORE_EMULATOR_HOST } from './tests/e2e/offline/emulators';
 import { SERVER_LOG, SERVER_LOG_DIR } from './tests/e2e/server-log';
 import { FIXTURE_PATH } from './tests/e2e/sign-in/seed';
+import { JOBS_BASE_URL, STORAGE_CONFIG, STORAGE_EMULATOR_HOST } from './tests/e2e/jobs/backend';
 
 const port = 3100;
 
@@ -16,6 +17,9 @@ const FIREBASE_TOOLS = 'firebase-tools@15.31.0';
 // for the database (LOCAL_SIGN_IN_FIXTURE, written by the global setup once both servers answer).
 // The Firestore emulator runs beside the Auth emulator for the offline tests (tests/e2e/offline),
 // which put each test behind a switchable network of its own (lane.ts) to cut and restore.
+// The job screens (tests/e2e/jobs.spec.ts) use a second server built from the same build, with a
+// throwaway PostgreSQL behind it in place of the local file (tests/e2e/jobs/server.ts), and the
+// Storage emulator in place of the evidence bucket, under its own config so no deploy can see it.
 export default defineConfig({
   testDir: 'tests/e2e',
   timeout: 60_000,
@@ -60,6 +64,23 @@ export default defineConfig({
       reuseExistingServer: false,
       // Long enough for the build, which runs before the server starts listening.
       timeout: 300_000,
+    },
+    {
+      command: `npx --yes ${FIREBASE_TOOLS} emulators:start --only storage --project ${E2E_PROJECT} --config ${STORAGE_CONFIG}`,
+      // Its root answers 501, which Playwright does not take as ready; the open port is.
+      port: Number(STORAGE_EMULATOR_HOST.split(':')[1]),
+      reuseExistingServer: false,
+      timeout: 180_000,
+      gracefulShutdown: { signal: 'SIGINT', timeout: 15_000 },
+    },
+    {
+      // Starts after the build above (Playwright starts these one after another) and reuses it.
+      command: 'npx tsx tests/e2e/jobs/server.ts',
+      url: `${JOBS_BASE_URL}/api/health`,
+      reuseExistingServer: false,
+      timeout: 180_000,
+      // SIGTERM lets it stop the app and remove its database; a kill would leave PostgreSQL running.
+      gracefulShutdown: { signal: 'SIGTERM', timeout: 30_000 },
     },
   ],
 });

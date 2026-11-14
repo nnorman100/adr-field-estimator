@@ -411,7 +411,7 @@ async function adminSql(url: string, run: (sql: postgres.Sql) => Promise<void>):
   }
 }
 
-function loginUrl(databaseUrl: string, role: SharedRole): string {
+export function loginUrl(databaseUrl: string, role: SharedRole): string {
   const url = new URL(databaseUrl);
   url.username = role.name;
   url.password = role.password;
@@ -422,7 +422,7 @@ function loginUrl(databaseUrl: string, role: SharedRole): string {
 // test used to build its own database before every test: an empty public schema as a new database
 // has it (everyone may use it, only its owner may create in it), the migrator given CREATE by hand
 // as in the runbook's bootstrap, then every migration as the migrator.
-async function prepareRolesServer(
+export async function prepareRolesServer(
   adminUrl: string,
 ): Promise<{ templateName: string; roles: SharedRoles; remove: () => Promise<void> }> {
   const roles: SharedRoles = {
