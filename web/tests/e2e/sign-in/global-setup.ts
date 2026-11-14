@@ -67,9 +67,10 @@ export default async function globalSetup(config: FullConfig) {
     };
   }
 
-  // A company of its own for each project's team tests: the owner has the second step the emulator
-  // cannot do (the fixture's `secondStep`), and the team starts with one estimator and one office
-  // user besides the people the tests change.
+  // A company of its own for each project's team tests: the owner and the office user have the
+  // second step the emulator cannot do (the fixture's `secondStep`; office needs it since
+  // 2026-11-14, D2), and the team starts with one estimator and one office user besides the people
+  // the tests change.
   const teams: Record<string, TeamSeed> = {};
   for (const project of PROJECTS) {
     const tenantId = await createTenant(`team-${project}-${run}`);
@@ -90,7 +91,7 @@ export default async function globalSetup(config: FullConfig) {
           displayName: name,
           role,
           status: 'active',
-          ...(role === 'owner' ? { secondStep: true } : {}),
+          ...(role === 'owner' || role === 'office' ? { secondStep: true } : {}),
         });
       }
       return { email, uid, name };

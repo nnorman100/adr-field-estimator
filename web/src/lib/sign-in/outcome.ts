@@ -76,6 +76,10 @@ export function signInErrorMessage(code: unknown, companyName: string): string |
       return 'Enter your email address.';
     case 'auth/missing-password':
       return 'Enter your password.';
+    // The company's password rule (at least 12 characters, owner decision 2026-11-14) is newer than
+    // this password, so Firebase wants a new one before it lets the person in.
+    case 'auth/password-does-not-meet-requirements':
+      return `${companyName} now needs a password of at least 12 characters. Choose Set your own password to pick a new one.`;
     case 'auth/too-many-requests':
       return 'Too many tries. Wait a few minutes, then try again.';
     case 'auth/network-request-failed':

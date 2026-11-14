@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { IdentityRefusal, sessionRefusal } from '@/lib/auth';
+import { ACCEPTED_SECOND_FACTORS, IdentityRefusal, sessionRefusal } from '@/lib/auth';
 import { readFixtureSync, updateFixture, type LocalFixtureData } from '@/lib/sign-in/local-directory';
 import {
   INVITATION_DAYS,
@@ -231,6 +231,11 @@ export function localTeamService(path: string, users: TenantUsers): TeamService 
           displayName: account.name,
           role: row.role,
           status: 'active',
+          // Accepted with an authenticator app, so the stand-in for the second step applies to them
+          // from now on, as a real enrolled factor would.
+          ...(account.session.secondFactor !== null && ACCEPTED_SECOND_FACTORS.includes(account.session.secondFactor)
+            ? { secondStep: true }
+            : {}),
         });
         row.status = 'accepted';
         row.acceptedByActorId = actorId;

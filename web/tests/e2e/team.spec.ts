@@ -1,6 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect as baseExpect, test, type APIRequestContext, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+import { APP_CODE, fakeSecondStep } from './second-step/fake-totp';
 import { activateAccount, idTokenFor } from './sign-in/emulator';
 import { PASSWORD, readSeed, type TeamAccount, type TeamSeed } from './sign-in/seed';
 
@@ -206,11 +207,20 @@ test('the owner invites someone, who accepts the invitation', async ({ page, bro
   await activateAccount(team.tenantId, email, PASSWORD);
   const other = await browser.newContext({ baseURL: testInfo.project.use.baseURL!, viewport: { width: 390, height: 844 } });
   const phone = await other.newPage();
+  // Office needs the authenticator-app second step (D2, since 2026-11-14), answered at the network
+  // boundary because the emulator cannot do it. Here the token from setting it up carries it.
+  await fakeSecondStep(phone, { enrolmentTokenCarriesSecondFactor: true });
   await signInAt(phone, new URL(link).pathname, { email });
   await expect(phone.getByRole('heading', { name: 'Accept invitation' })).toBeVisible();
   await expect(phone.getByText(`${team.companyName} has invited you to join as office.`)).toBeVisible();
   await expectAccessible(phone);
   await phone.getByRole('button', { name: 'Accept invitation' }).click();
+  // Accepting is refused until the second step is set up, so the setup screen comes next ...
+  await expect(phone.getByRole('heading', { name: 'Set up your second sign-in step' })).toBeVisible();
+  await expectAccessible(phone);
+  await phone.getByLabel('6-digit code').fill(APP_CODE);
+  await phone.getByRole('button', { name: 'Turn on second step' }).click();
+  // ... and once it is on, the invitation is accepted without another tap.
   await expect(phone.getByRole('heading', { name: `Signed in to ${team.companyName}` })).toBeVisible();
   await expect(phone.getByText('You are signed in as office staff.')).toBeVisible();
   // An office user has no way into the team screen.
@@ -221,6 +231,35 @@ test('the owner invites someone, who accepts the invitation', async ({ page, bro
   await expect(row(page, email)).toHaveCount(2);
   await expect(row(page, email).first()).toContainText('Office');
   await expect(row(page, email).nth(1)).toContainText('Accepted');
+});
+
+test('an office invitee whose setup sign-in has no second step signs in again with the code, then accepts', async ({ browser, request }, testInfo) => {
+  const email = uniqueEmail('office-code');
+  const { link } = await inviteThroughApi(request, email, 'office');
+  await activateAccount(team.tenantId, email, PASSWORD);
+  const other = await browser.newContext({ baseURL: testInfo.project.use.baseURL!, viewport: { width: 390, height: 844 } });
+  const phone = await other.newPage();
+  // Whether Identity Platform's token from setting up an authenticator app carries the second step
+  // is known only from S3-18; here it does not, so the server still refuses the accept.
+  const fake = await fakeSecondStep(phone, { enrolmentTokenCarriesSecondFactor: false });
+  await signInAt(phone, link, { email });
+  await phone.getByRole('button', { name: 'Accept invitation' }).click();
+  await expect(phone.getByRole('heading', { name: 'Set up your second sign-in step' })).toBeVisible();
+  await phone.getByLabel('6-digit code').fill(APP_CODE);
+  await phone.getByRole('button', { name: 'Turn on second step' }).click();
+  await expect(phone.getByText('Your authenticator app is set up. Sign in again and enter its code, then accept the invitation.')).toBeVisible();
+  expect(fake.factors).toHaveLength(1);
+
+  // Signing in again on the same link asks for the app's code, then offers the invitation.
+  await phone.getByLabel('Email').fill(email);
+  await phone.getByLabel('Password').fill(PASSWORD);
+  await phone.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await phone.getByLabel('6-digit code').fill(APP_CODE);
+  await phone.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await phone.getByRole('button', { name: 'Accept invitation' }).click();
+  await expect(phone.getByRole('heading', { name: `Signed in to ${team.companyName}` })).toBeVisible();
+  await expect(phone.getByText('You are signed in as office staff.')).toBeVisible();
+  await other.close();
 });
 
 test('an invitation for another email cannot be read', async ({ page, request }) => {
