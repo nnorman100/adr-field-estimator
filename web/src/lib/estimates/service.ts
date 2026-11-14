@@ -5,9 +5,12 @@ import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant
 import { priceEstimate, type Json } from '@/engine/estimate';
 import { contentHash, parseTable, type Table } from '@/engine/table';
 import type { Capability } from '@/lib/access';
+import { canonicalJson } from '@/lib/field/canonical';
 import { FieldMapError } from '@/lib/field/inspection';
 import { hasAny, jobAccess, JobError, type JobCaller, type JobRow } from '@/lib/jobs/access';
 import { readCompanyDocuments } from '@/lib/profile/documents';
+import { readJobDetails } from '@/lib/submissions/details';
+import type { Snapshot } from '@/lib/submissions/snapshot';
 import { EstimateError } from './errors';
 import { estimateInput, readSnapshot, SnapshotError } from './inputs';
 import { proposalBytes, proposalOf } from './proposal';
@@ -28,6 +31,12 @@ import { estimateView, type EstimateRecord, type EstimateView } from './result';
 // Only Reprice (S5b-6, the owner) moves a pin; nothing here does. Back to editing makes a new draft,
 // so the old estimate no longer answers for the job (the old review is void), and the next Finish
 // and review is priced from the same pin.
+//
+// The customer, the claim and the property address may still be edited while the job is submitted
+// (J3); each edit advances the job's revision but not its record, and the record cannot change.
+// So an estimate answers for the job only while its record states them as they are now: after an
+// edit the old review is void (read answers none) and Price this job is refused with
+// `details_changed`, writing nothing, until Back to editing and Finish make a record that states them.
 
 // Making an estimate is the audit (owner, estimator); reading it is any job reader (docs/spec.md 2.3).
 const MAKE: readonly Capability[] = ['audit'];
@@ -61,6 +70,12 @@ async function currentSubmission(tx: CompanyTransaction, companyId: string, job:
     );
   if (!row || !row.snapshotBytes || !row.snapshotSha256) return null;
   return { id: row.id, snapshotBytes: Buffer.from(row.snapshotBytes), snapshotSha256: row.snapshotSha256 };
+}
+
+// Whether the record states the job's property address, customer and claim as they are now.
+async function detailsCurrent(tx: CompanyTransaction, companyId: string, job: JobRow, snapshot: Snapshot): Promise<boolean> {
+  const now = await readJobDetails(tx, companyId, job);
+  return canonicalJson(now) === canonicalJson({ job: snapshot.job, customer: snapshot.customer, claim: snapshot.claim });
 }
 
 // The job's current pin: the highest sequence.
@@ -151,6 +166,14 @@ export function estimatesService(db: Database): EstimatesService {
         if (job.status !== 'submitted') throw new EstimateError('not_submitted');
         const submission = await currentSubmission(tx, caller.companyId, job);
         if (!submission) throw new EstimateError('not_submitted');
+        let snapshot: Snapshot;
+        try {
+          snapshot = readSnapshot(submission.snapshotBytes);
+        } catch (error) {
+          if (error instanceof SnapshotError) throw new EstimateError('record_unreadable');
+          throw error;
+        }
+        if (!(await detailsCurrent(tx, caller.companyId, job, snapshot))) throw new EstimateError('details_changed');
 
         const pin = await currentPin(tx, caller.companyId, jobId);
         if (pin) {
@@ -165,7 +188,7 @@ export function estimatesService(db: Database): EstimatesService {
         if (!company) throw new JobError('not_found');
         let input;
         try {
-          input = estimateInput(readSnapshot(submission.snapshotBytes), company);
+          input = estimateInput(snapshot, company);
         } catch (error) {
           if (error instanceof SnapshotError || error instanceof FieldMapError || error instanceof ZodError) throw new EstimateError('record_unreadable');
           throw error;
@@ -246,7 +269,9 @@ export function estimatesService(db: Database): EstimatesService {
         const pin = await currentPin(tx, caller.companyId, jobId);
         if (!submission || !pin) return none;
         const record = await storedEstimate(tx, caller.companyId, submission.id, pin.id);
-        return record ? { job: jobState(job), estimate: estimateView(record, caller.capabilities) } : none;
+        if (!record) return none;
+        if (job.status === 'submitted' && !(await detailsCurrent(tx, caller.companyId, job, readSnapshot(submission.snapshotBytes)))) return none;
+        return { job: jobState(job), estimate: estimateView(record, caller.capabilities) };
       });
     },
   };

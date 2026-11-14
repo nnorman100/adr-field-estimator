@@ -129,6 +129,10 @@ const OUTCOMES: Record<string, { message: string; next: Next }> = {
   summary_missing: { message: 'This job was finished without a summary of findings. Go back to editing, write it, then finish again.', next: 'done' },
   not_submitted: { message: 'This job is still being edited. Finish and review it first.', next: 'reload' },
   job_signed: { message: 'This job is signed. Its signed documents do not change.', next: 'reload' },
+  details_changed: {
+    message: 'The customer, claim or property address changed after this job was finished. Go back to editing, then finish again so the documents show it.',
+    next: 'done',
+  },
   record_unreadable: { message: 'This record cannot be priced as it is. Go back to editing, then finish again.', next: 'done' },
   prices_unreadable: { message: 'The prices this job is pinned to cannot be read. Ask the owner to check the Prices page.', next: 'done' },
   not_allowed: { message: 'Only the owner or the estimator on this job can price it.', next: 'done' },

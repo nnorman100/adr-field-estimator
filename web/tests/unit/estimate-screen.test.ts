@@ -47,6 +47,7 @@ describe('the review screen', () => {
     expect(outcomeOf(409, { error: 'prices_not_set' })).toMatchObject({ next: 'done', message: expect.stringContaining('no published prices') });
     expect(outcomeOf(409, { error: 'summary_missing' }).message).toContain('summary of findings');
     expect(outcomeOf(409, { error: 'scope_not_confirmed' }).message).toContain('confirm the scope');
+    expect(outcomeOf(409, { error: 'details_changed' })).toMatchObject({ next: 'done', message: expect.stringContaining('Go back to editing, then finish again') });
     expect(outcomeOf(409, { error: 'estimate_refused', stage: 'documents', message: 'Enter the address' }).message).toContain('property address');
     expect(outcomeOf(0, null)).toMatchObject({ next: 'retry' });
     expect(outcomeOf(503, { error: 'whatever' })).toMatchObject({ next: 'retry' });

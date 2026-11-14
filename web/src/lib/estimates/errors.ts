@@ -14,6 +14,9 @@ export const ESTIMATE_ERRORS = {
   // The engine refused the record or the documents; the answer names the stage and the engine's own
   // sentence (fixed wording, never a price).
   estimate_refused: 409,
+  // The customer, claim or property address was edited after Finish and review, so the record no
+  // longer states them: back to editing, then finish again.
+  details_changed: 409,
   // The submitted record cannot be read as a draft of the field map: back to editing, then finish again.
   record_unreadable: 409,
   // The pinned price version cannot be read (its content, hash or engine version is not one this

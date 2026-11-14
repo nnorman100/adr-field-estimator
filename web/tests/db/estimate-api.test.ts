@@ -26,6 +26,7 @@ const photoRoute = await import('@/app/api/jobs/[jobId]/photos/[photoId]/route')
 const submissionsRoute = await import('@/app/api/jobs/[jobId]/submissions/route');
 const draftsRoute = await import('@/app/api/jobs/[jobId]/drafts/route');
 const customerRoute = await import('@/app/api/jobs/[jobId]/customer/route');
+const claimRoute = await import('@/app/api/jobs/[jobId]/claim/route');
 const estimateRoute = await import('@/app/api/jobs/[jobId]/estimate/route');
 const { contentHash, ENGINE_VERSION, parseTable } = await import('@/engine/table');
 const { everything, params, request, resetTeamDatabase, startTeamServer } = await import('./team-harness');
@@ -250,6 +251,100 @@ describe('making the estimate', () => {
     const { jobId } = await submittedJob();
     const answer = await make(ESTIMATOR_A, jobId);
     expect(answer.body.estimate).toMatchObject({ price: { versionSequence: 2, tableHash: two.hash }, totals: { low: { total: '600.00' } } });
+  });
+});
+
+// A change to the customer or the claim while the job is submitted (J3), saved through the routes.
+async function saveCustomer(claims: FakeClaims, jobId: string, propertyAddress: string) {
+  const body = { revision: (await f.job(jobId)).revision, changeId: randomUUID(), name: 'Casey Customer', phone: '555-0101', email: 'casey@example.invalid', propertyAddress };
+  const answer = await customerRoute.PUT(request(claims, `/api/jobs/${jobId}/customer`, { method: 'PUT', body }), params({ jobId }));
+  expect(answer.status).toBe(200);
+}
+async function saveClaim(claims: FakeClaims, jobId: string, claimNumber: string) {
+  const body = {
+    revision: (await f.job(jobId)).revision,
+    changeId: randomUUID(),
+    carrier: 'Synthetic Mutual',
+    claimNumber,
+    policyNumber: 'POL-1',
+    dateOfLoss: '2026-11-01',
+    lossCause: 'Supply line',
+    adjusterName: 'Alex Adjuster',
+    adjusterEmail: 'alex@example.invalid',
+    adjusterPhone: '555-0102',
+    deductible: '1000',
+  };
+  const answer = await claimRoute.PUT(request(claims, `/api/jobs/${jobId}/claim`, { method: 'PUT', body }), params({ jobId }));
+  expect(answer.status).toBe(200);
+}
+
+// Back to editing, then Finish and review again with the same field data: a new record of the job.
+async function finishAgain(claims: FakeClaims, jobId: string, draftId: string, manifest: FieldManifest) {
+  const next = randomUUID();
+  expect((await f.nextDraft(claims, jobId, { draftId: next, fromDraftId: draftId })).status).toBe(201);
+  h.field.put(h.seed.a, next, manifest);
+  expect((await f.submitShown(claims, jobId, next, manifest)).answer.status).toBe(201);
+}
+
+describe('a customer or claim edit after Finish and review', () => {
+  it('an address edit after pricing voids the old documents; the next record’s documents show the new address', async () => {
+    await publish(h.seed.a, '2.00');
+    const { jobId, draftId, manifest } = await submittedJob();
+    const first = (await make(ESTIMATOR_A, jobId)).body.estimate;
+    expect(first.proposal.property_address).toBe('12 Synthetic Lane, Testville');
+
+    await saveCustomer(ESTIMATOR_A, jobId, '14 Synthetic Lane, Testville');
+    expect(await read(ESTIMATOR_A, jobId)).toMatchObject({ status: 200, body: { job: { status: 'submitted' }, estimate: null } });
+    const before = await everything(h.admin);
+    expect(await make(ESTIMATOR_A, jobId)).toMatchObject({ status: 409, body: { error: 'details_changed' } });
+    expect(await everything(h.admin)).toBe(before);
+
+    await finishAgain(ESTIMATOR_A, jobId, draftId, manifest);
+    const second = await make(ESTIMATOR_A, jobId);
+    expect(second.status).toBe(201);
+    expect(second.body.estimate.id).not.toBe(first.id);
+    expect(second.body.estimate.proposal.property_address).toBe('14 Synthetic Lane, Testville');
+    expect(second.body.estimate.documents.letter).toContain('RE: Remediation scope for 14 Synthetic Lane, Testville');
+    expect(second.body.estimate.documents.signable).toBe(true);
+    // Prices are unchanged: the same pin, the same total.
+    expect(second.body.estimate).toMatchObject({ price: { pinSequence: 1, versionSequence: 1 }, totals: { low: { total: '240.00' } } });
+    expect((await read(OFFICE_A, jobId)).body.estimate.id).toBe(second.body.estimate.id);
+  });
+
+  it('a claim edit after pricing voids the old documents; the next record’s letter shows the new claim', async () => {
+    await publish(h.seed.a, '2.00');
+    const { jobId, draftId, manifest } = await submittedJob();
+    await make(ESTIMATOR_A, jobId);
+
+    await saveClaim(ESTIMATOR_A, jobId, 'CLM-2');
+    expect((await read(OWNER_A, jobId)).body.estimate).toBeNull();
+    const before = await everything(h.admin);
+    expect(await make(OWNER_A, jobId)).toMatchObject({ status: 409, body: { error: 'details_changed' } });
+    expect(await everything(h.admin)).toBe(before);
+
+    await finishAgain(ESTIMATOR_A, jobId, draftId, manifest);
+    const second = (await make(ESTIMATOR_A, jobId)).body.estimate;
+    expect(second.documents.letter).toContain('Claim number: CLM-2');
+    expect(second.documents.signable).toBe(true);
+  });
+
+  it('an edit before the first price is refused at pricing, and nothing is pinned', async () => {
+    await publish(h.seed.a, '2.00');
+    const { jobId } = await submittedJob();
+    await saveClaim(ESTIMATOR_A, jobId, 'CLM-3');
+    const before = await everything(h.admin);
+    expect(await make(ESTIMATOR_A, jobId)).toMatchObject({ status: 409, body: { error: 'details_changed' } });
+    expect(await everything(h.admin)).toBe(before);
+    expect(await pins(jobId)).toEqual([]);
+  });
+
+  it('saving the same details again leaves the estimate current', async () => {
+    await publish(h.seed.a, '2.00');
+    const { jobId } = await submittedJob();
+    const first = (await make(ESTIMATOR_A, jobId)).body.estimate;
+    await saveCustomer(ESTIMATOR_A, jobId, '12 Synthetic Lane, Testville');
+    expect((await read(ESTIMATOR_A, jobId)).body.estimate.id).toBe(first.id);
+    expect(await make(ESTIMATOR_A, jobId)).toMatchObject({ status: 200, body: { estimate: { id: first.id } } });
   });
 });
 
