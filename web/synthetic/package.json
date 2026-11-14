@@ -1,0 +1,22 @@
+{
+  "name": "dryscope-synthetic",
+  "version": "1.0.0",
+  "private": true,
+  "description": "The test copy's synthetic monitor: signs in as a synthetic technician and opens one fixed job (TC-10). Built and deployed on its own, apart from the web app.",
+  "main": "dist/index.js",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "gcp-build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@google-cloud/functions-framework": "5.0.5",
+    "@google-cloud/synthetics-sdk-api": "0.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.1",
+    "typescript": "5.9.3"
+  }
+}

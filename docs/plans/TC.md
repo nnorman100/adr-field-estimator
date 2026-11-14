@@ -275,6 +275,7 @@ Format: **UI** screens, **FE** frontend, **BE** server routes and services, **DB
   2. `GET /api/me` must say signed in to that company.
   3. `GET /api/jobs/{id}` (S5a-3) opens the fixed job and checks its fixed name.
   - The whole probe has a 30-second limit and logs only step names and status codes.
+  - **Correction (2026-11-13):** the probe logs exactly these non-sensitive fields: severity, step name, status code and, on failure, a fixed failure code.
 - Tests: unit with `fetch` stubbed for success, wrong password, membership removed, job 404, timeout and slow responses. Each failure names its step and contains no email, password or token. A local run against the dev server and the Auth emulator.
 - Needs: S5a-3, https://github.com/nnorman100/adr-field-estimator/pull/341, for the jobs read route. New dependency per section 3.
 

@@ -85,6 +85,12 @@ test('the owner sees what is missing, fills it in and saves', async ({ page, req
     .getByRole('region', { name: 'Still needed before documents' })
     .getByRole('listitem');
   await expect(missing).toHaveText(['Company address', 'CSLB license', 'Document sign-off']);
+  // S7-4: the AI used today and this month against the V5 B default ceilings (the stand-in has no
+  // AI calls), read through the real route's owner check.
+  const aiUse = page.getByRole('region', { name: 'AI use' });
+  await expect(aiUse.getByRole('term')).toHaveText(['AI used today', 'AI used this month']);
+  await expect(aiUse.getByRole('definition')).toHaveText(['$0.00 of $10.00', '$0.00 of $200.00']);
+  await expect(aiUse).toContainText('not the prices of your work');
   await expectNoAxeViolations(page);
   await expectNoSideways(page);
 
@@ -206,6 +212,21 @@ test('a line the server refuses is explained and keeps what was typed', async ({
   await expectNoAxeViolations(page);
 });
 
+test('the settings still open when the AI use cannot be read, and say so', async ({ page, request }) => {
+  await setProfile(request, FULL);
+  await page.route(`**/api/companies/${team.companyId}/ai-usage`, (route) =>
+    route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"ai_usage_unavailable"}' }),
+  );
+  await signInTo(page, team.owner);
+  await openSettings(page);
+  const aiUse = page.getByRole('region', { name: 'AI use' });
+  await expect(aiUse).toContainText('We could not load the AI use');
+  await expect(aiUse.getByRole('term')).toHaveCount(0);
+  await expect(page.getByLabel('Company phone')).toHaveValue(FULL.phone);
+  await expectNoAxeViolations(page);
+  await expectNoSideways(page);
+});
+
 for (const [kind, who] of [
   ['an estimator', () => team.estimator],
   ['an office user', () => team.office],
@@ -237,6 +258,10 @@ for (const [kind, who] of [
     const read = await request.get(`/api/companies/${team.companyId}/profile`, { headers });
     expect(read.status()).toBe(403);
     expect(await read.json()).toEqual({ error: 'not_allowed' });
+    // The AI use as well (S7-4: ai_usage_read is the owner's).
+    const usage = await request.get(`/api/companies/${team.companyId}/ai-usage`, { headers });
+    expect(usage.status()).toBe(403);
+    expect(await usage.json()).toEqual({ error: 'not_allowed' });
     const owner = await idTokenFor(team.tenantId, team.owner.email, PASSWORD);
     const ownerRead = () =>
       request.get(`/api/companies/${team.companyId}/profile`, {

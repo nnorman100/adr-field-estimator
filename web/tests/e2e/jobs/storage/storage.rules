@@ -1,0 +1,13 @@
+rules_version = '2';
+
+// The Storage emulator's rules for the job-screen browser tests (tests/e2e/jobs.spec.ts) only. It
+// stands in for the evidence bucket, which only the app server touches, through the Admin SDK that
+// these rules do not bind; no browser may read or write it. This file is never deployed: it is
+// named only by tests/e2e/jobs/storage/firebase.json, never by web/firebase.json.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

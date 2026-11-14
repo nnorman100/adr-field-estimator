@@ -7,7 +7,10 @@ import {
   type MemberRecord,
   type TokenVerifier,
 } from '@/lib/auth';
+import { AI_FEATURES, AI_REGISTRY } from '@/lib/ai/registry';
 import {
+  AI_FLAG_DETAILS,
+  AI_FLAG_NAMES,
   ALL_OFF,
   FLAG_CHANGED_ACTION,
   FLAG_NAMES,
@@ -79,9 +82,25 @@ const priceBooksOnForA = { [A]: [{ flag: 'price_books', enabled: true }] };
 
 describe('the known flags', () => {
   it('is a fixed list, every flag off by default', () => {
-    expect(FLAG_NAMES).toEqual(['price_books']);
+    expect(FLAG_NAMES).toEqual([
+      'price_books',
+      'live_voice',
+      'ai_summary',
+      'ai_scope_fill',
+      'ai_meter_reading',
+      'ai_voice_notes',
+      'ai_job_summary',
+    ]);
     expect(Object.isFrozen(FLAG_NAMES)).toBe(true);
-    expect(ALL_OFF).toEqual({ price_books: false });
+    expect(ALL_OFF).toEqual({
+      price_books: false,
+      live_voice: false,
+      ai_summary: false,
+      ai_scope_fill: false,
+      ai_meter_reading: false,
+      ai_voice_notes: false,
+      ai_job_summary: false,
+    });
     expect(flagsFromRows([])).toEqual(ALL_OFF);
     expect(flagsFromRows(null)).toEqual(ALL_OFF);
   });
@@ -101,23 +120,45 @@ describe('the known flags', () => {
   });
 
   it('turns a flag on only for a known name stored with enabled exactly true', () => {
-    expect(flagsFromRows([{ flag: 'price_books', enabled: true }])).toEqual({ price_books: true });
-    expect(flagsFromRows([{ flag: 'price_books', enabled: false }])).toEqual({ price_books: false });
+    expect(flagsFromRows([{ flag: 'price_books', enabled: true }])).toEqual({ ...ALL_OFF, price_books: true });
+    expect(flagsFromRows([{ flag: 'price_books', enabled: false }])).toEqual(ALL_OFF);
+    expect(flagsFromRows([{ flag: 'ai_scope_fill', enabled: true }])).toEqual({ ...ALL_OFF, ai_scope_fill: true });
     const odd = [
       { flag: 'price_books', enabled: 'true' },
       { flag: 'price_books', enabled: 1 },
       { flag: 'unknown_feature', enabled: true },
       { flag: '__proto__', enabled: true },
+      { flag: 'live_voice', enabled: 'true' },
+      { flag: 'AI_SUMMARY', enabled: true },
     ] as unknown as FlagRow[];
     const flags = flagsFromRows(odd);
-    expect(flags).toEqual({ price_books: false });
-    expect(Object.keys(flags)).toEqual(['price_books']);
+    expect(flags).toEqual(ALL_OFF);
+    expect(Object.keys(flags)).toEqual([...FLAG_NAMES]);
     expect(Object.isFrozen(flags)).toBe(true);
   });
 
   it('maps price_books onto the capability table switch', () => {
-    expect(accessFlags({ price_books: true })).toEqual({ priceBooks: true });
+    expect(accessFlags({ ...ALL_OFF, price_books: true })).toEqual({ priceBooks: true });
     expect(accessFlags(ALL_OFF)).toEqual({ priceBooks: false });
+    // An AI switch grants no capability key: the AI boundary reads it per feature.
+    expect(accessFlags(Object.fromEntries(FLAG_NAMES.map((n) => [n, n !== 'price_books'])) as typeof ALL_OFF)).toEqual({ priceBooks: false });
+  });
+
+  it('gives each of the six AI switches an owner, a purpose and a removal date (S7-4)', () => {
+    expect([...AI_FLAG_NAMES].sort()).toEqual(
+      ['ai_job_summary', 'ai_meter_reading', 'ai_scope_fill', 'ai_summary', 'ai_voice_notes', 'live_voice'].sort(),
+    );
+    expect(FLAG_NAMES.filter((n) => n !== 'price_books')).toEqual([...AI_FLAG_NAMES]);
+    expect(Object.keys(AI_FLAG_DETAILS).sort()).toEqual([...AI_FLAG_NAMES].sort());
+    for (const name of AI_FLAG_NAMES) {
+      const { owner, purpose, removeBy } = AI_FLAG_DETAILS[name];
+      expect(owner.trim().length, name).toBeGreaterThan(0);
+      expect(purpose.trim().length, name).toBeGreaterThan(20);
+      expect(removeBy, name).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(new Date(`${removeBy}T00:00:00Z`).toISOString().slice(0, 10), name).toBe(removeBy);
+    }
+    // Every AI feature's flag is one of them, so the operator can turn each feature on.
+    for (const feature of AI_FEATURES) expect(AI_FLAG_NAMES, feature).toContain(AI_REGISTRY[feature].flag);
   });
 });
 
@@ -126,8 +167,8 @@ describe('flags at sign-in', () => {
     const dir = directory(priceBooksOnForA);
     const a = await resolveIdentity(signedIn('tenant-a'), verifier, dir);
     const b = await resolveIdentity(signedIn('tenant-b'), verifier, dir);
-    expect(a.flags).toEqual({ price_books: true });
-    expect(b.flags).toEqual({ price_books: false });
+    expect(a.flags).toEqual({ ...ALL_OFF, price_books: true });
+    expect(b.flags).toEqual(ALL_OFF);
     expect(a.capabilities).toEqual(expect.arrayContaining(['prices_read', 'prices_manage']));
     expect(b.capabilities).not.toContain('prices_read');
     expect(b.capabilities).not.toContain('prices_manage');
@@ -140,7 +181,7 @@ describe('flags at sign-in', () => {
       `http://localhost/api/feature?price_books=true&companyId=${A}`,
     );
     const identity = await resolveIdentity(sneaky, verifier, directory(priceBooksOnForA));
-    expect(identity.flags).toEqual({ price_books: false });
+    expect(identity.flags).toEqual(ALL_OFF);
   });
 
   it('/api/me capabilities follow the stored switch', async () => {
@@ -232,8 +273,8 @@ describe('changeCompanyFlag', () => {
     const { store, audit, rowsOf, flags } = memoryStore();
     const result = await changeCompanyFlag(store, { operatorActorId: OPERATOR, companyId: A, flag: 'price_books', enabled: true });
     expect(result).toEqual({ companyId: A, flag: 'price_books', enabled: true, previous: false });
-    expect(flagsFromRows(rowsOf(A))).toEqual({ price_books: true });
-    expect(flagsFromRows(rowsOf(B))).toEqual({ price_books: false });
+    expect(flagsFromRows(rowsOf(A))).toEqual({ ...ALL_OFF, price_books: true });
+    expect(flagsFromRows(rowsOf(B))).toEqual(ALL_OFF);
     expect(flags.get(`${A}/price_books`)?.updatedByOperatorId).toBe(OPERATOR);
     expect(audit).toEqual([
       {
@@ -252,7 +293,7 @@ describe('changeCompanyFlag', () => {
     await changeCompanyFlag(store, { operatorActorId: OPERATOR, companyId: A, flag: 'price_books', enabled: true });
     const result = await changeCompanyFlag(store, { operatorActorId: OPERATOR, companyId: A, flag: 'price_books', enabled: false });
     expect(result.previous).toBe(true);
-    expect(flagsFromRows(rowsOf(A))).toEqual({ price_books: false });
+    expect(flagsFromRows(rowsOf(A))).toEqual(ALL_OFF);
     expect(audit.map((event) => event.details)).toEqual([
       { enabled: true, previous: false },
       { enabled: false, previous: true },

@@ -494,8 +494,10 @@ Every read or write needs a token whose `firebase.tenant` is the company's `auth
 unexpired access record for that uid in that company. With both, owner and office read every draft
 of the company and an estimator reads only drafts they own in the field. Only the field owner, as
 owner or estimator, writes, and only the `field` map: of a draft, or of a room or photo reference
-under it (created holding only `field`, never deleted by a client; no other collection and nothing
-deeper). A draft that is `submitting` or `submitted` refuses every client write.
+under it (created holding only `field`; no other collection and nothing deeper). The field owner
+may also delete a room document of an editing draft (owner decision, 2026-11-13, S5a-6: the phone
+removes the room from `roomOrder` in the same batch); a photo reference is never deleted by a
+client. A draft that is `submitting` or `submitted` refuses every client write.
 
 Each `field` map follows field map v1 (S5a-1, `web/src/lib/field/schema.ts`), and the rules refuse
 a key it does not name, a value of the wrong type, and a text, number or list outside its size. Every

@@ -15,6 +15,7 @@ import {
 import { AI_REGISTRY, isAiFeature, type AiFeature, type AiFeatureEntry, type AiRegistry } from './registry';
 import { stripPricesDeep } from './rules';
 import { withAiSpan, type AiSpanRunner } from './span';
+import { secondsUntilNextUtcDay, utcDay } from './utc';
 
 // The AI boundary: every REST model call in the app goes through call(), in the order of
 // docs/plans/S7.md section 3:
@@ -30,8 +31,9 @@ import { withAiSpan, type AiSpanRunner } from './span';
 //  10. settlement;
 //  11. one allowlisted log line and span.
 // Any failure is a refusal with a fixed code and message; nothing is allowed by default. Live is the
-// relay's (S7-11 to S7-13) and is refused here. The quota and the budget are ports until S7-4
-// brings budget.ts; tests use fakes for them, for the model and for Model Armor.
+// relay's (S7-11 to S7-13) and is refused here. The quota and the budget are ports: budget.ts
+// (S7-4) is the Postgres ledger behind both; tests use fakes for them, for the model and for Model
+// Armor.
 
 // ---- Ports --------------------------------------------------------------------------------------
 
@@ -70,7 +72,13 @@ export type AiQuotaPort = {
   }): Promise<boolean>;
 };
 
-export type AiReservation = { ok: true; reservationId: string } | { ok: false; reason: 'daily' | 'monthly' | 'held' };
+// A refused reservation says why and, when it knows, how many seconds until it may fit: the UTC
+// day's or month's end for a spent ceiling or a used-up quota, a minute for room taken only by calls
+// still in progress. `quota` is the ledger's own count of the person's calls today, checked in the
+// same transaction as the money, so parallel calls cannot pass the quota together.
+export type AiReservation =
+  | { ok: true; reservationId: string }
+  | { ok: false; reason: 'daily' | 'monthly' | 'held' | 'quota'; retryAfterSeconds?: number };
 
 export type AiBudgetPort = {
   reserve(request: {
@@ -123,7 +131,9 @@ export type AiRequest<T> = {
   rules?: (output: T) => T;
 };
 
-export type AiRefusal = { code: AiRefusalCode; retryable: boolean; message: string };
+// retryAfterSeconds is set for a quota or budget refusal when the ledger knows when it may fit; the
+// route answers 429 with that Retry-After (budget.ts, aiRefusalResponse).
+export type AiRefusal = { code: AiRefusalCode; retryable: boolean; message: string; retryAfterSeconds?: number };
 
 export type AiOutcome<T> =
   | { ok: true; callId: string; output: T; model: AiModel; promptVersion: string | null }
@@ -162,6 +172,7 @@ class Refused extends Error {
     readonly code: AiRefusalCode,
     readonly verdict: AiVerdict = 'not_screened',
     readonly retryable?: boolean,
+    readonly retryAfterSeconds?: number,
   ) {
     super(code);
   }
@@ -317,7 +328,7 @@ export function createAiBoundary(deps: BoundaryDeps) {
         const parts = inputParts(entry, request);
         const at = now();
         // 3. Per-user quota.
-        const day = at.toISOString().slice(0, 10);
+        const day = utcDay(at);
         if (
           !(await deps.quota.take({
             companyId: context.companyId,
@@ -327,7 +338,7 @@ export function createAiBoundary(deps: BoundaryDeps) {
             day,
           }))
         ) {
-          throw new Refused('quota');
+          throw new Refused('quota', 'not_screened', undefined, secondsUntilNextUtcDay(at));
         }
         // 4. Budget reservation: input bytes / 3 plus the output cap.
         const instruction = entry.usesPrompt ? entry.prompt!.text : undefined;
@@ -344,7 +355,11 @@ export function createAiBoundary(deps: BoundaryDeps) {
           microUsd,
           at,
         });
-        if (!held.ok) throw new Refused('budget', 'not_screened', held.reason === 'held');
+        if (!held.ok) {
+          const after = held.retryAfterSeconds;
+          if (held.reason === 'quota') throw new Refused('quota', 'not_screened', undefined, after);
+          throw new Refused('budget', 'not_screened', held.reason === 'held', after);
+        }
         reservation = held.reservationId;
         // 5. Model Armor on the input.
         line.verdict = await screenInput(entry, parts);
@@ -390,10 +405,9 @@ export function createAiBoundary(deps: BoundaryDeps) {
           // The budget layer's own error; the reservation stays as it was and the sweeper settles it.
         }
         const known = REFUSALS[refused.code];
-        return finish({
-          ok: false,
-          refusal: { code: refused.code, retryable: refused.retryable ?? known.retryable, message: known.message },
-        });
+        const refusal: AiRefusal = { code: refused.code, retryable: refused.retryable ?? known.retryable, message: known.message };
+        if (refused.retryAfterSeconds !== undefined) refusal.retryAfterSeconds = refused.retryAfterSeconds;
+        return finish({ ok: false, refusal });
       }
     });
   }

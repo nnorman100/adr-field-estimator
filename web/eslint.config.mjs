@@ -7,5 +7,5 @@ export default defineConfig([
   ...nextVitals,
   ...nextTs,
   { rules: { 'max-lines': ['error', { max: 1000 }] } },
-  globalIgnores(['.next/**', 'out/**', 'next-env.d.ts', 'test-results/**', 'playwright-report/**']),
+  globalIgnores(['.next/**', 'out/**', 'next-env.d.ts', 'test-results/**', 'playwright-report/**', 'synthetic/node_modules/**', 'synthetic/dist/**']),
 ]);

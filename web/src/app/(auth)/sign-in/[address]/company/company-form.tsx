@@ -9,6 +9,7 @@ import { callApi } from '@/lib/firebase-client';
 import { changedProfile, profileMessage, profileView } from '@/lib/profile/screen';
 import type { ProfileView } from '@/lib/profile/service';
 import { FocusedPanel } from '../../../focused-panel';
+import { AiUsageSection } from './ai-usage-section';
 
 type Values = Pick<ProfileView, 'address' | 'phone' | 'email' | 'license' | 'signoff'>;
 
@@ -21,7 +22,8 @@ const valuesOf = ({ address, phone, email, license, signoff }: ProfileView): Val
 });
 
 // The owner's company settings on one screen at phone width: the lines the four documents print
-// (letterhead and sign-off), and what is still missing before documents can be issued. One save
+// (letterhead and sign-off), what is still missing before documents can be issued, and the
+// company's AI use today and this month (S7-4). One save
 // sends the five lines with the revision they were read at; the screen then shows what the server
 // holds, and when the profile changed elsewhere meanwhile, it shows that and says so. The company
 // name is set by DryScope when the company is made, and the logo is a later step, so the letterhead
@@ -31,11 +33,14 @@ export function CompanyForm({
   user,
   companyId,
   initial,
+  showAiUsage,
 }: {
   address: string;
   user: User;
   companyId: string;
   initial: ProfileView;
+  // Whether the role holds ai_usage_read (the owner): only then is the AI use asked for.
+  showAiUsage: boolean;
 }) {
   const [saved, setSaved] = useState<ProfileView>(initial);
   const [values, setValues] = useState<Values>(valuesOf(initial));
@@ -228,6 +233,8 @@ export function CompanyForm({
           Save company settings
         </Button>
       </form>
+
+      {showAiUsage && <AiUsageSection user={user} companyId={companyId} />}
     </FocusedPanel>
   );
 }
