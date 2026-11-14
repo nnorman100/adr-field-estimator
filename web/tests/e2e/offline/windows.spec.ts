@@ -9,6 +9,9 @@ import type { BrowserContext } from '@playwright/test';
 import type { NetworkLane } from './lane';
 import type { World } from './world';
 
+// Offline and worker tests need the service worker, which the suite blocks by default.
+test.use({ serviceWorkers: 'allow' });
+
 // Two windows, both signed in as the draft's owner and listening to the draft (so both are
 // started, and both have the draft cached).
 async function twoWindows(context: BrowserContext, lane: NetworkLane, world: World, cache: CacheKind) {

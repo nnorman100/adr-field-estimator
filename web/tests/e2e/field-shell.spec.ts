@@ -3,7 +3,13 @@ import { expect, test, type Page } from '@playwright/test';
 import { NOT_SAVED_TEXT, OFFLINE_TEXT } from '../../src/app/field/banners';
 import { PROBE_PATH } from '../../src/app/field/connection';
 import { HOME_SCREEN_HELP, HOME_SCREEN_TITLE } from '../../src/app/field/home-screen-text';
+import { DISCARD_LABEL, KEEP_LABEL, UNSENT_TITLE } from '../../src/app/(auth)/sign-in/[address]/unsent-sign-out-dialog';
+import { NOT_READY_OFFLINE_TEXT, PREPARING_TEXT } from '../../src/app/(auth)/sign-in/[address]/offline-ready-text';
 import { ME_DB, ME_DB_VERSION, ME_STORE } from '../../src/lib/field/ds-me';
+import { sessionValid } from '../../src/lib/field/sync-gate';
+import { unsentKey } from '../../src/lib/field/unsent';
+import { KEEP_YES } from '../../src/app/field/field-store-text';
+import { expectWorkerRuns } from './service-workers';
 import { PASSWORD, readSeed, type ProjectSeed } from './sign-in/seed';
 
 // The field shell's own screens (S6-2) in Chromium and WebKit at phone width: it starts from the
@@ -13,6 +19,13 @@ import { PASSWORD, readSeed, type ProjectSeed } from './sign-in/seed';
 const A = 'Company A Restoration';
 
 test.use({ viewport: { width: 390, height: 844 } });
+// The field shell's specs need its service worker, which the suite blocks by default.
+test.use({ serviceWorkers: 'allow' });
+
+test('runs with the field service worker allowed', async ({ page }) => {
+  await page.goto('/field');
+  await expectWorkerRuns(page);
+});
 
 let mine: ProjectSeed;
 test.beforeEach(({}, testInfo) => {
@@ -112,7 +125,19 @@ test('the sign-in is saved before the field app is offered, and removed before s
 
   const rows = await savedRows(page);
   expect(rows).toHaveLength(1);
-  expect(Object.keys(rows[0]!).sort()).toEqual(['address', 'companyName', 'config', 'key', 'savedAt', 'tenantId', 'uid']);
+  expect(Object.keys(rows[0]!).sort()).toEqual([
+    'address',
+    'authTime',
+    'capabilities',
+    'companyId',
+    'companyName',
+    'config',
+    'key',
+    'role',
+    'savedAt',
+    'tenantId',
+    'uid',
+  ]);
   expect(rows[0]).toMatchObject({ companyName: A, address: 'company-a' });
   expect(JSON.stringify(rows[0])).not.toContain(mine.memberA.email);
 
@@ -298,4 +323,128 @@ test('the "No signal" check reaches the app without its API', async ({ page }) =
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
   expect((await probed).ok()).toBe(true);
   await expect(page.getByText(OFFLINE_TEXT)).toHaveCount(0);
+});
+
+// The rows of ds-me, read straight from the phone's storage.
+function rowsNow(page: Page): Promise<Record<string, unknown>[]> {
+  return page.evaluate(
+    ([db, store]) =>
+      new Promise<Record<string, unknown>[]>((resolve, reject) => {
+        const open = indexedDB.open(db as string);
+        open.onerror = () => reject(open.error);
+        open.onsuccess = () => {
+          const rows = open.result.transaction(store as string, 'readonly').objectStore(store as string).getAll();
+          rows.onsuccess = () => {
+            open.result.close();
+            resolve(rows.result as Record<string, unknown>[]);
+          };
+        };
+      }),
+    [ME_DB, ME_STORE] as const,
+  );
+}
+
+// S6-3: the sign-in page saves what the server said and when the person signed in, so a phone
+// signed in and then taken out of signal before the field shell ever opens can work offline.
+test('a sign-in taken offline before the field shell opens can stand in offline', async ({ page, context }) => {
+  await signInAsMemberA(page);
+  // The signed-in screen shows only once the field worker has kept the shell, and says nothing is
+  // missing for working with no signal.
+  await expect(page.getByText(NOT_READY_OFFLINE_TEXT)).toHaveCount(0);
+  await context.setOffline(true);
+  const [row] = await rowsNow(page);
+  expect(row).toMatchObject({ companyName: A, role: expect.any(String), companyId: expect.any(String), capabilities: expect.any(Array) });
+  expect(Math.abs(Date.now() - (row!.authTime as number))).toBeLessThan(5 * 60_000);
+  expect(sessionValid(row as { role?: string; authTime?: number }, Date.now())).toBe(true);
+
+  // With no signal, the field app opens for the first time on this phone.
+  await page.goto('/field');
+  await expect(page.getByRole('heading', { name: A })).toBeVisible();
+  // The first time on this phone the shell asks whether to keep jobs here; the person says yes.
+  await page.getByRole('button', { name: KEEP_YES }).click();
+  await expect(page.getByText('Your jobs will show here.')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Sign in to continue' })).toHaveCount(0);
+  await context.setOffline(false);
+});
+
+// S6-3: signing in waits, saying so, while the field worker keeps the shell; when it cannot, the
+// signed-in screen says the field app is not ready to open with no signal.
+test('signing in says it is getting ready to work with no signal, and says so when it could not', async ({ page }) => {
+  // The worker's registration is held, then fails, as on a phone whose browser will not install it.
+  await page.addInitScript(() => {
+    let fail = () => undefined as void;
+    const held = new Promise<never>((_, reject) => (fail = () => reject(new Error('no worker'))));
+    (window as unknown as { failWorker: () => void }).failWorker = fail;
+    navigator.serviceWorker.register = () => held;
+  });
+  await page.goto('/sign-in/company-a');
+  await page.getByLabel('Email').fill(mine.memberA.email);
+  await page.getByLabel('Password').fill(PASSWORD);
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: PREPARING_TEXT })).toBeVisible();
+  await expect(page.getByRole('heading', { name: `Signed in to ${A}` })).toHaveCount(0);
+  await page.evaluate(() => (window as unknown as { failWorker: () => void }).failWorker());
+  await expect(page.getByRole('heading', { name: `Signed in to ${A}` })).toBeVisible();
+  await expect(page.getByText(NOT_READY_OFFLINE_TEXT)).toBeVisible();
+});
+
+// S6-3: the person's own sign-out asks first when their field edits for this company have not all
+// reached the server; Keep leaves them for the same person's next sign-in here (D7), Discard
+// removes them. The phone's mark of unsent work is set here as a field edit sets it.
+test('signing out with unsent work asks to keep or discard it', async ({ page }) => {
+  await signInAsMemberA(page);
+  const [row] = await page.evaluate(
+    ([db, store]) =>
+      new Promise<{ tenantId: string; uid: string }[]>((resolve, reject) => {
+        const open = indexedDB.open(db as string);
+        open.onerror = () => reject(open.error);
+        open.onsuccess = () => {
+          const rows = open.result.transaction(store as string, 'readonly').objectStore(store as string).getAll();
+          rows.onsuccess = () => {
+            open.result.close();
+            resolve(rows.result as { tenantId: string; uid: string }[]);
+          };
+        };
+      }),
+    [ME_DB, ME_STORE] as const,
+  );
+  const mark = unsentKey(row!.tenantId, row!.uid);
+  const unsent = JSON.stringify({ writes: 1, unsentSince: Date.now(), lockedSince: null });
+  await page.evaluate(([key, value]) => window.localStorage.setItem(key!, value!), [mark, unsent]);
+
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  const dialog = page.getByRole('dialog', { name: UNSENT_TITLE });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('button', { name: KEEP_LABEL })).toBeFocused();
+  await expectAccessible(page);
+  // Cancel signs nobody out.
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole('heading', { name: `Signed in to ${A}` })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await dialog.getByRole('button', { name: KEEP_LABEL }).click();
+  await expect(page.getByRole('heading', { name: `Sign in to ${A}` })).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), mark)).toBe(unsent);
+
+  await signInAsMemberA(page);
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await dialog.getByRole('button', { name: DISCARD_LABEL }).click();
+  await expect(page.getByRole('heading', { name: `Sign in to ${A}` })).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), mark)).toBeNull();
+
+  // With nothing unsent, signing out asks nothing.
+  await signInAsMemberA(page);
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await expect(page.getByRole('heading', { name: `Sign in to ${A}` })).toBeVisible();
+
+  // Work made only in a window's memory (Online only) is not kept by anything: nothing is offered
+  // or promised for it.
+  await signInAsMemberA(page);
+  const inMemory = JSON.stringify({ writes: 1, unsentSince: Date.now(), lockedSince: null, memoryOnly: true });
+  await page.evaluate(([key, value]) => window.localStorage.setItem(key!, value!), [mark, inMemory]);
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await expect(page.getByRole('heading', { name: `Sign in to ${A}` })).toBeVisible();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByText('kept on this phone')).toHaveCount(0);
 });

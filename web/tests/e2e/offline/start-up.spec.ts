@@ -8,6 +8,9 @@
 import { expect, test, Phone, OFFLINE_TEST_TIMEOUT } from './fixture';
 import { seedCompany } from './world';
 
+// Offline and worker tests need the service worker, which the suite blocks by default.
+test.use({ serviceWorkers: 'allow' });
+
 // How long the field screen will wait for the cache to answer before it calls the start stalled.
 const WATCHDOG_MS = 5000;
 const RELOADS = 25;

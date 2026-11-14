@@ -177,14 +177,14 @@ export async function sendVerifyEmail(user: User, continueUrl: string): Promise<
 
 // Asks the server who this sign-in is (GET /api/me). `fresh` gets a new ID token first, so a just
 // verified email is in it.
-export async function checkSignIn(user: User, fresh = false): Promise<MeOutcome> {
+export async function checkSignIn(user: User, fresh = false): Promise<{ outcome: MeOutcome; body: unknown }> {
   let response: Response;
   try {
     if (fresh) await user.reload();
     const token = await user.getIdToken(fresh);
     response = await fetch('/api/me', { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
   } catch {
-    return { kind: 'unavailable' };
+    return { outcome: { kind: 'unavailable' }, body: null };
   }
   let body: unknown = null;
   try {
@@ -192,7 +192,7 @@ export async function checkSignIn(user: User, fresh = false): Promise<MeOutcome>
   } catch {
     // An answer with no JSON is judged on its status alone.
   }
-  return meOutcome(response.status, body);
+  return { outcome: meOutcome(response.status, body), body };
 }
 
 // One call to this app's own API as the signed-in person (the team and invitation screens, S3-16).

@@ -5,6 +5,9 @@ import { expect, expectNothingSent, expectWithheld, test, SEND_MS } from './fixt
 import { Phone } from './fixture';
 import { readDraft, seedCompany } from './world';
 
+// Offline and worker tests need the service worker, which the suite blocks by default.
+test.use({ serviceWorkers: 'allow' });
+
 test.describe('a write made offline (S6-1 a)', () => {
   test('survives a reload and is sent once on reconnect', async ({ browser, lane }) => {
     const context = await browser.newContext();

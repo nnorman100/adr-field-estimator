@@ -15,6 +15,9 @@ import {
 import { nudge, openControlled } from './shell';
 import type { Page } from '@playwright/test';
 
+// Offline and worker tests need the service worker, which the suite blocks by default.
+test.use({ serviceWorkers: 'allow' });
+
 const IPHONE =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 18_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3 Mobile/15E148 Safari/604.1';
 const ANDROID =

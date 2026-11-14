@@ -67,7 +67,10 @@ type Fixtures = { lane: NetworkLane };
 export const OFFLINE_TEST_TIMEOUT = 180_000;
 
 export const test = base.extend<Fixtures>({
-  lane: async ({}, provide, testInfo) => {
+  lane: async ({ serviceWorkers }, provide, testInfo) => {
+    // The suite blocks service workers by default (playwright.config.ts); an offline test run with
+    // it blocked would lose its worker coverage without failing, so it fails here instead.
+    if (serviceWorkers !== 'allow') throw new Error("offline tests need test.use({ serviceWorkers: 'allow' })");
     testInfo.setTimeout(Math.max(testInfo.timeout, OFFLINE_TEST_TIMEOUT));
     const lane = await NetworkLane.open({ statics: await harnessFiles() });
     try {

@@ -4,6 +4,9 @@
 import { connect } from 'node:net';
 import { expect, test } from './fixture';
 
+// Offline and worker tests need the service worker, which the suite blocks by default.
+test.use({ serviceWorkers: 'allow' });
+
 const reachable = (url: string) =>
   fetch(url, { signal: AbortSignal.timeout(2000) }).then(
     (response) => response.status,

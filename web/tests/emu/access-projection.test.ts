@@ -3,7 +3,7 @@ import type { Firestore } from 'firebase-admin/firestore';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { parseProjectionConfig } from '@/lib/config';
 import { firestoreAccessStore, firestoreFor } from '@/lib/projection/firestore';
-import type { AccessStore } from '@/lib/projection/store';
+import type { AccessReader, AccessStore } from '@/lib/projection/store';
 import { accessStoreContract } from '../projection/store-contract';
 import { createTenant, projectId, signIn, signUp } from './auth-emulator';
 import { getDoc, serverSet, updateDoc } from './rules/firestore-rest';
@@ -13,7 +13,7 @@ import { getDoc, serverSet, updateDoc } from './rules/firestore-rest';
 // store runs against Postgres in tests/db/access-projection.test.ts.
 
 let db: Firestore;
-let store: AccessStore;
+let store: AccessStore & AccessReader;
 
 beforeAll(() => {
   const config = parseProjectionConfig({

@@ -19,7 +19,10 @@ import {
   type SecondStepChallenge,
 } from '@/lib/firebase-client';
 import { saveMe } from '@/lib/field/ds-me';
-import { signOutOfCompany } from '@/lib/field/sign-out';
+import { prepareFieldShell } from '@/lib/field/register-worker';
+import { meFacts } from '@/lib/field/sync-gate';
+import { noteUnlocked } from '@/lib/field/unsent';
+import { hasUnsentWork, signOutDiscarding, signOutOfCompany } from '@/lib/field/sign-out';
 import { endsSession, errorCode, signInErrorMessage, type MeOutcome } from '@/lib/sign-in/outcome';
 import { rememberSignInAddress } from '@/lib/sign-in/remember';
 import { offersCompanyScreen } from '@/lib/profile/screen';
@@ -31,6 +34,8 @@ import { EnrolScreen } from '../../second-step/enrol-screen';
 import { hadSecondStep, rememberSecondStep } from '../../second-step/remember';
 import { SecondStepSection } from '../../second-step/second-step-section';
 import { InvitationScreen } from './invitation-screen';
+import { UnsentSignOutDialog, type UnsentChoice } from './unsent-sign-out-dialog';
+import { NOT_READY_OFFLINE_TEXT, PREPARING_TEXT } from './offline-ready-text';
 
 export type SignInScreenProps = {
   address: string;
@@ -48,6 +53,8 @@ type Screen =
   | { name: 'set-password' }
   | { name: 'set-password-sent' }
   | { name: 'checking' }
+  // Signed in: the field worker is being installed so the field app opens with no signal.
+  | { name: 'preparing' }
   // The password or Google account was right and the person has a second step: the code is next.
   | { name: 'code'; challenge: SecondStepChallenge }
   // A signed-in person adds an authenticator app (the required first setup is the outcome below).
@@ -72,6 +79,9 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [askUnsent, setAskUnsent] = useState(false);
+  // False when the field app could not be made ready to open with no signal during this sign-in.
+  const [offlineReady, setOfflineReady] = useState(true);
   const authRef = useRef<Auth | null>(null);
   // The person signed in on this phone, for the screens that act on their account.
   const [signedInUser, setSignedInUser] = useState<User | null>(null);
@@ -113,7 +123,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
   const check = useCallback(
     async (user: User, fresh = false) => {
       setScreen({ name: 'checking' });
-      const outcome = await checkSignIn(user, fresh);
+      const { outcome, body } = await checkSignIn(user, fresh);
       const authenticators = outcome.kind === 'second-step' ? await authenticatorCount(user) : 0;
       const current = authRef.current?.currentUser ?? null;
       if (current !== user) {
@@ -139,11 +149,33 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
         return;
       }
       // The field shell starts from this row with no signal (S6-2), so it is saved before the screen
-      // that opens the shell; a phone that cannot keep it still signs in, and the shell says it is
-      // not saved.
+      // that opens the shell, with what the server said and when the person signed in, for the
+      // offline `me` read (S6-3); a phone that cannot keep it still signs in, and the shell says it
+      // is not saved. The field worker is installed here too, and the signed-in screen waits for
+      // it ("Getting DryScope ready…"), so a phone that loses signal before ever opening the field
+      // app can still open it; when that does not finish in time, the screen says so. The server
+      // just let this person in, so a refusal saved on the phone for them is lifted.
       if (outcome.kind === 'signed-in') {
-        await saveMe({ tenantId, uid: user.uid, companyName: outcome.companyName, address, config });
+        noteUnlocked(tenantId, user.uid);
+        const authTime = await user.getIdTokenResult().then(
+          (result) => Date.parse(result.authTime),
+          () => NaN,
+        );
+        await saveMe({
+          tenantId,
+          uid: user.uid,
+          companyName: outcome.companyName,
+          address,
+          config,
+          role: outcome.role,
+          ...(meFacts(body) ?? {}),
+          ...(Number.isFinite(authTime) ? { authTime } : {}),
+        });
         if ((authRef.current?.currentUser ?? null) !== user) return;
+        setScreen({ name: 'preparing' });
+        const ready = await prepareFieldShell();
+        if ((authRef.current?.currentUser ?? null) !== user) return;
+        setOfflineReady(ready);
       }
       setScreen({ name: 'outcome', outcome: outcome as Extract<Screen, { name: 'outcome' }>['outcome'] });
     },
@@ -189,12 +221,38 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
   const auth = () => authRef.current!;
   const currentUser = () => authRef.current?.currentUser ?? null;
 
+  // The person's own sign-out (S6-3). With work kept on this phone that the server does not have
+  // yet, it asks to keep or discard it; otherwise, and on Discard, this person's cache for this
+  // company goes too. Kept work stays for the same person's next sign-in here (D7). Work made only
+  // in a window's memory (Online only) is not kept by anything, so nothing is promised for it.
+  const signOutChosen = (choice: UnsentChoice) =>
+    run(async () => {
+      if (choice === 'keep') return endSession('You are signed out. Your unsent work is kept on this phone.');
+      const result = await signOutDiscarding(auth(), tenantId, config);
+      if (result === 'elsewhere') return setError('DryScope is open in another window. Close it there, then sign out.');
+      if (result === 'failed') return setError('Your work on this phone could not be removed. Try again.');
+      setNotice('You are signed out.');
+      setScreen({ name: 'signed-out' });
+    });
+
   const signOutButton = (
     <>
       <ErrorMessage text={error} />
-      <Button variant="outline" disabled={busy} onClick={() => run(() => endSession('You are signed out.'))}>
+      <Button
+        variant="outline"
+        disabled={busy}
+        onClick={() => (hasUnsentWork(auth(), tenantId) === 'kept' ? setAskUnsent(true) : void signOutChosen('discard'))}
+      >
         Sign out
       </Button>
+      <UnsentSignOutDialog
+        open={askUnsent}
+        companyName={companyName}
+        onChoice={(choice) => {
+          setAskUnsent(false);
+          if (choice) void signOutChosen(choice);
+        }}
+      />
     </>
   );
 
@@ -202,6 +260,14 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
     return (
       <FocusedPanel title={`Sign in to ${companyName}`}>
         <p role="status">Checking your sign-in…</p>
+      </FocusedPanel>
+    );
+  }
+
+  if (screen.name === 'preparing') {
+    return (
+      <FocusedPanel title={`Sign in to ${companyName}`}>
+        <p role="status">{PREPARING_TEXT}</p>
       </FocusedPanel>
     );
   }
@@ -299,6 +365,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
               You are signed in as {ROLE_NAMES[outcome.role] ?? 'a team member'}. The rest of DryScope arrives in later
               updates.
             </p>
+            {offlineReady ? null : <p role="status">{NOT_READY_OFFLINE_TEXT}</p>}
             {signedInUser ? (
               <SecondStepSection
                 user={signedInUser}

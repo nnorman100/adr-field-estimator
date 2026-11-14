@@ -9,7 +9,7 @@
 // emulator), so tests running in parallel never cut each other off. Each port forwards, byte for
 // byte, to the shared server behind it. The app port is also the origin the test page is served
 // from, so cutting it takes the page itself away.
-import { createServer as createHttpServer, request as httpRequest, type Server as HttpServer } from 'node:http';
+import { createServer as createHttpServer, request as httpRequest, type IncomingHttpHeaders, type Server as HttpServer } from 'node:http';
 import { createServer as createTcpServer, connect, type AddressInfo, type Server, type Socket } from 'node:net';
 import { AUTH_EMULATOR_HOST } from '../sign-in/emulator';
 import { FIRESTORE_EMULATOR_HOST } from './emulators';
@@ -34,13 +34,16 @@ type Side = {
   bytes: number;
 };
 
-export type StaticFile = { type: string; body: string | Buffer };
+// `status` is 200 unless set: a test can stand in for one API answer (S6-3's GET /api/me).
+export type StaticFile = { type: string; body: string | Buffer; status?: number };
+// An answer worked out per request, from the request's headers.
+export type Responder = (headers: IncomingHttpHeaders) => Promise<StaticFile>;
 
 export class NetworkLane {
   private readonly sides = new Map<Target, Side>();
   private readonly cuts = new Set<Target>();
   private readonly bytesAtCut = new Map<Target, number>();
-  private statics = new Map<string, StaticFile>();
+  private statics = new Map<string, StaticFile | Responder>();
   // Paths (and everything under a path ending in "/") the app side answers 404 to, as a server does
   // for files a newer build no longer has.
   private gone: string[] = [];
@@ -75,7 +78,7 @@ export class NetworkLane {
 
   // Serves `file` at `path` from now on instead of the app's own answer: a deployment that changed
   // that file. Used by the worker tests (S6-2); restore with unserve().
-  serve(path: string, file: StaticFile): void {
+  serve(path: string, file: StaticFile | Responder): void {
     this.statics.set(path, file);
   }
 
@@ -185,8 +188,12 @@ export class NetworkLane {
     const server = createHttpServer((req, res) => {
       const own = this.statics.get(new URL(req.url ?? '/', 'http://lane').pathname);
       if (own) {
-        res.writeHead(200, { 'Content-Type': own.type, 'Cache-Control': 'no-store' });
-        res.end(own.body);
+        const send = (file: StaticFile) => {
+          res.writeHead(file.status ?? 200, { 'Content-Type': file.type, 'Cache-Control': 'no-store' });
+          res.end(file.body);
+        };
+        if (typeof own === 'function') own(req.headers).then(send, () => res.destroy());
+        else send(own);
         return;
       }
       const path = new URL(req.url ?? '/', 'http://lane').pathname;
