@@ -5,9 +5,8 @@
 // person's own Google credentials (`gcloud auth application-default login`), never the app's,
 // which cannot change tenant settings.
 //
-//   npm run platform:secure-tenants -- --project dryscope                 # read only: what would change
-//   npm run platform:secure-tenants -- --project dryscope --apply         # change it
-//   npm run platform:secure-tenants -- --project dryscope --tenant ID ... # only the tenants named
+//   npm run platform:secure-tenants -- --project dryscope          # read only: what would change
+//   npm run platform:secure-tenants -- --project dryscope --apply  # change it
 //
 // Without --apply it only reads. Test and live tenants share the project, so the read lists both;
 // the owner checks the list before adding --apply. A tenant that already has a rule at least as
@@ -17,30 +16,25 @@
 import { pathToFileURL } from 'node:url';
 import { EMAIL_PRIVACY_CONFIG, MIN_PASSWORD_LENGTH, PROJECT_ID } from './create-tenant';
 
-export type SecureOptions = { project: string; tenants: string[]; apply: boolean };
-
-const TENANT_ID = /^[A-Za-z0-9-]{1,128}$/;
+export type SecureOptions = { project: string; apply: boolean };
 
 export function parseSecureArgs(argv: string[]): SecureOptions {
   let project: string | undefined;
-  const tenants: string[] = [];
   let apply = false;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
     if (arg === '--apply') apply = true;
-    else if (arg === '--project' || arg === '--tenant') {
+    else if (arg === '--project') {
       const value = argv[i + 1];
       if (!value || value.startsWith('--')) throw new Error(`${arg} needs a value`);
       i++;
-      if (arg === '--project') project = value;
-      else if (TENANT_ID.test(value)) tenants.push(value);
-      else throw new Error('--tenant must be a tenant id: letters, digits and hyphens');
+      project = value;
     } else if (arg.startsWith('--')) throw new Error(`unknown option ${arg}`);
     else throw new Error(`unexpected argument ${arg}`);
   }
   if (!project) throw new Error('--project is required');
   if (!PROJECT_ID.test(project)) throw new Error('--project must be a Google Cloud project id');
-  return { project, tenants, apply };
+  return { project, apply };
 }
 
 type StrengthOptions = { minPasswordLength?: number; maxPasswordLength?: number } & Record<string, unknown>;
@@ -146,13 +140,9 @@ export async function secureTenants(
   const token = await deps.accessToken();
   const listed = await listTenants(options.project, deps, token);
   const ids = (t: unknown) => /([^/]+)$/.exec(String(record(t).name))?.[1];
-  for (const wanted of options.tenants) {
-    if (!listed.some((t) => ids(t) === wanted)) throw new Error(`tenant ${wanted} was not found in project ${options.project}`);
-  }
-  const chosen = options.tenants.length === 0 ? listed : listed.filter((t) => options.tenants.includes(ids(t) ?? ''));
 
   // Every tenant is read and checked before anything is sent.
-  const plan = chosen.map((tenant) => ({ tenant, change: tenantChange(tenant) }));
+  const plan = listed.map((tenant) => ({ tenant, change: tenantChange(tenant) }));
   const needed = plan.filter((entry) => entry.change !== null).length;
   let changed = 0;
   for (const { tenant, change } of plan) {
@@ -185,10 +175,10 @@ export async function secureTenants(
   }
   deps.log(
     options.apply
-      ? `changed ${changed} of ${chosen.length} tenants.`
-      : `dry run: ${needed} of ${chosen.length} tenants would change; nothing was changed. Run again with --apply to change them.`,
+      ? `changed ${changed} of ${listed.length} tenants.`
+      : `dry run: ${needed} of ${listed.length} tenants would change; nothing was changed. Run again with --apply to change them.`,
   );
-  return { checked: chosen.length, needed, changed };
+  return { checked: listed.length, needed, changed };
 }
 
 async function main() {

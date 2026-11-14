@@ -56,20 +56,13 @@ function run(tenants: Record<string, unknown>[], argv: string[], options: Parame
 
 describe('parseSecureArgs', () => {
   it('reads first by default, and changes only with --apply', () => {
-    expect(parseSecureArgs(['--project', 'dryscope'])).toEqual({ project: 'dryscope', tenants: [], apply: false });
-    expect(parseSecureArgs(['--project', 'dryscope', '--apply'])).toEqual({ project: 'dryscope', tenants: [], apply: true });
-    expect(parseSecureArgs(['--project', 'dryscope', '--tenant', 'company-a-x1y2z', '--tenant', 'ops-a1b2c'])).toEqual({
-      project: 'dryscope',
-      tenants: ['company-a-x1y2z', 'ops-a1b2c'],
-      apply: false,
-    });
+    expect(parseSecureArgs(['--project', 'dryscope'])).toEqual({ project: 'dryscope', apply: false });
+    expect(parseSecureArgs(['--project', 'dryscope', '--apply'])).toEqual({ project: 'dryscope', apply: true });
   });
 
-  it('refuses a missing or malformed project or tenant, and anything it does not know', () => {
+  it('refuses a missing or malformed project, and anything it does not know', () => {
     expect(() => parseSecureArgs([])).toThrow(/--project is required/);
     expect(() => parseSecureArgs(['--project', 'Dry Scope'])).toThrow(/--project/);
-    expect(() => parseSecureArgs(['--project', 'dryscope', '--tenant'])).toThrow(/--tenant/);
-    expect(() => parseSecureArgs(['--project', 'dryscope', '--tenant', 'a/b'])).toThrow(/--tenant/);
     expect(() => parseSecureArgs(['--project', 'dryscope', '--yes'])).toThrow(/unknown option --yes/);
     expect(() => parseSecureArgs(['--project', 'dryscope', 'apply'])).toThrow(/unexpected argument/);
   });
@@ -193,17 +186,6 @@ describe('secureTenants', () => {
   it('stops when Google answers a change without the settings', async () => {
     const { result } = run(tenants, ['--project', 'dryscope', '--apply'], { afterPatch: (t) => ({ ...t, emailPrivacyConfig: {} }) });
     await expect(result).rejects.toThrow(/^tenant operators-a1b2c did not keep the new settings$/);
-  });
-
-  it('works only on the tenants named, and refuses a name it cannot find before changing anything', async () => {
-    const named = run(tenants, ['--project', 'dryscope', '--tenant', 'company-b-q9w8e', '--apply']);
-    expect(await named.result).toEqual({ checked: 1, needed: 1, changed: 1 });
-    expect(named.calls.filter((c) => c.method === 'PATCH').map((c) => c.url)).toEqual([
-      'https://identitytoolkit.googleapis.com/v2/projects/dryscope/tenants/company-b-q9w8e?updateMask=passwordPolicyConfig',
-    ]);
-    const missing = run(tenants, ['--project', 'dryscope', '--tenant', 'company-b-q9w8e', '--tenant', 'gone-z0z0z', '--apply']);
-    await expect(missing.result).rejects.toThrow(/^tenant gone-z0z0z was not found in project dryscope$/);
-    expect(missing.calls.filter((c) => c.method === 'PATCH')).toEqual([]);
   });
 
   it('names only the status when Google refuses, never the answer', async () => {

@@ -57,11 +57,11 @@ export const MIN_PASSWORD_LENGTH = 12;
 // `minLength`); firebase-admin turns those into these before sending. A password shorter than the
 // minimum is refused when it is set, and one already set is refused at sign-in until it is
 // changed (`forceUpgradeOnSignin`).
-export function passwordPolicyConfig(minPasswordLength = MIN_PASSWORD_LENGTH) {
+export function passwordPolicyConfig() {
   return {
     passwordPolicyEnforcementState: 'ENFORCE',
     forceUpgradeOnSignin: true,
-    passwordPolicyVersions: [{ customStrengthOptions: { minPasswordLength } }],
+    passwordPolicyVersions: [{ customStrengthOptions: { minPasswordLength: MIN_PASSWORD_LENGTH } }],
   };
 }
 
