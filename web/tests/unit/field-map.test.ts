@@ -70,8 +70,8 @@ describe('toInspection', () => {
       emergency_calls: 1,
       labor_hours: 2,
       rooms: [
-        { name: 'Hall', category: 1, unfinished_sf: 50, waste_percent: 10 },
-        { name: 'Kitchen', category: 1, unfinished_sf: 120 },
+        { name: 'Hall', category: 1, loss: 'water', unfinished_sf: 50, waste_percent: 10 },
+        { name: 'Kitchen', category: 1, loss: 'water', unfinished_sf: 120 },
       ],
     });
   });

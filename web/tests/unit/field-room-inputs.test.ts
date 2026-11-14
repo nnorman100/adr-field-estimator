@@ -89,6 +89,7 @@ describe('toInspection with room inputs', () => {
         name: 'Bathroom',
         room_type_id: 'bathroom',
         category: 2,
+        loss: 'water',
         water_class: 2,
         ceiling_height_ft: 8,
         floor_sf: 60,
@@ -102,7 +103,7 @@ describe('toInspection with room inputs', () => {
     // The engine's own strict schema reads it: prep tasks and findings are not engine inputs.
     expect(() => validateInspection({ address: '1 Example Street', ...inspection })).not.toThrow();
     const mold = toInspection({ roomOrder: ['m'] }, [{ id: 'm', field: { name: 'Attic', category: 'mold', moldCondition: 3, affectedSf: 45 } }]);
-    expect(mold.rooms).toEqual([{ name: 'Attic', category: 'mold', mold_condition: 3, affected_sf: 45 }]);
+    expect(mold.rooms).toEqual([{ name: 'Attic', category: 'mold', loss: 'mold', mold_condition: 3, affected_sf: 45 }]);
   });
 
   it('prices two rooms with the same item at different quantities as two lines', () => {
@@ -124,6 +125,13 @@ describe('toInspection with room inputs', () => {
     const without = toInspection({ roomOrder: ['r1'] }, [{ id: 'r1', field: { ...FULL_ROOM, ceilingHeightFt: undefined } }]);
     const needs = suggestEquipment(without);
     expect(needs.ok && needs.rooms[0]?.needs).toEqual(['ceiling height']);
+  });
+
+  it('sizes a Category 3 (black water) room as water, not mold', () => {
+    const black = { name: 'Basement', category: 3, waterClass: 2, floorSf: 100, ceilingHeightFt: 8 };
+    const suggestion = suggestEquipment(toInspection({ roomOrder: ['b'] }, [{ id: 'b', field: black }]));
+    expect(suggestion.ok && suggestion.rooms.map((room) => room.status)).toEqual(['ready']);
+    expect(suggestion.ok && suggestion.air_movers).toEqual({ min: 3, max: 3 });
   });
 });
 
@@ -185,6 +193,17 @@ describe('the Check Scope room form', () => {
     });
     expect(roomChanges(values, stored, { prepTasks: [] }).changes).toEqual({ prepTasks: null });
     expect(roomChanges(values, stored, { prepTasks: Array.from({ length: 11 }, (_, i) => `Task ${i}`) }).errors.prepTasks).toBeDefined();
+  });
+
+  it('ignores and keeps the inputs the category hides, so a hidden bad box never blocks a save', () => {
+    const toMold = { ...formOf(ROOM_FIELDS, stored), ceilingHeightFt: '0', waterClass: '3', category: 'mold', moldCondition: '3' };
+    expect(roomChanges(toMold, stored)).toEqual({ changes: { category: 'mold', moldCondition: 3 }, errors: {} });
+    const mold = { name: 'Attic', category: 'mold' as const, affectedSf: 40 };
+    const toWater = { ...formOf(ROOM_FIELDS, mold), affectedSf: 'x', moldCondition: '2', category: '3', ceilingHeightFt: '8' };
+    expect(roomChanges(toWater, mold)).toEqual({ changes: { category: 3, ceilingHeightFt: 8 }, errors: {} });
+    const shown = roomChanges({ ...formOf(ROOM_FIELDS, stored), ceilingHeightFt: '0' }, stored);
+    expect(shown.changes).toEqual({});
+    expect(shown.errors.ceilingHeightFt).toBeDefined();
   });
 
   it('writes the findings note and clears an emptied one', () => {

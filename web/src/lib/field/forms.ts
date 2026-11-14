@@ -194,8 +194,14 @@ function prepTasksChange(edited: string[], stored: RoomField, result: FormResult
   result.changes.prepTasks = tasks;
 }
 
+const HIDDEN_FOR_MOLD = ['waterClass', 'ceilingHeightFt'];
+const HIDDEN_FOR_WATER = ['moldCondition', 'affectedSf'];
+
 export function roomChanges(values: FormValues, stored: RoomField, lists: RoomLists = {}): FormResult {
-  const result = changesOf(ROOM_FIELDS, roomFieldSchema, values, stored);
+  const shown = formOf(ROOM_FIELDS, stored);
+  const hidden = values.category === 'mold' ? HIDDEN_FOR_MOLD : HIDDEN_FOR_WATER;
+  const visible = { ...values, ...Object.fromEntries(hidden.map((key) => [key, shown[key]!])) };
+  const result = changesOf(ROOM_FIELDS, roomFieldSchema, visible, stored);
   if (result.changes.name === null) {
     delete result.changes.name;
     result.errors.name = 'A room needs a name.';

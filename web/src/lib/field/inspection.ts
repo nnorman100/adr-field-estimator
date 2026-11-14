@@ -88,6 +88,7 @@ export function toInspection(draftField: unknown, rooms: RoomDoc[]): { [key: str
     const room = byId.get(id) as RoomField;
     if (room.name === undefined) throw new FieldMapError('a room has no name');
     const out = copy(room, ROOM_KEYS);
+    if (room.category !== undefined) out.loss = room.category === 'mold' ? 'mold' : 'water';
     // The engine takes a list, one entry per item; the map's ids in code-unit order, so the same
     // room always gives the same list.
     const items = Object.entries(room.items ?? {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
