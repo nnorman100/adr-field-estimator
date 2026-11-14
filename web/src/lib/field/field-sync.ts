@@ -81,7 +81,7 @@ export function runFieldSync(
     onRefused: (reason) => refuse(reason) !== 'unsaved',
     onExpired: () => refuse('sign-in-expired') !== 'unsaved',
     // Asked after every answer, a missing one included, so a refusal the phone could not save is
-    // told again then too.
+    // tried again (by that evaluate's sweep) then too.
     mayOpen: (opening) => {
       if (!opening) return tell({ kind: 'entry', person, saved: row }) !== 'expired';
       const state = tell({ kind: 'let-in', person });
