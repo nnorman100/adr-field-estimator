@@ -44,11 +44,11 @@ async function ids(context: RouteContext): Promise<{ jobId: string; photoId: str
 function kindOf(request: Request, fallback: PhotoKind | null): PhotoKind {
   const kind = new URL(request.url).searchParams.getAll('kind');
   if (kind.length === 0 && fallback) return fallback;
-  if (kind.length === 1 && (kind[0] === 'photo' || kind[0] === 'original')) return kind[0];
+  if (kind.length === 1 && (kind[0] === 'photo' || kind[0] === 'original' || kind[0] === 'signature')) return kind[0];
   throw new PhotoError('invalid_request');
 }
 
-// PUT /api/jobs/{jobId}/photos/{photoId}?kind=photo|original  (the raw image as the body)
+// PUT /api/jobs/{jobId}/photos/{photoId}?kind=photo|original|signature  (the raw image as the body)
 // 201 for a new photo, 200 for the same bytes again; the answer is the receipt. An original also
 // sends X-Photo-Sha256: the SHA-256 of the registered photo it belongs to.
 export async function putPhoto(request: Request, identity: Identity, context: RouteContext): Promise<Response> {
@@ -72,7 +72,7 @@ export async function putPhoto(request: Request, identity: Identity, context: Ro
   });
 }
 
-// GET /api/jobs/{jobId}/photos/{photoId}?kind=photo|original  (the photo when no kind is given)
+// GET /api/jobs/{jobId}/photos/{photoId}?kind=photo|original|signature  (the photo when no kind is given)
 export async function getPhoto(request: Request, identity: Identity, context: RouteContext): Promise<Response> {
   return respond(async () => {
     const { jobId, photoId } = await ids(context);

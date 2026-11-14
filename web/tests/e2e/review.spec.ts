@@ -1,6 +1,8 @@
 import { test as base, expect as baseExpect, type Page, type Request, type Route } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { priceEstimate } from '@/engine/estimate';
+import { SIGNED_FORMAT, type SignedRecord } from '@/lib/agreements/record';
+import type { SignedAgreement } from '@/lib/agreements/screen';
 import { estimateInput } from '@/lib/estimates/inputs';
 import { proposalBytes, proposalOf } from '@/lib/estimates/proposal';
 import { estimateView, type EstimateView } from '@/lib/estimates/result';
@@ -56,6 +58,8 @@ function estimateFor(team: TeamSeed, jobId: string, draftId: string, role: 'owne
     identity: { companyId: team.companyId, name: team.companyName, address: '1 Synthetic Way, Testville', phone: '555-0100', email: 'office@example.invalid', license: '000001', signoff: 'Pat Example' },
     letterhead: NEUTRAL_LETTERHEAD,
     settings: NEUTRAL_SETTINGS,
+    // The company's own wording for the signed page (S5a-11), synthetic text.
+    signing: { authorizationText: 'Synthetic start-work authorization.', paymentTermsText: 'Synthetic payment terms.' },
   };
   const snapshot = record(jobId, draftId);
   const table = {
@@ -94,14 +98,43 @@ function estimateFor(team: TeamSeed, jobId: string, draftId: string, role: 'owne
 
 type Job = { id: string; status: string; currentDraftId: string; revision: number };
 
-// The job and estimate routes at the network boundary. `estimate` is what GET answers; `make`
-// decides POST's answer.
-async function playApi(page: Page, job: Job, answers: { estimate: EstimateView | null; make?: () => [number, unknown]; read?: number }) {
+// The job, estimate and signing routes at the network boundary. `estimate` is what GET answers;
+// `make` decides POST's answer; `signature` and `sign` decide the signature receipt's and the
+// agreement's answers (S5a-11), and `agreement` is what GET .../agreements answers.
+type Answers = {
+  estimate: EstimateView | null;
+  make?: () => [number, unknown];
+  read?: number;
+  signature?: () => [number, unknown];
+  sign?: () => [number, unknown];
+  agreement?: SignedAgreement | null;
+};
+
+// What the page sent to the signing routes: the signature's path and bytes, and the agreement bodies.
+type Signing = { signatures: Array<{ path: string; bytes: Buffer }>; agreements: unknown[] };
+
+async function playApi(page: Page, job: Job, answers: Answers, signing: Signing = { signatures: [], agreements: [] }) {
   const sent: string[] = [];
   await page.route(`**/api/jobs/${job.id}**`, async (route: Route, request: Request) => {
     const path = new URL(request.url()).pathname;
     expect(request.headers().authorization).toMatch(/^Bearer /);
     sent.push(`${request.method()} ${path}`);
+    if (path.startsWith(`/api/jobs/${job.id}/photos/`) && new URL(request.url()).searchParams.get('kind') === 'signature') {
+      if (request.method() === 'GET') return route.fulfill({ status: 200, contentType: 'image/png', body: PNG });
+      if (request.method() === 'PUT' && answers.signature) {
+        signing.signatures.push({ path, bytes: request.postDataBuffer() ?? Buffer.alloc(0) });
+        const [status, json] = answers.signature();
+        return route.fulfill({ status, json });
+      }
+    }
+    if (path === `/api/jobs/${job.id}/agreements`) {
+      if (request.method() === 'GET') return route.fulfill({ json: { job, agreement: answers.agreement ?? null } });
+      if (request.method() === 'POST' && answers.sign) {
+        signing.agreements.push(request.postDataJSON());
+        const [status, json] = answers.sign();
+        return route.fulfill({ status, json });
+      }
+    }
     if (request.method() === 'GET' && path === `/api/jobs/${job.id}`) {
       return route.fulfill({ json: { job: { ...job, propertyAddress: '', fieldOwnerActorId: null, createdAt: '', updatedAt: '' }, customer: {}, claim: {} } });
     }
@@ -203,4 +236,150 @@ test('with prices switched off for the company, the review says so', async ({ pa
   await page.goto(`/sign-in/${team.address}/jobs/${job.id}/review`);
   await expect(page.getByRole('main').getByRole('heading', { name: 'Prices are not switched on' })).toBeVisible();
   await expectNoAxeViolations(page);
+});
+
+// A 1×1 white PNG: the stored signature image the signed page reads back.
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=', 'base64');
+
+// The signed record the server stores for `estimate` (src/lib/agreements/service.ts), as GET and POST answer it.
+function signedFor(estimate: EstimateView, signatureId: string): SignedAgreement {
+  const record: SignedRecord = {
+    format: SIGNED_FORMAT,
+    agreement_id: randomUUID(),
+    job_id: estimate.jobId,
+    kind: 'original',
+    signed_at: '2026-11-14T18:30:00.000Z',
+    signer: { name: 'Casey Customer' },
+    signed_with: { kind: 'device', presented_by: { actor_id: randomUUID(), name: 'Robin Tech' } },
+    signature: { id: signatureId, sha256: 'f'.repeat(64), content_type: 'image/png' },
+    proposal_sha256: estimate.proposalSha256!,
+    proposal: estimate.proposal!,
+    documents: { itemized_claim: estimate.documents!.itemizedClaim, letter: estimate.documents!.letter, photo_log: estimate.documents!.photoLog, claim: estimate.documents!.claim, compliance_notes: [] },
+    basis: { estimate_id: estimate.id, submission_id: estimate.submissionId },
+  };
+  return { id: record.agreement_id, signedAt: record.signed_at, documentsSha256: 'e'.repeat(64), record };
+}
+
+// Draws a stroke across the signature pad with the pointer, as a finger would.
+async function drawSignature(page: Page) {
+  const pad = page.getByTestId('signature-pad');
+  await pad.scrollIntoViewIfNeeded();
+  const box = (await pad.boundingBox())!;
+  await page.mouse.move(box.x + 20, box.y + box.height / 2);
+  await page.mouse.down();
+  for (let step = 1; step <= 10; step += 1) await page.mouse.move(box.x + 20 + step * 25, box.y + box.height / 2 + (step % 2 ? -20 : 20));
+  await page.mouse.up();
+}
+
+const exactText = (page: Page, testId: string) => page.getByTestId(testId).first().evaluate((element) => element.textContent);
+
+test('the customer signs on the phone: success only after the server’s answer, and the same request is retried', async ({ page }) => {
+  const job = { id: randomUUID(), status: 'submitted', currentDraftId: randomUUID(), revision: 3 };
+  const made = estimateFor(team, job.id, job.currentDraftId, 'estimator');
+  const signing: Signing = { signatures: [], agreements: [] };
+  let attempts = 0;
+  let signed: SignedAgreement | null = null;
+  await playApi(
+    page,
+    job,
+    {
+      estimate: made,
+      signature: () => [signing.signatures.length === 1 ? 201 : 200, { photoId: 'x', kind: 'signature', sha256: 'f'.repeat(64) }],
+      sign: () => {
+        attempts += 1;
+        // The first answer is lost: nothing is shown as signed.
+        if (attempts === 1) return [503, { error: 'agreements_unavailable' }];
+        const id = (signing.agreements[0] as { signatureId: string }).signatureId;
+        signed = signedFor(made, id);
+        return [201, { job: { ...job, status: 'signed' }, agreement: signed }];
+      },
+    },
+    signing,
+  );
+  await signInTo(page, team.estimator);
+  await page.goto(`/sign-in/${team.address}/jobs/${job.id}/review`);
+  const main = page.getByRole('main');
+  await expect(main.getByRole('heading', { name: 'Review before signing' })).toBeVisible();
+  // The proposal prints the company's start-work authorization and payment terms exactly as entered.
+  await main.getByText('Proposal', { exact: true }).click();
+  expect(await exactText(page, 'authorization-text')).toBe('Synthetic start-work authorization.');
+  expect(await exactText(page, 'payment-terms-text')).toBe('Synthetic payment terms.');
+
+  await expect(main.getByRole('heading', { name: 'Customer signature' })).toHaveCount(0);
+  await main.getByRole('checkbox', { name: /I reviewed the proposal/ }).check();
+  await expect(main.getByRole('heading', { name: 'Customer signature' })).toBeVisible();
+  // "Email me a copy" is not offered until email exists (J7).
+  await expect(main.getByText(/email me a copy/i)).toHaveCount(0);
+  await expectNoAxeViolations(page);
+  await expectNoSideways(page);
+
+  // Nothing is sent without a name and a signature.
+  await main.getByRole('button', { name: 'Sign', exact: true }).click();
+  await expect(main.getByText("Write the customer's name.")).toBeVisible();
+  await expect(main.getByText('Draw the signature in the box.')).toBeVisible();
+  expect(signing.signatures).toEqual([]);
+
+  await main.getByLabel("Customer's full name").fill('  Casey Customer ');
+  await drawSignature(page);
+  await main.getByRole('button', { name: 'Sign', exact: true }).click();
+  await expect(main.getByRole('alert')).toContainText('Nothing was signed yet.');
+  await expect(main.getByRole('heading', { name: 'Signed' })).toHaveCount(0);
+
+  await main.getByRole('button', { name: 'Try signing again' }).click();
+  await expect(main.getByRole('heading', { name: 'Signed', exact: true })).toBeVisible();
+  // Both tries sent the same signature bytes under the same id, and the same agreement request.
+  expect(signing.signatures).toHaveLength(2);
+  expect(signing.signatures[1]).toEqual(signing.signatures[0]);
+  expect([...signing.signatures[0]!.bytes.subarray(0, 8)]).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  expect(signing.agreements).toHaveLength(2);
+  expect(signing.agreements[1]).toEqual(signing.agreements[0]);
+  const body = signing.agreements[0] as Record<string, unknown>;
+  expect(body).toMatchObject({ estimateId: made.id, proposalSha256: made.proposalSha256, signerName: 'Casey Customer', documentsConfirmed: true });
+  expect(signing.signatures[0]!.path).toBe(`/api/jobs/${job.id}/photos/${body.signatureId as string}`);
+
+  // The signed page: who, when and how, from the stored record.
+  await expect(main.getByTestId('signed-by')).toHaveText('Signed by Casey Customer');
+  await expect(main.getByTestId('signed-how')).toHaveText("Signed on the technician's phone, presented by Robin Tech.");
+  await expect(main.getByTestId('signed-when')).toContainText('2026');
+  await expect(main.getByRole('button', { name: 'Sign', exact: true })).toHaveCount(0);
+  await expectNoAxeViolations(page);
+  await expectNoSideways(page);
+});
+
+test('a signed job opens read-only from its stored record', async ({ page }) => {
+  const job = { id: randomUUID(), status: 'signed', currentDraftId: randomUUID(), revision: 4 };
+  const made = estimateFor(team, job.id, job.currentDraftId, 'office');
+  const signatureId = randomUUID();
+  const sent = await playApi(page, job, { estimate: made, agreement: signedFor(made, signatureId) });
+  await signInTo(page, team.office);
+  await page.goto(`/sign-in/${team.address}/jobs/${job.id}/review`);
+  const main = page.getByRole('main');
+  await expect(main.getByRole('heading', { name: 'Signed', exact: true })).toBeVisible();
+  await expect(main.getByTestId('signed-by')).toHaveText('Signed by Casey Customer');
+  await expect(main.getByRole('img', { name: 'Signature of Casey Customer' })).toBeVisible();
+  expect(await exactText(page, 'authorization-text')).toBe('Synthetic start-work authorization.');
+  await expect(main.getByRole('checkbox')).toHaveCount(0);
+  await expect(main.getByRole('textbox')).toHaveCount(0);
+  await expectNoAxeViolations(page);
+  await expectNoSideways(page);
+  expect(sent).toContain(`GET /api/jobs/${job.id}/photos/${signatureId}`);
+  expect(sent.filter((call) => !call.startsWith('GET'))).toEqual([]);
+});
+
+test('signing is refused with the setup check’s answer', async ({ page }) => {
+  const job = { id: randomUUID(), status: 'submitted', currentDraftId: randomUUID(), revision: 3 };
+  await playApi(page, job, {
+    estimate: estimateFor(team, job.id, job.currentDraftId, 'owner'),
+    signature: () => [201, { photoId: 'x', kind: 'signature', sha256: 'f'.repeat(64) }],
+    sign: () => [409, { error: 'company_setup_missing', missing: ['Payment terms'] }],
+  });
+  await signInTo(page, team.owner);
+  await page.goto(`/sign-in/${team.address}/jobs/${job.id}/review`);
+  const main = page.getByRole('main');
+  await main.getByRole('checkbox', { name: /I reviewed the proposal/ }).check();
+  await main.getByLabel("Customer's full name").fill('Casey Customer');
+  await drawSignature(page);
+  await main.getByRole('button', { name: 'Sign', exact: true }).click();
+  await expect(main.getByRole('alert')).toContainText('Company settings are not finished: Payment terms.');
+  await expect(main.getByRole('heading', { name: 'Signed', exact: true })).toHaveCount(0);
 });

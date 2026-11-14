@@ -2,6 +2,7 @@ import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 import { and, eq, inArray } from 'drizzle-orm';
 import { auditEvents, evidenceObjects } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
+import { currentEstimateRow } from '@/lib/estimates/service';
 import { jobAccess, type JobCaller, type JobRow } from '@/lib/jobs/access';
 import type { DraftStates } from './drafts';
 import { PhotoError } from './errors';
@@ -9,16 +10,20 @@ import { sha256Of, sniffImageType } from './image';
 import type { EvidenceStore } from './store';
 
 // Photo bytes of a job (S5a-5): the receipt for a photo or its full-size original, and the read.
+// The customer's signature image (S5a-11) comes through the same receipt as a third kind.
 // Every database step runs inside withCompany for the company of the verified sign-in and goes
 // through the one job-access function. Bytes pass through the app server, so the bucket needs no
 // signing key and no browser ever holds a bucket address.
 
-export type PhotoKind = 'photo' | 'original';
+export type PhotoKind = 'photo' | 'original' | 'signature';
 
-// Who may do what (docs/ACCESS.md, "Photo routes"): sending needs `photos` (owner, estimator);
-// reading needs only the right to see the job (`jobs_read`), so office can look at a job's photos.
+// Who may do what (docs/ACCESS.md, "Photo routes"): sending a photo needs `photos` (owner,
+// estimator), sending a signature needs `sign` (who presents the documents for signing); reading
+// needs only the right to see the job (`jobs_read`), so office can look at a job's photos.
 const SEND = ['photos'] as const;
+const SIGN = ['sign'] as const;
 const READ = ['jobs_read'] as const;
+const sendNeeds = (kind: PhotoKind) => (kind === 'signature' ? SIGN : SEND);
 
 export type Receipt = {
   photoId: string;
@@ -49,9 +54,13 @@ type EvidenceRow = typeof evidenceObjects.$inferSelect;
 // Under the job's own path in the bucket, named by ids only (no uid, no person's name). The name
 // holds neither the hash nor a file extension: one photo id is one object name, so a second upload
 // of that id meets the create-only precondition whatever its bytes or type are.
+const FOLDERS: Record<PhotoKind, string> = { photo: 'photos', original: 'originals', signature: 'signatures' };
+
 export function objectNameOf(companyId: string, jobId: string, kind: PhotoKind, photoId: string): string {
-  return `companies/${companyId}/jobs/${jobId}/${kind === 'photo' ? 'photos' : 'originals'}/${photoId}`;
+  return `companies/${companyId}/jobs/${jobId}/${FOLDERS[kind]}/${photoId}`;
 }
+
+const RECEIVED: Record<PhotoKind, string> = { photo: 'photo_received', original: 'photo_original_received', signature: 'signature_received' };
 
 const receiptOf = (row: EvidenceRow): Receipt => ({
   photoId: row.objectId,
@@ -71,7 +80,7 @@ async function registryRows(tx: CompanyTransaction, caller: JobCaller, jobId: st
         eq(evidenceObjects.companyId, caller.companyId),
         eq(evidenceObjects.jobId, jobId),
         eq(evidenceObjects.objectId, photoId),
-        inArray(evidenceObjects.kind, ['photo', 'original']),
+        inArray(evidenceObjects.kind, ['photo', 'original', 'signature']),
       ),
     );
 }
@@ -94,13 +103,23 @@ export function photosService(db: Database, store: EvidenceStore, drafts: DraftS
     if (state !== 'editing') throw new PhotoError('draft_locked');
   }
 
+  // A signature needs a current unsigned estimate (docs/plans/S5.md, S5a-5 and S5a-11): the job is
+  // submitted, not signed, and its current record and pin have been priced. Read under the job's
+  // row lock when the row is made; the agreement checks the rest (which estimate, its proposal).
+  async function requireSignable(tx: CompanyTransaction, caller: JobCaller, job: JobRow): Promise<void> {
+    if (job.status !== 'submitted') throw new PhotoError('not_ready_to_sign');
+    if (!(await currentEstimateRow(tx, caller.companyId, job))) throw new PhotoError('not_ready_to_sign');
+  }
+
   return {
     async receive(caller, jobId, photoId, kind, input) {
       // 1. Access, and what the registry already holds for this id. No lock: nothing is changed yet.
       const seen = await withCompany(db, caller.companyId, async (tx) => {
-        const job = await jobAccess(tx, caller, jobId, SEND);
+        const job = await jobAccess(tx, caller, jobId, sendNeeds(kind));
         const rows = await registryRows(tx, caller, jobId, photoId);
-        return { job, same: rows.find((row) => row.kind === kind), photo: rows.find((row) => row.kind === 'photo') };
+        const same = rows.find((row) => row.kind === kind);
+        if (kind === 'signature' && !same) await requireSignable(tx, caller, job);
+        return { job, same, photo: rows.find((row) => row.kind === 'photo') };
       });
 
       const bytes = await input.readBytes();
@@ -141,8 +160,12 @@ export function photosService(db: Database, store: EvidenceStore, drafts: DraftS
 
       // 5. The registry row, once. Two requests that stored the same bytes at once make one row.
       return withCompany(db, caller.companyId, async (tx) => {
-        const job = await jobAccess(tx, caller, jobId, SEND, { lock: true });
+        const job = await jobAccess(tx, caller, jobId, sendNeeds(kind), { lock: true });
         if (kind === 'photo' && job.status !== 'draft') throw new PhotoError('draft_locked');
+        if (kind === 'signature') {
+          const [there] = (await registryRows(tx, caller, jobId, photoId)).filter((row) => row.kind === kind);
+          if (!there) await requireSignable(tx, caller, job);
+        }
         const [inserted] = await tx
           .insert(evidenceObjects)
           .values({
@@ -163,7 +186,7 @@ export function photosService(db: Database, store: EvidenceStore, drafts: DraftS
           await tx.insert(auditEvents).values({
             companyId: caller.companyId,
             actorId: caller.actorId,
-            action: kind === 'photo' ? 'photo_received' : 'photo_original_received',
+            action: RECEIVED[kind],
             target: jobId,
             details: { kind, sizeBytes: bytes.byteLength },
           });

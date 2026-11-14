@@ -5,6 +5,7 @@ import { onAuthStateChanged } from 'firebase/auth';
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { agreementAnswerOf, type SignedAgreement } from '@/lib/agreements/screen';
 import type { BrowserSignInConfig } from '@/lib/config';
 import type { EstimateView } from '@/lib/estimates/result';
 import { notReadyReasons, outcomeOf, reviewAnswerOf, reviewerOf, type Next, type ReviewJob, type Reviewer } from '@/lib/estimates/screen';
@@ -14,6 +15,7 @@ import { endsSession, meOutcome } from '@/lib/sign-in/outcome';
 import { FocusedPanel } from '../../../../../focused-panel';
 import { Panel } from '../../../../../panel';
 import { EstimateDocuments, EstimatePrice, StaffNotes } from './review-documents';
+import { SignedAgreementView, SigningForm } from './signing';
 
 export type ReviewScreenProps = {
   address: string;
@@ -24,7 +26,7 @@ export type ReviewScreenProps = {
   config: BrowserSignInConfig | null;
 };
 
-type Ready = { user: User; reviewer: Reviewer; job: ReviewJob; estimate: EstimateView | null };
+type Ready = { user: User; reviewer: Reviewer; job: ReviewJob; estimate: EstimateView | null; agreement: SignedAgreement | null };
 
 type Phase =
   | { name: 'checking' }
@@ -77,7 +79,16 @@ function Review({ address, companyName, tenantId, jobId, config }: ReviewScreenP
       if (answer.status === 404) return setPhase({ name: 'prices-off' });
       const read = answer.status === 200 ? reviewAnswerOf(answer.body) : null;
       if (!read) return setPhase({ name: 'unavailable' });
-      setPhase({ name: 'ready', user, reviewer, ...read });
+      // A signed job opens read-only, from the agreement's stored bytes (S5a-11).
+      let agreement: SignedAgreement | null = null;
+      if (read.job.status === 'signed') {
+        const signed = await callApi(user, `${path}/agreements`);
+        if (stale()) return;
+        const parsed = signed.status === 200 ? agreementAnswerOf(signed.body) : null;
+        if (!parsed?.agreement) return setPhase({ name: 'unavailable' });
+        agreement = parsed.agreement;
+      }
+      setPhase({ name: 'ready', user, reviewer, ...read, agreement });
     },
     [jobId, tenantId],
   );
@@ -146,8 +157,9 @@ function Review({ address, companyName, tenantId, jobId, config }: ReviewScreenP
   }
 }
 
-function ReviewBody({ user, reviewer, job, estimate: first, finishHref, reload }: Ready & { finishHref: string; reload: () => void }) {
+function ReviewBody({ user, reviewer, job, estimate: first, agreement: signedFirst, finishHref, reload }: Ready & { finishHref: string; reload: () => void }) {
   const [estimate, setEstimate] = useState<EstimateView | null>(first);
+  const [agreement, setAgreement] = useState<SignedAgreement | null>(signedFirst);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<{ message: string; next: Next } | null>(null);
   const [confirmed, setConfirmed] = useState(false);
@@ -168,6 +180,14 @@ function ReviewBody({ user, reviewer, job, estimate: first, finishHref, reload }
       <Link href={finishHref}>Back to Finish and review</Link>
     </Button>
   );
+
+  if (agreement) {
+    return (
+      <FocusedPanel title="Signed">
+        <SignedAgreementView user={user} jobId={job.id} agreement={agreement} />
+      </FocusedPanel>
+    );
+  }
 
   if (!estimate) {
     return (
@@ -235,6 +255,7 @@ function ReviewBody({ user, reviewer, job, estimate: first, finishHref, reload }
           <p role="status" className="text-sm">
             {confirmed ? 'Documents confirmed.' : ''}
           </p>
+          {confirmed ? <SigningForm user={user} jobId={job.id} estimate={estimate} onSigned={setAgreement} /> : null}
         </section>
       ) : null}
       {finishLink}
