@@ -69,6 +69,19 @@ describe('the document settings schema', () => {
     expect(readDocumentSettings(JSON.parse(JSON.stringify(asEntered)))).toEqual(asEntered);
   });
 
+  it('counts each limit on the text with its ends trimmed, and keeps the text as entered', () => {
+    const atLimits = {
+      ...SET,
+      company_clauses: [{ title: ` ${'x'.repeat(120)} `, text: `${'x'.repeat(2_000)}\n` }],
+      prep_tasks: [`  ${'x'.repeat(300)}`],
+      authorization_text: `\n${'x'.repeat(4_000)}\n`,
+      payment_terms_text: `${'x'.repeat(4_000)}  `,
+    };
+    expect(documentSettings.parse(atLimits)).toEqual(atLimits);
+    expect(ok({ ...SET, company_clauses: [{ title: 'T', text: `${'x'.repeat(2_001)}\n` }] })).toBe(false);
+    expect(ok({ ...SET, prep_tasks: [` ${'x'.repeat(301)} `] })).toBe(false);
+  });
+
   it.each([
     ['an unknown key', { ...SET, show_line_breakdown: true }],
     ['a layout outside the list', { ...SET, proposal_layout: 'brochure' }],

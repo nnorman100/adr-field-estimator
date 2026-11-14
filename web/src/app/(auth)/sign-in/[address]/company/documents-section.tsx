@@ -89,7 +89,6 @@ export function DocumentsSection({
                 id={`${id}-title`}
                 name={`${id}-title`}
                 type="text"
-                maxLength={DOCUMENT_LIMITS.clauseTitle}
                 autoComplete="off"
                 value={clause.title}
                 onChange={(event) => update({ title: event.target.value })}
@@ -101,7 +100,6 @@ export function DocumentsSection({
                 id={`${id}-text`}
                 name={`${id}-text`}
                 rows={4}
-                maxLength={DOCUMENT_LIMITS.clauseText}
                 className={TEXTAREA}
                 value={clause.text}
                 onChange={(event) => update({ text: event.target.value })}
@@ -142,7 +140,6 @@ export function DocumentsSection({
               id={`prep-task-${task.key}`}
               name={`prep-task-${task.key}`}
               type="text"
-              maxLength={DOCUMENT_LIMITS.prepTask}
               autoComplete="off"
               value={task.text}
               onChange={(event) =>
@@ -254,7 +251,6 @@ function SigningText({
         id={id}
         name={id}
         rows={5}
-        maxLength={DOCUMENT_LIMITS.signingText}
         aria-describedby={`${id}-hint`}
         disabled={busy}
         className={TEXTAREA}
