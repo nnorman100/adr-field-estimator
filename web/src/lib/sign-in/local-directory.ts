@@ -10,6 +10,7 @@ import type {
   TokenVerifier,
 } from '@/lib/auth/identity';
 import { isSignInAddress, type SignInDirectory } from './directory';
+import { localPricesSchema } from './local-prices-schema';
 
 // A stand-in for the sign-in records in Postgres, read from a JSON file, so the sign-in screens can
 // be driven end to end against the Auth emulator with no database (tests/e2e/sign-in). The server
@@ -34,6 +35,12 @@ const fixtureSchema = z.object({
         .object({ address: z.string(), phone: z.string(), email: z.string(), license: z.string(), signoff: z.string() })
         .optional(),
       profileRevision: z.string().optional(),
+      // The company's feature switches that are on (company_feature_flags), such as price_books;
+      // a company of an older fixture has none, so every switch is off.
+      flags: z.array(z.string().max(64)).max(20).optional(),
+      // The company's price tables (S4-8), kept by the local prices stand-in
+      // (src/lib/prices/local-prices.ts); none until the owner first saves.
+      prices: localPricesSchema.optional(),
     }),
   ),
   members: z.array(
@@ -132,12 +139,13 @@ export function localIdentityDirectory(path: string): IdentityDirectory {
       const rows = fixture.members.filter((m) => m.companyId === companyId && m.uid === uid);
       // As in the database: the active membership, else a disabled one.
       const row = rows.find((m) => m.status === 'active') ?? rows[0];
-      if (!row) return { company: record, actor: null, membership: null, flags: [] };
+      const flags = (company.flags ?? []).map((flag) => ({ flag, enabled: true }));
+      if (!row) return { company: record, actor: null, membership: null, flags };
       return {
         company: record,
         actor: { id: row.actorId, displayName: row.displayName },
         membership: { role: row.role, status: row.status },
-        flags: [],
+        flags,
       };
     },
   };
