@@ -64,6 +64,10 @@ const JOB_CLAIM = { revision: 1, changeId: '8d2f4a90-61b3-4c7e-a5d8-0e9b3c1f7a24
 
 // A body the photo route accepts as an image (its first bytes are a PNG's), so a refusal is the
 // access rule's and not the image check's.
+// Submit and Back to editing bodies (S5a-8): the suite's own ids, and a digest of nothing.
+const JOB_SUBMIT = { id: '6f1d9c34-2a7e-4b80-9c15-3e8a0d7b5f42', draftId: 'c4e8a2d6-7b19-4f53-8a0e-1d6b9f3c2e75', digest: '0'.repeat(64) };
+const JOB_NEXT_DRAFT = { draftId: '9a3b5c7d-1e2f-4a6b-8c9d-0e1f2a3b4c5d', fromDraftId: 'c4e8a2d6-7b19-4f53-8a0e-1d6b9f3c2e75' };
+
 const JOB_PHOTO = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, ...Buffer.from('planted photo')]);
 
 const COMPANY = 'api/companies/[companyId]';
@@ -106,6 +110,8 @@ export const MATRIX: readonly MatrixRow[] = [
   row('api/jobs/[jobId]/claim', 'PUT', 'company', { body: JOB_CLAIM, own: 'cross' }),
   row('api/jobs/[jobId]/photos/[photoId]', 'GET', 'company', { query: '?kind=photo', own: 'cross' }),
   row('api/jobs/[jobId]/photos/[photoId]', 'PUT', 'company', { query: '?kind=photo', body: JOB_PHOTO, own: 'cross' }),
+  row('api/jobs/[jobId]/submissions', 'POST', 'company', { body: JOB_SUBMIT, own: 'cross' }),
+  row('api/jobs/[jobId]/drafts', 'POST', 'company', { body: JOB_NEXT_DRAFT, own: 'cross' }),
 
   row('api/invitations/[invitationId]', 'GET', 'invitation'),
   row('api/invitations/[invitationId]/accept', 'POST', 'invitation'),
@@ -115,6 +121,9 @@ export const MATRIX: readonly MatrixRow[] = [
   row('api/health', 'GET', 'public'),
   row('api/echo', 'POST', 'public', { body: { message: 'hello' } }),
   row('api/sign-in/[address]', 'GET', 'public'),
+  row('api/client-errors', 'POST', 'public', {
+    body: { reports: [{ name: 'TypeError', message: 'x is not a function', stack: [], route: '/', browser: 'chrome' }] },
+  }),
 
   row('api/internal/access-projection', 'POST', 'service'),
 

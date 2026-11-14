@@ -29,6 +29,10 @@ vi.mock('@/lib/team/services', () => ({ teamServices: () => live.harness!.team }
 vi.mock('@/lib/prices/services', () => ({ pricesServices: () => live.harness!.prices }));
 vi.mock('@/lib/jobs/services', () => ({ jobsServices: () => live.harness!.jobs }));
 vi.mock('@/lib/photos/services', () => ({ photosServices: () => live.harness!.photos }));
+vi.mock('@/lib/submissions/services', () => ({
+  submissionsServices: () => live.harness!.submissions,
+  runQueuedSubmissionRepair: async () => ({ aborted: 0, marked: 0, failed: 0 }),
+}));
 vi.mock('@/lib/platform/services', () => ({ platformServices: () => live.harness!.platform }));
 vi.mock('@/lib/sign-in/services', async () => {
   const { databaseSignInDirectory } = await import('@/lib/sign-in/database-directory');
@@ -278,6 +282,12 @@ const OPEN: Record<string, OpenCheck> = {
     expect(JSON.parse(answer.text), where).toEqual({ message: 'hello' });
     expect(leaks(answer.text, victim), where).toEqual([]);
   },
+  // Write-only error reports: the answer is how many of the one report sent were logged, nothing else.
+  'POST api/client-errors': (answer, where, _attacker, victim) => {
+    expect(answer.status, where).toBe(202);
+    expect([{ accepted: 0 }, { accepted: 1 }], where).toContainEqual(JSON.parse(answer.text));
+    expect(leaks(answer.text, victim), where).toEqual([]);
+  },
 };
 
 describe('the route list', () => {
@@ -334,8 +344,8 @@ describe('the calls the suite makes', () => {
     ]);
   });
 
-  it('lists exactly four open answers: the caller’s own sign-in, the sign-in page, health and echo', () => {
-    expect(Object.keys(OPEN).sort()).toEqual(['GET api/health', 'GET api/me', 'GET api/sign-in/[address]', 'POST api/echo']);
+  it('lists exactly five open answers: the caller’s own sign-in, the sign-in page, health, echo and error reports', () => {
+    expect(Object.keys(OPEN).sort()).toEqual(['GET api/health', 'GET api/me', 'GET api/sign-in/[address]', 'POST api/client-errors', 'POST api/echo']);
   });
 });
 

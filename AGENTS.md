@@ -1,6 +1,6 @@
 # DryScope (repo: adr-field-estimator)
 
-A phone web app: a restoration technician walks a water or mold loss once and leaves with a priced, signable estimate. Serves Alert Disaster Restoration (ADR) first, then other companies as isolated workspaces. Read `VISION.md`, then `docs/STATUS.md`. Product, engine and California wording rules: `docs/ARCHITECTURE.md` ("Product rules"). Pricing: `docs/pricing-source.md`. Access: `docs/ACCESS.md`.
+A phone web app: a restoration technician walks a water or mold loss once and leaves with a priced, signable estimate. Built for water and mold restoration companies, each in its own isolated company workspace. Read `VISION.md`, then `docs/STATUS.md`. Product, engine and California wording rules: `docs/ARCHITECTURE.md` ("Product rules"). Pricing: `docs/pricing-source.md`. Access: `docs/ACCESS.md`.
 
 ## Stack (owner approval to change)
 The app is `web/`: TypeScript, Next.js, Zod at every route boundary; Cloud SQL Postgres with row-level security and Drizzle migrations, a Firestore field database, Cloud Run `us-central1`, project `dryscope` (Terraform in `infra/dryscope/`). The old app (`backend/`, `public/`, project `alert-disaster-field-2026`) is retired; change it only through S8 (`docs/runbook/ci.md`). Details: `docs/ARCHITECTURE.md`.
@@ -17,7 +17,7 @@ The app is `web/`: TypeScript, Next.js, Zod at every route boundary; Cloud SQL P
 4. Company isolation on every business endpoint: check identity, membership and job access server-side. New actions go in the role matrix (`web/src/lib/access/`) and `docs/ACCESS.md`.
 5. Signed records are immutable; later coordination goes in sidecars.
 6. No secrets, keys, tokens, prompts, transcripts, emails, addresses or coordinates in logs or git. Never read or print secrets; never touch other projects or peer sites.
-7. Water and mold losses only; web app only. ADR identity (CSLB #950983, sign-off Matthew Myers) and the California pre-1978 and estimate clauses are exact: keep them as in `docs/ARCHITECTURE.md`.
+7. Water and mold losses only; web app only. Each company's identity (name, licence number, sign-off) comes only from its company profile and prints exactly as entered; the California pre-1978 and estimate clauses are exact: keep them as in `docs/ARCHITECTURE.md`.
 
 ## Every change
 One small PR with a test that fails without it; the eight checks in `docs/roadmap.md`; no edits to `docs/status/` in feature PRs (updated in a batch after merges). Report what changed, what you were unsure of, and what the owner must check on a phone. Search functions by name; write the failing test first.

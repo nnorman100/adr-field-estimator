@@ -11,8 +11,20 @@ describe('API sign-in gate', () => {
     expect(config.matcher).toBe('/api/:path*');
   });
 
-  it('keeps the public list to the three routes that hold nothing private', () => {
-    expect([...publicApiPaths].sort()).toEqual(['/api/echo', '/api/health', '/api/sign-in/:address']);
+  it('keeps the public list to the four routes that hold nothing private', () => {
+    expect([...publicApiPaths].sort()).toEqual([
+      '/api/client-errors',
+      '/api/echo',
+      '/api/health',
+      '/api/sign-in/:address',
+    ]);
+  });
+
+  it('lets a signed-out phone report an error, and only at that exact path', () => {
+    expect(call('/api/client-errors', 'POST').headers.get('x-middleware-next')).toBe('1');
+    for (const path of ['/api/client-errors/', '/api/client-errors/x', '/api/client-errors/..%2Fme', '/api/client-error']) {
+      expect({ path, status: call(path, 'POST').status }).toEqual({ path, status: 401 });
+    }
   });
 
   it('matches a sign-in address segment to one sign-in address and nothing else', () => {
@@ -61,6 +73,8 @@ describe('API sign-in gate', () => {
       '/api/jobs/:id/customer',
       '/api/jobs/:id/claim',
       '/api/jobs/:id/photos/:id',
+      '/api/jobs/:id/submissions',
+      '/api/jobs/:id/drafts',
     ]);
     expect(call('/api/me').headers.get('x-middleware-next')).toBe('1');
     expect(call('/api/me/extra').status).toBe(401);
@@ -78,6 +92,8 @@ describe('API sign-in gate', () => {
     expect(call(`/api/invitations/${id}/accept`, 'POST').headers.get('x-middleware-next')).toBe('1');
     expect(call(`/api/jobs/${id}/customer`, 'PUT').headers.get('x-middleware-next')).toBe('1');
     expect(call(`/api/jobs/${id}/photos/${id}`, 'PUT').headers.get('x-middleware-next')).toBe('1');
+    expect(call(`/api/jobs/${id}/submissions`, 'POST').headers.get('x-middleware-next')).toBe('1');
+    expect(call(`/api/jobs/${id}/drafts`, 'POST').headers.get('x-middleware-next')).toBe('1');
     for (const path of [
       '/api/companies/current/team',
       `/api/companies/${id}/team/extra`,
@@ -90,6 +106,8 @@ describe('API sign-in gate', () => {
       `/api/jobs/${id}/photos`,
       `/api/jobs/${id}/photos/${id}/original`,
       `/api/jobs/${id}/photos/${id}/`,
+      `/api/jobs/${id}/submissions/${id}`,
+      `/api/jobs/${id}/drafts/`,
       '/api/invitations/..%2Fme',
     ]) {
       expect({ path, status: call(path).status }).toEqual({ path, status: 401 });
