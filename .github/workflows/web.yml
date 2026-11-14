@@ -14,11 +14,6 @@ on:
 permissions:
   contents: read
 
-# The emulator jobs (`emulators`, `company-isolation`, `e2e`) pick free emulator ports for each run
-# (web/tests/emu/ports.ts), so jobs on runners that share a machine never collide on 9399 or 8399.
-env:
-  EMU_PORTS: auto
-
 concurrency:
   group: web-${{ github.ref }}
   cancel-in-progress: true
@@ -63,6 +58,10 @@ jobs:
   # refuses any other id). `check` below fails when this job does.
   emulators:
     runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
+    # Picks free emulator ports for each run (web/tests/emu/ports.ts), so jobs on runners that share a
+    # machine never collide on 9399 or 8399. Only here: `npm test` in `check` must see the default ports.
+    env:
+      EMU_PORTS: auto
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -86,8 +85,10 @@ jobs:
   company-isolation:
     runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
     timeout-minutes: 25
+    # EMU_PORTS: free emulator ports per run (web/tests/emu/ports.ts); only in the jobs that start emulators.
     env:
       APP_ENV: test
+      EMU_PORTS: auto
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Same PostgreSQL 16 setup as the database job, and Java 21 for the Firestore emulator.
@@ -143,6 +144,10 @@ jobs:
   # took 19 to 20 minutes under load and were cancelled at the limit with no verdict.
   e2e:
     runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
+    # Picks free emulator ports for each run (web/tests/emu/ports.ts), so jobs on runners that share a
+    # machine never collide on 9399 or 8399. Only here: `npm test` in `check` must see the default ports.
+    env:
+      EMU_PORTS: auto
     timeout-minutes: 20
     strategy:
       fail-fast: false
