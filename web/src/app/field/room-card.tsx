@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import type { ScopeLists } from '@/lib/field/api';
-import { editsAfterSave, roomChanges, ROOM_FIELDS, withEdits, type FormValues, type RoomLists } from '@/lib/field/forms';
+import { editsAfterSave, roomChanges, roomTypeChoice, ROOM_FIELDS, withEdits, type FormValues, type RoomLists } from '@/lib/field/forms';
 import { MAX_FINDINGS, type RoomField } from '@/lib/field/schema';
 import { fieldRefusal, saveRoomField } from '@/lib/field/store';
 import type { JobContext } from './job-screens';
@@ -110,7 +110,6 @@ export function RoomCard({
   };
   const title = stored.name ?? `Room ${number}`;
   const mold = values.category === 'mold';
-  const typeId = String(values.roomTypeId);
 
   async function save() {
     const db = job.session.db;
@@ -157,14 +156,7 @@ export function RoomCard({
       />
     );
   };
-  const known = lists?.roomTypes ?? [];
-  const typeOptions = [
-    { value: '', label: 'Other' },
-    ...known.map((type) => ({ value: type.id, label: type.name })),
-    // A type the job's price list no longer has still shows, so a save never drops it unseen.
-    ...(typeId && !known.some((type) => type.id === typeId) ? [{ value: typeId, label: `${typeId} (not in this job’s price list)` }] : []),
-  ];
-  const suggested = known.find((type) => type.id === typeId)?.suggestedItems ?? [];
+  const roomType = roomTypeChoice(lists?.roomTypes ?? [], String(values.roomTypeId));
 
   return (
     <form
@@ -177,7 +169,7 @@ export function RoomCard({
     >
       <h4 className="text-base font-semibold">{title}</h4>
       <Box id={id('name')} label="Room name" value={String(values.name)} onChange={set('name')} readOnly={readOnly} error={errors.name} />
-      <Choice id={id('roomTypeId')} label="Room type" value={typeId} options={typeOptions} onChange={set('roomTypeId')} readOnly={readOnly} />
+      <Choice id={id('roomTypeId')} label="Room type" value={roomType.value} options={roomType.options} onChange={set('roomTypeId')} readOnly={readOnly} />
       <Choice
         id={id('category')}
         label="Water category or mold"
@@ -204,7 +196,7 @@ export function RoomCard({
         edited={listEdits.items}
         onChange={(items) => setList({ items })}
         lists={lists}
-        suggested={suggested}
+        suggested={roomType.suggested}
         errors={errors}
         readOnly={readOnly}
       />

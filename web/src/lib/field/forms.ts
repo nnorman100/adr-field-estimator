@@ -3,6 +3,7 @@
 // and the rules follow, so the phone never sends a value the rules would refuse. An empty box
 // clears its value: the key is deleted, never written as null or zero.
 import type { z } from 'zod';
+import { OTHER_TYPE } from '@/engine/values';
 import { draftFieldSchema, MAX_PREP_TASK, roomFieldSchema, type DraftField, type RoomField } from './schema';
 
 // `choice` is a picked value: a number when it is digits, else the text itself ('' clears it).
@@ -209,6 +210,21 @@ export function roomChanges(values: FormValues, stored: RoomField, lists: RoomLi
   if (lists.items) itemsChange(lists.items, stored, result);
   if (lists.prepTasks) prepTasksChange(lists.prepTasks, stored, result);
   return result;
+}
+
+type RoomTypeOption = { id: string; name: string; suggestedItems: string[] };
+
+// The room type picker: one Other, which is an absent room type ('' clears the key) and the price
+// list's `other` type, then the list's other types, then a stored type the list no longer has.
+export function roomTypeChoice(known: RoomTypeOption[], typeId: string) {
+  const value = typeId === OTHER_TYPE ? '' : typeId;
+  const options = [
+    { value: '', label: 'Other' },
+    ...known.filter((type) => type.id !== OTHER_TYPE).map((type) => ({ value: type.id, label: type.name })),
+    ...(value && !known.some((type) => type.id === value) ? [{ value, label: `${value} (not in this job’s price list)` }] : []),
+  ];
+  const suggested = known.find((type) => type.id === (value || OTHER_TYPE))?.suggestedItems ?? [];
+  return { value, options, suggested };
 }
 
 // A new room's name, or null when it is not one the field map accepts.

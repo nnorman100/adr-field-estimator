@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { suggestEquipment } from '../../src/engine/suggestions';
 import { validateInspection } from '../../src/engine/inspection';
 import { parseTable } from '../../src/engine/table';
-import { formOf, roomChanges, ROOM_FIELDS } from '../../src/lib/field/forms';
+import { formOf, roomChanges, roomTypeChoice, ROOM_FIELDS } from '../../src/lib/field/forms';
 import { toInspection, type RoomDoc } from '../../src/lib/field/inspection';
 import { roomFieldSchema } from '../../src/lib/field/schema';
 import { namesPriceIds, priceIdsKnown } from '../../src/lib/scope-lists/version';
@@ -204,6 +204,28 @@ describe('the Check Scope room form', () => {
     const shown = roomChanges({ ...formOf(ROOM_FIELDS, stored), ceilingHeightFt: '0' }, stored);
     expect(shown.changes).toEqual({});
     expect(shown.errors.ceilingHeightFt).toBeDefined();
+  });
+
+  it('offers one Other, preselected with its own suggestions, and keeps a type the list no longer has', () => {
+    const known = [
+      { id: 'other', name: 'Other', suggestedItems: ['demo'] },
+      { id: 'bathroom', name: 'Bathroom', suggestedItems: ['flood_cut'] },
+    ];
+    const absent = roomTypeChoice(known, '');
+    expect(absent.value).toBe('');
+    expect(absent.options).toEqual([
+      { value: '', label: 'Other' },
+      { value: 'bathroom', label: 'Bathroom' },
+    ]);
+    expect(absent.suggested).toEqual(['demo']);
+    const stored = roomTypeChoice(known, 'other');
+    expect(stored.value).toBe('');
+    expect(stored.options.filter((option) => option.label === 'Other')).toHaveLength(1);
+    expect(stored.suggested).toEqual(['demo']);
+    expect(roomTypeChoice(known, 'bathroom').suggested).toEqual(['flood_cut']);
+    const gone = roomTypeChoice(known, 'garage');
+    expect(gone.options.at(-1)).toEqual({ value: 'garage', label: 'garage (not in this job’s price list)' });
+    expect(gone.suggested).toEqual([]);
   });
 
   it('writes the findings note and clears an emptied one', () => {
