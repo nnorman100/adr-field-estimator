@@ -91,9 +91,9 @@ export function CompanyForm({
       </p>
       {showPrices ? (
         <p>
-          <Link href={`/sign-in/${signInAddress}/prices`} className="underline">
+          <a href={`/sign-in/${signInAddress}/prices`} className="underline">
             Prices
-          </Link>
+          </a>
         </p>
       ) : null}
 

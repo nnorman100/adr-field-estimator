@@ -366,9 +366,15 @@ export function FileSection({ user, table, working, dirty, lock, onWorkingCopy }
     setMessage(null);
     if (file.size > 1_500_000) return setMessage('That file is too large for a price list.');
     setBusy(true);
-    const csv = await file.text();
-    const answer = await callApi(user, '/api/prices/import', { method: 'POST', json: { expectedRevision: working.revision, csv } });
-    setBusy(false);
+    let answer: Awaited<ReturnType<typeof callApi>>;
+    try {
+      const csv = await file.text();
+      answer = await callApi(user, '/api/prices/import', { method: 'POST', json: { expectedRevision: working.revision, csv } });
+    } catch {
+      return setMessage('That file could not be read. Choose it again.');
+    } finally {
+      setBusy(false);
+    }
     const next = answer.status === 200 ? workingCopyOf(field(answer.body, 'workingCopy')) : null;
     const count = field(answer.body, 'changed');
     if (!next || typeof count !== 'number') return setMessage(pricesMessage(answer.status, answer.body, table));
