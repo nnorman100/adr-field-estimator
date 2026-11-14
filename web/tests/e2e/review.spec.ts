@@ -287,7 +287,7 @@ test('the customer signs on the phone: success only after the server’s answer,
       signature: () => [signing.signatures.length === 1 ? 201 : 200, { photoId: 'x', kind: 'signature', sha256: 'f'.repeat(64) }],
       sign: () => {
         attempts += 1;
-        // The first answer is lost: nothing is shown as signed.
+        // The first answer is lost: nothing is shown as signed, and nothing claims it was not signed.
         if (attempts === 1) return [503, { error: 'agreements_unavailable' }];
         const id = (signing.agreements[0] as { signatureId: string }).signatureId;
         signed = signedFor(made, id);
@@ -322,7 +322,8 @@ test('the customer signs on the phone: success only after the server’s answer,
   await main.getByLabel("Customer's full name").fill('  Casey Customer ');
   await drawSignature(page);
   await main.getByRole('button', { name: 'Sign', exact: true }).click();
-  await expect(main.getByRole('alert')).toContainText('Nothing was signed yet.');
+  await expect(main.getByRole('alert')).toContainText('We could not confirm signing with DryScope.');
+  await expect(main.getByRole('alert')).not.toContainText('Nothing was signed');
   await expect(main.getByRole('heading', { name: 'Signed' })).toHaveCount(0);
 
   await main.getByRole('button', { name: 'Try signing again' }).click();

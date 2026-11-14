@@ -196,6 +196,16 @@ describe('the signing screen’s words', () => {
     expect(signOutcomeOf(409, { error: 'company_setup_missing', missing: ['Start-work authorization', 'Payment terms'] }).message).toContain('Start-work authorization, Payment terms');
     expect(signOutcomeOf(0, null)).toMatchObject({ next: 'retry' });
     expect(signOutcomeOf(503, { error: 'agreements_unavailable' })).toMatchObject({ next: 'retry' });
+    for (const [status, body] of [
+      [0, null],
+      [502, null],
+      [503, { error: 'agreements_unavailable' }],
+      [503, { error: 'photos_unavailable' }],
+    ] as const) {
+      const outcome = signOutcomeOf(status, body);
+      expect(outcome).toEqual({ message: 'We could not confirm signing with DryScope. Check your connection, then try signing again to get the result.', next: 'retry' });
+      expect(outcome.message).not.toMatch(/nothing was signed/i);
+    }
     expect(signOutcomeOf(409, { error: 'estimate_superseded' })).toMatchObject({ next: 'reload' });
     expect(signOutcomeOf(409, { error: 'conflict' })).toMatchObject({ next: 'redraw' });
   });

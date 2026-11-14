@@ -51,9 +51,14 @@ export function signedHow(record: SignedRecord): string {
 
 export type SignNext = 'retry' | 'reload' | 'redraw' | 'done';
 
+const UNCONFIRMED = {
+  message: 'We could not confirm signing with DryScope. Check your connection, then try signing again to get the result.',
+  next: 'retry',
+} as const;
+
 const OUTCOMES: Record<string, { message: string; next: SignNext }> = {
-  agreements_unavailable: { message: 'We could not reach DryScope. Nothing was signed yet. Check your connection, then try again.', next: 'retry' },
-  photos_unavailable: { message: 'We could not reach DryScope. Nothing was signed yet. Check your connection, then try again.', next: 'retry' },
+  agreements_unavailable: UNCONFIRMED,
+  photos_unavailable: UNCONFIRMED,
   already_signed: { message: 'This job is already signed. Its signed documents do not change.', next: 'reload' },
   estimate_superseded: { message: 'This job was priced again since these documents were shown. Reload the job and review the new documents.', next: 'reload' },
   proposal_changed: { message: 'The proposal changed since it was shown. Reload the job and review it again.', next: 'reload' },
@@ -82,5 +87,5 @@ export function signOutcomeOf(status: number, body: unknown): { message: string;
   }
   const known = typeof code === 'string' ? OUTCOMES[code] : undefined;
   if (known) return known;
-  return status === 0 || status >= 500 ? OUTCOMES.agreements_unavailable! : { message: 'Something went wrong. Reload the job.', next: 'reload' };
+  return status === 0 || status >= 500 ? UNCONFIRMED : { message: 'Something went wrong. Reload the job.', next: 'reload' };
 }
