@@ -161,7 +161,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
       // user object, so its time tells them apart.
       const signedInAt = user.metadata.lastSignInTime;
       const stillCurrent = () => authRef.current?.currentUser === user && user.metadata.lastSignInTime === signedInAt;
-      const from = authRef.current ? signInOf(authRef.current) : undefined;
+      const from = signInOf(user);
       const { outcome, body } = await checkSignIn(user, fresh);
       const authenticators = outcome.kind === 'second-step' ? await authenticatorCount(user) : 0;
       const current = authRef.current?.currentUser ?? null;
@@ -266,10 +266,14 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
     }
   }
 
-  // Firebase wants a newer sign-in before it changes a second step.
-  const needsFreshSignIn = useCallback(() => {
-    void refuse('For your safety, sign in again before changing your second step.', 'sign-in-again');
-  }, [refuse]);
+  // Firebase wants a newer sign-in before it changes a second step: `from`, the sign-in the
+  // authenticator request was made with, is the one that ends.
+  const needsFreshSignIn = useCallback(
+    (from: SignIn) => {
+      void refuse('For your safety, sign in again before changing your second step.', 'sign-in-again', false, from);
+    },
+    [refuse],
+  );
 
   const auth = () => authRef.current!;
   const currentUser = () => authRef.current?.currentUser ?? null;

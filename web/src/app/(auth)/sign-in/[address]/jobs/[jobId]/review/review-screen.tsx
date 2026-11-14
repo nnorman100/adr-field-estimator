@@ -58,7 +58,7 @@ function Review({ address, companyName, tenantId, jobId, config }: ReviewScreenP
       setPhase({ name: 'checking' });
       // The sign-in this check is for, kept as the request goes.
       const auth = authRef.current!;
-      const from = signInOf(auth);
+      const from = signInOf(user);
       const me = await callApi(user, '/api/me');
       if (stale()) return;
       const outcome = meOutcome(me.status, me.body);

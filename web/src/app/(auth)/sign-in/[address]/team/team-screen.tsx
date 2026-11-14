@@ -50,8 +50,6 @@ export function TeamScreen(props: TeamScreenProps) {
 function CompanyTeam({ address, companyName, tenantId, config }: TeamScreenProps & { config: BrowserSignInConfig }) {
   const [phase, setPhase] = useState<Phase>({ name: 'checking' });
   const authRef = useRef<Auth | null>(null);
-  // The sign-in the screen was opened for: what its "Sign in again" ends.
-  const signedInRef = useRef<SignIn | undefined>(undefined);
   const router = useRouter();
 
   useEffect(() => {
@@ -65,8 +63,7 @@ function CompanyTeam({ address, companyName, tenantId, config }: TeamScreenProps
     async function open(user: User) {
       setPhase({ name: 'checking' });
       // The sign-in this check is for, kept as the request goes.
-      const from = signInOf(auth);
-      signedInRef.current = from;
+      const from = signInOf(user);
       const me = await callApi(user, '/api/me');
       if (stale(user)) return;
       const outcome = meOutcome(me.status, me.body);
@@ -147,10 +144,10 @@ function CompanyTeam({ address, companyName, tenantId, config }: TeamScreenProps
           user={phase.user}
           companyId={phase.companyId}
           initial={phase.team}
-          onSignInAgain={async () => {
+          onSignInAgain={async (from) => {
             const auth = authRef.current;
             const toSignIn = () => router.push(`/sign-in/${address}`);
-            return auth ? signOutOrShow(() => signOutOnRefusal(auth, tenantId, config, 'sign-in-again', false, signedInRef.current), setPhase, toSignIn) : toSignIn();
+            return auth ? signOutOrShow(() => signOutOnRefusal(auth, tenantId, config, 'sign-in-again', false, from), setPhase, toSignIn) : toSignIn();
           }}
         />
       );

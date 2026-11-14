@@ -61,10 +61,10 @@ function session(auth: Auth): Session {
   return { user: auth.currentUser, key: sessionKey(auth.currentUser) };
 }
 
-// The sign-in current on `auth` now: what a screen keeps as it sends a request whose refusal may
-// end it, so the sign-out ends that sign-in and never a newer one.
-export function signInOf(auth: Auth): SignIn {
-  return session(auth);
+// The sign-in `user` is now: what a screen keeps, as it sends a request with that user, for the
+// refusal of that request, so the sign-out ends that sign-in and never another one.
+export function signInOf(user: User | null): SignIn {
+  return { user, key: sessionKey(user) };
 }
 
 function stillSignedIn(auth: Auth, from: Session): boolean {

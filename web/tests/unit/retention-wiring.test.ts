@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Auth } from 'firebase/auth';
+import type { Auth, User } from 'firebase/auth';
 import type { BrowserSignInConfig } from '@/lib/config';
 import type { FieldClient, FieldPerson } from '@/lib/field-db';
 import type { DsMe } from '@/lib/field/ds-me';
@@ -338,13 +338,39 @@ describe('a refusal the phone could not save, then no signal', () => {
 describe('the sign-in a refusal ends', () => {
   it('is the one a screen kept as it sent its request, never one made since by the same person', async () => {
     const auth = { currentUser: signedInAs('ana') };
-    const from = signInOf(auth as unknown as Auth);
+    const from = signInOf(auth.currentUser as unknown as User);
     // Her request is on its way when she signs in again in another tab; then the old answer comes.
     auth.currentUser = signedInAs('ana', 'Sat, 14 Nov 2026 09:00:00 GMT');
     await signOutOnRefusal(auth as unknown as Auth, 't-a', config, 'sign-in-again', true, from);
     expect(forgetMe).not.toHaveBeenCalled();
     expect(signOutCompany).not.toHaveBeenCalled();
     expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: null });
+  });
+
+  it('is the one the request was sent with: an old answer, after she signed in again in another tab, ends nothing', async () => {
+    // Firebase keeps the user object and updates it in place when another tab signs her in again.
+    const user = signedInAs('ana');
+    const auth = { currentUser: user };
+    const from = signInOf(user as unknown as User);
+    user.metadata = { lastSignInTime: 'Sat, 14 Nov 2026 09:00:00 GMT' };
+    await signOutOnRefusal(auth as unknown as Auth, 't-a', config, 'sign-in-again', false, from);
+    expect(forgetMe).not.toHaveBeenCalled();
+    expect(signOutCompany).not.toHaveBeenCalled();
+    expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: null });
+  });
+
+  it('is the one a later request was sent with, not the one the page was opened with', async () => {
+    const user = signedInAs('ana');
+    const auth = { currentUser: user };
+    const opened = signInOf(user as unknown as User);
+    // She signs in again in another tab; the page stays open, and a later change is sent now.
+    user.metadata = { lastSignInTime: 'Sat, 14 Nov 2026 09:00:00 GMT' };
+    const sent = signInOf(user as unknown as User);
+    expect(sent).not.toEqual(opened);
+    await signOutOnRefusal(auth as unknown as Auth, 't-a', config, 'sign-in-again', false, sent);
+    expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: NOW, lockedReason: 'sign-in-again' });
+    expect(forgetMe).toHaveBeenCalledOnce();
+    expect(signOutCompany).toHaveBeenCalledOnce();
   });
 });
 

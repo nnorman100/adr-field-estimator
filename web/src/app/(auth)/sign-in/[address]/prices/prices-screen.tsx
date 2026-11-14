@@ -52,8 +52,6 @@ export function PricesScreen(props: PricesScreenProps) {
 function CompanyPrices({ address, companyName, tenantId, config }: PricesScreenProps & { config: BrowserSignInConfig }) {
   const [phase, setPhase] = useState<Phase>({ name: 'checking' });
   const authRef = useRef<Auth | null>(null);
-  // The sign-in the screen was opened for: what its "Sign in again" ends.
-  const signedInRef = useRef<SignIn | undefined>(undefined);
   const router = useRouter();
 
   useEffect(() => {
@@ -67,8 +65,7 @@ function CompanyPrices({ address, companyName, tenantId, config }: PricesScreenP
     async function open(user: User) {
       setPhase({ name: 'checking' });
       // The sign-in this check is for, kept as the request goes.
-      const from = signInOf(auth);
-      signedInRef.current = from;
+      const from = signInOf(user);
       const me = await callApi(user, '/api/me');
       if (stale(user)) return;
       const outcome = meOutcome(me.status, me.body);
@@ -148,10 +145,10 @@ function CompanyPrices({ address, companyName, tenantId, config }: PricesScreenP
             user={phase.user}
             initialWorking={phase.prices.workingCopy}
             initialCurrent={phase.prices.current}
-            onSignInAgain={async () => {
+            onSignInAgain={async (from) => {
               const auth = authRef.current;
               const toSignIn = () => router.push(`/sign-in/${address}`);
-              return auth ? signOutOrShow(() => signOutOnRefusal(auth, tenantId, config, 'sign-in-again', false, signedInRef.current), setPhase, toSignIn) : toSignIn();
+              return auth ? signOutOrShow(() => signOutOnRefusal(auth, tenantId, config, 'sign-in-again', false, from), setPhase, toSignIn) : toSignIn();
             }}
           />
         </PricesFrame>
