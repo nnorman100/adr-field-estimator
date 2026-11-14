@@ -99,15 +99,17 @@ describe('the review screen', () => {
 
   it('says why documents cannot be signed yet', () => {
     const view = (signable: boolean, missing: string[], unpriced: string[]) =>
-      ({ documents: { signable, unpricedWork: unpriced }, staffNotes: { companySetupMissing: missing } }) as unknown as EstimateView;
+      ({ documents: { signable, unpricedWork: unpriced }, staffNotes: { companySetupMissing: missing }, needsReview: false, missingDetails: [] }) as unknown as EstimateView;
     expect(notReadyReasons(view(true, [], []))).toEqual([]);
     expect(notReadyReasons(view(false, ['CSLB license'], ['Contents'])))
       .toEqual(['Company settings: CSLB license is not filled in. The owner adds it on Company settings.', 'Some work has no price. Go back to editing and change the scope.']);
     expect(notReadyReasons(view(false, [], []))).toEqual(['The scope has no priced work yet. Go back to editing and add the work.']);
-    const stale = { documents: { signable: false, unpricedWork: [] }, staffNotes: { companySetupMissing: [] }, needsReview: true } as unknown as EstimateView;
-    expect(notReadyReasons(stale)).toEqual([
-      'The customer, claim or property address changed after this job was priced. The documents show the new details at the same prices, but they cannot be signed until the job is reviewed again: go back to editing, then finish and review.',
-    ]);
+    const changed =
+      'The customer, claim or property address changed after this job was priced. The prices stay the same, but the documents cannot be signed until the job is reviewed again: go back to editing, then finish and review.';
+    const stale = { documents: { signable: false, unpricedWork: [] }, staffNotes: { companySetupMissing: [] }, needsReview: true, missingDetails: [] } as unknown as EstimateView;
+    expect(notReadyReasons(stale)).toEqual([changed]);
+    const missing = { documents: null, staffNotes: { companySetupMissing: [] }, needsReview: true, missingDetails: ['Property address is missing'] } as unknown as EstimateView;
+    expect(notReadyReasons(missing)).toEqual([changed, 'Property address is missing. The documents are shown again once it is added on the job.']);
   });
 });
 

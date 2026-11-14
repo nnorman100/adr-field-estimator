@@ -155,9 +155,10 @@ export type EstimateView = {
   submissionId: string;
   createdAt: string;
   price: { pinSequence: number; versionSequence: number; tableHash: string; engineVersion: string };
-  proposalSha256: string;
-  // The proposal exactly as stored and hashed: what the customer is shown and signs.
-  proposal: Proposal;
+  // The proposal exactly as stored and hashed: what the customer is shown and signs. Null, with the
+  // documents, when a detail they need is missing (`missingDetails`).
+  proposalSha256: string | null;
+  proposal: Proposal | null;
   lines: EstimateLine[];
   totals: StoredEstimate['totals'];
   documents: {
@@ -168,21 +169,32 @@ export type EstimateView = {
     complianceNotes: string[];
     unpricedWork: string[];
     signable: boolean;
-  };
+  } | null;
   staffNotes: StaffNotesView;
   // The customer, claim or property address was saved after the estimate: the documents are
   // rebuilt from the current details at the stored prices, and they cannot be signed.
   needsReview: boolean;
+  // What the documents cannot be rebuilt without, in plain words; empty when nothing is missing.
+  missingDetails: string[];
 };
 
-/** Documents rebuilt from the record with the job's current details, for an estimate that needs review. */
-export type RebuiltDocuments = { documents: EstimateDocuments; proposal: Proposal; proposalSha256: string };
+/**
+ * For an estimate that needs review: the documents rebuilt from the record with the job's current
+ * details, or what is missing for them to be built.
+ */
+export type RebuiltDocuments = { documents: EstimateDocuments; proposal: Proposal; proposalSha256: string } | { missing: string[] };
 
 /** What a caller is shown of a stored estimate. The quantity-override note goes only to `quantity_notes_read`. */
 export function estimateView(record: EstimateRecord, capabilities: readonly Capability[], rebuilt?: RebuiltDocuments): EstimateView {
   const stored = readStoredEstimate(record.pricedResult);
-  const documents = rebuilt?.documents ?? stored.documents;
-  const notes = documents.staff_notes;
+  const shown =
+    rebuilt === undefined
+      ? { documents: stored.documents, proposal: readStoredProposal(record.proposalBytes), proposalSha256: record.proposalSha256 }
+      : 'missing' in rebuilt
+        ? null
+        : rebuilt;
+  const documents = shown?.documents ?? null;
+  const notes = (documents ?? stored.documents).staff_notes;
   const staffNotes: StaffNotesView = {
     summary: notes.summary,
     suggestions: notes.suggestions,
@@ -196,20 +208,21 @@ export function estimateView(record: EstimateRecord, capabilities: readonly Capa
     submissionId: record.submissionId,
     createdAt: record.createdAt.toISOString(),
     price: { pinSequence: record.pinSequence, versionSequence: record.versionSequence, tableHash: record.tableHash, engineVersion: record.engineVersion },
-    proposalSha256: rebuilt?.proposalSha256 ?? record.proposalSha256,
-    proposal: rebuilt?.proposal ?? readStoredProposal(record.proposalBytes),
+    proposalSha256: shown?.proposalSha256 ?? null,
+    proposal: shown?.proposal ?? null,
     lines: stored.lines,
     totals: stored.totals,
-    documents: {
+    documents: documents && {
       itemizedClaim: documents.itemized_claim,
       letter: documents.letter,
       photoLog: documents.photo_log,
       claim: documents.claim,
       complianceNotes: documents.compliance_notes,
       unpricedWork: documents.unpriced_work,
-      signable: documents.signable && !rebuilt,
+      signable: documents.signable && rebuilt === undefined,
     },
     staffNotes,
     needsReview: rebuilt !== undefined,
+    missingDetails: rebuilt !== undefined && 'missing' in rebuilt ? rebuilt.missing : [],
   };
 }

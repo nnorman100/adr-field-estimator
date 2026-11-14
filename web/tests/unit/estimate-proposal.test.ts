@@ -209,6 +209,14 @@ describe('what each role is shown of a stored estimate', () => {
     expect(estimateView(stored, capabilitiesFor('estimator', ON))).toMatchObject({ needsReview: false, documents: { signable: true }, proposal: { customer_name: 'Casey Customer' } });
   });
 
+  it('an estimate that needs review with a detail missing shows the stored prices and what is missing, with no documents', () => {
+    const stored = record(estimate());
+    const view = estimateView(stored, capabilitiesFor('owner', ON), { missing: ['Property address is missing'] });
+    expect(view).toMatchObject({ needsReview: true, missingDetails: ['Property address is missing'], documents: null, proposal: null, proposalSha256: null, totals: { low: { total: '160.00' } } });
+    expect(view.staffNotes.summary).toBe('Water under the kitchen floor.');
+    expect(estimateView(stored, capabilitiesFor('owner', ON)).missingDetails).toEqual([]);
+  });
+
   it('refuses a stored result that does not match the schema', () => {
     const priced = JSON.parse(JSON.stringify({ ...estimate(), job_revision: 4 })) as Record<string, unknown>;
     expect(readStoredEstimate(priced)).toMatchObject({ ok: true, job_revision: 4 });

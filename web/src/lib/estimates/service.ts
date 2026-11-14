@@ -9,10 +9,10 @@ import { canonicalJson } from '@/lib/field/canonical';
 import { FieldMapError } from '@/lib/field/inspection';
 import { hasAny, jobAccess, JobError, type JobCaller, type JobRow } from '@/lib/jobs/access';
 import { readCompanyDocuments, type CompanyDocuments } from '@/lib/profile/documents';
-import { readJobDetails } from '@/lib/submissions/details';
+import { readJobDetails, type JobDetails } from '@/lib/submissions/details';
 import type { Snapshot } from '@/lib/submissions/snapshot';
 import { EstimateError } from './errors';
-import { estimateInput, readSnapshot, SnapshotError } from './inputs';
+import { estimateInput, readSnapshot, SnapshotError, type EstimateInput } from './inputs';
 import { proposalBytes, proposalOf, type Proposal } from './proposal';
 import { estimateView, readStoredEstimate, type EstimateRecord, type EstimateView } from './result';
 
@@ -162,19 +162,19 @@ async function audit(tx: CompanyTransaction, caller: JobCaller, action: string, 
   await tx.insert(auditEvents).values({ companyId: caller.companyId, actorId: caller.actorId, action, target: jobId, details });
 }
 
-// The record priced from a version with the four documents, refused as the routes answer it.
-function priceRecord(snapshot: Snapshot, company: CompanyDocuments, version: VersionRow): { estimate: Estimate; table: Table } {
-  const table = versionTable(version);
-  let input;
+// The engine's input for a record and the company's document inputs.
+function inputOf(snapshot: Snapshot, company: CompanyDocuments): EstimateInput {
   try {
-    input = estimateInput(snapshot, company);
+    return estimateInput(snapshot, company);
   } catch (error) {
     if (error instanceof SnapshotError || error instanceof FieldMapError || error instanceof ZodError) throw new EstimateError('record_unreadable');
     throw error;
   }
-  if (!input.scopeConfirmed) throw new EstimateError('scope_not_confirmed');
-  if (!input.summary.trim()) throw new EstimateError('summary_missing');
+}
 
+// The input priced from a version with the four documents, refused as the routes answer it.
+function priceInput(input: EstimateInput, version: VersionRow): { estimate: Estimate; table: Table } {
+  const table = versionTable(version);
   const estimate = priceEstimate(version.content as Json, input.job);
   if (!estimate.ok) {
     if (estimate.stage === 'table') throw new EstimateError('prices_unreadable');
@@ -198,18 +198,28 @@ function proposalFor(estimate: Estimate, company: CompanyDocuments, table: Table
   });
 }
 
+// The details the documents cannot be built without that a save after Finish can take away (the
+// year built and the rooms are the record's own), in plain words.
+function missingDetails(details: JobDetails): string[] {
+  return details.job.propertyAddress.trim() ? [] : ['Property address is missing'];
+}
+
 // What a caller is shown of a stored estimate. On a submitted job whose revision is past the one the
 // estimate states, the documents are rebuilt from the record with the current details and the
 // stored version, so the prices are the stored ones, and they need review and cannot be signed.
+// The record was already priced, so nothing about the details refuses: with a detail missing the
+// answer is the stored prices and what is missing, with no documents.
 async function present(tx: CompanyTransaction, caller: JobCaller, job: JobRow, row: StoredRow, submission: SubmissionRow): Promise<EstimateView> {
   const revision = readStoredEstimate(row.pricedResult).job_revision;
   if (job.status !== 'submitted' || (revision !== null && revision >= job.revision)) return estimateView(row, caller.capabilities);
+  const details = await readJobDetails(tx, caller.companyId, job);
+  const missing = missingDetails(details);
+  if (missing.length) return estimateView(row, caller.capabilities, { missing });
   const version = await versionById(tx, caller.companyId, row.versionId);
   if (!version) throw new EstimateError('prices_unreadable');
   const company = await readCompanyDocuments(tx, caller.companyId);
   if (!company) throw new JobError('not_found');
-  const snapshot: Snapshot = { ...readSnapshot(submission.snapshotBytes), ...(await readJobDetails(tx, caller.companyId, job)) };
-  const { estimate, table } = priceRecord(snapshot, company, version);
+  const { estimate, table } = priceInput(inputOf({ ...readSnapshot(submission.snapshotBytes), ...details }, company), version);
   const proposal = proposalFor(estimate, company, table, submission, version);
   return estimateView(row, caller.capabilities, { documents: estimate.documents!, proposal, proposalSha256: proposalBytes(proposal).sha256 });
 }
@@ -241,7 +251,10 @@ export function estimatesService(db: Database): EstimatesService {
         if (!version) throw new EstimateError('prices_not_set');
         const company = await readCompanyDocuments(tx, caller.companyId);
         if (!company) throw new JobError('not_found');
-        const { estimate, table } = priceRecord(snapshot, company, version);
+        const input = inputOf(snapshot, company);
+        if (!input.scopeConfirmed) throw new EstimateError('scope_not_confirmed');
+        if (!input.summary.trim()) throw new EstimateError('summary_missing');
+        const { estimate, table } = priceInput(input, version);
 
         let pinned = pin;
         if (!pinned) {

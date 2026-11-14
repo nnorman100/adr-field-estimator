@@ -65,8 +65,7 @@ function List({ items }: { items: string[] }) {
   );
 }
 
-function Proposal({ estimate }: { estimate: EstimateView }) {
-  const proposal = estimate.proposal;
+function Proposal({ proposal }: { proposal: NonNullable<EstimateView['proposal']> }) {
   const price = proposal.price;
   return (
     <div className="flex flex-col gap-2">
@@ -97,7 +96,8 @@ function Proposal({ estimate }: { estimate: EstimateView }) {
 }
 
 export function EstimateDocuments({ estimate }: { estimate: EstimateView }) {
-  const documents = estimate.documents;
+  const { documents, proposal } = estimate;
+  if (!documents || !proposal) return null;
   return (
     <section aria-labelledby="review-documents" className={SECTION}>
       <h2 id="review-documents" className={HEADING}>
@@ -107,7 +107,7 @@ export function EstimateDocuments({ estimate }: { estimate: EstimateView }) {
       <details className="rounded-md border p-3">
         <summary className="cursor-pointer font-semibold">Proposal</summary>
         <div className="pt-3">
-          <Proposal estimate={estimate} />
+          <Proposal proposal={proposal} />
         </div>
       </details>
       <details className="rounded-md border p-3">
@@ -166,7 +166,7 @@ export function StaffNotes({ estimate }: { estimate: EstimateView }) {
           <List items={notes.suggestions} />
         </>
       ) : null}
-      {estimate.documents.unpricedWork.length ? (
+      {estimate.documents?.unpricedWork.length ? (
         <>
           <p className="font-semibold">Work with no price</p>
           <List items={estimate.documents.unpricedWork} />

@@ -358,6 +358,56 @@ describe('a customer or claim save after the estimate', () => {
     expect(again.body.estimate).toEqual(first.body.estimate);
   });
 
+  it('an address cleared after pricing: the stored prices and what is missing, no documents and no refusal', async () => {
+    await publish(h.seed.a, '2.00');
+    const { jobId } = await submittedJob();
+    const first = (await make(ESTIMATOR_A, jobId)).body.estimate;
+
+    await saveCustomer(ESTIMATOR_A, jobId, '');
+    const shown = await read(OFFICE_A, jobId);
+    expect(shown.status).toBe(200);
+    expect(shown.body.estimate).toMatchObject({
+      id: first.id,
+      needsReview: true,
+      missingDetails: ['Property address is missing'],
+      documents: null,
+      proposal: null,
+      proposalSha256: null,
+      totals: first.totals,
+      lines: first.lines,
+      price: first.price,
+    });
+    const before = await everything(h.admin);
+    const again = await make(ESTIMATOR_A, jobId);
+    expect(again.status).toBe(200);
+    expect(again.body.estimate).toEqual((await read(ESTIMATOR_A, jobId)).body.estimate);
+    expect(await everything(h.admin)).toBe(before);
+
+    // With the address back the documents are rebuilt, and they still need review.
+    await saveCustomer(ESTIMATOR_A, jobId, '16 Synthetic Lane, Testville');
+    expect((await read(ESTIMATOR_A, jobId)).body.estimate).toMatchObject({
+      id: first.id,
+      needsReview: true,
+      missingDetails: [],
+      documents: { signable: false },
+      proposal: { property_address: '16 Synthetic Lane, Testville' },
+      totals: first.totals,
+    });
+  });
+
+  it('an address cleared between Finish and the first price: priced from the record, with what is missing', async () => {
+    await publish(h.seed.a, '2.00');
+    const { jobId } = await submittedJob();
+    await saveCustomer(ESTIMATOR_A, jobId, '');
+    const first = await make(ESTIMATOR_A, jobId);
+    expect(first.status).toBe(201);
+    expect(first.body.estimate).toMatchObject({ needsReview: true, missingDetails: ['Property address is missing'], documents: null, totals: { low: { total: '240.00' } } });
+    expect(await pins(jobId)).toHaveLength(1);
+    const again = await make(ESTIMATOR_A, jobId);
+    expect(again.status).toBe(200);
+    expect(again.body.estimate).toEqual(first.body.estimate);
+  });
+
   it('a save that puts the details back still needs review', async () => {
     await publish(h.seed.a, '2.00');
     const { jobId } = await submittedJob();
