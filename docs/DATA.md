@@ -460,6 +460,22 @@ names are checked for shape only; their closed lists stay in code (`web/src/lib/
 - A platform operator reads a company's rows through `withOperator` with that company set; every write policy
   refuses an active operator, except the operator's own ceiling write on `company_ai_settings`.
 
+`0013_company_documents` adds the letterhead lines and the document settings to `companies` (S5a-4b,
+`docs/plans/S5.md`; the profile routes read and save them, `docs/ACCESS.md` "Company profile API"). It only
+adds: no table, and no row is changed or seeded.
+
+- `profile_emergency_phone`, `profile_fax`, `profile_website`, `profile_tagline` and
+  `profile_mailing_address`: empty until set, one line each (no padding, no control characters), at most
+  80, 80, 200, 150 and 500 characters.
+- `profile_documents`: `jsonb`, an object under 64 KiB of its text form, `'{}'` until set (every setting at
+  its neutral default). SQL checks only that; the Zod schema in `web/src/lib/profile/settings.ts` checks its
+  shape when it is written and read, as `PriceTableV3` checks a price table.
+- The runtime's column-level `UPDATE` and 0010's trigger split cover the six columns: a company's own
+  transaction changes them, a platform operator never does (the trigger refuses it), and only the owner's
+  route writes them (`profile_manage`).
+- Personal data: none beyond 0010's. They are the company's own business details and wording, printed on its
+  documents; the audit row holds a count, never a value.
+
 Migrations are additive. Change the schema by add, then switch, then remove:
 
 1. Add the new table or column in a migration, and ship the app still able to read the old shape.

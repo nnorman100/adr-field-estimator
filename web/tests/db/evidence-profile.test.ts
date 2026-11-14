@@ -230,13 +230,14 @@ describe('the company profile (columns on companies)', () => {
     expect(await everything(h.admin)).toBe(before);
   });
 
-  it('gives the runtime UPDATE on exactly the five profile columns, beside the operator’s status, tenant and time', async () => {
+  it('gives the runtime UPDATE on exactly the profile columns (0010’s five and 0013’s six), beside the operator’s status, tenant and time', async () => {
     const columns = await h.admin<{ column: string }[]>`
       SELECT column_name AS column FROM information_schema.column_privileges
       WHERE grantee = 'dryscope_runtime' AND table_name = 'companies' AND privilege_type = 'UPDATE' ORDER BY 1
     `;
     expect(columns.map((row) => row.column)).toEqual([
-      'auth_tenant_id', 'profile_address', 'profile_email', 'profile_license', 'profile_phone', 'profile_signoff', 'status', 'updated_at',
+      'auth_tenant_id', 'profile_address', 'profile_documents', 'profile_email', 'profile_emergency_phone', 'profile_fax', 'profile_license',
+      'profile_mailing_address', 'profile_phone', 'profile_signoff', 'profile_tagline', 'profile_website', 'status', 'updated_at',
     ]);
   });
 

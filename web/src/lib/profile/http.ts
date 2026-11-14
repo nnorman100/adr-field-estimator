@@ -13,8 +13,10 @@ type RouteContext = { params: Promise<Record<string, string | string[] | undefin
 
 const NO_STORE = { 'Cache-Control': 'no-store' };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-// Five short lines of text; far more than any real profile.
-const MAX_BODY_BYTES = 8_192;
+// Ten short lines and the document settings, which are at most 64,000 bytes as JSON
+// (src/lib/profile/settings.ts): the lines and settings fit with room to spare. Counted in UTF-16
+// code units, never more than the UTF-8 bytes of the same text.
+const MAX_BODY_LENGTH = 73_728;
 
 class BadRequest extends Error {}
 
@@ -56,7 +58,7 @@ async function body(request: Request) {
   } catch {
     throw new BadRequest();
   }
-  if (text.length > MAX_BODY_BYTES) throw new BadRequest();
+  if (text.length > MAX_BODY_LENGTH) throw new BadRequest();
   let raw: unknown;
   try {
     raw = JSON.parse(text);
@@ -77,7 +79,8 @@ export async function readProfile(_request: Request, identity: Identity, context
   });
 }
 
-// PUT /api/companies/{companyId}/profile  { revision, changeId, address, phone, email, license, signoff }:
+// PUT /api/companies/{companyId}/profile  { revision, changeId, address, phone, email, license, signoff,
+// and optionally emergencyPhone, fax, website, tagline, mailingAddress, documents }:
 // 409 stale_revision with the current profile when it changed since that revision.
 export async function saveProfile(request: Request, identity: Identity, context: RouteContext): Promise<Response> {
   return respond(async () => {

@@ -4,11 +4,13 @@ import type { CompanyTransaction } from '@/db/tenant';
 
 // What the four documents take from the company (docs/plans/S5.md, S5a-9 and its 2026-11-13
 // correction): the profile the owner sets on Company settings (S5a-4), the letterhead fields and the
-// document settings. This is the one reader the documents use. The letterhead fields and the
-// document settings have no columns yet (S5a-4b adds them), so until then it returns them empty and
-// at their neutral defaults: the itemized layout, no company clauses, the photo log grouped by room.
-// Nothing here is seeded with any company's own values; each company's identity comes only from its
-// own row and prints exactly as entered.
+// document settings. This is the one reader the documents use. The letterhead fields are the
+// company's own (S5a-4b, migration 0013), empty until set. The document settings are stored too
+// (src/lib/profile/settings.ts), but no document prints them yet, so this still returns them at
+// their neutral defaults: the itemized layout, no company clauses, the photo log grouped by room.
+// S5a-9b and S5a-9c read the stored settings here when they widen DocumentSettings. Nothing here is
+// seeded with any company's own values; each company's identity comes only from its own row and
+// prints exactly as entered.
 
 export type CompanyIdentity = {
   companyId: string;
@@ -57,9 +59,15 @@ export async function readCompanyDocuments(tx: CompanyTransaction, companyId: st
       email: companies.profileEmail,
       license: companies.profileLicense,
       signoff: companies.profileSignoff,
+      emergencyPhone: companies.profileEmergencyPhone,
+      fax: companies.profileFax,
+      website: companies.profileWebsite,
+      tagline: companies.profileTagline,
+      mailingAddress: companies.profileMailingAddress,
     })
     .from(companies)
     .where(eq(companies.id, companyId));
   if (!row) return null;
-  return { identity: row, letterhead: { ...NEUTRAL_LETTERHEAD }, settings: NEUTRAL_SETTINGS };
+  const { emergencyPhone, fax, website, tagline, mailingAddress, ...identity } = row;
+  return { identity, letterhead: { emergencyPhone, fax, website, tagline, mailingAddress }, settings: NEUTRAL_SETTINGS };
 }
