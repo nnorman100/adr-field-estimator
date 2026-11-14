@@ -117,21 +117,31 @@ export async function readLatestMe(): Promise<DsMe | null | 'unavailable'> {
   }
 }
 
-// This (tenant, person)'s row, or null when there is none or the storage cannot be read.
-export async function readMe(tenantId: string, uid: string): Promise<DsMe | null> {
-  let db: IDBDatabase;
-  try {
-    db = await openDb();
-  } catch {
-    return null;
-  }
-  try {
-    return parseMe(await done(db.transaction(ME_STORE, 'readonly').objectStore(ME_STORE).get(meKey(tenantId, uid))));
-  } catch {
-    return null;
-  } finally {
-    db.close();
-  }
+// This (tenant, person)'s row; null when there is none, or the storage cannot be opened at all (the
+// shell cannot start from it either); false when it cannot be read or does not answer within
+// WRITE_WITHIN_MS, so the row may be there.
+export function readMe(tenantId: string, uid: string): Promise<DsMe | null | false> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), WRITE_WITHIN_MS);
+    const answer = (row: DsMe | null | false) => {
+      clearTimeout(timer);
+      resolve(row);
+    };
+    openDb().then(
+      (db) => {
+        try {
+          const request = db.transaction(ME_STORE, 'readonly').objectStore(ME_STORE).get(meKey(tenantId, uid));
+          request.onsuccess = () => answer(parseMe(request.result));
+          request.onerror = () => answer(false);
+        } catch {
+          answer(false);
+        } finally {
+          db.close();
+        }
+      },
+      () => answer(null),
+    );
+  });
 }
 
 // Every readable row, for judging each saved sign-in's age (retention.ts). None when the phone's

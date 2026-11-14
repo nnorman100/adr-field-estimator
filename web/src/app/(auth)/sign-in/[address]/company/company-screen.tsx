@@ -62,7 +62,8 @@ function CompanySettings({
     authRef.current = auth;
     // The latest sign-in wins: an answer for a user who has since signed out is dropped.
     const stale = (user: User) => authRef.current?.currentUser !== user;
-    const signOutOrUnavailable = (refusal: LockReason) => signOutOrShow(() => signOutOnRefusal(auth, tenantId, config, refusal), setPhase);
+    const signOutOrUnavailable = (refusal: LockReason, fromServer = false) =>
+      signOutOrShow(() => signOutOnRefusal(auth, tenantId, config, refusal, fromServer), setPhase);
 
     async function open(user: User) {
       setPhase({ name: 'checking' });
@@ -70,7 +71,7 @@ function CompanySettings({
       if (stale(user)) return;
       const outcome = meOutcome(me.status, me.body);
       if (endsSession(outcome)) {
-        await signOutOrUnavailable(outcome.kind);
+        await signOutOrUnavailable(outcome.kind, true);
         return;
       }
       if (outcome.kind === 'unavailable') return setPhase({ name: 'unavailable' });

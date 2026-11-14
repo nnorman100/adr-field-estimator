@@ -37,12 +37,15 @@ const signOutCompany = vi.fn(async () => undefined);
 const enableNetwork = vi.fn(async () => undefined);
 const discarded: string[] = [];
 const signedIn = { uid: 'ana' };
+// Who the field app is signed in as: nobody once Firebase ended the sign-in itself.
+let fieldSignedIn: { uid: string } | null = signedIn;
+const readMe = vi.fn(async (): Promise<DsMe | null | false> => null);
 
 vi.mock('@/lib/field/ds-me', async (original) => ({
   ...(await original<typeof import('@/lib/field/ds-me')>()),
   forgetMe,
   saveMe: vi.fn(async () => true),
-  readMe: vi.fn(async () => null),
+  readMe,
   readAllMe: vi.fn(async () => []),
   updateMe: vi.fn(async () => true),
 }));
@@ -58,14 +61,14 @@ vi.mock('@/lib/field-db', async () => {
     }),
     appCheckSeam: () => null,
     // One object: the gate drops an answer when the signed-in user changed while it was awaited.
-    fieldUser: () => signedIn,
+    fieldUser: () => fieldSignedIn,
     settle: vi.fn(async () => undefined),
   };
 });
 vi.mock('firebase/firestore', () => ({ enableNetwork, disableNetwork: vi.fn(async () => undefined) }));
 vi.mock('firebase/auth', () => ({ getIdTokenResult: vi.fn(async () => ({ authTime: new Date().toISOString() })) }));
 
-const { evaluate, forgetPending } = await import('@/lib/field/retention');
+const { evaluate } = await import('@/lib/field/retention');
 const { runFieldSync } = await import('@/lib/field/field-sync');
 const { signOutOnRefusal, signOutOrShow } = await import('@/lib/field/sign-out');
 const { noteWrite, readUnsent, unsentKey } = await import('@/lib/field/unsent');
@@ -92,7 +95,8 @@ function sync(signedInDaysAgo = 0): Run {
 }
 
 beforeEach(() => {
-  forgetPending();
+  fieldSignedIn = signedIn;
+  readMe.mockClear();
   vi.useFakeTimers();
   vi.setSystemTime(NOW);
   items.clear();
@@ -150,24 +154,63 @@ describe('the sync gate of an open field shell', () => {
     run.stop();
   });
 
-  it.each([
-    [29, true],
-    [31, false],
-  ])('when the server lets the person in after %i days locked, sends: %s', async (days, sends) => {
+  it.each([29, 31])('when the server lets the person in after %i days locked, lifts the lock and sends the work', async (days) => {
     items.set(unsentKey('t-a', 'ana'), lockedMark(days, 'sign-in-again'));
     server = letIn();
     const run = sync();
     await vi.advanceTimersByTimeAsync(0);
     await swept();
-    expect(enableNetwork).toHaveBeenCalledTimes(sends ? 1 : 0);
-    expect(run.removed).toBe(!sends);
-    expect(discarded).toEqual(sends ? [] : ['t-a/ana']);
-    if (sends) expect(readUnsent('t-a', 'ana')).toMatchObject({ unsentSince: NOW - days * DAY, lockedSince: null });
-    // Work that was removed is not asked about again.
+    expect(enableNetwork).toHaveBeenCalledTimes(1);
+    expect(run.removed).toBe(false);
+    expect(discarded).toEqual([]);
+    expect(readUnsent('t-a', 'ana')).toMatchObject({ unsentSince: NOW - days * DAY, lockedSince: null });
+    run.stop();
+  });
+
+  it('removes work locked past 30 days when the server refuses the person, and asks nothing more', async () => {
+    items.set(unsentKey('t-a', 'ana'), lockedMark(31, 'session-revoked'));
+    server = { status: 401, body: { error: 'sign_in_revoked' } };
+    const run = sync();
+    await vi.advanceTimersByTimeAsync(0);
+    await swept();
+    expect(run.removed).toBe(true);
+    expect(discarded).toEqual(['t-a/ana']);
     const asked = callApi.mock.calls.length;
     await vi.advanceTimersByTimeAsync(10 * 60_000);
-    if (!sends) expect(callApi.mock.calls.length).toBe(asked);
-    run.stop();
+    expect(callApi.mock.calls.length).toBe(asked);
+    expect(enableNetwork).not.toHaveBeenCalled();
+  });
+
+  it('keeps work locked past 30 days, hidden, when there is no signal or no sign-in to ask with, and keeps asking', async () => {
+    items.set(unsentKey('t-a', 'ana'), lockedMark(31, 'session-revoked'));
+    const offline = sync();
+    await vi.advanceTimersByTimeAsync(20_000);
+    await swept();
+    expect(offline.states).not.toContain('open');
+    offline.stop();
+
+    // Firebase ended the sign-in itself: the gate's own "sign in again" is no answer from the server.
+    callApi.mockClear();
+    fieldSignedIn = null;
+    const signedOut = sync();
+    await vi.advanceTimersByTimeAsync(0);
+    await swept();
+    expect(signedOut.states.at(-1)).toBe('locked');
+    expect(callApi).not.toHaveBeenCalled();
+    expect(signedOut.removed).toBe(false);
+    expect(discarded).toEqual([]);
+    expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: NOW - 31 * DAY, lockedReason: 'session-revoked' });
+    expect(enableNetwork).not.toHaveBeenCalled();
+    signedOut.stop();
+
+    // With a sign-in and signal again, the server decides: here it lets her in.
+    fieldSignedIn = signedIn;
+    server = letIn();
+    const back = sync();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(back.states.at(-1)).toBe('open');
+    expect(discarded).toEqual([]);
+    back.stop();
   });
 
   it('starts locked from a mark it cannot read, and starts its clock, so that work is not kept for ever', async () => {
@@ -180,14 +223,17 @@ describe('the sync gate of an open field shell', () => {
     run.stop();
   });
 
-  it('stops, and tells the shell, when another entry point of the phone removes this person\'s work', async () => {
+  it('stops, and tells the shell, when the server\'s refusal elsewhere on the page removes this person\'s work', async () => {
     items.set(unsentKey('t-a', 'ana'), lockedMark(29, 'company-inactive'));
     const run = sync();
     await vi.advanceTimersByTimeAsync(0);
     expect(run.states.at(-1)).toBe('locked');
-    // Two days pass with the page hidden; shown again, the shell's own entry point runs first.
+    // Two days pass with the page hidden; shown again, opening removes nothing, and a screen of the
+    // same page that the server refuses does.
     vi.setSystemTime(NOW + 2 * DAY);
-    expect(await evaluate(Date.now(), { kind: 'entry' }).done).toEqual(['t-a/ana']);
+    expect(await evaluate(Date.now(), { kind: 'entry' }).done).toEqual([]);
+    expect(run.removed).toBe(false);
+    expect(await evaluate(Date.now(), { kind: 'refused', person, reason: 'company-inactive', fromServer: true }).done).toEqual(['t-a/ana']);
     expect(run.removed).toBe(true);
     const asked = callApi.mock.calls.length;
     server = letIn();
@@ -202,7 +248,7 @@ describe('the sync gate of an open field shell', () => {
     await vi.advanceTimersByTimeAsync(0);
     run.stop();
     vi.setSystemTime(NOW + 2 * DAY);
-    await evaluate(Date.now(), { kind: 'entry' }).done;
+    await evaluate(Date.now(), { kind: 'refused', person, reason: 'company-inactive', fromServer: true }).done;
     expect(run.removed).toBe(false);
   });
 
@@ -217,7 +263,7 @@ describe('the sync gate of an open field shell', () => {
     expect(callApi).toHaveBeenCalledTimes(3);
     full = false;
     await vi.advanceTimersByTimeAsync(15_000);
-    expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: NOW, lockedReason: 'sign-in-again' });
+    expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: NOW + 45_000, lockedReason: 'sign-in-again' });
     expect(forgetMe).not.toHaveBeenCalled();
     expect(enableNetwork).not.toHaveBeenCalled();
     run.stop();
@@ -227,7 +273,7 @@ describe('the sync gate of an open field shell', () => {
 const signedInAs = (uid: string, at = 'Fri, 13 Nov 2026 09:00:00 GMT') => ({ uid, metadata: { lastSignInTime: at } });
 
 describe('a refusal the phone could not save, then no signal', () => {
-  it('is saved at the next check with no answer once storage answers, and a reopen stays locked', async () => {
+  it('keeps this window locked with the network off, and is saved from the server\'s next refusal once storage answers', async () => {
     server = { status: 403, body: { error: 'company_inactive' } };
     full = true;
     const run = sync();
@@ -235,26 +281,41 @@ describe('a refusal the phone could not save, then no signal', () => {
     expect(run.states.at(-1)).toBe('locked');
     expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: null });
 
-    // A shell started again on this page while it is held is locked from the start.
-    const meanwhile = sync();
-    expect(meanwhile.states[0]).toBe('locked');
-    meanwhile.stop();
-
-    // Storage answers again, and the signal is gone before the gate asks again.
+    // Storage answers again, and the signal is gone before the gate asks again: nothing is saved
+    // on what the phone alone holds, and the window stays locked.
     full = false;
     server = { status: 0, body: null };
     await vi.advanceTimersByTimeAsync(15_000);
-    expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: NOW, lockedReason: 'company-inactive' });
+    expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: null });
+    expect(run.states.at(-1)).toBe('locked');
     expect(enableNetwork).not.toHaveBeenCalled();
-    run.stop();
 
-    // Reopened with no signal: locked from the start.
-    forgetPending();
-    const reopened = sync();
+    // The signal is back and the server still refuses: saved from then.
+    server = { status: 403, body: { error: 'company_inactive' } };
+    run.stop();
+    const again = sync();
     await vi.advanceTimersByTimeAsync(0);
-    expect(reopened.states[0]).toBe('locked');
-    expect(reopened.states).not.toContain('open');
-    reopened.stop();
+    expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: NOW + 15_000, lockedReason: 'company-inactive' });
+    expect(again.states.at(-1)).toBe('locked');
+    expect(enableNetwork).not.toHaveBeenCalled();
+    again.stop();
+  });
+});
+
+describe('the saved sign-in a sign-out reads', () => {
+  it('keeps the sign-in and offers "Try again" when it cannot be read in time, and signs out once it can', async () => {
+    const auth = { currentUser: { uid: 'ana', metadata: { lastSignInTime: 'Fri, 13 Nov 2026 09:00:00 GMT' } } } as unknown as Auth;
+    const shown: FailedSignOut[] = [];
+    readMe.mockResolvedValueOnce(false);
+    await signOutOrShow(() => signOutOnRefusal(auth, 't-a', config, 'sign-in-again'), (failed) => shown.push(failed));
+    expect(shown.map((failed) => failed.name)).toEqual(['not-secured']);
+    expect(forgetMe).not.toHaveBeenCalled();
+    expect(signOutCompany).not.toHaveBeenCalled();
+
+    await (shown[0] as Extract<FailedSignOut, { name: 'not-secured' }>).retry();
+    expect(shown).toHaveLength(1);
+    expect(forgetMe).toHaveBeenCalledWith('t-a', 'ana', null);
+    expect(signOutCompany).toHaveBeenCalledOnce();
   });
 });
 

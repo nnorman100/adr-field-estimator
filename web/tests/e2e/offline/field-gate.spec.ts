@@ -169,7 +169,7 @@ test.describe('the sync gate (S6-3)', () => {
 });
 
 test.describe('locked work kept past 30 days (O5)', () => {
-  test('locked work is removed after 30 days for a revoked or ended sign-in, even when the phone opens with no signal, and kept before that', async ({ browser, lane }) => {
+  test('locked work past 30 days for a revoked or ended sign-in is hidden with no signal or no sign-in to ask with, removed when the server refuses the person, and kept before that', async ({ browser, lane }) => {
     const context = await browser.newContext();
     const world = await seedCompany({ people: ['ana', 'ben', 'cleo'] });
     const phone = await FieldPhone.open(context, lane);
@@ -177,15 +177,26 @@ test.describe('locked work kept past 30 days (O5)', () => {
     lane.drop('/api/me');
     const locked = (reason: string, days: number) => ({ writes: 1, unsentSince: Date.now(), lockedSince: Date.now() - days * DAY, lockedReason: reason });
 
-    // The server said the sign-in was revoked, 31 days ago.
-    await phone.call('start', ana!, 'persistent');
+    // The server said the sign-in was revoked, 31 days ago. With no signal the work is hidden and
+    // kept (decision 010); the server refusing her again removes it. She is signed in on the phone,
+    // so the gate asks the server for her.
+    await phone.signIn(world, world.people.ana!);
+    expect(await phone.call('start', ana!, 'persistent')).toBe('persistent');
     await phone.call('setMark', ana!, locked('session-revoked', 31));
     await phone.call('sync', ana!);
+    await expect.poll(() => phone.call('gate', ana!)).toBe('locked: session-revoked');
+    expect((await phone.call('enter', ana!)).state).toBe('hidden');
+    expect(await phone.call('unsent', ana!)).toMatchObject({ unsentSince: expect.any(Number), lockedReason: 'session-revoked' });
+    serveMe(lane, { status: 401, error: 'sign_in_revoked' });
+    await phone.call('poke', ana!);
     await expect.poll(() => phone.call('gate', ana!)).toBe('removed');
     expect(await phone.call('unsent', ana!)).toEqual({ writes: 0, unsentSince: null, lockedSince: null });
+    lane.drop('/api/me');
+    lane.unserve('/api/me');
 
     // Firebase ended the revoked sign-in itself, so the phone has no sign-in to ask with: the lock
-    // this saves counts too once it is 31 days old, read back at an offline start.
+    // this saves counts too once it is 31 days old, read back at an offline start, and hides the
+    // work; with no sign-in to ask with, nothing removes it.
     expect(await phone.call('start', ben!, 'persistent')).toBe('persistent (signed out)');
     await phone.call('setMark', ben!, { writes: 1, unsentSince: Date.now(), lockedSince: null });
     await phone.call('sync', ben!);
@@ -196,8 +207,11 @@ test.describe('locked work kept past 30 days (O5)', () => {
     await phone.call('setMark', ben!, { ...(saved as object), lockedSince: Date.now() - 31 * DAY });
     await phone.call('start', ben!, 'persistent');
     await phone.call('sync', ben!);
-    await expect.poll(() => phone.call('gate', ben!)).toBe('removed');
-    expect(await phone.call('unsent', ben!)).toEqual({ writes: 0, unsentSince: null, lockedSince: null });
+    await expect.poll(() => phone.call('gate', ben!)).toBe('locked: sign-in-again');
+    await phone.page.waitForTimeout(2000);
+    expect(await phone.call('gate', ben!)).toBe('locked: sign-in-again');
+    expect((await phone.call('enter', ben!)).state).toBe('hidden');
+    expect(await phone.call('unsent', ben!)).toMatchObject({ unsentSince: expect.any(Number), lockedReason: 'sign-in-again' });
 
     // Locked for 29 days: kept.
     await phone.call('start', cleo!, 'persistent');
@@ -238,7 +252,7 @@ test.describe('locked work on every sign-in-again path (O5)', () => {
     await context.close();
   });
 
-  test('a sign-in past the role\'s limit starts the clock with no signal and no refusal at all; 31 days on, the work is removed', async ({ browser, lane }) => {
+  test('a sign-in past the role\'s limit starts the clock with no signal and no refusal at all; 31 days on, the work is hidden until the server refuses the person', async ({ browser, lane }) => {
     const context = await browser.newContext();
     const world = await seedCompany();
     const phone = await FieldPhone.open(context, lane);
@@ -256,12 +270,17 @@ test.describe('locked work on every sign-in-again path (O5)', () => {
     await phone.call('setMark', person, { ...(saved as object), lockedSince: Date.now() - 31 * DAY });
     await phone.call('start', person, 'persistent');
     await phone.call('sync', person, 62);
+    await expect.poll(() => phone.call('gate', person), { timeout: 20_000 }).toBe('expired');
+    expect((await phone.call('enter', person)).state).toBe('hidden');
+    expect(await ourDatabases(phone, person)).not.toHaveLength(0);
+    serveMe(lane, { status: 401, error: 'sign_in_revoked' });
+    await phone.call('poke', person);
     await expect.poll(() => phone.call('gate', person)).toBe('removed');
     expect(await phone.call('unsent', person)).toEqual({ writes: 0, unsentSince: null, lockedSince: null });
     await context.close();
   });
 
-  test('a sign-out the app makes on a refusal keeps the clock with no saved sign-in, and reopening signed out removes the work at 31 days', async ({ browser, lane }) => {
+  test('a sign-out the app makes on a refusal keeps the clock with no saved sign-in, and reopening signed out at 31 days hides the work and removes nothing', async ({ browser, lane }) => {
     const context = await browser.newContext();
     const world = await seedCompany();
     const phone = await FieldPhone.open(context, lane);
@@ -278,20 +297,21 @@ test.describe('locked work on every sign-in-again path (O5)', () => {
 
     // Locked 29 days: the sign-in page keeps it.
     await phone.call('setMark', person, { ...(saved as object), lockedSince: Date.now() - 29 * DAY });
-    await phone.call('removeOutlived');
+    expect(await phone.call('enter', person)).toEqual({ state: 'locked', removed: [] });
     expect(await phone.call('unsent', person)).toMatchObject({ unsentSince: expect.any(Number) });
     expect(await ourDatabases(phone, person)).not.toHaveLength(0);
 
-    // Locked 31 days: reopening (the field shell signed out, or the sign-in page) removes it, though
-    // no saved sign-in names the person or the company's field database.
+    // Locked 31 days: reopening (the field shell signed out, or the sign-in page) hides it and
+    // removes nothing: no server has refused the person since (decision 010).
     await phone.call('setMark', person, { ...(saved as object), lockedSince: Date.now() - 31 * DAY });
-    await phone.call('removeOutlived');
-    expect(await phone.call('unsent', person)).toEqual({ writes: 0, unsentSince: null, lockedSince: null });
-    expect(await ourDatabases(phone, person)).toHaveLength(0);
+    expect(await phone.call('enter')).toEqual({ state: 'none', removed: [] });
+    expect(await phone.call('enter', person)).toEqual({ state: 'hidden', removed: [] });
+    expect(await phone.call('unsent', person)).toMatchObject({ unsentSince: expect.any(Number), lockedReason: 'sign-in-again' });
+    expect(await ourDatabases(phone, person)).not.toHaveLength(0);
     await context.close();
   });
 
-  test('a page hidden on day 29 of a lock and shown again on day 31, offline and past the sign-in limit, removes the work', async ({ browser, lane }) => {
+  test('a page hidden on day 29 of a lock and shown again on day 31, offline and past the sign-in limit, hides the work and removes nothing', async ({ browser, lane }) => {
     const context = await browser.newContext();
     const world = await seedCompany();
     const phone = await FieldPhone.open(context, lane);
@@ -306,12 +326,14 @@ test.describe('locked work on every sign-in-again path (O5)', () => {
 
     await phone.call('setMark', person, { ...locked, lockedSince: Date.now() - 31 * DAY });
     await phone.call('resume', person);
-    await expect.poll(() => phone.call('gate', person)).toBe('removed');
-    expect(await phone.call('unsent', person)).toEqual({ writes: 0, unsentSince: null, lockedSince: null });
+    await phone.page.waitForTimeout(2000);
+    expect(await phone.call('gate', person)).toBe('expired');
+    expect((await phone.call('enter', person)).state).toBe('hidden');
+    expect(await phone.call('unsent', person)).toMatchObject({ unsentSince: expect.any(Number), lockedReason: 'company-inactive' });
     await context.close();
   });
 
-  test('a later sign-in removes work locked past 30 days instead of sending it; before that it lifts the lock and the work is sent once', async ({ browser, lane }) => {
+  test('a later sign-in lifts the person\'s own lock however old, and the work is sent once', async ({ browser, lane }) => {
     for (const days of [31, 29]) {
       const context = await browser.newContext();
       const world = await seedCompany();
@@ -322,22 +344,17 @@ test.describe('locked work on every sign-in-again path (O5)', () => {
       await phone.call('setMark', person, { ...(saved as object), lockedSince: Date.now() - days * DAY, lockedReason: 'sign-in-again' });
       lane.restore(['auth', 'firestore']);
 
-      expect(await phone.call('letIn', person)).toBe(days > 30 ? 'removed' : 'unlocked');
+      expect(await phone.call('letIn', person)).toBe('unlocked');
       expect(await phone.call('start', person, 'persistent')).toBe('persistent');
       await phone.call('sync', person);
       await expect.poll(() => phone.call('gate', person)).toBe('open');
-      if (days > 30) {
-        expect(await phone.call('unsent', person)).toEqual({ writes: 0, unsentSince: null, lockedSince: null });
-        await expectWithheld(async () => (await sent(world)) === 0);
-      } else {
-        await expect.poll(() => sent(world), { timeout: SEND_MS }).toBe(1);
-        await expect.poll(() => phone.call('unsent', person)).toMatchObject({ lockedSince: null, unsentSince: null });
-      }
+      await expect.poll(() => sent(world), { timeout: SEND_MS }).toBe(1);
+      await expect.poll(() => phone.call('unsent', person)).toMatchObject({ lockedSince: null, unsentSince: null });
       await context.close();
     }
   });
 
-  test('an open field window does not send work locked past 30 days when the server lets the person back in', async ({ browser, lane }) => {
+  test('an open field window sends work locked past 30 days, once, when the server lets the person back in', async ({ browser, lane }) => {
     const context = await browser.newContext();
     const world = await seedCompany();
     const phone = await FieldPhone.open(context, lane);
@@ -351,11 +368,13 @@ test.describe('locked work on every sign-in-again path (O5)', () => {
     const saved = await phone.call('unsent', person);
     await phone.call('setMark', person, { ...(saved as object), lockedSince: Date.now() - 31 * DAY });
 
+    expect((await phone.call('enter', person)).state).toBe('hidden');
+
     serveMe(lane, { expiresAt: inDays(7) });
     await phone.call('poke', person);
-    await expect.poll(() => phone.call('gate', person)).toBe('removed');
-    await expectWithheld(async () => (await sent(world)) === 0);
-    expect(await phone.call('unsent', person)).toEqual({ writes: 0, unsentSince: null, lockedSince: null });
+    await expect.poll(() => phone.call('gate', person)).toBe('open');
+    await expect.poll(() => sent(world), { timeout: SEND_MS }).toBe(1);
+    await expect.poll(() => phone.call('unsent', person)).toMatchObject({ lockedSince: null, unsentSince: null });
     await context.close();
   });
 });

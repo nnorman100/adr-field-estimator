@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { forgetMe, meKey, parseMe, restoreMe } from '../../src/lib/field/ds-me';
+import { forgetMe, meKey, parseMe, readMe, restoreMe } from '../../src/lib/field/ds-me';
 
 const ROW = {
   key: 'tenant-1/uid-1',
@@ -125,5 +125,34 @@ describe('removing and putting back a saved sign-in', () => {
     rows.clear();
     expect(await restoreMe(ours)).toBe(true);
     expect(rows.get(ROW.key)).toEqual(ours);
+  });
+});
+
+// A sign-out reads the saved sign-in first: within 3 seconds, or it says the row may be there.
+describe('reading a saved sign-in', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it('answers the row, or null when there is none', async () => {
+    const rows = new Map<string, unknown>([[ROW.key, ROW]]);
+    vi.stubGlobal('indexedDB', fakeIndexedDb(rows));
+    expect(await readMe('tenant-1', 'uid-1')).toEqual(ROW);
+    rows.clear();
+    expect(await readMe('tenant-1', 'uid-1')).toBeNull();
+  });
+
+  it('answers false, never "no row", when the phone\'s storage does not answer within 3 seconds', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('indexedDB', { open: () => ({}) });
+    const read = readMe('tenant-1', 'uid-1');
+    await vi.advanceTimersByTimeAsync(2_999);
+    let settled = false;
+    void read.then(() => (settled = true));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await read).toBe(false);
   });
 });

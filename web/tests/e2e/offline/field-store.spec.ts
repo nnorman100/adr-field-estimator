@@ -347,9 +347,10 @@ test.describe('the field shell\'s phone storage (S6-3)', () => {
   });
 });
 
-// S6-3b: work locked past the 30-day limit (O5) is removed when the shell is shown again, with no
-// navigation, whether it is signed out or open for someone else.
-test.describe('the field shell removes outlived locked work when it is shown again', () => {
+// S6-3b: work locked past the 30-day limit (O5) is hidden when the shell is shown again, with no
+// navigation, whether it is signed out or open for someone else; the phone alone removes nothing,
+// only the server refusing the person does (decision 010).
+test.describe('the field shell hides outlived locked work when it is shown again, and removes nothing by itself', () => {
   // A page whose visibility the test sets, as a phone hides and shows the app.
   const controlVisibility = (page: Page) =>
     page.addInitScript(() => {
@@ -373,17 +374,20 @@ test.describe('the field shell removes outlived locked work when it is shown aga
     await harness.call('signOutKeep', person, 'sign-in-again');
   }
 
-  // The lock is 29 days old now; hidden, two days pass; shown again, the work is gone.
+  // The lock is 29 days old now; hidden, two days pass; shown again, the work is past the limit,
+  // and still all there.
   async function hideFromDay29ToDay31(page: Page, world: World, who: Person): Promise<void> {
     const key = unsentKey(world.tenantId, who.uid);
     const mark = JSON.parse((await getLocal(page, key))!) as Record<string, unknown>;
-    await setLocal(page, key, JSON.stringify({ ...mark, lockedSince: Date.now() - 29 * DAY }));
+    const aged = JSON.stringify({ ...mark, lockedSince: Date.now() - 29 * DAY });
+    await setLocal(page, key, aged);
     await setShown(page, false);
     await page.clock.fastForward('48:00:00');
     expect(await hasDatabase(page, who.uid)).toBe(true);
     await setShown(page, true);
-    await expect.poll(() => hasDatabase(page, who.uid)).toBe(false);
-    expect(await getLocal(page, key)).toBeNull();
+    await page.waitForTimeout(1000);
+    expect(await hasDatabase(page, who.uid)).toBe(true);
+    expect(await getLocal(page, key)).toBe(aged);
   }
 
   test('signed out', async ({ context, page, lane }) => {
@@ -414,7 +418,7 @@ test.describe('the field shell removes outlived locked work when it is shown aga
     await expect(page.getByText('Your jobs will show here.')).toBeVisible();
   });
 
-  test('open for the person whose work it is: the shell says it was removed', async ({ context, page, lane }) => {
+  test('open for the person whose work it is: the shell hides it, and says it was removed once the server refuses her', async ({ context, page, lane }) => {
     const world = await seedCompany();
     const harness = await FieldPhone.open(context, lane);
     const person = await harness.signIn(world, world.owner);
@@ -427,8 +431,15 @@ test.describe('the field shell removes outlived locked work when it is shown aga
     await openShell(page, lane, world, world.owner);
     await expect(page.getByText(text.LOCKED_INACTIVE_TEXT)).toBeVisible();
     await hideFromDay29ToDay31(page, world, world.owner);
-    await expect(page.getByText(text.REMOVED_TEXT)).toBeVisible();
+    await expect(page.getByText(text.HIDDEN_TEXT)).toBeVisible();
     await expect(page.getByText(text.LOCKED_INACTIVE_TEXT)).toHaveCount(0);
+
+    // The signal is back and the server still refuses her: the work goes, and the shell says so.
+    serveMe(lane, { status: 403, error: 'company_inactive' });
+    await page.clock.fastForward('00:01:00');
+    await expect.poll(() => hasDatabase(page, world.owner.uid)).toBe(false);
+    await expect(page.getByText(text.REMOVED_TEXT)).toBeVisible();
+    await expect(page.getByText(text.HIDDEN_TEXT)).toHaveCount(0);
   });
 
   test('open on another company\'s "Keep jobs on this phone?" question', async ({ context, page, lane }) => {
@@ -447,7 +458,7 @@ test.describe('the field shell removes outlived locked work when it is shown aga
     await expect(page.getByRole('heading', { name: text.KEEP_TITLE })).toBeVisible();
   });
 
-  test('left open and shown across the limit, with nothing hidden or shown again', async ({ context, page, lane }) => {
+  test('left open and shown across the limit, with nothing hidden or shown again: the work stays', async ({ context, page, lane }) => {
     const world = await seedCompany();
     const harness = await FieldPhone.open(context, lane);
     await lockedAndSignedOut(harness, world, world.owner);
@@ -457,14 +468,16 @@ test.describe('the field shell removes outlived locked work when it is shown aga
     await expect(page.getByRole('heading', { name: 'Sign in to continue' })).toBeVisible();
     const key = unsentKey(world.tenantId, world.owner.uid);
     const mark = JSON.parse((await getLocal(page, key))!) as Record<string, unknown>;
-    await setLocal(page, key, JSON.stringify({ ...mark, lockedSince: Date.now() - 29 * DAY }));
+    const aged = JSON.stringify({ ...mark, lockedSince: Date.now() - 29 * DAY });
+    await setLocal(page, key, aged);
     await page.clock.fastForward('48:00:00');
-    await expect.poll(() => hasDatabase(page, world.owner.uid)).toBe(false);
-    expect(await getLocal(page, key)).toBeNull();
+    await page.waitForTimeout(1000);
+    expect(await hasDatabase(page, world.owner.uid)).toBe(true);
+    expect(await getLocal(page, key)).toBe(aged);
   });
 
   // A saved sign-in past its role's limit starts the 30 days with no refusal from any server.
-  test('a sign-in past its role\'s limit, opened with no signal and no refusal saved, is locked out from then; shown again 30 days later, the work is removed', async ({ context, page, lane }) => {
+  test('a sign-in past its role\'s limit, opened with no signal and no refusal saved, is locked out from then; shown again 30 days later, the work is hidden and kept', async ({ context, page, lane }) => {
     const world = await seedCompany();
     const harness = await FieldPhone.open(context, lane);
     const person = await harness.signIn(world, world.owner);
@@ -494,11 +507,9 @@ test.describe('the field shell removes outlived locked work when it is shown aga
     await setShown(page, false);
     await page.clock.fastForward(2 * DAY);
     await setShown(page, true);
-    await expect.poll(() => hasDatabase(page, world.owner.uid)).toBe(false);
-    await expect(page.getByText(text.REMOVED_TEXT)).toBeVisible();
-    // Nothing of the work is left. The saved sign-in is still past its limit, so the person stays
-    // locked out, from now.
-    await expect.poll(mark).toMatchObject({ writes: 0, unsentSince: null, lockedReason: 'sign-in-expired' });
-    expect((await mark())!.lockedSince as number).toBeGreaterThan(since + 30 * DAY);
+    await expect(page.getByText(text.HIDDEN_TEXT)).toBeVisible();
+    // Nothing is removed: no server has refused the person (decision 010). The first time stands.
+    expect(await hasDatabase(page, world.owner.uid)).toBe(true);
+    expect(await mark()).toMatchObject({ unsentSince: expect.any(Number), lockedSince: since, lockedReason: 'sign-in-expired' });
   });
 });

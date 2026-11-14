@@ -11,7 +11,7 @@ import { evaluate, onWorkRemoved, takeRemoved } from '@/lib/field/retention';
 import { askToPersist, keepAnswer, saveKeepAnswer, type KeepAnswer } from '@/lib/field/keep-consent';
 import type { FieldSurface } from '@/lib/field/platform';
 import { sessionValid, type GateState, type SyncGate } from '@/lib/field/sync-gate';
-import { unsentWork } from '@/lib/field/unsent';
+import { lockOutlived, unsentWork } from '@/lib/field/unsent';
 import { holdWindow } from '@/lib/field/window-lock';
 import * as text from './field-store-text';
 
@@ -41,9 +41,7 @@ type Phase =
   | { kind: 'no-lock' }
   | { kind: 'reopen' }
   | { kind: 'ready'; client: FieldClient }
-  | { kind: 'removed' }
-  // Past the 30-day limit, and the phone could not remove the work now: nothing of it is opened.
-  | { kind: 'not-removed' };
+  | { kind: 'removed' };
 
 function Notice({ title, children }: { title?: string; children: ReactNode }) {
   return (
@@ -137,9 +135,9 @@ export function FieldStore({
     let release = () => undefined as void;
     const person = { tenantId: me.tenantId, uid: me.uid, config: me.config };
     const own = meKey(me.tenantId, me.uid);
-    // The retention routine removed this person's work (past the 30-day limit, O5), from whichever
-    // of the phone's entry points, before this started or while it runs: the shell says so, nothing
-    // of it shows, and nothing more is started for it.
+    // The retention routine removed this person's work (hidden past the 30-day limit, then refused by
+    // the server, decision 010), before this started or while it runs: the shell says so, nothing of
+    // it shows, and nothing more is started for it.
     let gone = false;
     const removed = (): boolean => {
       if (takeRemoved(own)) {
@@ -158,13 +156,11 @@ export function FieldStore({
         return setPhase({ kind: 'no-lock' });
       }
       release = lock.release;
-      // Work locked past the 30-day limit (O5, S6-3b), this person's included, goes before anything
-      // of it starts: this window holds the lock, so no other window holds any of it. Work that is
-      // past the limit and could not be removed now is not opened; the next entry point tries again.
-      const entry = evaluate(Date.now(), { kind: 'entry', person, saved: me });
-      await entry.done;
+      // The phone's retention routine runs before anything starts (O5, S6-3b). Work locked past the
+      // 30-day limit still starts its client and gate, so the server can be asked, but nothing of it
+      // shows (below) until the server refuses the person (it is removed) or lets them in.
+      await evaluate(Date.now(), { kind: 'entry', person, saved: me }).done;
       if (!live || removed()) return;
-      if (entry.state === 'expired') return setPhase({ kind: 'not-removed' });
       await mirrorSignIn(person).catch(() => false);
       const started = await startFieldClient(person, cache);
       if (!live || removed()) return;
@@ -272,10 +268,19 @@ export function FieldStore({
       </Notice>
     );
   }
-  if (phase.kind === 'removed' || phase.kind === 'not-removed') {
+  if (phase.kind === 'removed') {
     return (
       <Notice>
-        <p className="text-base">{phase.kind === 'removed' ? text.REMOVED_TEXT : text.NOT_REMOVED_TEXT}</p>
+        <p className="text-base">{text.REMOVED_TEXT}</p>
+      </Notice>
+    );
+  }
+  // Locked for more than 30 days (decision 010): read from the lock and the clock each time, and
+  // nothing of the work shows while it is.
+  if (lockOutlived(me.tenantId, me.uid, now)) {
+    return (
+      <Notice>
+        <p className="text-base">{text.HIDDEN_TEXT}</p>
       </Notice>
     );
   }

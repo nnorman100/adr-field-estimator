@@ -48,6 +48,6 @@ export const LOCKED_SIGN_IN_MEMORY_TEXT = `Sign in again to send your changes. $
 
 export const REMOVED_TEXT =
   'The changes kept on this phone were removed, because your access stayed turned off for 30 days.';
-// Past the same limit, but the phone's storage would not remove them yet.
-export const NOT_REMOVED_TEXT =
-  'The changes kept on this phone can no longer be sent, because your access stayed turned off for 30 days. This phone could not remove them yet. Close DryScope completely and open it again.';
+// Past the same limit, before the server has confirmed it (decision 010): nothing of it shows.
+export const HIDDEN_TEXT =
+  'The changes kept on this phone are hidden, because your access stayed turned off for 30 days. With signal, DryScope asks your company: they are removed if your access is still off, and shown again once you can sign in.';

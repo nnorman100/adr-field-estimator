@@ -132,12 +132,13 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
     [],
   );
 
+  // `fromServer`: the server's own answer refused the person just now (decision 010).
   const refuse = useCallback(
-    (message: string, refusal: LockReason) => {
+    (message: string, refusal: LockReason, fromServer = false) => {
       const auth = authRef.current;
       return signOutOrShow(
         async () => {
-          if (auth) await signOutOnRefusal(auth, tenantId, config, refusal);
+          if (auth) await signOutOnRefusal(auth, tenantId, config, refusal, fromServer);
         },
         showFailed,
         () => signedOut(message),
@@ -179,7 +180,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
             : outcome.kind === 'account-disabled'
               ? `This account is turned off. Ask the owner of ${companyName}.`
               : 'Please sign in again.';
-        await refuse(message, outcome.kind);
+        await refuse(message, outcome.kind, true);
         return;
       }
       // The field shell starts from this row with no signal (S6-2), so it is saved before the screen
@@ -189,10 +190,9 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
       // it ("Getting DryScope ready…"), so a phone that loses signal before ever opening the field
       // app can still open it; when that does not finish in time, the screen says so. The server
       // just let this person in, so once the row is saved a refusal saved on the phone for them is
-      // lifted, unless it is past the 30-day limit (O5): that work is removed instead, never sent
-      // (retention.ts), while this screen goes on. The row goes first, so the phone never finds an
-      // old sign-in with no lock. A phone that cannot save the lifting offers nothing of the field
-      // app: "Try again" lifts it again.
+      // lifted, however old (decision 010; retention.ts). The row goes first, so the phone never
+      // finds an old sign-in with no lock. A phone that cannot save the lifting offers nothing of
+      // the field app: "Try again" lifts it again.
       if (outcome.kind === 'signed-in') {
         const authTime = await user.getIdTokenResult().then(
           (result) => Date.parse(result.authTime),

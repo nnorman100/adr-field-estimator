@@ -32,7 +32,7 @@ vi.mock('@/lib/field-db', () => ({
 vi.mock('firebase/firestore', () => ({ enableNetwork, disableNetwork: vi.fn(async () => undefined) }));
 vi.mock('firebase/auth', () => ({ getIdTokenResult: vi.fn(async () => ({ authTime: new Date().toISOString() })) }));
 
-const { cleanupKey, forgetPending, lockWork } = await import('@/lib/field/retention');
+const { cleanupKey, lockWork } = await import('@/lib/field/retention');
 const { signOutOnRefusal, WorkNotSecuredError } = await import('@/lib/field/sign-out');
 const { runFieldSync } = await import('@/lib/field/field-sync');
 const { readUnsent, unsentKey } = await import('@/lib/field/unsent');
@@ -67,7 +67,6 @@ const auth = { currentUser: { uid: 'ana', metadata: { lastSignInTime: 'Fri, 13 N
 const unsentBefore = JSON.stringify({ writes: 3, unsentSince: 100, lockedSince: null });
 
 beforeEach(() => {
-  forgetPending();
   storage = fakeStorage();
   storage.items.set(unsentKey('t-a', 'ana'), unsentBefore);
   vi.stubGlobal('window', { localStorage: storage });

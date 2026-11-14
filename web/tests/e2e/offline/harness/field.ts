@@ -73,18 +73,20 @@ const f = {
   async signOutKeep(person: Person, refusal?: LockReason): Promise<void> {
     running.delete(key(person));
     const auth = companyAuth(person);
-    await (refusal ? signOutOnRefusal(auth, person.tenantId, person.config, refusal) : signOutKeeping(auth, person.tenantId));
+    await (refusal ? signOutOnRefusal(auth, person.tenantId, person.config, refusal, true) : signOutKeeping(auth, person.tenantId));
   },
   // What the field shell and the sign-in page do as they open (S6-3b): the phone's one retention
-  // routine, which removes the work of anyone on this phone whose lock outlived 30 days, from what
-  // the phone kept with the lock alone. Answers who was removed.
-  removeOutlived: () => evaluate(Date.now(), { kind: 'entry' }).done,
-  // The sign-in page when the server lets a person in: their lock is lifted ('unlocked'), unless
-  // it is past the limit: then the work is removed ('removed'), or stays locked when it cannot be.
-  async letIn(person: Person): Promise<'unlocked' | 'removed' | 'locked'> {
+  // routine, which removes nothing (decision 010). Answers the person's state ('none', 'locked',
+  // 'hidden') once it is over, and who was removed (nobody).
+  async enter(person?: Person): Promise<{ state: string; removed: string[] }> {
+    const { state, done } = evaluate(Date.now(), person ? { kind: 'entry', person } : { kind: 'entry' });
+    return { state, removed: await done };
+  },
+  // The sign-in page when the server lets a person in: their own lock is lifted, however old
+  // ('unlocked'), or stays when the phone cannot save that ('locked').
+  async letIn(person: Person): Promise<'unlocked' | 'locked'> {
     const { state, done } = evaluate(Date.now(), { kind: 'let-in', person });
-    const removed = await done;
-    if (removed.includes(key(person))) return 'removed';
+    await done;
     return state === 'none' ? 'unlocked' : 'locked';
   },
   async signOutDiscard(person: Person): Promise<string> {

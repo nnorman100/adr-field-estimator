@@ -3,8 +3,8 @@ import { getIdTokenResult } from 'firebase/auth';
 import { callApi } from '@/lib/firebase-client';
 import { appCheckSeam, fieldUser, settle, type FieldClient } from '@/lib/field-db';
 import { meKey, readMe, updateMe, type DsMe } from './ds-me';
-import { sessionValid, SyncGate, type GateState, type MeFacts } from './sync-gate';
-import { evaluate, onWorkRemoved, pendingReason, type RetentionEvent } from './retention';
+import { sessionValid, SyncGate, type GateState, type MeAnswer, type MeFacts } from './sync-gate';
+import { evaluate, onWorkRemoved, type RetentionEvent } from './retention';
 import { savedLock, savedReason } from './unsent';
 
 // Runs the sync gate for one person's started field client (S6-3), and does what each of its
@@ -19,12 +19,12 @@ import { savedLock, savedReason } from './unsent';
 //   judged, so the 30-day clock (O5) starts whatever the sign-in's age and whether or not the server
 //   answered. A phone that cannot save it keeps everything as it is, the gate stays shut, and it
 //   asks again.
-// - The server letting the person in lifts the lock, unless the work is past the limit: that work is
-//   never sent. A phone that cannot save the lifting keeps the lock shown, the network off, and
-//   asks again. The gate asks after every answer, whenever the page is shown again and every minute,
-//   and stops for good once it is.
-// - When that routine removes this person's work, from whichever of the phone's entry points, the
-//   gate stops and the shell is told ('removed').
+// - The server letting the person in lifts their lock, however old (decision 010). A phone that
+//   cannot save the lifting keeps the lock shown, the network off, and asks again.
+// - Work locked past the limit is hidden, and the gate keeps asking whenever there is signal: the
+//   server refusing the person then removes it (only a refusal the server gave, never the gate's
+//   own "no sign-in to ask with"), and the server letting them in shows it again.
+// - When that routine removes this person's work, the gate stops and the shell is told ('removed').
 // The gate starts paused when the page is hidden by the time the client has started; showing the
 // page resumes it (field-store.tsx).
 // The gate judges the person's ds-me row (read again before each check) against the role's session
@@ -43,11 +43,13 @@ export function runFieldSync(
   const { person } = client;
   let row = saved;
   const tell = (event: RetentionEvent) => evaluate(now(), event).state;
-  const refuse = (reason: Extract<RetentionEvent, { kind: 'refused' }>['reason']) => tell({ kind: 'refused', person, reason });
+  const refuse = (reason: Extract<RetentionEvent, { kind: 'refused' }>['reason'], fromServer = false) =>
+    tell({ kind: 'refused', person, reason, fromServer });
+  // The answers GET /api/me gave; not the one ask() makes up when there is no sign-in to ask with.
+  const fromServer = new WeakSet<MeAnswer>();
   // The saved sign-in is judged first: one that counts again lifts a lock only its age had made.
   tell({ kind: 'entry', person, saved });
-  // A refusal this page holds and could not save locks as a saved one does.
-  const lock = savedReason(person.tenantId, person.uid) ?? pendingReason(person.tenantId, person.uid);
+  const lock = savedReason(person.tenantId, person.uid);
   // A sign-in past its limit shows as "sign in again".
   const initial = lock === null ? undefined : ({ kind: 'locked', reason: lock === 'sign-in-expired' ? 'sign-in-again' : lock } as const);
   const stopWatching = onWorkRemoved((removed) => {
@@ -64,7 +66,9 @@ export function runFieldSync(
       }
       const user = fieldUser(person);
       if (!user) return { status: 401, body: { error: 'missing_token' } };
-      return callApi(user, '/api/me');
+      const answer = await callApi(user, '/api/me');
+      fromServer.add(answer);
+      return answer;
     },
     enableNetwork: () => enableNetwork(client.db),
     disableNetwork: () => disableNetwork(client.db),
@@ -73,14 +77,16 @@ export function runFieldSync(
     initial,
     session: () => fieldUser(person),
     sessionValid: (at) => sessionValid(row, at),
-    onRefused: (reason) => refuse(reason) !== 'unsaved',
+    onRefused: (reason, answer) => refuse(reason, fromServer.has(answer)) !== 'unsaved',
     onExpired: () => refuse('sign-in-expired') !== 'unsaved',
     // Asked after every answer, a missing one included, so a refusal the phone could not save is
     // tried again then too.
     mayOpen: (opening) => {
-      if (!opening) return tell({ kind: 'entry', person, saved: row }) !== 'expired';
-      const state = tell({ kind: 'let-in', person });
-      if (state !== 'unsaved') return state !== 'expired';
+      if (!opening) {
+        tell({ kind: 'entry', person, saved: row });
+        return true;
+      }
+      if (tell({ kind: 'let-in', person }) !== 'unsaved') return true;
       return { kind: 'locked', reason: savedLock(person.tenantId, person.uid) ?? 'sign-in-again' };
     },
     onStopped: stopWatching,
@@ -117,14 +123,15 @@ export function runFieldSync(
       ...(Number.isFinite(authTime) ? { authTime } : {}),
     };
     if (await updateMe(next)) {
-      row = (await readMe(person.tenantId, person.uid)) ?? row;
+      row = (await readMe(person.tenantId, person.uid)) || row;
       onEvent({ me: row });
     }
   }
 
-  // A lock saved by an earlier refusal goes through the same handling as a new one. Work already
-  // past the limit is not asked about: the routine removes it.
+  // A lock saved by an earlier refusal goes through the same handling as a new one; then the server
+  // is asked, which alone may remove work past the limit or show it again.
   if (initial) apply(initial);
-  if ((lock ? refuse(lock) : tell({ kind: 'entry', person })) !== 'expired') gate.start();
+  if (lock) refuse(lock);
+  gate.start();
   return gate;
 }

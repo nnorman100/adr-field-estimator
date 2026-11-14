@@ -7,13 +7,13 @@ import type { DsMe } from '@/lib/field/ds-me';
 import type { LockReason, SavedReason } from '@/lib/field/unsent';
 
 // S6-3b: the phone's one retention routine, evaluate(now, event) in src/lib/field/retention.ts.
-// The examples are the paths three reviews found uncovered; the properties run random sequences of
-// refusals, sign-outs, sign-ins, days passing, the phone opening, storage that refuses and another
-// window holding the work, and check the two things the owner asked for after every step:
-//   - unsent work of someone locked out for more than 30 days does not survive the next entry
-//     point (while the phone's storage refuses the removal it stays locked and is never sent, and
-//     it goes at the next entry point where storage answers);
-//   - nobody's work is removed while they are not locked out for more than 30 days.
+// The examples are the paths the reviews found; the property runs random sequences of refusals,
+// sign-outs, sign-ins, days passing, the phone opening in two tabs, storage that refuses and another
+// window holding the work, and checks the owner's two rules (decision 010) after every step:
+//   - work of someone locked out for more than 30 days is hidden (never shown or opened offline)
+//     at every entry point, read from the lock and the clock alone;
+//   - work is removed only when the server refuses the person at that moment, never on what the
+//     phone alone holds.
 //
 // The phone here is real localStorage-shaped storage with the app's own marks in it, a list of
 // saved sign-ins standing in for ds-me, and a set of people whose field database holds work.
@@ -100,15 +100,15 @@ vi.mock('@/lib/field-db', async () => {
   };
 });
 
-const { cleanupKey, evaluate, forgetPending, onWorkRemoved, takeRemoved, watchRetention, WATCH_EVERY_MS } = await import('@/lib/field/retention');
+const { cleanupKey, evaluate, onWorkRemoved, takeRemoved, watchRetention, WATCH_EVERY_MS } = await import('@/lib/field/retention');
 const { signOutKeeping, signOutOnRefusal, WorkNotSecuredError } = await import('@/lib/field/sign-out');
-// A second tab: its own copy of the routine's memory, over the same storage and saved sign-ins.
+// A second tab: its own copy of the routine's module, over the same storage and saved sign-ins.
 vi.resetModules();
 const secondTab = { ...(await import('@/lib/field/retention')), ...(await import('@/lib/field/sign-out')) };
-const firstTab = { evaluate, forgetPending, onWorkRemoved, signOutKeeping, signOutOnRefusal, WorkNotSecuredError };
+const firstTab = { evaluate, onWorkRemoved, signOutKeeping, signOutOnRefusal, WorkNotSecuredError };
 const TABS = [firstTab, secondTab];
 const { sessionValid } = await import('@/lib/field/sync-gate');
-const { RETAINED_REASONS, noteWrite, readUnsent, unsentKey } = await import('@/lib/field/unsent');
+const { RETAINED_REASONS, lockOutlived, noteWrite, readUnsent, unsentKey } = await import('@/lib/field/unsent');
 // O5: 30 days, said here and not read from the code under test.
 const LOCKED_LIMIT_MS = 30 * DAY;
 
@@ -139,7 +139,6 @@ const setClock = (now: number) => {
 
 beforeEach(() => {
   phone.reset();
-  for (const tab of TABS) tab.forgetPending();
   vi.useFakeTimers({ toFake: ['Date'] });
   setClock(START);
   vi.stubGlobal('window', { localStorage: storage });
@@ -169,35 +168,58 @@ describe('the states of one person', () => {
     expect(phone.work.has(keyOf(ana))).toBe(true);
   });
 
-  it('locked for more than 30 days is expired: no later refusal and no let-in makes the work sendable, and the next evaluate removes it', async () => {
+  it('locked for more than 30 days is hidden: only a refusal the server gives just now removes the work', async () => {
     giveWork(ana, START);
     evaluate(START, { kind: 'refused', person: ana, reason: 'session-revoked' });
     const later = START + LOCKED_LIMIT_MS + 1;
-    phone.otherWindow = true;
 
-    // Another window holds the work, so it cannot go yet. It stays expired through a refusal of a
-    // kind that is not removed after 30 days, and through the server letting the person in.
-    const refusedAgain = evaluate(later, { kind: 'refused', person: ana, reason: 'account-disabled' });
-    expect(refusedAgain.state).toBe('expired');
-    expect(await refusedAgain.done).toEqual([]);
-    const letIn = evaluate(later, { kind: 'let-in', person: ana });
-    expect(letIn.state).toBe('expired');
-    expect(await letIn.done).toEqual([]);
+    // Opening, a refusal the phone makes itself, any number of times, in either tab: hidden, kept.
+    for (const tab of TABS) {
+      const opened = tab.evaluate(later, { kind: 'entry', person: ana });
+      expect(opened.state).toBe('hidden');
+      expect(await opened.done).toEqual([]);
+      const madeUp = tab.evaluate(later, { kind: 'refused', person: ana, reason: 'account-disabled' });
+      expect(madeUp.state).toBe('hidden');
+      expect(await madeUp.done).toEqual([]);
+    }
     expect(lockOf(ana)).toEqual({ since: START, reason: 'session-revoked' });
     expect(phone.work.has(keyOf(ana))).toBe(true);
 
+    // The server refuses her while another window holds the work: it cannot go yet.
+    phone.otherWindow = true;
+    expect(await evaluate(later, { kind: 'refused', person: ana, reason: 'session-revoked', fromServer: true }).done).toEqual([]);
+    expect(phone.work.has(keyOf(ana))).toBe(true);
     phone.otherWindow = false;
-    expect(await evaluate(later, { kind: 'entry' }).done).toEqual(['t-a/ana']);
+    expect(await evaluate(later, { kind: 'refused', person: ana, reason: 'session-revoked', fromServer: true }).done).toEqual(['t-a/ana']);
     expect(phone.work.has(keyOf(ana))).toBe(false);
     expect(evaluate(later, { kind: 'entry', person: ana }).state).toBe('none');
+    // Her shell, started after it went, is still told, once.
+    expect(takeRemoved('t-a/ana')).toBe(true);
+    expect(takeRemoved('t-a/ana')).toBe(false);
   });
 
-  it('a refusal that is not removed after 30 days never expires', async () => {
+  it('a let-in shows hidden work again: the person\'s own lock goes, however old, and nothing is removed', async () => {
+    giveWork(ana, START);
+    giveWork(ben, START);
+    for (const who of [ana, ben]) evaluate(START, { kind: 'refused', person: who, reason: 'sign-in-again' });
+    const later = START + 40 * DAY;
+    const back = secondTab.evaluate(later, { kind: 'let-in', person: ana });
+    expect(back.state).toBe('none');
+    expect(await back.done).toEqual([]);
+    expect(lockOf(ana)).toBeNull();
+    expect(phone.work.has(keyOf(ana))).toBe(true);
+    // Anyone else's stays as it was.
+    expect(evaluate(later, { kind: 'entry', person: ben }).state).toBe('hidden');
+    expect(phone.work.has(keyOf(ben))).toBe(true);
+  });
+
+  it('a refusal that is not removed after 30 days never hides the work', async () => {
     giveWork(ana, START);
     evaluate(START, { kind: 'refused', person: ana, reason: 'second-step' });
     const much = evaluate(START + 400 * DAY, { kind: 'entry', person: ana });
     expect(much.state).toBe('locked');
     expect(await much.done).toEqual([]);
+    expect(await evaluate(START + 400 * DAY, { kind: 'refused', person: ana, reason: 'second-step', fromServer: true }).done).toEqual([]);
     expect(phone.work.has(keyOf(ana))).toBe(true);
   });
 
@@ -211,7 +233,7 @@ describe('the states of one person', () => {
     // A lock saved earlier still stands on a phone that is full now, but this refusal is not
     // saved: it is never reported as if it were.
     phone.quota = false;
-    await evaluate(START, { kind: 'refused', person: ana, reason: 'sign-in-again' }).done;
+    evaluate(START, { kind: 'refused', person: ana, reason: 'sign-in-again' });
     phone.quota = true;
     expect(evaluate(START + DAY, { kind: 'refused', person: ana, reason: 'sign-in-again' }).state).toBe('unsaved');
     expect(lockOf(ana)).toEqual({ since: START, reason: 'sign-in-again' });
@@ -222,42 +244,37 @@ describe('the states of one person', () => {
     giveWork(ana, START);
     evaluate(START, { kind: 'refused', person: ana, reason: 'second-step' });
     phone.quota = true;
-    await expect(signOutOnRefusal(authFor(ana), 't-a', config, 'sign-in-again')).rejects.toBeInstanceOf(WorkNotSecuredError);
+    await expect(signOutOnRefusal(authFor(ana), 't-a', config, 'sign-in-again', true)).rejects.toBeInstanceOf(WorkNotSecuredError);
     expect(phone.rows.has(keyOf(ana))).toBe(true);
     expect(lockOf(ana)).toEqual({ since: START, reason: 'second-step' });
 
     // Room again: the refusal is saved and the 30 days run.
     phone.quota = false;
-    await signOutOnRefusal(authFor(ana), 't-a', config, 'sign-in-again');
+    await signOutOnRefusal(authFor(ana), 't-a', config, 'sign-in-again', true);
     expect(lockOf(ana)).toEqual({ since: START, reason: 'sign-in-again' });
     expect(phone.rows.has(keyOf(ana))).toBe(false);
-    expect(await evaluate(START + LOCKED_LIMIT_MS + 1, { kind: 'entry' }).done).toEqual(['t-a/ana']);
+    const later = START + LOCKED_LIMIT_MS + 1;
+    expect(await evaluate(later, { kind: 'entry' }).done).toEqual([]);
+    expect(evaluate(later, { kind: 'entry', person: ana }).state).toBe('hidden');
+    expect(await evaluate(later, { kind: 'refused', person: ana, reason: 'sign-in-again', fromServer: true }).done).toEqual(['t-a/ana']);
   });
 
-  it('holds a refusal it could not save, keeps the work closed, and saves it, from its first time, at the next evaluate', async () => {
+  it('a refusal it could not save leaves the work as it was: not locked, so neither hidden nor removed later', async () => {
     giveWork(ana, START);
     phone.quota = true;
-    expect(evaluate(START, { kind: 'refused', person: ana, reason: 'company-inactive' }).state).toBe('unsaved');
-    expect(evaluate(START + DAY, { kind: 'entry', person: ana }).state).toBe('locked');
-    expect(lockOf(ana)).toBeNull();
-
+    expect(evaluate(START, { kind: 'refused', person: ana, reason: 'company-inactive', fromServer: true }).state).toBe('unsaved');
     phone.quota = false;
-    await evaluate(START + 2 * DAY, { kind: 'entry' }).done;
-    expect(lockOf(ana)).toEqual({ since: START, reason: 'company-inactive' });
-    expect(await evaluate(START + LOCKED_LIMIT_MS + 1, { kind: 'entry' }).done).toEqual(['t-a/ana']);
+    expect(await evaluate(START + 31 * DAY, { kind: 'entry' }).done).toEqual([]);
+    expect(evaluate(START + 31 * DAY, { kind: 'entry', person: ana }).state).toBe('none');
+    // The server's next refusal is saved from then, and removes nothing yet.
+    const again = evaluate(START + 31 * DAY, { kind: 'refused', person: ana, reason: 'company-inactive', fromServer: true });
+    expect(again.state).toBe('locked');
+    expect(await again.done).toEqual([]);
+    expect(lockOf(ana)).toEqual({ since: START + 31 * DAY, reason: 'company-inactive' });
+    expect(phone.work.has(keyOf(ana))).toBe(true);
   });
 
-  it('removes work refused on day 0 that could not be saved, when the page comes back on day 31 with room', async () => {
-    giveWork(ana, START);
-    phone.quota = true;
-    evaluate(START, { kind: 'refused', person: ana, reason: 'company-inactive' });
-    evaluate(START + DAY, { kind: 'refused', person: ana, reason: 'company-inactive' });
-    phone.quota = false;
-    expect(await evaluate(START + 31 * DAY, { kind: 'entry' }).done).toEqual(['t-a/ana']);
-    expect(phone.work.has(keyOf(ana))).toBe(false);
-  });
-
-  it('drops a refusal it holds from before a sign-in that counts now, made in another tab, and never saves it', async () => {
+  it('a Keep that could not lock an expired sign-in leaves nothing another tab could act on later', async () => {
     // An owner's sign-in counts for 14 days.
     saveRow(ana, 'owner', START - 15 * DAY);
     giveWork(ana, START - 20 * DAY);
@@ -283,7 +300,7 @@ describe('the states of one person', () => {
     expect(evaluate(START + 31 * DAY, { kind: 'entry', person: ana }).state).toBe('none');
   });
 
-  it('dates an expired sign-in it could not lock from when it was first found so, through a later "Try again"', async () => {
+  it('a Keep that could not lock an expired sign-in locks it when "Try again" succeeds', async () => {
     saveRow(ana, 'estimator', START - 31 * DAY);
     giveWork(ana, START - 2 * DAY);
     phone.quota = true;
@@ -295,18 +312,18 @@ describe('the states of one person', () => {
     phone.quota = false;
     setClock(START + DAY);
     await (failure as InstanceType<typeof WorkNotSecuredError>).retry();
-    expect(lockOf(ana)).toEqual({ since: START, reason: 'sign-in-expired' });
+    expect(lockOf(ana)).toEqual({ since: START + DAY, reason: 'sign-in-expired' });
     expect(phone.rows.has(keyOf(ana))).toBe(false);
   });
 
-  it('drops a held refusal from before the server let the person in, in this tab or another, and saves the rest', async () => {
+  it('a let-in lifts only the person\'s own lock, in either tab, and one the phone cannot save lets nothing open', async () => {
     giveWork(ana, START);
     giveWork(ben, START);
-    phone.quota = true;
     evaluate(START, { kind: 'refused', person: ana, reason: 'sign-in-again' });
     evaluate(START, { kind: 'refused', person: ben, reason: 'sign-in-again' });
-    // A let-in the phone cannot save lets nothing open.
+    phone.quota = true;
     expect(evaluate(START, { kind: 'let-in', person: ana }).state).toBe('unsaved');
+    expect(lockOf(ana)).toEqual({ since: START, reason: 'sign-in-again' });
     phone.quota = false;
     expect(secondTab.evaluate(START + 60_000, { kind: 'let-in', person: ana }).state).toBe('none');
     await evaluate(START + 120_000, { kind: 'entry' }).done;
@@ -315,12 +332,12 @@ describe('the states of one person', () => {
     expect(evaluate(START + 120_000, { kind: 'entry', person: ana }).state).toBe('none');
   });
 
-  it('counts the 30 days from the later of the first refusal and the last let-in', async () => {
+  it('counts the 30 days from the first refusal, kept through later ones', async () => {
     giveWork(ana, START);
     evaluate(START, { kind: 'refused', person: ana, reason: 'session-revoked' });
-    phone.items.set(unsentKey('t-a', 'ana'), JSON.stringify({ ...JSON.parse(phone.items.get(unsentKey('t-a', 'ana'))!), lastValidAt: START + 10 * DAY }));
-    expect(await evaluate(START + 31 * DAY, { kind: 'entry' }).done).toEqual([]);
-    expect(await evaluate(START + 40 * DAY + 1, { kind: 'entry' }).done).toEqual(['t-a/ana']);
+    evaluate(START + 10 * DAY, { kind: 'refused', person: ana, reason: 'session-revoked', fromServer: true });
+    expect(evaluate(START + 30 * DAY, { kind: 'entry', person: ana }).state).toBe('locked');
+    expect(evaluate(START + 30 * DAY + 1, { kind: 'entry', person: ana }).state).toBe('hidden');
   });
 
   it('says "unsaved" for a let-in it cannot save, and never removes the work of someone the server let in', async () => {
@@ -336,6 +353,7 @@ describe('the states of one person', () => {
     expect(evaluate(day29, { kind: 'let-in', person: ana }).state).toBe('none');
     expect(lockOf(ana)).toBeNull();
     expect(await evaluate(START + 31 * DAY, { kind: 'entry' }).done).toEqual([]);
+    expect(await evaluate(START + 31 * DAY, { kind: 'refused', person: ana, reason: 'sign-in-again', fromServer: true }).done).toEqual([]);
     expect(phone.work.has(keyOf(ana))).toBe(true);
   });
 });
@@ -354,11 +372,15 @@ describe('the sweep after every event', () => {
     expect(lockOf(otherAna)).toBeNull();
     expect(phone.work.size).toBe(3);
 
-    // Reopened again and again with no signal, the first time stays; 30 days on, the work goes.
+    // Reopened again and again with no signal, the first time stays; 30 days on, the work is
+    // hidden, and nothing is removed.
     await evaluate(START + 10 * DAY, { kind: 'entry' }).done;
     expect(lockOf(ana)).toEqual({ since: START, reason: 'sign-in-expired' });
-    expect(await evaluate(START + LOCKED_LIMIT_MS + 1, { kind: 'entry' }).done).toEqual(['t-a/ana', 't-a/ben']);
-    expect(phone.work.has(keyOf(otherAna))).toBe(true);
+    const later = START + LOCKED_LIMIT_MS + 1;
+    expect(await evaluate(later, { kind: 'entry' }).done).toEqual([]);
+    // The other Ana's sign-in has passed its own limit meanwhile: locked from now.
+    expect([ana, ben, otherAna].map((who) => evaluate(later, { kind: 'entry', person: who }).state)).toEqual(['hidden', 'hidden', 'locked']);
+    expect(phone.work.size).toBe(3);
   });
 
   it('lifts a lock that only the sign-in\'s age made once a newer saved sign-in counts, and no other lock', async () => {
@@ -377,7 +399,7 @@ describe('the sweep after every event', () => {
     phone.items.set(unsentKey('t-b', 'ana'), JSON.stringify({ writes: 1, unsentSince: START, lockedSince: START - 20 * DAY, lockedReason: 'sign-in-expired' }));
 
     // Each signs in again 20 days on; only the saved row says so (the page closed before the lock
-    // was lifted). By then the other Ana has been locked out for 40 days.
+    // was lifted). By then the other Ana has been locked out for 40 days: hidden, and kept.
     const later = START + 20 * DAY;
     for (const who of [ana, ben, otherAna]) saveRow(who, 'estimator', later - DAY);
     phone.otherWindow = true;
@@ -386,6 +408,7 @@ describe('the sweep after every event', () => {
     expect(lockOf(ben)).toEqual({ since: START, reason: 'sign-in-again' });
     expect(lockOf(otherAna)).toEqual({ since: START - 20 * DAY, reason: 'sign-in-expired' });
     expect(phone.work.has(keyOf(ana))).toBe(true);
+    expect(phone.work.has(keyOf(otherAna))).toBe(true);
 
     // The caller's own saved sign-in is judged at once, before the sweep.
     saveRow(ana, 'estimator', later - 31 * DAY);
@@ -400,7 +423,7 @@ describe('the sweep after every event', () => {
     expect(lockOf(ana)).toBeNull();
   });
 
-  it('removes everyone\'s outlived work, in every company, whoever the event was about, with no saved sign-in', async () => {
+  it('removes only the work of the person the server refused, never anyone else\'s, whoever else is hidden', async () => {
     for (const who of [ana, ben, otherAna]) {
       giveWork(who, START);
       evaluate(START, { kind: 'refused', person: who, reason: 'sign-in-again' });
@@ -410,10 +433,12 @@ describe('the sweep after every event', () => {
     const stop = onWorkRemoved((who) => removed.push(who));
 
     const later = START + LOCKED_LIMIT_MS + 1;
-    expect(await evaluate(later, { kind: 'refused', person: ben, reason: 'member-disabled' }).done).toEqual(['t-a/ana', 't-b/ana']);
-    expect(removed).toEqual(['t-a/ana', 't-b/ana']);
-    expect([...phone.work]).toEqual(['t-a/ben']);
+    expect(await evaluate(later, { kind: 'refused', person: ben, reason: 'member-disabled', fromServer: true }).done).toEqual([]);
     expect(lockOf(ben)).toEqual({ since: later, reason: 'member-disabled' });
+    expect(phone.work.size).toBe(3);
+    expect(await evaluate(later, { kind: 'refused', person: ana, reason: 'sign-in-again', fromServer: true }).done).toEqual(['t-a/ana']);
+    expect(removed).toEqual(['t-a/ana']);
+    expect([...phone.work].sort()).toEqual(['t-a/ben', 't-b/ana']);
     stop();
   });
 
@@ -421,76 +446,92 @@ describe('the sweep after every event', () => {
     giveWork(ana, START);
     evaluate(START, { kind: 'refused', person: ana, reason: 'company-inactive' });
     const later = START + LOCKED_LIMIT_MS + 1;
+    const refused = () => evaluate(later, { kind: 'refused', person: ana, reason: 'company-inactive', fromServer: true }).done;
 
     phone.otherWindow = true;
-    expect(await evaluate(later, { kind: 'entry' }).done).toEqual([]);
+    expect(await refused()).toEqual([]);
     expect(phone.discards.at(-1)).toEqual({ person: 't-a/ana', lockHeld: false });
     phone.otherWindow = false;
     phone.ownsWindow = true;
-    expect(await evaluate(later, { kind: 'entry' }).done).toEqual(['t-a/ana']);
+    expect(await refused()).toEqual(['t-a/ana']);
     expect(phone.discards.at(-1)).toEqual({ person: 't-a/ana', lockHeld: true });
   });
 
-  it('tries a removal the phone\'s storage refused again at the next evaluate', async () => {
+  it('a removal the phone\'s storage refused waits for the next refusal from the server, not for an entry point', async () => {
     giveWork(ana, START);
     evaluate(START, { kind: 'refused', person: ana, reason: 'sign-in-again' });
     const later = START + LOCKED_LIMIT_MS + 1;
     phone.discardFails = true;
-    expect(await evaluate(later, { kind: 'entry' }).done).toEqual([]);
+    expect(await evaluate(later, { kind: 'refused', person: ana, reason: 'sign-in-again', fromServer: true }).done).toEqual([]);
     const still = evaluate(later, { kind: 'entry', person: ana });
-    expect(still.state).toBe('expired');
+    expect(still.state).toBe('hidden');
     expect(await still.done).toEqual([]);
     phone.discardFails = false;
-    expect(await evaluate(later + 1, { kind: 'entry' }).done).toEqual(['t-a/ana']);
+    expect(await evaluate(later + 1, { kind: 'entry' }).done).toEqual([]);
+    expect(await evaluate(later + 1, { kind: 'refused', person: ana, reason: 'sign-in-again', fromServer: true }).done).toEqual(['t-a/ana']);
   });
 
-  it('runs one removal at a time: two evaluates at once remove a person once', async () => {
+  it('runs one removal at a time: two refusals at once remove a person once', async () => {
     giveWork(ana, START);
     evaluate(START, { kind: 'refused', person: ana, reason: 'sign-in-again' });
     const later = START + LOCKED_LIMIT_MS + 1;
-    const [first, second] = await Promise.all([evaluate(later, { kind: 'entry' }).done, evaluate(later, { kind: 'entry' }).done]);
+    const refused = () => evaluate(later, { kind: 'refused', person: ana, reason: 'sign-in-again', fromServer: true }).done;
+    const [first, second] = await Promise.all([refused(), refused()]);
     expect([first, second]).toEqual([['t-a/ana'], []]);
     expect(phone.discards).toHaveLength(1);
   });
 
-  it('removes nothing on a guess: not for a mark it cannot read, nor without the settings that name the database', async () => {
+  it('removes nothing on a guess: not on opening, and not for a mark it cannot read', async () => {
     const later = START + LOCKED_LIMIT_MS + 1;
     phone.items.set(unsentKey('t-a', 'ana'), '{not json');
     // A lock an earlier version saved without the company's settings, and no saved sign-in.
     phone.items.set(unsentKey('t-a', 'ben'), JSON.stringify({ writes: 1, unsentSince: START, lockedSince: START, lockedReason: 'sign-in-again' }));
     phone.work.add(keyOf(ben));
     expect(await evaluate(later, { kind: 'entry' }).done).toEqual([]);
-    expect(phone.discards).toEqual([]);
-
-    // Anyone of the company (here the sign-in page, or a person's own event) brings the settings;
-    // then the work with a readable lock can go. The mark that cannot be read stays, locked.
+    expect(await evaluate(later, { kind: 'entry', company: { tenantId: 't-a', config } }).done).toEqual([]);
     const unread = evaluate(later, { kind: 'entry', person: ana });
     expect(unread.state).toBe('locked');
-    expect(await unread.done).toEqual(['t-a/ben']);
-    expect(await evaluate(later, { kind: 'entry', company: { tenantId: 't-a', config } }).done).toEqual([]);
-    expect(phone.discards).toEqual([{ person: 't-a/ben', lockHeld: false }]);
+    expect(await unread.done).toEqual([]);
+    expect(phone.discards).toEqual([]);
     expect(phone.items.get(unsentKey('t-a', 'ana'))).toBe('{not json');
+
+    // The server's refusal brings the person's own settings, which name the database.
+    expect(await evaluate(later, { kind: 'refused', person: ben, reason: 'sign-in-again', fromServer: true }).done).toEqual(['t-a/ben']);
+    expect(phone.discards).toEqual([{ person: 't-a/ben', lockHeld: false }]);
   });
 
-  it('keeps the settings a company\'s own page brings, for a lock saved without them', async () => {
+  it('keeps the settings a company\'s own page brings, and removes nothing for it', async () => {
     const later = START + LOCKED_LIMIT_MS + 1;
     phone.items.set(unsentKey('t-a', 'ben'), JSON.stringify({ writes: 1, unsentSince: START, lockedSince: START, lockedReason: 'sign-in-again' }));
     phone.work.add(keyOf(ben));
     expect(await evaluate(later, { kind: 'entry', company: { tenantId: 't-b', config } }).done).toEqual([]);
-    expect(await evaluate(later, { kind: 'entry', company: { tenantId: 't-a', config } }).done).toEqual(['t-a/ben']);
+    expect(phone.items.has(cleanupKey('t-b'))).toBe(true);
+    expect(await evaluate(later, { kind: 'entry', company: { tenantId: 't-a', config } }).done).toEqual([]);
+    expect(phone.work.has(keyOf(ben))).toBe(true);
   });
 });
 
 describe('a sign-out the app makes on a refusal', () => {
-  it('removes work already past the limit before the saved sign-in goes', async () => {
+  it('removes work already past the limit before the saved sign-in goes, when the server refused', async () => {
     saveRow(ana, 'estimator', START);
     giveWork(ana, START);
     evaluate(START, { kind: 'refused', person: ana, reason: 'sign-in-again' });
     setClock(START + LOCKED_LIMIT_MS + 1);
-    await signOutOnRefusal(authFor(ana), 't-a', config, 'sign-in-again');
+    await signOutOnRefusal(authFor(ana), 't-a', config, 'sign-in-again', true);
     expect(phone.log).toEqual(['removed t-a/ana', 'forgot t-a/ana']);
     expect(phone.work.has(keyOf(ana))).toBe(false);
     expect(phone.rows.has(keyOf(ana))).toBe(false);
+  });
+
+  it('removes nothing on a refusal the phone made itself, and the sign-in still goes', async () => {
+    saveRow(ana, 'estimator', START);
+    giveWork(ana, START);
+    evaluate(START, { kind: 'refused', person: ana, reason: 'sign-in-again' });
+    setClock(START + LOCKED_LIMIT_MS + 1);
+    await signOutOnRefusal(authFor(ana), 't-a', config, 'not-this-company');
+    expect(phone.log).toEqual(['forgot t-a/ana']);
+    expect(phone.work.has(keyOf(ana))).toBe(true);
+    expect(evaluate(Date.now(), { kind: 'entry', person: ana }).state).toBe('hidden');
   });
 });
 
@@ -506,8 +547,10 @@ describe('the person\'s own sign-out', () => {
     await signOutKeeping(authFor(ana), 't-a');
     expect(phone.rows.has(keyOf(ana))).toBe(false);
     expect(lockOf(ana)).toEqual({ since: keep, reason: 'sign-in-expired' });
-    expect(await evaluate(keep + LOCKED_LIMIT_MS, { kind: 'entry' }).done).toEqual([]);
-    expect(await evaluate(keep + LOCKED_LIMIT_MS + 1, { kind: 'entry' }).done).toEqual(['t-a/ana']);
+    expect(evaluate(keep + LOCKED_LIMIT_MS, { kind: 'entry', person: ana }).state).toBe('locked');
+    expect(await evaluate(keep + LOCKED_LIMIT_MS + 1, { kind: 'entry' }).done).toEqual([]);
+    expect(evaluate(keep + LOCKED_LIMIT_MS + 1, { kind: 'entry', person: ana }).state).toBe('hidden');
+    expect(phone.work.has(keyOf(ana))).toBe(true);
   });
 
   it('keeps the saved sign-in when that lock cannot be saved, and "Try again" finishes the sign-out', async () => {
@@ -554,84 +597,80 @@ describe('the entry points every page shares', () => {
   const settle = async () => {
     for (let turn = 0; turn < 50; turn += 1) await Promise.resolve();
   };
-  // Ana's work, locked on day 0; the page opens on day 29.
-  function lockedOnDay29() {
-    giveWork(ana, START);
-    evaluate(START, { kind: 'refused', person: ana, reason: 'sign-in-again' });
-    setClock(START + 29 * DAY);
+  // Ana's estimator sign-in is 29 days old as the page opens, and Ben's work was locked on day 0.
+  function day29() {
+    saveRow(ana, 'estimator', START - 29 * DAY);
+    giveWork(ana, START - 29 * DAY);
+    giveWork(ben, START - 29 * DAY);
+    evaluate(START - 29 * DAY, { kind: 'refused', person: ben, reason: 'sign-in-again' });
   }
 
   it.each([
     ['made visible again', (shown: ReturnType<typeof page>) => shown.fire('visibilitychange')],
     ['brought back from the back-forward cache', (shown: ReturnType<typeof page>) => shown.fire('pageshow')],
     ['left open and shown, at the next minute', () => vi.advanceTimersByTime(WATCH_EVERY_MS)],
-  ])('run the routine as the page opens and when it is %s', async (_name, again) => {
+  ])('run the routine as the page opens and when it is %s, removing nothing', async (_name, again) => {
     vi.useFakeTimers();
+    setClock(START);
     const shown = page();
-    lockedOnDay29();
+    day29();
     const stop = watchRetention();
     await settle();
-    expect(phone.work.has(keyOf(ana))).toBe(true);
+    expect(lockOf(ana)).toBeNull();
 
     // Two days pass with the page hidden: nothing runs while it is.
-    setClock(START + 31 * DAY);
+    setClock(START + 2 * DAY);
     shown.document.visibilityState = 'hidden';
     again(shown);
     await settle();
-    expect(phone.work.has(keyOf(ana))).toBe(true);
+    expect(lockOf(ana)).toBeNull();
 
+    // Shown again: Ana's sign-in is past its 30 days, so her clock starts; Ben's work is hidden.
     shown.document.visibilityState = 'visible';
     again(shown);
     await settle();
-    expect(phone.work.has(keyOf(ana))).toBe(false);
+    expect(lockOf(ana)).toMatchObject({ reason: 'sign-in-expired' });
+    expect(lockOf(ana)!.since).toBeGreaterThanOrEqual(START + 2 * DAY);
+    expect(lockOutlived('t-a', 'ben', Date.now())).toBe(true);
+    expect([...phone.work].sort()).toEqual(['t-a/ana', 't-a/ben']);
     stop();
   });
 
-  it('remove work that outlived the limit while the page was closed, as it opens', async () => {
+  it('hide, and remove nothing of, work that outlived the limit while the page was closed, as it opens', async () => {
     page();
-    lockedOnDay29();
-    setClock(START + 31 * DAY);
+    day29();
+    setClock(START + 2 * DAY);
     const stop = watchRetention();
     await settle();
-    expect(phone.work.has(keyOf(ana))).toBe(false);
-    // The person's shell, started after it went, is still told, once.
-    expect(takeRemoved('t-a/ana')).toBe(true);
-    expect(takeRemoved('t-a/ana')).toBe(false);
+    expect(phone.work.has(keyOf(ben))).toBe(true);
+    expect(evaluate(Date.now(), { kind: 'entry', person: ben }).state).toBe('hidden');
+    expect(phone.discards).toEqual([]);
     stop();
   });
 
   it('keep the settings of the company whose page it is, and stop when told to', async () => {
     vi.useFakeTimers();
+    setClock(START);
     const shown = page();
-    lockedOnDay29();
+    day29();
     const stop = watchRetention({ tenantId: 't-b', config });
     await settle();
     expect(phone.items.has(cleanupKey('t-b'))).toBe(true);
     stop();
-    setClock(START + 31 * DAY);
+    setClock(START + 2 * DAY);
     shown.fire('visibilitychange');
     shown.fire('pageshow');
     vi.advanceTimersByTime(10 * WATCH_EVERY_MS);
     await settle();
-    expect(phone.work.has(keyOf(ana))).toBe(true);
+    expect(lockOf(ana)).toBeNull();
   });
 });
 
 // The model: what the owner's rules say each person's lock, saved sign-in and work must be, written
-// from the rules (docs/plans/S6.md, O5) and not from the code under test. Two tabs share the
-// phone's storage and saved sign-ins; each holds, in its own memory, the refusals it could not save.
+// from the rules (docs/plans/S6.md, O5 and decision 010) and not from the code under test. Two tabs
+// share the phone's storage and saved sign-ins.
 // `admitted`: the server let them in, and the lock was lifted, since they were last locked out.
-// `validAt`: when the server last let them in, as the phone saved it.
-// `pending[tab]`: the refusals that tab could not save, each with when it was given.
-type Held = { reason: SavedReason; at: number };
-type Model = {
-  lock: { since: number; reason: SavedReason } | null;
-  validAt: number | null;
-  row: { role: string; authTime: number } | null;
-  work: boolean;
-  admitted: boolean;
-  pending: [Held[], Held[]];
-};
+type Model = { lock: { since: number; reason: SavedReason } | null; row: { role: string; authTime: number } | null; work: boolean; admitted: boolean };
 const PEOPLE = [ana, ben, otherAna];
 const REASONS: LockReason[] = [
   'verify-email',
@@ -651,12 +690,16 @@ type Command =
   | { kind: 'entry'; tab: Tab }
   // A suspended tab shown again (visibilitychange, pageshow): the routine runs for the page's company.
   | { kind: 'resume'; tab: Tab }
-  | { kind: 'write'; who: number; tab: Tab }
+  | { kind: 'write'; who: number }
+  // The sync gate: the server's refusal (GET /api/me), the gate's own "no sign-in to ask with", a
+  // saved sign-in found past its role's limit, any other check, and the server letting them in.
   | { kind: 'gate-refused'; who: number; tab: Tab; reason: LockReason }
+  | { kind: 'gate-signed-out'; who: number; tab: Tab }
   | { kind: 'gate-expired'; who: number; tab: Tab }
   | { kind: 'gate-check'; who: number; tab: Tab }
   | { kind: 'gate-open'; who: number; tab: Tab }
-  | { kind: 'forced-sign-out'; who: number; tab: Tab; reason: LockReason }
+  // A screen ends the sign-in: on the server's refusal, or on one the phone made itself.
+  | { kind: 'forced-sign-out'; who: number; tab: Tab; reason: LockReason; fromServer: boolean }
   | { kind: 'own-sign-out'; who: number; tab: Tab }
   | { kind: 'sign-in'; who: number; tab: Tab; role: string }
   | { kind: 'set'; what: 'quota' | 'discardFails' | 'otherWindow' | 'ownsWindow' | 'rowsUnreadable' | 'offline'; on: boolean };
@@ -669,12 +712,13 @@ const command: fc.Arbitrary<Command> = fc.oneof(
   { weight: 5, arbitrary: fc.record({ kind: fc.constant('hours' as const), hours: fc.integer({ min: 1, max: 45 * 24 }) }) },
   { weight: 4, arbitrary: fc.record({ kind: fc.constant('entry' as const), tab }) },
   { weight: 3, arbitrary: fc.record({ kind: fc.constant('resume' as const), tab }) },
-  { weight: 3, arbitrary: fc.record({ kind: fc.constant('write' as const), who, tab }) },
+  { weight: 3, arbitrary: fc.record({ kind: fc.constant('write' as const), who }) },
   { weight: 3, arbitrary: fc.record({ kind: fc.constant('gate-refused' as const), who, tab, reason }) },
+  { weight: 2, arbitrary: fc.record({ kind: fc.constant('gate-signed-out' as const), who, tab }) },
   { weight: 2, arbitrary: fc.record({ kind: fc.constant('gate-expired' as const), who, tab }) },
   { weight: 2, arbitrary: fc.record({ kind: fc.constant('gate-check' as const), who, tab }) },
   { weight: 3, arbitrary: fc.record({ kind: fc.constant('gate-open' as const), who, tab }) },
-  { weight: 3, arbitrary: fc.record({ kind: fc.constant('forced-sign-out' as const), who, tab, reason }) },
+  { weight: 3, arbitrary: fc.record({ kind: fc.constant('forced-sign-out' as const), who, tab, reason, fromServer: fc.boolean() }) },
   { weight: 3, arbitrary: fc.record({ kind: fc.constant('own-sign-out' as const), who, tab }) },
   { weight: 3, arbitrary: fc.record({ kind: fc.constant('sign-in' as const), who, tab, role: fc.constantFrom('estimator', 'owner', 'office') }) },
   {
@@ -688,141 +732,103 @@ const command: fc.Arbitrary<Command> = fc.oneof(
 );
 
 describe('any sequence of refusals, sign-outs, sign-ins, days, tabs and failing storage', () => {
-  it('never keeps work locked out for more than 30 days past a working entry point, never sends it, and never removes anyone else\'s', async () => {
+  it('hides work locked out for more than 30 days at every entry point, and removes work only when the server refuses the person', async () => {
     await fc.assert(
       fc.asyncProperty(fc.array(command, { maxLength: 60 }), async (commands) => {
         phone.reset();
-        for (const t of TABS) t.forgetPending();
         setClock(START);
         let offline = false;
-        const model = new Map<string, Model>(PEOPLE.map((p) => [keyOf(p), { lock: null, validAt: null, row: null, work: false, admitted: false, pending: [[], []] }]));
+        const model = new Map<string, Model>(PEOPLE.map((p) => [keyOf(p), { lock: null, row: null, work: false, admitted: false }]));
         const of = (index: number) => ({ p: PEOPLE[index]!, m: model.get(keyOf(PEOPLE[index]!))! });
-        // Locked for 30 days counts from the later of the first refusal and the last let-in.
-        const lockedOutTooLong = (m: Model) =>
-          m.lock !== null && RETAINED_REASONS.has(m.lock.reason) && clock - Math.max(m.lock.since, m.validAt ?? m.lock.since) > LOCKED_LIMIT_MS;
+        const lockedOutTooLong = (m: Model) => m.lock !== null && RETAINED_REASONS.has(m.lock.reason) && clock - m.lock.since > LOCKED_LIMIT_MS;
         const signInCounts = (m: Model) => m.row !== null && sessionValid(m.row, clock);
         const canRemove = () => !phone.discardFails && !(phone.otherWindow && !phone.ownsWindow);
 
         // The rules.
-        // A lock is saved with when its first refusal was given; one already saved keeps its time. A
-        // refusal that removes work after 30 days is not replaced by a plain "sign in again", and
-        // none of them by the sign-in's own age. A write the phone refuses is never saved.
-        const lockAt = (m: Model, why: SavedReason, since: number): boolean => {
+        // A refusal is saved with its first time; one already saved keeps its time. A refusal that
+        // removes work after 30 days is not replaced by a plain "sign in again", and none of them by
+        // the sign-in's own age. A write the phone refuses is never saved. True when saved.
+        // A hidden lock is kept as it is.
+        const refuse = (m: Model, why: SavedReason): boolean => {
+          if (lockedOutTooLong(m)) return true;
           if (phone.quota) return false;
           const before = m.lock?.reason;
           const keeps = before !== undefined && RETAINED_REASONS.has(before) && (why === 'sign-in-expired' || (why === 'sign-in-again' && before !== 'sign-in-expired'));
-          m.lock = { since: m.lock?.since ?? since, reason: keeps ? before : why };
+          m.lock = { since: m.lock?.since ?? clock, reason: keeps ? before : why };
           m.admitted = false;
           return true;
         };
-        // A refusal the tab could not save is held, with its time (the same one again keeps the
-        // first time).
-        const hold = (m: Model, t: Tab, why: SavedReason) => {
-          if (m.pending[t].at(-1)?.reason !== why) m.pending[t].push({ reason: why, at: clock });
-        };
-        // A refusal, at once: saved now, unless the tab holds refusals for the person, which go
-        // first. Work past the limit needs nothing new: its company's settings were kept with its
-        // lock. True when the phone holds the lock afterwards.
-        const refuse = (m: Model, t: Tab, why: SavedReason): boolean => {
-          const saved = lockedOutTooLong(m) || (m.pending[t].length === 0 && lockAt(m, why, clock));
-          if (!saved) hold(m, t, why);
-          return saved;
-        };
-        // The server let the person in: the lock goes and the time is kept, in one write, unless the
-        // work is past the limit. 'unsaved' when the phone could not save it (nothing may open then).
-        const letIn = (m: Model, t: Tab): 'none' | 'expired' | 'unsaved' => {
-          if (lockedOutTooLong(m)) return 'expired';
-          if (phone.quota) return 'unsaved';
+        // The server let the person in: their own lock goes, however old. 'unsaved' when the phone
+        // could not lift it (nothing may open then).
+        const letIn = (m: Model): 'none' | 'unsaved' => {
+          if (m.lock !== null && phone.quota) return 'unsaved';
           m.lock = null;
-          m.validAt = clock;
-          m.pending[t] = [];
           return 'none';
         };
         // A saved sign-in, judged: past its role's limit the person is locked out from now (false
-        // when that cannot be saved); one that counts lifts a lock that only its age had made.
-        const judge = (m: Model, t: Tab): boolean => {
+        // when that cannot be saved); one that counts lifts a lock that only its age had made,
+        // unless it is hidden.
+        const judge = (m: Model): boolean => {
           if (m.row === null) return true;
-          if (!signInCounts(m)) return refuse(m, t, 'sign-in-expired');
+          if (!signInCounts(m)) return refuse(m, 'sign-in-expired');
           if (m.lock?.reason === 'sign-in-expired' && !lockedOutTooLong(m) && !phone.quota) m.lock = null;
           return true;
         };
-        // At the start of every evaluate, the tab tries again the refusals it holds: one from before
-        // the last let-in the phone saved is dropped, the others saved with their own time.
-        const retryHeld = (t: Tab) => {
-          for (const m of model.values()) {
-            m.pending[t] = m.pending[t].filter((held) => !(held.at < (m.validAt ?? -Infinity) || lockedOutTooLong(m) || lockAt(m, held.reason, held.at)));
-          }
+        // An evaluate's sweep: every saved sign-in judged (none when they cannot be read), then the
+        // removal the event confirmed: the server refused this person just now while hidden.
+        const sweep = (confirmed: string | null): string[] => {
+          if (!phone.rowsUnreadable) for (const m of model.values()) judge(m);
+          const m = confirmed === null ? null : model.get(confirmed)!;
+          if (m === null || !lockedOutTooLong(m) || !canRemove()) return [];
+          // Never while their sign-in counts and the server has let them in.
+          expect(m.admitted && signInCounts(m)).toBe(false);
+          Object.assign(m, { lock: null, work: false });
+          return [confirmed!];
         };
-        // A tab's sweep, once it has read the saved sign-ins: every one judged. Nothing when they
-        // cannot be read.
-        const sweepOf = (t: Tab) => {
-          if (phone.rowsUnreadable) return;
-          for (const m of model.values()) judge(m, t);
-        };
-        // What every entry point owes: who must be gone after it, and who may be.
-        const expectSweep = async (t: Tab, run: () => Promise<string[]>) => {
-          sweepOf(t);
-          const due = PEOPLE.filter((p) => lockedOutTooLong(model.get(keyOf(p))!)).map(keyOf);
+        // What the code removed against what the rules say: exactly that, and nobody else's work.
+        const expectRemoved = async (expected: string[], run: () => Promise<string[]>) => {
           const workBefore = new Set(phone.work);
           const removed = await run();
-          // Nobody's work goes unless they have been locked out for more than 30 days.
-          for (const gone of removed) expect(due).toContain(gone);
-          // Nor while their sign-in counts and the server has let them in.
-          for (const gone of removed) expect(model.get(gone)!.admitted && signInCounts(model.get(gone)!)).toBe(false);
-          for (const kept of workBefore) if (!due.includes(kept)) expect(phone.work.has(kept)).toBe(true);
-          // Everybody's who has been does, at this entry point, when the phone can remove it.
-          if (canRemove()) {
-            expect([...removed].sort()).toEqual([...due].sort());
-            for (const gone of due) expect(phone.work.has(gone)).toBe(false);
-            for (const gone of due) Object.assign(model.get(gone)!, { lock: null, work: false });
-          } else {
-            expect(removed).toEqual([]);
-          }
+          expect([...removed].sort()).toEqual([...expected].sort());
+          for (const kept of workBefore) expect(phone.work.has(kept)).toBe(!expected.includes(kept));
         };
-        // A sign-out of the tab: the refusal first when the app makes it, then the saved sign-in
-        // is judged, each followed by the tab's sweep, and the row goes only when the tab holds
-        // nothing for the person. Each sweep removes, there and then, the work it may.
-        const signOut = async (p: FieldPerson, m: Model, t: Tab, run: () => Promise<void>, before?: () => void) => {
+        // A sign-out, the refusal first when the app makes it on one, then the saved sign-in judged
+        // before it goes; each step runs a sweep, and so does the entry point that follows.
+        const signOut = async (p: FieldPerson, m: Model, t: Tab, run: () => Promise<void>, refusal?: { why: LockReason; fromServer: boolean }) => {
           const gone: string[] = [];
-          const swept = () => {
-            sweepOf(t);
-            const due = PEOPLE.filter((q) => lockedOutTooLong(model.get(keyOf(q))!)).map(keyOf);
-            for (const person of due) expect(model.get(person)!.admitted && signInCounts(model.get(person)!)).toBe(false);
-            if (!canRemove()) return;
-            for (const person of due) Object.assign(model.get(person)!, { lock: null, work: false });
-            gone.push(...due);
-          };
           const ok = (() => {
-            if (before) {
-              retryHeld(t);
-              before();
-              swept();
-              if (m.pending[t].length > 0) return false;
+            if (refusal) {
+              const saved = refuse(m, refusal.why);
+              gone.push(...sweep(saved && refusal.fromServer && lockedOutTooLong(m) ? keyOf(p) : null));
+              if (!saved) return false;
             }
-            retryHeld(t);
-            judge(m, t);
-            swept();
-            return m.pending[t].length === 0;
+            const judged = judge(m);
+            gone.push(...sweep(null));
+            return judged;
           })();
           // The row goes before the entry point that follows.
           if (ok) m.row = null;
-          retryHeld(t);
-          swept();
-          const workBefore = new Set(phone.work);
+          gone.push(...sweep(null));
           const removed: string[] = [];
           const stop = TABS[t]!.onWorkRemoved((person) => removed.push(person));
-          const outcome = await run().then(
-            () => 'signed-out',
-            (error: unknown) => (error instanceof TABS[t]!.WorkNotSecuredError ? 'not-secured' : 'failed'),
-          );
-          await TABS[t]!.evaluate(clock, { kind: 'entry' }).done;
+          await expectRemoved(gone, async () => {
+            const outcome = await run().then(
+              () => 'signed-out',
+              (error: unknown) => (error instanceof TABS[t]!.WorkNotSecuredError ? 'not-secured' : 'failed'),
+            );
+            await TABS[t]!.evaluate(clock, { kind: 'entry' }).done;
+            // The saved sign-in goes only once the phone holds what it must.
+            expect(outcome).toBe(ok ? 'signed-out' : 'not-secured');
+            expect(phone.rows.has(keyOf(p))).toBe(!ok);
+            return removed;
+          });
           stop();
-          // The saved sign-in goes only once the phone holds what it must.
-          expect(outcome).toBe(ok ? 'signed-out' : 'not-secured');
-          expect(phone.rows.has(keyOf(p))).toBe(!ok);
-          // Exactly the work the rules say goes, and nobody else's.
-          expect([...removed].sort()).toEqual([...gone].sort());
-          for (const kept of workBefore) expect(phone.work.has(kept)).toBe(!gone.includes(kept));
+        };
+        const refusedBy = async (p: FieldPerson, m: Model, t: Tab, why: SavedReason, fromServer: boolean) => {
+          const saved = refuse(m, why);
+          const result = TABS[t]!.evaluate(clock, { kind: 'refused', person: p, reason: why, fromServer });
+          expect(result.state).toBe(!saved ? 'unsaved' : lockedOutTooLong(m) ? 'hidden' : 'locked');
+          await expectRemoved(sweep(saved && fromServer && lockedOutTooLong(m) ? keyOf(p) : null), () => result.done);
         };
 
         for (const step of commands) {
@@ -833,45 +839,37 @@ describe('any sequence of refusals, sign-outs, sign-ins, days, tabs and failing 
             // One window holds the lock: this page's field window, or another tab's.
             if (step.on && step.what === 'otherWindow') phone.ownsWindow = false;
             if (step.on && step.what === 'ownsWindow') phone.otherWindow = false;
-          } else if (step.kind === 'entry') {
-            retryHeld(step.tab);
-            await expectSweep(step.tab, () => TABS[step.tab]!.evaluate(clock, { kind: 'entry' }).done);
-          } else if (step.kind === 'resume') {
-            retryHeld(step.tab);
-            await expectSweep(step.tab, () => TABS[step.tab]!.evaluate(clock, { kind: 'entry', company: { tenantId: 't-a', config } }).done);
+          } else if (step.kind === 'entry' || step.kind === 'resume') {
+            const event = step.kind === 'entry' ? ({ kind: 'entry' } as const) : ({ kind: 'entry', company: { tenantId: 't-a', config } } as const);
+            await expectRemoved(sweep(null), () => TABS[step.tab]!.evaluate(clock, event).done);
           } else if (step.kind === 'write') {
-            // A tab's shell lets a person work only with a sign-in that counts and no lock, saved or
-            // held by that tab.
+            // The shell lets a person work only with a sign-in that counts and no lock.
             const { p, m } = of(step.who);
-            if (!signInCounts(m) || m.lock !== null || m.pending[step.tab].length > 0) continue;
+            if (!signInCounts(m) || m.lock !== null) continue;
             if (noteWrite(p.tenantId, p.uid, clock) !== null) {
               phone.work.add(keyOf(p));
               m.work = true;
             }
-          } else if (step.kind === 'gate-refused' || step.kind === 'gate-expired') {
-            // The sync gate of an open field shell: the server's refusal, or a saved sign-in found
-            // past its role's limit with or without signal.
+          } else if (step.kind === 'gate-refused') {
+            const { p, m } = of(step.who);
+            if (m.row === null || offline) continue;
+            await refusedBy(p, m, step.tab, step.reason, true);
+          } else if (step.kind === 'gate-signed-out') {
             const { p, m } = of(step.who);
             if (m.row === null) continue;
-            if (step.kind === 'gate-refused' ? offline : signInCounts(m)) continue;
-            const why = step.kind === 'gate-refused' ? step.reason : 'sign-in-expired';
-            retryHeld(step.tab);
-            const saved = refuse(m, step.tab, why);
-            const result = TABS[step.tab]!.evaluate(clock, { kind: 'refused', person: p, reason: why });
-            expect(result.state).toBe(!saved ? 'unsaved' : lockedOutTooLong(m) ? 'expired' : 'locked');
-            await expectSweep(step.tab, () => result.done);
+            await refusedBy(p, m, step.tab, 'sign-in-again', false);
+          } else if (step.kind === 'gate-expired') {
+            const { p, m } = of(step.who);
+            if (m.row === null || signInCounts(m)) continue;
+            await refusedBy(p, m, step.tab, 'sign-in-expired', false);
           } else if (step.kind === 'gate-check') {
-            // Any other check of the gate (every minute, the page shown again, an answer that
-            // opens nothing): the saved sign-in it runs from is judged, then the phone is swept.
+            // Any other check of the gate: the saved sign-in it runs from is judged, then the sweep.
             const { p, m } = of(step.who);
             if (m.row === null) continue;
-            retryHeld(step.tab);
-            const judged = judge(m, step.tab);
+            const judged = judge(m);
             const result = TABS[step.tab]!.evaluate(clock, { kind: 'entry', person: p, saved: m.row });
-            expect(result.state).toBe(
-              !judged ? 'unsaved' : lockedOutTooLong(m) ? 'expired' : m.lock === null && m.pending[step.tab].length === 0 ? 'none' : 'locked',
-            );
-            await expectSweep(step.tab, () => result.done);
+            expect(result.state).toBe(!judged ? 'unsaved' : lockedOutTooLong(m) ? 'hidden' : m.lock === null ? 'none' : 'locked');
+            await expectRemoved(sweep(null), () => result.done);
           } else if (step.kind === 'gate-open' || step.kind === 'sign-in') {
             // The server lets the person in: from an open shell's gate, or on the sign-in page,
             // where the row is saved first. Nothing opens unless the lock is lifted.
@@ -881,18 +879,19 @@ describe('any sequence of refusals, sign-outs, sign-ins, days, tabs and failing 
               saveRow(p, step.role, clock);
               m.row = { role: step.role, authTime: clock };
             } else if (!signInCounts(m)) continue;
-            retryHeld(step.tab);
-            const expected = letIn(m, step.tab);
+            const expected = letIn(m);
             const result = TABS[step.tab]!.evaluate(clock, { kind: 'let-in', person: p });
             expect(result.state).toBe(expected);
             if (expected === 'none') m.admitted = true;
-            await expectSweep(step.tab, () => result.done);
+            await expectRemoved(sweep(null), () => result.done);
           } else if (step.kind === 'forced-sign-out') {
-            // A screen ends the sign-in on the server's refusal: the refusal first, then the sign-out.
             const { p, m } = of(step.who);
-            if (offline || m.row === null) continue;
+            if (m.row === null || (offline && step.fromServer)) continue;
             const t = step.tab;
-            await signOut(p, m, t, () => TABS[t]!.signOutOnRefusal(authFor(p), p.tenantId, config, step.reason), () => void refuse(m, t, step.reason));
+            await signOut(p, m, t, () => TABS[t]!.signOutOnRefusal(authFor(p), p.tenantId, config, step.reason, step.fromServer), {
+              why: step.reason,
+              fromServer: step.fromServer,
+            });
           } else {
             // The person's own sign-out (Keep).
             const { p, m } = of(step.who);
@@ -901,22 +900,21 @@ describe('any sequence of refusals, sign-outs, sign-ins, days, tabs and failing 
             await signOut(p, m, t, () => TABS[t]!.signOutKeeping(authFor(p), p.tenantId));
           }
 
-          // After every step the phone holds exactly what the rules say.
+          // After every step the phone holds exactly what the rules say, and work locked out for
+          // more than 30 days is hidden: read from the lock and the clock alone.
           for (const p of PEOPLE) {
             const m = model.get(keyOf(p))!;
             expect(lockOf(p), `${keyOf(p)} lock after ${JSON.stringify(step)}`).toEqual(m.lock);
             expect(phone.work.has(keyOf(p)), `${keyOf(p)} work after ${JSON.stringify(step)}`).toBe(m.work);
             expect(phone.rows.has(keyOf(p))).toBe(m.row !== null);
+            expect(lockOutlived(p.tenantId, p.uid, clock)).toBe(lockedOutTooLong(m));
           }
         }
 
-        // Whatever happened, once the phone's storage answers and no other window holds the work,
-        // one entry point in each tab leaves nothing of anyone locked out for more than 30 days.
+        // Whatever happened, once storage answers and no other window holds the work, the server
+        // refusing each person removes exactly the work that is hidden, in either tab.
         phone.quota = phone.discardFails = phone.otherWindow = phone.rowsUnreadable = false;
-        for (const t of [0, 1] as const) {
-          retryHeld(t);
-          await expectSweep(t, () => TABS[t]!.evaluate(clock, { kind: 'entry' }).done);
-        }
+        for (const [index, p] of PEOPLE.entries()) await refusedBy(p, model.get(keyOf(p))!, (index % 2) as Tab, 'session-revoked', true);
         for (const p of PEOPLE) {
           const m = model.get(keyOf(p))!;
           expect(phone.work.has(keyOf(p)) && lockedOutTooLong(m)).toBe(false);
@@ -926,11 +924,11 @@ describe('any sequence of refusals, sign-outs, sign-ins, days, tabs and failing 
         numRuns: 400,
         examples: [
           // A refusal on day 0 the phone cannot save; storage answers again; the page comes back on
-          // day 31: the work goes at that entry point.
+          // day 31: nothing is locked by the phone alone, so nothing is hidden or removed.
           [
             [
               { kind: 'sign-in', who: 0, tab: 0, role: 'estimator' },
-              { kind: 'write', who: 0, tab: 0 },
+              { kind: 'write', who: 0 },
               { kind: 'set', what: 'quota', on: true },
               { kind: 'gate-refused', who: 0, tab: 0, reason: 'company-inactive' },
               { kind: 'hours', hours: 31 * 24 },
@@ -938,39 +936,48 @@ describe('any sequence of refusals, sign-outs, sign-ins, days, tabs and failing 
               { kind: 'entry', tab: 0 },
             ],
           ],
-          // An owner past 14 days chooses Keep on a full phone in one tab; storage answers again;
-          // 29 days later the owner signs in in another tab and works there; the first tab comes
-          // back 2 days later: the owner's work stays.
+          // An owner past 14 days chooses Keep on a full phone in one tab; 29 days later the owner
+          // signs in in another tab, works there and chooses Keep there too; the first tab comes
+          // back 2 days later: the owner's kept work stays.
           [
             [
               { kind: 'sign-in', who: 0, tab: 0, role: 'owner' },
-              { kind: 'write', who: 0, tab: 0 },
+              { kind: 'write', who: 0 },
               { kind: 'hours', hours: 15 * 24 },
               { kind: 'set', what: 'quota', on: true },
               { kind: 'own-sign-out', who: 0, tab: 0 },
               { kind: 'set', what: 'quota', on: false },
               { kind: 'hours', hours: 29 * 24 },
               { kind: 'sign-in', who: 0, tab: 1, role: 'owner' },
-              { kind: 'write', who: 0, tab: 1 },
-              { kind: 'hours', hours: 2 * 24 },
-              { kind: 'entry', tab: 0 },
-            ],
-          ],
-          // The same, but the owner chooses Keep in the other tab too before the first comes back:
-          // no saved sign-in is left, and the owner's kept work stays.
-          [
-            [
-              { kind: 'sign-in', who: 0, tab: 0, role: 'owner' },
-              { kind: 'hours', hours: 15 * 24 },
-              { kind: 'set', what: 'quota', on: true },
-              { kind: 'own-sign-out', who: 0, tab: 0 },
-              { kind: 'set', what: 'quota', on: false },
-              { kind: 'hours', hours: 29 * 24 },
-              { kind: 'sign-in', who: 0, tab: 1, role: 'owner' },
-              { kind: 'write', who: 0, tab: 1 },
+              { kind: 'write', who: 0 },
               { kind: 'own-sign-out', who: 0, tab: 1 },
               { kind: 'hours', hours: 2 * 24 },
               { kind: 'resume', tab: 0 },
+            ],
+          ],
+          // Refused on day 0, hidden from day 31 at every entry point and in both tabs; a refusal the
+          // phone makes removes nothing; the server's refusal does.
+          [
+            [
+              { kind: 'sign-in', who: 0, tab: 0, role: 'estimator' },
+              { kind: 'write', who: 0 },
+              { kind: 'gate-refused', who: 0, tab: 0, reason: 'session-revoked' },
+              { kind: 'hours', hours: 31 * 24 },
+              { kind: 'entry', tab: 1 },
+              { kind: 'gate-signed-out', who: 0, tab: 1 },
+              { kind: 'resume', tab: 0 },
+              { kind: 'gate-refused', who: 0, tab: 0, reason: 'session-revoked' },
+            ],
+          ],
+          // Hidden, then the server lets the person in: their own work shows again.
+          [
+            [
+              { kind: 'sign-in', who: 0, tab: 0, role: 'estimator' },
+              { kind: 'write', who: 0 },
+              { kind: 'gate-refused', who: 0, tab: 0, reason: 'member-disabled' },
+              { kind: 'hours', hours: 31 * 24 },
+              { kind: 'sign-in', who: 0, tab: 1, role: 'estimator' },
+              { kind: 'entry', tab: 0 },
             ],
           ],
         ],

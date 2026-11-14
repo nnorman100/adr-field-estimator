@@ -3,7 +3,7 @@ import type { BrowserSignInConfig } from '@/lib/config';
 import { signOutCompany } from '@/lib/firebase-client';
 import { discardFieldWork, stopFieldClient } from '@/lib/field-db';
 import { forgetMe, readMe, restoreMe } from './ds-me';
-import { evaluate, pendingReason } from './retention';
+import { evaluate } from './retention';
 import { unsentWork, type LockReason } from './unsent';
 
 // Ends this company's sign-in on the phone (S6-2). The field shell must not start from it again, so
@@ -17,8 +17,8 @@ import { unsentWork, type LockReason } from './unsent';
 // Every sign-out ends here, the person's own and the app's. The saved sign-in is judged by the
 // phone's retention routine (retention.ts) before it goes, so one past its role's limit locks the
 // work from now even though no row is left to find later (O5, S6-3b). Throws WorkNotSecuredError,
-// with the row and the work left as they were, while the phone holds a lock for the person it
-// could not save (that one, or a refusal before it).
+// with the row and the work left as they were, when that lock cannot be saved, or the row cannot be
+// read in time (it may be there).
 //
 // `from` is the sign-in the sign-out was started for. When anyone has signed in since (another
 // person, or the same person again, in this tab or another), that newer sign-in and its saved
@@ -28,9 +28,11 @@ async function leave(auth: Auth, tenantId: string, from: Session): Promise<void>
   const { user } = from;
   const found = user ? await readMe(tenantId, user.uid) : null;
   if (!stillSignedIn(auth, from)) return;
+  if (found === false) throw new WorkNotSecuredError(() => leave(auth, tenantId, from));
   if (found) {
-    await evaluate(Date.now(), { kind: 'entry', person: { tenantId, uid: found.uid, config: found.config }, saved: found }).done;
-    if (pendingReason(tenantId, found.uid) !== null) throw new WorkNotSecuredError(() => leave(auth, tenantId, from));
+    const { state, done } = evaluate(Date.now(), { kind: 'entry', person: { tenantId, uid: found.uid, config: found.config }, saved: found });
+    if (state === 'unsaved') throw new WorkNotSecuredError(() => leave(auth, tenantId, from));
+    await done;
     if (!stillSignedIn(auth, from)) return;
   }
   const removed = user ? await forgetMe(tenantId, user.uid, found?.savedAt ?? null) : null;
@@ -91,18 +93,20 @@ export async function signOutOrShow(signOut: () => Promise<void>, show: (failed:
 // routine (retention.ts) first, which saves it apart from the saved sign-in, so the 30-day limit
 // for locked work (O5) runs from now even though the field shell will not start for this person
 // again (S6-3b). Throws WorkNotSecuredError, with the saved sign-in and the work left as they
-// were, when the phone could not save it; its `retry` is the retry.
-export function signOutOnRefusal(auth: Auth, tenantId: string, config: BrowserSignInConfig, refusal: LockReason): Promise<void> {
-  return refuse(auth, session(auth), tenantId, config, refusal);
+// were, when the phone could not save it; its `retry` is the retry. `fromServer`: the server gave
+// this refusal just now; only then is work already past the limit removed (decision 010).
+export function signOutOnRefusal(auth: Auth, tenantId: string, config: BrowserSignInConfig, refusal: LockReason, fromServer = false): Promise<void> {
+  return refuse(auth, session(auth), tenantId, config, refusal, fromServer);
 }
 
-async function refuse(auth: Auth, from: Session, tenantId: string, config: BrowserSignInConfig, refusal: LockReason): Promise<void> {
+async function refuse(auth: Auth, from: Session, tenantId: string, config: BrowserSignInConfig, refusal: LockReason, fromServer: boolean): Promise<void> {
   if (!stillSignedIn(auth, from)) return;
   const { user } = from;
   if (user) {
-    // Work already past the limit is removed before the sign-in that names it goes.
-    await evaluate(Date.now(), { kind: 'refused', person: { tenantId, uid: user.uid, config }, reason: refusal }).done;
-    if (pendingReason(tenantId, user.uid) !== null) throw new WorkNotSecuredError(() => refuse(auth, from, tenantId, config, refusal));
+    const { state, done } = evaluate(Date.now(), { kind: 'refused', person: { tenantId, uid: user.uid, config }, reason: refusal, fromServer });
+    if (state === 'unsaved') throw new WorkNotSecuredError(() => refuse(auth, from, tenantId, config, refusal, fromServer));
+    // Work past the limit that the server's refusal removes goes before the sign-in that names it.
+    await done;
   }
   await leave(auth, tenantId, from);
 }

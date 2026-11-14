@@ -63,7 +63,7 @@ function Finish({ address, companyName, tenantId, jobId, config }: FinishScreenP
       const outcome = meOutcome(me.status, me.body);
       if (endsSession(outcome)) {
         const auth = authRef.current!;
-        await signOutOrShow(() => signOutOnRefusal(auth, tenantId, config, outcome.kind), setPhase);
+        await signOutOrShow(() => signOutOnRefusal(auth, tenantId, config, outcome.kind, true), setPhase);
         return;
       }
       if (outcome.kind === 'unavailable') return setPhase({ name: 'unavailable' });

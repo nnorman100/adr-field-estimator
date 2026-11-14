@@ -2,54 +2,54 @@ import type { BrowserSignInConfig } from '@/lib/config';
 import { discardFieldWork, type FieldPerson } from '@/lib/field-db';
 import { meKey, readAllMe } from './ds-me';
 import { sessionValid } from './sync-gate';
-import { allOutlivedLocks, lastValidAt, lockOutlived, noteLetIn, noteLocked, noteUnlocked, savedReason, type SavedReason } from './unsent';
+import { lockOutlived, noteLocked, noteUnlocked, savedReason, type SavedReason } from './unsent';
 import { holdsWindow } from './window-lock';
 
-// Locked work and the 30-day limit (owner decision O5), as one routine (S6-3b). Everything on the
-// phone that refuses a person, lets them back in, or merely opens goes through evaluate(now, event)
-// below, and nothing else changes a lock or removes locked work.
+// Locked work and the 30-day limit (owner decisions O5 and 010), as one routine (S6-3b).
+// Everything on the phone that refuses a person, lets them back in, or merely opens goes through
+// evaluate(now, event) below, and nothing else changes a lock or removes locked work.
 //
 // Each person of each company is in one state, read from the phone's own storage and from `now`:
 //
 //   none      nothing refused them since they last got through; their work is theirs to send.
 //   locked    refused since `since`, for `reason`: nothing is sent, everything is kept.
-//   expired   locked for more than 30 days under a refusal O5 removes work for (RETAINED_REASONS):
-//             the work may never be sent again, and is removed.
+//   hidden    locked for more than 30 days under a refusal O5 applies to (RETAINED_REASONS): the
+//             work is neither shown nor sent, and the field app does not open for it offline.
 //
-//   event \ state            none            locked                     expired
-//   refused                  locked (now)    locked (first time kept)   expired
-//   a saved sign-in past     locked (now)    locked (first time kept)   expired
+// "hidden" is only ever read, from the saved lock and the clock; nothing is written to hide, so any
+// tab may judge it again, in any order. Work is removed only when the server itself refuses the
+// person at that moment while they are hidden (decision 010): never on what the phone alone holds.
+//
+//   event \ state            none            locked                     hidden
+//   refused                  locked (now)    locked (first time kept)   hidden; removed when the
+//                                                                          server refused just now
+//   a saved sign-in past     locked (now)    locked (first time kept)   hidden
 //     its role's limit
-//   let-in                   none            none (when saved)          expired
-//   a saved sign-in that     none            none, when only its age    expired
+//   let-in                   none            none                       none
+//   a saved sign-in that     none            none, when only its age    hidden
 //     counts again                             had locked it
-//   entry                    none            locked                     expired
-//   the sweep                -               -                          none, once the work is removed
+//   entry                    none            locked                     hidden
 //
-// "expired" can only be left by the removal, which every evaluate tries again, so neither a later
-// refusal of another kind nor the server letting the person in can make that work sendable.
+// The server letting the person in lifts their own lock, however old: their work shows and is sent
+// again. It changes nothing for anyone else.
 //
-// The state lives apart from the saved sign-in (ds-me): the lock, and when the server last let the
-// person in (written by a let-in, in the same write that lifts the lock), in the person's
-// unsent-work mark (unsent.ts), and beside it the company's public browser settings, the only thing
-// that names the person's field database (no email, no token, no field values). A lock is never
-// saved without them, so the work can still be removed after a sign-out took the saved sign-in away.
+// The state lives apart from the saved sign-in (ds-me): the lock in the person's unsent-work mark
+// (unsent.ts), and beside it the company's public browser settings (no email, no token, no field
+// values). A lock is never saved without them.
 //
-// After the event, every evaluate sweeps the whole phone, whoever the event was about:
-// 1. every saved sign-in is judged: past its role's session limit it is locked out from now, so
-//    the clock starts though no server ever refused it; counting again (a newer sign-in was saved)
-//    it lifts a lock that only its age had made;
-// 2. everyone who is expired has their work removed, unless a field window open elsewhere holds it
-//    or the phone's storage refuses; whoever is left stays expired and is tried at the next evaluate.
-// A mark that cannot be read counts as locked and never as expired: nothing is removed on a guess.
+// After the event, every evaluate sweeps the whole phone, whoever the event was about: every saved
+// sign-in is judged; past its role's session limit it is locked out from now, so the clock starts
+// though no server ever refused it; counting again (a newer sign-in was saved) it lifts a lock that
+// only its age had made. The sweep removes nothing. A mark that cannot be read counts as locked and
+// never as hidden.
 
 const CLEANUP_PREFIX = 'ds-retain/';
 export const cleanupKey = (tenantId: string): string => `${CLEANUP_PREFIX}${tenantId}`;
 
 type Company = Pick<FieldPerson, 'tenantId' | 'config'>;
 
-// Saves what removing this company's locked work needs, for when no saved sign-in is left. False
-// when it could not be saved.
+// Saves the company's public browser settings, which name the person's field database, beside the
+// lock. False when they could not be saved.
 function keepCleanupContext({ tenantId, config }: Company): boolean {
   const { apiKey, authDomain, projectId, authEmulatorUrl, firestoreDatabaseId, firestoreEmulatorUrl } = config;
   const value = JSON.stringify({ apiKey, authDomain, projectId, authEmulatorUrl, firestoreDatabaseId, firestoreEmulatorUrl });
@@ -85,108 +85,62 @@ function cleanupContext(tenantId: string): BrowserSignInConfig | null {
   }
 }
 
-export type RetentionState = 'none' | 'locked' | 'expired';
+export type RetentionState = 'none' | 'locked' | 'hidden';
 
 function stateOf({ tenantId, uid }: Pick<FieldPerson, 'tenantId' | 'uid'>, now: number): RetentionState {
-  if (lockOutlived(tenantId, uid, now)) return 'expired';
+  if (lockOutlived(tenantId, uid, now)) return 'hidden';
   return savedReason(tenantId, uid) === null ? 'none' : 'locked';
 }
 
-// True when the phone holds the company's settings that remove its locked work.
-function settingsKept(company: Company): boolean {
-  return keepCleanupContext(company) || cleanupContext(company.tenantId) !== null;
-}
-
-// Saves the lock of a refusal, after what removes the work later, so a lock is never saved without
-// it. Returns when the refusals began, or null when either could not be saved: the caller must then
+// Saves the lock of a refusal, after the company's settings, so a lock is never saved without them.
+// Returns when the refusals began, or null when either could not be saved: the caller must then
 // leave the person's sign-in and their work exactly as they are. evaluate's own step; exported for
 // its tests only.
 export function lockWork(person: FieldPerson, reason: SavedReason, now = Date.now()): number | null {
-  if (!settingsKept(person)) return null;
+  if (!keepCleanupContext(person) && cleanupContext(person.tenantId) === null) return null;
   return noteLocked(person.tenantId, person.uid, reason, now);
 }
 
-// Refusals the phone could not save, held by this page in the order they were given, each with
-// when it was given, and tried again at the start of every evaluate. One given before the last time
-// the server let the person in (saved on the phone, by this tab or another) no longer counts and is
-// dropped; the others are saved with the time each was given, never the time it could be saved (O5).
-type Held = { reason: SavedReason; at: number };
-const pending = new Map<string, { person: FieldPerson; held: Held[] }>();
-
-function hold(person: FieldPerson, reason: SavedReason, at: number): void {
-  const key = meKey(person.tenantId, person.uid);
-  const entry = pending.get(key) ?? { person, held: [] };
-  // The same refusal again keeps its first time.
-  if (entry.held.at(-1)?.reason !== reason) entry.held.push({ reason, at });
-  pending.set(key, entry);
-}
-
-// The "refused" row of the table: true when the phone holds the person's lock afterwards, and for
-// work past the limit, the settings that remove it. While this page holds refusals for the person,
-// a new one is held behind them.
+// The "refused" row of the table: true when the phone holds the person's lock afterwards. A hidden
+// lock is kept as it is, so no later refusal of another kind shows that work again.
 function refuse(person: FieldPerson, reason: SavedReason, now: number): boolean {
-  const key = meKey(person.tenantId, person.uid);
-  const saved = stateOf(person, now) === 'expired' ? settingsKept(person) : !pending.has(key) && lockWork(person, reason, now) !== null;
-  if (!saved) hold(person, reason, now);
-  return saved;
-}
-
-function retryPending(now: number): void {
-  for (const [key, { person, held }] of [...pending]) {
-    const validAt = lastValidAt(person.tenantId, person.uid) ?? -Infinity;
-    const left = held.filter(
-      (one) => !(one.at < validAt || (stateOf(person, now) === 'expired' ? settingsKept(person) : lockWork(person, one.reason, one.at) !== null)),
-    );
-    if (left.length === 0) pending.delete(key);
-    else pending.set(key, { person, held: left });
-  }
+  return stateOf(person, now) === 'hidden' || lockWork(person, reason, now) !== null;
 }
 
 // What the phone saved of a sign-in, as far as its age goes (a ds-me row).
 type SavedSignIn = { role?: string; authTime?: number };
 
 // The two "saved sign-in" rows of the table. False when the sign-in is past its limit and the phone
-// could not save the lock that says so; it is then held from now.
+// could not save the lock that says so.
 function judgeSignIn(person: FieldPerson, saved: SavedSignIn, now: number): boolean {
   if (!sessionValid(saved, now)) return refuse(person, 'sign-in-expired', now);
-  if (savedReason(person.tenantId, person.uid) === 'sign-in-expired' && stateOf(person, now) !== 'expired') {
+  if (savedReason(person.tenantId, person.uid) === 'sign-in-expired' && stateOf(person, now) !== 'hidden') {
     noteUnlocked(person.tenantId, person.uid);
   }
   return true;
-}
-
-// The first refusal this page holds for the person and could not save yet, or null. Their work
-// stays closed while one is held.
-export function pendingReason(tenantId: string, uid: string): SavedReason | null {
-  return pending.get(meKey(tenantId, uid))?.held[0]?.reason ?? null;
-}
-
-// Forgets every refusal this page holds; for tests only, which share one page.
-export function forgetPending(): void {
-  pending.clear();
 }
 
 export type RetentionEvent =
   // The phone opened or was shown again (the field shell, signed in or not; the sign-in page; a
   // check of the sync gate that changed nothing). `person`: whose state to answer with, and
   // `saved`: the sign-in the caller started from for them, judged at once. `company`: the company
-  // whose page this is, whose settings are kept for a removal with no saved sign-in.
+  // whose page this is, whose settings are kept.
   | { kind: 'entry'; person?: FieldPerson; saved?: SavedSignIn; company?: Company }
   // The person may not go on: the server refused them, the app ends their sign-in, or their saved
-  // sign-in is past its role's limit ('sign-in-expired').
-  | { kind: 'refused'; person: FieldPerson; reason: SavedReason }
-  // The server let the person in: the lock is lifted, and when is kept, unless the work is past the
-  // limit.
+  // sign-in is past its role's limit ('sign-in-expired'). `fromServer`: the server gave this
+  // refusal just now (the sync gate's GET /api/me, or the answer that makes a screen end the
+  // sign-in); only that may remove hidden work. A refusal the phone made itself never does.
+  | { kind: 'refused'; person: FieldPerson; reason: SavedReason; fromServer?: boolean }
+  // The server let the person in: their own lock is lifted.
   | { kind: 'let-in'; person: FieldPerson };
 
 export type Evaluation = {
   // The event's person afterwards. 'unsaved': they were refused, let in, or their saved sign-in was
   // past its limit, and the phone could not save it: on a refusal or an expired sign-in nothing of
-  // theirs may be signed out or removed (the refusal is held, and saved by a later evaluate); on a
-  // let-in their lock still stands and nothing may open. Either way the caller tries again. An
-  // entry answers 'locked' for a person whose refusal is held.
+  // theirs may be signed out or removed; on a let-in their lock still stands and nothing may open.
+  // Either way the caller tries again.
   state: RetentionState | 'unsaved';
-  // Settles when this evaluate's sweep is over, with everyone whose work it removed (meKey).
+  // Settles when this evaluate is over, with everyone whose work it removed (meKey).
   done: Promise<string[]>;
 };
 
@@ -201,33 +155,31 @@ export function takeRemoved(person: string): boolean {
 }
 
 // Calls `listener` with the person (meKey) each time an evaluate on this page removes someone's
-// work, whichever entry point it came from. Returns what stops it.
+// work. Returns what stops it.
 export function onWorkRemoved(listener: (person: string) => void): () => void {
   removedListeners.add(listener);
   return () => void removedListeners.delete(listener);
 }
 
-async function sweep(now: number): Promise<string[]> {
-  const removed: string[] = [];
+// The sweep, then the removal the event confirmed: `confirmed`, refused by the server just now
+// while hidden. Still hidden when its turn comes, or nothing goes.
+async function sweep(now: number, confirmed: FieldPerson | null): Promise<string[]> {
   try {
     const saved = await readAllMe();
     // Judged in one go after the read, so a sign-in saved since is never locked out.
     for (const row of saved) judgeSignIn(row, row, now);
-    for (const { tenantId, uid } of allOutlivedLocks(now)) {
-      const config = cleanupContext(tenantId) ?? saved.find((row) => row.tenantId === tenantId)?.config;
-      if (!config) continue;
-      // This page's own field window holds the one-window lock; any other page must find it free.
-      const result = await discardFieldWork({ tenantId, uid, config }, { lockHeld: holdsWindow() }).catch(() => 'failed' as const);
-      if (result !== 'discarded') continue;
-      const person = meKey(tenantId, uid);
-      removed.push(person);
-      removedUntold.add(person);
-      for (const listener of [...removedListeners]) listener(person);
-    }
+    if (!confirmed || stateOf(confirmed, now) !== 'hidden') return [];
+    // This page's own field window holds the one-window lock; any other page must find it free.
+    const result = await discardFieldWork(confirmed, { lockHeld: holdsWindow() }).catch(() => 'failed' as const);
+    if (result !== 'discarded') return [];
+    const person = meKey(confirmed.tenantId, confirmed.uid);
+    removedUntold.add(person);
+    for (const listener of [...removedListeners]) listener(person);
+    return [person];
   } catch {
-    // Whatever could not be read or removed now is tried at the next evaluate.
+    // Whatever could not be read or removed now waits for the next confirmation.
+    return [];
   }
-  return removed;
 }
 
 // One sweep at a time on a page: two would start the same removal twice.
@@ -236,27 +188,22 @@ let sweeping: Promise<unknown> = Promise.resolve();
 // The one entry to the phone's refusal and retention bookkeeping. The event is applied at once
 // (`state` is the person's state as this call returns), then the phone is swept (`done`).
 export function evaluate(now: number, event: RetentionEvent): Evaluation {
-  // Whoever the event names brings their company's settings: kept, so that work locked before
-  // they were (by an earlier version, or a storage failure) can be removed too.
+  // Whoever the event names brings their company's settings: kept beside their lock.
   const company = event.kind === 'entry' ? (event.person ?? event.company) : event.person;
   if (company) keepCleanupContext(company);
-  retryPending(now);
   let state: Evaluation['state'] = 'none';
+  let confirmed: FieldPerson | null = null;
   if (event.kind === 'entry') {
     const { person, saved } = event;
     if (person && saved && !judgeSignIn(person, saved, now)) state = 'unsaved';
-    else if (person) state = stateOf(person, now) === 'none' && pendingReason(person.tenantId, person.uid) ? 'locked' : stateOf(person, now);
+    else if (person) state = stateOf(person, now);
   } else if (event.kind === 'refused') {
     state = refuse(event.person, event.reason, now) ? stateOf(event.person, now) : 'unsaved';
-  } else if (stateOf(event.person, now) === 'expired') {
-    state = 'expired';
-  } else if (noteLetIn(event.person.tenantId, event.person.uid, now)) {
-    pending.delete(meKey(event.person.tenantId, event.person.uid));
-    state = 'none';
+    if (state === 'hidden' && event.fromServer) confirmed = event.person;
   } else {
-    state = 'unsaved';
+    state = noteUnlocked(event.person.tenantId, event.person.uid) ? 'none' : 'unsaved';
   }
-  const done = sweeping.then(() => sweep(now));
+  const done = sweeping.then(() => sweep(now, confirmed));
   sweeping = done;
   return { state, done };
 }
@@ -265,9 +212,8 @@ export function evaluate(now: number, event: RetentionEvent): Evaluation {
 export const WATCH_EVERY_MS = 60_000;
 
 // The entry points every page shares: now, each time the page is shown again (made visible, or
-// brought back from the back-forward cache), when locked work may have outlived the limit while
-// the page was away, and every minute while it stays shown, for a page left open across the limit
-// and for a removal the phone's storage refused. Returns what stops it.
+// brought back from the back-forward cache), and every minute while it stays shown, so a saved
+// sign-in that passed its role's limit meanwhile starts its clock. Returns what stops it.
 export function watchRetention(company?: Company): () => void {
   const enter = () => {
     if (document.visibilityState === 'visible') void evaluate(Date.now(), company ? { kind: 'entry', company } : { kind: 'entry' });

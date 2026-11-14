@@ -63,9 +63,6 @@ export type UnsentMark = {
   lockedSince: number | null;
   // Which refusal it was, while lockedSince is set.
   lockedReason?: SavedReason;
-  // When the server last let this person in (S6-3b): a refusal from before it no longer counts, and
-  // a lock is never older than it.
-  lastValidAt?: number;
   // Every unsent write was made in a memory cache (Online only, an iPhone browser tab, the
   // fallback): nothing of it is kept once that window closes.
   memoryOnly?: true;
@@ -86,8 +83,6 @@ function parse(raw: string | null): UnsentMark | null {
     const unsentSince = time(value.unsentSince);
     const mark: UnsentMark = { writes: value.writes, unsentSince, lockedSince };
     if (unsentSince !== null && value.memoryOnly === true) mark.memoryOnly = true;
-    const validAt = time(value.lastValidAt);
-    if (validAt !== null) mark.lastValidAt = validAt;
     if (lockedSince !== null) {
       const reason = value.lockedReason;
       const known = typeof reason === 'string' && (Object.hasOwn(LOCK_REASONS, reason) || reason === 'sign-in-expired');
@@ -191,20 +186,13 @@ export function savedLock(tenantId: string, uid: string): LockReason | null {
 }
 
 // True when this person's work has been locked under a refusal in RETAINED_REASONS for longer than
-// LOCKED_LIMIT_MS (O5), counted from the later of the first refusal and the last time the server let
-// them in: it may no longer be sent, and is removed. Judged from the mark alone, so it holds after
-// the saved sign-in is gone. A mark that cannot be read never counts.
+// LOCKED_LIMIT_MS (O5): it is hidden, and removed once the server refuses the person again (decision
+// 010). Judged from the mark alone, so it holds after the saved sign-in is gone. A mark that cannot
+// be read never counts.
 export function lockOutlived(tenantId: string, uid: string, now: number): boolean {
   const mark = readUnsent(tenantId, uid);
   if (mark === 'unreadable' || mark.lockedSince === null) return false;
-  const since = Math.max(mark.lockedSince, mark.lastValidAt ?? mark.lockedSince);
-  return RETAINED_REASONS.has(mark.lockedReason ?? 'sign-in-again') && now - since > LOCKED_LIMIT_MS;
-}
-
-// When the server last let this person in on this phone, or null.
-export function lastValidAt(tenantId: string, uid: string): number | null {
-  const mark = readUnsent(tenantId, uid);
-  return mark === 'unreadable' ? null : (mark.lastValidAt ?? null);
+  return RETAINED_REASONS.has(mark.lockedReason ?? 'sign-in-again') && now - mark.lockedSince > LOCKED_LIMIT_MS;
 }
 
 // Everyone on this phone, in every company, whose lock outlived the limit, signed in or not.
@@ -233,15 +221,6 @@ export function noteUnlocked(tenantId: string, uid: string): boolean {
   return change(tenantId, uid, ({ lockedReason: _reason, ...current }) => {
     void _reason;
     return { ...current, lockedSince: null };
-  });
-}
-
-// The server let the person in at `now`: their lock is lifted and the time kept, in one write. False
-// when it could not be saved (the lock, if any, still stands).
-export function noteLetIn(tenantId: string, uid: string, now: number): boolean {
-  return change(tenantId, uid, ({ lockedReason: _reason, ...current }) => {
-    void _reason;
-    return { ...current, lockedSince: null, lastValidAt: now };
   });
 }
 

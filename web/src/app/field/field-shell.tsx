@@ -79,7 +79,7 @@ export function FieldShell() {
   // The phone's retention routine (O5, S6-3b; retention.ts) runs as the shell opens and each time it
   // is shown again, whatever the shell then shows: signed in or not, the question about keeping
   // jobs answered or not, a field client started or not. It covers everyone on the phone, this
-  // person included; FieldStore hears when it removes this person's work.
+  // person included, and removes nothing (decision 010).
   useEffect(() => watchRetention(), []);
 
   const homeScreen = surface === 'ios-tab' ? <HomeScreenSheet openFirstTime={boot.kind !== 'starting'} /> : null;

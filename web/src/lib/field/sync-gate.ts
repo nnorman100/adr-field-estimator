@@ -137,10 +137,10 @@ export type GateDeps = {
   // - every refusal the server gives this sign-in, before its age or anything else is judged;
   // - every time the saved sign-in is found past its role's limit, answer or no answer.
   // Either answers false when the phone could not save it: the gate then asks again after
-  // LOCKED_RETRY_MS, whatever the refusal, until it can.
-  onRefused?: (reason: Extract<GateState, { kind: 'locked' }>['reason']) => boolean | void;
+  // LOCKED_RETRY_MS, whatever the refusal, until it can. `answer`: what ask() answered.
+  onRefused?: (reason: Extract<GateState, { kind: 'locked' }>['reason'], answer: MeAnswer) => boolean | void;
   onExpired?: () => boolean | void;
-  // - False when the work on the phone may no longer be sent (its lock outlived the O5 limit). Asked
+  // - False when the work on the phone may no longer be sent. Asked
   //   after every answer, by checkSession() (the page shown again, every minute) and, with
   //   `opening`, just before the network would go on because the server let the person in,
   //   whatever the answer or the sign-in's age; the gate then stops for good, with the network off.
@@ -362,7 +362,7 @@ export class SyncGate {
       let verdict = judgeMe(answer, this.now());
       let refusalSaved = true;
       if (verdict.kind === 'locked') {
-        refusalSaved = this.deps.onRefused?.(verdict.reason) !== false;
+        refusalSaved = this.deps.onRefused?.(verdict.reason, answer) !== false;
         if (stale()) return;
       }
       if (!this.sessionOk()) return await expire();
