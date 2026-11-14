@@ -136,9 +136,8 @@ describe('the check job', () => {
 
 describe('the e2e job', () => {
   const job = (): Data => web().jobs.e2e;
-  /** A step's command line as argv, with the shard filled in as Actions does for each matrix run. */
-  const argv = (step: Data, shard = 1): string[] =>
-    shlex(commands(step).replace(/\$\{\{\s*matrix\.shard\s*\}\}/g, String(shard)));
+  /** A step's command line as argv, comments dropped. */
+  const argv = (step: Data): string[] => shlex(commands(step));
   const isTest = (step: Data): boolean => argv(step).slice(0, 3).join(' ') === 'npm run test:e2e';
   const testStep = (): Data => {
     const found = (job().steps as Data[]).filter(isTest);
@@ -155,16 +154,10 @@ describe('the e2e job', () => {
   });
 
   it('gives each shard its own slice of a total that is the matrix length', () => {
-    const shards: number[] = job().strategy.matrix.shard;
-    for (const shard of shards) {
-      expect(argv(testStep(), shard)).toEqual([
-        'npm',
-        'run',
-        'test:e2e',
-        '--',
-        `--shard=${shard}/${shards.length}`,
-      ]);
-    }
+    const step = testStep();
+    expect(argv(step)).toEqual(['npm', 'run', 'test:e2e']);
+    const total = job().strategy.matrix.shard.length;
+    expect(step.env.E2E_SHARD).toBe(`\${{ matrix.shard }}/${total}`);
   });
 
   it('names the failure artifact per shard, so the shards do not collide', () => {

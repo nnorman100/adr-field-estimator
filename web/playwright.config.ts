@@ -4,6 +4,7 @@ import { FIELD_DATABASE, FIRESTORE_EMULATOR_HOST } from './tests/e2e/offline/emu
 import { SERVER_LOG, SERVER_LOG_DIR } from './tests/e2e/server-log';
 import { FIXTURE_PATH } from './tests/e2e/sign-in/seed';
 import { JOBS_BASE_URL, STORAGE_CONFIG, STORAGE_EMULATOR_HOST } from './tests/e2e/jobs/backend';
+import { parseShard } from './tests/e2e/shard';
 
 const port = 3100;
 
@@ -20,11 +21,14 @@ const FIREBASE_TOOLS = 'firebase-tools@15.31.0';
 // The job screens (tests/e2e/jobs.spec.ts) use a second server built from the same build, with a
 // throwaway PostgreSQL behind it in place of the local file (tests/e2e/jobs/server.ts), and the
 // Storage emulator in place of the evidence bucket, under its own config so no deploy can see it.
+// In CI each matrix run of the e2e job runs one shard, set by E2E_SHARD (tests/e2e/shard.ts); unset
+// runs the whole suite, and a --shard flag on the command line still overrides it.
 export default defineConfig({
   testDir: 'tests/e2e',
   timeout: 60_000,
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
+  shard: parseShard(process.env.E2E_SHARD),
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
   globalSetup: './tests/e2e/sign-in/global-setup.ts',
