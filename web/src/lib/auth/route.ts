@@ -77,7 +77,7 @@ function refusalOf(error: unknown): Response {
 // Open to anyone. Use only for routes that read no company data.
 export function publicRoute<H extends Handler>(handler: H): H {
   return ((request: Request, context: RouteContext) =>
-    monitorAppCheck(request, context, () => handler(request, context))) as H;
+    monitorAppCheck(request, () => handler(request, context))) as H;
 }
 
 // Only a signed-in, active member of an active company. The identity comes from the verified
@@ -89,7 +89,7 @@ export function memberRoute(
 ): Handler {
   const route = Object.freeze({ ...rule });
   return (request, context) =>
-    monitorAppCheck(request, context, async () => {
+    monitorAppCheck(request, async () => {
       let identity: Identity;
       try {
         const { verifier, directory } = services();
@@ -123,7 +123,7 @@ export function requireFlag(
 // session rules for the role it grants.
 export function accountRoute(handler: AccountHandler, services: () => IdentityServices = identityServices): Handler {
   return (request, context) =>
-    monitorAppCheck(request, context, async () => {
+    monitorAppCheck(request, async () => {
       let account: Account;
       try {
         const { verifier, directory } = services();
@@ -179,7 +179,7 @@ export function operatorRoute(
 ): Handler {
   const freshSignIn = rule.freshSignIn === true;
   return (request, context) =>
-    monitorAppCheck(request, context, async () => {
+    monitorAppCheck(request, async () => {
       let operator: Operator;
       try {
         const { verifier, operators } = services();

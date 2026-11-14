@@ -81,44 +81,86 @@ export async function appCheckOutcome(
   }
 }
 
-type Params = Record<string, string | string[] | undefined>;
+// The API routes of the app, as route patterns. tests/unit/app-check.test.ts checks this matches
+// the route files under src/app/api.
+export const API_ROUTES: readonly string[] = [
+  '/api/client-errors',
+  '/api/companies/[companyId]/ai-usage',
+  '/api/companies/[companyId]/invitations',
+  '/api/companies/[companyId]/invitations/[invitationId]/cancel',
+  '/api/companies/[companyId]/invitations/[invitationId]/clear',
+  '/api/companies/[companyId]/invitations/[invitationId]/resend',
+  '/api/companies/[companyId]/members/[membershipId]',
+  '/api/companies/[companyId]/members/[membershipId]/disable',
+  '/api/companies/[companyId]/members/[membershipId]/enable',
+  '/api/companies/[companyId]/profile',
+  '/api/companies/[companyId]/team',
+  '/api/echo',
+  '/api/health',
+  '/api/internal/access-projection',
+  '/api/invitations/[invitationId]',
+  '/api/invitations/[invitationId]/accept',
+  '/api/jobs',
+  '/api/jobs/[jobId]',
+  '/api/jobs/[jobId]/claim',
+  '/api/jobs/[jobId]/customer',
+  '/api/jobs/[jobId]/drafts',
+  '/api/jobs/[jobId]/estimate',
+  '/api/jobs/[jobId]/photos/[photoId]',
+  '/api/jobs/[jobId]/submissions',
+  '/api/me',
+  '/api/platform/companies',
+  '/api/platform/companies/[companyId]/ai-settings',
+  '/api/platform/companies/[companyId]/flags',
+  '/api/platform/companies/[companyId]/invitations/[invitationId]/cancel',
+  '/api/platform/companies/[companyId]/invitations/[invitationId]/resend',
+  '/api/platform/companies/[companyId]/members/[membershipId]',
+  '/api/platform/companies/[companyId]/members/[membershipId]/enable',
+  '/api/platform/companies/[companyId]/members/[membershipId]/reset-second-step',
+  '/api/platform/companies/[companyId]/owner',
+  '/api/platform/companies/[companyId]/prices',
+  '/api/platform/companies/[companyId]/status',
+  '/api/platform/companies/[companyId]/team',
+  '/api/platform/companies/[companyId]/tenant',
+  '/api/prices',
+  '/api/prices/export',
+  '/api/prices/import',
+  '/api/prices/preview',
+  '/api/prices/publish',
+  '/api/prices/versions',
+  '/api/prices/versions/[versionId]',
+  '/api/prices/versions/[versionId]/restore',
+  '/api/prices/working-copy',
+  '/api/sign-in/[address]',
+];
 
-// The route pattern of a call, from its address and the route's own parameters: each segment that
-// is a parameter's value is written as the parameter's name, so no id reaches the line
-// (/api/jobs/3f2…/claim becomes /api/jobs/[jobId]/claim). The query is never included.
-export function routePattern(url: string, params: Params): string {
+// The route pattern a call's address matches, or 'unknown'; the query is never included. A `[name]`
+// segment stands for any one non-empty segment, and where two patterns match, the one with a fixed
+// segment earlier wins, as in Next.js routing (/api/jobs/3f2…/claim becomes /api/jobs/[jobId]/claim,
+// and /api/sign-in/api becomes /api/sign-in/[address]).
+export function routePattern(url: string): string {
   let path: string;
   try {
     path = new URL(url).pathname;
   } catch {
     return 'unknown';
   }
-  const names = new Map<string, string>();
-  for (const [name, value] of Object.entries(params)) {
-    if (typeof value === 'string') names.set(value, `[${name}]`);
-    else if (Array.isArray(value)) for (const part of value) names.set(part, `[...${name}]`);
+  const parts = path.replace(/\/+$/, '').split('/');
+  let found: string[] | undefined;
+  for (const pattern of API_ROUTES) {
+    const want = pattern.split('/');
+    const same = want.length === parts.length && want.every((part, i) => (isParam(part) ? parts[i]!.length > 0 : part === parts[i]));
+    if (same && (found === undefined || moreFixed(want, found))) found = want;
   }
-  const segments = path.split('/').map((segment) => {
-    let decoded = segment;
-    try {
-      decoded = decodeURIComponent(segment);
-    } catch {
-      // Left as it came.
-    }
-    return names.get(decoded) ?? segment;
-  });
-  // A catch-all parameter spans several segments: one name for the run.
-  return segments.filter((segment, i) => !(segment.startsWith('[...') && segments[i - 1] === segment)).join('/');
+  return found ? found.join('/') : 'unknown';
 }
 
-type Context = { params?: Promise<Params> } | undefined;
+const isParam = (part: string) => part.startsWith('[');
 
-async function paramsOf(context: Context): Promise<Params> {
-  try {
-    return (await context?.params) ?? {};
-  } catch {
-    return {};
-  }
+// At the first segment where two patterns differ in kind, a fixed segment beats a parameter.
+function moreFixed(a: string[], b: string[]): boolean {
+  const i = a.findIndex((part, j) => isParam(part) !== isParam(b[j]!));
+  return i >= 0 && !isParam(a[i]!);
 }
 
 // Runs a route's handler and, in monitor mode, writes the App Check line for the call. The check
@@ -126,7 +168,6 @@ async function paramsOf(context: Context): Promise<Params> {
 // its error) is what the caller gets.
 export async function monitorAppCheck(
   request: Request,
-  context: Context,
   run: () => Response | Promise<Response>,
   services: AppCheckServices = appCheckServices,
 ): Promise<Response> {
@@ -149,7 +190,7 @@ export async function monitorAppCheck(
       log('INFO', 'App Check', {
         outcome: await outcome,
         method: request.method,
-        route: routePattern(request.url, await paramsOf(context)),
+        route: routePattern(request.url),
         status,
       });
     } catch {

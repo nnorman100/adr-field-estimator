@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { readdirSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
+  API_ROUTES,
   APP_CHECK_HEADER,
   appCheckOutcome,
   monitorAppCheck,
@@ -21,7 +25,7 @@ function call(token?: string, url = 'https://app.example/api/jobs/8d0a6a1e-0000-
   return new Request(url, { method: 'PUT', headers: token === undefined ? {} : { [APP_CHECK_HEADER]: token } });
 }
 
-const context = (params: Record<string, string | string[]> = {}) => ({ params: Promise.resolve(params) });
+const context = (params: Record<string, string> = {}) => ({ params: Promise.resolve(params) });
 
 function services(verify: AppCheckVerifier, mode: 'monitor' | 'off' = 'monitor', limitMs?: number): AppCheckServices {
   return { mode: () => mode, verifier: () => verify, ...(limitMs === undefined ? {} : { limitMs }) };
@@ -101,9 +105,7 @@ describe('the outcome of one call', () => {
 
 describe('monitor mode', () => {
   it('writes one line with the outcome, method, route pattern and status, and nothing else', async () => {
-    await monitorAppCheck(call(TOKEN), context({ jobId: '8d0a6a1e-0000-4000-8000-000000000001' }), () =>
-      Response.json({ ok: true }),
-    services(async () => ({})));
+    await monitorAppCheck(call(TOKEN), () => Response.json({ ok: true }), services(async () => ({})));
     expect(lines).toEqual([
       { severity: 'INFO', message: 'App Check', outcome: 'valid', method: 'PUT', route: '/api/jobs/[jobId]/claim', status: 200 },
     ]);
@@ -120,7 +122,7 @@ describe('monitor mode', () => {
     for (const status of [200, 201, 401, 403, 404, 503]) {
       for (const [token, verify] of outcomes) {
         const answer = new Response('body', { status, headers: { 'X-Kept': 'yes' } });
-        const response = await monitorAppCheck(call(token), context(), () => answer, services(verify));
+        const response = await monitorAppCheck(call(token), () => answer, services(verify));
         expect(response).toBe(answer);
         expect(response.status).toBe(status);
       }
@@ -133,7 +135,7 @@ describe('monitor mode', () => {
   it('lets a handler’s error through unchanged and records it as 500', async () => {
     const fault = new Error('handler fault');
     await expect(
-      monitorAppCheck(call(), context(), () => Promise.reject(fault), services(async () => ({}))),
+      monitorAppCheck(call(), () => Promise.reject(fault), services(async () => ({}))),
     ).rejects.toBe(fault);
     expect(lines).toMatchObject([{ outcome: 'missing', status: 500 }]);
   });
@@ -141,7 +143,7 @@ describe('monitor mode', () => {
   it('writes nothing and checks nothing when off', async () => {
     const verify = vi.fn(async () => ({}));
     const answer = new Response(null, { status: 204 });
-    expect(await monitorAppCheck(call(TOKEN), context(), () => answer, services(verify, 'off'))).toBe(answer);
+    expect(await monitorAppCheck(call(TOKEN), () => answer, services(verify, 'off'))).toBe(answer);
     expect(verify).not.toHaveBeenCalled();
     expect(lines).toEqual([]);
   });
@@ -164,11 +166,27 @@ describe('monitor mode', () => {
 
 describe('the route pattern', () => {
   it('names each parameter instead of its value and drops the query', () => {
-    expect(routePattern('https://a.example/api/companies/c1/invitations/i%202?token=x', { companyId: 'c1', invitationId: 'i 2' })).toBe(
-      '/api/companies/[companyId]/invitations/[invitationId]',
+    expect(routePattern('https://a.example/api/companies/c1/invitations/i%202/cancel?token=x')).toBe(
+      '/api/companies/[companyId]/invitations/[invitationId]/cancel',
     );
-    expect(routePattern('https://a.example/api/files/a/b/c', { path: ['a', 'b', 'c'] })).toBe('/api/files/[...path]');
-    expect(routePattern('not a url', {})).toBe('unknown');
+    expect(routePattern('https://a.example/api/jobs/j1/')).toBe('/api/jobs/[jobId]');
+    expect(routePattern('https://a.example/api/files/a/b/c')).toBe('unknown');
+    expect(routePattern('not a url')).toBe('unknown');
+  });
+
+  it('keeps the fixed segments when a value is spelt like one', () => {
+    expect(routePattern('https://a.example/api/sign-in/api')).toBe('/api/sign-in/[address]');
+    expect(routePattern('https://a.example/api/sign-in/sign-in')).toBe('/api/sign-in/[address]');
+    expect(routePattern('https://a.example/api/jobs/claim/claim')).toBe('/api/jobs/[jobId]/claim');
+    expect(routePattern('https://a.example/api/prices/versions/restore/restore')).toBe('/api/prices/versions/[versionId]/restore');
+  });
+
+  it('covers every API route file', () => {
+    const files = readdirSync(fileURLToPath(new URL('../../src/app/api', import.meta.url)), { recursive: true, encoding: 'utf8' })
+      .filter((file) => path.basename(file) === 'route.ts')
+      .map((file) => `/api/${path.dirname(file).split(path.sep).join('/')}`)
+      .sort();
+    expect([...API_ROUTES].sort()).toEqual(files);
   });
 });
 
