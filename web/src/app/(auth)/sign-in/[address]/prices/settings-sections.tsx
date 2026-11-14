@@ -145,8 +145,6 @@ export function SizesSection({ table, onChange }: Edit) {
 export function SettingsSection({ table, onChange, published }: Edit & { published: boolean }) {
   const policy = table.policy;
   const set = (change: Partial<Policy>) => onChange(setPolicy(table, change));
-  const assist = policy.assist;
-  const setAssist = (change: Partial<Policy['assist']>) => set({ assist: { ...assist, ...change } });
   return (
     <Section id="settings" title="Estimate settings">
       <CheckField
@@ -170,12 +168,6 @@ export function SettingsSection({ table, onChange, published }: Edit & { publish
         <Hint>You choose whether estimates show a range or one price when you first publish.</Hint>
       )}
       {policy.estimate_mode === 'range' && published ? <RangeFields table={table} onChange={onChange} /> : null}
-      <WholeField
-        label="Drying days the proposal assumes"
-        value={assist.drying_days}
-        hint="Example: 3 means the equipment is priced for 3 days unless the technician enters other days."
-        onChange={(value) => value !== null && setAssist({ drying_days: value })}
-      />
       <DecimalField
         label="Minimum job charge"
         prefix="$"

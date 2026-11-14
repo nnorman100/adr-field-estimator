@@ -232,7 +232,7 @@ function ItemDetails({ item, set }: { item: Item; set: (change: Partial<Item>) =
           onChange={(allow_zero) => set({ allow_zero })}
         />
         <DecimalField label="Waste (%)" value={item.waste_percent} onChange={(waste_percent) => set({ waste_percent })} />
-        {isRoomItem(item) || item.unit === 'room' ? null : (
+        {item.quantity_source !== 'typed' ? null : (
           <DecimalField
             label="Quantity when none is entered"
             value={item.default_quantity}

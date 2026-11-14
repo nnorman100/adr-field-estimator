@@ -3,6 +3,7 @@
 import type { User } from 'firebase/auth';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import type { Table } from '@/engine/table';
 import { callApi } from '@/lib/firebase-client';
 import { changed } from '@/lib/prices/edit';
@@ -222,14 +223,14 @@ export function PublishSection({
             <label htmlFor="publish-reason" className="text-sm font-medium">
               What changed (kept with the version)
             </label>
-            <textarea
+            <Input
               id="publish-reason"
               value={reason}
               maxLength={500}
               required
-              rows={3}
+              autoComplete="off"
+              enterKeyHint="done"
               aria-describedby="publish-reason-hint"
-              className="w-full rounded-md border border-foreground/40 bg-background px-3 py-2 text-base"
               onChange={(event) => setReason(event.target.value)}
             />
             <Hint id="publish-reason-hint">3 to 500 characters, for example &quot;First prices&quot;.</Hint>
@@ -243,9 +244,13 @@ export function PublishSection({
         {message ? <p>{message}</p> : null}
       </div>
       {freshSignIn ? (
-        <Button type="button" variant="outline" onClick={onSignInAgain}>
-          Sign in again
-        </Button>
+        dirty ? (
+          <Hint>Save your changes before you sign in again.</Hint>
+        ) : (
+          <Button type="button" variant="outline" onClick={onSignInAgain}>
+            Sign in again
+          </Button>
+        )
       ) : null}
     </Section>
   );

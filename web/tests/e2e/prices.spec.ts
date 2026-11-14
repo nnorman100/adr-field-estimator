@@ -262,7 +262,7 @@ test('every field is locked while a save is out, so nothing typed meanwhile is l
   await page.getByRole('button', { name: 'Save changes' }).click();
   await expect(page.getByRole('button', { name: 'Saving…' })).toBeVisible();
   await expect(price).toBeDisabled();
-  await expect(page.getByLabel('Drying days the proposal assumes')).toBeDisabled();
+  await expect(page.getByLabel('Small: up to (sq ft)')).toBeDisabled();
   release();
   await expect(page.getByText('Saved. The prices are not published until you publish them.')).toBeVisible();
   await expect(price).toBeEnabled();
@@ -273,12 +273,12 @@ test('a whole-number field holding something else is neither saved nor published
   await resetPrices();
   await savePriced(request);
   await openPricesAsOwner(page);
-  const days = page.getByLabel('Drying days the proposal assumes');
-  const before = await days.inputValue();
+  const small = page.getByLabel('Small: up to (sq ft)');
+  const before = await small.inputValue();
   const save = page.getByRole('button', { name: 'Save changes' });
   const publish = page.getByRole('region', { name: 'Publish', exact: true });
 
-  await days.fill('3.5');
+  await small.fill('3.5');
   await expect(page.getByText(/holds something else\. Correct it before you save or publish\./)).toBeVisible();
   await expect(publish.getByText('Save your changes before you publish.')).toBeVisible();
   await expect(save).toBeDisabled();
@@ -289,14 +289,14 @@ test('a whole-number field holding something else is neither saved nor published
 
   // Undo puts back what is saved, on screen too.
   await page.getByRole('button', { name: 'Undo changes' }).click();
-  await expect(days).toHaveValue(before);
+  await expect(small).toHaveValue(before);
   await expect(page.getByText('All changes are saved.')).toBeVisible();
 
-  await days.fill('4');
+  await small.fill('100');
   await save.click();
   await expect(page.getByText('Saved.', { exact: false })).toBeVisible();
   await page.reload();
-  await expect(page.getByLabel('Drying days the proposal assumes')).toHaveValue('4');
+  await expect(page.getByLabel('Small: up to (sq ft)')).toHaveValue('100');
 });
 
 test('the previews wait while a whole-number field holds something else', async ({ page, request }) => {
@@ -311,15 +311,15 @@ test('the previews wait while a whole-number field holds something else', async 
   const line = pays.getByRole('listitem').filter({ hasText: 'Drywall removal' });
   await expect(line).toContainText('$4.00 per sq ft');
 
-  const days = page.getByLabel('Drying days the proposal assumes');
-  const before = await days.inputValue();
-  await days.fill('3.5');
+  const small = page.getByLabel('Small: up to (sq ft)');
+  const before = await small.inputValue();
+  await small.fill('3.5');
   await expect(preview.getByText('These prices can be published.')).toHaveCount(0);
   await expect(run).toBeDisabled();
   await expect(line).toHaveCount(0);
   await expect(pays.getByText(/to see what this room pays\./)).toBeVisible();
 
-  await days.fill(before);
+  await small.fill(before);
   await expect(run).toBeEnabled();
   await expect(line).toContainText('$4.00 per sq ft');
   await expect(preview.getByText('These prices can be published.')).toBeVisible();
