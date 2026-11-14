@@ -134,13 +134,13 @@ export async function readMe(tenantId: string, uid: string): Promise<DsMe | null
   }
 }
 
-// Every readable row, for judging each saved sign-in's age (retention.ts). Null when the phone's
+// Every readable row, for judging each saved sign-in's age (retention.ts). None when the phone's
 // storage cannot be read or does not answer within WRITE_WITHIN_MS: a row that cannot be read is
-// never judged, and nothing is decided as if there were none.
-export function readAllMe(): Promise<DsMe[] | null> {
+// never judged.
+export function readAllMe(): Promise<DsMe[]> {
   return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(null), WRITE_WITHIN_MS);
-    const answer = (rows: DsMe[] | null) => {
+    const timer = setTimeout(() => resolve([]), WRITE_WITHIN_MS);
+    const answer = (rows: DsMe[]) => {
       clearTimeout(timer);
       resolve(rows);
     };
@@ -149,14 +149,14 @@ export function readAllMe(): Promise<DsMe[] | null> {
         try {
           const request = db.transaction(ME_STORE, 'readonly').objectStore(ME_STORE).getAll();
           request.onsuccess = () => answer((request.result as unknown[]).map(parseMe).filter((row): row is DsMe => row !== null));
-          request.onerror = () => answer(null);
+          request.onerror = () => answer([]);
         } catch {
-          answer(null);
+          answer([]);
         } finally {
           db.close();
         }
       },
-      () => answer(null),
+      () => answer([]),
     );
   });
 }

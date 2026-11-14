@@ -8,7 +8,7 @@ const RETENTION_RULE = 'Locks and locked work change only through evaluate(now, 
 // A lock on someone's unsent work is saved, lifted and acted on by one routine, evaluate() in
 // src/lib/field/retention.ts (O5, S6-3b). Nothing else may reach the steps it is made of.
 const RETENTION_STEPS = [
-  { group: ['**/unsent', '@/lib/field/unsent'], importNames: ['noteLocked', 'noteUnlocked'], message: RETENTION_RULE },
+  { group: ['**/unsent', '@/lib/field/unsent'], importNames: ['noteLocked', 'noteUnlocked', 'noteLetIn'], message: RETENTION_RULE },
   { group: ['**/retention', '@/lib/field/retention'], importNames: ['lockWork'], message: RETENTION_RULE },
 ];
 

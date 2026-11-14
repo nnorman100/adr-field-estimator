@@ -16,7 +16,6 @@ vi.mock('@/lib/field/ds-me', async (original) => ({
   forgetMe,
   saveMe: vi.fn(async () => true),
   readMe: vi.fn(async () => null),
-  readAllMe: vi.fn(async () => []),
   updateMe: vi.fn(async () => true),
 }));
 vi.mock('@/lib/firebase-client', () => ({

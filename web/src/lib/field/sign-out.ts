@@ -101,12 +101,7 @@ async function refuse(auth: Auth, from: Session, tenantId: string, config: Brows
   const { user } = from;
   if (user) {
     // Work already past the limit is removed before the sign-in that names it goes.
-    await evaluate(Date.now(), {
-      kind: 'refused',
-      person: { tenantId, uid: user.uid, config },
-      reason: refusal,
-      current: () => stillSignedIn(auth, from),
-    }).done;
+    await evaluate(Date.now(), { kind: 'refused', person: { tenantId, uid: user.uid, config }, reason: refusal }).done;
     if (pendingReason(tenantId, user.uid) !== null) throw new WorkNotSecuredError(() => refuse(auth, from, tenantId, config, refusal));
   }
   await leave(auth, tenantId, from);

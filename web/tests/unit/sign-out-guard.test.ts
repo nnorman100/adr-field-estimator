@@ -59,6 +59,8 @@ describe('the steps of the retention routine', () => {
   it.each([
     ["import { noteLocked } from './unsent';\nexport const step = noteLocked;\n", LIB],
     ["import { noteUnlocked } from '@/lib/field/unsent';\nexport const step = noteUnlocked;\n", LIB],
+    ["import { noteLetIn } from './unsent';\nexport const step = noteLetIn;\n", LIB],
+    ["import { noteLetIn } from '@/lib/field/unsent';\nexport const step = noteLetIn;\n", SCREEN],
     ["import { lockWork } from './retention';\nexport const step = lockWork;\n", LIB],
     ["import { noteLocked } from '@/lib/field/unsent';\nexport const step = noteLocked;\n", SCREEN],
     ["import { lockWork } from '@/lib/field/retention';\nexport const step = lockWork;\n", 'src/app/field/sample-view.tsx'],
@@ -70,7 +72,9 @@ describe('the steps of the retention routine', () => {
   });
 
   it('are allowed in the routine itself, and the routine and the marks\' reads everywhere', async () => {
-    expect(await restricted("import { noteLocked, noteUnlocked } from './unsent';\nexport const steps = [noteLocked, noteUnlocked];\n", 'src/lib/field/retention.ts')).toEqual([]);
+    expect(
+      await restricted("import { noteLetIn, noteLocked, noteUnlocked } from './unsent';\nexport const steps = [noteLetIn, noteLocked, noteUnlocked];\n", 'src/lib/field/retention.ts'),
+    ).toEqual([]);
     expect(
       await restricted(
         "import { evaluate, watchRetention } from '@/lib/field/retention';\nimport { savedLock, unsentWork } from '@/lib/field/unsent';\nexport const all = [evaluate, watchRetention, savedLock, unsentWork];\n",

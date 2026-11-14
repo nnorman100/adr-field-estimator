@@ -43,12 +43,7 @@ export function runFieldSync(
   const { person } = client;
   let row = saved;
   const tell = (event: RetentionEvent) => evaluate(now(), event).state;
-  // A refusal the phone could not save is held for the sign-in it was given for, and dropped once
-  // another is current.
-  const refuse = (reason: Extract<RetentionEvent, { kind: 'refused' }>['reason']) => {
-    const user = fieldUser(person);
-    return tell({ kind: 'refused', person, reason, current: () => fieldUser(person) === user });
-  };
+  const refuse = (reason: Extract<RetentionEvent, { kind: 'refused' }>['reason']) => tell({ kind: 'refused', person, reason });
   // The saved sign-in is judged first: one that counts again lifts a lock only its age had made.
   tell({ kind: 'entry', person, saved });
   // A refusal this page holds and could not save locks as a saved one does.
@@ -81,7 +76,7 @@ export function runFieldSync(
     onRefused: (reason) => refuse(reason) !== 'unsaved',
     onExpired: () => refuse('sign-in-expired') !== 'unsaved',
     // Asked after every answer, a missing one included, so a refusal the phone could not save is
-    // tried again (by that evaluate's sweep) then too.
+    // tried again then too.
     mayOpen: (opening) => {
       if (!opening) return tell({ kind: 'entry', person, saved: row }) !== 'expired';
       const state = tell({ kind: 'let-in', person });
