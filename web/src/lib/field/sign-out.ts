@@ -48,8 +48,10 @@ async function leave(auth: Auth, tenantId: string, from: Session): Promise<void>
 }
 
 // One sign-in: Firebase keeps the same user object when another tab signs the same person in
-// again, so the sign-in is told apart by its time, read when the sign-out starts.
+// again, so the sign-in is told apart by its time, read when the sign-out starts, or by a screen
+// when it sends the request whose refusal may end that sign-in (signInOf).
 type Session = { user: User | null; key: string | null };
+export type SignIn = Session;
 
 function sessionKey(user: User | null): string | null {
   return user ? `${user.uid} ${user.metadata.lastSignInTime ?? ''}` : null;
@@ -57,6 +59,12 @@ function sessionKey(user: User | null): string | null {
 
 function session(auth: Auth): Session {
   return { user: auth.currentUser, key: sessionKey(auth.currentUser) };
+}
+
+// The sign-in current on `auth` now: what a screen keeps as it sends a request whose refusal may
+// end it, so the sign-out ends that sign-in and never a newer one.
+export function signInOf(auth: Auth): SignIn {
+  return session(auth);
 }
 
 function stillSignedIn(auth: Auth, from: Session): boolean {
@@ -95,9 +103,17 @@ export async function signOutOrShow(signOut: () => Promise<void>, show: (failed:
 // again (S6-3b). Throws WorkNotSecuredError, with the saved sign-in and the work left as they
 // were, when the phone could not save it; its `retry` is the retry. `fromServer`: the server gave
 // this refusal just now; only then may work already past the limit be removed (decisions 010, 011).
-// The retry is no answer from the server: it only locks.
-export function signOutOnRefusal(auth: Auth, tenantId: string, config: BrowserSignInConfig, refusal: LockReason, fromServer = false): Promise<void> {
-  return refuse(auth, session(auth), tenantId, config, refusal, fromServer);
+// The retry is no answer from the server: it only locks. `from`: the sign-in refused (signInOf, kept
+// when the request was sent); the current one when left out.
+export function signOutOnRefusal(
+  auth: Auth,
+  tenantId: string,
+  config: BrowserSignInConfig,
+  refusal: LockReason,
+  fromServer = false,
+  from: SignIn = session(auth),
+): Promise<void> {
+  return refuse(auth, from, tenantId, config, refusal, fromServer);
 }
 
 async function refuse(auth: Auth, from: Session, tenantId: string, config: BrowserSignInConfig, refusal: LockReason, fromServer: boolean): Promise<void> {
@@ -136,7 +152,7 @@ export async function signOutDiscarding(auth: Auth, tenantId: string, config: Br
   const from = session(auth);
   if (from.user) {
     const result = await discardFieldWork({ tenantId, uid: from.user.uid, config });
-    if (result !== 'discarded') return result;
+    if (result !== 'discarded') return result === 'elsewhere' ? 'elsewhere' : 'failed';
   }
   await leave(auth, tenantId, from);
   return 'signed-out';

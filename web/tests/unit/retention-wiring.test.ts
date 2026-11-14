@@ -71,7 +71,7 @@ vi.mock('firebase/auth', () => ({ getIdTokenResult: vi.fn(async () => ({ authTim
 const { evaluate, forgetPending } = await import('@/lib/field/retention');
 const { discardFieldWork } = await import('@/lib/field-db');
 const { runFieldSync } = await import('@/lib/field/field-sync');
-const { signOutOnRefusal, signOutOrShow } = await import('@/lib/field/sign-out');
+const { signInOf, signOutOnRefusal, signOutOrShow } = await import('@/lib/field/sign-out');
 const { noteWrite, readUnsent, unsentKey } = await import('@/lib/field/unsent');
 
 const letIn = () => ({
@@ -332,6 +332,19 @@ describe('a refusal the phone could not save, then no signal', () => {
     expect(reopened.states[0]).toBe('locked');
     expect(reopened.states).not.toContain('open');
     reopened.stop();
+  });
+});
+
+describe('the sign-in a refusal ends', () => {
+  it('is the one a screen kept as it sent its request, never one made since by the same person', async () => {
+    const auth = { currentUser: signedInAs('ana') };
+    const from = signInOf(auth as unknown as Auth);
+    // Her request is on its way when she signs in again in another tab; then the old answer comes.
+    auth.currentUser = signedInAs('ana', 'Sat, 14 Nov 2026 09:00:00 GMT');
+    await signOutOnRefusal(auth as unknown as Auth, 't-a', config, 'sign-in-again', true, from);
+    expect(forgetMe).not.toHaveBeenCalled();
+    expect(signOutCompany).not.toHaveBeenCalled();
+    expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: null });
   });
 });
 

@@ -7,11 +7,11 @@ import { companyAuth } from '@/lib/firebase-client';
 import { mirrorSignIn, startFieldClient, type CacheKind, type FieldClient } from '@/lib/field-db';
 import { meKey, type DsMe } from '@/lib/field/ds-me';
 import { runFieldSync } from '@/lib/field/field-sync';
-import { evaluate, onWorkRemoved, takeRemoved } from '@/lib/field/retention';
+import { contentHidden, evaluate, onWorkRemoved, takeRemoved } from '@/lib/field/retention';
 import { askToPersist, keepAnswer, saveKeepAnswer, type KeepAnswer } from '@/lib/field/keep-consent';
 import type { FieldSurface } from '@/lib/field/platform';
 import { sessionValid, type GateState, type SyncGate } from '@/lib/field/sync-gate';
-import { lockOutlived, unsentWork } from '@/lib/field/unsent';
+import { unsentWork } from '@/lib/field/unsent';
 import { holdWindow } from '@/lib/field/window-lock';
 import * as text from './field-store-text';
 
@@ -69,8 +69,8 @@ function KeepQuestion({ onAnswer }: { onAnswer: (answer: KeepAnswer) => void }) 
   );
 }
 
-// Whether the person's work is hidden (decision 010), read from the lock and the clock: again as the
-// page is shown and every minute while it stays shown, as the shell's other entry points run.
+// Whether the person's work is hidden (decisions 010, 011; contentHidden in retention.ts): asked again
+// as the page is shown and every minute while it stays shown, as the shell's other entry points run.
 function useHidden(tenantId: string, uid: string): boolean {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -84,7 +84,7 @@ function useHidden(tenantId: string, uid: string): boolean {
       clearInterval(timer);
     };
   }, []);
-  return lockOutlived(tenantId, uid, now);
+  return contentHidden(tenantId, uid, now);
 }
 
 // The boundary of the person's field screens (jobs, scope, customer, photos and what is typed in
@@ -301,9 +301,9 @@ export function FieldStore({
       </Notice>
     );
   }
-  // Locked for more than 30 days (decision 010): read from the lock and the clock each time, and
+  // Locked for more than 30 days (decisions 010, 011): asked of the retention routine each time, and
   // nothing of the work shows while it is.
-  if (lockOutlived(me.tenantId, me.uid, now)) {
+  if (contentHidden(me.tenantId, me.uid, now)) {
     return (
       <Notice>
         <p className="text-base">{text.HIDDEN_TEXT}</p>

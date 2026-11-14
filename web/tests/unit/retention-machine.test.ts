@@ -14,7 +14,7 @@ vi.mock('@/lib/field/window-lock', () => ({ holdsWindow: () => helper.phone.owns
 vi.mock('@/lib/field-db', () => helper.fieldDb());
 
 const { DAY, START, config, keyOf, phone, storage, ana, ben, otherAna, saveRow, giveWork, lockOf, authFor } = helper;
-const { cleanupKey, evaluate, forgetPending, onWorkRemoved, takeRemoved, watchRetention, WATCH_EVERY_MS } = await import('@/lib/field/retention');
+const { cleanupKey, contentHidden, evaluate, forgetPending, onWorkRemoved, takeRemoved, watchRetention, WATCH_EVERY_MS } = await import('@/lib/field/retention');
 const { signOutKeeping, signOutOnRefusal, WorkNotSecuredError } = await import('@/lib/field/sign-out');
 // A second tab: its own copy of the routine's modules, over the same storage and saved sign-ins.
 vi.resetModules();
@@ -274,6 +274,24 @@ describe('the states of one person', () => {
   });
 });
 
+describe('whether a person\'s field content may show', () => {
+  it('hides it from day 30 of a refusal saved on the phone, or held by the page because storage refused it', () => {
+    giveWork(ana, START);
+    giveWork(ben, START);
+    evaluate(START, { kind: 'refused', person: ana, reason: 'company-inactive' });
+    phone.quota = true;
+    expect(evaluate(START, { kind: 'refused', person: ben, reason: 'company-inactive' }).state).toBe('unsaved');
+    const day30 = START + LOCKED_LIMIT_MS;
+    expect([contentHidden('t-a', 'ana', day30), contentHidden('t-a', 'ben', day30)]).toEqual([false, false]);
+    // Day 31, storage still full: both are hidden, the held one too.
+    expect([contentHidden('t-a', 'ana', day30 + 1), contentHidden('t-a', 'ben', day30 + 1)]).toEqual([true, true]);
+    expect(lockOf(ben)).toBeNull();
+    // A refusal that is not removed after 30 days hides nothing, saved or held.
+    expect(evaluate(START, { kind: 'refused', person: otherAna, reason: 'second-step' }).state).toBe('unsaved');
+    expect(contentHidden('t-b', 'ana', START + 400 * DAY)).toBe(false);
+  });
+});
+
 describe('the sweep after every event', () => {
   it('starts the clock for a saved sign-in past its role\'s limit that no server refused, and for nobody else', async () => {
     // An estimator signed in 31 days ago, an owner 15 days ago, an estimator yesterday.
@@ -390,6 +408,22 @@ describe('the sweep after every event', () => {
     phone.discardFails = false;
     expect(await evaluate(later + 1, { kind: 'entry' }).done).toEqual([]);
     expect(await evaluate(later + 1, { kind: 'refused', person: ana, reason: 'member-disabled', fromServer: true }).done).toEqual(['t-a/ana']);
+  });
+
+  it('never erases work whose lock a let-in elsewhere lifted while the removal was on its way', async () => {
+    giveWork(ana, START);
+    evaluate(START, { kind: 'refused', person: ana, reason: 'member-disabled' });
+    const later = START + LOCKED_LIMIT_MS + 1;
+    // Her client has stopped for the removal when another tab signs her in.
+    phone.whileDiscarding = () => void secondTab.evaluate(later, { kind: 'let-in', person: ana });
+    const told: [string, boolean][] = [];
+    const stop = onWorkRemoved((who, done) => told.push([who, done]));
+    expect(await evaluate(later, { kind: 'refused', person: ana, reason: 'member-disabled', fromServer: true }).done).toEqual([]);
+    expect(phone.work.has(keyOf(ana))).toBe(true);
+    expect(lockOf(ana)).toBeNull();
+    // Her field window, whose client stopped, is opened again for her.
+    expect(told).toEqual([['t-a/ana', false]]);
+    stop();
   });
 
   it('runs one removal at a time: two refusals at once remove a person once', async () => {

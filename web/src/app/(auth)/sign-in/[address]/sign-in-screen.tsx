@@ -28,9 +28,11 @@ import {
   signOutDiscarding,
   signOutKeeping,
   signOutOnRefusal,
+  signInOf,
   signOutOrShow,
   WorkNotSecuredError,
   type FailedSignOut,
+  type SignIn,
 } from '@/lib/field/sign-out';
 import { endsSession, errorCode, signInErrorMessage, type MeOutcome } from '@/lib/sign-in/outcome';
 import { rememberSignInAddress } from '@/lib/sign-in/remember';
@@ -132,13 +134,14 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
     [],
   );
 
-  // `fromServer`: the server's own answer refused the person just now (decision 010).
+  // `fromServer`: the server's own answer refused the person just now (decision 010). `from`: the
+  // sign-in refused, kept when the request was sent; the current one when left out.
   const refuse = useCallback(
-    (message: string, refusal: LockReason, fromServer = false) => {
+    (message: string, refusal: LockReason, fromServer = false, from?: SignIn) => {
       const auth = authRef.current;
       return signOutOrShow(
         async () => {
-          if (auth) await signOutOnRefusal(auth, tenantId, config, refusal, fromServer);
+          if (auth) await signOutOnRefusal(auth, tenantId, config, refusal, fromServer, from);
         },
         showFailed,
         () => signedOut(message),
@@ -158,6 +161,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
       // user object, so its time tells them apart.
       const signedInAt = user.metadata.lastSignInTime;
       const stillCurrent = () => authRef.current?.currentUser === user && user.metadata.lastSignInTime === signedInAt;
+      const from = authRef.current ? signInOf(authRef.current) : undefined;
       const { outcome, body } = await checkSignIn(user, fresh);
       const authenticators = outcome.kind === 'second-step' ? await authenticatorCount(user) : 0;
       const current = authRef.current?.currentUser ?? null;
@@ -170,7 +174,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
         return;
       }
       if (authenticators > 0) {
-        await refuse('Your authenticator app is set up. Sign in again and enter its code.', 'sign-in-again');
+        await refuse('Your authenticator app is set up. Sign in again and enter its code.', 'sign-in-again', false, from);
         return;
       }
       if (endsSession(outcome)) {
@@ -180,7 +184,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
             : outcome.kind === 'account-disabled'
               ? `This account is turned off. Ask the owner of ${companyName}.`
               : 'Please sign in again.';
-        await refuse(message, outcome.kind, true);
+        await refuse(message, outcome.kind, true, from);
         return;
       }
       // The field shell starts from this row with no signal (S6-2), so it is saved before the screen

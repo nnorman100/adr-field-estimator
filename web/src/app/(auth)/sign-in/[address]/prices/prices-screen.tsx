@@ -8,7 +8,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import type { BrowserSignInConfig } from '@/lib/config';
 import { belongsTo, callApi, companyAuth } from '@/lib/firebase-client';
-import { signOutOnRefusal, signOutOrShow, type FailedSignOut } from '@/lib/field/sign-out';
+import { signInOf, signOutOnRefusal, signOutOrShow, type FailedSignOut, type SignIn } from '@/lib/field/sign-out';
 import type { LockReason } from '@/lib/field/unsent';
 import { pricesAccess, pricesView, type OwnerPrices, type ReaderPrices } from '@/lib/prices/screen';
 import { endsSession, meOutcome } from '@/lib/sign-in/outcome';
@@ -52,6 +52,8 @@ export function PricesScreen(props: PricesScreenProps) {
 function CompanyPrices({ address, companyName, tenantId, config }: PricesScreenProps & { config: BrowserSignInConfig }) {
   const [phase, setPhase] = useState<Phase>({ name: 'checking' });
   const authRef = useRef<Auth | null>(null);
+  // The sign-in the screen was opened for: what its "Sign in again" ends.
+  const signedInRef = useRef<SignIn | undefined>(undefined);
   const router = useRouter();
 
   useEffect(() => {
@@ -59,16 +61,19 @@ function CompanyPrices({ address, companyName, tenantId, config }: PricesScreenP
     authRef.current = auth;
     // The latest sign-in wins: an answer for a user who has since signed out is dropped.
     const stale = (user: User) => authRef.current?.currentUser !== user;
-    const signOutOrUnavailable = (refusal: LockReason, fromServer = false) =>
-      signOutOrShow(() => signOutOnRefusal(auth, tenantId, config, refusal, fromServer), setPhase);
+    const signOutOrUnavailable = (refusal: LockReason, fromServer = false, from?: SignIn) =>
+      signOutOrShow(() => signOutOnRefusal(auth, tenantId, config, refusal, fromServer, from), setPhase);
 
     async function open(user: User) {
       setPhase({ name: 'checking' });
+      // The sign-in this check is for, kept as the request goes.
+      const from = signInOf(auth);
+      signedInRef.current = from;
       const me = await callApi(user, '/api/me');
       if (stale(user)) return;
       const outcome = meOutcome(me.status, me.body);
       if (endsSession(outcome)) {
-        await signOutOrUnavailable(outcome.kind, true);
+        await signOutOrUnavailable(outcome.kind, true, from);
         return;
       }
       if (outcome.kind === 'unavailable') return setPhase({ name: 'unavailable' });
@@ -146,7 +151,7 @@ function CompanyPrices({ address, companyName, tenantId, config }: PricesScreenP
             onSignInAgain={async () => {
               const auth = authRef.current;
               const toSignIn = () => router.push(`/sign-in/${address}`);
-              return auth ? signOutOrShow(() => signOutOnRefusal(auth, tenantId, config, 'sign-in-again'), setPhase, toSignIn) : toSignIn();
+              return auth ? signOutOrShow(() => signOutOnRefusal(auth, tenantId, config, 'sign-in-again', false, signedInRef.current), setPhase, toSignIn) : toSignIn();
             }}
           />
         </PricesFrame>

@@ -29,6 +29,8 @@ export const phone = {
   ownsWindow: false,
   // ds-me cannot be read.
   rowsUnreadable: false,
+  // What happens elsewhere while a removal has stopped the person's client and not yet erased.
+  whileDiscarding: null as (() => void) | null,
   discards: [] as { person: string; lockHeld: boolean }[],
   // What happened, in order: 'removed <person>', 'forgot <person>' (the saved sign-in).
   log: [] as string[],
@@ -39,6 +41,7 @@ export const phone = {
     this.discards.length = 0;
     this.log.length = 0;
     this.quota = this.discardFails = this.otherWindow = this.ownsWindow = this.rowsUnreadable = false;
+    this.whileDiscarding = null;
   },
 };
 
@@ -75,15 +78,18 @@ export function dsMe<T extends object>(original: T) {
 }
 
 // field-db as the phone holds it: nothing goes while another window holds the work or the database
-// cannot be cleared; otherwise the database and the person's mark go together.
+// cannot be cleared; once the client has stopped, `stillWanted` is asked right before anything is
+// erased; otherwise the database and the person's mark go together.
 export function fieldDb() {
   return {
     stopFieldClient: async () => undefined,
-    discardFieldWork: async (person: FieldPerson, { lockHeld = false } = {}) => {
+    discardFieldWork: async (person: FieldPerson, { lockHeld = false, stillWanted }: { lockHeld?: boolean; stillWanted?: () => boolean } = {}) => {
       phone.discards.push({ person: keyOf(person), lockHeld });
       // Clearing a database takes a while: anything not waiting for it runs first.
       for (let turn = 0; turn < 5; turn += 1) await Promise.resolve();
       if (phone.otherWindow && !lockHeld) return 'elsewhere';
+      phone.whileDiscarding?.();
+      if (stillWanted && !stillWanted()) return 'kept';
       if (phone.discardFails) return 'failed';
       phone.log.push(`removed ${keyOf(person)}`);
       phone.work.delete(keyOf(person));

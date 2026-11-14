@@ -7,7 +7,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import type { BrowserSignInConfig } from '@/lib/config';
 import { manifestDigest, type FieldManifest } from '@/lib/field/canonical';
-import { signOutOnRefusal, signOutOrShow, type FailedSignOut } from '@/lib/field/sign-out';
+import { signInOf, signOutOnRefusal, signOutOrShow, type FailedSignOut } from '@/lib/field/sign-out';
 import { belongsTo, callApi, companyAuth } from '@/lib/firebase-client';
 import { endsSession, meOutcome } from '@/lib/sign-in/outcome';
 import { fieldDatabase, readShownDraft } from '@/lib/submissions/field-reader';
@@ -58,12 +58,14 @@ function Finish({ address, companyName, tenantId, jobId, config }: FinishScreenP
     async (user: User) => {
       const stale = () => authRef.current?.currentUser !== user;
       setPhase({ name: 'checking' });
+      // The sign-in this check is for, kept as the request goes.
+      const auth = authRef.current!;
+      const from = signInOf(auth);
       const me = await callApi(user, '/api/me');
       if (stale()) return;
       const outcome = meOutcome(me.status, me.body);
       if (endsSession(outcome)) {
-        const auth = authRef.current!;
-        await signOutOrShow(() => signOutOnRefusal(auth, tenantId, config, outcome.kind, true), setPhase);
+        await signOutOrShow(() => signOutOnRefusal(auth, tenantId, config, outcome.kind, true, from), setPhase);
         return;
       }
       if (outcome.kind === 'unavailable') return setPhase({ name: 'unavailable' });

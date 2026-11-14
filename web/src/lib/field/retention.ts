@@ -2,7 +2,7 @@ import type { BrowserSignInConfig } from '@/lib/config';
 import { discardFieldWork, type FieldPerson } from '@/lib/field-db';
 import { meKey, readAllMe } from './ds-me';
 import { sessionValid } from './sync-gate';
-import { lockOutlived, noteLocked, noteUnlocked, savedReason, type SavedReason } from './unsent';
+import { LOCKED_LIMIT_MS, lockOutlived, noteLocked, noteUnlocked, RETAINED_REASONS, savedReason, type SavedReason } from './unsent';
 import { holdsWindow } from './window-lock';
 
 // Locked work and the 30-day limit (owner decisions O5, 010 and 011), as one routine (S6-3b).
@@ -139,6 +139,16 @@ function retryPending(now: number): void {
   }
 }
 
+// Whether the person's field content may not show: their work is hidden, locked for more than 30
+// days under a refusal O5 applies to, by a lock saved on the phone or one this page holds with the
+// time it was given (decisions 010, 011). The one answer the shell, its store and the job screens
+// ask; read, never written.
+export function contentHidden(tenantId: string, uid: string, now: number): boolean {
+  if (lockOutlived(tenantId, uid, now)) return true;
+  const held = pending.get(meKey(tenantId, uid))?.held ?? [];
+  return held.some((one) => RETAINED_REASONS.has(one.reason) && now - one.at > LOCKED_LIMIT_MS);
+}
+
 // The first refusal this page holds for the person and could not save yet, or null. Their work
 // stays closed while one is held.
 export function pendingReason(tenantId: string, uid: string): SavedReason | null {
@@ -208,7 +218,8 @@ export function onWorkRemoved(listener: (person: string, removed: boolean) => vo
 }
 
 // The sweep, then the removal the event confirmed: `confirmed`, removed by the server just now while
-// hidden. Still hidden when its turn comes, or nothing goes.
+// hidden. Still hidden when its turn comes, and again at the moment the work would be erased (a
+// let-in elsewhere meanwhile lifts the lock), or nothing goes.
 async function sweep(now: number, confirmed: FieldPerson | null): Promise<string[]> {
   try {
     const saved = await readAllMe();
@@ -216,8 +227,10 @@ async function sweep(now: number, confirmed: FieldPerson | null): Promise<string
     for (const row of saved) judgeSignIn(row, row, now);
     if (!confirmed || stateOf(confirmed, now) !== 'hidden') return [];
     // This page's own field window holds the one-window lock; any other page must find it free.
-    const result = await discardFieldWork(confirmed, { lockHeld: holdsWindow() }).catch(() => 'failed' as const);
-    // Another window holds the work: nothing was touched.
+    const stillHidden = () => stateOf(confirmed, now) === 'hidden';
+    const result = await discardFieldWork(confirmed, { lockHeld: holdsWindow(), stillWanted: stillHidden }).catch(() => 'failed' as const);
+    // Another window holds the work: nothing was touched. Otherwise the person's client was stopped,
+    // and unless the work is gone it must be opened again ('kept': let in meanwhile, nothing erased).
     if (result === 'elsewhere') return [];
     const person = meKey(confirmed.tenantId, confirmed.uid);
     const removed = result === 'discarded';
