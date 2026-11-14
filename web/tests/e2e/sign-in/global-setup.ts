@@ -68,9 +68,10 @@ export default async function globalSetup(config: FullConfig) {
     };
   }
 
-  // A company of its own for each project's team tests: the owner has the second step the emulator
-  // cannot do (the fixture's `secondStep`), and the team starts with one estimator and one office
-  // user besides the people the tests change.
+  // A company of its own for each project's team tests: the owner and the office user have the
+  // second step the emulator cannot do (the fixture's `secondStep`; office needs it since
+  // 2026-11-14, D2), and the team starts with one estimator and one office user besides the people
+  // the tests change.
   const teams: Record<string, TeamSeed> = {};
   for (const project of PROJECTS) {
     const tenantId = await createTenant(`team-${project}-${run}`);
@@ -91,7 +92,7 @@ export default async function globalSetup(config: FullConfig) {
           displayName: name,
           role,
           status: 'active',
-          ...(role === 'owner' ? { secondStep: true } : {}),
+          ...(role === 'owner' || role === 'office' ? { secondStep: true } : {}),
         });
       }
       return { email, uid, name };
@@ -111,7 +112,8 @@ export default async function globalSetup(config: FullConfig) {
   }
 
   // A company of its own for each project's Prices tests, with the price_books switch on: an owner
-  // with the second step, an estimator and an office user.
+  // and an office user with the second step (office needs it since 2026-11-14, D2), an estimator,
+  // and a second office user who has not set it up yet, to show the refusal.
   const prices: Record<string, PricesSeed> = {};
   for (const project of PROJECTS) {
     const tenantId = await createTenant(`prices-${project}-${run}`);
@@ -119,7 +121,11 @@ export default async function globalSetup(config: FullConfig) {
     const address = `prices-${project}`;
     const companyName = `Prices ${project} Restoration`;
     fixture.companies.push({ id: companyId, name: companyName, signInAddress: address, tenantId, status: 'active', flags: ['price_books'] });
-    const person = async (name: string, role: 'owner' | 'estimator' | 'office'): Promise<TeamAccount> => {
+    const person = async (
+      name: string,
+      role: 'owner' | 'estimator' | 'office',
+      secondStep = role !== 'estimator',
+    ): Promise<TeamAccount> => {
       const email = `${name}-${project}-${run}@example.com`;
       const uid = await createUser(tenantId, { email, password: PASSWORD, emailVerified: true });
       fixture.members.push({
@@ -131,7 +137,7 @@ export default async function globalSetup(config: FullConfig) {
         displayName: name,
         role,
         status: 'active',
-        ...(role === 'owner' ? { secondStep: true } : {}),
+        ...(secondStep ? { secondStep: true } : {}),
       });
       return { email, uid, name };
     };
@@ -143,6 +149,7 @@ export default async function globalSetup(config: FullConfig) {
       owner: await person('owner-prices', 'owner'),
       estimator: await person('estimator-prices', 'estimator'),
       office: await person('office-prices', 'office'),
+      officeWithoutApp: await person('office-no-app-prices', 'office', false),
     };
   }
 

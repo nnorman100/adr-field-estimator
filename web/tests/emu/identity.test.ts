@@ -161,6 +161,17 @@ describe('second-step and session rules on emulator tokens', () => {
     expect(await resolveIdentity(bearer(estimator.idToken), verifier, directory)).toMatchObject({ role: 'estimator' });
   });
 
+  // Office users see every job of the company, so since 2026-11-14 they need it too (D2, D-030).
+  it('refuses an office user who signed in without a second step, or with a text message', async () => {
+    const office = await user(tenantA);
+    roles.set(office.uid, 'office');
+    expect(await refusalOf(resolveIdentity(bearer(office.idToken), verifier, directory))).toBe('second_step_required');
+    const enrolment = { route: { secondStep: 'enrolment' as const } };
+    expect(await resolveIdentity(bearer(office.idToken), verifier, directory, enrolment)).toMatchObject({ role: 'office' });
+    const withSms = await enrolTextMessageSecondFactor(tenantA, office.idToken, '+15555550102');
+    expect(await refusalOf(resolveIdentity(bearer(withSms), verifier, directory))).toBe('second_step_required');
+  });
+
   it('does not count a text-message second factor for an owner', async () => {
     const owner = await user(tenantA);
     roles.set(owner.uid, 'owner');

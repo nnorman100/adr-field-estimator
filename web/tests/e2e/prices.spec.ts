@@ -436,6 +436,31 @@ test('a room type removed after it was chosen gives way to the first one listed'
   await expect(page.getByText('Saved.', { exact: false })).toBeVisible();
 });
 
+// Office users need the authenticator-app second step (D2, since 2026-11-14): one who has not set it
+// up gets only the setup screen, and the server refuses the Prices routes until it is done.
+test('an office user without the second step is refused on Prices', async ({ page, request }) => {
+  await resetPrices();
+  await publishFirst(request);
+  const person = company.officeWithoutApp;
+  await page.goto(`/sign-in/${company.address}`);
+  await page.getByLabel('Email').fill(person.email);
+  await page.getByLabel('Password').fill(PASSWORD);
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Set up your second sign-in step' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: `Signed in to ${company.companyName}` })).toHaveCount(0);
+
+  await page.goto(`/sign-in/${company.address}/prices`);
+  await expect(page.getByRole('heading', { name: 'Prices', level: 1 })).toHaveCount(0);
+  await expect(page.getByText('Drywall removal')).toHaveCount(0);
+
+  const read = await call(request, person, 'GET', '/api/prices');
+  expect(read.status).toBe(403);
+  expect(read.body).toEqual({ error: 'second_step_required' });
+  const save = await call(request, person, 'PUT', '/api/prices/working-copy', { expectedRevision: 1, table: {} });
+  expect(save.status).toBe(403);
+  expect(save.body).toEqual({ error: 'second_step_required' });
+});
+
 for (const role of ['estimator', 'office'] as const) {
   test(`the ${role} reads the published prices and changes nothing`, async ({ page, request }) => {
     await resetPrices();

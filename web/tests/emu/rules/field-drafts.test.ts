@@ -4,10 +4,12 @@
 // real Auth emulator ID token for one user. 200 means the rules allowed the call, 403 refused it.
 import { randomUUID } from 'node:crypto';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { call, createTenant, signIn, signUp } from '../auth-emulator';
+import { call, createTenant, signIn, signUp, withSecondFactor } from '../auth-emulator';
 import { type Caller, createDoc, deleteDoc, getDoc, listDocs, serverSet, updateDoc } from './firestore-rest';
 
-type User = { uid: string; caller: Caller };
+// `caller` signed in as the person's role must (with the authenticator app for an owner or office
+// user, D2); `passwordOnly` is the same person signed in with the password alone.
+type User = { uid: string; caller: Caller; passwordOnly: Caller };
 
 const run = randomUUID().slice(0, 8);
 const A = `company-a-${run}`;
@@ -20,14 +22,14 @@ let tenantA: string;
 let tenantB: string;
 const users: Record<string, User> = {};
 
-async function user(name: string, tenantId: string | undefined): Promise<User> {
+async function user(name: string, tenantId: string | undefined, secondStep = false): Promise<User> {
   const email = `${name}-${run}@field.example.test`;
   const password = `synthetic-password-${name}`;
   const uid = tenantId ? await signUp(tenantId, email, password) : await signUpProjectLevel(email, password);
   const idToken = tenantId
     ? await signIn(tenantId, email, password)
     : await signInProjectLevel(email, password);
-  return { uid, caller: { idToken } };
+  return { uid, caller: { idToken: secondStep ? withSecondFactor(idToken) : idToken }, passwordOnly: { idToken } };
 }
 
 // A user of no tenant (project-level sign-in) has no `firebase.tenant` in the token.
@@ -63,7 +65,7 @@ beforeAll(async () => {
   tenantA = await createTenant('company-a');
   tenantB = await createTenant('company-b');
   for (const name of ['ownerA', 'estimatorA', 'otherEstimatorA', 'officeA', 'expiredA', 'noAccessA']) {
-    users[name] = await user(name, tenantA);
+    users[name] = await user(name, tenantA, name === 'ownerA' || name === 'officeA');
   }
   users.estimatorB = await user('estimatorB', tenantB);
   users.projectUser = await user('projectUser', undefined);
@@ -295,6 +297,30 @@ describe('field database rules', () => {
     expect(await createDoc(office, `${draft(A, 'office-owned')}/rooms/new`, { field: { name: 'x' } })).toBe(
       403,
     );
+  });
+
+  it('refuses an owner or office user who did not sign in with the authenticator app, and not an estimator', async () => {
+    await serverSet(`${draft(A, 'editing')}/photos/p-step`, { field: { shotTag: 'overview' } });
+    for (const name of ['officeA', 'ownerA']) {
+      const { idToken } = u(name).passwordOnly as { idToken: string };
+      for (const [how, caller] of [
+        ['password only', { idToken }],
+        ['text message', { idToken: withSecondFactor(idToken, 'phone') }],
+      ] as const) {
+        const who = `${name} ${how}`;
+        expect(await getDoc(caller, draft(A, 'editing')), who).toBe(403);
+        expect(await getDoc(caller, `${draft(A, 'editing')}/rooms/kitchen`), who).toBe(403);
+        expect(await getDoc(caller, `${draft(A, 'editing')}/photos/p-step`), who).toBe(403);
+        expect(await listDocs(caller, `companies/${A}/drafts`), who).toBe(403);
+      }
+      // Control: the same person, signed in with the authenticator app.
+      expect(await getDoc(u(name).caller, `${draft(A, 'editing')}/photos/p-step`), name).toBe(200);
+    }
+    // An estimator may opt in to the second step but need not: the password alone still works.
+    const estimator = u('estimatorA').passwordOnly;
+    expect(await getDoc(estimator, draft(A, 'editing'))).toBe(200);
+    expect(await getDoc(estimator, `${draft(A, 'editing')}/photos/p-step`)).toBe(200);
+    expect(await updateDoc(estimator, draft(A, 'editing'), { field: { notes: 'wet carpet' } })).toBe(200);
   });
 
   it("refuses an estimator another estimator's draft", async () => {

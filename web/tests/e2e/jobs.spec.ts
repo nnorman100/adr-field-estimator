@@ -5,6 +5,7 @@ import { expectNoAxeViolations } from './a11y';
 import { JOBS_BASE_URL } from './jobs/backend';
 import { adminSql, currentDraftOf, seedCompany, storedJobs, storedPhotos, type Company, type Person } from './jobs/seed';
 import { adminDb } from './offline/world';
+import { APP_CODE, fakeSecondStep, withSecondFactor } from './second-step/fake-totp';
 import { idTokenFor } from './sign-in/emulator';
 import { PASSWORD } from './sign-in/seed';
 
@@ -31,11 +32,25 @@ const PICTURE = {
   ),
 };
 
+// An office user (and an owner) needs the authenticator-app second step (D2; office since
+// 2026-11-14), which the Auth emulator cannot do: it is answered at the network boundary
+// (second-step/fake-totp.ts), with an authenticator app already set up.
+const withAuthenticator = new WeakSet<Page>();
+
 async function signIn(page: Page, company: Company, person: Person) {
+  const secondStep = person.role !== 'estimator';
+  if (secondStep && !withAuthenticator.has(page)) {
+    await fakeSecondStep(page, { factors: ['Authenticator app'] });
+    withAuthenticator.add(page);
+  }
   await page.goto(`/sign-in/${company.address}`);
   await page.getByLabel('Email').fill(person.email);
   await page.getByLabel('Password').fill(PASSWORD);
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  if (secondStep) {
+    await page.getByLabel('6-digit code').fill(APP_CODE);
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  }
   await expect(page.getByRole('heading', { name: `Signed in to ${company.name}` })).toBeVisible();
   await page.getByRole('link', { name: 'Open the field app' }).click();
   await expect(page.getByRole('heading', { name: company.name, level: 1 })).toBeVisible();
@@ -449,7 +464,7 @@ test("a save that meets someone else's change keeps their change", async ({ page
 
   // Meanwhile the office saves the claim from another device.
   const office = company.people.office!;
-  const headers = { Authorization: `Bearer ${await idTokenFor(company.tenantId, office.email, PASSWORD)}` };
+  const headers = { Authorization: `Bearer ${withSecondFactor(await idTokenFor(company.tenantId, office.email, PASSWORD))}` };
   const read = await request.get(`${JOBS_BASE_URL}/api/jobs/${jobId}`, { headers });
   const { job, claim } = await read.json();
   const saved = await request.put(`${JOBS_BASE_URL}/api/jobs/${jobId}/claim`, {

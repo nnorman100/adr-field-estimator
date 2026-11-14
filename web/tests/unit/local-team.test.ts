@@ -63,14 +63,14 @@ beforeEach(async () => {
   await writeFile(path, JSON.stringify(fixture()));
 });
 
-const account = (email: string, uid = 'invitee-uid', companyId = COMPANY): Account => ({
+const account = (email: string, uid = 'invitee-uid', companyId = COMPANY, secondFactor: string | null = null): Account => ({
   companyId,
   companyName: 'Company A',
   tenant: TENANT,
   uid,
   email,
   name: null,
-  session: { authTime: Math.floor(NOW.getTime() / 1000), secondFactor: null },
+  session: { authTime: Math.floor(NOW.getTime() / 1000), secondFactor },
 });
 
 describe('the local team stand-in', () => {
@@ -112,12 +112,28 @@ describe('the local team stand-in', () => {
   it('makes one membership however often the invitation is accepted', async () => {
     const team = localTeamService(path, users);
     const { invitation } = await team.invite(COMPANY, by, { email: 'new@example.com', role: 'office' }, NOW);
-    const first = await team.accept(account('new@example.com'), invitation.id, NOW);
-    const second = await team.accept(account('new@example.com'), invitation.id, NOW);
+    // An office invitation needs the authenticator-app second step (D2 as changed 2026-11-14).
+    await expect(team.accept(account('new@example.com'), invitation.id, NOW)).rejects.toMatchObject({ code: 'second_step_required' });
+    const withApp = account('new@example.com', 'invitee-uid', COMPANY, 'totp');
+    const first = await team.accept(withApp, invitation.id, NOW);
+    const second = await team.accept(withApp, invitation.id, NOW);
     expect([first.accepted, second.accepted]).toEqual([true, false]);
     expect(second.membershipId).toBe(first.membershipId);
     expect(readFixtureSync(path).members.filter((m) => m.email === 'new@example.com')).toHaveLength(1);
     await expect(team.accept(account('new@example.com', 'another-uid'), invitation.id, NOW)).rejects.toMatchObject({ code: 'invitation_closed' });
+  });
+
+  // The emulator cannot do the second step, so the fixture's `secondStep` mark stands in for it
+  // (withLocalSecondStep). Someone who accepted with an authenticator app has one from then on.
+  it('marks a member who accepted with an authenticator app as having a second step, and no one else', async () => {
+    const team = localTeamService(path, users);
+    const office = await team.invite(COMPANY, by, { email: 'office@example.com', role: 'office' }, NOW);
+    const estimator = await team.invite(COMPANY, by, { email: 'field@example.com', role: 'estimator' }, NOW);
+    await team.accept(account('office@example.com', 'office-uid', COMPANY, 'totp'), office.invitation.id, NOW);
+    await team.accept(account('field@example.com', 'field-uid'), estimator.invitation.id, NOW);
+    const members = readFixtureSync(path).members;
+    expect(members.find((m) => m.uid === 'office-uid')?.secondStep).toBe(true);
+    expect(members.find((m) => m.uid === 'field-uid')?.secondStep).toBeUndefined();
   });
 
   it('refuses an expired or cancelled invitation, and resending gives an expired one 7 days again', async () => {

@@ -85,10 +85,10 @@ const ROUTES: [string, RouteSessionRule][] = [
 ];
 
 describe('the session rules match the owner decisions', () => {
-  it('second step: owners and the operator must use it, office and estimators opt in (D2, D6)', () => {
+  it('second step: owners, office and the operator must use it, estimators opt in (D2 as changed 2026-11-14, D6)', () => {
     expect(SESSION_RULES.owner.secondStepRequired).toBe(true);
     expect(SESSION_RULES.operator.secondStepRequired).toBe(true);
-    expect(SESSION_RULES.office.secondStepRequired).toBe(false);
+    expect(SESSION_RULES.office.secondStepRequired).toBe(true);
     expect(SESSION_RULES.estimator.secondStepRequired).toBe(false);
   });
 
@@ -141,9 +141,27 @@ describe('second step', () => {
     }
   });
 
-  it.each(['estimator', 'office'] as const)('lets %s sign in without a second step (opt in, D2)', async (role) => {
-    expect(await outcome({ role })).toBe(`ok:${role}`);
-    expect(await outcome({ role, secondFactor: 'totp' })).toBe(`ok:${role}`);
+  it('lets an estimator sign in without a second step (opt in, D2)', async () => {
+    expect(await outcome({ role: 'estimator' })).toBe('ok:estimator');
+    expect(await outcome({ role: 'estimator', secondFactor: 'totp' })).toBe('ok:estimator');
+  });
+
+  // Office users see every job of the company, so since 2026-11-14 they need the second step too.
+  it.each(ROUTES.filter(([, route]) => route.secondStep !== 'enrolment'))(
+    'refuses an office token without a second factor on %s',
+    async (_name, route) => {
+      expect(await outcome({ role: 'office' }, route)).toBe('second_step_required');
+      expect(await outcome({ role: 'office', secondFactor: 'phone' }, route)).toBe('second_step_required');
+    },
+  );
+
+  it.each(ROUTES)('accepts an office user who used an authenticator app on %s', async (_name, route) => {
+    expect(await outcome({ role: 'office', secondFactor: 'totp' }, route)).toBe('ok:office');
+  });
+
+  it('lets an office user with no second step reach only enrolment', async () => {
+    expect(await outcome({ role: 'office' }, { secondStep: 'enrolment' })).toBe('ok:office');
+    expect(await outcome({ role: 'office', authTime: NOW - 14 * DAY - 1 }, { secondStep: 'enrolment' })).toBe('sign_in_again');
   });
 
   it('requires it for the operator too (D6)', () => {
@@ -271,6 +289,18 @@ describe('/api/me', () => {
     expect(res.status).toBe(403);
     expect(await res.json()).toEqual({ error: 'second_step_required' });
     const ok = await GET(request({ role: 'owner', authTime: now, secondFactor: 'totp' }), { params: Promise.resolve({}) });
+    expect(ok.status).toBe(200);
+  });
+
+  it('refuses an office user without a second step, so the phone shows enrolment', async () => {
+    vi.resetModules();
+    vi.doMock('@/lib/auth/services', () => ({ identityServices: () => ({ verifier, directory }) }));
+    const { GET } = await import('@/app/api/me/route');
+    const now = Math.floor(Date.now() / 1000);
+    const res = await GET(request({ role: 'office', authTime: now }), { params: Promise.resolve({}) });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: 'second_step_required' });
+    const ok = await GET(request({ role: 'office', authTime: now, secondFactor: 'totp' }), { params: Promise.resolve({}) });
     expect(ok.status).toBe(200);
   });
 });

@@ -6,7 +6,7 @@
 // company boundary and not a broken setup. 200 means the rules allowed the call, 403 refused it.
 import { randomUUID } from 'node:crypto';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { call, createTenant, projectId, signIn, signUp } from '../auth-emulator';
+import { call, createTenant, projectId, signIn, signUp, withSecondFactor } from '../auth-emulator';
 import { type Caller, commit, createDoc, deleteDoc, getDoc, listDocs, serverSet, updateDoc } from './firestore-rest';
 
 type Person = { uid: string; caller: Caller; role: 'owner' | 'estimator' | 'office' };
@@ -23,7 +23,9 @@ async function person(tenant: string, name: string, role: Person['role'], localI
   const email = `${name}-${run}@isolation.example.test`;
   const password = `synthetic-password-${name}`;
   const uid = localId ? await signUpWithUid(tenant, email, password, localId) : await signUp(tenant, email, password);
-  return { uid, role, caller: { idToken: await signIn(tenant, email, password) } };
+  // An owner or office user signs in with the authenticator app as the second step (D2).
+  const idToken = await signIn(tenant, email, password);
+  return { uid, role, caller: { idToken: role === 'estimator' ? idToken : withSecondFactor(idToken) } };
 }
 
 // An account with a chosen uid, made as the emulator's admin: the same uid in two tenants is two

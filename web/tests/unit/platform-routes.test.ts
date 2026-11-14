@@ -101,7 +101,7 @@ describe('operatorRoute', () => {
 });
 
 describe('the owner-run tenant command', () => {
-  it('creates a tenant with password sign-in, no public sign-up and authenticator-app second steps', async () => {
+  it('creates a tenant with password sign-in, no public sign-up, authenticator-app second steps, a 12-character password rule and email enumeration protection', async () => {
     const fetch = vi.fn(async () => Response.json({ name: 'projects/dryscope/tenants/test-company-a-x1y2z' }));
     const id = await createTenant(parseTenantArgs(['--project', 'dryscope', '--name', 'test-company-a']), {
       accessToken: async () => 'token',
@@ -118,6 +118,13 @@ describe('the owner-run tenant command', () => {
       enableEmailLinkSignin: false,
       client: { permissions: { disabledUserSignup: true, disabledUserDeletion: true } },
       mfaConfig: { state: 'ENABLED', providerConfigs: [{ state: 'ENABLED', totpProviderConfig: { adjacentIntervals: 1 } }] },
+      // Owner decision 2026-11-14 (sign-in security review, F1 and F2).
+      passwordPolicyConfig: {
+        passwordPolicyEnforcementState: 'ENFORCE',
+        forceUpgradeOnSignin: true,
+        passwordPolicyVersions: [{ customStrengthOptions: { minPasswordLength: 12 } }],
+      },
+      emailPrivacyConfig: { enableImprovedEmailPrivacy: true },
     });
     expect(tenantBody('x')).not.toHaveProperty('enableAnonymousUser');
   });
