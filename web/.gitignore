@@ -11,3 +11,6 @@ coverage/
 
 # The service worker is generated from sw/sw.js by scripts/build-sw.ts after next build (S6-2).
 public/sw.js
+
+# The e2e shards' JSON reports, which the e2e job's guard reads (.github/workflows/web.yml).
+e2e-reports/
