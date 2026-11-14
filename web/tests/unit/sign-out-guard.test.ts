@@ -40,7 +40,7 @@ describe('screen sign-outs', () => {
   it('allow the shared sign-out, and the operator console its own', async () => {
     expect(
       await restricted(
-        "import { signOutOnRefusal } from '@/lib/field/sign-out';\nimport { companyAuth } from '@/lib/firebase-client';\nexport const both = [signOutOnRefusal, companyAuth];\n",
+        "import { signOutDiscarding, signOutKeeping, signOutOnRefusal } from '@/lib/field/sign-out';\nimport { companyAuth } from '@/lib/firebase-client';\nexport const all = [signOutDiscarding, signOutKeeping, signOutOnRefusal, companyAuth];\n",
       ),
     ).toEqual([]);
     expect(

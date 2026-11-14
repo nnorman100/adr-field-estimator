@@ -4,7 +4,7 @@ import { callApi } from '@/lib/firebase-client';
 import { appCheckSeam, fieldUser, settle, type FieldClient } from '@/lib/field-db';
 import { meKey, readMe, updateMe, type DsMe } from './ds-me';
 import { sessionValid, SyncGate, type GateState, type MeFacts } from './sync-gate';
-import { evaluate, onWorkRemoved, type RetentionEvent } from './retention';
+import { evaluate, onWorkRemoved, pendingReason, type RetentionEvent } from './retention';
 import { savedLock, savedReason } from './unsent';
 
 // Runs the sync gate for one person's started field client (S6-3), and does what each of its
@@ -43,9 +43,16 @@ export function runFieldSync(
   const { person } = client;
   let row = saved;
   const tell = (event: RetentionEvent) => evaluate(now(), event).state;
+  // A refusal the phone could not save is held for the sign-in it was given for, and dropped once
+  // another is current.
+  const refuse = (reason: Extract<RetentionEvent, { kind: 'refused' }>['reason']) => {
+    const user = fieldUser(person);
+    return tell({ kind: 'refused', person, reason, current: () => fieldUser(person) === user });
+  };
   // The saved sign-in is judged first: one that counts again lifts a lock only its age had made.
   tell({ kind: 'entry', person, saved });
-  const lock = savedReason(person.tenantId, person.uid);
+  // A refusal this page holds and could not save locks as a saved one does.
+  const lock = savedReason(person.tenantId, person.uid) ?? pendingReason(person.tenantId, person.uid);
   // A sign-in past its limit shows as "sign in again".
   const initial = lock === null ? undefined : ({ kind: 'locked', reason: lock === 'sign-in-expired' ? 'sign-in-again' : lock } as const);
   const stopWatching = onWorkRemoved((removed) => {
@@ -71,10 +78,13 @@ export function runFieldSync(
     initial,
     session: () => fieldUser(person),
     sessionValid: (at) => sessionValid(row, at),
-    onRefused: (reason) => tell({ kind: 'refused', person, reason }) !== 'unsaved',
-    onExpired: () => tell({ kind: 'refused', person, reason: 'sign-in-expired' }) !== 'unsaved',
+    onRefused: (reason) => refuse(reason) !== 'unsaved',
+    onExpired: () => refuse('sign-in-expired') !== 'unsaved',
+    // Asked after every answer, a missing one included, so a refusal the phone could not save is
+    // told again then too.
     mayOpen: (opening) => {
-      const state = tell(opening ? { kind: 'let-in', person } : { kind: 'entry', person, saved: row });
+      if (!opening) return tell({ kind: 'entry', person, saved: row }) !== 'expired';
+      const state = tell({ kind: 'let-in', person });
       if (state !== 'unsaved') return state !== 'expired';
       return { kind: 'locked', reason: savedLock(person.tenantId, person.uid) ?? 'sign-in-again' };
     },
@@ -120,6 +130,6 @@ export function runFieldSync(
   // A lock saved by an earlier refusal goes through the same handling as a new one. Work already
   // past the limit is not asked about: the routine removes it.
   if (initial) apply(initial);
-  if (tell(lock ? { kind: 'refused', person, reason: lock } : { kind: 'entry', person }) !== 'expired') gate.start();
+  if ((lock ? refuse(lock) : tell({ kind: 'entry', person })) !== 'expired') gate.start();
   return gate;
 }

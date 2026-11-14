@@ -14,13 +14,25 @@ import { unsentWork, type LockReason } from './unsent';
 // kept through a re-sign-in (D7) and the same person signing in again sends it. Their cache is a
 // database of its own (field-db.ts), which no other person's client opens.
 //
+// Every sign-out ends here, the person's own and the app's. The saved sign-in is judged by the
+// phone's retention routine (retention.ts) before it goes, so one past its role's limit locks the
+// work from now even though no row is left to find later (O5, S6-3b). Throws WorkNotSecuredError,
+// with the row and the work left as they were, when that lock cannot be saved.
+//
 // `from` is the sign-in the sign-out was started for. When anyone has signed in since (another
 // person, or the same person again, in this tab or another), that newer sign-in and its saved
 // sign-in are left alone: the sign-in this was for has ended already.
 async function leave(auth: Auth, tenantId: string, from: Session): Promise<void> {
+  if (!stillSignedIn(auth, from)) return;
   const { user } = from;
   const found = user ? await readMe(tenantId, user.uid) : null;
   if (!stillSignedIn(auth, from)) return;
+  if (found) {
+    const { state, done } = evaluate(Date.now(), { kind: 'entry', person: { tenantId, uid: found.uid, config: found.config }, saved: found });
+    if (state === 'unsaved') throw new WorkNotSecuredError(() => leave(auth, tenantId, from));
+    await done;
+    if (!stillSignedIn(auth, from)) return;
+  }
   const removed = user ? await forgetMe(tenantId, user.uid, found?.savedAt ?? null) : null;
   if (!stillSignedIn(auth, from)) return;
   if (removed === false) throw new Error('the saved sign-in may still be on this phone');
@@ -49,9 +61,9 @@ function stillSignedIn(auth: Auth, from: Session): boolean {
   return sessionKey(auth.currentUser) === from.key;
 }
 
-// The refusal could not be saved on the phone: nothing was signed out or removed, and the screen
-// asks the person to try again. `retry` is the same sign-out for the same person and refusal; it
-// does nothing once anyone has signed in since.
+// A lock (a refusal, or a saved sign-in past its limit) could not be saved on the phone: nothing was
+// signed out or removed, and the screen asks the person to try again. `retry` is the same sign-out
+// for the same sign-in; it does nothing once anyone has signed in since.
 export class WorkNotSecuredError extends Error {
   constructor(readonly retry: () => Promise<void>) {
     super('the refusal could not be saved on this phone');
@@ -88,7 +100,12 @@ async function refuse(auth: Auth, from: Session, tenantId: string, config: Brows
   if (!stillSignedIn(auth, from)) return;
   const { user } = from;
   if (user) {
-    const { state, done } = evaluate(Date.now(), { kind: 'refused', person: { tenantId, uid: user.uid, config }, reason: refusal });
+    const { state, done } = evaluate(Date.now(), {
+      kind: 'refused',
+      person: { tenantId, uid: user.uid, config },
+      reason: refusal,
+      current: () => stillSignedIn(auth, from),
+    });
     if (state === 'unsaved') throw new WorkNotSecuredError(() => refuse(auth, from, tenantId, config, refusal));
     // Work already past the limit is removed before the sign-in that names it goes.
     await done;
@@ -96,7 +113,8 @@ async function refuse(auth: Auth, from: Session, tenantId: string, config: Brows
   await leave(auth, tenantId, from);
 }
 
-// The person's own "Sign out" when they chose Keep: nothing refused them, so nothing is locked.
+// The person's own "Sign out" when they chose Keep: nothing refused them, so nothing is locked
+// unless their saved sign-in is past its role's limit (leave).
 export async function signOutKeeping(auth: Auth, tenantId: string): Promise<void> {
   await leave(auth, tenantId, session(auth));
 }

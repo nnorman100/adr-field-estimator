@@ -115,12 +115,36 @@ function refuse(person: FieldPerson, reason: SavedReason, now: number): boolean 
 // What the phone saved of a sign-in, as far as its age goes (a ds-me row).
 type SavedSignIn = { role?: string; authTime?: number };
 
-// The two "saved sign-in" rows of the table.
-function judgeSignIn(person: FieldPerson, saved: SavedSignIn, now: number): void {
-  if (!sessionValid(saved, now)) refuse(person, 'sign-in-expired', now);
-  else if (savedReason(person.tenantId, person.uid) === 'sign-in-expired' && stateOf(person, now) !== 'expired') {
+// The two "saved sign-in" rows of the table. False when the sign-in is past its limit and the phone
+// could not save the lock that says so.
+function judgeSignIn(person: FieldPerson, saved: SavedSignIn, now: number): boolean {
+  if (!sessionValid(saved, now)) return refuse(person, 'sign-in-expired', now);
+  if (savedReason(person.tenantId, person.uid) === 'sign-in-expired' && stateOf(person, now) !== 'expired') {
     noteUnlocked(person.tenantId, person.uid);
   }
+  return true;
+}
+
+// Refusals the phone could not save, held by this page and told again at every evaluate until they
+// are saved, the person is let in, or the sign-in they were given for is no longer the current one.
+type Pending = { person: FieldPerson; reason: SavedReason; current?: () => boolean };
+const pending = new Map<string, Pending>();
+
+function retryPending(now: number): void {
+  for (const [key, held] of [...pending]) {
+    if (held.current?.() === false || refuse(held.person, held.reason, now)) pending.delete(key);
+  }
+}
+
+// The refusal this page holds for the person and could not save yet, or null. Their work stays
+// closed while it is held.
+export function pendingReason(tenantId: string, uid: string): SavedReason | null {
+  return pending.get(meKey(tenantId, uid))?.reason ?? null;
+}
+
+// Forgets every refusal this page holds; for tests only, which share one page.
+export function forgetPending(): void {
+  pending.clear();
 }
 
 export type RetentionEvent =
@@ -130,15 +154,18 @@ export type RetentionEvent =
   // whose page this is, whose settings are kept for a removal with no saved sign-in.
   | { kind: 'entry'; person?: FieldPerson; saved?: SavedSignIn; company?: Company }
   // The person may not go on: the server refused them, the app ends their sign-in, or their saved
-  // sign-in is past its role's limit ('sign-in-expired').
-  | { kind: 'refused'; person: FieldPerson; reason: SavedReason }
+  // sign-in is past its role's limit ('sign-in-expired'). `current`: whether the sign-in it was
+  // given for is still the current one, for a refusal that cannot be saved at once.
+  | { kind: 'refused'; person: FieldPerson; reason: SavedReason; current?: () => boolean }
   // The server let the person in.
   | { kind: 'let-in'; person: FieldPerson };
 
 export type Evaluation = {
-  // The event's person afterwards. 'unsaved': they were refused, or let in, and the phone could not
-  // save it: on a refusal nothing of theirs may be signed out or removed; on a let-in their lock
-  // still stands and nothing may open. Either way the caller tries again.
+  // The event's person afterwards. 'unsaved': they were refused, let in, or their saved sign-in was
+  // past its limit, and the phone could not save it: on a refusal or an expired sign-in nothing of
+  // theirs may be signed out or removed (a refusal is held and told again at every evaluate); on a
+  // let-in their lock still stands and nothing may open. Either way the caller tries again. An
+  // entry answers 'locked' for a person whose refusal is held.
   state: RetentionState | 'unsaved';
   // Settles when this evaluate's sweep is over, with everyone whose work it removed (meKey).
   done: Promise<string[]>;
@@ -194,12 +221,22 @@ export function evaluate(now: number, event: RetentionEvent): Evaluation {
   // they were (by an earlier version, or a storage failure) can be removed too.
   const company = event.kind === 'entry' ? (event.person ?? event.company) : event.person;
   if (company) keepCleanupContext(company);
+  if (event.kind === 'let-in') pending.delete(meKey(event.person.tenantId, event.person.uid));
+  retryPending(now);
   let state: Evaluation['state'] = 'none';
   if (event.kind === 'entry') {
-    if (event.person && event.saved) judgeSignIn(event.person, event.saved, now);
-    if (event.person) state = stateOf(event.person, now);
+    const { person, saved } = event;
+    if (person && saved && !judgeSignIn(person, saved, now)) state = 'unsaved';
+    else if (person) state = stateOf(person, now) === 'none' && pendingReason(person.tenantId, person.uid) ? 'locked' : stateOf(person, now);
   } else if (event.kind === 'refused') {
-    state = refuse(event.person, event.reason, now) ? stateOf(event.person, now) : 'unsaved';
+    const key = meKey(event.person.tenantId, event.person.uid);
+    if (refuse(event.person, event.reason, now)) {
+      pending.delete(key);
+      state = stateOf(event.person, now);
+    } else {
+      pending.set(key, { person: event.person, reason: event.reason, current: event.current });
+      state = 'unsaved';
+    }
   } else if (stateOf(event.person, now) === 'expired') {
     state = 'expired';
   } else {

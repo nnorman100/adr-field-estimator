@@ -23,7 +23,15 @@ import { prepareFieldShell } from '@/lib/field/register-worker';
 import { meFacts } from '@/lib/field/sync-gate';
 import { evaluate, watchRetention } from '@/lib/field/retention';
 import type { LockReason } from '@/lib/field/unsent';
-import { hasUnsentWork, signOutDiscarding, signOutKeeping, signOutOnRefusal, signOutOrShow } from '@/lib/field/sign-out';
+import {
+  hasUnsentWork,
+  signOutDiscarding,
+  signOutKeeping,
+  signOutOnRefusal,
+  signOutOrShow,
+  WorkNotSecuredError,
+  type FailedSignOut,
+} from '@/lib/field/sign-out';
 import { endsSession, errorCode, signInErrorMessage, type MeOutcome } from '@/lib/sign-in/outcome';
 import { rememberSignInAddress } from '@/lib/sign-in/remember';
 import { offersCompanyScreen } from '@/lib/profile/screen';
@@ -119,6 +127,11 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
     [config, signedOut, tenantId],
   );
 
+  const showFailed = useCallback(
+    (failed: FailedSignOut) => setScreen(failed.name === 'not-secured' ? failed : { name: 'outcome', outcome: { kind: 'unavailable' } }),
+    [],
+  );
+
   const refuse = useCallback(
     (message: string, refusal: LockReason) => {
       const auth = authRef.current;
@@ -126,11 +139,11 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
         async () => {
           if (auth) await signOutOnRefusal(auth, tenantId, config, refusal);
         },
-        (failed) => setScreen(failed.name === 'not-secured' ? failed : { name: 'outcome', outcome: { kind: 'unavailable' } }),
+        showFailed,
         () => signedOut(message),
       );
     },
-    [config, signedOut, tenantId],
+    [config, showFailed, signedOut, tenantId],
   );
 
   // When the server still wants the second step, Firebase is asked how many authenticator apps the
@@ -140,6 +153,10 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
   const check = useCallback(
     async (user: User, fresh = false) => {
       setScreen({ name: 'checking' });
+      // The sign-in this check is for: the same person signing in again in another tab keeps the
+      // user object, so its time tells them apart.
+      const signedInAt = user.metadata.lastSignInTime;
+      const stillCurrent = () => authRef.current?.currentUser === user && user.metadata.lastSignInTime === signedInAt;
       const { outcome, body } = await checkSignIn(user, fresh);
       const authenticators = outcome.kind === 'second-step' ? await authenticatorCount(user) : 0;
       const current = authRef.current?.currentUser ?? null;
@@ -181,6 +198,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
           (result) => Date.parse(result.authTime),
           () => NaN,
         );
+        if (!stillCurrent()) return;
         await saveMe({
           tenantId,
           uid: user.uid,
@@ -193,12 +211,12 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
         });
         const signedIn = outcome;
         async function openField(): Promise<void> {
+          if (!stillCurrent()) return;
           const { state } = evaluate(Date.now(), { kind: 'let-in', person: { tenantId, uid: user.uid, config } });
-          if ((authRef.current?.currentUser ?? null) !== user) return;
           if (state === 'unsaved') return setScreen({ name: 'not-secured', retry: openField });
           setScreen({ name: 'preparing' });
           const ready = await prepareFieldShell();
-          if ((authRef.current?.currentUser ?? null) !== user) return;
+          if (!stillCurrent()) return;
           setOfflineReady(ready);
           setScreen({ name: 'outcome', outcome: signedIn });
         }
@@ -256,14 +274,21 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
   // yet, it asks to keep or discard it; otherwise, and on Discard, this person's cache for this
   // company goes too. Kept work stays for the same person's next sign-in here (D7). Work made only
   // in a window's memory (Online only) is not kept by anything, so nothing is promised for it.
+  // A saved sign-in past its role's limit is locked before it goes; a phone that cannot save that
+  // keeps the sign-in and offers "Try again", which finishes this sign-out.
   const signOutChosen = (choice: UnsentChoice) =>
     run(async () => {
-      if (choice === 'keep') return endSession('You are signed out. Your unsent work is kept on this phone.', 'kept');
-      const result = await signOutDiscarding(auth(), tenantId, config);
-      if (result === 'elsewhere') return setError('DryScope is open in another window. Close it there, then sign out.');
-      if (result === 'failed') return setError('Your work on this phone could not be removed. Try again.');
-      setNotice('You are signed out.');
-      setScreen({ name: 'signed-out' });
+      const message = choice === 'keep' ? 'You are signed out. Your unsent work is kept on this phone.' : 'You are signed out.';
+      try {
+        if (choice === 'keep') return await endSession(message, 'kept');
+        const result = await signOutDiscarding(auth(), tenantId, config);
+        if (result === 'elsewhere') return setError('DryScope is open in another window. Close it there, then sign out.');
+        if (result === 'failed') return setError('Your work on this phone could not be removed. Try again.');
+        signedOut(message);
+      } catch (failure) {
+        if (!(failure instanceof WorkNotSecuredError)) throw failure;
+        setScreen({ name: 'not-secured', retry: () => signOutOrShow(failure.retry, showFailed, () => signedOut(message)) });
+      }
     });
 
   const signOutButton = (

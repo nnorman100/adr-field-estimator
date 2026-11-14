@@ -65,7 +65,7 @@ vi.mock('@/lib/field-db', async () => {
 vi.mock('firebase/firestore', () => ({ enableNetwork, disableNetwork: vi.fn(async () => undefined) }));
 vi.mock('firebase/auth', () => ({ getIdTokenResult: vi.fn(async () => ({ authTime: new Date().toISOString() })) }));
 
-const { evaluate } = await import('@/lib/field/retention');
+const { evaluate, forgetPending } = await import('@/lib/field/retention');
 const { runFieldSync } = await import('@/lib/field/field-sync');
 const { signOutOnRefusal, signOutOrShow } = await import('@/lib/field/sign-out');
 const { noteWrite, readUnsent, unsentKey } = await import('@/lib/field/unsent');
@@ -92,6 +92,7 @@ function sync(signedInDaysAgo = 0): Run {
 }
 
 beforeEach(() => {
+  forgetPending();
   vi.useFakeTimers();
   vi.setSystemTime(NOW);
   items.clear();
@@ -224,6 +225,38 @@ describe('the sync gate of an open field shell', () => {
 });
 
 const signedInAs = (uid: string, at = 'Fri, 13 Nov 2026 09:00:00 GMT') => ({ uid, metadata: { lastSignInTime: at } });
+
+describe('a refusal the phone could not save, then no signal', () => {
+  it('is saved at the next check with no answer once storage answers, and a reopen stays locked', async () => {
+    server = { status: 403, body: { error: 'company_inactive' } };
+    full = true;
+    const run = sync();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(run.states.at(-1)).toBe('locked');
+    expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: null });
+
+    // A shell started again on this page while it is held is locked from the start.
+    const meanwhile = sync();
+    expect(meanwhile.states[0]).toBe('locked');
+    meanwhile.stop();
+
+    // Storage answers again, and the signal is gone before the gate asks again.
+    full = false;
+    server = { status: 0, body: null };
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: NOW + 15_000, lockedReason: 'company-inactive' });
+    expect(enableNetwork).not.toHaveBeenCalled();
+    run.stop();
+
+    // Reopened with no signal: locked from the start.
+    forgetPending();
+    const reopened = sync();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(reopened.states[0]).toBe('locked');
+    expect(reopened.states).not.toContain('open');
+    reopened.stop();
+  });
+});
 
 describe('the server letting the person in, on a phone that cannot save it', () => {
   it('keeps the lock shown and the network off, asks again every 15 seconds, and opens once it is saved', async () => {
