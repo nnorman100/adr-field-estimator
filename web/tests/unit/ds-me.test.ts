@@ -34,3 +34,22 @@ describe('ds-me rows', () => {
     expect(parseMe(value)).toBeNull();
   });
 });
+
+// S6-3 adds what the server said at the last online check and when the person signed in.
+describe('ds-me rows with the S6-3 facts', () => {
+  const FACTS = { ...ROW, companyId: 'company-a', role: 'estimator', capabilities: ['scope'], authTime: 2 };
+
+  it('are read with them, and without them (a row saved before S6-3)', () => {
+    expect(parseMe(FACTS)).toEqual(FACTS);
+    expect(parseMe(ROW)).toEqual(ROW);
+  });
+
+  it.each([
+    ['an empty company id', { ...FACTS, companyId: '' }],
+    ['a role that is not text', { ...FACTS, role: 3 }],
+    ['capabilities that are not a list of text', { ...FACTS, capabilities: ['scope', 4] }],
+    ['a sign-in time that is not a number', { ...FACTS, authTime: '2' }],
+  ])('are skipped when damaged: %s', (_name, value) => {
+    expect(parseMe(value)).toBeNull();
+  });
+});

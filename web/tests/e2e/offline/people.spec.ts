@@ -5,6 +5,9 @@
 import { expect, expectNothingSent, expectWithheld, test, Phone, SEND_MS } from './fixture';
 import { readDraft, seedCompany } from './world';
 
+// Offline and worker tests need the service worker, which the suite blocks by default.
+test.use({ serviceWorkers: 'allow' });
+
 const cached = (phone: Phone, path: string, key = 'main') => phone.call('readCache', key, path);
 
 test.describe('people and companies on one phone (S6-1 c)', () => {

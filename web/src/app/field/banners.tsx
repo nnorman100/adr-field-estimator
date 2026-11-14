@@ -3,17 +3,19 @@
 
 export const OFFLINE_TEXT = 'No signal: your work is saved on this phone';
 export const NOT_SAVED_TEXT = 'Not saved on this phone';
+// With "Online only" chosen for the company (S6-3), nothing is kept either.
+export const NOT_KEPT_TEXT = 'No signal: jobs are not kept on this phone, so you need signal to work.';
 // In an iPhone browser tab nothing is kept for later (Safari deletes it after about 7 days), so the
 // promise above is not made there (owner decision G8, D-025).
 export const ONLINE_ONLY_TEXT =
   'No signal: in Safari, DryScope works online only. Save it to your Home Screen to work with no signal.';
 
-export function OfflineBanner({ offline, onlineOnly }: { offline: boolean; onlineOnly: boolean }) {
+export function OfflineBanner({ offline, onlineOnly, kept }: { offline: boolean; onlineOnly: boolean; kept: boolean }) {
   return (
     <div role="status">
       {offline ? (
         <p className="border-b border-input bg-accent px-4 py-3 text-base font-medium">
-          {onlineOnly ? ONLINE_ONLY_TEXT : OFFLINE_TEXT}
+          {onlineOnly ? ONLINE_ONLY_TEXT : kept ? OFFLINE_TEXT : NOT_KEPT_TEXT}
         </p>
       ) : null}
     </div>

@@ -8,6 +8,7 @@ export const SCREENS: Record<string, string> = {
   '/sign-in/[address]': 'sign-in.spec.ts',
   '/sign-in/[address]/team': 'team.spec.ts',
   '/sign-in/[address]/company': 'company.spec.ts',
+  '/sign-in/[address]/prices': 'prices.spec.ts',
   '/sign-in/[address]/jobs/[jobId]/finish': 'finish.spec.ts',
   '/sign-in/[address]/jobs/[jobId]/review': 'review.spec.ts',
   '/sign-in/[address]/invitations/[invitationId]': 'sign-in.spec.ts',

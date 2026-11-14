@@ -17,6 +17,7 @@ import {
   runAccessProjection,
   type AccessStore,
 } from '@/lib/projection';
+import { fieldAccessExpiry } from '@/lib/projection/expiry';
 import { projectCommittedChange } from '@/lib/projection/services';
 import { AccessStoreError } from '@/lib/projection/store';
 import { teamService } from '@/lib/team/service';
@@ -869,6 +870,22 @@ describe('access projection outbox (S3-12)', () => {
       expect(await renewAccess(handle.db, store, member)).toBe('failed');
       expect((await outbox())[0]).toMatchObject({ processed: false, attempts: 2 });
       errors.mockRestore();
+    });
+
+    // S6-3: GET /api/me answers 200 even when its renewal was skipped, so it also returns the
+    // record's expiry, and the phone's sync gate waits until that is in the future.
+    it('a renewal skipped because the actor was busy is retried by the next call', async () => {
+      const store = memoryStore();
+      const member = { companyId: seed.a, actorId: seed.estimatorA, uid: 'estimator-a' };
+      await admin.begin(async (tx) => {
+        // Another run holds the actor (the lock projectActor takes).
+        await tx`SELECT pg_advisory_xact_lock(${0x5312}::int, hashtext(${seed.estimatorA}))`;
+        expect(await renewAccess(handle.db, store, member)).toBe('busy');
+      });
+      expect(await fieldAccessExpiry(member, () => store)).toBeNull();
+      expect(await renewAccess(handle.db, store, member)).toBe('granted');
+      expect((await fieldAccessExpiry(member, () => store))!.getTime()).toBeGreaterThan(Date.now());
+      expect(await outbox()).toEqual([expect.objectContaining({ processed: true })]);
     });
 
     it('stays in its own company', async () => {

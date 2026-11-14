@@ -49,6 +49,17 @@ export type TeamSeed = {
   // A verified account of the company with no membership and no invitation.
   stranger: TeamAccount;
 };
+// A company of its own for each browser project with the price_books switch on, for the Prices
+// screens (tests/e2e/prices.spec.ts), whose tests change its prices.
+export type PricesSeed = {
+  address: string;
+  companyId: string;
+  companyName: string;
+  tenantId: string;
+  owner: TeamAccount;
+  estimator: TeamAccount;
+  office: TeamAccount;
+};
 export type Seed = {
   tenantA: string;
   tenantB: string;
@@ -56,6 +67,7 @@ export type Seed = {
   tenantOperators: string;
   projects: Record<string, ProjectSeed>;
   teams: Record<string, TeamSeed>;
+  prices: Record<string, PricesSeed>;
   fixture: LocalSignInFixture;
 };
 

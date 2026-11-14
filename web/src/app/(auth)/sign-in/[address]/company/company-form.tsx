@@ -34,6 +34,7 @@ export function CompanyForm({
   companyId,
   initial,
   showAiUsage,
+  showPrices = false,
 }: {
   address: string;
   user: User;
@@ -41,6 +42,8 @@ export function CompanyForm({
   initial: ProfileView;
   // Whether the role holds ai_usage_read (the owner): only then is the AI use asked for.
   showAiUsage: boolean;
+  // Whether the company's prices are open (the price_books switch): only then is the Prices page linked.
+  showPrices?: boolean;
 }) {
   const [saved, setSaved] = useState<ProfileView>(initial);
   const [values, setValues] = useState<Values>(valuesOf(initial));
@@ -86,6 +89,13 @@ export function CompanyForm({
           Back to your sign-in page
         </Link>
       </p>
+      {showPrices ? (
+        <p>
+          <a href={`/sign-in/${signInAddress}/prices`} className="underline">
+            Prices
+          </a>
+        </p>
+      ) : null}
 
       <section
         aria-labelledby="setup-heading"

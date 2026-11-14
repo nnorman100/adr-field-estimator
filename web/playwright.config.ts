@@ -28,7 +28,11 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
   globalSetup: './tests/e2e/sign-in/global-setup.ts',
-  use: { baseURL: `http://localhost:${port}`, trace: 'retain-on-failure' },
+  // Service workers are blocked unless a spec asks for them (tests/e2e/service-workers.ts). Since
+  // S6-3 signing in installs the field worker, scoped to the whole site, and Playwright's WebKit
+  // cannot route a page a service worker controls, so page.route stand-ins in specs about other
+  // things would stop working there. The worker and offline specs allow it, and check that it runs.
+  use: { baseURL: `http://localhost:${port}`, trace: 'retain-on-failure', serviceWorkers: 'block' },
   projects: [
     { name: 'chromium', use: { browserName: 'chromium' } },
     { name: 'webkit', use: { browserName: 'webkit' } },

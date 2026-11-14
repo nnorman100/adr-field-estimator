@@ -8,6 +8,7 @@ import {
   PASSWORD,
   SEED_PATH,
   STATE_DIR,
+  type PricesSeed,
   type ProjectSeed,
   type Seed,
   type TeamAccount,
@@ -109,9 +110,45 @@ export default async function globalSetup(config: FullConfig) {
     };
   }
 
+  // A company of its own for each project's Prices tests, with the price_books switch on: an owner
+  // with the second step, an estimator and an office user.
+  const prices: Record<string, PricesSeed> = {};
+  for (const project of PROJECTS) {
+    const tenantId = await createTenant(`prices-${project}-${run}`);
+    const companyId = randomUUID();
+    const address = `prices-${project}`;
+    const companyName = `Prices ${project} Restoration`;
+    fixture.companies.push({ id: companyId, name: companyName, signInAddress: address, tenantId, status: 'active', flags: ['price_books'] });
+    const person = async (name: string, role: 'owner' | 'estimator' | 'office'): Promise<TeamAccount> => {
+      const email = `${name}-${project}-${run}@example.com`;
+      const uid = await createUser(tenantId, { email, password: PASSWORD, emailVerified: true });
+      fixture.members.push({
+        companyId,
+        uid,
+        actorId: randomUUID(),
+        membershipId: randomUUID(),
+        email,
+        displayName: name,
+        role,
+        status: 'active',
+        ...(role === 'owner' ? { secondStep: true } : {}),
+      });
+      return { email, uid, name };
+    };
+    prices[project] = {
+      address,
+      companyId,
+      companyName,
+      tenantId,
+      owner: await person('owner-prices', 'owner'),
+      estimator: await person('estimator-prices', 'estimator'),
+      office: await person('office-prices', 'office'),
+    };
+  }
+
   await mkdir(STATE_DIR, { recursive: true });
   await writeFile(FIXTURE_PATH, JSON.stringify(fixture));
-  const seed: Seed = { tenantA, tenantB, tenantOperators, projects, teams, fixture };
+  const seed: Seed = { tenantA, tenantB, tenantOperators, projects, teams, prices, fixture };
   await writeFile(SEED_PATH, JSON.stringify(seed));
   // The fixture is in place, so the dev server can answer the sign-in routes: compile each route now.
   await warmRoutes(config.projects[0]!.use.baseURL!);
@@ -128,6 +165,15 @@ async function warmTeamRoutes(baseUrl: string) {
     ['GET', '/sign-in/company-z'],
     ['GET', '/sign-in/company-a/team'],
     ['GET', '/sign-in/company-a/company'],
+    ['GET', '/sign-in/company-a/prices'],
+    ['GET', '/api/prices'],
+    ['PUT', '/api/prices/working-copy'],
+    ['POST', '/api/prices/preview'],
+    ['POST', '/api/prices/publish'],
+    ['GET', '/api/prices/versions'],
+    ['POST', `/api/prices/versions/${id}/restore`],
+    ['GET', '/api/prices/export'],
+    ['POST', '/api/prices/import'],
     ['GET', `/api/companies/${id}/profile`],
     ['PUT', `/api/companies/${id}/profile`],
     ['GET', `/api/companies/${id}/team`],

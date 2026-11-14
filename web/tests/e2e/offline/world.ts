@@ -68,6 +68,14 @@ async function grantAccess(companyId: string, person: Person, role: 'owner' | 'e
     .set({ role, expiresAt: Timestamp.fromMillis(Date.now() + 24 * HOUR) });
 }
 
+// Rewrites a person's access record to stop working at `expiresAt` (S6-3): the server's renewal, or
+// a record that ran out while the phone was offline.
+export async function setAccessExpiry(world: Pick<World, 'companyId'>, person: Person, expiresAt: Date, role: 'owner' | 'estimator' | 'office' = 'estimator'): Promise<void> {
+  await adminDb()
+    .doc(`companies/${world.companyId}/access/${person.uid}`)
+    .set({ role, expiresAt: Timestamp.fromDate(expiresAt) });
+}
+
 export async function removeAccess(companyId: string, person: Person): Promise<void> {
   await adminDb().doc(`companies/${companyId}/access/${person.uid}`).delete();
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useEffect, useState, type ReactNode } from 'react';
 import { meKey, readLatestMe, type DsMe } from '@/lib/field/ds-me';
 import { registerFieldWorker } from '@/lib/field/register-worker';
 import { offlineCaptureAllowed } from '@/lib/field/platform';
@@ -8,13 +8,16 @@ import { rememberedSignInAddress } from '@/lib/sign-in/remember';
 import { NotSavedBanner, OfflineBanner } from './banners';
 import { FieldApp } from './field-app';
 import { useReachable } from './connection';
+import { FieldStore, type FieldStorage } from './field-store';
 import { HomeScreenSheet, useFieldSurface } from './home-screen-sheet';
 
 // The field shell (S6-2): the one page every field screen lives in. The server renders nothing of
 // a person's here, so the page is built once, the service worker keeps that copy, and the Home
 // Screen icon opens it with no signal. It starts from `ds-me` (the settings and company saved at
 // the last online sign-in), never from the server, and all views under it are client state. The
-// job screens (S5a-6, ./field-app.tsx) mount below; the phone's stores (S6-3 and after) join them.
+// phone's Firestore cache and sync gate (S6-3, ./field-store.tsx) start below it, and the job
+// screens (S5a-6, ./field-app.tsx) mount beside them; the job screens still use their own client
+// until they are moved onto src/lib/field-db.ts (a follow-up named in docs/plans/S6.md).
 type Boot =
   | { kind: 'starting' }
   | { kind: 'ready'; me: DsMe }
@@ -23,8 +26,28 @@ type Boot =
   // The phone's storage cannot be opened at all.
   | { kind: 'no-storage'; address: string | null };
 
+// The job screens ask the server who the person is as soon as they mount. A shell opened in a
+// page that is not shown (a background tab, a phone that restored it hidden) must ask nothing until
+// it is (S6-3: the sync gate waits the same way), so they mount once the page has been shown, and
+// then stay.
+function ShownOnce({ children }: { children: ReactNode }) {
+  const [shown, setShown] = useState(() => document.visibilityState === 'visible');
+  useEffect(() => {
+    if (shown) return;
+    const onChange = () => {
+      if (document.visibilityState === 'visible') setShown(true);
+    };
+    document.addEventListener('visibilitychange', onChange);
+    return () => document.removeEventListener('visibilitychange', onChange);
+  }, [shown]);
+  return shown ? <>{children}</> : null;
+}
+
 export function FieldShell() {
   const [boot, setBoot] = useState<Boot>({ kind: 'starting' });
+  // What the Firestore cache keeps (S6-3). A fallback to memory keeps nothing, as with no storage at
+  // all; Online only keeps nothing by choice.
+  const [storage, setStorage] = useState<FieldStorage>('kept');
   const reachable = useReachable();
   const surface = useFieldSurface();
 
@@ -62,23 +85,35 @@ export function FieldShell() {
       data-offline-capture={offlineCaptureAllowed(surface) ? 'allowed' : 'blocked'}
     >
       <OfflineBanner
-        offline={!reachable && (boot.kind === 'ready' || boot.kind === 'signed-out')}
+        offline={!reachable && storage !== 'not-saved' && (boot.kind === 'ready' || boot.kind === 'signed-out')}
         onlineOnly={surface === 'ios-tab'}
+        kept={storage === 'kept'}
       />
-      <NotSavedBanner unavailable={boot.kind === 'no-storage'} />
+      <NotSavedBanner unavailable={boot.kind === 'no-storage' || storage === 'not-saved'} />
       <main className="flex flex-1 flex-col gap-4 p-6">
         <p className="text-sm font-semibold tracking-wide">DryScope</p>
         {boot.kind === 'starting' ? <p role="status">Opening…</p> : null}
         {boot.kind === 'ready' ? (
           <>
             <h1 className="text-2xl font-semibold">{boot.me.companyName}</h1>
-            {/* Above the jobs, which load after the page shows: nothing moves the notice once it is there. */}
+            {/* Above the content that loads after the page shows, so nothing moves the notice. */}
             {homeScreen}
+            <FieldStore
+              key={`${boot.me.tenantId}/${boot.me.uid}`}
+              me={boot.me}
+              surface={surface}
+              reachable={reachable}
+              onStorage={setStorage}
+            >
+              <p className="text-base">Your jobs will show here.</p>
+            </FieldStore>
             {/* The view is read from the address, which only the browser knows. Another sign-in
                 starts the screens afresh, so nothing of the last person's stays on them. */}
-            <Suspense fallback={<p role="status">Opening your jobs…</p>}>
-              <FieldApp key={meKey(boot.me.tenantId, boot.me.uid)} me={boot.me} />
-            </Suspense>
+            <ShownOnce>
+              <Suspense fallback={<p role="status">Opening your jobs…</p>}>
+                <FieldApp key={meKey(boot.me.tenantId, boot.me.uid)} me={boot.me} />
+              </Suspense>
+            </ShownOnce>
           </>
         ) : null}
         {boot.kind === 'signed-out' || boot.kind === 'no-storage' ? (
