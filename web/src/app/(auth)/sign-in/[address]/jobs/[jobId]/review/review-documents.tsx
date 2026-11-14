@@ -1,5 +1,6 @@
+import type { EstimateEnd } from '@/engine/estimate';
 import type { EstimateView } from '@/lib/estimates/result';
-import { dollars, photoLine, priceLines, quantityNoteLine, warningText } from '@/lib/estimates/screen';
+import { chargeRows, dollars, photoLine, priceLines, quantityNoteLine, warningText } from '@/lib/estimates/screen';
 
 // The parts of Review before signing that show the stored estimate: the price, the four documents
 // and the staff-only notes. Every amount and sentence is the server's, shown as stored; the
@@ -11,6 +12,15 @@ const ROW = 'flex min-w-0 items-baseline justify-between gap-3';
 
 function text(value: unknown): string {
   return typeof value === 'string' ? value : '';
+}
+
+function Charges({ end }: { end: EstimateEnd }) {
+  return chargeRows(end).map((row, index) => (
+    <li key={`${index}-${row.label}`} className={ROW}>
+      <span className="min-w-0 break-words">{row.label}</span>
+      <span className="shrink-0 tabular-nums">{dollars(row.amount)}</span>
+    </li>
+  ));
 }
 
 export function EstimatePrice({ estimate }: { estimate: EstimateView }) {
@@ -37,6 +47,7 @@ export function EstimatePrice({ estimate }: { estimate: EstimateView }) {
             <span className="shrink-0 tabular-nums">{dollars(line.total)}</span>
           </li>
         ))}
+        <Charges end={estimate.totals.low} />
       </ul>
     </section>
   );
@@ -57,13 +68,6 @@ function List({ items }: { items: string[] }) {
 function Proposal({ estimate }: { estimate: EstimateView }) {
   const proposal = estimate.proposal;
   const price = proposal.price;
-  const ends = [
-    ['Subtotal', price.low.subtotal],
-    ['After-hours', price.low.after_hours],
-    ['Minimum job charge', price.low.minimum_charge],
-    ['Overhead and profit', price.low.overhead_profit],
-    ['Sales tax', price.low.tax],
-  ].filter(([, amount]) => amount !== '0.00');
   return (
     <div className="flex flex-col gap-2">
       <p className="font-semibold">{proposal.heading}</p>
@@ -77,12 +81,7 @@ function Proposal({ estimate }: { estimate: EstimateView }) {
             <span className="shrink-0 tabular-nums">{dollars(line.total)}</span>
           </li>
         ))}
-        {ends.map(([label, amount]) => (
-          <li key={label} className={ROW}>
-            <span>{label}</span>
-            <span className="shrink-0 tabular-nums">{dollars(amount!)}</span>
-          </li>
-        ))}
+        <Charges end={price.low} />
       </ul>
       <p className="font-semibold">
         {price.mode === 'range' && price.high ? `Customer estimate range: ${dollars(price.low.total)} to ${dollars(price.high.total)}` : `Price: ${dollars(price.low.total)}`}
@@ -131,6 +130,11 @@ export function EstimateDocuments({ estimate }: { estimate: EstimateView }) {
               </li>
             );
           })}
+          <Charges end={estimate.totals.low} />
+          <li className={`${ROW} font-semibold`}>
+            <span>Itemized total</span>
+            <span className="shrink-0 tabular-nums">{dollars(estimate.totals.low.total)}</span>
+          </li>
         </ul>
       </details>
       <details className="rounded-md border p-3">

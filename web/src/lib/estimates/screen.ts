@@ -1,3 +1,4 @@
+import type { EstimateEnd } from '@/engine/estimate';
 import type { EstimateView } from './result';
 
 // What the Review before signing screen decides in the browser, as pure functions so they are
@@ -50,6 +51,18 @@ export function priceLines(totals: EstimateView['totals']): { customer: string; 
   const itemized = `Itemized total: ${dollars(totals.low.total)}`;
   if (totals.mode === 'single' || !totals.high) return { customer: `Price: ${dollars(totals.low.total)}`, itemized };
   return { customer: `Customer estimate range: ${dollars(totals.low.total)} to ${dollars(totals.high.total)}`, itemized };
+}
+
+/** One end's charges in the order the engine adds them into its total: the subtotal, then each adjustment it charged. */
+export function chargeRows(end: EstimateEnd): Array<{ label: string; amount: string }> {
+  const adjustments = [
+    { label: 'After-hours', amount: end.after_hours },
+    ...end.trade_minimums.map((row) => ({ label: `${row.name} trade minimum`, amount: row.amount })),
+    { label: 'Minimum job charge', amount: end.minimum_charge },
+    { label: 'Overhead and profit', amount: end.overhead_profit },
+    { label: 'Sales tax', amount: end.tax },
+  ];
+  return [{ label: 'Subtotal', amount: end.subtotal }, ...adjustments.filter((row) => row.amount !== '0.00')];
 }
 
 // The engine's pricing warnings by code (src/engine/price-v2.ts), in plain words. The advisory

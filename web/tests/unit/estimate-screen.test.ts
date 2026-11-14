@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { priceEstimate } from '@/engine/estimate';
 import type { EstimateView } from '@/lib/estimates/result';
-import { dollars, notReadyReasons, outcomeOf, photoLine, priceLines, quantityNoteLine, reviewAnswerOf, reviewerOf, warningText } from '@/lib/estimates/screen';
+import { item, job as pricedJob, priced, room, table } from './estimate-fixtures';
+import { chargeRows, dollars, notReadyReasons, outcomeOf, photoLine, priceLines, quantityNoteLine, reviewAnswerOf, reviewerOf, warningText } from '@/lib/estimates/screen';
 
 // S5a-9, what the Review before signing screen decides in the browser. Presentation only: amounts
 // are the server's strings, printed with thousands separators and never recomputed.
@@ -64,6 +65,23 @@ describe('the review screen', () => {
     expect(quantityNoteLine({ label: 'Wet floor area', room: 'Kitchen', measured: '120', entered: '0', reason: 'Whole floor wet' })).toBe(
       'Wet floor area (Kitchen) · measured 120, entered 0 · Reason: Whole floor wet',
     );
+  });
+
+  it('lists every charge the stored total includes, so a document’s breakdown adds up to it', () => {
+    // Demolition 100 sf x $2.00 = $200.00 under the $400.00 drywall minimum: a $200.00 top-up, total $400.00.
+    const result = priced(
+      { ...table([item('demo', { trade: 'drywall' })]), trades: [{ trade_id: 'drywall', name: 'Drywall', minimum_charge: '400' }] },
+      pricedJob([room('Kitchen', { unfinished_sf: 100 })]),
+    );
+    expect(chargeRows(result.totals.low)).toEqual([
+      { label: 'Subtotal', amount: '200.00' },
+      { label: 'Drywall trade minimum', amount: '200.00' },
+    ]);
+    expect(result.totals.low.total).toBe('400.00');
+    const every = { subtotal: '100.00', after_hours: '10.00', trade_minimums: [{ trade_id: 't', name: 'Mold', amount: '20.00' }], minimum_charge: '30.00', overhead_profit: '40.00', tax: '5.00', total: '205.00' };
+    expect(chargeRows(every).map((row) => row.label)).toEqual(['Subtotal', 'After-hours', 'Mold trade minimum', 'Minimum job charge', 'Overhead and profit', 'Sales tax']);
+    const cents = (amount: string) => Number(amount.replace('.', ''));
+    expect(chargeRows(every).reduce((sum, row) => sum + cents(row.amount), 0)).toBe(cents(every.total));
   });
 
   it('says why documents cannot be signed yet', () => {
