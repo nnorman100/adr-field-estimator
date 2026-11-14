@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { EstimateJob, Json } from '@/engine/estimate';
-import { draftFieldSchema, photoFieldSchema, roomFieldSchema } from '@/lib/field/schema';
+import { draftFieldSchema, photoFieldSchema, roomFieldSchema, SHOT_NAMES, SHOT_TAGS, UNTAGGED_ALBUM } from '@/lib/field/schema';
 import { toInspection } from '@/lib/field/inspection';
 import type { CompanyDocuments } from '@/lib/profile/documents';
 import { SNAPSHOT_FORMAT, type Snapshot } from '@/lib/submissions/snapshot';
@@ -75,11 +75,14 @@ function claimOf(claim: Snapshot['claim']): Json {
 }
 
 /**
- * The photo log in the company's grouping. Only grouping by room exists so far (S5a-9c adds shot
- * tags): the photos of each room in the record's room order, then the photos tied to no room. Each
- * photo is the record's own: its id and the hash the evidence registry held when it was submitted.
+ * The photo log in the company's grouping (S5a-9c). By room, the default: the photos of each room in
+ * the record's room order, then the photos tied to no room, with the rows as S5a-9 made them. By shot
+ * tag: albums in the field map's shot-tag order, photos with no tag last, each row naming its album.
+ * Either way each photo is the record's own: its id, its room and the hash the evidence registry held
+ * when it was submitted; only the order and the album headings differ. Within a room or an album the
+ * photos keep the record's order, the only order the record holds.
  */
-function photoLog(snapshot: Snapshot): Json[] {
+function photoLog(snapshot: Snapshot, grouping: CompanyDocuments['settings']['photoLogGrouping']): Json[] {
   const draft = draftFieldSchema.parse(snapshot.field.draft ?? {});
   const names = new Map<string, string>();
   for (const room of snapshot.field.rooms) names.set(room.id, roomFieldSchema.parse(room.field ?? {}).name ?? '');
@@ -92,9 +95,11 @@ function photoLog(snapshot: Snapshot): Json[] {
     const roomId = field.roomId !== undefined && names.has(field.roomId) ? field.roomId : null;
     const row: { [key: string]: Json } = { id: doc.id, room: roomId === null ? NO_ROOM : names.get(roomId)!, sha256 };
     if (field.shotTag !== undefined) row.shot_tag = field.shotTag;
-    return { row, rank: roomId === null ? order.length : order.indexOf(roomId) };
+    if (grouping === 'shot_tag') row.album = field.shotTag === undefined ? UNTAGGED_ALBUM : SHOT_NAMES[field.shotTag];
+    const rank = grouping === 'shot_tag' ? (field.shotTag === undefined ? SHOT_TAGS.length : SHOT_TAGS.indexOf(field.shotTag)) : roomId === null ? order.length : order.indexOf(roomId);
+    return { row, rank };
   });
-  // A stable sort: within a room the photos keep the record's order.
+  // A stable sort: within a room or an album the photos keep the record's order.
   return rows.sort((a, b) => a.rank - b.rank).map((photo) => photo.row);
 }
 
@@ -129,7 +134,7 @@ export function estimateInput(snapshot: Snapshot, company: CompanyDocuments): Es
           signoff: identity.signoff,
         },
         claim: claimOf(snapshot.claim),
-        photos: photoLog(snapshot),
+        photos: photoLog(snapshot, company.settings.photoLogGrouping),
         // The documents' summary is the technician's own (J1). AI suggestions arrive with S7.
         ai: { summary, suggestions: [], unpriced_work: [] },
         customer_name: snapshot.customer.name,

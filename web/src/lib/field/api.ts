@@ -9,7 +9,6 @@ import type { User } from 'firebase/auth';
 import { z } from 'zod';
 import { callApi } from '@/lib/firebase-client';
 import type { ClaimView, CustomerView, JobDetail, JobListItem, JobPage } from '@/lib/jobs/service';
-import { SHOT_TAGS } from './schema';
 import type { JobsList } from './views';
 
 const jobView = z.object({
@@ -159,13 +158,6 @@ export async function photoAddress(user: User, jobId: string, photoId: string): 
   return bytes ? URL.createObjectURL(bytes) : null;
 }
 
-export const SHOT_NAMES: Record<(typeof SHOT_TAGS)[number], string> = {
-  overview: 'Overview',
-  source: 'Source of loss',
-  surface: 'Affected surface',
-  meter: 'Moisture meter',
-  contents: 'Contents',
-  equipment: 'Equipment',
-};
+export { SHOT_NAMES } from './schema';
 
 export type { JobDetail, JobListItem, JobPage };

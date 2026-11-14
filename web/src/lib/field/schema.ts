@@ -25,6 +25,18 @@ export const EARLIEST_YEAR = 1800;
 /** The shot list an adjuster expects in each room (the old app's backend/shot_list.py). */
 export const SHOT_TAGS = ['overview', 'source', 'surface', 'meter', 'contents', 'equipment'] as const;
 
+/** How a shot tag reads on screen and on the photo log's album headings. */
+export const SHOT_NAMES: Record<(typeof SHOT_TAGS)[number], string> = {
+  overview: 'Overview',
+  source: 'Source of loss',
+  surface: 'Affected surface',
+  meter: 'Moisture meter',
+  contents: 'Contents',
+  equipment: 'Equipment',
+};
+/** The album of photos with no shot tag. */
+export const UNTAGGED_ALBUM = 'Not tagged';
+
 const ID = /^[A-Za-z0-9_-]+$/;
 
 const count = () => z.int().min(0).max(MAX_COUNT);

@@ -1,6 +1,6 @@
 import type { EstimateEnd } from '@/engine/estimate';
 import type { EstimateView } from '@/lib/estimates/result';
-import { chargeRows, dollars, photoLine, priceLines, quantityNoteLine, warningText } from '@/lib/estimates/screen';
+import { chargeRows, dollars, photoAlbums, priceLines, quantityNoteLine, warningText } from '@/lib/estimates/screen';
 
 // The parts of Review before signing that show the stored estimate: the price, the four documents
 // and the staff-only notes. Every amount and sentence is the server's, shown as stored; the
@@ -143,7 +143,16 @@ export function EstimateDocuments({ estimate }: { estimate: EstimateView }) {
       </details>
       <details className="rounded-md border p-3">
         <summary className="cursor-pointer font-semibold">Photo audit log</summary>
-        {documents.photoLog.length ? <List items={documents.photoLog.map((photo, index) => photoLine(photo, index))} /> : <p className="pt-3">No photos.</p>}
+        {documents.photoLog.length ? (
+          photoAlbums(documents.photoLog).map((album) => (
+            <div key={album.heading ?? 'photos'}>
+              {album.heading ? <h3 className="pt-3 font-semibold">{album.heading}</h3> : null}
+              <List items={album.lines} />
+            </div>
+          ))
+        ) : (
+          <p className="pt-3">No photos.</p>
+        )}
       </details>
     </section>
   );
