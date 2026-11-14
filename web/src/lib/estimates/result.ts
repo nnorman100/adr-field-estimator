@@ -87,6 +87,9 @@ export const storedEstimateSchema = z.strictObject({
   warnings: z.strictObject({ engine: z.array(jsonObject), advisory: z.array(jsonObject) }),
   // An estimate is always stored with its documents.
   documents: documentsSchema,
+  // The job revision whose customer, claim and property address the documents state; null when
+  // they had changed between Finish and the first price (src/lib/estimates/service.ts).
+  job_revision: z.int().min(1).nullable(),
 }) satisfies z.ZodType<Estimate>;
 
 export type StoredEstimate = z.infer<typeof storedEstimateSchema>;
@@ -167,12 +170,18 @@ export type EstimateView = {
     signable: boolean;
   };
   staffNotes: StaffNotesView;
+  // The customer, claim or property address was saved after the estimate: the documents are
+  // rebuilt from the current details at the stored prices, and they cannot be signed.
+  needsReview: boolean;
 };
 
+/** Documents rebuilt from the record with the job's current details, for an estimate that needs review. */
+export type RebuiltDocuments = { documents: EstimateDocuments; proposal: Proposal; proposalSha256: string };
+
 /** What a caller is shown of a stored estimate. The quantity-override note goes only to `quantity_notes_read`. */
-export function estimateView(record: EstimateRecord, capabilities: readonly Capability[]): EstimateView {
+export function estimateView(record: EstimateRecord, capabilities: readonly Capability[], rebuilt?: RebuiltDocuments): EstimateView {
   const stored = readStoredEstimate(record.pricedResult);
-  const documents = stored.documents;
+  const documents = rebuilt?.documents ?? stored.documents;
   const notes = documents.staff_notes;
   const staffNotes: StaffNotesView = {
     summary: notes.summary,
@@ -187,8 +196,8 @@ export function estimateView(record: EstimateRecord, capabilities: readonly Capa
     submissionId: record.submissionId,
     createdAt: record.createdAt.toISOString(),
     price: { pinSequence: record.pinSequence, versionSequence: record.versionSequence, tableHash: record.tableHash, engineVersion: record.engineVersion },
-    proposalSha256: record.proposalSha256,
-    proposal: readStoredProposal(record.proposalBytes),
+    proposalSha256: rebuilt?.proposalSha256 ?? record.proposalSha256,
+    proposal: rebuilt?.proposal ?? readStoredProposal(record.proposalBytes),
     lines: stored.lines,
     totals: stored.totals,
     documents: {
@@ -198,8 +207,9 @@ export function estimateView(record: EstimateRecord, capabilities: readonly Capa
       claim: documents.claim,
       complianceNotes: documents.compliance_notes,
       unpricedWork: documents.unpriced_work,
-      signable: documents.signable,
+      signable: documents.signable && !rebuilt,
     },
     staffNotes,
+    needsReview: rebuilt !== undefined,
   };
 }

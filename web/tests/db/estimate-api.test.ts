@@ -286,65 +286,90 @@ async function finishAgain(claims: FakeClaims, jobId: string, draftId: string, m
   expect((await f.submitShown(claims, jobId, next, manifest)).answer.status).toBe(201);
 }
 
-describe('a customer or claim edit after Finish and review', () => {
-  it('an address edit after pricing voids the old documents; the next record’s documents show the new address', async () => {
+describe('a customer or claim save after the estimate', () => {
+  it('an address save after pricing: the same prices, documents rebuilt with the new address, needing review and not signable', async () => {
     await publish(h.seed.a, '2.00');
     const { jobId, draftId, manifest } = await submittedJob();
     const first = (await make(ESTIMATOR_A, jobId)).body.estimate;
-    expect(first.proposal.property_address).toBe('12 Synthetic Lane, Testville');
+    expect(first).toMatchObject({ needsReview: false, documents: { signable: true }, proposal: { property_address: '12 Synthetic Lane, Testville' } });
 
     await saveCustomer(ESTIMATOR_A, jobId, '14 Synthetic Lane, Testville');
-    expect(await read(ESTIMATOR_A, jobId)).toMatchObject({ status: 200, body: { job: { status: 'submitted' }, estimate: null } });
-    const before = await everything(h.admin);
-    expect(await make(ESTIMATOR_A, jobId)).toMatchObject({ status: 409, body: { error: 'details_changed' } });
-    expect(await everything(h.admin)).toBe(before);
+    const shown = await read(OFFICE_A, jobId);
+    expect(shown.status).toBe(200);
+    expect(shown.body.estimate).toMatchObject({
+      id: first.id,
+      needsReview: true,
+      documents: { signable: false },
+      proposal: { property_address: '14 Synthetic Lane, Testville' },
+      totals: first.totals,
+      lines: first.lines,
+      price: first.price,
+    });
+    expect(shown.body.estimate.documents.letter).toContain('RE: Remediation scope for 14 Synthetic Lane, Testville');
+    expect(shown.body.estimate.proposalSha256).not.toBe(first.proposalSha256);
 
+    // Pricing again is never refused: the same stored estimate, needing review, and nothing written.
+    const before = await everything(h.admin);
+    const again = await make(ESTIMATOR_A, jobId);
+    expect(again.status).toBe(200);
+    expect(again.body.estimate).toEqual((await read(ESTIMATOR_A, jobId)).body.estimate);
+    expect((await make(ESTIMATOR_A, jobId)).body.estimate).toEqual(again.body.estimate);
+    expect(await everything(h.admin)).toBe(before);
+    expect(await estimates(jobId)).toHaveLength(1);
+
+    // Back to editing and Finish make a new record, priced from the same pin, that can be signed.
     await finishAgain(ESTIMATOR_A, jobId, draftId, manifest);
     const second = await make(ESTIMATOR_A, jobId);
     expect(second.status).toBe(201);
+    expect(second.body.estimate).toMatchObject({
+      needsReview: false,
+      documents: { signable: true },
+      proposal: { property_address: '14 Synthetic Lane, Testville' },
+      price: { pinSequence: 1, versionSequence: 1 },
+      totals: { low: { total: '240.00' } },
+    });
     expect(second.body.estimate.id).not.toBe(first.id);
-    expect(second.body.estimate.proposal.property_address).toBe('14 Synthetic Lane, Testville');
-    expect(second.body.estimate.documents.letter).toContain('RE: Remediation scope for 14 Synthetic Lane, Testville');
-    expect(second.body.estimate.documents.signable).toBe(true);
-    // Prices are unchanged: the same pin, the same total.
-    expect(second.body.estimate).toMatchObject({ price: { pinSequence: 1, versionSequence: 1 }, totals: { low: { total: '240.00' } } });
-    expect((await read(OFFICE_A, jobId)).body.estimate.id).toBe(second.body.estimate.id);
   });
 
-  it('a claim edit after pricing voids the old documents; the next record’s letter shows the new claim', async () => {
-    await publish(h.seed.a, '2.00');
-    const { jobId, draftId, manifest } = await submittedJob();
-    await make(ESTIMATOR_A, jobId);
-
-    await saveClaim(ESTIMATOR_A, jobId, 'CLM-2');
-    expect((await read(OWNER_A, jobId)).body.estimate).toBeNull();
-    const before = await everything(h.admin);
-    expect(await make(OWNER_A, jobId)).toMatchObject({ status: 409, body: { error: 'details_changed' } });
-    expect(await everything(h.admin)).toBe(before);
-
-    await finishAgain(ESTIMATOR_A, jobId, draftId, manifest);
-    const second = (await make(ESTIMATOR_A, jobId)).body.estimate;
-    expect(second.documents.letter).toContain('Claim number: CLM-2');
-    expect(second.documents.signable).toBe(true);
-  });
-
-  it('an edit before the first price is refused at pricing, and nothing is pinned', async () => {
-    await publish(h.seed.a, '2.00');
-    const { jobId } = await submittedJob();
-    await saveClaim(ESTIMATOR_A, jobId, 'CLM-3');
-    const before = await everything(h.admin);
-    expect(await make(ESTIMATOR_A, jobId)).toMatchObject({ status: 409, body: { error: 'details_changed' } });
-    expect(await everything(h.admin)).toBe(before);
-    expect(await pins(jobId)).toEqual([]);
-  });
-
-  it('saving the same details again leaves the estimate current', async () => {
+  it('a claim save after pricing: the letter shows the new claim, needing review and not signable', async () => {
     await publish(h.seed.a, '2.00');
     const { jobId } = await submittedJob();
     const first = (await make(ESTIMATOR_A, jobId)).body.estimate;
+
+    await saveClaim(ESTIMATOR_A, jobId, 'CLM-2');
+    for (const answer of [await read(OWNER_A, jobId), await make(OWNER_A, jobId)]) {
+      expect(answer.status).toBe(200);
+      expect(answer.body.estimate).toMatchObject({ id: first.id, needsReview: true, documents: { signable: false }, totals: first.totals });
+      expect(answer.body.estimate.documents.letter).toContain('Claim number: CLM-2');
+    }
+  });
+
+  it('a save between Finish and the first price: the first estimate already needs review', async () => {
+    await publish(h.seed.a, '2.00');
+    const { jobId } = await submittedJob();
+    await saveClaim(ESTIMATOR_A, jobId, 'CLM-3');
+    const first = await make(ESTIMATOR_A, jobId);
+    expect(first.status).toBe(201);
+    expect(first.body.estimate).toMatchObject({ needsReview: true, documents: { signable: false }, totals: { low: { total: '240.00' } } });
+    expect(first.body.estimate.documents.letter).toContain('Claim number: CLM-3');
+    expect(await pins(jobId)).toHaveLength(1);
+    const again = await make(ESTIMATOR_A, jobId);
+    expect(again.status).toBe(200);
+    expect(again.body.estimate).toEqual(first.body.estimate);
+  });
+
+  it('a save that puts the details back still needs review', async () => {
+    await publish(h.seed.a, '2.00');
+    const { jobId } = await submittedJob();
+    const first = (await make(ESTIMATOR_A, jobId)).body.estimate;
+    await saveCustomer(ESTIMATOR_A, jobId, '14 Synthetic Lane, Testville');
     await saveCustomer(ESTIMATOR_A, jobId, '12 Synthetic Lane, Testville');
-    expect((await read(ESTIMATOR_A, jobId)).body.estimate.id).toBe(first.id);
-    expect(await make(ESTIMATOR_A, jobId)).toMatchObject({ status: 200, body: { estimate: { id: first.id } } });
+    expect((await read(ESTIMATOR_A, jobId)).body.estimate).toMatchObject({
+      id: first.id,
+      needsReview: true,
+      documents: { signable: false },
+      proposal: { property_address: '12 Synthetic Lane, Testville' },
+    });
   });
 });
 

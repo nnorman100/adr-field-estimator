@@ -114,6 +114,11 @@ export function quantityNoteLine(note: unknown): string {
 export function notReadyReasons(estimate: EstimateView): string[] {
   if (estimate.documents.signable) return [];
   const reasons: string[] = [];
+  if (estimate.needsReview) {
+    reasons.push(
+      'The customer, claim or property address changed after this job was priced. The documents show the new details at the same prices, but they cannot be signed until the job is reviewed again: go back to editing, then finish and review.',
+    );
+  }
   for (const missing of estimate.staffNotes.companySetupMissing) reasons.push(`Company settings: ${missing} is not filled in. The owner adds it on Company settings.`);
   if (estimate.documents.unpricedWork.length) reasons.push('Some work has no price. Go back to editing and change the scope.');
   if (reasons.length === 0) reasons.push('The scope has no priced work yet. Go back to editing and add the work.');
@@ -129,10 +134,6 @@ const OUTCOMES: Record<string, { message: string; next: Next }> = {
   summary_missing: { message: 'This job was finished without a summary of findings. Go back to editing, write it, then finish again.', next: 'done' },
   not_submitted: { message: 'This job is still being edited. Finish and review it first.', next: 'reload' },
   job_signed: { message: 'This job is signed. Its signed documents do not change.', next: 'reload' },
-  details_changed: {
-    message: 'The customer, claim or property address changed after this job was finished. Go back to editing, then finish again so the documents show it.',
-    next: 'done',
-  },
   record_unreadable: { message: 'This record cannot be priced as it is. Go back to editing, then finish again.', next: 'done' },
   prices_unreadable: { message: 'The prices this job is pinned to cannot be read. Ask the owner to check the Prices page.', next: 'done' },
   not_allowed: { message: 'Only the owner or the estimator on this job can price it.', next: 'done' },

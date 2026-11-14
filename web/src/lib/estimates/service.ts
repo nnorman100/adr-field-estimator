@@ -2,19 +2,19 @@ import { and, desc, eq } from 'drizzle-orm';
 import { ZodError } from 'zod';
 import { auditEvents, jobEstimates, jobPricePins, jobSubmissions, priceTableVersions } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
-import { priceEstimate, type Json } from '@/engine/estimate';
+import { priceEstimate, type Estimate, type Json } from '@/engine/estimate';
 import { contentHash, parseTable, type Table } from '@/engine/table';
 import type { Capability } from '@/lib/access';
 import { canonicalJson } from '@/lib/field/canonical';
 import { FieldMapError } from '@/lib/field/inspection';
 import { hasAny, jobAccess, JobError, type JobCaller, type JobRow } from '@/lib/jobs/access';
-import { readCompanyDocuments } from '@/lib/profile/documents';
+import { readCompanyDocuments, type CompanyDocuments } from '@/lib/profile/documents';
 import { readJobDetails } from '@/lib/submissions/details';
 import type { Snapshot } from '@/lib/submissions/snapshot';
 import { EstimateError } from './errors';
 import { estimateInput, readSnapshot, SnapshotError } from './inputs';
-import { proposalBytes, proposalOf } from './proposal';
-import { estimateView, type EstimateRecord, type EstimateView } from './result';
+import { proposalBytes, proposalOf, type Proposal } from './proposal';
+import { estimateView, readStoredEstimate, type EstimateRecord, type EstimateView } from './result';
 
 // The estimate (docs/plans/S5.md S5a-9; pricing plan S5a-2): the job's submitted record priced from
 // the job's pinned price version, with the four documents built from the record and the company's
@@ -32,11 +32,13 @@ import { estimateView, type EstimateRecord, type EstimateView } from './result';
 // so the old estimate no longer answers for the job (the old review is void), and the next Finish
 // and review is priced from the same pin.
 //
-// The customer, the claim and the property address may still be edited while the job is submitted
-// (J3); each edit advances the job's revision but not its record, and the record cannot change.
-// So an estimate answers for the job only while its record states them as they are now: after an
-// edit the old review is void (read answers none) and Price this job is refused with
-// `details_changed`, writing nothing, until Back to editing and Finish make a record that states them.
+// The customer, the claim and the property address may still be saved while the job is submitted
+// (J3); each save advances the job's revision but not its record, which cannot change, and one
+// record and pin hold one estimate. So the stored priced result carries the job revision whose
+// details it states (none when they had already changed between Finish and the first price), and a
+// later save makes the estimate need review: both routes answer the stored prices with the
+// documents rebuilt from the current details, never signable, and neither refuses. Only Back to
+// editing and Finish make a record, and so an estimate, that can be signed at the new details.
 
 // Making an estimate is the audit (owner, estimator); reading it is any job reader (docs/spec.md 2.3).
 const MAKE: readonly Capability[] = ['audit'];
@@ -72,7 +74,8 @@ async function currentSubmission(tx: CompanyTransaction, companyId: string, job:
   return { id: row.id, snapshotBytes: Buffer.from(row.snapshotBytes), snapshotSha256: row.snapshotSha256 };
 }
 
-// Whether the record states the job's property address, customer and claim as they are now.
+// Whether the record states the job's property address, customer and claim as they are now: asked
+// only at the first price, since Submit stores no revision; from then on the revision decides.
 async function detailsCurrent(tx: CompanyTransaction, companyId: string, job: JobRow, snapshot: Snapshot): Promise<boolean> {
   const now = await readJobDetails(tx, companyId, job);
   return canonicalJson(now) === canonicalJson({ job: snapshot.job, customer: snapshot.customer, claim: snapshot.claim });
@@ -117,7 +120,9 @@ async function latestVersion(tx: CompanyTransaction, companyId: string): Promise
 }
 
 // The estimate stored for a record and a pin, with the pin's and its version's sequence numbers.
-async function storedEstimate(tx: CompanyTransaction, companyId: string, submissionId: string, pinId: string): Promise<EstimateRecord | null> {
+type StoredRow = EstimateRecord & { versionId: string };
+
+async function storedEstimate(tx: CompanyTransaction, companyId: string, submissionId: string, pinId: string): Promise<StoredRow | null> {
   const [row] = await tx
     .select({
       id: jobEstimates.id,
@@ -125,6 +130,7 @@ async function storedEstimate(tx: CompanyTransaction, companyId: string, submiss
       submissionId: jobEstimates.submissionId,
       pinSequence: jobPricePins.sequence,
       versionSequence: priceTableVersions.sequence,
+      versionId: priceTableVersions.id,
       tableHash: jobEstimates.tableHash,
       engineVersion: jobEstimates.engineVersion,
       pricedResult: jobEstimates.pricedResult,
@@ -156,6 +162,58 @@ async function audit(tx: CompanyTransaction, caller: JobCaller, action: string, 
   await tx.insert(auditEvents).values({ companyId: caller.companyId, actorId: caller.actorId, action, target: jobId, details });
 }
 
+// The record priced from a version with the four documents, refused as the routes answer it.
+function priceRecord(snapshot: Snapshot, company: CompanyDocuments, version: VersionRow): { estimate: Estimate; table: Table } {
+  const table = versionTable(version);
+  let input;
+  try {
+    input = estimateInput(snapshot, company);
+  } catch (error) {
+    if (error instanceof SnapshotError || error instanceof FieldMapError || error instanceof ZodError) throw new EstimateError('record_unreadable');
+    throw error;
+  }
+  if (!input.scopeConfirmed) throw new EstimateError('scope_not_confirmed');
+  if (!input.summary.trim()) throw new EstimateError('summary_missing');
+
+  const estimate = priceEstimate(version.content as Json, input.job);
+  if (!estimate.ok) {
+    if (estimate.stage === 'table') throw new EstimateError('prices_unreadable');
+    throw new EstimateError('estimate_refused', { stage: estimate.stage, message: estimate.error });
+  }
+  // A version priced by other formulas than this server's is refused, never priced by these
+  // (pricing plan 3.5: an unknown engine version is refused).
+  if (estimate.engine_version !== version.engineVersion || estimate.table_sha256 !== version.contentHash) {
+    throw new EstimateError('prices_unreadable');
+  }
+  return { estimate, table };
+}
+
+function proposalFor(estimate: Estimate, company: CompanyDocuments, table: Table, submission: SubmissionRow, version: VersionRow): Proposal {
+  return proposalOf({
+    estimate,
+    company,
+    showLineBreakdown: table.policy.show_line_breakdown,
+    submission: { id: submission.id, snapshotSha256: submission.snapshotSha256 },
+    version: { sequence: version.sequence },
+  });
+}
+
+// What a caller is shown of a stored estimate. On a submitted job whose revision is past the one the
+// estimate states, the documents are rebuilt from the record with the current details and the
+// stored version, so the prices are the stored ones, and they need review and cannot be signed.
+async function present(tx: CompanyTransaction, caller: JobCaller, job: JobRow, row: StoredRow, submission: SubmissionRow): Promise<EstimateView> {
+  const revision = readStoredEstimate(row.pricedResult).job_revision;
+  if (job.status !== 'submitted' || (revision !== null && revision >= job.revision)) return estimateView(row, caller.capabilities);
+  const version = await versionById(tx, caller.companyId, row.versionId);
+  if (!version) throw new EstimateError('prices_unreadable');
+  const company = await readCompanyDocuments(tx, caller.companyId);
+  if (!company) throw new JobError('not_found');
+  const snapshot: Snapshot = { ...readSnapshot(submission.snapshotBytes), ...(await readJobDetails(tx, caller.companyId, job)) };
+  const { estimate, table } = priceRecord(snapshot, company, version);
+  const proposal = proposalFor(estimate, company, table, submission, version);
+  return estimateView(row, caller.capabilities, { documents: estimate.documents!, proposal, proposalSha256: proposalBytes(proposal).sha256 });
+}
+
 export function estimatesService(db: Database): EstimatesService {
   return {
     async make(caller, jobId) {
@@ -173,39 +231,17 @@ export function estimatesService(db: Database): EstimatesService {
           if (error instanceof SnapshotError) throw new EstimateError('record_unreadable');
           throw error;
         }
-        if (!(await detailsCurrent(tx, caller.companyId, job, snapshot))) throw new EstimateError('details_changed');
 
         const pin = await currentPin(tx, caller.companyId, jobId);
         if (pin) {
           const existing = await storedEstimate(tx, caller.companyId, submission.id, pin.id);
-          if (existing) return { created: false, job: jobState(job), estimate: estimateView(existing, caller.capabilities) };
+          if (existing) return { created: false, job: jobState(job), estimate: await present(tx, caller, job, existing, submission) };
         }
         const version = pin ? await versionById(tx, caller.companyId, pin.versionId) : await latestVersion(tx, caller.companyId);
         if (!version) throw new EstimateError('prices_not_set');
-        const table = versionTable(version);
-
         const company = await readCompanyDocuments(tx, caller.companyId);
         if (!company) throw new JobError('not_found');
-        let input;
-        try {
-          input = estimateInput(snapshot, company);
-        } catch (error) {
-          if (error instanceof SnapshotError || error instanceof FieldMapError || error instanceof ZodError) throw new EstimateError('record_unreadable');
-          throw error;
-        }
-        if (!input.scopeConfirmed) throw new EstimateError('scope_not_confirmed');
-        if (!input.summary.trim()) throw new EstimateError('summary_missing');
-
-        const estimate = priceEstimate(version.content as Json, input.job);
-        if (!estimate.ok) {
-          if (estimate.stage === 'table') throw new EstimateError('prices_unreadable');
-          throw new EstimateError('estimate_refused', { stage: estimate.stage, message: estimate.error });
-        }
-        // A version priced by other formulas than this server's is refused, never priced by these
-        // (pricing plan 3.5: an unknown engine version is refused).
-        if (estimate.engine_version !== version.engineVersion || estimate.table_sha256 !== version.contentHash) {
-          throw new EstimateError('prices_unreadable');
-        }
+        const { estimate, table } = priceRecord(snapshot, company, version);
 
         let pinned = pin;
         if (!pinned) {
@@ -217,14 +253,8 @@ export function estimatesService(db: Database): EstimatesService {
           await audit(tx, caller, 'job_price_pinned', jobId, { sequence: pinned.sequence, version: version.sequence });
         }
 
-        const proposal = proposalOf({
-          estimate,
-          company,
-          showLineBreakdown: table.policy.show_line_breakdown,
-          submission: { id: submission.id, snapshotSha256: submission.snapshotSha256 },
-          version: { sequence: version.sequence },
-        });
-        const { bytes, sha256 } = proposalBytes(proposal);
+        const pricedResult = { ...estimate, job_revision: (await detailsCurrent(tx, caller.companyId, job, snapshot)) ? job.revision : null };
+        const { bytes, sha256 } = proposalBytes(proposalFor(estimate, company, table, submission, version));
         const [stored] = await tx
           .insert(jobEstimates)
           .values({
@@ -234,27 +264,28 @@ export function estimatesService(db: Database): EstimatesService {
             pinId: pinned.id,
             tableHash: version.contentHash,
             engineVersion: version.engineVersion,
-            pricedResult: estimate as unknown as Record<string, unknown>,
+            pricedResult: pricedResult as unknown as Record<string, unknown>,
             proposalBytes: bytes,
             proposalSha256: sha256,
             createdByActorId: caller.actorId,
           })
           .returning({ id: jobEstimates.id, createdAt: jobEstimates.createdAt });
         await audit(tx, caller, 'estimate_created', jobId, { pin: pinned.sequence, version: version.sequence, lines: estimate.lines.length });
-        const record: EstimateRecord = {
+        const row: StoredRow = {
           id: stored!.id,
           jobId,
           submissionId: submission.id,
           pinSequence: pinned.sequence,
           versionSequence: version.sequence,
+          versionId: version.id,
           tableHash: version.contentHash,
           engineVersion: version.engineVersion,
-          pricedResult: estimate,
+          pricedResult,
           proposalBytes: bytes,
           proposalSha256: sha256,
           createdAt: stored!.createdAt,
         };
-        return { created: true, job: jobState(job), estimate: estimateView(record, caller.capabilities) };
+        return { created: true, job: jobState(job), estimate: await present(tx, caller, job, row, submission) };
       });
     },
 
@@ -268,10 +299,8 @@ export function estimatesService(db: Database): EstimatesService {
         const submission = await currentSubmission(tx, caller.companyId, job);
         const pin = await currentPin(tx, caller.companyId, jobId);
         if (!submission || !pin) return none;
-        const record = await storedEstimate(tx, caller.companyId, submission.id, pin.id);
-        if (!record) return none;
-        if (job.status === 'submitted' && !(await detailsCurrent(tx, caller.companyId, job, readSnapshot(submission.snapshotBytes)))) return none;
-        return { job: jobState(job), estimate: estimateView(record, caller.capabilities) };
+        const row = await storedEstimate(tx, caller.companyId, submission.id, pin.id);
+        return row ? { job: jobState(job), estimate: await present(tx, caller, job, row, submission) } : none;
       });
     },
   };

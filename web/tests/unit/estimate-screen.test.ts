@@ -47,7 +47,6 @@ describe('the review screen', () => {
     expect(outcomeOf(409, { error: 'prices_not_set' })).toMatchObject({ next: 'done', message: expect.stringContaining('no published prices') });
     expect(outcomeOf(409, { error: 'summary_missing' }).message).toContain('summary of findings');
     expect(outcomeOf(409, { error: 'scope_not_confirmed' }).message).toContain('confirm the scope');
-    expect(outcomeOf(409, { error: 'details_changed' })).toMatchObject({ next: 'done', message: expect.stringContaining('Go back to editing, then finish again') });
     expect(outcomeOf(409, { error: 'estimate_refused', stage: 'documents', message: 'Enter the address' }).message).toContain('property address');
     expect(outcomeOf(0, null)).toMatchObject({ next: 'retry' });
     expect(outcomeOf(503, { error: 'whatever' })).toMatchObject({ next: 'retry' });
@@ -105,6 +104,10 @@ describe('the review screen', () => {
     expect(notReadyReasons(view(false, ['CSLB license'], ['Contents'])))
       .toEqual(['Company settings: CSLB license is not filled in. The owner adds it on Company settings.', 'Some work has no price. Go back to editing and change the scope.']);
     expect(notReadyReasons(view(false, [], []))).toEqual(['The scope has no priced work yet. Go back to editing and add the work.']);
+    const stale = { documents: { signable: false, unpricedWork: [] }, staffNotes: { companySetupMissing: [] }, needsReview: true } as unknown as EstimateView;
+    expect(notReadyReasons(stale)).toEqual([
+      'The customer, claim or property address changed after this job was priced. The documents show the new details at the same prices, but they cannot be signed until the job is reviewed again: go back to editing, then finish and review.',
+    ]);
   });
 });
 

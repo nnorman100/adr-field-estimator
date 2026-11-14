@@ -163,7 +163,7 @@ function record(priced: Estimate): EstimateRecord {
     tableHash: priced.table_sha256,
     engineVersion: priced.engine_version,
     // As jsonb gives it back.
-    pricedResult: JSON.parse(JSON.stringify(priced)),
+    pricedResult: JSON.parse(JSON.stringify({ ...priced, job_revision: 4 })),
     proposalBytes: bytes,
     proposalSha256: sha256,
     createdAt: new Date('2026-11-14T00:00:00Z'),
@@ -198,10 +198,22 @@ describe('what each role is shown of a stored estimate', () => {
     expect(view.price).toEqual({ pinSequence: 1, versionSequence: 3, tableHash: stored.tableHash, engineVersion: 'dryscope-v3' });
   });
 
+  it('an estimate that needs review shows the rebuilt documents and proposal, never signable, at the stored prices', () => {
+    const stored = record(estimate());
+    const rebuiltEstimate = priceEstimate(table(), { ...JOB, documents: { ...JOB.documents!, customer_name: 'Riley Renamed' } });
+    if (!rebuiltEstimate.ok) expect.fail(rebuiltEstimate.error);
+    const proposal = proposalOf({ estimate: rebuiltEstimate, company: COMPANY, showLineBreakdown: false, ...BASIS });
+    const view = estimateView(stored, capabilitiesFor('estimator', ON), { documents: rebuiltEstimate.documents!, proposal, proposalSha256: proposalBytes(proposal).sha256 });
+    expect(view).toMatchObject({ needsReview: true, documents: { signable: false }, proposal: { customer_name: 'Riley Renamed' }, totals: { low: { total: '160.00' } } });
+    expect(view.proposalSha256).not.toBe(stored.proposalSha256);
+    expect(estimateView(stored, capabilitiesFor('estimator', ON))).toMatchObject({ needsReview: false, documents: { signable: true }, proposal: { customer_name: 'Casey Customer' } });
+  });
+
   it('refuses a stored result that does not match the schema', () => {
-    const priced = JSON.parse(JSON.stringify(estimate())) as Record<string, unknown>;
-    expect(readStoredEstimate(priced)).toMatchObject({ ok: true });
-    for (const broken of [{ ...priced, ok: false }, { ...priced, extra: 1 }, { ...priced, documents: null }, { ...priced, lines: [{ total: 12 }] }]) {
+    const priced = JSON.parse(JSON.stringify({ ...estimate(), job_revision: 4 })) as Record<string, unknown>;
+    expect(readStoredEstimate(priced)).toMatchObject({ ok: true, job_revision: 4 });
+    expect(readStoredEstimate({ ...priced, job_revision: null })).toMatchObject({ job_revision: null });
+    for (const broken of [{ ...priced, job_revision: undefined }, { ...priced, job_revision: '4' }, { ...priced, ok: false }, { ...priced, extra: 1 }, { ...priced, documents: null }, { ...priced, lines: [{ total: 12 }] }]) {
       expect(() => readStoredEstimate(broken)).toThrow(StoredEstimateError);
     }
   });

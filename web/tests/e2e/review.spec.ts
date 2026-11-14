@@ -83,7 +83,7 @@ function estimateFor(team: TeamSeed, jobId: string, draftId: string, role: 'owne
       versionSequence: 1,
       tableHash: priced.table_sha256,
       engineVersion: priced.engine_version,
-      pricedResult: JSON.parse(JSON.stringify(priced)),
+      pricedResult: JSON.parse(JSON.stringify({ ...priced, job_revision: 1 })),
       proposalBytes: bytes,
       proposalSha256: sha256,
       createdAt: new Date(),
