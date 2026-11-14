@@ -217,7 +217,7 @@ describe('the sync gate of an open field shell', () => {
     expect(callApi).toHaveBeenCalledTimes(3);
     full = false;
     await vi.advanceTimersByTimeAsync(15_000);
-    expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: NOW + 45_000, lockedReason: 'sign-in-again' });
+    expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: NOW, lockedReason: 'sign-in-again' });
     expect(forgetMe).not.toHaveBeenCalled();
     expect(enableNetwork).not.toHaveBeenCalled();
     run.stop();
@@ -244,7 +244,7 @@ describe('a refusal the phone could not save, then no signal', () => {
     full = false;
     server = { status: 0, body: null };
     await vi.advanceTimersByTimeAsync(15_000);
-    expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: NOW + 15_000, lockedReason: 'company-inactive' });
+    expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: NOW, lockedReason: 'company-inactive' });
     expect(enableNetwork).not.toHaveBeenCalled();
     run.stop();
 
