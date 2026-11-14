@@ -3,7 +3,9 @@ import { CAPABILITIES, ROLES } from '@/lib/access';
 import {
   ACCEPT_SECOND_STEP_MESSAGE,
   ACCEPT_SIGN_IN_AGAIN_MESSAGE,
+  ACCEPT_SIGN_IN_WITH_CODE_MESSAGE,
   acceptErrorMessage,
+  acceptSecondStepNext,
   fullTeam,
   invitationOffer,
   invitationStatusText,
@@ -109,7 +111,18 @@ describe('words for a refused accept', () => {
     const message = acceptErrorMessage(403, { error: 'second_step_required' });
     expect(message).toBe(ACCEPT_SECOND_STEP_MESSAGE);
     expect(message).not.toContain('team');
+    expect(message).not.toContain('next update');
     expect(teamErrorMessage(403, { error: 'second_step_required' })).toContain('changing the team');
+  });
+
+  // An owner or office invitation needs the authenticator-app second step (D2, office since
+  // 2026-11-14). The invitation screen asks Firebase how many authenticator apps the account has.
+  it('sets one up when there is none, asks for a sign-in with its code when there is one, and retries when it cannot tell', () => {
+    expect(acceptSecondStepNext(0)).toBe('set-up');
+    expect(acceptSecondStepNext(1)).toBe('sign-in-with-code');
+    expect(acceptSecondStepNext(3)).toBe('sign-in-with-code');
+    expect(acceptSecondStepNext(null)).toBe('try-again');
+    expect(ACCEPT_SIGN_IN_WITH_CODE_MESSAGE).toBe('Your authenticator app is set up. Sign in again and enter its code, then accept the invitation.');
   });
 });
 

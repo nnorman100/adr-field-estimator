@@ -58,8 +58,9 @@ function parseToken(token: string): { header: string; payload: Record<string, un
   };
 }
 
-// The same unsigned emulator token with the second-factor claim added.
-function withSecondFactor(token: string): string {
+// The same unsigned emulator token with the second-factor claim added. Also used by tests that call
+// the API as an office user or owner, who need the second step (D2).
+export function withSecondFactor(token: string): string {
   const { header, payload } = parseToken(token);
   const firebase = {
     ...(payload.firebase as Record<string, unknown>),

@@ -28,8 +28,10 @@ service cloud.firestore {
       return /databases/$(database)/documents/companies/$(companyId)/access/$(request.auth.uid);
     }
 
-    // The caller's access record, when the token's sign-in tenant is the company's tenant and the
-    // record has not expired; null otherwise. One get() of the company and one of the access
+    // The caller's access record, when the token's sign-in tenant is the company's tenant, the
+    // record has not expired and, for every role but estimator, the sign-in used the authenticator
+    // app (`totp`) as its second step, as the server's session rules require (owner decision D2,
+    // web/src/lib/auth/policy.ts); null otherwise. One get() of the company and one of the access
     // record, so every rule below reads at most three documents (with the draft) per write.
     function member(companyId) {
       let company = get(companyPath(companyId));
@@ -40,7 +42,9 @@ service cloud.firestore {
         && company.data.authTenantId == request.auth.token.firebase.tenant
         && record != null
         && record.data.expiresAt is timestamp
-        && record.data.expiresAt > request.time ? record.data : null;
+        && record.data.expiresAt > request.time
+        && (record.data.role == 'estimator'
+          || request.auth.token.firebase.get('sign_in_second_factor', null) == 'totp') ? record.data : null;
     }
 
     // Owner and office see every draft of their company; an estimator sees only the drafts they

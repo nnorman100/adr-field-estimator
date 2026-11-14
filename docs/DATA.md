@@ -375,7 +375,7 @@ company's rows only inside `withCompany`, with forced row-level security. A key 
   audit details hold ids and counts only.
 
 `0011_submissions_agreements` adds the submission, price pin, estimate and agreement tables and the worker's
-lookup across companies (S5a-7, `docs/plans/S5.md`); no route uses them until S5a-8 to S5a-11. The four tables
+lookup across companies (S5a-7, `docs/plans/S5.md`); the submission routes (S5a-8) and the estimate routes (S5a-9) use them, and agreements are not used until S5a-11. The four tables
 hold a company's rows only inside `withCompany`, with forced row-level security, and every key between rows
 carries `company_id`.
 

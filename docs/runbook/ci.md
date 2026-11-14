@@ -31,7 +31,7 @@ The jobs `python` (pytest and ruff), `browser` (Playwright) and `firestore-emula
 | `node` | `npm ci`, Prettier, `npm run lint` (ESLint, the file-length check `scripts/check-file-length.mts`, required docs) and the vitest suite, which holds the Terraform plan check and the TypeScript ports of the rebuild's workflow guards (see below). The legacy unit tests in `npm test` no longer run. |
 | `Analyze (python)` in CodeQL | Unchanged: still scans the legacy Python (the pricing code stays in the repo), and still only when a legacy file changed, the diff base is unavailable or on the weekly schedule; otherwise it reports green with the skip reason in its log. |
 | `audit`, `Analyze (javascript-typescript)`, `Test guard` | Unchanged and never scoped. |
-| `web.yml` (Web app) | Every job runs on every pull request, with no path filter, so `company-isolation` and `check` report on each one; `check` still requires `database`, `emulators` and `company-isolation` to succeed. Pushes to `master` keep the path filter. `tests/test_web_workflow.ts` covers it. Never scoped. |
+| `web.yml` (Web app) | Every job runs on every pull request, with no path filter, so `company-isolation` and `check` report on each one; `check` still requires `database`, `emulators` and `company-isolation` to succeed. The `e2e` job runs as two Playwright shards (matrix, `E2E_SHARD=N/2`, read by `web/playwright.config.ts`). Pushes to `master` keep the path filter. `tests/test_web_workflow.ts` covers it. Never scoped. |
 
 The legacy deploy workflow `.github/workflows/deploy.yml` is disabled in GitHub (the file stays).
 

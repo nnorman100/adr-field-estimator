@@ -71,6 +71,20 @@ export type EstimateDocuments = {
   itemized_claim: Json[];
   unpriced_work: string[];
   signable: boolean;
+  /** Notes for the company's staff, never part of a document a customer or adjuster receives. */
+  staff_notes: StaffNotes;
+};
+
+/**
+ * What the review shows the company's staff beside the documents: the written summary of findings,
+ * suggestions outside the priced scope, the company fields still missing, and the quantity-override
+ * note, which the server passes on only to a caller holding `quantity_notes_read`.
+ */
+export type StaffNotes = {
+  summary: string;
+  suggestions: string[];
+  company_setup_missing: string[];
+  quantity_notes: Json[];
 };
 
 export type Estimate = {
@@ -86,6 +100,8 @@ export type Estimate = {
     labor_material_high: string;
     explanation: string;
     range_explanation: string | null;
+    /** The price table's name for the after-hours adjustment (`after_hours` on each end). */
+    after_hours_label: string;
   };
   warnings: { engine: Json[]; advisory: Json[] };
   documents: EstimateDocuments | null;
@@ -164,6 +180,12 @@ function documentsOf(documents: JObj): EstimateDocuments {
     itemized_claim: Array.isArray(documents.xactimate_scope) ? documents.xactimate_scope : [],
     unpriced_work: strings(documents.unpriced_work),
     signable: documents.signable === true,
+    staff_notes: {
+      summary: typeof documents.ai_summary === 'string' ? documents.ai_summary : '',
+      suggestions: strings(documents.ai_suggestions),
+      company_setup_missing: strings(documents.company_setup_missing),
+      quantity_notes: Array.isArray(documents.quantity_notes) ? documents.quantity_notes : [],
+    },
   };
 }
 
@@ -256,6 +278,7 @@ export function priceEstimate(table: Json, job: EstimateJob): Estimate | Refusal
       labor_material_high: cents(totals.laborMaterialHigh),
       explanation: totals.explanation,
       range_explanation: totals.rangeExplanation,
+      after_hours_label: totals.afterHoursLabel,
     },
     warnings: { engine: priced.warnings, advisory },
     documents,

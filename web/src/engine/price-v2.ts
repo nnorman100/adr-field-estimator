@@ -9,12 +9,12 @@ import {
   isWater,
   truthy,
   type SizeTier,
-  type Category,
   type PriceLine,
 } from './values';
 import type { Inspection, Room } from './inspection';
 import { fieldDec, roomNumber } from './inspection';
 import { affectedBandOf, roomTypeOf, sizeTierOf } from './rooms';
+import { pickPriceRow } from './row-pick';
 import {
   BUCKET_OF_GROUP,
   COUNT_DAYS,
@@ -159,14 +159,11 @@ export function makeLine(
 /**
  * The row that prices a room: the most specific one wins, room type plus category, then room type,
  * then category; null means the item's default row. A room type the table does not know matches
- * none of the room-type rows.
+ * none of the room-type rows. The rule itself is pickPriceRow (row-pick.ts), shared with the
+ * Prices screen's preview.
  */
 function rowFor(item: Item, room: Room, type: string | null): PriceRow | null {
-  const find = (roomType: string | null, category: Category | null): PriceRow | null =>
-    item.rows?.find((row) => (row.room_type ?? null) === roomType && (row.category ?? null) === category) ?? null;
-  return (
-    (type !== null && (find(type, room.category) ?? find(type, null))) || find(null, room.category) || null
-  );
+  return pickPriceRow(item, room.category, type);
 }
 
 /** "Bathroom, Cat 3": what a row that priced a line is called on it. */

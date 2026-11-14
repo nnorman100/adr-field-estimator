@@ -4,7 +4,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { parseProjectionConfig } from '@/lib/config';
 import { firestoreDraftStore, type DraftStore } from '@/lib/jobs/drafts';
 import { firestoreAccessStore, firestoreFor } from '@/lib/projection/firestore';
-import { createTenant, projectId, signIn, signUp } from './auth-emulator';
+import { createTenant, projectId, signIn, signUp, withSecondFactor } from './auth-emulator';
 import { createDoc, getDoc, updateDoc } from './rules/firestore-rest';
 
 // The first field draft a new job gets (S5a-3), written by the real firebase-admin writer against
@@ -34,7 +34,9 @@ async function member(tenantId: string, company: string, role: 'owner' | 'estima
   const password = `synthetic-password-${role}`;
   const uid = await signUp(tenantId, email, password);
   await grants.grant({ companyId: company, authTenantId: tenantId, uid, role, expiresAt: new Date(Date.now() + DAY), version: 1 });
-  return { uid, caller: { idToken: await signIn(tenantId, email, password) } };
+  // An owner or office user signs in with the authenticator app as the second step (D2).
+  const idToken = await signIn(tenantId, email, password);
+  return { uid, caller: { idToken: role === 'estimator' ? idToken : withSecondFactor(idToken) } };
 }
 
 const path = (company: string, draft: string) => `companies/${company}/drafts/${draft}`;

@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { isIP } from 'node:net';
 import { z } from 'zod';
 import {
   BROWSER_FAMILIES,
@@ -8,7 +10,7 @@ import {
   isKnownRoute,
   scrubMessage,
 } from './client-error-report';
-import { emit } from './log';
+import { emit, log } from './log';
 
 // POST /api/client-errors (TC-2, docs/plans/TC.md): the way a browser or phone error reaches Error
 // Reporting. Public, because the sign-in pages fail before anyone is signed in; so it is write-only
@@ -17,9 +19,11 @@ import { emit } from './log';
 // from fixed fields only:
 //   - the body: JSON, at most 8 KB (counted in bytes while it is read, never trusted from the
 //     header), at most 20 reports, every field bounded by the schema below;
-//   - the rate: each instance writes at most 60 reports a minute; the rest are answered 202 (the
-//     sender can do nothing about them) and only counted, never logged, so a flood cannot also be
-//     a log flood;
+//   - the rate: each caller (its connecting address) may have at most 20 reports a minute written, so one caller cannot use up the instance's allowance; and each
+//     instance writes at most 60 reports a minute in all. The rest are answered 202 (the sender
+//     can do nothing about them) and only counted. The instance cap logs nothing; a caller hitting
+//     its own cap writes one fixed line a minute with no address in it (S3 security review, F6),
+//     so a flood is never also a log flood;
 //   - the content: every report is scrubbed again with the browser's own rules before it is
 //     written, and a frame that is not the app's own script is dropped. Nothing else in the body is
 //     read, so a field a caller invents is not written.
@@ -31,6 +35,8 @@ export const CLIENT_SERVICE = 'dryscope-web-client';
 export const MAX_BODY_BYTES = 8192;
 export const MAX_REPORTS = 20;
 export const REPORTS_PER_MINUTE = 60;
+export const REPORTS_PER_CALLER_PER_MINUTE = 20;
+export const MAX_CALLERS = 5000;
 
 const reportSchema = z.object({
   name: z.string().max(64),
@@ -76,6 +82,52 @@ export function resetClientErrorLimit(): void {
   windowStart = 0;
   used = 0;
   limited = 0;
+  callers.clear();
+  callerLimited = 0;
+  capLoggedAt = -Infinity;
+}
+
+// Per-caller shares, per instance. The key is a SHA-256 of the connecting address: only the hash is
+// held, in memory, and it is never logged. Nothing the caller chooses (user agent, other headers)
+// is part of the key, so a caller cannot buy a new share by changing it. Cloud Run appends the address
+// it saw as the LAST X-Forwarded-For entry; anything before it is the caller's own claim, so only
+// the last is read. A request with no usable address (never on Cloud Run) has no share of its own
+// and is held by the instance cap alone.
+const callers = new Map<string, { start: number; used: number }>();
+let callerLimited = 0;
+let capLoggedAt = -Infinity;
+
+// Reports left unwritten by a caller's own cap since the instance started. Counted, never logged.
+export function callerLimitedReports(): number {
+  return callerLimited;
+}
+
+// Callers held right now, for the test that proves the table stays bounded.
+export function callerTableSize(): number {
+  return callers.size;
+}
+
+function callerKey(headers: Headers): string | null {
+  const last = headers.get('x-forwarded-for')?.split(',').pop()?.trim() ?? '';
+  if (isIP(last) === 0) return null;
+  return createHash('sha256').update(last).digest('hex');
+}
+
+function takeCaller(key: string, count: number, now: number): number {
+  let entry = callers.get(key);
+  if (!entry || now - entry.start >= 60_000) {
+    if (!entry && callers.size >= MAX_CALLERS) {
+      for (const [k, e] of callers) if (now - e.start >= 60_000) callers.delete(k);
+      // Still full of live callers: drop the oldest, so the table stays bounded.
+      if (callers.size >= MAX_CALLERS) callers.delete(callers.keys().next().value as string);
+    }
+    entry = { start: now, used: 0 };
+    callers.set(key, entry);
+  }
+  const allowed = Math.min(count, REPORTS_PER_CALLER_PER_MINUTE - entry.used);
+  entry.used += allowed;
+  callerLimited += count - allowed;
+  return allowed;
 }
 
 // The body as text, or null when it is over the limit. The limit is enforced on the bytes as they
@@ -134,7 +186,15 @@ export async function handleClientErrors(request: Request): Promise<Response> {
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) return refuse('invalid_request', 400);
 
-  const reports = parsed.data.reports.slice(0, take(parsed.data.reports.length, Date.now()));
+  const now = Date.now();
+  const key = callerKey(request.headers);
+  const mine = key === null ? parsed.data.reports.length : takeCaller(key, parsed.data.reports.length, now);
+  if (mine < parsed.data.reports.length && now - capLoggedAt >= 60_000) {
+    capLoggedAt = now;
+    log('WARNING', 'client error reports capped for one caller', { component: 'client-errors', event: 'caller_cap' }, request.headers);
+  }
+  // Only what the caller's share allows counts against the instance's allowance.
+  const reports = parsed.data.reports.slice(0, take(mine, now));
   const commit = process.env.APP_COMMIT;
   const version = commit && COMMIT.test(commit) ? commit : 'unknown';
   for (const report of reports) emit(eventFor(report, version), request.headers);

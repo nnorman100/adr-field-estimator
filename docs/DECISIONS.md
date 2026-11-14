@@ -174,3 +174,13 @@ Decision: no agent is built in S7. The first agent will be ADK TypeScript 2.x on
 Status: accepted (owner, Nov 13, 2026, choice "A"). Supersedes D-015.
 Decision: the pipeline review agent is ChatGPT (GPT-6 Astra), with no Grok or Gemini fallback. Builders are Claude only, so the reviewer is always a different model family from the builder. Technology Standard 2.10 records the same change; the Standard is now at 2.10.
 Update 2026-11-14 (owner): the reviewer is now ChatGPT GPT-6.1 Sol, replacing GPT-6 Astra, to conserve tokens; OpenAI lists it as near-Astra performance at a lower cost. Builders stay Claude only, so the reviewer is still a different model family. The rest of this decision is unchanged.
+
+### D-030: Stronger company sign-in after the sign-in security review (Nov 14, 2026)
+
+Status: accepted (owner, Nov 14, 2026, "all recommended"). Changes S3 decisions D2 and D7 (`docs/plans/S3.md`, section 5).
+Context: the sign-in and company-separation security review of Nov 14, 2026 found company sign-in tenants made with no password rule (F1), email enumeration protection not set by the tenant command (F2), and the operator's 15-minute fresh sign-in covering team changes only (F8).
+Decision:
+1. Company and operator sign-in tenants enforce a password rule of at least 12 characters; a shorter password set before the rule must be changed at the next sign-in. Office users, who see every job of the company, need the authenticator-app second step too (D2 now: owners, office and the platform operator must use it; estimators may opt in). The server refuses an office user without it, as it does an owner, and the sign-in and invitation screens lead them through setting it up.
+2. Email enumeration protection is on for every tenant. The tenant command (`npm run platform:create-tenant`) sets both settings on a new tenant; the owner-run `npm run platform:secure-tenants` brings existing tenants up to them (read-only unless `--apply`).
+3. The operator's sign-in must be under 15 minutes old (D7) for company status, tenant binding, feature switches and AI limits as well as team and second-step changes. Reads and creating a new company keep the 12-hour sign-in.
+Consequences: an office user with no authenticator app is asked to set one up at their next sign-in, and an office invitation is accepted only after it is set up. Existing tenants keep their old settings until the owner runs the update command.

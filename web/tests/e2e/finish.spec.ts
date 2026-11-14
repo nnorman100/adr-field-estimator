@@ -4,6 +4,7 @@ import { Timestamp } from 'firebase-admin/firestore';
 import { manifestDigest, type FieldManifest } from '@/lib/field/canonical';
 import { expectNoAxeViolations } from './a11y';
 import { adminDb } from './offline/world';
+import { APP_CODE, fakeSecondStep } from './second-step/fake-totp';
 import { PASSWORD, readSeed, type TeamAccount, type TeamSeed } from './sign-in/seed';
 
 // The Finish and review screen (S5a-8) in Chromium and WebKit at phone width. It signs in to the
@@ -82,11 +83,19 @@ async function playJobsApi(
   return sent;
 }
 
-async function signInTo(page: Page, who: Pick<TeamAccount, 'email'>) {
+// An owner or office user signs in with the authenticator app (D2), which the Auth emulator cannot
+// do: it is answered at the network boundary (second-step/fake-totp.ts), so the token the page
+// shows the field rules carries the second step, as Identity Platform's does.
+async function signInTo(page: Page, who: Pick<TeamAccount, 'email'>, secondStep = false) {
+  if (secondStep) await fakeSecondStep(page, { factors: ['Authenticator app'] });
   await page.goto(`/sign-in/${team.address}`);
   await page.getByLabel('Email').fill(who.email);
   await page.getByLabel('Password').fill(PASSWORD);
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  if (secondStep) {
+    await page.getByLabel('6-digit code').fill(APP_CODE);
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  }
   await expect(page.getByRole('heading', { name: `Signed in to ${team.companyName}` })).toBeVisible();
 }
 
@@ -180,7 +189,7 @@ test('when another phone finished first, a reload shows the record and Back to e
 test('office sees the draft but cannot finish it', async ({ page }) => {
   const { jobId, draftId } = await seedDraft(team.office, 'office');
   const sent = await playJobsApi(page, { id: jobId, status: 'draft', currentDraftId: draftId, revision: 2 }, {});
-  await signInTo(page, team.office);
+  await signInTo(page, team.office, true);
   await page.goto(`/sign-in/${team.address}/jobs/${jobId}/finish`);
   const main = page.getByRole('main');
   await expect(main.getByText('2 rooms: Kitchen, Hall')).toBeVisible();
