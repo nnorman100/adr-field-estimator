@@ -4,10 +4,11 @@
 // Everything runs under a demo- project on loopback, so nothing here can reach a real project.
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { E2E_EMU } from '../emu-ports';
 
 export const JOBS_PORT = 3101;
 export const JOBS_BASE_URL = `http://localhost:${JOBS_PORT}`;
-export const STORAGE_EMULATOR_HOST = '127.0.0.1:9499';
+export const STORAGE_EMULATOR_HOST = `127.0.0.1:${E2E_EMU.ports.storage}`;
 export const EVIDENCE_BUCKET = 'dryscope-evidence-e2e';
 
 const webDir = fileURLToPath(new URL('../../..', import.meta.url));

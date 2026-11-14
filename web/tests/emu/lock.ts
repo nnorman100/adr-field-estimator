@@ -1,7 +1,9 @@
 // Host-wide lock for `npm run test:emu`. The emulators use the fixed ports in firebase.json
 // (auth 9399, firestore 8399), so two runs on one machine would collide on "port taken". Each
 // run takes this lock before the Firebase CLI starts and holds it until the emulators stop;
-// a second run waits its turn instead of failing.
+// a second run waits its turn instead of failing. A run with its own ports (ports.ts) needs no
+// turn: it takes one of these locks per port instead (`tryAcquireLock`), so runs only wait for
+// the ports they share.
 import { closeSync, openSync, readFileSync, rmSync, statSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -52,6 +54,27 @@ function tryTake(path: string): boolean {
   }
 }
 
+// Takes the lock at `path` if it is free (or its holder is gone) without waiting: a release
+// function when this process now holds it, null when another live process does.
+export function tryAcquireLock(path: string): (() => void) | null {
+  for (;;) {
+    if (tryTake(path)) break;
+    if (!isStale(path)) return null;
+    rmSync(path, { force: true });
+  }
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    try {
+      // Only remove our own lock.
+      if (readFileSync(path, 'utf8') === String(process.pid)) rmSync(path, { force: true });
+    } catch {
+      // already gone
+    }
+  };
+}
+
 // Resolves with a release function once this process holds the lock.
 export async function acquireEmulatorLock(options: LockOptions = {}): Promise<() => void> {
   const path = options.path ?? DEFAULT_LOCK_PATH;
@@ -61,11 +84,8 @@ export async function acquireEmulatorLock(options: LockOptions = {}): Promise<()
   const started = Date.now();
   let announced = false;
   for (;;) {
-    if (tryTake(path)) break;
-    if (isStale(path)) {
-      rmSync(path, { force: true });
-      continue;
-    }
+    const release = tryAcquireLock(path);
+    if (release) return release;
     if (Date.now() - started > timeoutMs) {
       throw new Error(
         `Waited ${Math.round(timeoutMs / 1000)}s for another test:emu run to finish (lock ${path})`,
@@ -79,15 +99,4 @@ export async function acquireEmulatorLock(options: LockOptions = {}): Promise<()
     }
     await new Promise((resolve) => setTimeout(resolve, pollMs));
   }
-  let released = false;
-  return () => {
-    if (released) return;
-    released = true;
-    try {
-      // Only remove our own lock.
-      if (readFileSync(path, 'utf8') === String(process.pid)) rmSync(path, { force: true });
-    } catch {
-      // already gone
-    }
-  };
 }

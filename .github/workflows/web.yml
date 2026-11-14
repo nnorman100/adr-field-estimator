@@ -14,6 +14,11 @@ on:
 permissions:
   contents: read
 
+# The emulator jobs (`emulators`, `company-isolation`, `e2e`) pick free emulator ports for each run
+# (web/tests/emu/ports.ts), so jobs on runners that share a machine never collide on 9399 or 8399.
+env:
+  EMU_PORTS: auto
+
 concurrency:
   group: web-${{ github.ref }}
   cancel-in-progress: true

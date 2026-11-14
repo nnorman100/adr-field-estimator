@@ -192,3 +192,16 @@ describe('the e2e job', () => {
     expect(java.with['java-version']).toBe('21');
   });
 });
+
+describe('emulator ports', () => {
+  it('are picked per run for every job, so runners that share a machine never collide', () => {
+    // web/tests/emu/ports.ts: with EMU_PORTS=auto, test:emu, test:isolation and test:e2e each claim free ports.
+    expect(web().env?.EMU_PORTS).toBe('auto');
+    for (const [name, job] of Object.entries(web().jobs as Record<string, Data>)) {
+      expect(
+        job.env?.EMU_PORTS,
+        `job ${name} must not override the workflow's setting`,
+      ).toBeUndefined();
+    }
+  });
+});
