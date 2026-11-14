@@ -26,6 +26,7 @@ export const BASE_CAPABILITIES = Object.freeze({
     'delivery_resend',
     'quantity_notes_read',
     'retention_manage',
+    'ai_usage_read',
   ],
   estimator: [
     'jobs_read',

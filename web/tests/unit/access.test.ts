@@ -46,8 +46,8 @@ const off = { priceBooks: false };
 describe('access table against docs/ACCESS.md', () => {
   const matrix = docMatrix();
 
-  it('lists exactly 21 keys in the document, and the table knows the same keys', () => {
-    expect(matrix.size).toBe(21);
+  it('lists exactly 22 keys in the document, and the table knows the same keys', () => {
+    expect(matrix.size).toBe(22);
     expect([...CAPABILITIES].sort()).toEqual([...matrix.keys()].sort());
   });
 
@@ -76,7 +76,7 @@ describe('price flag', () => {
     }
   });
 
-  it('leaves the other 19 keys unchanged when off', () => {
+  it('leaves the other 20 keys unchanged when off', () => {
     const matrix = docMatrix();
     for (const role of ROLE_COLUMNS) {
       const expected = [...matrix]
@@ -97,7 +97,7 @@ describe('price flag', () => {
   it('lists the price keys only in the table that includes them', () => {
     expect(CAPABILITIES).toContain('prices_read');
     expect(CAPABILITIES).toContain('prices_manage');
-    expect(CAPABILITIES).toHaveLength(21);
+    expect(CAPABILITIES).toHaveLength(22);
   });
 });
 

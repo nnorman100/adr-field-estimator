@@ -6,8 +6,62 @@ import type { AccessFlags } from '@/lib/access';
 // and a name not on this list all mean off. Only a platform operator changes a flag (owner
 // decision D12); the route is POST /api/platform/companies/{companyId}/flags (S3-11b).
 
-export const FLAG_NAMES = Object.freeze(['price_books'] as const);
+// The six AI feature switches (docs/plans/S7.md section 3, step S7-4). The operator turns one on for
+// a company only after that feature's eval passes on `test`; the AI boundary (web/src/lib/ai/call.ts)
+// refuses a feature whose switch is not exactly on.
+export const AI_FLAG_NAMES = Object.freeze([
+  'live_voice',
+  'ai_summary',
+  'ai_scope_fill',
+  'ai_meter_reading',
+  'ai_voice_notes',
+  'ai_job_summary',
+] as const);
+export type AiFlagName = (typeof AI_FLAG_NAMES)[number];
+
+export const FLAG_NAMES = Object.freeze(['price_books', ...AI_FLAG_NAMES] as const);
 export type FlagName = (typeof FLAG_NAMES)[number];
+
+// Every AI switch's owner, purpose and removal date (the Standard's feature-switch rule). The owner
+// is a role, never a person's name. A switch is removed, with its row, once its feature is on for
+// every company; the date is when that review is due, not an automatic switch-off.
+export type FlagDetails = { readonly owner: string; readonly purpose: string; readonly removeBy: string };
+
+const AI_FLAG_OWNER = 'DryScope product owner';
+const AI_FLAG_REMOVE_BY = '2027-06-30';
+
+export const AI_FLAG_DETAILS: Readonly<Record<AiFlagName, FlagDetails>> = Object.freeze({
+  live_voice: {
+    owner: AI_FLAG_OWNER,
+    purpose: 'The live voice walkthrough (S7-11 to S7-13): the technician talks the loss through with the AI.',
+    removeBy: AI_FLAG_REMOVE_BY,
+  },
+  ai_summary: {
+    owner: AI_FLAG_OWNER,
+    purpose: 'The AI draft of the inspection summary (S7-6), which the technician reviews before it is used.',
+    removeBy: AI_FLAG_REMOVE_BY,
+  },
+  ai_scope_fill: {
+    owner: AI_FLAG_OWNER,
+    purpose: 'AI scope fill from notes (S7-7): proposed room and scope changes, each backed by an exact quote.',
+    removeBy: AI_FLAG_REMOVE_BY,
+  },
+  ai_meter_reading: {
+    owner: AI_FLAG_OWNER,
+    purpose: 'Reading a moisture meter from its photo (S7-8), proposed to the technician.',
+    removeBy: AI_FLAG_REMOVE_BY,
+  },
+  ai_voice_notes: {
+    owner: AI_FLAG_OWNER,
+    purpose: 'Transcribing recorded voice notes (S7-9); the audio is not kept.',
+    removeBy: AI_FLAG_REMOVE_BY,
+  },
+  ai_job_summary: {
+    owner: AI_FLAG_OWNER,
+    purpose: 'The AI job summary for the office (S7-10).',
+    removeBy: AI_FLAG_REMOVE_BY,
+  },
+});
 
 export type CompanyFlags = Readonly<Record<FlagName, boolean>>;
 
