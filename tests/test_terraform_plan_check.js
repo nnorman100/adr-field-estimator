@@ -396,7 +396,10 @@ describe.each(['test', 'live'])('data root, %s: grants and protection', (environ
       'principalSet://iam.googleapis.com/projects/1/locations/global/workloadIdentityPools';
     const pool = `${pools}/dryscope-${environment}`;
     expect(withBinding(`${pool}/attribute.repository_id/42`)).toEqual([]);
-    expect(withBinding(`${pool}/attribute.repository/nnorman100/adr-field-estimator`)).toEqual([]);
+    // D-024: the repository-name form is refused; only the numeric repository id is trusted.
+    expect(withBinding(`${pool}/attribute.repository/nnorman100/adr-field-estimator`)).toHaveLength(
+      1,
+    );
     expect(withBinding(`${pool}/*`)).toHaveLength(1);
     expect(withBinding(`${pool}/attribute.repository_owner/nnorman100`)).toHaveLength(1);
   });

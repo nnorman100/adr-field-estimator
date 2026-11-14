@@ -56,6 +56,17 @@ export async function signIn(tenantId: string, email: string, password: string):
   return session.idToken as string;
 }
 
+// The same unsigned emulator ID token, recording `factor` as the sign-in's second step the way
+// Identity Platform's tokens do (`totp` for an authenticator app, `phone` for a text message). The
+// Auth emulator cannot do the authenticator-app step (totp.test.ts), and the Firestore emulator
+// does not check signatures, so this stands in for an owner or office user who signed in with one.
+export function withSecondFactor(idToken: string, factor: 'totp' | 'phone' = 'totp'): string {
+  const [header, payload] = idToken.split('.');
+  const claims = JSON.parse(Buffer.from(payload!, 'base64url').toString('utf8')) as Record<string, unknown>;
+  const firebase = { ...(claims.firebase as Record<string, unknown>), sign_in_second_factor: factor };
+  return [header, Buffer.from(JSON.stringify({ ...claims, firebase })).toString('base64url'), ''].join('.');
+}
+
 export async function markEmailVerified(tenantId: string, localId: string): Promise<void> {
   await ok(`/v1/projects/${projectId}/tenants/${tenantId}/accounts:update`, { localId, emailVerified: true }, true);
 }

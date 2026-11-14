@@ -20,7 +20,12 @@ output "artifact_repository" {
 
 output "secret_ids" {
   description = "Secret names the owner must add a value to."
-  value       = [for s in google_secret_manager_secret.app : s.secret_id]
+  value       = concat([for s in google_secret_manager_secret.app : s.secret_id], [for s in google_secret_manager_secret.synthetic_password : s.secret_id])
+}
+
+output "recaptcha_site_key" {
+  description = "The web app's reCAPTCHA Enterprise site key for App Check (public: the browser sends it)."
+  value       = google_recaptcha_enterprise_key.web.name
 }
 
 output "identity_users_role" {

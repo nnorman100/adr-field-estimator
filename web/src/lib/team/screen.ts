@@ -75,7 +75,9 @@ const OTHER_MESSAGES: Record<string, string> = {
 export const SIGN_IN_AGAIN_MESSAGE = 'For safety, team changes need a sign-in from the last 15 minutes. Sign in again, then repeat the change.';
 export const ACCEPT_SIGN_IN_AGAIN_MESSAGE = 'Your sign-in has run out. Sign in again, then accept the invitation.';
 export const ACCEPT_SECOND_STEP_MESSAGE =
-  'This invitation needs an authenticator app as a second sign-in step before you can accept it. Setting it up from this screen arrives in the next update.';
+  'This invitation needs an authenticator app as a second sign-in step before you can accept it. Check your connection, then try again.';
+export const ACCEPT_SIGN_IN_WITH_CODE_MESSAGE =
+  'Your authenticator app is set up. Sign in again and enter its code, then accept the invitation.';
 const TRY_AGAIN_MESSAGE = 'We could not make that change. Check your connection, then try again.';
 
 export function isSignInAgain(status: number, body: unknown): boolean {
@@ -94,11 +96,20 @@ export function teamErrorMessage(status: number, body: unknown): string {
 }
 
 // The words for a refused accept: its sign-in rules are those of the role being accepted (its
-// sign-in age, and the second step for an owner), not the rules of team changes.
+// sign-in age, and the second step for an owner or office user), not the rules of team changes.
 export function acceptErrorMessage(status: number, body: unknown): string {
   if (isSignInAgain(status, body)) return ACCEPT_SIGN_IN_AGAIN_MESSAGE;
   if (status === 403 && field(body, 'error') === 'second_step_required') return ACCEPT_SECOND_STEP_MESSAGE;
   return teamErrorMessage(status, body);
+}
+
+// What the invitation screen does when accepting is refused for a missing second step (an owner
+// or office invitation, D2), from the number of authenticator apps Firebase lists for the account:
+// none, set one up here; some, this sign-in did not use one (it is the session that set it up), so
+// sign in again with its code; unknown (no connection), say so and let the person try again.
+export function acceptSecondStepNext(authenticators: number | null): 'set-up' | 'sign-in-with-code' | 'try-again' {
+  if (authenticators === null) return 'try-again';
+  return authenticators > 0 ? 'sign-in-with-code' : 'set-up';
 }
 
 // The link just made or resent stays on screen until a list read from the server no longer holds

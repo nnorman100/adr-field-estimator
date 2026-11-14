@@ -102,6 +102,7 @@ export function parseSource(text: string): Source {
   if (text === 'room:floor') return { kind: 'room', ...empty, field: 'floor_sf' };
   if (text === 'room:basis') return { kind: 'room', ...empty, field: 'basis' };
   if (text === 'room:each') return { kind: 'room', ...empty, field: 'each' };
+  if (text === 'room:typed') return { kind: 'room', ...empty, field: 'typed' };
   if (text === 'after_hours') return { kind: 'after_hours', ...empty };
   if (text === 'typed') return { kind: 'typed', ...empty };
   if (text === 'typed_count_days') return { kind: 'typed_count_days', ...empty };

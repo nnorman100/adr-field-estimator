@@ -143,11 +143,18 @@ describe('the operator context', () => {
       { table: 'companies', column: 'sign_in_slug', privilege: 'INSERT' },
       { table: 'companies', column: 'auth_tenant_id', privilege: 'UPDATE' },
       // 0010: a company's own profile columns, which the operator's context cannot change.
+      // 0013 adds the letterhead lines and the document settings to them, under the same rule.
       { table: 'companies', column: 'profile_address', privilege: 'UPDATE' },
+      { table: 'companies', column: 'profile_documents', privilege: 'UPDATE' },
       { table: 'companies', column: 'profile_email', privilege: 'UPDATE' },
+      { table: 'companies', column: 'profile_emergency_phone', privilege: 'UPDATE' },
+      { table: 'companies', column: 'profile_fax', privilege: 'UPDATE' },
       { table: 'companies', column: 'profile_license', privilege: 'UPDATE' },
+      { table: 'companies', column: 'profile_mailing_address', privilege: 'UPDATE' },
       { table: 'companies', column: 'profile_phone', privilege: 'UPDATE' },
       { table: 'companies', column: 'profile_signoff', privilege: 'UPDATE' },
+      { table: 'companies', column: 'profile_tagline', privilege: 'UPDATE' },
+      { table: 'companies', column: 'profile_website', privilege: 'UPDATE' },
       { table: 'companies', column: 'status', privilege: 'UPDATE' },
       { table: 'companies', column: 'updated_at', privilege: 'UPDATE' },
     ]);

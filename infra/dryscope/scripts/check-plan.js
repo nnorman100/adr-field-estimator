@@ -29,7 +29,10 @@
 // Cloud Run refuses to change an existing revision and makes a fresh one only for an unnamed
 // template. A fourth covers a Cloud SQL instance already applied
 // with a regional backup location: it may change in place, and only to the US multi-region (`us`),
-// with every other attribute unchanged. Nothing else may be deleted, replaced or updated.
+// with every other attribute unchanged. A fifth covers the data resources stage TC changes in place
+// (check-plan-tc.js, FIELD_UPDATES): the evidence bucket may change only its lifecycle rule and soft
+// delete, and the image repository only its scanning setting, each to the table's value. Nothing
+// else may be deleted, replaced or updated.
 //
 // A RE-APPLY plan (the root is already applied, so at least one resource in the plan is a no-op)
 // adds one more allowance: a resource of a type in REAPPLY_UPDATABLE may change in place, because
@@ -41,6 +44,7 @@
 const fs = require('node:fs');
 const readline = require('node:readline');
 const { addAiData, aiSettings, LIVE_CONCURRENCY } = require('./check-plan-ai.js');
+const { addTcData, fieldUpdate } = require('./check-plan-tc.js');
 
 const PROJECT = 'dryscope';
 const PROJECT_NUMBER = '570228742694';
@@ -261,14 +265,14 @@ function expectedPlan(root, env) {
       repository: `dryscope-${env}`,
       location: REGION,
     };
-    // Present only after the owner supplies a repository-scoped principal set from this
-    // environment's own pool.
+    // Present only after the owner supplies a principal set from this environment's own pool,
+    // scoped to one repository by its numeric id (D-024: never the repository-name form).
     const wif = 'google_service_account_iam_member.deploy_workload_identity[0]';
     optional.add(wif);
     grants[wif] = {
       role: 'roles/iam.workloadIdentityUser',
       member: new RegExp(
-        `^principalSet://iam\\.googleapis\\.com/projects/[0-9]+/locations/global/workloadIdentityPools/dryscope-${env}/attribute\\.(repository_id|repository)/[^*]+$`,
+        `^principalSet://iam\\.googleapis\\.com/projects/[0-9]+/locations/global/workloadIdentityPools/dryscope-${env}/attribute\\.repository_id/[0-9]+$`,
       ),
       condition: null,
       service_account_id: `projects/${PROJECT}/serviceAccounts/dryscope-deploy-${env}@${PROJECT}.iam.gserviceaccount.com`,
@@ -313,7 +317,8 @@ function expectedPlan(root, env) {
       force_destroy: false,
       'versioning.0.enabled': true,
     };
-    absent['google_storage_bucket.evidence'] = ['retention_policy', 'lifecycle_rule'];
+    // Its one lifecycle rule (D-023) is held by check-plan-tc.js.
+    absent['google_storage_bucket.evidence'] = ['retention_policy'];
     attrs['google_sql_database.app'] = {
       name: 'dryscope',
       instance: `dryscope-${env}-pg`,
@@ -371,6 +376,7 @@ function expectedPlan(root, env) {
       };
     }
     addAiData(env, { sa, others, grants, attrs, absent, optional, wif });
+    addTcData(env, { sa, others, grants, attrs, absent, optional });
     lists['google_project_iam_custom_role.identity_users'] = { permissions: IDENTITY_PERMISSIONS };
     attrs['google_project_iam_custom_role.identity_users'] = {
       role_id: `dryscopeIdentity${title(env)}`,
@@ -517,7 +523,9 @@ const get = (obj, path) => path.split('.').reduce((o, k) => (o == null ? undefin
 const same = (want, got) =>
   want instanceof RegExp
     ? typeof got === 'string' && want.test(got)
-    : JSON.stringify(want) === JSON.stringify(got);
+    : typeof want === 'function'
+      ? want(got)
+      : JSON.stringify(want) === JSON.stringify(got);
 // Unset, as the provider reports it against real state: null, an empty list or map, or "" (a
 // scheduler job's `headers = {}` and `body = ""`, a never-released service's revision name).
 const empty = (v) =>
@@ -690,7 +698,8 @@ function checkPlan(resourceChanges, { root, environment, complete = true, reappl
       retiredDelete(rc, actions) ||
       reconditionedReplace(rc, actions) ||
       settingsUpdate(rc, actions) ||
-      backupLocationUpdate(rc, actions)
+      backupLocationUpdate(rc, actions) ||
+      fieldUpdate(rc, actions)
     ) {
       // Named, reviewed exception (see the table).
     } else if (actions.includes('delete')) {

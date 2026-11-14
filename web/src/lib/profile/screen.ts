@@ -1,6 +1,7 @@
 import { can, isRole } from '@/lib/access';
-import { PROFILE_FIELDS } from './schema';
+import { LETTERHEAD_FIELDS, PROFILE_FIELDS } from './schema';
 import type { ProfileView } from './service';
+import { documentSettings } from './settings';
 
 // What the Company settings screen decides in the browser, as pure functions so they are
 // unit-tested. Everything here is convenience: the server checks the sign-in, the company and the
@@ -29,6 +30,7 @@ export function signedInProfileManager(body: unknown): SignedInProfileManager | 
 }
 
 // GET or PUT /api/companies/{id}/profile's answer, or null when it is not the shape the server sends.
+// The document settings are read through their one schema, as the server reads them.
 export function profileView(body: unknown): ProfileView | null {
   const companyId = field(body, 'companyId');
   const name = field(body, 'name');
@@ -36,10 +38,28 @@ export function profileView(body: unknown): ProfileView | null {
   const setupMissing = field(body, 'setupMissing');
   if (typeof companyId !== 'string' || typeof name !== 'string' || typeof revision !== 'string') return null;
   if (!Array.isArray(setupMissing) || !setupMissing.every((item) => typeof item === 'string')) return null;
-  const values = PROFILE_FIELDS.map((key) => field(body, key));
+  const values = [...PROFILE_FIELDS, ...LETTERHEAD_FIELDS].map((key) => field(body, key));
   if (!values.every((value) => typeof value === 'string')) return null;
-  const [address, phone, email, license, signoff] = values as string[];
-  return { companyId, name, revision, address: address!, phone: phone!, email: email!, license: license!, signoff: signoff!, setupMissing };
+  const documents = documentSettings.safeParse(field(body, 'documents'));
+  if (!documents.success) return null;
+  const [address, phone, email, license, signoff, emergencyPhone, fax, website, tagline, mailingAddress] = values as string[];
+  return {
+    companyId,
+    name,
+    revision,
+    address: address!,
+    phone: phone!,
+    email: email!,
+    license: license!,
+    signoff: signoff!,
+    emergencyPhone: emergencyPhone!,
+    fax: fax!,
+    website: website!,
+    tagline: tagline!,
+    mailingAddress: mailingAddress!,
+    documents: documents.data,
+    setupMissing,
+  };
 }
 
 // A 409 to a save: the profile the server holds now, which changed since the screen read it.

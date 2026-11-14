@@ -51,6 +51,9 @@ locals {
     # Runs the manual AI evaluation workflow (docs/plans/S7.md, V9 B): predict and Model Armor
     # sanitize only. Test only.
     eval = "dryscope-eval-${local.env}"
+    # Runs the test copy's synthetic monitor (docs/plans/TC.md, TC-9 and TC-11): reads its own
+    # sign-in password secret and nothing else. Test only.
+    synthetic = "dryscope-synthetic-${local.env}"
   }
 
   # Fixed by the project_id check above; Cloud Run's deterministic address uses it.

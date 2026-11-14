@@ -500,8 +500,11 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
             <InvitationScreen
               invitationId={invitationId}
               companyName={companyName}
+              tenantId={tenantId}
               user={user}
               onAccepted={() => check(user, true)}
+              onSignInAgain={(message, refusal, from) => void refuse(message, refusal, false, from)}
+              onNeedsSignIn={needsFreshSignIn}
               signOut={signOutButton}
             />
           );

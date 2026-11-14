@@ -276,6 +276,14 @@ describe('sign-in error messages', () => {
     expect(signInErrorMessage('auth/cancelled-popup-request', 'A')).toBeNull();
   });
 
+  // Tenants enforce a 12-character password rule and make a shorter old password be changed at the
+  // next sign-in (owner decision 2026-11-14); Firebase then refuses the sign-in with this code.
+  it('tells a person whose password is too short to set a new one', () => {
+    const message = signInErrorMessage('auth/password-does-not-meet-requirements', 'Company A');
+    expect(message).toContain('at least 12 characters');
+    expect(message).toContain('Set your own password');
+  });
+
   it('falls back to a fixed message and reads only the error code', () => {
     expect(signInErrorMessage('auth/internal-error', 'A')).toBe('Sign-in did not work. Try again.');
     expect(signInErrorMessage(undefined, 'A')).toBe('Sign-in did not work. Try again.');

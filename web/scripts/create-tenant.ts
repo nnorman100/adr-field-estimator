@@ -7,8 +7,11 @@
 //   npm run platform:create-tenant -- --project dryscope --name test-operators
 //
 // The tenant gets password sign-in, no public sign-up, no account deletion by the user, and
-// authenticator-app (TOTP) second steps (D1), as in docs/plans/S3.md section 6, step 5. It prints
-// the new tenant id. A company tenant is then bound to its company with the operator route
+// authenticator-app (TOTP) second steps (D1), as in docs/plans/S3.md section 6, step 5, and, since
+// the owner's decision of 2026-11-14 (sign-in security review F1 and F2), a password rule of at
+// least 12 characters, enforced, and email enumeration protection. Tenants made before that are
+// brought up to the same settings by `npm run platform:secure-tenants` (scripts/secure-tenants.ts).
+// It prints the new tenant id. A company tenant is then bound to its company with the operator route
 // POST /api/platform/companies/{id}/tenant; an operator tenant is registered by
 // `npm run platform:add-operator`. Binding the app's user role on the tenant (step 7) and turning
 // Google sign-in on (step 9) stay separate owner steps. Prints no token.
@@ -18,7 +21,7 @@ export type TenantOptions = { project: string; name: string };
 
 // A Google Cloud project id, and an Identity Platform display name: 4-20 letters, digits and
 // hyphens, starting with a letter (docs.cloud.google.com/identity-platform/docs/multi-tenancy-managing-tenants).
-const PROJECT_ID = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/;
+export const PROJECT_ID = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/;
 const DISPLAY_NAME = /^[A-Za-z][A-Za-z0-9-]{3,19}$/;
 
 export function parseTenantArgs(argv: string[]): TenantOptions {
@@ -44,6 +47,27 @@ export function parseTenantArgs(argv: string[]): TenantOptions {
   return { project, name };
 }
 
+// The shortest password a company or operator tenant accepts (owner decision 2026-11-14).
+export const MIN_PASSWORD_LENGTH = 12;
+
+// The password rule, in the field names of the Identity Toolkit v2 REST reference
+// (docs.cloud.google.com/identity-platform/docs/reference/rest/v2/projects.tenants#PasswordPolicyConfig).
+// Google's how-to page shows the Admin SDK's names instead (`enforcementState`, `constraints`,
+// `minLength`); firebase-admin turns those into these before sending. A password shorter than the
+// minimum is refused when it is set, and one already set is refused at sign-in until it is
+// changed (`forceUpgradeOnSignin`).
+export function passwordPolicyConfig() {
+  return {
+    passwordPolicyEnforcementState: 'ENFORCE',
+    forceUpgradeOnSignin: true,
+    passwordPolicyVersions: [{ customStrengthOptions: { minPasswordLength: MIN_PASSWORD_LENGTH } }],
+  };
+}
+
+// Email enumeration protection: generic sign-in errors, and no change of a signed-in user's email
+// to an address that is not verified (docs.cloud.google.com/identity-platform/docs/admin/email-enumeration-protection).
+export const EMAIL_PRIVACY_CONFIG = Object.freeze({ enableImprovedEmailPrivacy: true });
+
 // The tenant body (Identity Platform v2 projects.tenants).
 export function tenantBody(name: string) {
   return {
@@ -52,6 +76,8 @@ export function tenantBody(name: string) {
     enableEmailLinkSignin: false,
     client: { permissions: { disabledUserSignup: true, disabledUserDeletion: true } },
     mfaConfig: { state: 'ENABLED', providerConfigs: [{ state: 'ENABLED', totpProviderConfig: { adjacentIntervals: 1 } }] },
+    passwordPolicyConfig: passwordPolicyConfig(),
+    emailPrivacyConfig: { ...EMAIL_PRIVACY_CONFIG },
   };
 }
 

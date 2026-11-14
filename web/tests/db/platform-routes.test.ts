@@ -190,8 +190,33 @@ describe('who may use the operator routes', () => {
     }
     expect(await (await call(changeRole, stale, ids, { method: 'PATCH', body: { role: 'office' } })).json()).toEqual({ error: 'sign_in_again' });
     expect(await everything(h.admin)).toBe(before);
-    // A company list or status change needs only the operator's 12-hour sign-in.
+    // A company list needs only the operator's 12-hour sign-in.
     expect((await call(companiesGet, stale)).status).toBe(200);
+  });
+
+  // D7 extended by the owner on 2026-11-14 (sign-in security review, finding F8).
+  it('needs a sign-in under 15 minutes old for company status, tenant binding, feature switches and AI limits', async () => {
+    const { POST: flags } = await import('@/app/api/platform/companies/[companyId]/flags/route');
+    const { PUT: aiSettings } = await import('@/app/api/platform/companies/[companyId]/ai-settings/route');
+    const unbound = await newCompany();
+    const changes = [
+      ['company status', status, { companyId: h.seed.a }, 'POST', { status: 'suspended' }],
+      ['tenant binding', tenant, { companyId: unbound }, 'POST', { tenantId: 'tenant-new' }],
+      ['a feature switch', flags, { companyId: h.seed.a }, 'POST', { flag: 'price_books', enabled: true }],
+      ['AI limits', aiSettings, { companyId: h.seed.a }, 'PUT', { dailyCeilingMicroUsd: 1, monthlyCeilingMicroUsd: 1 }],
+    ] as const;
+    const before = await everything(h.admin);
+    for (const [what, route, ids, method, body] of changes) {
+      const response = await call(route as RouteHandler, operatorClaims({ signedInAgo: 16 * 60 }), ids, { method, body });
+      expect({ what, status: response.status, body: await response.json() }).toEqual({ what, status: 401, body: { error: 'sign_in_again' } });
+    }
+    expect(await everything(h.admin)).toBe(before);
+    // A sign-in under 15 minutes old goes through. The AI limits route needs the AI services this
+    // file does not set up; ai-usage-api.test.ts sets limits with a fresh operator sign-in.
+    for (const [what, route, ids, method, body] of changes.slice(0, 3)) {
+      const response = await call(route as RouteHandler, operatorClaims({ signedInAgo: 14 * 60 }), ids, { method, body });
+      expect({ what, status: response.status }).toEqual({ what, status: 200 });
+    }
   });
 });
 

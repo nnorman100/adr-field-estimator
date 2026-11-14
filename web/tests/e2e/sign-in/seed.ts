@@ -59,6 +59,8 @@ export type PricesSeed = {
   owner: TeamAccount;
   estimator: TeamAccount;
   office: TeamAccount;
+  // An office user who has not set up the authenticator-app second step (needed since 2026-11-14).
+  officeWithoutApp: TeamAccount;
 };
 export type Seed = {
   tenantA: string;

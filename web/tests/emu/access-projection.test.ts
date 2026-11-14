@@ -5,7 +5,7 @@ import { parseProjectionConfig } from '@/lib/config';
 import { firestoreAccessStore, firestoreFor } from '@/lib/projection/firestore';
 import type { AccessReader, AccessStore } from '@/lib/projection/store';
 import { accessStoreContract } from '../projection/store-contract';
-import { createTenant, projectId, signIn, signUp } from './auth-emulator';
+import { createTenant, projectId, signIn, signUp, withSecondFactor } from './auth-emulator';
 import { getDoc, serverSet, updateDoc } from './rules/firestore-rest';
 
 // The access records the server writes (S3-12), through the real firebase-admin store, against the
@@ -99,7 +99,9 @@ describe('access records written by the server, checked by the rules', () => {
     const tenant = await createTenant('projection-e');
     const company = randomUUID();
     const member = await estimator(tenant);
-    const caller = { idToken: member.idToken };
+    // Signed in with the authenticator app (an estimator's choice, an office user's duty, D2), so
+    // only the role decides below.
+    const caller = { idToken: withSecondFactor(member.idToken) };
     const draft = `companies/${company}/drafts/d1`;
     await serverSet(draft, { fieldOwnerUid: member.uid, state: 'editing', field: {} });
     await store.grant({ companyId: company, authTenantId: tenant, uid: member.uid, role: 'estimator', expiresAt: new Date(Date.now() + DAY), version: 1 });

@@ -17,8 +17,22 @@ resource "google_storage_bucket" "evidence" {
     retention_duration_seconds = var.evidence_soft_delete_days * 86400
   }
 
-  # No retention policy (an irreversible lock needs its own approval) and no
-  # lifecycle rule that deletes objects or old versions.
+  # D-023, the 35-day backup window: a version that stopped being live (only a deliberate delete
+  # makes one, because uploads never overwrite) is deleted 28 days later, and then stays recoverable
+  # for the 7 days of soft delete above (Google's suggested setup:
+  # documents/docs.cloud.google.com/storage/docs/object-versioning; a deleted noncurrent version is
+  # soft-deleted: documents/docs.cloud.google.com/storage/docs/soft-delete). ARCHIVED limits the
+  # rule to noncurrent versions, so a live object is never touched. This is the only lifecycle
+  # rule; no retention policy (an irreversible lock needs its own approval).
+  lifecycle_rule {
+    condition {
+      with_state                 = "ARCHIVED"
+      days_since_noncurrent_time = 28
+    }
+    action {
+      type = "Delete"
+    }
+  }
 
   lifecycle {
     prevent_destroy = true

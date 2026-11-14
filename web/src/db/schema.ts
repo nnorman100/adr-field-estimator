@@ -68,6 +68,15 @@ export const companies = pgTable(
     profileEmail: text('profile_email').notNull().default(''),
     profileLicense: text('profile_license').notNull().default(''),
     profileSignoff: text('profile_signoff').notNull().default(''),
+    // The letterhead fields and the document settings (0013, S5a-4b), under the same rule. The
+    // settings are one jsonb object whose shape the Zod schema in src/lib/profile/settings.ts checks
+    // at write and at read; '{}' means every setting at its neutral default.
+    profileEmergencyPhone: text('profile_emergency_phone').notNull().default(''),
+    profileFax: text('profile_fax').notNull().default(''),
+    profileWebsite: text('profile_website').notNull().default(''),
+    profileTagline: text('profile_tagline').notNull().default(''),
+    profileMailingAddress: text('profile_mailing_address').notNull().default(''),
+    profileDocuments: jsonb('profile_documents').$type<Record<string, unknown>>().notNull().default({}),
   },
   (t) => [
     unique('companies_id_auth_tenant_id_key').on(t.id, t.authTenantId),

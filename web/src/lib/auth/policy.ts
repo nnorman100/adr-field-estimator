@@ -3,7 +3,9 @@ import type { RefusalCode } from './identity';
 
 // Second-step and session-age rules, from the owner's S3 decisions (2026-11-09):
 //   D1  the second step is an authenticator app (TOTP) only;
-//   D2  owners and the platform operator must use it, office and estimators may opt in;
+//   D2  owners, office and the platform operator must use it, estimators may opt in (office
+//       added by the owner on 2026-11-14, from the sign-in security review: office users see
+//       every job of the company);
 //   D7  sign in again after 12 hours (operator), 14 days (owner, office) or 30 days (estimator),
 //       and within the last 15 minutes for team changes and second-step changes;
 //   D8  the second step is required from the first sign-in, with no grace period.
@@ -25,7 +27,7 @@ export type SessionRule = { secondStepRequired: boolean; maxSignInAgeSeconds: nu
 export const SESSION_RULES: Readonly<Record<SignInHolder, Readonly<SessionRule>>> = Object.freeze({
   operator: Object.freeze({ secondStepRequired: true, maxSignInAgeSeconds: 12 * HOUR }),
   owner: Object.freeze({ secondStepRequired: true, maxSignInAgeSeconds: 14 * DAY }),
-  office: Object.freeze({ secondStepRequired: false, maxSignInAgeSeconds: 14 * DAY }),
+  office: Object.freeze({ secondStepRequired: true, maxSignInAgeSeconds: 14 * DAY }),
   estimator: Object.freeze({ secondStepRequired: false, maxSignInAgeSeconds: 30 * DAY }),
 });
 
