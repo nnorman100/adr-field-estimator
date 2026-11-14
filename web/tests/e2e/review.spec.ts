@@ -273,6 +273,20 @@ async function drawSignature(page: Page) {
 
 const exactText = (page: Page, testId: string) => page.getByTestId(testId).first().evaluate((element) => element.textContent);
 
+// The signed page prints the authorization and payment terms above the signature (S5a-11).
+async function expectTermsAboveSignature(page: Page, signer: string) {
+  const main = page.getByRole('main');
+  const signature = main.getByRole('img', { name: `Signature of ${signer}` });
+  await expect(signature).toBeVisible();
+  const signatureTop = (await signature.boundingBox())!.y;
+  for (const testId of ['authorization-text', 'payment-terms-text']) {
+    const terms = main.getByRole('region', { name: 'Signed proposal' }).getByTestId(testId);
+    await expect(terms).toBeVisible();
+    const box = (await terms.boundingBox())!;
+    expect(box.y + box.height).toBeLessThanOrEqual(signatureTop);
+  }
+}
+
 test('the customer signs on the phone: success only after the server’s answer, and the same request is retried', async ({ page }) => {
   const job = { id: randomUUID(), status: 'submitted', currentDraftId: randomUUID(), revision: 3 };
   const made = estimateFor(team, job.id, job.currentDraftId, 'estimator');
@@ -343,6 +357,7 @@ test('the customer signs on the phone: success only after the server’s answer,
   await expect(main.getByTestId('signed-how')).toHaveText("Signed on the technician's phone, presented by Robin Tech.");
   await expect(main.getByTestId('signed-when')).toContainText('2026');
   await expect(main.getByRole('button', { name: 'Sign', exact: true })).toHaveCount(0);
+  await expectTermsAboveSignature(page, 'Casey Customer');
   await expectNoAxeViolations(page);
   await expectNoSideways(page);
 });
@@ -359,6 +374,8 @@ test('a signed job opens read-only from its stored record', async ({ page }) => 
   await expect(main.getByTestId('signed-by')).toHaveText('Signed by Casey Customer');
   await expect(main.getByRole('img', { name: 'Signature of Casey Customer' })).toBeVisible();
   expect(await exactText(page, 'authorization-text')).toBe('Synthetic start-work authorization.');
+  expect(await exactText(page, 'payment-terms-text')).toBe('Synthetic payment terms.');
+  await expectTermsAboveSignature(page, 'Casey Customer');
   await expect(main.getByRole('checkbox')).toHaveCount(0);
   await expect(main.getByRole('textbox')).toHaveCount(0);
   await expectNoAxeViolations(page);

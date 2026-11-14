@@ -148,8 +148,8 @@ export function SigningForm({ user, jobId, estimate, onSigned }: { user: User; j
   );
 }
 
-// The signed page: who signed, when (the server's clock) and how, the signature and the documents,
-// all from the agreement's stored bytes. Nothing on it can be changed here.
+// The signed page: the proposal with its terms, then the signature, who signed, when (the server's
+// clock) and how, then the other documents, all from the agreement's stored bytes. Nothing on it can be changed here.
 export function SignedAgreementView({ user, jobId, agreement }: { user: User; jobId: string; agreement: SignedAgreement }) {
   const { record } = agreement;
   const [image, setImage] = useState<string | null>(null);
@@ -174,32 +174,34 @@ export function SignedAgreementView({ user, jobId, agreement }: { user: User; jo
   const end = record.proposal.price.low;
   return (
     <>
+      <section aria-labelledby="signed-proposal" className="flex flex-col gap-2">
+        <h2 id="signed-proposal" className="text-lg font-semibold">
+          Signed proposal
+        </h2>
+        <div className="rounded-md border p-3">
+          <Proposal proposal={record.proposal} />
+        </div>
+      </section>
       <section aria-labelledby="signed-heading" className="flex flex-col gap-2 rounded-md border border-green-800 p-3">
         <h2 id="signed-heading" className="text-lg font-semibold">
           Signed record
         </h2>
-        <p data-testid="signed-by">Signed by {record.signer.name}</p>
-        <p data-testid="signed-when">{signedWhen(record.signed_at)}</p>
-        <p data-testid="signed-how">{signedHow(record)}</p>
         {image ? (
           // eslint-disable-next-line @next/next/no-img-element -- a local blob address of the stored signature bytes
           <img src={image} alt={`Signature of ${record.signer.name}`} className="h-28 w-full rounded-md border bg-white object-contain" />
         ) : (
           <p className="text-sm">The signature image is not loaded. It is kept with the signed record.</p>
         )}
+        <p data-testid="signed-by">Signed by {record.signer.name}</p>
+        <p data-testid="signed-when">{signedWhen(record.signed_at)}</p>
+        <p data-testid="signed-how">{signedHow(record)}</p>
         <p className="text-sm break-all">Proposal SHA-256 {record.proposal_sha256}</p>
         <p className="text-sm">This record cannot change. A change to the work is a revised estimate the customer signs again.</p>
       </section>
       <section aria-labelledby="signed-documents" className="flex flex-col gap-2">
         <h2 id="signed-documents" className="text-lg font-semibold">
-          Signed documents
+          Signed supporting documents
         </h2>
-        <details className="rounded-md border p-3" open>
-          <summary className="cursor-pointer font-semibold">Proposal</summary>
-          <div className="pt-3">
-            <Proposal proposal={record.proposal} />
-          </div>
-        </details>
         <details className="rounded-md border p-3">
           <summary className="cursor-pointer font-semibold">Itemized claim</summary>
           <ItemizedClaim rows={record.documents.itemized_claim} end={end} afterHoursLabel={record.proposal.price.after_hours_label} />
