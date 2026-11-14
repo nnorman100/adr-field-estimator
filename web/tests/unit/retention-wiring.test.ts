@@ -375,16 +375,16 @@ describe('the sign-in a refusal ends', () => {
 });
 
 describe('the saved sign-in a sign-out reads', () => {
-  it('keeps the sign-in and offers "Try again" when it cannot be read in time, and signs out once it can', async () => {
+  it('fails the ordinary way, keeping the sign-in, when it cannot be read in time, and signs out once it can', async () => {
     const auth = { currentUser: { uid: 'ana', metadata: { lastSignInTime: 'Fri, 13 Nov 2026 09:00:00 GMT' } } } as unknown as Auth;
     const shown: FailedSignOut[] = [];
     readMe.mockResolvedValueOnce(false);
     await signOutOrShow(() => signOutOnRefusal(auth, 't-a', config, 'sign-in-again'), (failed) => shown.push(failed));
-    expect(shown.map((failed) => failed.name)).toEqual(['not-secured']);
+    expect(shown).toEqual([{ name: 'unavailable' }]);
     expect(forgetMe).not.toHaveBeenCalled();
     expect(signOutCompany).not.toHaveBeenCalled();
 
-    await (shown[0] as Extract<FailedSignOut, { name: 'not-secured' }>).retry();
+    await signOutOrShow(() => signOutOnRefusal(auth, 't-a', config, 'sign-in-again'), (failed) => shown.push(failed));
     expect(shown).toHaveLength(1);
     expect(forgetMe).toHaveBeenCalledWith('t-a', 'ana', null);
     expect(signOutCompany).toHaveBeenCalledOnce();

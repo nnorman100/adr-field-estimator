@@ -17,8 +17,9 @@ import { unsentWork, type LockReason } from './unsent';
 // Every sign-out ends here, the person's own and the app's. The saved sign-in is judged by the
 // phone's retention routine (retention.ts) before it goes, so one past its role's limit locks the
 // work from now even though no row is left to find later (O5, S6-3b). Throws WorkNotSecuredError,
-// with the row and the work left as they were, when that lock cannot be saved, the page still holds
-// a refusal for the person it could not save, or the row cannot be read in time (it may be there).
+// with the row and the work left as they were, when that lock cannot be saved or the page still holds
+// a refusal for the person it could not save. A row that cannot be read in time (it may be there) is
+// the ordinary failure: the person stays signed in and tries again.
 //
 // `from` is the sign-in the sign-out was started for. When anyone has signed in since (another
 // person, or the same person again, in this tab or another), that newer sign-in and its saved
@@ -28,7 +29,7 @@ async function leave(auth: Auth, tenantId: string, from: Session): Promise<void>
   const { user } = from;
   const found = user ? await readMe(tenantId, user.uid) : null;
   if (!stillSignedIn(auth, from)) return;
-  if (found === false) throw new WorkNotSecuredError(() => leave(auth, tenantId, from));
+  if (found === false) throw new Error('the saved sign-in may still be on this phone');
   if (found) {
     const { state, done } = evaluate(Date.now(), { kind: 'entry', person: { tenantId, uid: found.uid, config: found.config }, saved: found });
     if (state === 'unsaved' || pendingReason(tenantId, found.uid) !== null) throw new WorkNotSecuredError(() => leave(auth, tenantId, from));
