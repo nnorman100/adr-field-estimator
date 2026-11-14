@@ -11,8 +11,7 @@
 // the owner's decision of 2026-11-14 (sign-in security review F1 and F2), a password rule of at
 // least 12 characters, enforced, and email enumeration protection. Tenants made before that are
 // brought up to the same settings by `npm run platform:secure-tenants` (scripts/secure-tenants.ts).
-// It prints
-// the new tenant id. A company tenant is then bound to its company with the operator route
+// It prints the new tenant id. A company tenant is then bound to its company with the operator route
 // POST /api/platform/companies/{id}/tenant; an operator tenant is registered by
 // `npm run platform:add-operator`. Binding the app's user role on the tenant (step 7) and turning
 // Google sign-in on (step 9) stay separate owner steps. Prints no token.
