@@ -165,6 +165,44 @@ export function rowName(table: Table, row: Pick<PriceRow, 'category' | 'room_typ
 
 // Whether an item is priced room by room (a room quantity source): only those take price rows, and
 // only those appear in "what does this room pay?".
+// The fields an item's card lets the owner set, each only where the engine uses it: a default
+// quantity for a typed item; for additional work, whose lines are each extra's own wording, hours
+// and approved rate, no name, wording, waste, default quantity or Xactimate note; the after-hours
+// flag for labor; the taxed share once tax applies.
+export type ItemField =
+  | 'name'
+  | 'customer_description'
+  | 'trade'
+  | 'allow_zero'
+  | 'waste_percent'
+  | 'default_quantity'
+  | 'taxable'
+  | 'materials_share_percent'
+  | 'after_hours'
+  | 'no_overhead_profit'
+  | 'xactimate_code';
+
+const EXTRAS_GROUP = 'extras';
+const AFTER_HOURS_GROUPS = new Set(['demolition', 'treatment', 'labor']);
+
+export function itemFields(item: Item): ItemField[] {
+  const extras = item.group === EXTRAS_GROUP;
+  const fields: Array<ItemField | null> = [
+    extras ? null : 'name',
+    extras ? null : 'customer_description',
+    'trade',
+    'allow_zero',
+    extras ? null : 'waste_percent',
+    !extras && item.quantity_source === 'typed' ? 'default_quantity' : null,
+    'taxable',
+    item.taxable ? 'materials_share_percent' : null,
+    AFTER_HOURS_GROUPS.has(item.group) ? 'after_hours' : null,
+    'no_overhead_profit',
+    extras ? null : 'xactimate_code',
+  ];
+  return fields.filter((field): field is ItemField => field !== null);
+}
+
 export function isRoomItem(item: Pick<Item, 'quantity_source'>): boolean {
   return item.quantity_source.startsWith('room:');
 }

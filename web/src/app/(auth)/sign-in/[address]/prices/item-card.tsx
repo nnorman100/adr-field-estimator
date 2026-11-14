@@ -16,7 +16,18 @@ import {
   setItemCategories,
   setRowForm,
 } from '@/lib/prices/edit';
-import { CATEGORIES, OTHER_TYPE, categoryName, isRoomItem, itemCategories, moneyText, rowName, unitWords } from '@/lib/prices/screen';
+import {
+  CATEGORIES,
+  OTHER_TYPE,
+  categoryName,
+  isRoomItem,
+  itemCategories,
+  itemFields,
+  moneyText,
+  rowName,
+  unitWords,
+  type ItemField,
+} from '@/lib/prices/screen';
 import { PriceFields } from './price-form';
 import { CheckField, DecimalField, Hint, Select, TextField } from './ui';
 
@@ -24,8 +35,6 @@ import { CheckField, DecimalField, Hint, Select, TextField } from './ui';
 // until the owner turns on "Price varies by water category" (plan section 3.4 and risk table): then
 // it has a price for each category it is used in, used as set. With "Price varies by room type" on
 // (a company setting), a room-type row can be added as well.
-
-const LABOR_GROUPS = new Set(['demolition', 'treatment', 'labor']);
 
 export function summaryPrice(item: Item): string {
   if (item.unit === 'room') {
@@ -43,6 +52,7 @@ export function ItemCard({ table, item, onChange }: { table: Table; item: Item; 
   const typeRows = (item.rows ?? []).filter((row) => row.room_type !== undefined);
   const moldOnly = Boolean(item.mold_conditions?.length || item.affected_bands?.length);
   const set = (change: Partial<Item>) => onChange({ ...item, ...change });
+  const fields = new Set(itemFields(item));
 
   return (
     <details className="rounded-md border border-foreground/25 open:pb-4 [&_summary]:min-h-11">
@@ -60,14 +70,16 @@ export function ItemCard({ table, item, onChange }: { table: Table; item: Item; 
           hint="An item that is on needs a price before the prices can be published."
           onChange={(enabled) => set({ enabled })}
         />
-        <TextField label="Name" value={item.name} maxLength={80} onChange={(name) => set({ name })} />
-        <TextField
-          label="What the customer reads"
-          value={item.customer_description}
-          maxLength={300}
-          onChange={(customer_description) => set({ customer_description })}
-        />
-        {table.trades?.length ? (
+        {fields.has('name') ? <TextField label="Name" value={item.name} maxLength={80} onChange={(name) => set({ name })} /> : null}
+        {fields.has('customer_description') ? (
+          <TextField
+            label="What the customer reads"
+            value={item.customer_description}
+            maxLength={300}
+            onChange={(customer_description) => set({ customer_description })}
+          />
+        ) : null}
+        {fields.has('trade') && table.trades?.length ? (
           <Select
             label="Trade heading"
             value={item.trade ?? ''}
@@ -96,7 +108,7 @@ export function ItemCard({ table, item, onChange }: { table: Table; item: Item; 
             varies by room type&quot; is off.
           </Hint>
         ) : null}
-        <ItemDetails item={item} set={set} />
+        <ItemDetails item={item} fields={fields} set={set} />
       </div>
     </details>
   );
@@ -220,31 +232,37 @@ function RoomTypePrices({
   );
 }
 
-function ItemDetails({ item, set }: { item: Item; set: (change: Partial<Item>) => void }) {
+function ItemDetails({ item, fields, set }: { item: Item; fields: ReadonlySet<ItemField>; set: (change: Partial<Item>) => void }) {
   return (
     <details className="rounded-md border border-foreground/15 px-3 py-2">
       <summary className="min-h-11 cursor-pointer py-2 text-sm font-medium">More about this item</summary>
       <div className="flex flex-col gap-4 pt-2">
-        <CheckField
-          label="A price of $0.00 is meant"
-          checked={item.allow_zero}
-          hint="Publishing asks you to confirm a zero price again."
-          onChange={(allow_zero) => set({ allow_zero })}
-        />
-        <DecimalField label="Waste (%)" value={item.waste_percent} onChange={(waste_percent) => set({ waste_percent })} />
-        {item.quantity_source !== 'typed' ? null : (
+        {fields.has('allow_zero') ? (
+          <CheckField
+            label="A price of $0.00 is meant"
+            checked={item.allow_zero}
+            hint="Publishing asks you to confirm a zero price again."
+            onChange={(allow_zero) => set({ allow_zero })}
+          />
+        ) : null}
+        {fields.has('waste_percent') ? (
+          <DecimalField label="Waste (%)" value={item.waste_percent} onChange={(waste_percent) => set({ waste_percent })} />
+        ) : null}
+        {fields.has('default_quantity') ? (
           <DecimalField
             label="Quantity when none is entered"
             value={item.default_quantity}
             onChange={(default_quantity) => set({ default_quantity })}
           />
-        )}
-        <CheckField
-          label="Sales tax applies"
-          checked={item.taxable}
-          onChange={(taxable) => set(taxable ? { taxable } : { taxable, materials_share_percent: undefined })}
-        />
-        {item.taxable ? (
+        ) : null}
+        {fields.has('taxable') ? (
+          <CheckField
+            label="Sales tax applies"
+            checked={item.taxable}
+            onChange={(taxable) => set(taxable ? { taxable } : { taxable, materials_share_percent: undefined })}
+          />
+        ) : null}
+        {fields.has('materials_share_percent') ? (
           <DecimalField
             label="Taxed share of the price (%)"
             value={item.materials_share_percent ?? '100'}
@@ -252,7 +270,7 @@ function ItemDetails({ item, set }: { item: Item; set: (change: Partial<Item>) =
             onChange={(materials_share_percent) => set({ materials_share_percent })}
           />
         ) : null}
-        {LABOR_GROUPS.has(item.group) ? (
+        {fields.has('after_hours') ? (
           <CheckField
             label="After-hours rate applies"
             checked={item.after_hours === true}
@@ -260,18 +278,22 @@ function ItemDetails({ item, set }: { item: Item; set: (change: Partial<Item>) =
             onChange={(on) => set({ after_hours: on ? true : undefined })}
           />
         ) : null}
-        <CheckField
-          label="No overhead and profit on this item"
-          checked={item.no_overhead_profit === true}
-          onChange={(on) => set({ no_overhead_profit: on ? true : undefined })}
-        />
-        <TextField
-          label="Matches Xactimate line (office note)"
-          value={item.xactimate_code}
-          maxLength={80}
-          hint="For your office only; it prints on the itemized claim, never on the proposal."
-          onChange={(xactimate_code) => set({ xactimate_code })}
-        />
+        {fields.has('no_overhead_profit') ? (
+          <CheckField
+            label="No overhead and profit on this item"
+            checked={item.no_overhead_profit === true}
+            onChange={(on) => set({ no_overhead_profit: on ? true : undefined })}
+          />
+        ) : null}
+        {fields.has('xactimate_code') ? (
+          <TextField
+            label="Matches Xactimate line (office note)"
+            value={item.xactimate_code}
+            maxLength={80}
+            hint="For your office only; it prints on the itemized claim, never on the proposal."
+            onChange={(xactimate_code) => set({ xactimate_code })}
+          />
+        ) : null}
       </div>
     </details>
   );
