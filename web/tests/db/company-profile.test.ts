@@ -47,6 +47,26 @@ const FULL = {
   license: '000001',
   signoff: 'Pat Example',
 };
+// Since S5a-4b every answer also holds the letterhead lines and the document settings (empty and
+// neutral here; tests/db/company-documents.test.ts sets them), and the setup check also lists the
+// two texts the signed page needs while they are empty.
+const S5A_4B = {
+  emergencyPhone: '',
+  fax: '',
+  website: '',
+  tagline: '',
+  mailingAddress: '',
+  documents: {
+    proposal_layout: 'itemized',
+    company_clauses: [],
+    prep_tasks: [],
+    photo_log_grouping: 'room',
+    authorization_text: '',
+    payment_terms_text: '',
+    show_previous_price: false,
+  },
+};
+const SIGNING = ['Start-work authorization', 'Payment terms'];
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Json = Record<string, any>;
@@ -90,7 +110,8 @@ describe('reading the profile', () => {
       email: '',
       license: '',
       signoff: '',
-      setupMissing: ['Company address', 'CSLB license', 'Document sign-off'],
+      ...S5A_4B,
+      setupMissing: ['Company address', 'CSLB license', 'Document sign-off', ...SIGNING],
     });
   });
 
@@ -125,7 +146,7 @@ describe('saving the profile', () => {
   it('lets the owner save the five fields, then reads them back with an empty setup list', async () => {
     const saved = await put(owner(), h.seed.a, { ...FULL, email: 'Office@Example.Test' });
     expect(saved.status).toBe(200);
-    expect(saved.body).toEqual({ companyId: h.seed.a, name: 'Company company-a', revision: REVISION, ...FULL, setupMissing: [] });
+    expect(saved.body).toEqual({ companyId: h.seed.a, name: 'Company company-a', revision: REVISION, ...FULL, ...S5A_4B, setupMissing: SIGNING });
     expect((await get(owner(), h.seed.a)).body).toEqual(saved.body);
     const row = await rowOf(h.seed.a);
     expect(row).toMatchObject({
@@ -138,13 +159,14 @@ describe('saving the profile', () => {
   });
 
   it('lists a missing licence or sign-off from the engine’s setup check, before any document', async () => {
-    expect((await put(owner(), h.seed.a, { ...FULL, license: '' })).body?.setupMissing).toEqual(['CSLB license']);
-    expect((await put(owner(), h.seed.a, { ...FULL, signoff: '   ' })).body?.setupMissing).toEqual(['Document sign-off']);
+    expect((await put(owner(), h.seed.a, { ...FULL, license: '' })).body?.setupMissing).toEqual(['CSLB license', ...SIGNING]);
+    expect((await put(owner(), h.seed.a, { ...FULL, signoff: '   ' })).body?.setupMissing).toEqual(['Document sign-off', ...SIGNING]);
     expect((await put(owner(), h.seed.a, { ...FULL, license: '', signoff: '' })).body?.setupMissing).toEqual([
       'CSLB license',
       'Document sign-off',
+      ...SIGNING,
     ]);
-    expect((await put(owner(), h.seed.a, FULL)).body?.setupMissing).toEqual([]);
+    expect((await put(owner(), h.seed.a, FULL)).body?.setupMissing).toEqual(SIGNING);
   });
 
   it('writes one audit row that names the actor and the change and holds no value', async () => {

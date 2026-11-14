@@ -5,8 +5,9 @@ import type { CompanyTransaction } from '@/db/tenant';
 // What the four documents take from the company (docs/plans/S5.md, S5a-9 and its 2026-11-13
 // correction): the profile the owner sets on Company settings (S5a-4), the letterhead fields and the
 // document settings. This is the one reader the documents use. The letterhead fields and the
-// document settings have no columns yet (S5a-4b adds them), so until then it returns them empty and
-// at their neutral defaults: the itemized layout, no company clauses, the photo log grouped by room.
+// document settings are stored since S5a-4b (migration 0013), but no document prints them yet, so
+// this returns them empty and at their neutral defaults (the itemized layout, no company clauses,
+// the photo log grouped by room) until S5a-9b and S5a-9c read them.
 // Nothing here is seeded with any company's own values; each company's identity comes only from its
 // own row and prints exactly as entered.
 

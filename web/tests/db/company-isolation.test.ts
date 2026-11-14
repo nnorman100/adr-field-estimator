@@ -163,6 +163,9 @@ async function seedSides(): Promise<void> {
   // Each company's profile holds markers too, so a clean answer from the profile route is not an empty one.
   for (const [company, suffix] of [[h.seed.a, 'a'], [h.seed.b, 'b']] as const) {
     await h.admin`UPDATE companies SET profile_address = ${`Profile Line ${suffix}`}, profile_signoff = ${`Signoff ${suffix}`}, profile_license = ${`Licence ${suffix}`} WHERE id = ${company}`;
+    // S5a-4b: a letterhead line and the document settings hold markers too.
+    const documents = { company_clauses: [{ title: `Clause Line ${suffix}`, text: `Clause Text ${suffix}` }], authorization_text: `Terms Line ${suffix}` };
+    await h.admin`UPDATE companies SET profile_tagline = ${`Tagline Line ${suffix}`}, profile_documents = ${h.admin.json(documents)} WHERE id = ${company}`;
   }
   const jobA = await job(h.seed.a, h.seed.ownerA.actor, 'a');
   const jobB = await job(h.seed.b, h.seed.ownerB.actor, 'b');
@@ -184,7 +187,7 @@ async function seedSides(): Promise<void> {
       companyId,
       ids: { membershipId, invitationId, address: `company-${suffix}`, versionId, ...job },
       people: { owner: person(`owner-${suffix}`), estimator: person(`estimator-${suffix}`), office: person(`office-${suffix}`) },
-      markers: [companyId, membershipId, invitationId, versionId, `zz-price-marker-${suffix}`, `zz-reason-${suffix}`, tenant, `company-${suffix}`, `-${suffix}@example.test`, ...ids, ...extra, job.jobId, job.draftId, job.photoId, `Property Line ${suffix}`, `Customer ${suffix}`, `Carrier ${suffix}`, `Claim ${suffix}`, `Profile Line ${suffix}`, `Signoff ${suffix}`, `Licence ${suffix}`].map((value) =>
+      markers: [companyId, membershipId, invitationId, versionId, `zz-price-marker-${suffix}`, `zz-reason-${suffix}`, tenant, `company-${suffix}`, `-${suffix}@example.test`, ...ids, ...extra, job.jobId, job.draftId, job.photoId, `Property Line ${suffix}`, `Customer ${suffix}`, `Carrier ${suffix}`, `Claim ${suffix}`, `Profile Line ${suffix}`, `Signoff ${suffix}`, `Licence ${suffix}`, `Tagline Line ${suffix}`, `Clause Line ${suffix}`, `Clause Text ${suffix}`, `Terms Line ${suffix}`].map((value) =>
         value.toLowerCase(),
       ),
     };

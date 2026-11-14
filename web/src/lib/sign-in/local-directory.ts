@@ -31,8 +31,23 @@ const fixtureSchema = z.object({
       tenantId: z.string().regex(/^[A-Za-z0-9-]{1,128}$/),
       status: z.enum(['active', 'suspended', 'archived']),
       // The company profile of the settings screen (S5a-4); a company of an older fixture has none.
+      // The letterhead lines and the document settings (S5a-4b) are optional within it, so a profile
+      // an older fixture holds still reads (empty letterhead, neutral settings).
       profile: z
-        .object({ address: z.string(), phone: z.string(), email: z.string(), license: z.string(), signoff: z.string() })
+        .object({
+          address: z.string(),
+          phone: z.string(),
+          email: z.string(),
+          license: z.string(),
+          signoff: z.string(),
+          emergencyPhone: z.string().optional(),
+          fax: z.string().optional(),
+          website: z.string().optional(),
+          tagline: z.string().optional(),
+          mailingAddress: z.string().optional(),
+          // Checked by the settings' own schema when read (src/lib/profile/local-profile.ts).
+          documents: z.unknown().optional(),
+        })
         .optional(),
       profileRevision: z.string().optional(),
       // The company's feature switches that are on (company_feature_flags), such as price_books;
