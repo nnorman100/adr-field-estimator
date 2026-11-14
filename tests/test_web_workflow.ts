@@ -3,6 +3,7 @@
 // `check` still requires database, emulators and company-isolation to succeed. The browser tests run
 // as two Playwright shards (`e2e-shard`) that feed the one required check `e2e`, which passes only
 // when both passed and every listed test ran exactly once. Run by vitest in the node CI job.
+import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -30,43 +31,111 @@ function workDir(job: Data, step: Data): string {
   );
 }
 
-/** `${{ needs.<job>.result }}`, as Actions fills it in. */
-function expand(run: string, needs: Needs): string {
-  return run.replace(/\$\{\{\s*([^}]*?)\s*\}\}/g, (_, expr: string) => {
-    const match = /^needs\.([\w-]+)\.result$/.exec(expr);
-    if (!match) throw new Error(`unexpected expression ${expr}`);
-    return needs[match[1]]?.result ?? '';
+type Context = Record<string, string>;
+
+/** `${{ <expression> }}`, as Actions fills it in from the context; any other expression is an error. */
+function expand(text: string, context: Context): string {
+  return text.replace(/\$\{\{\s*([^}]*?)\s*\}\}/g, (_, expr: string) => {
+    if (!Object.hasOwn(context, expr)) throw new Error(`unexpected expression ${expr}`);
+    return context[expr];
   });
 }
 
-/**
- * Runs the check job's (or the named job's) steps as Actions would on a fresh runner: the workspace starts empty and
- * holds the repository only after actions/checkout, and a run step fails when its working
- * directory is missing. The `Require` steps that test a needed job's result really run; the rest are listed.
- */
-function runCheck(needs: Needs, jobName = 'check'): { passed: boolean; ran: string[] } {
-  const job = web().jobs[jobName];
-  expect(evaluateStep(job.if, {}, true)).toBe(true);
+const newShell = (): Shell => {
   const sh = new Shell();
   shells.push(sh);
+  return sh;
+};
+
+/** Uploaded artifacts by name: the files and directories each one holds. */
+type Artifacts = Record<string, string[]>;
+
+const GUARD = path.join(ROOT, 'web', 'scripts', 'check-e2e-shards.ts');
+const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * Runs a job's steps as Actions would on a fresh runner, filling in `${{ }}` from the context: the
+ * workspace starts empty and holds the repository (here web/ with the shard guard) only after
+ * actions/checkout; a run step runs under bash in its working directory with the commands `sh`
+ * fakes, and fails when that directory is missing; upload-artifact collects the paths it finds and
+ * download-artifact copies the matching artifacts into its path. A failed step fails the job unless
+ * it continues on error, and each later step runs only as its `if` allows.
+ */
+function runJob(
+  jobName: string,
+  sh: Shell,
+  context: Context,
+  artifacts: Artifacts = {},
+): { passed: boolean; ran: string[]; output: string } {
+  const job = web().jobs[jobName];
   const workspace = path.join(sh.tmp, 'workspace');
+  const temp = path.join(sh.tmp, 'runner-temp');
   mkdirSync(workspace);
+  mkdirSync(temp);
+  const ctx = { ...context, 'runner.temp': temp };
   let failed = false;
+  let output = '';
   const ran: string[] = [];
+  const act = (s: Data): boolean => {
+    const uses = String(s.uses ?? '');
+    const w = s.with ?? {};
+    if (uses.startsWith('actions/checkout@')) {
+      mkdirSync(path.join(workspace, 'web', 'scripts'), { recursive: true });
+      cpSync(GUARD, path.join(workspace, 'web', 'scripts', path.basename(GUARD)));
+      return true;
+    }
+    if (uses.startsWith('actions/upload-artifact@')) {
+      const found = expand(w.path, ctx)
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line && existsSync(path.join(workspace, line)));
+      if (found.length === 0 && w['if-no-files-found'] === 'error') return false;
+      artifacts[expand(w.name, ctx)] = found.map((line) => path.join(workspace, line));
+      return true;
+    }
+    if (uses.startsWith('actions/download-artifact@')) {
+      const pattern = new RegExp(`^${String(w.pattern).split('*').map(escape).join('.*')}$`);
+      for (const [name, files] of Object.entries(artifacts)) {
+        if (!pattern.test(name)) continue;
+        const into = path.join(workspace, w.path, w['merge-multiple'] ? '' : name);
+        mkdirSync(into, { recursive: true });
+        for (const file of files)
+          cpSync(file, path.join(into, path.basename(file)), { recursive: true });
+      }
+      return true;
+    }
+    if (s.run === undefined) return true;
+    const cwd = path.join(workspace, workDir(job, s));
+    if (!existsSync(cwd)) return false;
+    const env: Context = { RUNNER_TEMP: temp };
+    for (const [key, value] of Object.entries({ ...job.env, ...s.env })) {
+      env[key] = expand(String(value), ctx);
+    }
+    const result = sh.run(expand(s.run, ctx), env, cwd);
+    output += result.stdout + result.stderr;
+    return result.status === 0;
+  };
   for (const s of job.steps as Data[]) {
     const runs = s.if === undefined ? !failed : evaluateStep(s.if, {}, failed);
     if (!runs) continue;
     ran.push(s.name ?? s.run ?? s.uses);
-    if (s.uses?.startsWith('actions/checkout@')) mkdirSync(path.join(workspace, 'web'));
-    if (s.run === undefined) continue;
-    const cwd = path.join(workspace, workDir(job, s));
-    if (!existsSync(cwd)) failed = true;
-    else if (/^Require /.test(s.name ?? '') && /^test "/.test(s.run)) {
-      const result = sh.run(expand(s.run, needs), {}, cwd);
-      if (result.status !== 0) failed = true;
-    }
+    if (!act(s) && !s['continue-on-error']) failed = true;
   }
-  return { passed: !failed, ran };
+  return { passed: !failed, ran, output };
+}
+
+const needsContext = (needs: Needs): Context =>
+  Object.fromEntries(
+    Object.entries(needs).map(([name, { result }]) => [`needs.${name}.result`, result]),
+  );
+
+/** The check job on a fresh runner, its `Require` steps run for real and npm faked. */
+function runCheck(needs: Needs): { passed: boolean; ran: string[] } {
+  const job = web().jobs.check;
+  expect(evaluateStep(job.if, {}, true)).toBe(true);
+  const sh = newShell();
+  sh.fake('npm');
+  return runJob('check', sh, needsContext(needs));
 }
 
 const all = (result: string): Needs =>
@@ -141,7 +210,8 @@ describe('the check job', () => {
 const SHARDS = ['e2e-shard'];
 const shardJob = (): Data => web().jobs['e2e-shard'];
 const e2eJob = (): Data => web().jobs.e2e;
-const stepRuns = (job: Data): string[] => job.steps.map((s: Data) => s.run ?? s.uses ?? '');
+const shardCount = (): number => shardJob().strategy.matrix.shard.length;
+const PG = 'Install PostgreSQL 16 when there is no Docker daemon';
 const named = (job: Data, name: string): Data => {
   const found = (job.steps as Data[]).filter((s) => s.name === name);
   expect(found, name).toHaveLength(1);
@@ -152,6 +222,92 @@ const usesAction = (job: Data, action: string): Data => {
   expect(found, action).toHaveLength(1);
   return found[0];
 };
+
+// Playwright's JSON reports for a suite of four tests: two specs in each browser project.
+const LISTED = ['chromium', 'webkit'].flatMap((project) =>
+  [1, 2].map((line) => ({ project, line })),
+);
+const report = (tests: typeof LISTED, results: unknown[]) => ({
+  errors: [],
+  suites: [
+    {
+      title: 'a.spec.ts',
+      specs: tests.map(({ project, line }) => ({
+        title: `t${line}`,
+        file: 'a.spec.ts',
+        line,
+        column: 1,
+        tests: [{ projectName: project, results }],
+      })),
+    },
+  ],
+});
+const listReport = () => report(LISTED, []);
+/** What `--shard=i/n` runs: every listed test whose index is i - 1 modulo n, once. */
+const shardReport = (i: number, n: number) =>
+  report(
+    LISTED.filter((_, k) => k % n === i - 1),
+    [{}],
+  );
+
+/**
+ * One matrix run of e2e-shard with Docker answering (so no PostgreSQL install) and Playwright
+ * faked: `npm run test:e2e` writes the JSON report of its `--shard=i/n` slice to
+ * PLAYWRIGHT_JSON_OUTPUT_NAME only when the json reporter is named, leaves the failure output in
+ * test-results and playwright-report, and refuses to run with the HTML report served.
+ */
+function runShard(shard: number, testsFail: boolean, artifacts: Artifacts) {
+  const sh = newShell();
+  const n = shardCount();
+  const reports = path.join(sh.tmp, 'reports');
+  mkdirSync(reports);
+  for (let i = 1; i <= n; i += 1) {
+    writeFileSync(path.join(reports, `${i}-of-${n}.json`), JSON.stringify(shardReport(i, n)));
+  }
+  sh.fake('docker');
+  sh.fake('npx');
+  sh.fake(
+    'npm',
+    [
+      'set -e',
+      `[ "$1 $2" = 'run test:e2e' ] || exit 0`,
+      `[ "$PLAYWRIGHT_HTML_OPEN" = never ] || exit 3`,
+      'for arg; do case $arg in --shard=*) shard=${arg#--shard=};; --reporter=*) reporters=,${arg#--reporter=},;; esac; done',
+      'mkdir -p test-results playwright-report',
+      'case $reporters in *,json,*)',
+      '  mkdir -p "$(dirname "$PLAYWRIGHT_JSON_OUTPUT_NAME")"',
+      `  cp '${reports}/'"\${shard/\\//-of-}.json" "$PLAYWRIGHT_JSON_OUTPUT_NAME";;`,
+      'esac',
+      `exit ${testsFail ? 1 : 0}`,
+    ].join('\n'),
+  );
+  return { ...runJob('e2e-shard', sh, { 'matrix.shard': String(shard) }, artifacts), sh };
+}
+
+/** Every shard of the matrix, sharing one artifact store as a workflow run does. */
+function runShards(testsFail = false) {
+  const artifacts: Artifacts = {};
+  const runs = (shardJob().strategy.matrix.shard as number[]).map((shard) =>
+    runShard(shard, testsFail, artifacts),
+  );
+  return { artifacts, runs };
+}
+
+/** The e2e job after the shards, with `playwright test --list` faked to write the given list. */
+function runE2e(artifacts: Artifacts, result = 'success') {
+  const sh = newShell();
+  const list = path.join(sh.tmp, 'list.json');
+  writeFileSync(list, JSON.stringify(listReport()));
+  sh.fake('npm');
+  sh.fake(
+    'npx',
+    [
+      `case " $* " in *' --list '*) ;; *) exit 0;; esac`,
+      `case " $* " in *' --reporter=json '*) cp '${list}' "$PLAYWRIGHT_JSON_OUTPUT_NAME";; esac`,
+    ].join('\n'),
+  );
+  return { ...runJob('e2e', sh, { 'needs.e2e-shard.result': result }, artifacts), sh };
+}
 
 describe('the e2e shards', () => {
   it('run as a matrix of two, with the runner and 20-minute limit the one job had', () => {
@@ -165,58 +321,64 @@ describe('the e2e shards', () => {
     expect(job).not.toHaveProperty('needs');
   });
 
-  it('give each shard its own slice of one total, which is the matrix length', () => {
-    const job = shardJob();
-    const total = job.strategy.matrix.shard.length;
-    const test = (job.steps as Data[]).filter((s) => String(s.run ?? '').includes('test:e2e'));
-    expect(test).toHaveLength(1);
-    expect(test[0].run).toContain(`--shard=\${{ matrix.shard }}/${total}`);
-    // The workflow's only other mention of the total is the guard's, and it agrees.
-    expect(stepRuns(e2eJob()).join('\n')).toContain(`--shards ${total}`);
+  it('each run their own slice of one total, which is the matrix length, with a JSON report', () => {
+    const n = shardCount();
+    const { runs } = runShards();
+    runs.forEach(({ passed, sh }, k) => {
+      expect(passed).toBe(true);
+      expect(sh.calls('npm')).toEqual([
+        ['ci'],
+        ['run', 'test:e2e', '--', `--shard=${k + 1}/${n}`, '--reporter=list,html,json'],
+      ]);
+    });
   });
 
   it('keep every setup step the one job had', () => {
     const job = shardJob();
-    const runs = stepRuns(job);
-    expect(runs.some((r) => r.startsWith('actions/checkout@'))).toBe(true);
-    expect(named(job, 'Install PostgreSQL 16 when there is no Docker daemon').run).toContain(
-      'postgresql-16',
-    );
+    usesAction(job, 'actions/checkout');
+    expect(named(job, PG)).toEqual(named(web().jobs.database, PG));
     expect(usesAction(job, 'actions/setup-java').with['java-version']).toBe('21');
     expect(usesAction(job, 'actions/setup-node').with.cache).toBe('npm');
-    for (const command of ['npm ci', 'npx playwright install --with-deps chromium webkit']) {
-      expect(runs).toContain(command);
-    }
+    const { sh } = runShards().runs[0];
+    expect(sh.calls('docker')).toHaveLength(1);
+    expect(sh.calls('npx')).toEqual([
+      ['playwright', 'install', '--with-deps', 'chromium', 'webkit'],
+    ]);
   });
 
-  it('write a JSON report per shard and upload it whatever the outcome', () => {
-    const job = shardJob();
-    const test = (job.steps as Data[]).find((s) => String(s.run ?? '').includes('test:e2e'))!;
-    expect(test.run).toContain('--reporter=list,html,json');
-    const report = 'e2e-reports/shard-${{ matrix.shard }}.json';
-    expect(test.env.PLAYWRIGHT_JSON_OUTPUT_NAME).toBe(report);
-    const upload = (job.steps as Data[]).filter(
+  it('upload each JSON report, whatever the outcome', () => {
+    const n = shardCount();
+    for (const testsFail of [false, true]) {
+      const { artifacts, runs } = runShards(testsFail);
+      for (let i = 1; i <= n; i += 1) {
+        expect(runs[i - 1].passed).toBe(!testsFail);
+        const files = artifacts[`e2e-report-${i}`];
+        expect(files).toHaveLength(1);
+        expect(JSON.parse(readFileSync(files[0], 'utf8'))).toEqual(shardReport(i, n));
+      }
+    }
+    const upload = (shardJob().steps as Data[]).filter(
       (s) => String(s.uses ?? '').startsWith('actions/upload-artifact@') && s.if === 'always()',
     );
     expect(upload).toHaveLength(1);
-    expect(upload[0].with.name).toBe('e2e-report-${{ matrix.shard }}');
-    expect(upload[0].with.path).toBe(`web/${report}`);
     expect(upload[0].with['if-no-files-found']).toBe('error');
   });
 
   it('keep the failure artifacts, one per shard so the names do not collide', () => {
-    const failure = (shardJob().steps as Data[]).filter((s) => s.if === 'failure()');
-    expect(failure).toHaveLength(1);
-    expect(failure[0].with.name).toBe('web-e2e-results-${{ matrix.shard }}');
-    expect(failure[0].with.path).toContain('web/test-results');
-    expect(failure[0].with.path).toContain('web/playwright-report');
+    const n = shardCount();
+    const passing = runShards(false).artifacts;
+    const failing = runShards(true).artifacts;
+    for (let i = 1; i <= n; i += 1) {
+      expect(passing).not.toHaveProperty(`web-e2e-results-${i}`);
+      expect(failing[`web-e2e-results-${i}`].map((f) => path.basename(f))).toEqual([
+        'test-results',
+        'playwright-report',
+      ]);
+    }
   });
 });
 
 describe('the e2e job', () => {
-  const shards = (result: string): Needs =>
-    Object.fromEntries(SHARDS.map((name) => [name, { result }]));
-
   it('is the one job named e2e, needs only the shards and reports even when they fail', () => {
     const job = e2eJob();
     expect(job.needs).toEqual(SHARDS);
@@ -230,8 +392,11 @@ describe('the e2e job', () => {
     expect(web().jobs.check.needs).toEqual(REQUIRED);
   });
 
-  it('passes when both shards succeed and runs every one of its steps', () => {
-    const { passed, ran } = runCheck(shards('success'), 'e2e');
+  it('passes when both shards succeed, listing every test and finding each ran once', () => {
+    const { passed, ran, output, sh } = runE2e(runShards().artifacts);
+    expect(output).toContain(
+      `${LISTED.length} tests ran exactly once across ${shardCount()} shards.`,
+    );
     expect(passed).toBe(true);
     for (const command of [
       'Require both e2e shards',
@@ -241,138 +406,55 @@ describe('the e2e job', () => {
     ]) {
       expect(ran).toContain(command);
     }
+    expect(sh.calls('npx')).toEqual([['playwright', 'test', '--list', '--reporter=json']]);
   });
 
   it.each(['failure', 'cancelled', 'skipped'])(
     'fails without the guard when a shard is %s',
     (r) => {
-      const { passed, ran } = runCheck(shards(r), 'e2e');
+      const { passed, ran, sh } = runE2e(runShards().artifacts, r);
       expect(passed).toBe(false);
       expect(ran).not.toContain('List every browser test');
       expect(ran).not.toContain('Require every test to have run exactly once');
+      expect(sh.calls('npx')).toEqual([]);
     },
   );
 
-  it('gets the shard reports, lists the tests and runs the guard, in that order', () => {
-    const job = e2eJob();
-    const download = usesAction(job, 'actions/download-artifact');
-    expect(download.with.pattern).toBe('e2e-report-*');
-    expect(download.with['merge-multiple']).toBe(true);
-    expect(download.with.path).toBe('web/e2e-reports');
-    const list = named(job, 'List every browser test');
-    expect(list.run).toBe('npx playwright test --list --reporter=json > /dev/null');
-    const guard = named(job, 'Require every test to have run exactly once');
-    expect(guard.run).toContain('node scripts/check-e2e-shards.ts');
-    expect(guard.run).toContain('e2e-reports/shard-*.json');
-    for (const s of [download, list, guard]) {
-      expect(s).not.toHaveProperty('if');
-      expect(s).not.toHaveProperty('continue-on-error');
-    }
-    const order = (job.steps as Data[]).map((s) => s.name ?? s.uses ?? s.run);
-    const at = (name: string) => order.findIndex((o) => String(o).startsWith(name));
-    expect(at('Require both e2e shards')).toBeLessThan(at('actions/download-artifact'));
-    expect(at('actions/download-artifact')).toBeLessThan(at('List every browser test'));
-    expect(at('List every browser test')).toBeLessThan(at('Require every test'));
-  });
-
-  it('reads the list where the list step writes it, and the reports where the shards upload them', () => {
-    const job = e2eJob();
-    const list = named(job, 'List every browser test');
-    const guard = named(job, 'Require every test to have run exactly once');
-    expect(list.env.PLAYWRIGHT_JSON_OUTPUT_NAME).toBe('${{ runner.temp }}/e2e-list.json');
-    expect(guard.run).toContain('--list "$RUNNER_TEMP/e2e-list.json"');
-  });
-
-  describe('the guard step, run for real', () => {
-    // The step's own command line, in a copy of web/ holding only the script, with the shard
-    // reports a run would download.
-    const place = (reports: Record<string, unknown>) => {
-      const sh = new Shell();
-      shells.push(sh);
-      const web = path.join(sh.tmp, 'web');
-      mkdirSync(path.join(web, 'scripts'), { recursive: true });
-      cpSync(
-        path.join(ROOT, 'web', 'scripts', 'check-e2e-shards.ts'),
-        path.join(web, 'scripts', 'check-e2e-shards.ts'),
-      );
-      mkdirSync(path.join(web, 'e2e-reports'));
-      const temp = path.join(sh.tmp, 'runner-temp');
-      mkdirSync(temp);
-      for (const [file, report] of Object.entries(reports)) {
-        const target = file === 'list' ? path.join(temp, 'e2e-list.json') : path.join(web, file);
-        writeFileSync(target, JSON.stringify(report));
-      }
-      const guard = named(e2eJob(), 'Require every test to have run exactly once');
-      return sh.run(guard.run, { RUNNER_TEMP: temp }, web);
-    };
-    const one = (project: string, results: unknown[]) => ({
-      errors: [],
-      suites: [
-        {
-          title: 'a.spec.ts',
-          specs: [
-            {
-              title: 't',
-              file: 'a.spec.ts',
-              line: 1,
-              column: 1,
-              tests: [{ projectName: project, results }],
-            },
-          ],
-        },
-      ],
-    });
-    const both = {
-      errors: [],
-      suites: [
-        {
-          ...one('chromium', []).suites[0],
-          specs: [...one('chromium', []).suites[0].specs, ...one('webkit', []).suites[0].specs],
-        },
-      ],
-    };
-
-    it('passes when each listed test is in exactly one shard', () => {
-      const result = place({
-        list: both,
-        'e2e-reports/shard-1.json': one('chromium', [{}]),
-        'e2e-reports/shard-2.json': one('webkit', [{}]),
-      });
-      expect(result.stderr).toBe('');
-      expect(result.status).toBe(0);
-    });
+  describe('the guard step, run for real on the shard reports', () => {
+    const overwrite = (artifacts: Artifacts, shard: number, content: unknown) =>
+      writeFileSync(artifacts[`e2e-report-${shard}`][0], JSON.stringify(content));
 
     it('fails when a listed test ran in no shard', () => {
-      const result = place({
-        list: both,
-        'e2e-reports/shard-1.json': one('chromium', [{}]),
-        'e2e-reports/shard-2.json': { errors: [], suites: [] },
-      });
-      expect(result.status).toBe(1);
-      expect(result.stderr).toContain('ran in no shard: webkit | a.spec.ts:1:1');
+      const { artifacts } = runShards();
+      overwrite(artifacts, 2, { errors: [], suites: [] });
+      const { passed, output } = runE2e(artifacts);
+      expect(passed).toBe(false);
+      expect(output).toContain('ran in no shard: chromium | a.spec.ts:2:1');
     });
 
     it('fails when a test ran in both shards', () => {
-      const result = place({
-        list: both,
-        'e2e-reports/shard-1.json': one('chromium', [{}]),
-        'e2e-reports/shard-2.json': one('chromium', [{}]),
-      });
-      expect(result.status).toBe(1);
-      expect(result.stderr).toContain('ran in shard 1 and shard 2: chromium | a.spec.ts:1:1');
+      const { artifacts } = runShards();
+      overwrite(artifacts, 2, shardReport(1, shardCount()));
+      const { passed, output } = runE2e(artifacts);
+      expect(passed).toBe(false);
+      expect(output).toContain('ran in shard 1 and shard 2: chromium | a.spec.ts:1:1');
     });
 
     it('fails when a shard report is missing', () => {
-      const result = place({ list: both, 'e2e-reports/shard-1.json': one('chromium', [{}]) });
-      expect(result.status).toBe(1);
-      expect(result.stderr).toContain('expected 2 shard reports, found 1');
+      const { artifacts } = runShards();
+      delete artifacts[`e2e-report-${shardCount()}`];
+      const { passed, output } = runE2e(artifacts);
+      expect(passed).toBe(false);
+      expect(output).toContain(`expected ${shardCount()} shard reports, found ${shardCount() - 1}`);
     });
   });
 });
 
 describe('the e2e reports directory', () => {
   it('is ignored by git, so a local run leaves the tree clean', () => {
-    const ignore = readFileSync(path.join(ROOT, 'web', '.gitignore'), 'utf8').split('\n');
-    expect(ignore).toContain('e2e-reports/');
+    const ignored = spawnSync('git', ['check-ignore', '-q', 'web/e2e-reports/shard-1.json'], {
+      cwd: ROOT,
+    });
+    expect(ignored.status).toBe(0);
   });
 });
