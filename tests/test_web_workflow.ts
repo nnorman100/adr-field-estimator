@@ -336,7 +336,6 @@ describe('the e2e shards', () => {
   it('keep every setup step the one job had', () => {
     const job = shardJob();
     usesAction(job, 'actions/checkout');
-    expect(named(job, PG)).toEqual(named(web().jobs.database, PG));
     expect(usesAction(job, 'actions/setup-java').with['java-version']).toBe('21');
     expect(usesAction(job, 'actions/setup-node').with.cache).toBe('npm');
     const { sh } = runShards().runs[0];
@@ -344,6 +343,59 @@ describe('the e2e shards', () => {
     expect(sh.calls('npx')).toEqual([
       ['playwright', 'install', '--with-deps', 'chromium', 'webkit'],
     ]);
+  });
+
+  /**
+   * The PostgreSQL step on a runner where Docker answers or not and initdb is present or not: bash
+   * reads BASH_ENV, which turns off its own `[` so the faked one decides the initdb check, and
+   * sudo records what it is asked to run and what tee is given.
+   */
+  const installPostgres = (docker: boolean, initdb: boolean) => {
+    const sh = newShell();
+    const env = path.join(sh.tmp, 'bash-env');
+    const teed = path.join(sh.tmp, 'teed');
+    writeFileSync(env, 'enable -n [\n');
+    sh.fake('docker', `exit ${docker ? 0 : 1}`);
+    sh.fake(
+      '[',
+      [
+        `case "$*" in '! -x /usr/lib/postgresql/16/bin/initdb ]') exit ${initdb ? 1 : 0};; esac`,
+        'exec /usr/bin/[ "$@"',
+      ].join('\n'),
+    );
+    sh.fake('sudo', `case $1 in tee) cat >> '${teed}';; esac`);
+    const result = sh.run(named(shardJob(), PG).run, { BASH_ENV: env });
+    expect(result.status).toBe(0);
+    return { sudo: sh.calls('sudo'), teed: existsSync(teed) ? readFileSync(teed, 'utf8') : '' };
+  };
+
+  it('install PostgreSQL 16 only when no Docker daemon answers and initdb is missing', () => {
+    expect(installPostgres(false, false)).toEqual({
+      sudo: [
+        ['mkdir', '-p', '/etc/postgresql-common'],
+        ['tee', '/etc/postgresql-common/createcluster.conf'],
+        ['apt-get', 'update', '-q'],
+        [
+          'DEBIAN_FRONTEND=noninteractive',
+          'apt-get',
+          'install',
+          '-y',
+          '-q',
+          '--no-install-recommends',
+          '-o',
+          'Dpkg::Options::=--force-confold',
+          'postgresql-16',
+        ],
+      ],
+      teed: 'create_main_cluster = false\n',
+    });
+    for (const [docker, initdb] of [
+      [true, false],
+      [false, true],
+      [true, true],
+    ]) {
+      expect(installPostgres(docker, initdb)).toEqual({ sudo: [], teed: '' });
+    }
   });
 
   it('upload each JSON report, whatever the outcome', () => {
