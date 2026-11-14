@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
-import { actors, auditEvents, evidenceObjects, jobClaims, jobCustomers, jobs, jobSubmissions } from '@/db/schema';
+import { actors, auditEvents, evidenceObjects, jobs, jobSubmissions } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
 import { manifestDigest, type FieldManifest } from '@/lib/field/canonical';
 import { hasAny, jobAccess, JobError, type JobCaller, type JobRow } from '@/lib/jobs/access';
+import { readJobDetails } from './details';
 import { SubmissionError, type SubmissionErrorCode } from './errors';
 import type { FenceStore } from './fence';
 import { submitDigest, type NextDraftInput, type SubmitInput } from './schema';
@@ -273,24 +274,7 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
         return { row: (await submissionRow(tx, caller.companyId, id))!, job, decidedHere: true, problem: failure ?? 'submission_aborted' };
       }
 
-      const [customer] = await tx
-        .select({ name: jobCustomers.name, phone: jobCustomers.phone, email: jobCustomers.email })
-        .from(jobCustomers)
-        .where(and(eq(jobCustomers.companyId, caller.companyId), eq(jobCustomers.jobId, jobId)));
-      const [claim] = await tx
-        .select({
-          carrier: jobClaims.carrier,
-          claimNumber: jobClaims.claimNumber,
-          policyNumber: jobClaims.policyNumber,
-          dateOfLoss: jobClaims.dateOfLoss,
-          lossCause: jobClaims.lossCause,
-          adjusterName: jobClaims.adjusterName,
-          adjusterEmail: jobClaims.adjusterEmail,
-          adjusterPhone: jobClaims.adjusterPhone,
-          deductible: jobClaims.deductible,
-        })
-        .from(jobClaims)
-        .where(and(eq(jobClaims.companyId, caller.companyId), eq(jobClaims.jobId, jobId)));
+      const details = await readJobDetails(tx, caller.companyId, job);
       const byId = new Map(photos.map((photo) => [photo.objectId, photo]));
       const snapshot: Snapshot = {
         format: SNAPSHOT_FORMAT,
@@ -303,9 +287,7 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
           .map((photo) => byId.get(photo.id)!)
           .map((photo) => ({ id: photo.objectId, sha256: photo.sha256, sizeBytes: photo.sizeBytes, contentType: photo.contentType }))
           .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
-        job: { propertyAddress: job.propertyAddress },
-        customer: customer ?? { name: '', phone: '', email: '' },
-        claim: claim ?? {},
+        ...details,
       };
       const { bytes, sha256 } = snapshotBytes(snapshot);
       const [committed] = await tx

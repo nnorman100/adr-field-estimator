@@ -34,6 +34,10 @@ vi.mock('@/lib/submissions/services', () => ({
   runQueuedSubmissionRepair: async () => ({ aborted: 0, marked: 0, failed: 0 }),
 }));
 vi.mock('@/lib/platform/services', () => ({ platformServices: () => live.harness!.platform }));
+vi.mock('@/lib/estimates/services', async () => {
+  const { estimatesService } = await import('@/lib/estimates/service');
+  return { estimatesServices: () => estimatesService(live.harness!.handle.db) };
+});
 vi.mock('@/lib/sign-in/services', async () => {
   const { databaseSignInDirectory } = await import('@/lib/sign-in/database-directory');
   return { signInDirectory: () => databaseSignInDirectory(live.harness!.handle.db) };
