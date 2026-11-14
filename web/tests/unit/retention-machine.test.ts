@@ -120,7 +120,7 @@ const lockOf = (who: FieldPerson) => {
   if (mark === 'unreadable' || mark.lockedSince === null) return null;
   return { since: mark.lockedSince, reason: mark.lockedReason };
 };
-const authFor = (who: FieldPerson) => ({ currentUser: { uid: who.uid } }) as unknown as Auth;
+const authFor = (who: FieldPerson) => ({ currentUser: { uid: who.uid, metadata: { lastSignInTime: 'Fri, 13 Nov 2026 09:00:00 GMT' } } }) as unknown as Auth;
 
 let clock = START;
 const setClock = (now: number) => {

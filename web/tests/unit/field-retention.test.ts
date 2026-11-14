@@ -63,7 +63,7 @@ function fakeStorage() {
 }
 
 let storage: ReturnType<typeof fakeStorage>;
-const auth = { currentUser: { uid: 'ana' } } as unknown as Auth;
+const auth = { currentUser: { uid: 'ana', metadata: { lastSignInTime: 'Fri, 13 Nov 2026 09:00:00 GMT' } } } as unknown as Auth;
 const unsentBefore = JSON.stringify({ writes: 3, unsentSince: 100, lockedSince: null });
 
 beforeEach(() => {

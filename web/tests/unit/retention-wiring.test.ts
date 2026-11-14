@@ -223,8 +223,10 @@ describe('the sync gate of an open field shell', () => {
   });
 });
 
+const signedInAs = (uid: string, at = 'Fri, 13 Nov 2026 09:00:00 GMT') => ({ uid, metadata: { lastSignInTime: at } });
+
 describe('"Try again" after a sign-out that could not save the refusal', () => {
-  const auth = { currentUser: { uid: 'ana' } } as unknown as Auth;
+  const auth = { currentUser: signedInAs('ana') } as unknown as Auth;
 
   it('makes the same sign-out again: the refusal is saved, the sign-in ends, and what followed the sign-out follows', async () => {
     const shown: FailedSignOut[] = [];
@@ -264,9 +266,9 @@ describe('"Try again" after a sign-out that could not save the refusal', () => {
 
 describe('a forced sign-out when someone else signs in meanwhile (another tab)', () => {
   it('saves the refusal for the person refused and leaves the newer sign-in alone', async () => {
-    const auth: { currentUser: { uid: string } } = { currentUser: { uid: 'ana' } };
+    const auth = { currentUser: signedInAs('ana') };
     const leaving = signOutOnRefusal(auth as unknown as Auth, 't-a', config, 'sign-in-again');
-    auth.currentUser = { uid: 'ben' };
+    auth.currentUser = signedInAs('ben');
     await leaving;
     expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: NOW, lockedReason: 'sign-in-again' });
     expect(forgetMe).not.toHaveBeenCalled();
@@ -274,14 +276,14 @@ describe('a forced sign-out when someone else signs in meanwhile (another tab)',
   });
 
   it('"Try again" saves the refusal for the person it was for, not whoever is signed in now', async () => {
-    const auth: { currentUser: { uid: string } } = { currentUser: { uid: 'ana' } };
+    const auth = { currentUser: signedInAs('ana') };
     const shown: FailedSignOut[] = [];
     const after = vi.fn();
     full = true;
     await signOutOrShow(() => signOutOnRefusal(auth as unknown as Auth, 't-a', config, 'sign-in-again'), (failed) => shown.push(failed), after);
     expect(shown.map((failed) => failed.name)).toEqual(['not-secured']);
 
-    auth.currentUser = { uid: 'ben' };
+    auth.currentUser = signedInAs('ben');
     full = false;
     await (shown[0] as Extract<FailedSignOut, { name: 'not-secured' }>).retry();
     expect(shown).toHaveLength(1);
@@ -289,5 +291,29 @@ describe('a forced sign-out when someone else signs in meanwhile (another tab)',
     expect(forgetMe).not.toHaveBeenCalled();
     expect(signOutCompany).not.toHaveBeenCalled();
     expect(after).toHaveBeenCalledOnce();
+  });
+
+  it('leaves the same person\'s newer sign-in alone, made while the sign-out was pending', async () => {
+    const auth = { currentUser: signedInAs('ana') };
+    const leaving = signOutOnRefusal(auth as unknown as Auth, 't-a', config, 'sign-in-again');
+    auth.currentUser.metadata = { lastSignInTime: 'Sat, 14 Nov 2026 09:00:00 GMT' };
+    await leaving;
+    expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: NOW, lockedReason: 'sign-in-again' });
+    expect(forgetMe).not.toHaveBeenCalled();
+    expect(signOutCompany).not.toHaveBeenCalled();
+  });
+
+  it('"Try again" does not end the same person\'s newer sign-in', async () => {
+    const auth = { currentUser: signedInAs('ana') };
+    const shown: FailedSignOut[] = [];
+    full = true;
+    await signOutOrShow(() => signOutOnRefusal(auth as unknown as Auth, 't-a', config, 'sign-in-again'), (failed) => shown.push(failed));
+    expect(shown.map((failed) => failed.name)).toEqual(['not-secured']);
+
+    auth.currentUser = signedInAs('ana', 'Sat, 14 Nov 2026 09:00:00 GMT');
+    full = false;
+    await (shown[0] as Extract<FailedSignOut, { name: 'not-secured' }>).retry();
+    expect(forgetMe).not.toHaveBeenCalled();
+    expect(signOutCompany).not.toHaveBeenCalled();
   });
 });

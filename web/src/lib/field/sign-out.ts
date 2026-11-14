@@ -14,23 +14,37 @@ import { unsentWork, type LockReason } from './unsent';
 // kept through a re-sign-in (D7) and the same person signing in again sends it. Their cache is a
 // database of its own (field-db.ts), which no other person's client opens.
 //
-// `user` is who the sign-out was started for. When someone else has signed in since (another tab),
-// their sign-in and saved sign-in are left alone: the person this was for is signed out already.
-async function leave(auth: Auth, tenantId: string, user: User | null): Promise<void> {
-  if (!stillSignedIn(auth, user)) return;
+// `from` is the sign-in the sign-out was started for. When anyone has signed in since (another
+// person, or the same person again, in this tab or another), that newer sign-in and its saved
+// sign-in are left alone: the sign-in this was for has ended already.
+async function leave(auth: Auth, tenantId: string, from: Session): Promise<void> {
+  const { user } = from;
+  if (!stillSignedIn(auth, from)) return;
   const removed = user ? await forgetMe(tenantId, user.uid) : null;
   if (removed === false) throw new Error('the saved sign-in may still be on this phone');
   try {
     if (user) await stopFieldClient({ tenantId, uid: user.uid });
-    if (stillSignedIn(auth, user)) await signOutCompany(auth);
+    if (stillSignedIn(auth, from)) await signOutCompany(auth);
   } catch (error) {
     if (removed) await saveMe(removed);
     throw error;
   }
 }
 
-function stillSignedIn(auth: Auth, user: User | null): boolean {
-  return (auth.currentUser?.uid ?? null) === (user?.uid ?? null);
+// One sign-in: Firebase keeps the same user object when another tab signs the same person in
+// again, so the sign-in is told apart by its time, read when the sign-out starts.
+type Session = { user: User | null; key: string | null };
+
+function sessionKey(user: User | null): string | null {
+  return user ? `${user.uid} ${user.metadata.lastSignInTime ?? ''}` : null;
+}
+
+function session(auth: Auth): Session {
+  return { user: auth.currentUser, key: sessionKey(auth.currentUser) };
+}
+
+function stillSignedIn(auth: Auth, from: Session): boolean {
+  return sessionKey(auth.currentUser) === from.key;
 }
 
 // The refusal could not be saved on the phone: nothing was signed out or removed, and the screen
@@ -64,22 +78,23 @@ export async function signOutOrShow(signOut: () => Promise<void>, show: (failed:
 // again (S6-3b). Throws WorkNotSecuredError, with the saved sign-in and the work left as they
 // were, when the phone could not save it; its `retry` is the retry.
 export function signOutOnRefusal(auth: Auth, tenantId: string, config: BrowserSignInConfig, refusal: LockReason): Promise<void> {
-  return refuse(auth, auth.currentUser, tenantId, config, refusal);
+  return refuse(auth, session(auth), tenantId, config, refusal);
 }
 
-async function refuse(auth: Auth, user: User | null, tenantId: string, config: BrowserSignInConfig, refusal: LockReason): Promise<void> {
+async function refuse(auth: Auth, from: Session, tenantId: string, config: BrowserSignInConfig, refusal: LockReason): Promise<void> {
+  const { user } = from;
   if (user) {
     const { state, done } = evaluate(Date.now(), { kind: 'refused', person: { tenantId, uid: user.uid, config }, reason: refusal });
-    if (state === 'unsaved') throw new WorkNotSecuredError(() => refuse(auth, user, tenantId, config, refusal));
+    if (state === 'unsaved') throw new WorkNotSecuredError(() => refuse(auth, from, tenantId, config, refusal));
     // Work already past the limit is removed before the sign-in that names it goes.
     await done;
   }
-  await leave(auth, tenantId, user);
+  await leave(auth, tenantId, from);
 }
 
 // The person's own "Sign out" when they chose Keep: nothing refused them, so nothing is locked.
 export async function signOutKeeping(auth: Auth, tenantId: string): Promise<void> {
-  await leave(auth, tenantId, auth.currentUser);
+  await leave(auth, tenantId, session(auth));
 }
 
 // Whether the signed-in person may have field edits that the server does not have yet, in this
@@ -97,11 +112,11 @@ export type SignOutResult = 'signed-out' | 'elsewhere' | 'failed';
 // another person's stay. 'elsewhere' when a field window is open, which holds that cache; nothing is
 // removed and the person stays signed in.
 export async function signOutDiscarding(auth: Auth, tenantId: string, config: BrowserSignInConfig): Promise<SignOutResult> {
-  const user = auth.currentUser;
-  if (user) {
-    const result = await discardFieldWork({ tenantId, uid: user.uid, config });
+  const from = session(auth);
+  if (from.user) {
+    const result = await discardFieldWork({ tenantId, uid: from.user.uid, config });
     if (result !== 'discarded') return result;
   }
-  await leave(auth, tenantId, user);
+  await leave(auth, tenantId, from);
   return 'signed-out';
 }
