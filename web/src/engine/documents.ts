@@ -172,16 +172,22 @@ const LOCATION = z
     return row;
   });
 
+// A photo of the log. The submitted record (S5a-8) knows a photo's room, shot tag and stored hash,
+// but not its capture time, size or a meter reading (meter-photo reading is S7), so those keys are
+// optional and a row holds only the keys it was given. A photo with no `ocr_status` was never sent
+// for a reading: it is a supporting photo, not one waiting for a reading.
 const PHOTO = z
   .object({
     id: z.string(),
     room: z.string(),
-    captured_at: z.string(),
-    width: z.number().int(),
-    height: z.number().int(),
-    ocr_status: z.enum(['pending', 'verified', 'no_meter', 'failed']),
+    captured_at: z.string().optional(),
+    width: z.number().int().optional(),
+    height: z.number().int().optional(),
+    ocr_status: z.enum(['pending', 'verified', 'no_meter', 'failed']).optional(),
     ocr: OCR.nullish(),
     location: LOCATION.nullish(),
+    sha256: z.string().regex(/^[0-9a-f]{64}$/, 'must be 64 lowercase hex characters').optional(),
+    shot_tag: text(1, 40).optional(),
   })
   .superRefine((photo, ctx) => {
     if (photo.ocr_status === 'verified' && !photo.ocr) {
@@ -189,21 +195,20 @@ const PHOTO = z
     }
   });
 
-type PhotoRow = { row: JObj; room: string; status: string; ocr: z.output<typeof OCR> | null };
+type PhotoRow = { row: JObj; room: string; status: string | null; ocr: z.output<typeof OCR> | null };
 
 function photoOf(raw: Json): PhotoRow {
   const photo = parse(PHOTO, raw, 'photo');
-  const row: JObj = {
-    captured_at: photo.captured_at,
-    height: photo.height,
-    id: photo.id,
-    ocr_status: photo.ocr_status,
-    room: photo.room,
-    width: photo.width,
-  };
+  const row: JObj = { id: photo.id, room: photo.room };
+  if (photo.captured_at !== undefined) row.captured_at = photo.captured_at;
+  if (photo.width !== undefined) row.width = photo.width;
+  if (photo.height !== undefined) row.height = photo.height;
+  if (photo.ocr_status !== undefined) row.ocr_status = photo.ocr_status;
   if (photo.ocr) row.ocr = photo.ocr;
   if (photo.location) row.location = photo.location;
-  return { row, room: photo.room, status: photo.ocr_status, ocr: photo.ocr ?? null };
+  if (photo.sha256 !== undefined) row.sha256 = photo.sha256;
+  if (photo.shot_tag !== undefined) row.shot_tag = photo.shot_tag;
+  return { row, room: photo.room, status: photo.ocr_status ?? null, ocr: photo.ocr ?? null };
 }
 
 function endJson(end: End): JObj {

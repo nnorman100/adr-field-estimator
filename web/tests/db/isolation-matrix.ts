@@ -114,6 +114,9 @@ export const MATRIX: readonly MatrixRow[] = [
   row('api/jobs/[jobId]/photos/[photoId]', 'PUT', 'company', { query: '?kind=photo', body: JOB_PHOTO, own: 'cross' }),
   row('api/jobs/[jobId]/submissions', 'POST', 'company', { body: JOB_SUBMIT, own: 'cross' }),
   row('api/jobs/[jobId]/drafts', 'POST', 'company', { body: JOB_NEXT_DRAFT, own: 'cross' }),
+  // S5a-9: the estimate takes no body; another company's job is 404 to every role.
+  row('api/jobs/[jobId]/estimate', 'POST', 'company', { own: 'cross' }),
+  row('api/jobs/[jobId]/estimate', 'GET', 'company', { own: 'cross' }),
 
   row('api/invitations/[invitationId]', 'GET', 'invitation'),
   row('api/invitations/[invitationId]/accept', 'POST', 'invitation'),
