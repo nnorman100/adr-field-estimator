@@ -77,6 +77,7 @@ describe('API sign-in gate', () => {
       '/api/jobs/:id/submissions',
       '/api/jobs/:id/drafts',
       '/api/jobs/:id/estimate',
+      '/api/jobs/:id/scope-lists',
     ]);
     expect(call('/api/me').headers.get('x-middleware-next')).toBe('1');
     expect(call('/api/me/extra').status).toBe(401);

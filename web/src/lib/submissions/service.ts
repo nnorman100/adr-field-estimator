@@ -4,7 +4,9 @@ import { actors, auditEvents, evidenceObjects, jobs, jobSubmissions } from '@/db
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
 import { manifestDigest, type FieldManifest } from '@/lib/field/canonical';
+import { roomFieldSchema } from '@/lib/field/schema';
 import { hasAny, jobAccess, JobError, type JobCaller, type JobRow } from '@/lib/jobs/access';
+import { jobPriceTable, namesPriceIds, priceIdsKnown, PricesUnreadable } from '@/lib/scope-lists/version';
 import { readJobDetails } from './details';
 import { SubmissionError, type SubmissionErrorCode } from './errors';
 import type { FenceStore } from './fence';
@@ -74,6 +76,21 @@ const UNIQUE_VIOLATION = '23505';
 function errorCode(error: unknown): unknown {
   const found = error as { code?: unknown; cause?: { code?: unknown } } | null;
   return found?.code ?? found?.cause?.code;
+}
+
+// Whether the rooms' types and items are in the job's price version (its pin, else the company's
+// current version; docs/plans/S5.md S5a-10), or why not. A draft naming none of either reads no
+// version. The manifest already passed `manifestProblem`, so each room map parses.
+async function priceIdProblem(tx: CompanyTransaction, companyId: string, jobId: string, manifest: FieldManifest): Promise<SubmissionErrorCode | null> {
+  const rooms = manifest.rooms.map((room) => roomFieldSchema.parse(room.field ?? {}));
+  if (!namesPriceIds(rooms)) return null;
+  try {
+    const found = await jobPriceTable(tx, companyId, jobId);
+    return priceIdsKnown(rooms, found?.table ?? null) ? null : 'unknown_price_ids';
+  } catch (error) {
+    if (error instanceof PricesUnreadable) return 'prices_unreadable';
+    throw error;
+  }
 }
 
 const jobState = (row: JobRow): JobState => ({ id: row.id, status: row.status, currentDraftId: row.currentDraftId, revision: row.revision });
@@ -267,6 +284,7 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
                 );
         if (photos.length !== ids.length) failure = 'photo_missing';
       }
+      if (!failure && manifest) failure = await priceIdProblem(tx, caller.companyId, jobId, manifest);
 
       if (failure || !manifest) {
         await abortPending(tx, caller.companyId, id);

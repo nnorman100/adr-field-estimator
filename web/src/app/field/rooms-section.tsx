@@ -1,29 +1,37 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { editsAfterSave, ROOM_FIELDS, roomChanges, roomName, withEdits, type FormValues } from '@/lib/field/forms';
-import { MAX_ROOMS, type RoomField } from '@/lib/field/schema';
-import { addRoom, fieldRefusal, removeRoom, saveRoomField, type FieldDraft } from '@/lib/field/store';
+import { readScopeLists, type ScopeLists } from '@/lib/field/api';
+import { roomName } from '@/lib/field/forms';
+import { MAX_ROOMS } from '@/lib/field/schema';
+import { addRoom, fieldRefusal, removeRoom, type FieldDraft } from '@/lib/field/store';
 import type { JobContext } from './job-screens';
-import { Box, Choice, Outcome, READ_AGAIN, Section } from './ui';
-
-export const CATEGORY_OPTIONS = [
-  { value: '', label: 'Not set' },
-  { value: '1', label: 'Category 1: clean water' },
-  { value: '2', label: 'Category 2: gray water' },
-  { value: '3', label: 'Category 3: black water' },
-];
+import { RoomCard } from './room-card';
+import { Box, Outcome, Section } from './ui';
 
 // The rooms of Check Scope (S5a-6): each room is its own document in the field draft, listed in
 // the draft's room order. Adding or removing a room changes both in one batch (src/lib/field/store.ts).
+// The room types, items and prep-task templates the rooms pick from are read once (S5a-10).
 export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraft }) {
+  const [lists, setLists] = useState<ScopeLists | null>(null);
+  const [listsError, setListsError] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const readOnly = !job.editable;
   const full = draft.rooms.length >= MAX_ROOMS;
+  const { user } = job.session;
+  const jobId = job.detail.job.id;
+
+  function loadLists() {
+    void readScopeLists(user, jobId).then((answer) => {
+      setLists(answer.ok ? answer.value : null);
+      setListsError(answer.ok ? null : 'The room types, items and prep tasks could not be read. ' + answer.message);
+    });
+  }
+  useEffect(loadLists, [user, jobId]);
 
   async function remove(roomId: string, label: string) {
     const db = job.session.db;
@@ -63,6 +71,14 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
 
   return (
     <Section title="Rooms">
+      {listsError ? (
+        <div className="flex flex-col gap-2">
+          <p role="alert">{listsError}</p>
+          <Button type="button" variant="outline" onClick={loadLists}>
+            Read the lists again
+          </Button>
+        </div>
+      ) : null}
       {draft.rooms.length === 0 ? <p>No rooms yet.</p> : null}
       <ul className="flex flex-col gap-3" aria-label="Rooms">
         {draft.rooms.map((room, index) => (
@@ -72,6 +88,7 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
               roomId={room.id}
               stored={room.field}
               number={index + 1}
+              lists={lists}
               onRemove={() => remove(room.id, room.field.name ?? `Room ${index + 1}`)}
             />
           </li>
@@ -95,101 +112,5 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
         </form>
       )}
     </Section>
-  );
-}
-
-// One room's name, category and areas, saved on their own; `onRemove` takes the room out of the job.
-export function RoomCard({
-  job,
-  roomId,
-  stored,
-  number,
-  onRemove,
-}: {
-  job: JobContext;
-  roomId: string;
-  stored: RoomField;
-  number: number;
-  onRemove?: () => Promise<void>;
-}) {
-  // Only the boxes the person changed; the rest always show the room as last read.
-  const [edits, setEdits] = useState<FormValues>({});
-  const values = withEdits(ROOM_FIELDS, stored, edits);
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const readOnly = !job.editable;
-  const set = (key: string) => (value: string) => {
-    setEdits((current) => ({ ...current, [key]: value }));
-    setNotice(null);
-  };
-  const title = stored.name ?? `Room ${number}`;
-
-  async function save() {
-    const db = job.session.db;
-    if (!db || job.stale) return;
-    const { changes, errors: found } = roomChanges(values, stored);
-    setErrors(found);
-    setNotice(null);
-    if (Object.keys(found).length > 0) return setError('Check the boxes marked above.');
-    setError(null);
-    setBusy(true);
-    const sent = edits;
-    try {
-      await saveRoomField(db, job.draftRef, roomId, changes);
-      setEdits((current) => editsAfterSave(current, sent));
-      await job.reloadDraft();
-      setNotice(Object.keys(changes).length === 0 ? 'Nothing to save.' : 'Room saved.');
-    } catch (error) {
-      setError('The room was not saved. Check the signal and save again.');
-      job.checkAccess(fieldRefusal(error));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const id = (key: string) => `room-${roomId}-${key}`;
-  return (
-    <form
-      className="flex flex-col gap-3 rounded-md border border-foreground/20 p-3"
-      aria-label={title}
-      onSubmit={(event) => {
-        event.preventDefault();
-        void save();
-      }}
-    >
-      <h4 className="text-base font-semibold">{title}</h4>
-      <Box id={id('name')} label="Room name" value={String(values.name)} onChange={set('name')} readOnly={readOnly} error={errors.name} />
-      <Choice id={id('category')} label="Water category" value={String(values.category)} options={CATEGORY_OPTIONS} onChange={set('category')} readOnly={readOnly} />
-      <div className="grid grid-cols-2 gap-3">
-        {ROOM_FIELDS.filter((field) => field.kind === 'decimal').map((field) => (
-          <Box
-            key={field.key}
-            id={id(field.key)}
-            label={field.label}
-            value={String(values[field.key])}
-            onChange={set(field.key)}
-            readOnly={readOnly}
-            error={errors[field.key]}
-            inputMode="decimal"
-          />
-        ))}
-      </div>
-      {readOnly ? null : (
-        <div className="flex flex-wrap gap-2">
-          <Button type="submit" variant="outline" disabled={busy || job.stale}>
-            {busy ? 'Saving…' : 'Save room'}
-          </Button>
-          {onRemove ? (
-            <Button type="button" variant="outline" disabled={busy} onClick={() => void onRemove()}>
-              Remove room
-            </Button>
-          ) : null}
-        </div>
-      )}
-      {!readOnly && job.stale ? <p className="text-sm">{READ_AGAIN}</p> : null}
-      <Outcome error={error} notice={notice} />
-    </form>
   );
 }

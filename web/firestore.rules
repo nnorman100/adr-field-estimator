@@ -13,11 +13,14 @@ rules_version = '2';
 //   submitted draft a "Back to editing" version came from) are the server's
 //   (web/src/lib/submissions/fence.ts). A client may change only the `field` map.
 //
-// The `field` maps follow field map v1 (`web/src/lib/field/schema.ts`): the rules check each
+// The `field` maps follow field map v2 (`web/src/lib/field/schema.ts`): the rules check each
 // key's type and size and refuse a key the map does not name. Every key is optional; clearing a
 // value deletes its key. Rules cannot loop over a list, so `roomOrder` is checked for type, size
-// and repeats only, and the server checks its entries when it reads the draft. Lookups stay at
-// the company, the access record and the draft (three documents per write).
+// and repeats only, and the server checks its entries when it reads the draft; a room's items and
+// prep tasks, which have a fixed largest size, are checked entry by entry, one line per place.
+// Whether a room type or item id is in the job's price list is the server's check (at Submit and
+// when it prices). Lookups stay at the company, the access record and the draft (three documents
+// per write).
 service cloud.firestore {
   match /databases/{database}/documents {
     function companyPath(companyId) {
@@ -123,17 +126,62 @@ service cloud.firestore {
         && okBool(f, 'isAfterHours');
     }
 
+    // A room's items: a map of price-list item id to its typed quantity as decimal text (0 to
+    // 100,000, at most two decimal places, as the engine reads a quantity), at most 50. Rules cannot
+    // loop, and checking fifty entries one by one costs more than a request may evaluate, so the
+    // keys and the values are each joined and checked with one pattern. Split again, the joined
+    // text must give back the very same list: so no key or value hides a comma, and every value is
+    // text (a number would come back as text, and the lists would differ).
+    function okItems(f) {
+      let items = f.get('items', {});
+      let keys = items.keys().join(',');
+      let values = items.values().join(',');
+      return !('items' in f) || (items is map
+        && items.size() <= 50
+        && (items.size() == 0 || (
+          keys.matches('[a-z][a-z0-9_]{1,39}(,[a-z][a-z0-9_]{1,39})*')
+          && keys.split(',') == items.keys()
+          && values.matches('(100000(\\.0{1,2})?|[0-9]{1,5}(\\.[0-9]{1,2})?)(,(100000(\\.0{1,2})?|[0-9]{1,5}(\\.[0-9]{1,2})?))*')
+          && values.split(',') == items.values())));
+    }
+
+    function okPrepTask(l, i) {
+      return l.size() <= i || (l[i] is string && l[i].size() >= 1 && l[i].size() <= 300);
+    }
+
+    // A room's prep tasks: a list of at most 10 texts, each 1 to 300 characters.
+    function okPrepTasks(f) {
+      let l = f.get('prepTasks', []);
+      return !('prepTasks' in f) || (l is list
+        && l.size() <= 10
+        && okPrepTask(l, 0) && okPrepTask(l, 1) && okPrepTask(l, 2) && okPrepTask(l, 3)
+        && okPrepTask(l, 4) && okPrepTask(l, 5) && okPrepTask(l, 6) && okPrepTask(l, 7)
+        && okPrepTask(l, 8) && okPrepTask(l, 9));
+    }
+
     function validRoomField(f) {
       return f is map
-        && f.keys().hasOnly(['name', 'category', 'unfinishedSf', 'finishedSf', 'floorSf',
-          'wetFloorSf', 'wastePercent'])
+        && f.keys().hasOnly(['name', 'roomTypeId', 'category', 'waterClass', 'ceilingHeightFt',
+          'moldCondition', 'affectedSf', 'unfinishedSf', 'finishedSf', 'floorSf', 'wetFloorSf',
+          'wastePercent', 'items', 'prepTasks', 'findings'])
         && okText(f, 'name', 1, 100)
-        && okInt(f, 'category', 1, 3)
+        && okText(f, 'roomTypeId', 2, 30)
+        && (!('roomTypeId' in f) || f.roomTypeId.matches('[a-z][a-z0-9_]{1,29}'))
+        && (!('category' in f) || (f.category is int && f.category >= 1 && f.category <= 3)
+          || f.category == 'mold')
+        && okInt(f, 'waterClass', 1, 4)
+        && (!('ceilingHeightFt' in f)
+          || (f.ceilingHeightFt is number && f.ceilingHeightFt > 0 && f.ceilingHeightFt <= 60))
+        && okInt(f, 'moldCondition', 1, 3)
+        && okNumber(f, 'affectedSf', 0, 100000)
         && okNumber(f, 'unfinishedSf', 0, 100000)
         && okNumber(f, 'finishedSf', 0, 100000)
         && (!('floorSf' in f) || (f.floorSf is number && f.floorSf > 0 && f.floorSf <= 100000))
         && okNumber(f, 'wetFloorSf', 0, 100000)
-        && okNumber(f, 'wastePercent', 0, 100);
+        && okNumber(f, 'wastePercent', 0, 100)
+        && okItems(f)
+        && okPrepTasks(f)
+        && okText(f, 'findings', 0, 2000);
     }
 
     function validPhotoField(f) {

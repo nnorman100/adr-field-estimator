@@ -117,6 +117,8 @@ export const MATRIX: readonly MatrixRow[] = [
   // S5a-9: the estimate takes no body; another company's job is 404 to every role.
   row('api/jobs/[jobId]/estimate', 'POST', 'company', { own: 'cross' }),
   row('api/jobs/[jobId]/estimate', 'GET', 'company', { own: 'cross' }),
+  // S5a-10: what Check Scope picks from; another company's job is 404 to every role.
+  row('api/jobs/[jobId]/scope-lists', 'GET', 'company', { own: 'cross' }),
 
   row('api/invitations/[invitationId]', 'GET', 'invitation'),
   row('api/invitations/[invitationId]/accept', 'POST', 'invitation'),

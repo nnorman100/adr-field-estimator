@@ -159,6 +159,21 @@ export async function photoAddress(user: User, jobId: string, photoId: string): 
   return bytes ? URL.createObjectURL(bytes) : null;
 }
 
+const scopeLists = z.object({
+  version: z.number().nullable(),
+  roomTypes: z.array(z.object({ id: z.string(), name: z.string(), suggestedItems: z.array(z.string()) })),
+  items: z.array(z.object({ itemId: z.string(), name: z.string(), unit: z.string() })),
+  prepTasks: z.array(z.string()),
+});
+export type ScopeLists = z.infer<typeof scopeLists>;
+
+// What Check Scope picks from for this job (S5a-10): room types, the items a room may list, and the
+// company's prep-task templates. Names only; the server prices.
+export async function readScopeLists(user: User, jobId: string): Promise<Answer<ScopeLists>> {
+  const { status, body } = await callApi(user, `/api/jobs/${jobId}/scope-lists`);
+  return answerOf(status, body, scopeLists);
+}
+
 export const SHOT_NAMES: Record<(typeof SHOT_TAGS)[number], string> = {
   overview: 'Overview',
   source: 'Source of loss',
