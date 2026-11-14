@@ -50,12 +50,18 @@ function sampleTotal(result: unknown, table: Table): string {
   return typeof high === 'string' && field(totals, 'mode') === 'range' ? `${moneyText(low)} to ${moneyText(high)}` : moneyText(low);
 }
 
-export function PreviewSection({ user, table, dirty, lock }: Pick<Common, 'user' | 'table' | 'dirty' | 'lock'>) {
+export function PreviewSection({
+  user,
+  table,
+  dirty,
+  unfinished,
+  lock,
+}: Pick<Common, 'user' | 'table' | 'dirty' | 'lock'> & { unfinished: boolean }) {
   // The answer with the prices it was for: once the prices on screen change, it is not shown.
   const [priced, setPriced] = useState<{ table: Table; view: PreviewView } | null>(null);
   const [busy, setBusy] = useBusy(lock);
   const [error, setError] = useState<string | null>(null);
-  const preview = priced && !changed(priced.table, table) ? priced.view : null;
+  const preview = priced && !unfinished && !changed(priced.table, table) ? priced.view : null;
   async function run() {
     setBusy(true);
     setError(null);
@@ -73,9 +79,10 @@ export function PreviewSection({ user, table, dirty, lock }: Pick<Common, 'user'
         DryScope prices four made-up jobs with the prices on this screen{dirty ? ', including changes not saved yet' : ''}. Nothing is
         saved or published.
       </Hint>
-      <Button type="button" variant="outline" disabled={busy} onClick={() => void run()}>
+      <Button type="button" variant="outline" disabled={busy || unfinished} onClick={() => void run()}>
         {busy ? 'Pricing the sample jobs…' : 'Price the sample jobs'}
       </Button>
+      {unfinished ? <Hint>Correct the field marked &quot;Use a whole number&quot; first.</Hint> : null}
       <div role="status" aria-live="polite" className="flex flex-col gap-3">
         {error ? <p className="text-red-800">{error}</p> : null}
         {preview ? (

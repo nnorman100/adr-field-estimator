@@ -137,14 +137,14 @@ export function PricesEditor({
           )}
         />
       </Section>
-      <RoomPays table={draft} />
+      <RoomPays table={draft} unfinished={unfinished} />
       <SettingsSection table={draft} onChange={edit} published={current !== null} />
       <SizesSection table={draft} onChange={edit} />
       <HeadingsSection table={draft} onChange={edit} />
       <RoomTypesSection table={draft} onChange={edit} />
       </Fragment>
       </WholeFieldCheck.Provider>
-      <PreviewSection user={user} table={draft} dirty={dirty} lock={setLocked} />
+      <PreviewSection user={user} table={draft} dirty={dirty} unfinished={unfinished} lock={setLocked} />
       <PublishSection
         {...common}
         published={current !== null}

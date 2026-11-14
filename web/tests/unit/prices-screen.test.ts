@@ -181,6 +181,25 @@ describe('the editor changes', () => {
     expect(defaultForm(bracketsOff(banded))).toEqual({ unit_price: '' });
   });
 
+  it('keeps a price per category while category prices are on, as categories are unticked and ticked again', () => {
+    const table = priced();
+    let item = setCategoryPricing(setItemCategories(DRYWALL(table), [1, 2, 3]), true);
+    item = setRowForm(item, rowId({ category: 1 }), { unit_price: '4.00' });
+    item = setRowForm(item, rowId({ category: 2 }), { unit_price: '5.00' });
+    item = setRowForm(item, rowId({ category: 3 }), { unit_price: '6.50' });
+    const fewer = setItemCategories(item, [1, 3]);
+    expect(fewer.rows?.map(rowId)).toEqual(['|1', '|3']);
+    const again = setItemCategories(fewer, [1, 2, 3]);
+    expect(again.rows).toEqual([
+      { category: 1, unit_price: '4.00' },
+      { category: 2, unit_price: '' },
+      { category: 3, unit_price: '6.50' },
+    ]);
+    expect(() => parseTable({ ...table, items: table.items.map((i) => (i.item_id === item.item_id ? again : i)) })).not.toThrow();
+    // With category prices off, ticking a category adds no row.
+    expect(setItemCategories(setItemCategories(DRYWALL(table), [1, 3]), [1, 2, 3]).rows).toBeUndefined();
+  });
+
   it('removes rows the schema would refuse: a category the item no longer uses, a room type removed', () => {
     const table = withRows(true);
     const id = DRYWALL(table).item_id;

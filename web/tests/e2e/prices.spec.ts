@@ -299,6 +299,32 @@ test('a whole-number field holding something else is neither saved nor published
   await expect(page.getByLabel('Drying days the proposal assumes')).toHaveValue('4');
 });
 
+test('the previews wait while a whole-number field holds something else', async ({ page, request }) => {
+  await resetPrices();
+  await savePriced(request);
+  await openPricesAsOwner(page);
+  const preview = page.getByRole('region', { name: 'Preview on sample jobs' });
+  const run = preview.getByRole('button', { name: 'Price the sample jobs' });
+  await run.click();
+  await expect(preview.getByText('These prices can be published.')).toBeVisible();
+  const pays = page.getByRole('region', { name: 'What does this room pay?' });
+  const line = pays.getByRole('listitem').filter({ hasText: 'Drywall removal' });
+  await expect(line).toContainText('$4.00 per sq ft');
+
+  const days = page.getByLabel('Drying days the proposal assumes');
+  const before = await days.inputValue();
+  await days.fill('3.5');
+  await expect(preview.getByText('These prices can be published.')).toHaveCount(0);
+  await expect(run).toBeDisabled();
+  await expect(line).toHaveCount(0);
+  await expect(pays.getByText(/to see what this room pays\./)).toBeVisible();
+
+  await days.fill(before);
+  await expect(run).toBeEnabled();
+  await expect(line).toContainText('$4.00 per sq ft');
+  await expect(preview.getByText('These prices can be published.')).toBeVisible();
+});
+
 test('a check or a preview of earlier prices is not shown once the prices change', async ({ page, request }) => {
   await resetPrices();
   await savePriced(request, '');

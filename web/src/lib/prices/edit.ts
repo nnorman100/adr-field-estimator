@@ -103,15 +103,16 @@ export function addRoomTypeRow(item: Item, roomType: string, category?: Category
 }
 
 // The categories an item is used in (none ticked means all four). Rows for a category it no longer
-// uses are removed, as the schema refuses them.
+// uses are removed, as the schema refuses them; with "Price varies by water category" on, a category
+// newly used gets a blank price of its own.
 export function setItemCategories(item: Item, categories: Category[]): Item {
   const chosen = [...new Set(categories)].sort(categoryOrder);
   const all = chosen.length === 0 || chosen.length === CATEGORIES.length;
-  const next = { ...item, categories: all ? [] : chosen };
-  return withRows(
-    next,
+  const next = withRows(
+    { ...item, categories: all ? [] : chosen },
     (item.rows ?? []).filter((row) => row.category === undefined || all || chosen.includes(row.category)),
   );
+  return categoryPricingOn(next) ? setCategoryPricing(next, true) : next;
 }
 
 // Brackets: the bands' limits rise and the last is open-ended (null).

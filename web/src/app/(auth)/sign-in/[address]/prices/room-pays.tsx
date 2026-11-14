@@ -12,7 +12,15 @@ import { Hint, RadioGroup, Section, Select } from './ui';
 // comes from. It shows the prices as set and names a multiplier; it adds nothing up. Totals come
 // from the server's preview on the sample jobs.
 
-export function RoomPays({ table, title = 'What does this room pay?' }: { table: Table; title?: string }) {
+export function RoomPays({
+  table,
+  title = 'What does this room pay?',
+  unfinished = false,
+}: {
+  table: Table;
+  title?: string;
+  unfinished?: boolean;
+}) {
   const [category, setCategory] = useState<Category>(3);
   const [tier, setTier] = useState<SizeTier>('m');
   const [chosenType, setRoomType] = useState<string>(table.policy.room_types[0]?.id ?? OTHER_TYPE);
@@ -45,9 +53,13 @@ export function RoomPays({ table, title = 'What does this room pay?' }: { table:
         onChange={setTier}
       />
       <div role="status" aria-live="polite" className="flex flex-col gap-3">
-        {rows.length === 0 ? <p>No item that is on is used in this kind of room.</p> : null}
+        {unfinished ? (
+          <p>Correct the field marked &quot;Use a whole number&quot; to see what this room pays.</p>
+        ) : rows.length === 0 ? (
+          <p>No item that is on is used in this kind of room.</p>
+        ) : null}
         <ul className="flex flex-col gap-3">
-          {rows.map((row) => (
+          {(unfinished ? [] : rows).map((row) => (
             <li key={row.itemId} className="rounded-md border border-foreground/20 p-3">
               <p className="font-medium">{row.name}</p>
               <PriceText
