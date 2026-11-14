@@ -14,6 +14,7 @@ import { endsSession, meOutcome } from '@/lib/sign-in/outcome';
 import { fullTeam, signedInMember } from '@/lib/team/screen';
 import type { TeamView } from '@/lib/team/service';
 import { FocusedPanel } from '../../../focused-panel';
+import { failedSignOut, WorkNotSecured } from '../work-not-secured';
 import { Panel } from '../../../panel';
 import { TeamBoard } from './team-board';
 
@@ -33,6 +34,7 @@ type Phase =
   | { name: 'finish-sign-in' }
   | { name: 'not-owner' }
   | { name: 'unavailable' }
+  | { name: 'not-secured' }
   | { name: 'ready'; user: User; companyId: string; team: Extract<TeamView, { view: 'full' }> };
 
 export function TeamScreen(props: TeamScreenProps) {
@@ -57,7 +59,7 @@ function CompanyTeam({ address, companyName, tenantId, config }: TeamScreenProps
     // The latest sign-in wins: an answer for a user who has since signed out is dropped.
     const stale = (user: User) => authRef.current?.currentUser !== user;
     const signOutOrUnavailable = (refusal: LockReason) =>
-      signOutOnRefusal(auth, tenantId, config, refusal).catch(() => setPhase({ name: 'unavailable' }));
+      signOutOnRefusal(auth, tenantId, config, refusal).catch((error) => setPhase(failedSignOut(error)));
 
     async function open(user: User) {
       setPhase({ name: 'checking' });
@@ -123,6 +125,8 @@ function CompanyTeam({ address, companyName, tenantId, config }: TeamScreenProps
           {signInLink}
         </FocusedPanel>
       );
+    case 'not-secured':
+      return <WorkNotSecured />;
     case 'unavailable':
       return (
         <FocusedPanel title="We could not open the team">
@@ -142,8 +146,8 @@ function CompanyTeam({ address, companyName, tenantId, config }: TeamScreenProps
           onSignInAgain={async () => {
             try {
               if (authRef.current) await signOutOnRefusal(authRef.current, tenantId, config, 'sign-in-again');
-            } catch {
-              return setPhase({ name: 'unavailable' });
+            } catch (error) {
+              return setPhase(failedSignOut(error));
             }
             router.push(`/sign-in/${address}`);
           }}

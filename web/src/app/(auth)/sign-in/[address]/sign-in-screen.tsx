@@ -21,7 +21,7 @@ import {
 import { saveMe } from '@/lib/field/ds-me';
 import { prepareFieldShell } from '@/lib/field/register-worker';
 import { meFacts } from '@/lib/field/sync-gate';
-import { keepCleanupContext, letIn, runRetention } from '@/lib/field/retention';
+import { keepCleanupContext, letIn, runRetention, whenShownAgain } from '@/lib/field/retention';
 import type { LockReason } from '@/lib/field/unsent';
 import { hasUnsentWork, signOutDiscarding, signOutKeeping, signOutOnRefusal } from '@/lib/field/sign-out';
 import { endsSession, errorCode, signInErrorMessage, type MeOutcome } from '@/lib/sign-in/outcome';
@@ -37,6 +37,7 @@ import { SecondStepSection } from '../../second-step/second-step-section';
 import { InvitationScreen } from './invitation-screen';
 import { UnsentSignOutDialog, type UnsentChoice } from './unsent-sign-out-dialog';
 import { NOT_READY_OFFLINE_TEXT, PREPARING_TEXT } from './offline-ready-text';
+import { failedSignOut, WorkNotSecured } from './work-not-secured';
 
 export type SignInScreenProps = {
   address: string;
@@ -56,6 +57,8 @@ type Screen =
   | { name: 'checking' }
   // Signed in: the field worker is being installed so the field app opens with no signal.
   | { name: 'preparing' }
+  // A sign-out the app had to make could not save the refusal first: nothing was signed out.
+  | { name: 'not-secured' }
   // The password or Google account was right and the person has a second step: the code is next.
   | { name: 'code'; challenge: SecondStepChallenge }
   // A signed-in person adds an authenticator app (the required first setup is the outcome below).
@@ -115,8 +118,8 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
     async (message: string, refusal: LockReason) => {
       try {
         await endSession(message, refusal);
-      } catch {
-        setScreen({ name: 'outcome', outcome: { kind: 'unavailable' } });
+      } catch (error) {
+        setScreen(failedSignOut(error).name === 'not-secured' ? { name: 'not-secured' } : { name: 'outcome', outcome: { kind: 'unavailable' } });
       }
     },
     [endSession],
@@ -189,11 +192,16 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
     [address, companyName, config, refuse, showSignedOut, tenantId],
   );
 
+  // Work locked past the 30-day limit (O5), of anyone on this phone (S6-3b): as the page opens and
+  // each time it is shown again.
   useEffect(() => {
-    rememberSignInAddress(address);
-    // Work locked past the 30-day limit (O5), of anyone on this phone (S6-3b).
     keepCleanupContext(tenantId, config);
     void runRetention();
+    return whenShownAgain(() => void runRetention());
+  }, [config, tenantId]);
+
+  useEffect(() => {
+    rememberSignInAddress(address);
     const auth = companyAuth({ config, tenantId });
     authRef.current = auth;
     return onAuthStateChanged(auth, (user) => {
@@ -273,6 +281,8 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
       </FocusedPanel>
     );
   }
+
+  if (screen.name === 'not-secured') return <WorkNotSecured />;
 
   if (screen.name === 'preparing') {
     return (

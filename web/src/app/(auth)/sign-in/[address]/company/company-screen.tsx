@@ -15,6 +15,7 @@ import { profileView, signedInProfileManager } from '@/lib/profile/screen';
 import type { ProfileView } from '@/lib/profile/service';
 import { endsSession, meOutcome } from '@/lib/sign-in/outcome';
 import { FocusedPanel } from '../../../focused-panel';
+import { failedSignOut, WorkNotSecured } from '../work-not-secured';
 import { Panel } from '../../../panel';
 import { CompanyForm } from './company-form';
 
@@ -34,6 +35,7 @@ type Phase =
   | { name: 'finish-sign-in' }
   | { name: 'not-owner' }
   | { name: 'unavailable' }
+  | { name: 'not-secured' }
   | { name: 'ready'; user: User; companyId: string; profile: ProfileView; aiUsage: boolean; prices: boolean };
 
 export function CompanyScreen(props: CompanyScreenProps) {
@@ -62,7 +64,7 @@ function CompanySettings({
     // The latest sign-in wins: an answer for a user who has since signed out is dropped.
     const stale = (user: User) => authRef.current?.currentUser !== user;
     const signOutOrUnavailable = (refusal: LockReason) =>
-      signOutOnRefusal(auth, tenantId, config, refusal).catch(() => setPhase({ name: 'unavailable' }));
+      signOutOnRefusal(auth, tenantId, config, refusal).catch((error) => setPhase(failedSignOut(error)));
 
     async function open(user: User) {
       setPhase({ name: 'checking' });
@@ -136,6 +138,8 @@ function CompanySettings({
           {signInLink}
         </FocusedPanel>
       );
+    case 'not-secured':
+      return <WorkNotSecured />;
     case 'unavailable':
       return (
         <FocusedPanel title="We could not open the company settings">

@@ -13,6 +13,7 @@ import type { LockReason } from '@/lib/field/unsent';
 import { pricesAccess, pricesView, type OwnerPrices, type ReaderPrices } from '@/lib/prices/screen';
 import { endsSession, meOutcome } from '@/lib/sign-in/outcome';
 import { FocusedPanel } from '../../../focused-panel';
+import { failedSignOut, WorkNotSecured } from '../work-not-secured';
 import { Panel } from '../../../panel';
 import { ReadOnlyItems } from './price-list';
 import { PricesEditor } from './prices-editor';
@@ -34,6 +35,7 @@ type Phase =
   // company (or the role holds no prices key). Nothing about prices is requested or shown.
   | { name: 'hidden' }
   | { name: 'unavailable' }
+  | { name: 'not-secured' }
   | { name: 'owner'; user: User; prices: OwnerPrices }
   | { name: 'reader'; prices: ReaderPrices };
 
@@ -59,7 +61,7 @@ function CompanyPrices({ address, companyName, tenantId, config }: PricesScreenP
     // The latest sign-in wins: an answer for a user who has since signed out is dropped.
     const stale = (user: User) => authRef.current?.currentUser !== user;
     const signOutOrUnavailable = (refusal: LockReason) =>
-      signOutOnRefusal(auth, tenantId, config, refusal).catch(() => setPhase({ name: 'unavailable' }));
+      signOutOnRefusal(auth, tenantId, config, refusal).catch((error) => setPhase(failedSignOut(error)));
 
     async function open(user: User) {
       setPhase({ name: 'checking' });
@@ -125,6 +127,8 @@ function CompanyPrices({ address, companyName, tenantId, config }: PricesScreenP
           {signInLink}
         </FocusedPanel>
       );
+    case 'not-secured':
+      return <WorkNotSecured />;
     case 'unavailable':
       return (
         <FocusedPanel title="We could not open the prices">
@@ -143,8 +147,8 @@ function CompanyPrices({ address, companyName, tenantId, config }: PricesScreenP
             onSignInAgain={async () => {
               try {
                 if (authRef.current) await signOutOnRefusal(authRef.current, tenantId, config, 'sign-in-again');
-              } catch {
-                return setPhase({ name: 'unavailable' });
+              } catch (error) {
+                return setPhase(failedSignOut(error));
               }
               router.push(`/sign-in/${address}`);
             }}

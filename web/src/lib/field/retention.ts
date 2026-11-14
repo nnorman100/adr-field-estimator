@@ -14,16 +14,18 @@ import { lockOutlived, noteLocked, noteUnlocked, outlivedLocks, type LockReason 
 const CLEANUP_PREFIX = 'ds-retain/';
 export const cleanupKey = (tenantId: string): string => `${CLEANUP_PREFIX}${tenantId}`;
 
-// Saves what removing this company's locked work needs, for when no saved sign-in is left.
-export function keepCleanupContext(tenantId: string, config: BrowserSignInConfig): void {
+// Saves what removing this company's locked work needs, for when no saved sign-in is left. False
+// when it could not be saved.
+export function keepCleanupContext(tenantId: string, config: BrowserSignInConfig): boolean {
   const { apiKey, authDomain, projectId, authEmulatorUrl, firestoreDatabaseId, firestoreEmulatorUrl } = config;
   try {
     window.localStorage.setItem(
       cleanupKey(tenantId),
       JSON.stringify({ apiKey, authDomain, projectId, authEmulatorUrl, firestoreDatabaseId, firestoreEmulatorUrl }),
     );
+    return true;
   } catch {
-    // Nothing kept: the sign-in page, which has the settings, saves them again as it opens.
+    return false;
   }
 }
 
@@ -68,25 +70,43 @@ function cleanupContexts(): { tenantId: string; config: BrowserSignInConfig }[] 
 }
 
 // The server refused this person (O5): their work is locked from now, and what removes it after 30
-// days is kept with the lock. Returns when the refusals began, or null when the lock was not saved.
+// days is saved first, so a lock is never saved without it. Returns when the refusals began, or
+// null when either could not be saved.
 export function lockWork(person: FieldPerson, reason: LockReason, now = Date.now()): number | null {
-  keepCleanupContext(person.tenantId, person.config);
+  if (!keepCleanupContext(person.tenantId, person.config)) return null;
   return noteLocked(person.tenantId, person.uid, reason, now);
 }
 
 // Removes the work of every person on this phone, in every company, whose lock outlived the limit,
 // signed in or not. Without `lockHeld` a field window open elsewhere holds that work, and nothing
-// is removed; `lockHeld` is for the field window itself, before it starts its own client. A mark
-// that cannot be read never counts. Returns who was removed (meKey); the rest is tried next time.
-export async function runRetention(now = Date.now(), { lockHeld = false } = {}): Promise<string[]> {
+// is removed; `lockHeld` is for the field window itself, and `skip` (a meKey) is the person whose
+// client that window runs, whose own gate removes their work. A mark that cannot be read never
+// counts. Returns who was removed (meKey); the rest is tried next time.
+export async function runRetention(now = Date.now(), { lockHeld = false, skip = '' } = {}): Promise<string[]> {
   const removed: string[] = [];
   for (const { tenantId, config } of cleanupContexts()) {
     for (const uid of outlivedLocks(tenantId, now)) {
+      if (meKey(tenantId, uid) === skip) continue;
       const result = await discardFieldWork({ tenantId, uid, config }, { lockHeld }).catch(() => 'failed' as const);
       if (result === 'discarded') removed.push(meKey(tenantId, uid));
     }
   }
   return removed;
+}
+
+// Calls `retain` each time the page is shown again (made visible, or brought back from the
+// back-forward cache), the foreground entry points where locked work may have outlived the limit
+// while the page was away. Returns what stops it.
+export function whenShownAgain(retain: () => void): () => void {
+  const shown = () => {
+    if (document.visibilityState === 'visible') retain();
+  };
+  document.addEventListener('visibilitychange', shown);
+  window.addEventListener('pageshow', shown);
+  return () => {
+    document.removeEventListener('visibilitychange', shown);
+    window.removeEventListener('pageshow', shown);
+  };
 }
 
 // The server let this person in at sign-in. Their lock is lifted, so the work is sent, unless it

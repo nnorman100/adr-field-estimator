@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useState, type ReactNode } from 'react';
 import { meKey, readLatestMe, type DsMe } from '@/lib/field/ds-me';
 import { registerFieldWorker } from '@/lib/field/register-worker';
-import { runRetention } from '@/lib/field/retention';
+import { runRetention, whenShownAgain } from '@/lib/field/retention';
 import { offlineCaptureAllowed } from '@/lib/field/platform';
 import { rememberedSignInAddress } from '@/lib/sign-in/remember';
 import { NotSavedBanner, OfflineBanner } from './banners';
@@ -59,9 +59,6 @@ export function FieldShell() {
       void readLatestMe().then((me) => {
         if (!live) return;
         const address = rememberedSignInAddress();
-        // With no saved sign-in no field window starts here, so this page removes work locked past
-        // the 30-day limit (O5, S6-3b); a signed-in shell does it once it holds the window lock.
-        if (me === 'unavailable' || me === null) void runRetention();
         if (me === 'unavailable') setBoot({ kind: 'no-storage', address });
         else if (me === null) setBoot({ kind: 'signed-out', address });
         else setBoot({ kind: 'ready', me });
@@ -78,6 +75,16 @@ export function FieldShell() {
       window.removeEventListener('pageshow', restored);
     };
   }, []);
+
+  // With no saved sign-in no field window starts here, so this page removes work locked past the
+  // 30-day limit (O5, S6-3b) as it opens and each time it is shown again; a signed-in shell does it
+  // while it holds the window lock (field-store.tsx).
+  const signedOut = boot.kind === 'signed-out' || boot.kind === 'no-storage';
+  useEffect(() => {
+    if (!signedOut) return;
+    void runRetention();
+    return whenShownAgain(() => void runRetention());
+  }, [signedOut]);
 
   const homeScreen = surface === 'ios-tab' ? <HomeScreenSheet openFirstTime={boot.kind !== 'starting'} /> : null;
 

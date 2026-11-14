@@ -26,13 +26,22 @@ async function leave(auth: Auth, tenantId: string): Promise<void> {
   }
 }
 
+// The refusal could not be saved on the phone: nothing was signed out or removed, and the screen
+// asks the person to try again.
+export class WorkNotSecuredError extends Error {
+  constructor() {
+    super('the refusal could not be saved on this phone');
+  }
+}
+
 // Every sign-out the person did not ask for: the server refused them (sign in again, a second step,
 // another company's sign-in, an account turned off). The refusal is saved with their unsent-work
 // mark, apart from the saved sign-in, before that goes, so the 30-day limit for locked work (O5)
-// runs from now even though the field shell will not start for this person again (S6-3b).
+// runs from now even though the field shell will not start for this person again (S6-3b). Throws
+// WorkNotSecuredError, with the saved sign-in and the work left as they were, when it cannot be.
 export async function signOutOnRefusal(auth: Auth, tenantId: string, config: BrowserSignInConfig, refusal: LockReason): Promise<void> {
   const user = auth.currentUser;
-  if (user) lockWork({ tenantId, uid: user.uid, config }, refusal);
+  if (user && lockWork({ tenantId, uid: user.uid, config }, refusal) === null) throw new WorkNotSecuredError();
   await leave(auth, tenantId);
 }
 

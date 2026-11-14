@@ -346,3 +346,71 @@ test.describe('the field shell\'s phone storage (S6-3)', () => {
     await expect(page.getByText(text.RENEWING_TEXT)).toHaveCount(0);
   });
 });
+
+// S6-3b: work locked past the 30-day limit (O5) is removed when the shell is shown again, with no
+// navigation, whether it is signed out or open for someone else.
+test.describe('the field shell removes outlived locked work when it is shown again', () => {
+  // A page whose visibility the test sets, as a phone hides and shows the app.
+  const controlVisibility = (page: Page) =>
+    page.addInitScript(() => {
+      const shown = { value: true };
+      (window as unknown as { shown: typeof shown }).shown = shown;
+      Object.defineProperty(document, 'visibilityState', { get: () => (shown.value ? 'visible' : 'hidden'), configurable: true });
+    });
+  const setShown = (page: Page, value: boolean) =>
+    page.evaluate((shown) => {
+      (window as unknown as { shown: { value: boolean } }).shown.value = shown;
+      document.dispatchEvent(new Event('visibilitychange'));
+    }, value);
+  const hasDatabase = (page: Page, uid: string) =>
+    page.evaluate(async (id) => ((await indexedDB.databases()) ?? []).some((database) => (database.name ?? '').includes(id)), uid);
+  const getLocal = (page: Page, key: string) => page.evaluate((k) => window.localStorage.getItem(k), key);
+
+  // Locked work of `who` kept on the phone by a sign-out the app made on a refusal.
+  async function lockedAndSignedOut(harness: FieldPhone, world: World, who: Person): Promise<void> {
+    const person = await harness.signIn(world, who);
+    expect(await harness.call('start', person, 'persistent')).toBe('persistent');
+    await harness.call('signOutKeep', person, 'sign-in-again');
+  }
+
+  // The lock is 29 days old now; hidden, two days pass; shown again, the work is gone.
+  async function hideFromDay29ToDay31(page: Page, world: World, who: Person): Promise<void> {
+    const key = unsentKey(world.tenantId, who.uid);
+    const mark = JSON.parse((await getLocal(page, key))!) as Record<string, unknown>;
+    await setLocal(page, key, JSON.stringify({ ...mark, lockedSince: Date.now() - 29 * DAY }));
+    await setShown(page, false);
+    await page.clock.fastForward('48:00:00');
+    expect(await hasDatabase(page, who.uid)).toBe(true);
+    await setShown(page, true);
+    await expect.poll(() => hasDatabase(page, who.uid)).toBe(false);
+    expect(await getLocal(page, key)).toBeNull();
+  }
+
+  test('signed out', async ({ context, page, lane }) => {
+    const world = await seedCompany();
+    const harness = await FieldPhone.open(context, lane);
+    await lockedAndSignedOut(harness, world, world.owner);
+    await harness.page.close();
+    await controlVisibility(page);
+    await page.clock.install();
+    await page.goto(`${lane.appUrl}/field`);
+    await expect(page.getByRole('heading', { name: 'Sign in to continue' })).toBeVisible();
+    await hideFromDay29ToDay31(page, world, world.owner);
+  });
+
+  test('open for another person of the company', async ({ context, page, lane }) => {
+    const world = await seedCompany({ people: ['owner', 'ben'] });
+    const ben = world.people.ben!;
+    const harness = await FieldPhone.open(context, lane);
+    await lockedAndSignedOut(harness, world, ben);
+    await harness.signIn(world, world.owner);
+    await harness.page.close();
+    lane.drop('/api/me');
+    await controlVisibility(page);
+    await page.clock.install();
+    await openShell(page, lane, world, world.owner);
+    await expect(page.getByText('Your jobs will show here.')).toBeVisible();
+    await hideFromDay29ToDay31(page, world, ben);
+    await expect(page.getByText('Your jobs will show here.')).toBeVisible();
+  });
+});

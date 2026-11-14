@@ -2,7 +2,7 @@ import { disableNetwork, enableNetwork } from 'firebase/firestore';
 import { getIdTokenResult } from 'firebase/auth';
 import { callApi } from '@/lib/firebase-client';
 import { appCheckSeam, discardFieldWork, fieldUser, settle, type FieldClient } from '@/lib/field-db';
-import { forgetMe, readMe, updateMe, type DsMe } from './ds-me';
+import { readMe, updateMe, type DsMe } from './ds-me';
 import { sessionValid, SyncGate, type GateState, type MeFacts } from './sync-gate';
 import { lockWork } from './retention';
 import { lockOutlived, noteUnlocked, savedLock, type LockReason } from './unsent';
@@ -13,8 +13,8 @@ import { lockOutlived, noteUnlocked, savedLock, type LockReason } from './unsent
 //   cleared once the queue has been sent, and the ds-me row gets the company id, role,
 //   capabilities and sign-in time for the next offline start;
 // - a refusal: the work stays, locked, and the refusal is saved on the phone, so a start with no
-//   answer is locked too; a phone that cannot save it forgets the offline sign-in instead. It is
-//   saved whatever the sign-in's age, so a phone reopened past the role's limit still starts the
+//   answer is locked too; a phone that cannot save it keeps everything as it is, the gate stays
+//   shut, and the next refusal tries again. It is saved whatever the sign-in's age, so a phone reopened past the role's limit still starts the
 //   clock (S6-3b). A disabled member's, inactive company's or signed-out (revoked or ended)
 //   sign-in's work is removed after 30 days of refusals (owner decision O5), and never sent once
 //   past that, even when the server lets the person in again. The gate asks whether it is past that
@@ -73,11 +73,7 @@ export function runFieldSync(
   }
 
   function refused(reason: LockReason): void {
-    if (lockWork(person, reason, now()) === null) {
-      void forgetMe(person.tenantId, person.uid);
-      return;
-    }
-    retire();
+    if (lockWork(person, reason, now()) !== null) retire();
   }
 
   // Past the O5 limit, the work is removed and the gate stops for good: true when it was.

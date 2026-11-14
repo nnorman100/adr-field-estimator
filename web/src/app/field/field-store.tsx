@@ -7,7 +7,7 @@ import { companyAuth } from '@/lib/firebase-client';
 import { mirrorSignIn, startFieldClient, type CacheKind, type FieldClient } from '@/lib/field-db';
 import { meKey, type DsMe } from '@/lib/field/ds-me';
 import { runFieldSync } from '@/lib/field/field-sync';
-import { runRetention } from '@/lib/field/retention';
+import { runRetention, whenShownAgain } from '@/lib/field/retention';
 import { askToPersist, keepAnswer, saveKeepAnswer, type KeepAnswer } from '@/lib/field/keep-consent';
 import type { FieldSurface } from '@/lib/field/platform';
 import { sessionValid, type GateState, type SyncGate } from '@/lib/field/sync-gate';
@@ -133,6 +133,7 @@ export function FieldStore({
     if (!hasDatabase || cache === null) return;
     let live = true;
     let release = () => undefined as void;
+    let stopRetention = () => undefined as void;
     const person = { tenantId: me.tenantId, uid: me.uid, config: me.config };
     void (async () => {
       const lock = await holdWindow();
@@ -145,9 +146,12 @@ export function FieldStore({
       release = lock.release;
       // Work locked past the 30-day limit (O5, S6-3b), this person's included, before anything
       // starts: this window holds the lock, so no other window holds any of it.
+      const own = meKey(me.tenantId, me.uid);
       const removed = await runRetention(Date.now(), { lockHeld: true });
       if (!live) return;
-      if (removed.includes(meKey(me.tenantId, me.uid))) return setPhase({ kind: 'removed' });
+      if (removed.includes(own)) return setPhase({ kind: 'removed' });
+      // Everyone else's, each time the page is shown again; this person's own is the gate's.
+      stopRetention = whenShownAgain(() => void runRetention(Date.now(), { lockHeld: true, skip: own }));
       await mirrorSignIn(person).catch(() => false);
       const started = await startFieldClient(person, cache);
       if (!live) return;
@@ -181,6 +185,7 @@ export function FieldStore({
     window.addEventListener('offline', offline);
     return () => {
       live = false;
+      stopRetention();
       stopAuth();
       document.removeEventListener('visibilitychange', shown);
       window.removeEventListener('offline', offline);
