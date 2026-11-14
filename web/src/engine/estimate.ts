@@ -100,6 +100,8 @@ export type Estimate = {
     labor_material_high: string;
     explanation: string;
     range_explanation: string | null;
+    /** The price table's name for the after-hours adjustment (`after_hours` on each end). */
+    after_hours_label: string;
   };
   warnings: { engine: Json[]; advisory: Json[] };
   documents: EstimateDocuments | null;
@@ -276,6 +278,7 @@ export function priceEstimate(table: Json, job: EstimateJob): Estimate | Refusal
       labor_material_high: cents(totals.laborMaterialHigh),
       explanation: totals.explanation,
       range_explanation: totals.rangeExplanation,
+      after_hours_label: totals.afterHoursLabel,
     },
     warnings: { engine: priced.warnings, advisory },
     documents,

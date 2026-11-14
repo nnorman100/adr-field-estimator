@@ -82,6 +82,7 @@ export const storedEstimateSchema = z.strictObject({
     labor_material_high: money,
     explanation: z.string(),
     range_explanation: z.string().nullable(),
+    after_hours_label: z.string(),
   }),
   warnings: z.strictObject({ engine: z.array(jsonObject), advisory: z.array(jsonObject) }),
   // An estimate is always stored with its documents.

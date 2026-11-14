@@ -54,9 +54,9 @@ export function priceLines(totals: EstimateView['totals']): { customer: string; 
 }
 
 /** One end's charges in the order the engine adds them into its total: the subtotal, then each adjustment it charged. */
-export function chargeRows(end: EstimateEnd): Array<{ label: string; amount: string }> {
+export function chargeRows(end: EstimateEnd, afterHoursLabel: string): Array<{ label: string; amount: string }> {
   const adjustments = [
-    { label: 'After-hours', amount: end.after_hours },
+    { label: afterHoursLabel, amount: end.after_hours },
     ...end.trade_minimums.map((row) => ({ label: `${row.name} trade minimum`, amount: row.amount })),
     { label: 'Minimum job charge', amount: end.minimum_charge },
     { label: 'Overhead and profit', amount: end.overhead_profit },

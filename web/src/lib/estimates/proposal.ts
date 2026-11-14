@@ -19,6 +19,8 @@ export type ProposalPrice = {
   low: EstimateEnd;
   high: EstimateEnd | null;
   explanation: string | null;
+  // The price table's name for the after-hours adjustment.
+  after_hours_label: string;
   // Each line's description and price, only when the price table shows the line breakdown.
   lines?: Array<{ description: string; quantity: string; unit: string; total: string }>;
 };
@@ -81,6 +83,7 @@ export function proposalOf(input: ProposalInput): Proposal {
     low: totals.low,
     high: totals.mode === 'range' ? totals.high : null,
     explanation: totals.mode === 'range' ? totals.range_explanation : totals.explanation,
+    after_hours_label: totals.after_hours_label,
   };
   if (input.showLineBreakdown) {
     price.lines = estimate.lines.map((line) => ({ description: line.description, quantity: line.quantity, unit: line.unit, total: line.total }));

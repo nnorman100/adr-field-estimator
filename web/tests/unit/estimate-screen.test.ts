@@ -11,7 +11,7 @@ const END = { subtotal: '1234.50', after_hours: '0.00', trade_minimums: [], mini
 const HIGH = { ...END, subtotal: '1500.00', total: '1500.00' };
 
 function totals(mode: 'range' | 'single'): EstimateView['totals'] {
-  return { mode, low: END, high: mode === 'range' ? HIGH : null, labor_material_low: '0.00', labor_material_high: '0.00', explanation: '', range_explanation: null };
+  return { mode, low: END, high: mode === 'range' ? HIGH : null, labor_material_low: '0.00', labor_material_high: '0.00', explanation: '', range_explanation: null, after_hours_label: 'After-hours adjustment' };
 }
 
 describe('the review screen', () => {
@@ -74,15 +74,28 @@ describe('the review screen', () => {
       { ...table([item('demo', { trade: 'drywall' })]), trades: [{ trade_id: 'drywall', name: 'Drywall', minimum_charge: '400' }] },
       pricedJob([room('Kitchen', { unfinished_sf: 100 })]),
     );
-    expect(chargeRows(result.totals.low)).toEqual([
+    expect(chargeRows(result.totals.low, result.totals.after_hours_label)).toEqual([
       { label: 'Subtotal', amount: '200.00' },
       { label: 'Drywall trade minimum', amount: '200.00' },
     ]);
     expect(result.totals.low.total).toBe('400.00');
     const every = { subtotal: '100.00', after_hours: '10.00', trade_minimums: [{ trade_id: 't', name: 'Mold', amount: '20.00' }], minimum_charge: '30.00', overhead_profit: '40.00', tax: '5.00', total: '205.00' };
-    expect(chargeRows(every).map((row) => row.label)).toEqual(['Subtotal', 'After-hours', 'Mold trade minimum', 'Minimum job charge', 'Overhead and profit', 'Sales tax']);
+    expect(chargeRows(every, 'Night work').map((row) => row.label)).toEqual(['Subtotal', 'Night work', 'Mold trade minimum', 'Minimum job charge', 'Overhead and profit', 'Sales tax']);
     const cents = (amount: string) => Number(amount.replace('.', ''));
-    expect(chargeRows(every).reduce((sum, row) => sum + cents(row.amount), 0)).toBe(cents(every.total));
+    expect(chargeRows(every, 'Night work').reduce((sum, row) => sum + cents(row.amount), 0)).toBe(cents(every.total));
+  });
+
+  it('names the after-hours adjustment as the company’s price table does', () => {
+    // Demolition 100 sf x $2.00 = $200.00, flagged after-hours; multiplier 1.5: a $100.00 adjustment.
+    const result = priced(
+      table([item('demo', { after_hours: true })], { after_hours: { multiplier: '1.5', label: 'Emergency labor surcharge' } }),
+      pricedJob([room('Kitchen', { unfinished_sf: 100 })], { is_after_hours: true }),
+    );
+    expect(result.totals.after_hours_label).toBe('Emergency labor surcharge');
+    expect(chargeRows(result.totals.low, result.totals.after_hours_label)).toEqual([
+      { label: 'Subtotal', amount: '200.00' },
+      { label: 'Emergency labor surcharge', amount: '100.00' },
+    ]);
   });
 
   it('says why documents cannot be signed yet', () => {

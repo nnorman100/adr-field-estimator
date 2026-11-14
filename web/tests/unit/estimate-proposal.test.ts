@@ -121,7 +121,7 @@ describe('the proposal', () => {
     expect(proposal.findings).toEqual(priced.documents!.proposal.findings);
     expect(proposal.recommendations).toEqual(priced.documents!.proposal.recommendations);
     expect(proposal.disclaimers).toEqual(priced.documents!.proposal.disclaimers);
-    expect(proposal.price).toEqual({ mode: 'single', itemized_total: '160.00', low: priced.totals.low, high: null, explanation: priced.totals.explanation });
+    expect(proposal.price).toEqual({ mode: 'single', itemized_total: '160.00', low: priced.totals.low, high: null, explanation: priced.totals.explanation, after_hours_label: 'After-hours adjustment' });
     const text = proposalBytes(proposal).bytes.toString('utf8');
     expect(text).not.toContain('Whole floor wet');
     expect(text).not.toContain('Water under the kitchen floor.');
@@ -132,6 +132,11 @@ describe('the proposal', () => {
     expect(shown.price.lines).toEqual([{ description: 'Kitchen: Antimicrobial', quantity: '160', unit: 'sf', total: '160.00' }]);
     const hidden = proposalOf({ estimate: estimate(), company: COMPANY, showLineBreakdown: false, ...BASIS });
     expect(hidden.price).not.toHaveProperty('lines');
+  });
+
+  it('carries the price table’s name for the after-hours adjustment', () => {
+    const named = proposalOf({ estimate: estimate({ after_hours: { multiplier: '1.5', label: 'Emergency labor surcharge' } }), company: COMPANY, showLineBreakdown: false, ...BASIS });
+    expect(named.price.after_hours_label).toBe('Emergency labor surcharge');
   });
 
   it('is stored as canonical bytes with their SHA-256, the same for the same input', () => {

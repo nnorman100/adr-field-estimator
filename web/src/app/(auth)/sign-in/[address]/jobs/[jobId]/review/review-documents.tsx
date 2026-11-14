@@ -14,8 +14,8 @@ function text(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
-function Charges({ end }: { end: EstimateEnd }) {
-  return chargeRows(end).map((row, index) => (
+function Charges({ end, afterHoursLabel }: { end: EstimateEnd; afterHoursLabel: string }) {
+  return chargeRows(end, afterHoursLabel).map((row, index) => (
     <li key={`${index}-${row.label}`} className={ROW}>
       <span className="min-w-0 break-words">{row.label}</span>
       <span className="shrink-0 tabular-nums">{dollars(row.amount)}</span>
@@ -47,7 +47,7 @@ export function EstimatePrice({ estimate }: { estimate: EstimateView }) {
             <span className="shrink-0 tabular-nums">{dollars(line.total)}</span>
           </li>
         ))}
-        <Charges end={estimate.totals.low} />
+        <Charges end={estimate.totals.low} afterHoursLabel={estimate.totals.after_hours_label} />
       </ul>
     </section>
   );
@@ -81,7 +81,7 @@ function Proposal({ estimate }: { estimate: EstimateView }) {
             <span className="shrink-0 tabular-nums">{dollars(line.total)}</span>
           </li>
         ))}
-        <Charges end={price.low} />
+        <Charges end={price.low} afterHoursLabel={price.after_hours_label} />
       </ul>
       <p className="font-semibold">
         {price.mode === 'range' && price.high ? `Customer estimate range: ${dollars(price.low.total)} to ${dollars(price.high.total)}` : `Price: ${dollars(price.low.total)}`}
@@ -130,7 +130,7 @@ export function EstimateDocuments({ estimate }: { estimate: EstimateView }) {
               </li>
             );
           })}
-          <Charges end={estimate.totals.low} />
+          <Charges end={estimate.totals.low} afterHoursLabel={estimate.totals.after_hours_label} />
           <li className={`${ROW} font-semibold`}>
             <span>Itemized total</span>
             <span className="shrink-0 tabular-nums">{dollars(estimate.totals.low.total)}</span>
