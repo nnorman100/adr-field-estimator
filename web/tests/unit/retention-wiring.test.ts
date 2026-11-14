@@ -68,7 +68,8 @@ vi.mock('@/lib/field-db', async () => {
 vi.mock('firebase/firestore', () => ({ enableNetwork, disableNetwork: vi.fn(async () => undefined) }));
 vi.mock('firebase/auth', () => ({ getIdTokenResult: vi.fn(async () => ({ authTime: new Date().toISOString() })) }));
 
-const { evaluate } = await import('@/lib/field/retention');
+const { evaluate, forgetPending } = await import('@/lib/field/retention');
+const { discardFieldWork } = await import('@/lib/field-db');
 const { runFieldSync } = await import('@/lib/field/field-sync');
 const { signOutOnRefusal, signOutOrShow } = await import('@/lib/field/sign-out');
 const { noteWrite, readUnsent, unsentKey } = await import('@/lib/field/unsent');
@@ -83,18 +84,20 @@ const lockedMark = (days: number, reason: string) => JSON.stringify({ writes: 1,
 // Waits for the sweeps the gate's own tellings started: they run one after another.
 const swept = () => evaluate(Date.now(), { kind: 'entry' }).done;
 
-type Run = { states: string[]; removed: boolean; stop: () => void };
+type Run = { states: string[]; removed: boolean; reopen: boolean; stop: () => void };
 function sync(signedInDaysAgo = 0): Run {
-  const run: Run = { states: [], removed: false, stop: () => undefined };
+  const run: Run = { states: [], removed: false, reopen: false, stop: () => undefined };
   const gate = runFieldSync({ db: {}, cache: 'persistent', person } as unknown as FieldClient, savedRow(signedInDaysAgo), (event) => {
     if ('state' in event) run.states.push(event.state.kind);
     if ('removed' in event) run.removed = true;
+    if ('reopen' in event) run.reopen = true;
   });
   run.stop = () => gate.stop();
   return run;
 }
 
 beforeEach(() => {
+  forgetPending();
   fieldSignedIn = signedIn;
   readMe.mockClear();
   vi.useFakeTimers();
@@ -167,9 +170,9 @@ describe('the sync gate of an open field shell', () => {
     run.stop();
   });
 
-  it('removes work locked past 30 days when the server refuses the person, and asks nothing more', async () => {
+  it('removes work locked past 30 days when the server says the member is turned off, and asks nothing more', async () => {
     items.set(unsentKey('t-a', 'ana'), lockedMark(31, 'session-revoked'));
-    server = { status: 401, body: { error: 'sign_in_revoked' } };
+    server = { status: 403, body: { error: 'member_disabled' } };
     const run = sync();
     await vi.advanceTimersByTimeAsync(0);
     await swept();
@@ -179,6 +182,33 @@ describe('the sync gate of an open field shell', () => {
     await vi.advanceTimersByTimeAsync(10 * 60_000);
     expect(callApi.mock.calls.length).toBe(asked);
     expect(enableNetwork).not.toHaveBeenCalled();
+  });
+
+  it('only hides work locked past 30 days when the server asks for a new sign-in', async () => {
+    items.set(unsentKey('t-a', 'ana'), lockedMark(31, 'session-revoked'));
+    server = { status: 401, body: { error: 'sign_in_revoked' } };
+    const run = sync();
+    await vi.advanceTimersByTimeAsync(0);
+    await swept();
+    expect(run.removed).toBe(false);
+    expect(discarded).toEqual([]);
+    expect(run.states.at(-1)).toBe('locked');
+    expect(enableNetwork).not.toHaveBeenCalled();
+    run.stop();
+  });
+
+  it('asks for the app to be opened again when a removal stopped its client and could not finish', async () => {
+    items.set(unsentKey('t-a', 'ana'), lockedMark(31, 'company-inactive'));
+    vi.mocked(discardFieldWork).mockResolvedValueOnce('failed');
+    server = { status: 403, body: { error: 'company_inactive' } };
+    const run = sync();
+    await vi.advanceTimersByTimeAsync(0);
+    await swept();
+    expect(run.reopen).toBe(true);
+    expect(run.removed).toBe(false);
+    const asked = callApi.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(callApi.mock.calls.length).toBe(asked);
   });
 
   it('keeps work locked past 30 days, hidden, when there is no signal or no sign-in to ask with, and keeps asking', async () => {
@@ -263,7 +293,7 @@ describe('the sync gate of an open field shell', () => {
     expect(callApi).toHaveBeenCalledTimes(3);
     full = false;
     await vi.advanceTimersByTimeAsync(15_000);
-    expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: NOW + 45_000, lockedReason: 'sign-in-again' });
+    expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: NOW, lockedReason: 'sign-in-again' });
     expect(forgetMe).not.toHaveBeenCalled();
     expect(enableNetwork).not.toHaveBeenCalled();
     run.stop();
@@ -273,7 +303,7 @@ describe('the sync gate of an open field shell', () => {
 const signedInAs = (uid: string, at = 'Fri, 13 Nov 2026 09:00:00 GMT') => ({ uid, metadata: { lastSignInTime: at } });
 
 describe('a refusal the phone could not save, then no signal', () => {
-  it('keeps this window locked with the network off, and is saved from the server\'s next refusal once storage answers', async () => {
+  it('is saved, from when it was given, at the next check with no answer once storage answers, and a reopen stays locked', async () => {
     server = { status: 403, body: { error: 'company_inactive' } };
     full = true;
     const run = sync();
@@ -281,24 +311,27 @@ describe('a refusal the phone could not save, then no signal', () => {
     expect(run.states.at(-1)).toBe('locked');
     expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: null });
 
-    // Storage answers again, and the signal is gone before the gate asks again: nothing is saved
-    // on what the phone alone holds, and the window stays locked.
+    // A shell started again on this page while it is held is locked from the start.
+    const meanwhile = sync();
+    expect(meanwhile.states[0]).toBe('locked');
+    meanwhile.stop();
+
+    // Storage answers again, and the signal is gone before the gate asks again.
     full = false;
     server = { status: 0, body: null };
     await vi.advanceTimersByTimeAsync(15_000);
-    expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: null });
-    expect(run.states.at(-1)).toBe('locked');
+    expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: NOW, lockedReason: 'company-inactive' });
     expect(enableNetwork).not.toHaveBeenCalled();
-
-    // The signal is back and the server still refuses: saved from then.
-    server = { status: 403, body: { error: 'company_inactive' } };
+    expect(discarded).toEqual([]);
     run.stop();
-    const again = sync();
+
+    // Reopened with no signal: locked from the start.
+    forgetPending();
+    const reopened = sync();
     await vi.advanceTimersByTimeAsync(0);
-    expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: NOW + 15_000, lockedReason: 'company-inactive' });
-    expect(again.states.at(-1)).toBe('locked');
-    expect(enableNetwork).not.toHaveBeenCalled();
-    again.stop();
+    expect(reopened.states[0]).toBe('locked');
+    expect(reopened.states).not.toContain('open');
+    reopened.stop();
   });
 });
 

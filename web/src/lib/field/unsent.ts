@@ -195,24 +195,6 @@ export function lockOutlived(tenantId: string, uid: string, now: number): boolea
   return RETAINED_REASONS.has(mark.lockedReason ?? 'sign-in-again') && now - mark.lockedSince > LOCKED_LIMIT_MS;
 }
 
-// Everyone on this phone, in every company, whose lock outlived the limit, signed in or not.
-export function allOutlivedLocks(now: number): { tenantId: string; uid: string }[] {
-  const found: { tenantId: string; uid: string }[] = [];
-  try {
-    const storage = window.localStorage;
-    for (let index = 0; index < storage.length; index += 1) {
-      const key = storage.key(index);
-      if (key === null || !key.startsWith(UNSENT_PREFIX)) continue;
-      const [tenantId, uid, ...more] = key.slice(UNSENT_PREFIX.length).split('/');
-      if (!tenantId || !uid || more.length > 0) continue;
-      if (lockOutlived(tenantId, uid, now)) found.push({ tenantId, uid });
-    }
-  } catch {
-    return [];
-  }
-  return found;
-}
-
 // The server let the person in: their lock is lifted. False when it could not be saved (the lock
 // still stands).
 export function noteUnlocked(tenantId: string, uid: string): boolean {

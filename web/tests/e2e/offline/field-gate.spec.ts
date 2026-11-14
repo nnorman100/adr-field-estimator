@@ -178,8 +178,8 @@ test.describe('locked work kept past 30 days (O5)', () => {
     const locked = (reason: string, days: number) => ({ writes: 1, unsentSince: Date.now(), lockedSince: Date.now() - days * DAY, lockedReason: reason });
 
     // The server said the sign-in was revoked, 31 days ago. With no signal the work is hidden and
-    // kept (decision 010); the server refusing her again removes it. She is signed in on the phone,
-    // so the gate asks the server for her.
+    // kept (decision 010); the server saying she is turned off removes it (decision 011). She is
+    // signed in on the phone, so the gate asks the server for her.
     await phone.signIn(world, world.people.ana!);
     expect(await phone.call('start', ana!, 'persistent')).toBe('persistent');
     await phone.call('setMark', ana!, locked('session-revoked', 31));
@@ -187,7 +187,7 @@ test.describe('locked work kept past 30 days (O5)', () => {
     await expect.poll(() => phone.call('gate', ana!)).toBe('locked: session-revoked');
     expect((await phone.call('enter', ana!)).state).toBe('hidden');
     expect(await phone.call('unsent', ana!)).toMatchObject({ unsentSince: expect.any(Number), lockedReason: 'session-revoked' });
-    serveMe(lane, { status: 401, error: 'sign_in_revoked' });
+    serveMe(lane, { status: 403, error: 'member_disabled' });
     await phone.call('poke', ana!);
     await expect.poll(() => phone.call('gate', ana!)).toBe('removed');
     expect(await phone.call('unsent', ana!)).toEqual({ writes: 0, unsentSince: null, lockedSince: null });
@@ -229,7 +229,7 @@ test.describe('locked work kept past 30 days (O5)', () => {
 test.describe('locked work on every sign-in-again path (O5)', () => {
   const ourDatabases = async (phone: FieldPhone, person: FieldPerson) => (await phone.call('databases')).filter((name) => name.includes(person.uid));
 
-  test('a sign-in past the role\'s limit that the server refuses starts the clock; 31 days on, the work is removed', async ({ browser, lane }) => {
+  test('a sign-in past the role\'s limit that the server refuses starts the clock; 31 days on, the work is hidden, and removed once the server says the member is turned off', async ({ browser, lane }) => {
     const context = await browser.newContext();
     const world = await seedCompany();
     const phone = await FieldPhone.open(context, lane);
@@ -247,12 +247,18 @@ test.describe('locked work on every sign-in-again path (O5)', () => {
     await phone.call('setMark', person, { ...(saved as object), lockedSince: Date.now() - 31 * DAY });
     await phone.call('start', person, 'persistent');
     await phone.call('sync', person, 62);
+    // "Sign in again" from the server only hides it (decision 011).
+    await expect.poll(() => phone.call('gate', person)).toBe('expired');
+    expect((await phone.call('enter', person)).state).toBe('hidden');
+    expect(await phone.call('unsent', person)).toMatchObject({ unsentSince: expect.any(Number), lockedReason: 'session-revoked' });
+    serveMe(lane, { status: 403, error: 'member_disabled' });
+    await phone.call('poke', person);
     await expect.poll(() => phone.call('gate', person)).toBe('removed');
     expect(await phone.call('unsent', person)).toEqual({ writes: 0, unsentSince: null, lockedSince: null });
     await context.close();
   });
 
-  test('a sign-in past the role\'s limit starts the clock with no signal and no refusal at all; 31 days on, the work is hidden until the server refuses the person', async ({ browser, lane }) => {
+  test('a sign-in past the role\'s limit starts the clock with no signal and no refusal at all; 31 days on, the work is hidden until the server says the member is turned off', async ({ browser, lane }) => {
     const context = await browser.newContext();
     const world = await seedCompany();
     const phone = await FieldPhone.open(context, lane);
@@ -273,7 +279,7 @@ test.describe('locked work on every sign-in-again path (O5)', () => {
     await expect.poll(() => phone.call('gate', person), { timeout: 20_000 }).toBe('expired');
     expect((await phone.call('enter', person)).state).toBe('hidden');
     expect(await ourDatabases(phone, person)).not.toHaveLength(0);
-    serveMe(lane, { status: 401, error: 'sign_in_revoked' });
+    serveMe(lane, { status: 403, error: 'member_disabled' });
     await phone.call('poke', person);
     await expect.poll(() => phone.call('gate', person)).toBe('removed');
     expect(await phone.call('unsent', person)).toEqual({ writes: 0, unsentSince: null, lockedSince: null });

@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { keepAnswer, saveKeepAnswer } from '@/lib/field/keep-consent';
 import {
-  allOutlivedLocks,
   forgetUnsent,
   LOCKED_LIMIT_MS,
   lockOutlived,
@@ -179,20 +178,20 @@ describe('unsent work marks', () => {
     expect(lockOutlived('t-a', 'gus', now)).toBe(false);
     // A mark that cannot be read is never taken as permission to remove anything.
     expect(lockOutlived('t-a', 'hal', now)).toBe(false);
-    const outlived = allOutlivedLocks(now);
-    const ofCompany = (tenantId: string) => outlived.filter((who) => who.tenantId === tenantId).map((who) => who.uid);
-    expect(ofCompany('t-a')).toEqual(['ana', 'eve']);
-    expect(ofCompany('t-ab')).toEqual(['fay']);
-    expect(ofCompany('t-b')).toEqual([]);
+    expect(lockOutlived('t-a', 'eve', now)).toBe(true);
+    expect(lockOutlived('t-ab', 'fay', now)).toBe(true);
+    expect(lockOutlived('t-a', 'fay', now)).toBe(false);
+    expect(lockOutlived('t-b', 'ana', now)).toBe(false);
   });
 
-  it('find nobody when the phone\'s storage cannot be listed', () => {
+  it('count nobody as outlived when the phone\'s storage cannot be read', () => {
+    noteLocked('t-a', 'ana', 'session-revoked', Date.now() - LOCKED_LIMIT_MS - 1);
     vi.stubGlobal('window', {
       get localStorage(): Storage {
         throw new DOMException('denied', 'SecurityError');
       },
     });
-    expect(allOutlivedLocks(Date.now())).toEqual([]);
+    expect(lockOutlived('t-a', 'ana', Date.now())).toBe(false);
   });
 
   it('hold counts and times only', () => {

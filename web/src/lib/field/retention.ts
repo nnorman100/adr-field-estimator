@@ -5,7 +5,7 @@ import { sessionValid } from './sync-gate';
 import { lockOutlived, noteLocked, noteUnlocked, savedReason, type SavedReason } from './unsent';
 import { holdsWindow } from './window-lock';
 
-// Locked work and the 30-day limit (owner decisions O5 and 010), as one routine (S6-3b).
+// Locked work and the 30-day limit (owner decisions O5, 010 and 011), as one routine (S6-3b).
 // Everything on the phone that refuses a person, lets them back in, or merely opens goes through
 // evaluate(now, event) below, and nothing else changes a lock or removes locked work.
 //
@@ -17,12 +17,14 @@ import { holdsWindow } from './window-lock';
 //             work is neither shown nor sent, and the field app does not open for it offline.
 //
 // "hidden" is only ever read, from the saved lock and the clock; nothing is written to hide, so any
-// tab may judge it again, in any order. Work is removed only when the server itself refuses the
-// person at that moment while they are hidden (decision 010): never on what the phone alone holds.
+// tab may judge it again, in any order. Work is removed only when the server itself, in the very
+// operation that removes, says the person or the company is refused or removed (REMOVING_REASONS:
+// company inactive, member turned off, membership removed, account turned off) while they are
+// hidden (decisions 010, 011). Nothing the phone holds, retries or replays ever removes anything.
 //
 //   event \ state            none            locked                     hidden
 //   refused                  locked (now)    locked (first time kept)   hidden; removed when the
-//                                                                          server refused just now
+//                                                                          server removed them just now
 //   a saved sign-in past     locked (now)    locked (first time kept)   hidden
 //     its role's limit
 //   let-in                   none            none                       none
@@ -35,7 +37,9 @@ import { holdsWindow } from './window-lock';
 //
 // The state lives apart from the saved sign-in (ds-me): the lock in the person's unsent-work mark
 // (unsent.ts), and beside it the company's public browser settings (no email, no token, no field
-// values). A lock is never saved without them.
+// values). A lock is never saved without them. A refusal the phone could not save is held by the
+// page with the time it was given and saved with that time at the next evaluate that can, so the 30
+// days run from the refusal; held, it keeps the person's work closed, and it only ever locks.
 //
 // After the event, every evaluate sweeps the whole phone, whoever the event was about: every saved
 // sign-in is judged; past its role's session limit it is locked out from now, so the clock starts
@@ -101,10 +105,49 @@ export function lockWork(person: FieldPerson, reason: SavedReason, now = Date.no
   return noteLocked(person.tenantId, person.uid, reason, now);
 }
 
+// What the server says when the person or the company is refused or removed: the only refusals
+// that may remove work, and only as the server's own answer in the operation that removes (011).
+const REMOVING_REASONS: ReadonlySet<SavedReason> = new Set<SavedReason>(['company-inactive', 'member-disabled', 'needs-invitation', 'account-disabled']);
+
+// Refusals the phone could not save, held by this page in the order they were given, each with when
+// it was given (the same refusal again keeps its first time). Tried again, with that time, at the
+// start of every evaluate; dropped once saved or when the person is let in.
+type Held = { reason: SavedReason; at: number };
+const pending = new Map<string, { person: FieldPerson; held: Held[] }>();
+
+function save(person: FieldPerson, reason: SavedReason, at: number, now: number): boolean {
+  return stateOf(person, now) === 'hidden' || lockWork(person, reason, at) !== null;
+}
+
 // The "refused" row of the table: true when the phone holds the person's lock afterwards. A hidden
-// lock is kept as it is, so no later refusal of another kind shows that work again.
+// lock is kept as it is, so no later refusal of another kind shows that work again. While this page
+// holds refusals for the person, a new one is held behind them.
 function refuse(person: FieldPerson, reason: SavedReason, now: number): boolean {
-  return stateOf(person, now) === 'hidden' || lockWork(person, reason, now) !== null;
+  const key = meKey(person.tenantId, person.uid);
+  if (stateOf(person, now) === 'hidden' || (!pending.has(key) && save(person, reason, now, now))) return true;
+  const entry = pending.get(key) ?? { person, held: [] };
+  if (entry.held.at(-1)?.reason !== reason) entry.held.push({ reason, at: now });
+  pending.set(key, entry);
+  return false;
+}
+
+function retryPending(now: number): void {
+  for (const [key, { person, held }] of [...pending]) {
+    const left = held.filter((one) => !save(person, one.reason, one.at, now));
+    if (left.length === 0) pending.delete(key);
+    else pending.set(key, { person, held: left });
+  }
+}
+
+// The first refusal this page holds for the person and could not save yet, or null. Their work
+// stays closed while one is held.
+export function pendingReason(tenantId: string, uid: string): SavedReason | null {
+  return pending.get(meKey(tenantId, uid))?.held[0]?.reason ?? null;
+}
+
+// Forgets every refusal this page holds; for tests only, which share one page.
+export function forgetPending(): void {
+  pending.clear();
 }
 
 // What the phone saved of a sign-in, as far as its age goes (a ds-me row).
@@ -128,8 +171,9 @@ export type RetentionEvent =
   | { kind: 'entry'; person?: FieldPerson; saved?: SavedSignIn; company?: Company }
   // The person may not go on: the server refused them, the app ends their sign-in, or their saved
   // sign-in is past its role's limit ('sign-in-expired'). `fromServer`: the server gave this
-  // refusal just now (the sync gate's GET /api/me, or the answer that makes a screen end the
-  // sign-in); only that may remove hidden work. A refusal the phone made itself never does.
+  // refusal just now, in this operation (the sync gate's GET /api/me, or the answer that makes a
+  // screen end the sign-in); only that, with a reason in REMOVING_REASONS, may remove hidden work.
+  // A refusal the phone made itself, retried or replayed never does.
   | { kind: 'refused'; person: FieldPerson; reason: SavedReason; fromServer?: boolean }
   // The server let the person in: their own lock is lifted.
   | { kind: 'let-in'; person: FieldPerson };
@@ -137,14 +181,15 @@ export type RetentionEvent =
 export type Evaluation = {
   // The event's person afterwards. 'unsaved': they were refused, let in, or their saved sign-in was
   // past its limit, and the phone could not save it: on a refusal or an expired sign-in nothing of
-  // theirs may be signed out or removed; on a let-in their lock still stands and nothing may open.
-  // Either way the caller tries again.
+  // theirs may be signed out or removed (the refusal is held); on a let-in their lock still stands
+  // and nothing may open. Either way the caller tries again. An entry answers 'locked' for a person
+  // whose refusal is held.
   state: RetentionState | 'unsaved';
   // Settles when this evaluate is over, with everyone whose work it removed (meKey).
   done: Promise<string[]>;
 };
 
-const removedListeners = new Set<(person: string) => void>();
+const removedListeners = new Set<(person: string, removed: boolean) => void>();
 // Whose work this page removed and no field shell has said so yet.
 const removedUntold = new Set<string>();
 
@@ -155,14 +200,15 @@ export function takeRemoved(person: string): boolean {
 }
 
 // Calls `listener` with the person (meKey) each time an evaluate on this page removes someone's
-// work. Returns what stops it.
-export function onWorkRemoved(listener: (person: string) => void): () => void {
+// work (`removed`), or set out to and could not finish once it had stopped their field client
+// (`removed` false: that client must be opened again). Returns what stops it.
+export function onWorkRemoved(listener: (person: string, removed: boolean) => void): () => void {
   removedListeners.add(listener);
   return () => void removedListeners.delete(listener);
 }
 
-// The sweep, then the removal the event confirmed: `confirmed`, refused by the server just now
-// while hidden. Still hidden when its turn comes, or nothing goes.
+// The sweep, then the removal the event confirmed: `confirmed`, removed by the server just now while
+// hidden. Still hidden when its turn comes, or nothing goes.
 async function sweep(now: number, confirmed: FieldPerson | null): Promise<string[]> {
   try {
     const saved = await readAllMe();
@@ -171,11 +217,13 @@ async function sweep(now: number, confirmed: FieldPerson | null): Promise<string
     if (!confirmed || stateOf(confirmed, now) !== 'hidden') return [];
     // This page's own field window holds the one-window lock; any other page must find it free.
     const result = await discardFieldWork(confirmed, { lockHeld: holdsWindow() }).catch(() => 'failed' as const);
-    if (result !== 'discarded') return [];
+    // Another window holds the work: nothing was touched.
+    if (result === 'elsewhere') return [];
     const person = meKey(confirmed.tenantId, confirmed.uid);
-    removedUntold.add(person);
-    for (const listener of [...removedListeners]) listener(person);
-    return [person];
+    const removed = result === 'discarded';
+    if (removed) removedUntold.add(person);
+    for (const listener of [...removedListeners]) listener(person, removed);
+    return removed ? [person] : [];
   } catch {
     // Whatever could not be read or removed now waits for the next confirmation.
     return [];
@@ -191,17 +239,21 @@ export function evaluate(now: number, event: RetentionEvent): Evaluation {
   // Whoever the event names brings their company's settings: kept beside their lock.
   const company = event.kind === 'entry' ? (event.person ?? event.company) : event.person;
   if (company) keepCleanupContext(company);
+  retryPending(now);
   let state: Evaluation['state'] = 'none';
   let confirmed: FieldPerson | null = null;
   if (event.kind === 'entry') {
     const { person, saved } = event;
     if (person && saved && !judgeSignIn(person, saved, now)) state = 'unsaved';
-    else if (person) state = stateOf(person, now);
+    else if (person) state = stateOf(person, now) === 'none' && pendingReason(person.tenantId, person.uid) ? 'locked' : stateOf(person, now);
   } else if (event.kind === 'refused') {
     state = refuse(event.person, event.reason, now) ? stateOf(event.person, now) : 'unsaved';
-    if (state === 'hidden' && event.fromServer) confirmed = event.person;
+    if (state === 'hidden' && event.fromServer && REMOVING_REASONS.has(event.reason)) confirmed = event.person;
+  } else if (noteUnlocked(event.person.tenantId, event.person.uid)) {
+    pending.delete(meKey(event.person.tenantId, event.person.uid));
+    state = 'none';
   } else {
-    state = noteUnlocked(event.person.tenantId, event.person.uid) ? 'none' : 'unsaved';
+    state = 'unsaved';
   }
   const done = sweeping.then(() => sweep(now, confirmed));
   sweeping = done;

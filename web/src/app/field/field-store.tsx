@@ -69,6 +69,31 @@ function KeepQuestion({ onAnswer }: { onAnswer: (answer: KeepAnswer) => void }) 
   );
 }
 
+// Whether the person's work is hidden (decision 010), read from the lock and the clock: again as the
+// page is shown and every minute while it stays shown, as the shell's other entry points run.
+function useHidden(tenantId: string, uid: string): boolean {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const tick = () => setNow(Date.now());
+    document.addEventListener('visibilitychange', tick);
+    window.addEventListener('pageshow', tick);
+    const timer = setInterval(tick, 60_000);
+    return () => {
+      document.removeEventListener('visibilitychange', tick);
+      window.removeEventListener('pageshow', tick);
+      clearInterval(timer);
+    };
+  }, []);
+  return lockOutlived(tenantId, uid, now);
+}
+
+// The boundary of the person's field screens (jobs, scope, customer, photos and what is typed in
+// them): none of it stays mounted while their work is hidden. FieldStore applies the same rule to
+// what it shows, and keeps its gate asking the server.
+export function UnlessHidden({ me, children }: { me: DsMe; children: ReactNode }) {
+  return useHidden(me.tenantId, me.uid) ? null : <>{children}</>;
+}
+
 function SignInLink({ address }: { address: string }) {
   return (
     <a className="inline-flex min-h-11 items-center text-base font-medium underline" href={`/sign-in/${address}`}>
@@ -172,6 +197,7 @@ export function FieldStore({
       gateRef.current = runFieldSync(started.client, me, (event) => {
         if (!live) return;
         if ('removed' in event) return setPhase({ kind: 'removed' });
+        if ('reopen' in event) return setPhase({ kind: 'reopen' });
         if ('me' in event) return setKnown(event.me);
         setGate(event.state);
         setNow(Date.now());

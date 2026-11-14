@@ -4,7 +4,7 @@ import { callApi } from '@/lib/firebase-client';
 import { appCheckSeam, fieldUser, settle, type FieldClient } from '@/lib/field-db';
 import { meKey, readMe, updateMe, type DsMe } from './ds-me';
 import { sessionValid, SyncGate, type GateState, type MeAnswer, type MeFacts } from './sync-gate';
-import { evaluate, onWorkRemoved, type RetentionEvent } from './retention';
+import { evaluate, onWorkRemoved, pendingReason, type RetentionEvent } from './retention';
 import { savedLock, savedReason } from './unsent';
 
 // Runs the sync gate for one person's started field client (S6-3), and does what each of its
@@ -24,7 +24,9 @@ import { savedLock, savedReason } from './unsent';
 // - Work locked past the limit is hidden, and the gate keeps asking whenever there is signal: the
 //   server refusing the person then removes it (only a refusal the server gave, never the gate's
 //   own "no sign-in to ask with"), and the server letting them in shows it again.
-// - When that routine removes this person's work, the gate stops and the shell is told ('removed').
+// - When that routine removes this person's work, the gate stops and the shell is told ('removed');
+//   when it stopped this client to remove the work and could not finish, the gate stops and the
+//   shell asks for the app to be opened again ('reopen').
 // The gate starts paused when the page is hidden by the time the client has started; showing the
 // page resumes it (field-store.tsx).
 // The gate judges the person's ds-me row (read again before each check) against the role's session
@@ -32,7 +34,7 @@ import { savedLock, savedReason } from './unsent';
 // changed while it was awaited is dropped (sync-gate.ts).
 
 // `me`: the row saved for the next offline start after an online check let the person in.
-export type SyncEvent = { state: GateState } | { removed: true } | { me: DsMe };
+export type SyncEvent = { state: GateState } | { removed: true } | { reopen: true } | { me: DsMe };
 
 export function runFieldSync(
   client: FieldClient,
@@ -49,13 +51,14 @@ export function runFieldSync(
   const fromServer = new WeakSet<MeAnswer>();
   // The saved sign-in is judged first: one that counts again lifts a lock only its age had made.
   tell({ kind: 'entry', person, saved });
-  const lock = savedReason(person.tenantId, person.uid);
+  // A refusal this page holds and could not save yet locks as a saved one does.
+  const lock = savedReason(person.tenantId, person.uid) ?? pendingReason(person.tenantId, person.uid);
   // A sign-in past its limit shows as "sign in again".
   const initial = lock === null ? undefined : ({ kind: 'locked', reason: lock === 'sign-in-expired' ? 'sign-in-again' : lock } as const);
-  const stopWatching = onWorkRemoved((removed) => {
-    if (removed !== meKey(person.tenantId, person.uid)) return;
+  const stopWatching = onWorkRemoved((whose, removed) => {
+    if (whose !== meKey(person.tenantId, person.uid)) return;
     gate.stop();
-    onEvent({ removed: true });
+    onEvent(removed ? { removed: true } : { reopen: true });
   });
   const gate: SyncGate = new SyncGate({
     async ask() {

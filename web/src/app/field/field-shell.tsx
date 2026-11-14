@@ -9,7 +9,7 @@ import { rememberedSignInAddress } from '@/lib/sign-in/remember';
 import { NotSavedBanner, OfflineBanner } from './banners';
 import { FieldApp } from './field-app';
 import { useReachable } from './connection';
-import { FieldStore, type FieldStorage } from './field-store';
+import { FieldStore, UnlessHidden, type FieldStorage } from './field-store';
 import { HomeScreenSheet, useFieldSurface } from './home-screen-sheet';
 
 // The field shell (S6-2): the one page every field screen lives in. The server renders nothing of
@@ -116,11 +116,13 @@ export function FieldShell() {
             </FieldStore>
             {/* The view is read from the address, which only the browser knows. Another sign-in
                 starts the screens afresh, so nothing of the last person's stays on them. */}
-            <ShownOnce>
-              <Suspense fallback={<p role="status">Opening your jobs…</p>}>
-                <FieldApp key={meKey(boot.me.tenantId, boot.me.uid)} me={boot.me} />
-              </Suspense>
-            </ShownOnce>
+            <UnlessHidden me={boot.me}>
+              <ShownOnce>
+                <Suspense fallback={<p role="status">Opening your jobs…</p>}>
+                  <FieldApp key={meKey(boot.me.tenantId, boot.me.uid)} me={boot.me} />
+                </Suspense>
+              </ShownOnce>
+            </UnlessHidden>
           </>
         ) : null}
         {boot.kind === 'signed-out' || boot.kind === 'no-storage' ? (
