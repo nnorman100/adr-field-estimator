@@ -10,7 +10,7 @@ Summary of who may do what. **Source of truth in code:** the `CAPABILITIES` dict
    With `WORKSPACES_ENABLED` off (a rollback mode) there are no capabilities: access is the `STAFF_EMAILS` allowlist plus `owner_uid == uid`.
 5. One active owner and one company membership per user.
 6. Superadmin support access is read-only plus listed support actions, always audited, and is not a membership.
-7. Rebuilt app (`web/`) sign-in (`web/src/lib/auth/policy.ts`): owners, office users and the platform operator must sign in with an authenticator app as a second step, or every route except second-step setup answers 403 `second_step_required`; estimators may opt in. Office was added on 2026-11-14 (D-030), as was the rule that every sign-in tenant enforces passwords of at least 12 characters and email enumeration protection (set by `npm run platform:create-tenant`; existing tenants by `npm run platform:secure-tenants`).
+7. Rebuilt app (`web/`) sign-in (`web/src/lib/auth/policy.ts`): owners, office users and the platform operator must sign in with an authenticator app as a second step, or every route except second-step setup answers 403 `second_step_required` and the field database rules (`web/firestore.rules`) refuse their reads and writes; estimators may opt in. Office was added on 2026-11-14 (D-030), as was the rule that every sign-in tenant enforces passwords of at least 12 characters and email enumeration protection (set by `npm run platform:create-tenant`; existing tenants by `npm run platform:secure-tenants`).
 
 ## Company roles (from `CAPABILITIES` in `backend/workspaces.py`, Oct 28, 2026)
 | Capability key | What it allows | Owner | Estimator | Office |

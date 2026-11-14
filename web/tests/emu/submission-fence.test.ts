@@ -6,7 +6,7 @@ import type { FieldManifest } from '@/lib/field/canonical';
 import { firestoreAccessStore, firestoreFor } from '@/lib/projection/firestore';
 import { firestoreFenceStore, type FenceStore } from '@/lib/submissions/fence';
 import { fenceStoreContract } from '../submissions/fence-contract';
-import { createTenant, projectId, signIn, signUp } from './auth-emulator';
+import { createTenant, projectId, signIn, signUp, withSecondFactor } from './auth-emulator';
 import { createDoc, updateDoc } from './rules/firestore-rest';
 
 // S5a-8: the real Firestore fence writer (src/lib/submissions/fence.ts) against the emulator, held
@@ -66,7 +66,9 @@ async function member(tenantId: string, company: string, role: 'owner' | 'estima
   const password = `synthetic-password-${role}`;
   const uid = await signUp(tenantId, email, password);
   await grants.grant({ companyId: company, authTenantId: tenantId, uid, role, expiresAt: new Date(Date.now() + DAY), version: 1 });
-  return { uid, caller: { idToken: await signIn(tenantId, email, password) } };
+  // An owner or office user signs in with the authenticator app as the second step (D2).
+  const idToken = await signIn(tenantId, email, password);
+  return { uid, caller: { idToken: role === 'estimator' ? idToken : withSecondFactor(idToken) } };
 }
 
 const MANIFEST: FieldManifest = {
