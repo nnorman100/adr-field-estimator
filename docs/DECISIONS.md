@@ -173,3 +173,4 @@ Decision: no agent is built in S7. The first agent will be ADK TypeScript 2.x on
 
 Status: accepted (owner, Nov 13, 2026, choice "A"). Supersedes D-015.
 Decision: the pipeline review agent is ChatGPT (GPT-6 Astra), with no Grok or Gemini fallback. Builders are Claude only, so the reviewer is always a different model family from the builder. Technology Standard 2.10 records the same change; the Standard is now at 2.10.
+Update 2026-11-14 (owner): the reviewer is now ChatGPT GPT-6.1 Sol, replacing GPT-6 Astra, to conserve tokens; OpenAI lists it as near-Astra performance at a lower cost. Builders stay Claude only, so the reviewer is still a different model family. The rest of this decision is unchanged.
