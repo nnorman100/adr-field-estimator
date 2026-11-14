@@ -14,7 +14,8 @@ each room counts once at the largest area figure its priced square-foot items
 waste. Finished plus unfinished demolition counts as one figure, even when only
 one demolition item reads that room. Floor and wet-floor items use their own area
 figures; a blank wet floor uses the floor area. A `room:basis` item reads the
-policy's area basis. Area figures that no enabled, priced square-foot item reads
+policy's area basis. A `room:typed` item reads the square feet typed for that room
+(see `pricing-source.md`). Area figures that no enabled, priced square-foot item reads
 do not contribute: a room priced only by a floor item at 600 sq ft counts 600,
 even if a larger demolition area was entered.
 Several items on one 500 sq ft room count 500 sq ft; demolition on a room with 400 sq ft finished

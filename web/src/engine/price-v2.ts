@@ -82,7 +82,13 @@ function wetFloor(room: Room, rooms: Map<string, Dec>): Dec {
   return readRoom(room, 'floor_sf', rooms) ?? ZERO;
 }
 
-function roomQuantity(room: Room, source: Source, policy: Policy, rooms: Map<string, Dec>): Dec {
+/** The quantity a room typed for an item (`room:typed`), or null when the room does not list the item. */
+function typedInRoom(room: Room, item: Item): Dec | null {
+  return room.items.find((entry) => entry.itemId === item.item_id)?.quantity ?? null;
+}
+
+function roomQuantity(room: Room, item: Item, source: Source, policy: Policy, rooms: Map<string, Dec>): Dec {
+  if (source.field === 'typed') return typedInRoom(room, item) ?? ZERO;
   if (source.field === 'basis') {
     if (policy.area_basis === 'wet_floor') return wetFloor(room, rooms);
     const unfinished = readRoom(room, 'unfinished_sf', rooms);
@@ -225,15 +231,18 @@ function roomLines(
 ): PriceLine[] {
   const lines: PriceLine[] = [];
   const label = item.customer_description || item.name;
+  const typed = source.field === 'typed';
   for (const room of data.rooms) {
     if (item.categories.length && !item.categories.includes(room.category)) continue;
+    // A typed item prices only the rooms that list it with a quantity; the others are not missing anything.
+    if (typed && !truthy(typedInRoom(room, item) ?? ZERO)) continue;
     if (!applies(item, room, warnings)) continue;
     const tier = item.unit === 'room' ? sizeTierOf(room, policy) : null;
     if (item.unit === 'room' && tier === null) {
       warnings.push({ code: 'missing_size', item_id: item.item_id, room: room.name });
       continue;
     }
-    const quantity = roomQuantity(room, source, policy, rooms);
+    const quantity = roomQuantity(room, item, source, policy, rooms);
     if (!truthy(quantity)) {
       warnings.push({ code: 'missing_area', item_id: item.item_id, room: room.name });
       continue;
@@ -243,7 +252,9 @@ function roomLines(
     const waste = truthy(room.wastePercent) ? room.wastePercent : Dec.parse(item.waste_percent);
     const where = row ? `${room.name}, ${rowLabel(row, policy)}` : room.name;
     const size = tier ? ` (size ${tier.toUpperCase()})` : '';
-    const line = makeLine(item, `${where}: ${label}${size}`, quantity, price, waste, room.name, item.unit === 'room' ? null : quantity);
+    // The quantity is square feet of the room's work unless the item is priced per room, or is typed in another unit.
+    const area = item.unit === 'room' || (typed && item.unit !== 'sf') ? null : quantity;
+    const line = makeLine(item, `${where}: ${label}${size}`, quantity, price, waste, room.name, area);
     if (row) line.priceRow = rowKey(row);
     lines.push(line);
   }
@@ -292,8 +303,8 @@ export function jobSf(data: Inspection, items: Item[], policy: Policy): Dec {
       if (!applies(item, room, [])) return;
       const area =
         source.field === 'finished_sf' || source.field === 'unfinished_sf'
-          ? roomQuantity(room, demolition, demolitionPolicy, rooms)
-          : roomQuantity(room, source, policy, rooms);
+          ? roomQuantity(room, item, demolition, demolitionPolicy, rooms)
+          : roomQuantity(room, item, source, policy, rooms);
       areas.set(index, maxDec(areas.get(index) ?? ZERO, area));
     });
   }

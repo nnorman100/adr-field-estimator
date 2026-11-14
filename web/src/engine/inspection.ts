@@ -35,7 +35,15 @@ export type Room = {
   sizeTier: SizeTier | null;
   moldCondition: MoldCondition | null;
   affectedSf: Dec | null;
+  /** Quantities typed for this room, one per item, read by the item's `room:typed` source. */
+  items: RoomItem[];
 };
+
+/** A quantity of one price-list item typed for one room. */
+export type RoomItem = { itemId: string; quantity: Dec };
+
+/** The most items one room can list. */
+export const MAX_ROOM_ITEMS = 50;
 
 export type Approval = { acceptedByName: string; acceptedAt: string; rate: Dec; total: Dec };
 
@@ -122,6 +130,17 @@ const reason = text(3, 300)
 
 const quantity = amount('0', '100000', { places: 2 });
 
+const ITEM_ID = /^[a-z][a-z0-9_]{1,39}$/;
+
+/** A room's typed quantities: one entry per item, at most MAX_ROOM_ITEMS. */
+const ROOM_ITEMS = z
+  .array(z.strictObject({ item_id: z.string().regex(ITEM_ID), quantity }))
+  .max(MAX_ROOM_ITEMS)
+  .refine((entries) => new Set(entries.map((entry) => entry.item_id)).size === entries.length, {
+    message: 'an item is listed twice',
+  })
+  .transform((entries): RoomItem[] => entries.map((entry) => ({ itemId: entry.item_id, quantity: entry.quantity })));
+
 const ROOM = z
   .strictObject({
     name: text(1, 100),
@@ -147,6 +166,7 @@ const ROOM = z
     equipment_placed: z.boolean().nullish(),
     affected_surfaces: int(0, 50).nullish(),
     wet_materials: int(0, 50).nullish(),
+    items: ROOM_ITEMS.default([]),
   })
   .transform(
     (room): Room => ({
@@ -165,6 +185,7 @@ const ROOM = z
       sizeTier: room.size_tier ?? null,
       moldCondition: room.mold_condition ?? null,
       affectedSf: room.affected_sf ?? null,
+      items: room.items,
     }),
   );
 
@@ -318,7 +339,7 @@ const INSPECTION = z.strictObject({
   extras: z.array(EXTRA).max(30).default([]),
   equipment_scans: z.array(SCAN).max(200).optional(),
   scope_items: capped(SCOPE, 150)
-    .refine((record) => Object.keys(record).every((key) => /^[a-z][a-z0-9_]{1,39}$/.test(key)), {
+    .refine((record) => Object.keys(record).every((key) => ITEM_ID.test(key)), {
       message: 'scope item ids',
     })
     .nullish(),
@@ -366,6 +387,20 @@ export function validateInspection(value: unknown): Inspection {
     scopeItems: raw.scope_items ?? null,
     quantityOverrides: raw.quantity_overrides ?? null,
   };
+}
+
+/**
+ * Each room item names an item of the price table that reads a room's typed quantity (`room:typed`).
+ * The inspection schema cannot see the table, so the server checks the ids when it prices.
+ */
+export function checkRoomItems(data: Inspection, typedItems: ReadonlySet<string>): void {
+  data.rooms.forEach((room, index) => {
+    room.items.forEach((entry, at) => {
+      if (!typedItems.has(entry.itemId)) {
+        bad(`rooms.${index}.items.${at}.item_id: ${entry.itemId} is not an item priced by a room's typed quantity`);
+      }
+    });
+  });
 }
 
 export function distinctRooms(data: Inspection): void {

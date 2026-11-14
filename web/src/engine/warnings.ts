@@ -7,7 +7,7 @@ import { fieldDec } from './inspection';
 import { priceScopeV2 } from './price-v2';
 import { roomTypeOf } from './rooms';
 import { equipmentSizing, type Sizing } from './sizing';
-import { COUNT_DAYS, FIELD_SOURCES, blankPrice, parseSource, type Table } from './table';
+import { COUNT_DAYS, FIELD_SOURCES, blankPrice, parseSource, type Item, type Table } from './table';
 import { OTHER_TYPE, categoryOrder, categoryWords, numberText, truthy, type Category, type PriceLine } from './values';
 import type { Priced } from './totals';
 
@@ -52,7 +52,10 @@ function roomWarnings(data: Inspection, table: Table): JObj[] {
   const found: JObj[] = [];
   for (const room of data.rooms) {
     const allows = (categories: Category[]) => !categories.length || categories.includes(room.category);
-    if (sources.some((item) => allows(item.categories))) continue;
+    // A typed item prices a room only when the room lists it.
+    const lists = (item: Item) =>
+      item.quantity_source !== 'room:typed' || room.items.some((entry) => entry.itemId === item.item_id && truthy(entry.quantity));
+    if (sources.some((item) => allows(item.categories) && lists(item))) continue;
     const area = roomArea(room, wet);
     const other = roomArea(room, !wet);
     const used = truthy(area) ? area : other;
