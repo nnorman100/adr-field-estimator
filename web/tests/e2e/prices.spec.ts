@@ -247,6 +247,169 @@ test('the owner downloads the price list and loads a changed one back', async ({
   await expect(drywall(page)).toContainText('$4.25 per sq ft');
 });
 
+test('every field is locked while a save is out, so nothing typed meanwhile is lost', async ({ page }) => {
+  await resetPrices();
+  await openPricesAsOwner(page);
+  await drywall(page).getByText('Drywall removal', { exact: true }).click();
+  const price = drywall(page).getByLabel('Price (per sq ft)', { exact: true });
+  await price.fill('4.00');
+  let release = () => {};
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route('**/api/prices/working-copy', async (route) => {
+    await held;
+    await route.continue();
+  });
+  await page.getByRole('button', { name: 'Save changes' }).click();
+  await expect(page.getByRole('button', { name: 'Saving…' })).toBeVisible();
+  await expect(price).toBeDisabled();
+  await expect(page.getByLabel('Drying days the proposal assumes')).toBeDisabled();
+  release();
+  await expect(page.getByText('Saved. The prices are not published until you publish them.')).toBeVisible();
+  await expect(price).toBeEnabled();
+  await expect(price).toHaveValue('4.00');
+});
+
+test('a whole-number field holding something else is neither saved nor published', async ({ page, request }) => {
+  await resetPrices();
+  await savePriced(request);
+  await openPricesAsOwner(page);
+  const days = page.getByLabel('Drying days the proposal assumes');
+  const before = await days.inputValue();
+  const save = page.getByRole('button', { name: 'Save changes' });
+  const publish = page.getByRole('region', { name: 'Publish', exact: true });
+
+  await days.fill('3.5');
+  await expect(page.getByText(/holds something else\. Correct it before you save or publish\./)).toBeVisible();
+  await expect(publish.getByText('Save your changes before you publish.')).toBeVisible();
+  await expect(save).toBeDisabled();
+  // Another change does not carry the old number to the server in its place.
+  await drywall(page).getByText('Drywall removal', { exact: true }).click();
+  await drywall(page).getByLabel('Price (per sq ft)', { exact: true }).fill('5.00');
+  await expect(save).toBeDisabled();
+
+  // Undo puts back what is saved, on screen too.
+  await page.getByRole('button', { name: 'Undo changes' }).click();
+  await expect(days).toHaveValue(before);
+  await expect(page.getByText('All changes are saved.')).toBeVisible();
+
+  await days.fill('4');
+  await save.click();
+  await expect(page.getByText('Saved.', { exact: false })).toBeVisible();
+  await page.reload();
+  await expect(page.getByLabel('Drying days the proposal assumes')).toHaveValue('4');
+});
+
+test('a check or a preview of earlier prices is not shown once the prices change', async ({ page, request }) => {
+  await resetPrices();
+  await savePriced(request, '');
+  await openPricesAsOwner(page);
+  const publish = page.getByRole('region', { name: 'Publish', exact: true });
+  await publish.getByRole('button', { name: 'Check the prices before publishing' }).click();
+  await expect(publish.getByText(/^Not ready to publish/)).toBeVisible();
+  await page.getByRole('button', { name: 'Price the sample jobs' }).click();
+  const preview = page.getByRole('region', { name: 'Preview on sample jobs' });
+  await expect(preview.getByText(/^Not ready to publish/)).toBeVisible();
+
+  await drywall(page).getByText('Drywall removal', { exact: true }).click();
+  await drywall(page).getByLabel('Price (per sq ft)', { exact: true }).fill('4.00');
+  await expect(preview.getByText(/^Not ready to publish/)).toHaveCount(0);
+  await expect(preview.getByText('Kitchen, Category 1')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Save changes' }).click();
+  await expect(page.getByText('Saved.', { exact: false })).toBeVisible();
+
+  // The saved prices are checked afresh, and now they can be published.
+  await publish.getByRole('button', { name: 'Check the prices before publishing' }).click();
+  await expect(publish.getByRole('button', { name: 'Publish these prices' })).toBeVisible();
+  await expect(publish.getByText(/^Not ready to publish/)).toHaveCount(0);
+});
+
+test('a publish whose answer was lost is retried with its key, and another publish gets a new one', async ({ page, request }) => {
+  await resetPrices();
+  await savePriced(request);
+  await openPricesAsOwner(page);
+  const keys: string[] = [];
+  await page.route('**/api/prices/publish', async (route) => {
+    keys.push((route.request().postDataJSON() as { publishKey: string }).publishKey);
+    if (keys.length > 2) return route.continue();
+    // The server publishes; its answer never reaches the phone.
+    await route.fetch();
+    await route.abort();
+  });
+  const publish = page.getByRole('region', { name: 'Publish', exact: true });
+  const send = publish.getByRole('button', { name: 'Publish these prices' });
+  await publish.getByRole('button', { name: 'Check the prices before publishing' }).click();
+  await publish.getByLabel('A price range (low to high)').check();
+  await publish.getByLabel('What changed (kept with the version)').fill('First prices');
+  await send.click();
+  await expect(publish.getByText(/could not reach DryScope/)).toBeVisible();
+  await expect(send).toBeEnabled();
+  await send.click();
+  await expect.poll(() => keys.length).toBe(2);
+  expect(keys[1]).toBe(keys[0]);
+  await expect(send).toBeEnabled();
+
+  // The version did publish, so this screen's save is stale; reloaded, changed and saved, the new
+  // prices publish as a new version under the same reason.
+  await drywall(page).getByText('Drywall removal', { exact: true }).click();
+  const price = drywall(page).getByLabel('Price (per sq ft)', { exact: true });
+  await price.fill('9.00');
+  await page.getByRole('button', { name: 'Save changes' }).click();
+  await expect(page.getByText(/changed on another device/)).toBeVisible();
+  await page.getByRole('button', { name: 'Reload the saved prices' }).click();
+  await expect(page.getByText(/Estimates use version 1, published/)).toBeVisible();
+  await price.fill('9.00');
+  await page.getByRole('button', { name: 'Save changes' }).click();
+  await expect(page.getByText('Saved.', { exact: false })).toBeVisible();
+  await publish.getByRole('button', { name: 'Check the prices before publishing' }).click();
+  await expect(publish.getByLabel('What changed (kept with the version)')).toHaveValue('First prices');
+  await send.click();
+  await expect(publish.getByText('Published as version 2.', { exact: false })).toBeVisible();
+  expect(keys[2]).not.toBe(keys[0]);
+});
+
+test('a room type removed after it was chosen gives way to the first one listed', async ({ page, request }) => {
+  await resetPrices();
+  const read = await call(request, company.owner, 'GET', '/api/prices');
+  const working = read.body.workingCopy as { revision: number; table: { items: Json[]; policy: Json } & Json };
+  const items = working.table.items.map((item) =>
+    item.item_id === 'demo_drywall' ? { ...item, unit_price: '4.00', rows: [{ room_type: 'bathroom', unit_price: '7.00' }] } : item,
+  );
+  const saved = await call(request, company.owner, 'PUT', '/api/prices/working-copy', {
+    expectedRevision: working.revision,
+    table: { ...working.table, items, policy: { ...working.table.policy, room_type_pricing: true } },
+  });
+  expect(saved.status).toBe(200);
+  await openPricesAsOwner(page);
+
+  const pays = page.getByRole('region', { name: 'What does this room pay?' });
+  await pays.getByLabel('Category 3').check();
+  await pays.getByLabel('Room type').selectOption('kitchen');
+  const line = pays.getByRole('listitem').filter({ hasText: 'Drywall removal' });
+  await expect(line).toContainText('$4.00 per sq ft');
+  await drywall(page).getByText('Drywall removal', { exact: true }).click();
+  const card = drywall(page);
+  await card.getByLabel('Room type').selectOption('kitchen');
+  await card.getByLabel('Category', { exact: true }).selectOption('2');
+
+  const types = page.getByRole('region', { name: 'Room types' });
+  await types.getByText(/^Kitchen · /).click();
+  await types.getByRole('button', { name: 'Remove the Kitchen room type' }).click();
+  await expect(pays.getByLabel('Room type')).toHaveValue('bathroom');
+  await expect(line).toContainText('$7.00 per sq ft');
+  await expect(line).toContainText('The Bathroom price, used as set.');
+  await card.getByRole('button', { name: 'Add a room-type price' }).click();
+  await expect(card.getByLabel('Bathroom, Cat 2 price (per sq ft)')).toBeVisible();
+
+  // A category the item is no longer used in gives way to "Any category".
+  await card.getByLabel('Category', { exact: true }).selectOption('1');
+  await card.getByLabel('Category 1', { exact: true }).uncheck();
+  await card.getByRole('button', { name: 'Add a room-type price' }).click();
+  await expect(card.getByLabel('Bathroom, Cat 1 price (per sq ft)')).toHaveCount(0);
+  await expect(card.getByRole('button', { name: /^Remove the .* price$/ })).toHaveCount(2);
+  await page.getByRole('button', { name: 'Save changes' }).click();
+  await expect(page.getByText('Saved.', { exact: false })).toBeVisible();
+});
+
 for (const role of ['estimator', 'office'] as const) {
   test(`the ${role} reads the published prices and changes nothing`, async ({ page, request }) => {
     await resetPrices();

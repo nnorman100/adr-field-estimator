@@ -1,6 +1,6 @@
 'use client';
 
-import { useId, useState } from 'react';
+import { createContext, useContext, useEffect, useId, useState } from 'react';
 import { Input } from '@/components/ui/input';
 
 // Small form pieces of the Prices screens, at phone width: a label above its field, help text tied
@@ -83,6 +83,20 @@ export function DecimalField({ label, value, onChange, hint, disabled, prefix }:
   );
 }
 
+// A request's own busy flag, which also locks the owner's whole page while the request is out.
+export function useBusy(lock: (on: boolean) => void) {
+  const [busy, setBusy] = useState(false);
+  const set = (on: boolean) => {
+    setBusy(on);
+    lock(on);
+  };
+  return [busy, set] as const;
+}
+
+// Told by each whole-number field whether what it shows is in the table, so the owner's page can
+// refuse to save or publish while a field shows something the table does not hold.
+export const WholeFieldCheck = createContext<(id: string, ok: boolean) => void>(() => {});
+
 // A whole number of square feet or days. What was typed stays on screen; the table only changes
 // when it is a whole number (or blank, where blank is allowed).
 export function WholeField({
@@ -109,6 +123,11 @@ export function WholeField({
     setText(value === null ? '' : String(value));
   }
   const valid = /^\d{1,6}$/.test(text) || (allowBlank && text === '');
+  const report = useContext(WholeFieldCheck);
+  useEffect(() => {
+    report(id, valid);
+    return () => report(id, true);
+  }, [report, id, valid]);
   return (
     <div className="flex flex-col gap-1">
       <label htmlFor={id} className="text-sm font-medium">

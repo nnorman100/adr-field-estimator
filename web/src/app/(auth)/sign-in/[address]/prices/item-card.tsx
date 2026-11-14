@@ -176,10 +176,14 @@ function RoomTypePrices({
   const types = table.policy.room_types.some((type) => type.id === OTHER_TYPE)
     ? table.policy.room_types
     : [...table.policy.room_types, { id: OTHER_TYPE, name: 'Other', suggested_items: [] }];
-  const [type, setType] = useState(types[0]?.id ?? OTHER_TYPE);
-  const [category, setCategory] = useState<string>('');
+  const [chosenType, setType] = useState(types[0]?.id ?? OTHER_TYPE);
+  const [chosenCategory, setCategory] = useState<string>('');
   const rows = (item.rows ?? []).filter((row) => row.room_type !== undefined);
   const categoryOptions = itemCategories(item).map((value) => ({ value: String(value), label: categoryName(value) }));
+  // A room type or category no longer offered gives way to the first one listed, on screen and in
+  // the row added.
+  const type = types.some((t) => t.id === chosenType) ? chosenType : (types[0]?.id ?? OTHER_TYPE);
+  const category = categoryOptions.some((option) => option.value === chosenCategory) ? chosenCategory : '';
   return (
     <fieldset className="flex flex-col gap-3">
       <legend className="text-sm font-medium">Room-type prices</legend>

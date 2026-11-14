@@ -15,11 +15,13 @@ import { Hint, RadioGroup, Section, Select } from './ui';
 export function RoomPays({ table, title = 'What does this room pay?' }: { table: Table; title?: string }) {
   const [category, setCategory] = useState<Category>(3);
   const [tier, setTier] = useState<SizeTier>('m');
-  const [roomType, setRoomType] = useState<string>(table.policy.room_types[0]?.id ?? OTHER_TYPE);
+  const [chosenType, setRoomType] = useState<string>(table.policy.room_types[0]?.id ?? OTHER_TYPE);
   const byType = table.policy.room_type_pricing;
   const types = table.policy.room_types.some((type) => type.id === OTHER_TYPE)
     ? table.policy.room_types
     : [...table.policy.room_types, { id: OTHER_TYPE, name: 'Other', suggested_items: [] }];
+  // A room type removed since it was chosen gives way to the first one listed, on screen and here.
+  const roomType = types.some((type) => type.id === chosenType) ? chosenType : (types[0]?.id ?? OTHER_TYPE);
   const rows = roomPrices(table, { category, roomType: byType ? roomType : OTHER_TYPE, tier });
   const cabinetry = category === 3 && table.policy.cabinetry.multiplier !== '1';
 
