@@ -37,13 +37,15 @@ const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[
 
 const clean = (control: RegExp) => (value: string) => !control.test(value) && !LONE_SURROGATE.test(value);
 
-// Text is trimmed at both ends; a line has at least one character where it must say something.
-const line = (max: number) => z.string().trim().min(1).max(max).refine(clean(LINE_CONTROL));
-const text = (max: number) => z.string().trim().max(max).refine(clean(TEXT_CONTROL));
+// Text is kept exactly as entered, spaces and line breaks included, since it prints as entered.
+// Where it must say something, it must hold more than blank space.
+const notBlank = (value: string) => value.trim().length > 0;
+const line = (max: number) => z.string().max(max).refine(notBlank).refine(clean(LINE_CONTROL));
+const text = (max: number) => z.string().max(max).refine(clean(TEXT_CONTROL));
 
 export const companyClause = z.strictObject({
   title: line(DOCUMENT_LIMITS.clauseTitle),
-  text: text(DOCUMENT_LIMITS.clauseText).min(1),
+  text: text(DOCUMENT_LIMITS.clauseText).refine(notBlank),
 });
 
 const byteLength = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;

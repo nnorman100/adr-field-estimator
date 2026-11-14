@@ -57,6 +57,18 @@ describe('the document settings schema', () => {
     expect(documentSettings.parse(SET)).toEqual(SET);
   });
 
+  it('keeps each text exactly as entered, leading spaces and a final line break included', () => {
+    const asEntered = {
+      ...SET,
+      company_clauses: [{ title: '  Scheduling ', text: '  First paragraph\n\n  Second paragraph\n' }],
+      prep_tasks: ['  Clear the closet. '],
+      authorization_text: '  I authorize the work.\n',
+      payment_terms_text: '\nDue on completion.  ',
+    };
+    expect(documentSettings.parse(asEntered)).toEqual(asEntered);
+    expect(readDocumentSettings(JSON.parse(JSON.stringify(asEntered)))).toEqual(asEntered);
+  });
+
   it.each([
     ['an unknown key', { ...SET, show_line_breakdown: true }],
     ['a layout outside the list', { ...SET, proposal_layout: 'brochure' }],

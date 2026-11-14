@@ -154,6 +154,21 @@ describe('the owner saves and reads the letterhead and document settings', () =>
     expect((await rowOf(h.seed.a)).profile_documents).toEqual(changed);
   });
 
+  it('saves and reads each text exactly as entered, leading spaces and a final line break included', async () => {
+    const asEntered = {
+      ...DOCUMENTS,
+      company_clauses: [{ title: '  Scheduling ', text: '  First paragraph\n\n  Second paragraph\n' }],
+      prep_tasks: ['  Clear the closet. '],
+      authorization_text: '  I authorize the work.\n',
+      payment_terms_text: '\nDue on completion.  ',
+    };
+    const saved = await put(owner(), h.seed.a, { ...PROFILE, documents: asEntered });
+    expect(saved.status).toBe(200);
+    expect(saved.body?.documents).toEqual(asEntered);
+    expect((await get(owner(), h.seed.a)).body?.documents).toEqual(asEntered);
+    expect((await rowOf(h.seed.a)).profile_documents).toEqual(asEntered);
+  });
+
   it('keeps the letterhead and settings when a save leaves them out (a screen that does not know them)', async () => {
     await put(owner(), h.seed.a, { ...PROFILE, ...LETTERHEAD, documents: DOCUMENTS });
     const saved = await put(owner(), h.seed.a, { ...PROFILE, phone: '(555) 010-0111' });
