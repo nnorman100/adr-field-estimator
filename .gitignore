@@ -51,3 +51,6 @@ review-artifacts/
 *.tfstate.*
 *.tfplan
 crash.log
+
+# TC-10 synthetic function build output
+web/synthetic/dist/

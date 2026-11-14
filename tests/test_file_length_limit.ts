@@ -121,6 +121,7 @@ describe('new files', () => {
     const root = tree();
     for (const name of [
       'web/package-lock.json',
+      'web/synthetic/package-lock.json',
       'web/node_modules/pkg/index.ts',
       'web/.next/server/app.js',
       'package-lock.json',

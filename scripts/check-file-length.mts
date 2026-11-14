@@ -55,6 +55,7 @@ const EXCLUDED_PREFIXES = [
   'web/node_modules/',
   'web/.next/',
   'web/package-lock.json',
+  'web/synthetic/package-lock.json', // the synthetic function's own lockfile (TC-10)
 ];
 const EXCLUDED_SUFFIXES = ['.lock.hcl']; // Terraform's provider lockfiles
 
