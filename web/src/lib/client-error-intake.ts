@@ -19,8 +19,7 @@ import { emit, log } from './log';
 // from fixed fields only:
 //   - the body: JSON, at most 8 KB (counted in bytes while it is read, never trusted from the
 //     header), at most 20 reports, every field bounded by the schema below;
-//   - the rate: each caller (its connecting address plus a hash of its user agent) may have at most
-//     20 reports a minute written, so one caller cannot use up the instance's allowance; and each
+//   - the rate: each caller (its connecting address) may have at most 20 reports a minute written, so one caller cannot use up the instance's allowance; and each
 //     instance writes at most 60 reports a minute in all. The rest are answered 202 (the sender
 //     can do nothing about them) and only counted. The instance cap logs nothing; a caller hitting
 //     its own cap writes one fixed line a minute with no address in it (S3 security review, F6),
@@ -88,8 +87,9 @@ export function resetClientErrorLimit(): void {
   capLoggedAt = -Infinity;
 }
 
-// Per-caller shares, per instance. The key is a SHA-256 of the connecting address and the user
-// agent: only the hash is held, in memory, and it is never logged. Cloud Run appends the address
+// Per-caller shares, per instance. The key is a SHA-256 of the connecting address: only the hash is
+// held, in memory, and it is never logged. Nothing the caller chooses (user agent, other headers)
+// is part of the key, so a caller cannot buy a new share by changing it. Cloud Run appends the address
 // it saw as the LAST X-Forwarded-For entry; anything before it is the caller's own claim, so only
 // the last is read. A request with no usable address (never on Cloud Run) has no share of its own
 // and is held by the instance cap alone.
@@ -105,8 +105,7 @@ export function callerLimitedReports(): number {
 function callerKey(headers: Headers): string | null {
   const last = headers.get('x-forwarded-for')?.split(',').pop()?.trim() ?? '';
   if (isIP(last) === 0) return null;
-  const agent = (headers.get('user-agent') ?? '').slice(0, 256);
-  return createHash('sha256').update(`${last}\n${agent}`).digest('hex');
+  return createHash('sha256').update(last).digest('hex');
 }
 
 function takeCaller(key: string, count: number, now: number): number {

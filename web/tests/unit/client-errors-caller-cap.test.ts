@@ -95,9 +95,18 @@ describe('POST /api/client-errors: the per-caller cap', () => {
     expect(await accepted(await send(batch(1), caller))).toBe(1);
   });
 
-  it('treats the same address with another user agent as another caller', async () => {
+  it('treats the same address with another user agent as the same caller, so a new agent buys no new share', async () => {
     await send(batch(REPORTS_PER_CALLER_PER_MINUTE), { ip: '203.0.113.7', agent: 'one' });
-    expect(await accepted(await send(batch(1), { ip: '203.0.113.7', agent: 'two' }))).toBe(1);
+    expect(await accepted(await send(batch(1), { ip: '203.0.113.7', agent: 'two' }))).toBe(0);
+    expect(await accepted(await send(batch(1), { ip: '203.0.113.7' }))).toBe(0);
+    expect(callerLimitedReports()).toBe(2);
+  });
+
+  it('cannot use up the instance allowance by rotating user agents from one address', async () => {
+    for (const agent of ['A', 'B', 'C']) await send(batch(REPORTS_PER_CALLER_PER_MINUTE), { ip: '203.0.113.7', agent });
+    expect(await accepted(await send(batch(20), { ip: '198.51.100.9', agent: 'Mobile Safari' }))).toBe(20);
+    expect(limitedReports()).toBe(0);
+    expect(events().filter((e) => e.event === 'caller_cap')).toHaveLength(1);
   });
 
   it('keys on the last X-Forwarded-For entry, so an invented first entry buys no new share', async () => {
