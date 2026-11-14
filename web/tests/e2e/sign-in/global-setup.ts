@@ -112,7 +112,8 @@ export default async function globalSetup(config: FullConfig) {
   }
 
   // A company of its own for each project's Prices tests, with the price_books switch on: an owner
-  // with the second step, an estimator and an office user.
+  // and an office user with the second step (office needs it since 2026-11-14, D2), an estimator,
+  // and a second office user who has not set it up yet, to show the refusal.
   const prices: Record<string, PricesSeed> = {};
   for (const project of PROJECTS) {
     const tenantId = await createTenant(`prices-${project}-${run}`);
@@ -120,7 +121,11 @@ export default async function globalSetup(config: FullConfig) {
     const address = `prices-${project}`;
     const companyName = `Prices ${project} Restoration`;
     fixture.companies.push({ id: companyId, name: companyName, signInAddress: address, tenantId, status: 'active', flags: ['price_books'] });
-    const person = async (name: string, role: 'owner' | 'estimator' | 'office'): Promise<TeamAccount> => {
+    const person = async (
+      name: string,
+      role: 'owner' | 'estimator' | 'office',
+      secondStep = role !== 'estimator',
+    ): Promise<TeamAccount> => {
       const email = `${name}-${project}-${run}@example.com`;
       const uid = await createUser(tenantId, { email, password: PASSWORD, emailVerified: true });
       fixture.members.push({
@@ -132,7 +137,7 @@ export default async function globalSetup(config: FullConfig) {
         displayName: name,
         role,
         status: 'active',
-        ...(role === 'owner' ? { secondStep: true } : {}),
+        ...(secondStep ? { secondStep: true } : {}),
       });
       return { email, uid, name };
     };
@@ -144,6 +149,7 @@ export default async function globalSetup(config: FullConfig) {
       owner: await person('owner-prices', 'owner'),
       estimator: await person('estimator-prices', 'estimator'),
       office: await person('office-prices', 'office'),
+      officeWithoutApp: await person('office-no-app-prices', 'office', false),
     };
   }
 
