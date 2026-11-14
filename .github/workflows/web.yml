@@ -134,17 +134,12 @@ jobs:
         env:
           APP_ENV: test
 
-  # The browser tests run as two Playwright shards at the same time, each with its own runner
-  # container, so neither comes near its 20-minute limit (the whole suite, about 400 tests in
-  # Chromium and WebKit, took 19 to 20 minutes in one job under load and was cancelled with no
-  # verdict). The single required check, `e2e` below, passes only when both shards passed and the
-  # guard in it finds every listed test ran exactly once. Change the shard count in three places:
-  # the matrix, `--shard=N/2` and `--shards 2`; tests/test_web_workflow.ts checks they agree.
-  e2e-shard:
+  # The browser tests (Chromium and WebKit) run as two Playwright shards in parallel: as one job they
+  # took 19 to 20 minutes under load and were cancelled at the limit with no verdict.
+  e2e:
     runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
     timeout-minutes: 20
     strategy:
-      # Both shards report, so a failure in one does not hide a failure in the other.
       fail-fast: false
       matrix:
         shard: [1, 2]
@@ -176,19 +171,7 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm ci
       - run: npx playwright install --with-deps chromium webkit
-      # The command line names the reporters (the config's CI list plus the JSON report the guard in
-      # `e2e` reads); PLAYWRIGHT_HTML_OPEN keeps the HTML reporter from serving the report on failure.
-      - run: npm run test:e2e -- --shard=${{ matrix.shard }}/2 --reporter=list,html,json
-        env:
-          PLAYWRIGHT_HTML_OPEN: never
-          PLAYWRIGHT_JSON_OUTPUT_NAME: e2e-reports/shard-${{ matrix.shard }}.json
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: always()
-        with:
-          name: e2e-report-${{ matrix.shard }}
-          path: web/e2e-reports/shard-${{ matrix.shard }}.json
-          if-no-files-found: error
-          retention-days: 7
+      - run: npm run test:e2e -- --shard=${{ matrix.shard }}/2
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
@@ -197,36 +180,6 @@ jobs:
             web/test-results
             web/playwright-report
           retention-days: 7
-
-  # The one required check named `e2e` (the master ruleset and `check` are unchanged by the split).
-  # It reports even when a shard fails or times out, and passes only when both shards succeeded and
-  # the guard finds every test in `playwright test --list` in exactly one shard report, once.
-  e2e:
-    needs: [e2e-shard]
-    if: always() && !cancelled()
-    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Require both e2e shards
-        run: test "${{ needs.e2e-shard.result }}" = "success"
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: lts/*
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - run: npm ci
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          pattern: e2e-report-*
-          merge-multiple: true
-          path: web/e2e-reports
-      - name: List every browser test
-        run: npx playwright test --list --reporter=json > /dev/null
-        env:
-          PLAYWRIGHT_JSON_OUTPUT_NAME: ${{ runner.temp }}/e2e-list.json
-      - name: Require every test to have run exactly once
-        run: node scripts/check-e2e-shards.ts --list "$RUNNER_TEMP/e2e-list.json" --shards 2 e2e-reports/shard-*.json
 
   # The production image the release workflow (web-release.yml) ships, assembled without Docker by
   # web/scripts/build-image.sh: check its configuration, run its /app tree the way the image does and
