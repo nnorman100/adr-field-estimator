@@ -18,14 +18,16 @@ const expect = baseExpect.configure({ timeout: 20_000 });
 
 const TEMPLATE = 'Move the vanity contents to the garage.';
 
-// The company's published prices: a flood cut and toe-kick removal typed per room, and a Bathroom
-// room type that suggests the flood cut.
+// The company's published prices: a flood cut and toe-kick removal typed per room, water extraction
+// priced from the room's wet floor, and a Bathroom room type that suggests the flood cut and the
+// extraction.
 async function publishPrices(company: Company): Promise<void> {
   const db = adminSql();
   const table = parseTable({
     items: [
       { item_id: 'flood_cut', group: 'demolition', name: '4 ft flood cut', unit: 'lf', quantity_source: 'room:typed', unit_price: '3.00' },
       { item_id: 'toe_kick', group: 'demolition', name: 'Toe-kick removal', unit: 'lf', quantity_source: 'room:typed', unit_price: '4.00' },
+      { item_id: 'extraction', group: 'treatment', name: 'Water extraction', unit: 'sf', quantity_source: 'room:wet_floor', unit_price: '2.00' },
     ],
     policy: {
       estimate_mode: 'single',
@@ -34,7 +36,7 @@ async function publishPrices(company: Company): Promise<void> {
       category_multipliers: { '1': '1', '2': '1', '3': '1' },
       cabinetry: { multiplier: '1', scope: 'finished_only' },
       sales_tax: { enabled: false, percent: '0' },
-      room_types: [{ id: 'bathroom', name: 'Bathroom', suggested_items: ['flood_cut'] }],
+      room_types: [{ id: 'bathroom', name: 'Bathroom', suggested_items: ['flood_cut', 'extraction'] }],
     },
   });
   const [owner] = await db<{ id: string }[]>`SELECT id::text FROM actors WHERE company_id = ${company.id} AND display_name = 'owner'`;
@@ -85,10 +87,13 @@ test('an estimator types a room’s type, class, items, prep tasks and findings,
   await addRoom(page, 'Bathroom');
   const bath = page.getByRole('form', { name: 'Bathroom' });
 
-  // Other is preselected; the job's price list offers Bathroom, which suggests the flood cut.
+  // Other is preselected; the job's price list offers Bathroom, which suggests the flood cut to type
+  // and the extraction priced from the room's measurements, shown before any quantity is typed.
   await expect(bath.getByLabel('Room type')).toHaveValue('');
   await expect(bath.getByLabel('Room type').locator('option:checked')).toHaveText('Other');
   await bath.getByLabel('Room type').selectOption({ label: 'Bathroom' });
+  await expect(bath.getByRole('list', { name: 'Priced from this room’s measurements' }).getByRole('listitem')).toHaveText(['Water extraction']);
+  await expect(bath.getByRole('button', { name: 'Add Water extraction' })).toHaveCount(0);
   await bath.getByRole('button', { name: 'Add 4 ft flood cut' }).click();
   await bath.getByLabel('4 ft flood cut (linear ft)').fill('4');
   await bath.getByLabel('Another item').selectOption({ label: 'Toe-kick removal' });

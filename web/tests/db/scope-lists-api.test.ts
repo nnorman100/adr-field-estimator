@@ -178,12 +178,47 @@ describe('GET /api/jobs/{id}/scope-lists', () => {
     expect(answer.status).toBe(200);
     expect(answer.body).toEqual({
       version: 1,
-      // The type's suggestions keep only items a room may list (enabled, typed per room).
-      roomTypes: [{ id: 'bathroom', name: 'Bathroom', suggestedItems: ['flood_cut'] }],
+      // The type's enabled suggestions, typed per room or priced from the room's measurements.
+      roomTypes: [
+        {
+          id: 'bathroom',
+          name: 'Bathroom',
+          suggestedItems: [
+            { itemId: 'flood_cut', name: '4 ft flood cut', unit: 'lf', typed: true, categories: [] },
+            { itemId: 'extraction', name: 'Extraction', unit: 'sf', typed: false, categories: [] },
+          ],
+        },
+      ],
       items: [{ itemId: 'flood_cut', name: '4 ft flood cut', unit: 'lf' }],
       prepTasks: [],
     });
     expect(JSON.stringify(answer.body)).not.toMatch(/3\.00|price/);
+  });
+
+  it('lists a room type’s suggestions priced from measurements when no item is typed per room', async () => {
+    await publish({
+      items: [
+        { item_id: 'extraction', group: 'treatment', name: 'Extraction', unit: 'sf', quantity_source: 'room:wet_floor', unit_price: '2.00', categories: [1, 2, 3] },
+        { item_id: 'mold_clean', group: 'treatment', name: 'Mold cleaning', unit: 'sf', quantity_source: 'room:floor', unit_price: '4.00', categories: ['mold'] },
+      ],
+      roomTypes: [{ id: 'bathroom', name: 'Bathroom', suggested_items: ['extraction', 'mold_clean'] }],
+    });
+    const { jobId } = await readyJob();
+    const answer = await lists(ESTIMATOR_A, jobId);
+    expect(answer.status).toBe(200);
+    expect(answer.body).toMatchObject({
+      items: [],
+      roomTypes: [
+        {
+          id: 'bathroom',
+          suggestedItems: [
+            { itemId: 'extraction', name: 'Extraction', unit: 'sf', typed: false, categories: [1, 2, 3] },
+            { itemId: 'mold_clean', name: 'Mold cleaning', unit: 'sf', typed: false, categories: ['mold'] },
+          ],
+        },
+      ],
+    });
+    expect(JSON.stringify(answer.body)).not.toMatch(/2\.00|4\.00|price/);
   });
 
   it('answers everyone who can read the job, and no one else', async () => {

@@ -8,7 +8,9 @@ import { Box, Choice } from './ui';
 
 // A room's lists on Check Scope (S5a-10): the items typed for the room, each with the quantity the
 // estimator types, and the room's prep tasks. Both are edited on screen and saved with the room
-// (room-card.tsx); `edited` is undefined until the person changes the list.
+// (room-card.tsx); `edited` is undefined until the person changes the list. The room type's
+// suggestions show beside them: one typed per room is added to the room's items; one priced from
+// the room's measurements or the job's counts is only shown, for the technician to confirm.
 
 const UNITS: Record<string, string> = {
   sf: 'sq ft',
@@ -37,7 +39,7 @@ export function RoomItems({
   edited: Record<string, string> | undefined;
   onChange: (items: Record<string, string>) => void;
   lists: ScopeLists | null;
-  suggested: string[];
+  suggested: ScopeLists['roomTypes'][number]['suggestedItems'];
   errors: Record<string, string>;
   readOnly: boolean;
 }) {
@@ -58,7 +60,8 @@ export function RoomItems({
     delete next[itemId];
     onChange(next);
   };
-  const offered = suggested.filter((itemId) => !(itemId in current));
+  const offered = suggested.filter((item) => item.typed && !(item.itemId in current));
+  const measured = suggested.filter((item) => !item.typed);
   const others = known.filter((item) => !(item.itemId in current));
 
   return (
@@ -90,15 +93,25 @@ export function RoomItems({
           );
         })}
       </ul>
+      {measured.length > 0 ? (
+        <div className="flex flex-col gap-1">
+          <p className="text-sm">Also suggested for this room type, priced from this room’s measurements or the job’s counts. Confirm them by entering the areas and counts.</p>
+          <ul className="list-disc pl-5 text-sm" aria-label="Priced from this room’s measurements">
+            {measured.map((item) => (
+              <li key={item.itemId}>{item.name}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       {readOnly ? null : (
         <>
           {offered.length > 0 && !full ? (
             <div className="flex flex-col gap-2">
               <p className="text-sm">Suggested for this room type. Add the ones this room needs, then type each quantity.</p>
               <div className="flex flex-wrap gap-2">
-                {offered.map((itemId) => (
-                  <Button key={itemId} type="button" variant="outline" onClick={() => add(itemId)}>
-                    Add {nameOf(itemId)}
+                {offered.map((item) => (
+                  <Button key={item.itemId} type="button" variant="outline" onClick={() => add(item.itemId)}>
+                    Add {nameOf(item.itemId)}
                   </Button>
                 ))}
               </div>

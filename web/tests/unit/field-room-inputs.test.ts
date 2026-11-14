@@ -206,26 +206,38 @@ describe('the Check Scope room form', () => {
     expect(shown.errors.ceilingHeightFt).toBeDefined();
   });
 
+  const suggestion = (itemId: string, typed: boolean, categories: (1 | 2 | 3 | 'mold')[] = []) => ({ itemId, name: itemId, unit: 'sf', typed, categories });
+
   it('offers one Other, preselected with its own suggestions, and keeps a type the list no longer has', () => {
     const known = [
-      { id: 'other', name: 'Other', suggestedItems: ['demo'] },
-      { id: 'bathroom', name: 'Bathroom', suggestedItems: ['flood_cut'] },
+      { id: 'other', name: 'Other', suggestedItems: [suggestion('demo', false)] },
+      { id: 'bathroom', name: 'Bathroom', suggestedItems: [suggestion('flood_cut', true)] },
     ];
-    const absent = roomTypeChoice(known, '');
+    const absent = roomTypeChoice(known, '', '');
     expect(absent.value).toBe('');
     expect(absent.options).toEqual([
       { value: '', label: 'Other' },
       { value: 'bathroom', label: 'Bathroom' },
     ]);
-    expect(absent.suggested).toEqual(['demo']);
-    const stored = roomTypeChoice(known, 'other');
+    expect(absent.suggested.map((item) => item.itemId)).toEqual(['demo']);
+    const stored = roomTypeChoice(known, 'other', '');
     expect(stored.value).toBe('');
     expect(stored.options.filter((option) => option.label === 'Other')).toHaveLength(1);
-    expect(stored.suggested).toEqual(['demo']);
-    expect(roomTypeChoice(known, 'bathroom').suggested).toEqual(['flood_cut']);
-    const gone = roomTypeChoice(known, 'garage');
+    expect(stored.suggested.map((item) => item.itemId)).toEqual(['demo']);
+    expect(roomTypeChoice(known, 'bathroom', '').suggested.map((item) => item.itemId)).toEqual(['flood_cut']);
+    const gone = roomTypeChoice(known, 'garage', '');
     expect(gone.options.at(-1)).toEqual({ value: 'garage', label: 'garage (not in this job’s price list)' });
     expect(gone.suggested).toEqual([]);
+  });
+
+  it('shows the picked type’s suggestions with no typed quantities, for the room’s category', () => {
+    const extraction = suggestion('extraction', false, [1, 2, 3]);
+    const moldClean = suggestion('mold_clean', false, ['mold']);
+    const fan = suggestion('air_mover', false);
+    const known = [{ id: 'bathroom', name: 'Bathroom', suggestedItems: [extraction, moldClean, fan] }];
+    expect(roomTypeChoice(known, 'bathroom', '').suggested).toEqual([extraction, fan]);
+    expect(roomTypeChoice(known, 'bathroom', '3').suggested).toEqual([extraction, fan]);
+    expect(roomTypeChoice(known, 'bathroom', 'mold').suggested).toEqual([moldClean, fan]);
   });
 
   it('writes the findings note and clears an emptied one', () => {

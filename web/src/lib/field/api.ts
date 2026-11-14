@@ -161,7 +161,21 @@ export async function photoAddress(user: User, jobId: string, photoId: string): 
 
 const scopeLists = z.object({
   version: z.number().nullable(),
-  roomTypes: z.array(z.object({ id: z.string(), name: z.string(), suggestedItems: z.array(z.string()) })),
+  roomTypes: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      suggestedItems: z.array(
+        z.object({
+          itemId: z.string(),
+          name: z.string(),
+          unit: z.string(),
+          typed: z.boolean(),
+          categories: z.array(z.union([z.literal(1), z.literal(2), z.literal(3), z.literal('mold')])),
+        }),
+      ),
+    }),
+  ),
   items: z.array(z.object({ itemId: z.string(), name: z.string(), unit: z.string() })),
   prepTasks: z.array(z.string()),
 });

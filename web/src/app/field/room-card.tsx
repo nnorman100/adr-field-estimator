@@ -156,7 +156,7 @@ export function RoomCard({
       />
     );
   };
-  const roomType = roomTypeChoice(lists?.roomTypes ?? [], String(values.roomTypeId));
+  const roomType = roomTypeChoice(lists?.roomTypes ?? [], String(values.roomTypeId), String(values.category));
 
   return (
     <form

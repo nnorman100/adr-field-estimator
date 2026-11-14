@@ -4,6 +4,7 @@
 // clears its value: the key is deleted, never written as null or zero.
 import type { z } from 'zod';
 import { OTHER_TYPE } from '@/engine/values';
+import type { ScopeLists } from './api';
 import { draftFieldSchema, MAX_PREP_TASK, roomFieldSchema, type DraftField, type RoomField } from './schema';
 
 // `choice` is a picked value: a number when it is digits, else the text itself ('' clears it).
@@ -212,18 +213,23 @@ export function roomChanges(values: FormValues, stored: RoomField, lists: RoomLi
   return result;
 }
 
-type RoomTypeOption = { id: string; name: string; suggestedItems: string[] };
+type RoomTypeOption = ScopeLists['roomTypes'][number];
 
 // The room type picker: one Other, which is an absent room type ('' clears the key) and the price
-// list's `other` type, then the list's other types, then a stored type the list no longer has.
-export function roomTypeChoice(known: RoomTypeOption[], typeId: string) {
+// list's `other` type, then the list's other types, then a stored type the list no longer has. The
+// suggestions are the picked type's items priced for the room's category (category 1 until one is
+// picked, as the engine prices a room with none).
+export function roomTypeChoice(known: RoomTypeOption[], typeId: string, category: string) {
   const value = typeId === OTHER_TYPE ? '' : typeId;
   const options = [
     { value: '', label: 'Other' },
     ...known.filter((type) => type.id !== OTHER_TYPE).map((type) => ({ value: type.id, label: type.name })),
     ...(value && !known.some((type) => type.id === value) ? [{ value, label: `${value} (not in this job’s price list)` }] : []),
   ];
-  const suggested = known.find((type) => type.id === (value || OTHER_TYPE))?.suggestedItems ?? [];
+  const priced = category === 'mold' ? 'mold' : Number(category || 1);
+  const suggested = (known.find((type) => type.id === (value || OTHER_TYPE))?.suggestedItems ?? []).filter(
+    (item) => item.categories.length === 0 || item.categories.some((allowed) => allowed === priced),
+  );
   return { value, options, suggested };
 }
 

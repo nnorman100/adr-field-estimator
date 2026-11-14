@@ -1,7 +1,8 @@
 import { eq } from 'drizzle-orm';
 import { companies } from '@/db/schema';
 import { withCompany, type Database } from '@/db/tenant';
-import type { Table } from '@/engine/table';
+import { suggestedItems, type Table } from '@/engine/table';
+import type { Category } from '@/engine/values';
 import type { Capability } from '@/lib/access';
 import { hasAny, jobAccess, JobError, type JobCaller } from '@/lib/jobs/access';
 import { readDocumentSettings } from '@/lib/profile/settings';
@@ -17,13 +18,19 @@ const READ: readonly Capability[] = ['jobs_read'];
 export type ScopeLists = {
   /** The price version the lists come from; null when the company has published none. */
   version: number | null;
-  /** The owner's room types, in the owner's order; each with the items it suggests that a room may list. */
-  roomTypes: { id: string; name: string; suggestedItems: string[] }[];
+  /**
+   * The owner's room types, in the owner's order; each with the enabled items it suggests: whether a
+   * room lists the item with a typed quantity, or the item is priced from the room's measurements or
+   * the job's counts, and the categories it is priced for (none: every category).
+   */
+  roomTypes: { id: string; name: string; suggestedItems: SuggestedItem[] }[];
   /** The enabled items a room may list with a typed quantity, in the owner's order. */
   items: { itemId: string; name: string; unit: string }[];
   /** The company's prep-task templates, as the owner wrote them. */
   prepTasks: string[];
 };
+
+export type SuggestedItem = { itemId: string; name: string; unit: string; typed: boolean; categories: Category[] };
 
 export type ScopeListsService = { read(caller: JobCaller, jobId: string): Promise<ScopeLists> };
 
@@ -34,12 +41,17 @@ function listsOf(table: Table | null): Pick<ScopeLists, 'roomTypes' | 'items'> {
     .filter((item) => item.enabled && typed.has(item.item_id))
     .sort((a, b) => a.sort_order - b.sort_order)
     .map((item) => ({ itemId: item.item_id, name: item.name, unit: item.unit }));
-  const listed = new Set(items.map((item) => item.itemId));
   return {
     roomTypes: table.policy.room_types.map((type) => ({
       id: type.id,
       name: type.name,
-      suggestedItems: type.suggested_items.filter((id) => listed.has(id)),
+      suggestedItems: suggestedItems(table, type.id).map((item) => ({
+        itemId: item.item_id,
+        name: item.name,
+        unit: item.unit,
+        typed: typed.has(item.item_id),
+        categories: item.categories,
+      })),
     })),
     items,
   };
