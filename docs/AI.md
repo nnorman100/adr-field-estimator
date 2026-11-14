@@ -64,11 +64,18 @@ Per-user daily and per-minute limits are `DAILY_LIMITS` in `backend/inspection_s
 
 ## Company budget and daily ceiling
 
-Each company has a shared monthly AI spending allowance ($10 per UTC calendar month before launch) on top
+In the Python app each company has a shared monthly AI spending allowance ($10 per UTC calendar month before launch) on top
 of the per-user limits above. REST calls hold a counted-input reservation before dispatch; Live has a soft
 threshold with an admission margin. The mechanism, refusals, overrides and crash behavior are owned by
 [ai-spending.md](ai-spending.md). `backend/ai_usage.py` still only reports request counts (`ai_usage`
-switch) and enforces nothing. There is no separate daily company ceiling.
+switch) and enforces nothing. The Python app has no separate daily company ceiling.
+
+The rebuilt app (`web/`, S7-4) has its own ledger in Postgres, `web/src/lib/ai/budget.ts` over migration
+0012's `ai_ledger` and `company_ai_settings`: a daily **and** a monthly ceiling per company ($10 and $200 by
+default, owner decision V5 B; the operator can store others), per-person daily quotas per feature, a 429 with
+`Retry-After` that says field work continues, settlement once per call id, and holds that never refund on
+their own. The owner reads the use on Company settings; the routes are in [ACCESS.md](ACCESS.md), "AI usage
+and ceilings".
 
 ## Evaluation tests
 

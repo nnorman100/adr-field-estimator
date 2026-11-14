@@ -263,6 +263,26 @@ describe('refusals', () => {
     });
   });
 
+  it('carries the ledger’s Retry-After, and its quota count, into the refusal (S7-4)', async () => {
+    const daily = harness({ budget: { ok: false, reason: 'daily', retryAfterSeconds: 43_200 } });
+    expect(await daily.boundary.call(context(), summaryRequest)).toEqual({
+      ok: false,
+      refusal: { code: 'budget', retryable: false, retryAfterSeconds: 43_200, message: expect.stringContaining('keep working without AI') },
+    });
+    // The ledger counts the person's calls in the same transaction as the money: its quota refusal
+    // is a quota refusal, not a budget one, and nothing reaches Model Armor or the model.
+    const quota = harness({ budget: { ok: false, reason: 'quota', retryAfterSeconds: 600 } });
+    expect(await quota.boundary.call(context(), summaryRequest)).toMatchObject({
+      refusal: { code: 'quota', retryable: false, retryAfterSeconds: 600 },
+    });
+    expect(quota.events).toEqual(['quota', 'reserve', 'log']);
+    // The quota port's own refusal waits for the next UTC day: NOW is 12:00 UTC.
+    const early = harness({ quota: false });
+    expect(await early.boundary.call(context(), summaryRequest)).toMatchObject({
+      refusal: { code: 'quota', retryAfterSeconds: 12 * 60 * 60 },
+    });
+  });
+
   it('refuses a blocked input and settles the unused reservation at zero', async () => {
     const h = harness({ prompt: BLOCK });
     expect(await h.boundary.call(context(), summaryRequest)).toMatchObject({

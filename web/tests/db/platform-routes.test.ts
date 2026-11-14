@@ -21,7 +21,7 @@ type FakeClaims = import('./team-harness').FakeClaims;
 
 const API_DIR = fileURLToPath(new URL('../../src/app/api', import.meta.url));
 const PLATFORM_DIR = join(API_DIR, 'platform');
-const METHODS = ['GET', 'POST', 'PATCH'] as const;
+const METHODS = ['GET', 'POST', 'PATCH', 'PUT'] as const;
 type RouteHandler = (request: Request, context: ReturnType<typeof params>) => Response | Promise<Response>;
 
 async function routeFiles(dir: string): Promise<string[]> {
@@ -121,6 +121,7 @@ describe('who may use the operator routes', () => {
       'POST platform/companies/[companyId]/owner',
       'POST platform/companies/[companyId]/status',
       'POST platform/companies/[companyId]/tenant',
+      'PUT platform/companies/[companyId]/ai-settings',
     ]);
   });
 
@@ -130,6 +131,7 @@ describe('who may use the operator routes', () => {
     const bodies: Record<string, unknown> = {
       POST: { status: 'suspended', tenantId: 'x', email: 'x@example.test', name: 'X', signInSlug: 'x', confirmedBy: 'phone' },
       PATCH: { role: 'office' },
+      PUT: { dailyCeilingMicroUsd: 1, monthlyCeilingMicroUsd: 1 },
     };
     for (const caller of [owner(), { tenant: 'tenant-a', uid: 'estimator-a' }, { tenant: 'tenant-a', uid: 'office-a' }, owner('owner-b', 'tenant-b')]) {
       for (const { name, method, handler, ids } of handlers) {

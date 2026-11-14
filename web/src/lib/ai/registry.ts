@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { Capability } from '@/lib/access';
+import type { AiFlagName } from '@/lib/flags/known';
 import type { AiModel } from './pricing';
 
 // The AI registry: one entry per AI feature, read by call.ts on every model call and by the TC-8
@@ -14,8 +15,8 @@ import type { AiModel } from './pricing';
 //   prompt is null and call.ts refuses the feature as not ready.
 // - Daily quotas per person are the old DAILY_LIMITS (backend/inspection_store.py), except Live at
 //   20 sessions a day (V5). Output caps are the old REST_OUTPUT_LIMITS (backend/ai_spending.py).
-// - Flags are the six company switches of section 3; S7-4 adds them to FLAG_NAMES. Every one is off
-//   until then, so no feature can run before its own step.
+// - Flags are the six company switches of section 3, in FLAG_NAMES (S7-4). Every one is off until
+//   the operator turns it on for a company, so no feature runs before its own step and eval.
 
 export const AI_FEATURES = Object.freeze([
   'summary_draft',
@@ -27,15 +28,9 @@ export const AI_FEATURES = Object.freeze([
 ] as const);
 export type AiFeature = (typeof AI_FEATURES)[number];
 
-export const AI_FLAG_NAMES = Object.freeze([
-  'ai_summary',
-  'ai_scope_fill',
-  'ai_meter_reading',
-  'ai_voice_notes',
-  'ai_job_summary',
-  'live_voice',
-] as const);
-export type AiFlagName = (typeof AI_FLAG_NAMES)[number];
+// The flag names are the company switches' own list (web/src/lib/flags/known.ts), so a feature's flag
+// is always one the operator can turn on.
+export { AI_FLAG_NAMES, type AiFlagName } from '@/lib/flags/known';
 
 export type Prompt = { readonly text: string; readonly version: string };
 
