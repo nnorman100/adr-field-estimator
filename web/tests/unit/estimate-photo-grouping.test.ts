@@ -3,18 +3,20 @@ import { priceEstimate, type Estimate, type Json } from '@/engine/estimate';
 import { estimateInput, NO_ROOM } from '@/lib/estimates/inputs';
 import { photoAlbums } from '@/lib/estimates/screen';
 import { NEUTRAL_LETTERHEAD, NEUTRAL_SETTINGS, type CompanyDocuments } from '@/lib/profile/documents';
-import { SNAPSHOT_FORMAT, type Snapshot } from '@/lib/submissions/snapshot';
+import { SNAPSHOT_FORMAT, storedManifest, type Snapshot } from '@/lib/submissions/snapshot';
 
 // S5a-9c: the Photo audit log in the company's grouping (docs/plans/S5.md). `room` is today's
 // order and today's bytes; `shot_tag` lists albums in the field map's shot-tag order, photos with no
-// tag last, each album in the record's order. Only the order and the album headings change: the
-// photo ids, hashes, rooms and tags listed are the snapshot's in both groupings.
+// tag last, each album in the snapshot's order. Only the order and the album headings change: the
+// photo ids, hashes, rooms and tags listed are the snapshot's in both groupings. Each snapshot here is
+// stored as Submit stores it (`storedManifest`, photos sorted by id), so the snapshot's order is the
+// photo ids' order, not the order the photos were given in: the snapshot holds no capture time.
 
 const id = (digit: string) => digit.repeat(8) + '-' + digit.repeat(4) + '-4' + digit.repeat(3) + '-8' + digit.repeat(3) + '-' + digit.repeat(12);
 const hash = (digit: string) => digit.repeat(64);
-const [P1, P2, P3, P4, P5, P6, P7] = ['1', '2', '3', '4', '5', '6', '7'].map(id) as [string, string, string, string, string, string, string];
+const [P1, P2, P3, P4, P5, P6, P7, PF] = ['1', '2', '3', '4', '5', '6', '7', 'f'].map(id) as [string, string, string, string, string, string, string, string];
 
-// In the record's order: kitchen source, hall overview, kitchen overview, hall untagged, hall
+// In the snapshot's order: kitchen source, hall overview, kitchen overview, hall untagged, hall
 // source, no room equipment, kitchen surface. Room order is hall, then kitchen.
 const PHOTOS: Array<[string, { roomId?: string; shotTag?: string }]> = [
   [P1, { roomId: 'kitchen', shotTag: 'source' }],
@@ -33,15 +35,17 @@ function snapshot(photos = PHOTOS): Snapshot {
     jobId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
     draftId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
     fieldSha256: hash('d'),
-    field: {
+    field: storedManifest({
       draft: { yearBuilt: 1972, roomOrder: ['hall', 'kitchen'], summary: 'Category 2 water in two rooms.', scopeConfirmed: true },
       rooms: [
         { id: 'hall', field: { name: 'Hall', category: 2, floorSf: 40, wetFloorSf: 40 } },
         { id: 'kitchen', field: { name: 'Kitchen', category: 2, floorSf: 120, wetFloorSf: 80 } },
       ],
       photos: photos.map(([photo, field]) => ({ id: photo, field })),
-    },
-    photos: photos.map(([photo]) => ({ id: photo, sha256: hash(photo[0]!), sizeBytes: 100, contentType: 'image/jpeg' })),
+    }),
+    photos: photos
+      .map(([photo]) => ({ id: photo, sha256: hash(photo[0]!), sizeBytes: 100, contentType: 'image/jpeg' }))
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
     job: { propertyAddress: '12 Synthetic Lane, Testville' },
     customer: { name: 'Casey Customer', phone: '555-0100', email: 'casey@example.invalid' },
     claim: {},
@@ -81,10 +85,16 @@ describe('the photo log grouped by room', () => {
     expect(rows.every((row) => !('album' in row))).toBe(true);
     expect(rows[0]).toEqual({ id: P2, room: 'Hall', sha256: hash('2'), shot_tag: 'overview' });
   });
+
+  it('keeps the snapshot’s order inside a room: photos given as f… then 1… come out 1…, f…', () => {
+    const record = snapshot([[PF, { roomId: 'hall', shotTag: 'overview' }], [P1, { roomId: 'hall', shotTag: 'source' }]]);
+    expect(record.field.photos.map((photo) => photo.id)).toEqual([P1, PF]);
+    expect(ids(log('room', record))).toEqual([P1, PF]);
+  });
 });
 
 describe('the photo log grouped by shot tag', () => {
-  it('lists the albums in the field map’s order, untagged photos last, each album in the record’s order', () => {
+  it('lists the albums in the field map’s order, untagged photos last, each album in the snapshot’s order', () => {
     expect(ids(log('shot_tag'))).toEqual([P2, P3, P1, P5, P7, P6, P4]);
   });
 
@@ -101,14 +111,15 @@ describe('the photo log grouped by shot tag', () => {
     ]);
   });
 
-  it('keeps the record’s order inside an album whichever room the photos are in', () => {
-    const rows = log('shot_tag', snapshot([[P3, { roomId: 'kitchen', shotTag: 'meter' }], [P2, { roomId: 'hall', shotTag: 'meter' }], [P1, { shotTag: 'meter' }]]));
-    expect(ids(rows)).toEqual([P3, P2, P1]);
+  it('keeps the snapshot’s order inside an album whichever room the photos are in: given f…, 2…, 1…, it is 1…, 2…, f…', () => {
+    const record = snapshot([[PF, { roomId: 'kitchen', shotTag: 'meter' }], [P2, { roomId: 'hall', shotTag: 'meter' }], [P1, { shotTag: 'meter' }]]);
+    expect(record.field.photos.map((photo) => photo.id)).toEqual([P1, P2, PF]);
+    expect(ids(log('shot_tag', record))).toEqual([P1, P2, PF]);
   });
 
-  it('with no photo tagged, makes one album of untagged photos in the record’s order', () => {
-    const rows = log('shot_tag', snapshot([[P2, { roomId: 'hall' }], [P1, { roomId: 'kitchen' }]]));
-    expect(rows.map((row) => [row.id, row.album])).toEqual([[P2, 'Not tagged'], [P1, 'Not tagged']]);
+  it('with no photo tagged, makes one album of untagged photos in the snapshot’s order', () => {
+    const rows = log('shot_tag', snapshot([[PF, { roomId: 'hall' }], [P1, { roomId: 'kitchen' }]]));
+    expect(rows.map((row) => [row.id, row.album])).toEqual([[P1, 'Not tagged'], [PF, 'Not tagged']]);
     expect(rows.every((row) => !('shot_tag' in row))).toBe(true);
   });
 });

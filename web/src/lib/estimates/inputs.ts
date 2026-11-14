@@ -80,7 +80,8 @@ function claimOf(claim: Snapshot['claim']): Json {
  * tag: albums in the field map's shot-tag order, photos with no tag last, each row naming its album.
  * Either way each photo is the record's own: its id, its room and the hash the evidence registry held
  * when it was submitted; only the order and the album headings differ. Within a room or an album the
- * photos keep the record's order, the only order the record holds.
+ * photos keep the snapshot's order (sorted by photo id), which is not capture order: the snapshot
+ * holds no capture time.
  */
 function photoLog(snapshot: Snapshot, grouping: CompanyDocuments['settings']['photoLogGrouping']): Json[] {
   const draft = draftFieldSchema.parse(snapshot.field.draft ?? {});
@@ -99,7 +100,7 @@ function photoLog(snapshot: Snapshot, grouping: CompanyDocuments['settings']['ph
     const rank = grouping === 'shot_tag' ? (field.shotTag === undefined ? SHOT_TAGS.length : SHOT_TAGS.indexOf(field.shotTag)) : roomId === null ? order.length : order.indexOf(roomId);
     return { row, rank };
   });
-  // A stable sort: within a room or an album the photos keep the record's order.
+  // A stable sort: within a room or an album the photos keep the snapshot's order.
   return rows.sort((a, b) => a.rank - b.rank).map((photo) => photo.row);
 }
 
