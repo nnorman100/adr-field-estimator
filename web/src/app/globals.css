@@ -28,3 +28,9 @@ body {
   background: var(--background);
   color: var(--foreground);
 }
+
+/* The reCAPTCHA badge stays hidden: the sign-in screens carry Google's notice line instead
+   (src/components/recaptcha-notice.tsx), as docs.cloud.google.com/recaptcha/docs/faq allows. */
+.grecaptcha-badge {
+  visibility: hidden;
+}

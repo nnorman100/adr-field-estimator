@@ -7,6 +7,7 @@
 // the status and the server's fixed error code only.
 import type { User } from 'firebase/auth';
 import { z } from 'zod';
+import { appCheckHeaders } from '@/lib/app-check-client';
 import { callApi } from '@/lib/firebase-client';
 import type { ClaimView, CustomerView, JobDetail, JobListItem, JobPage } from '@/lib/jobs/service';
 import { SHOT_TAGS } from './schema';
@@ -125,7 +126,8 @@ export async function saveClaim(user: User, jobId: string, input: ClaimSave): Pr
 async function authorized(user: User, path: string, init: RequestInit = {}): Promise<Response | null> {
   try {
     const token = await user.getIdToken();
-    return await fetch(path, { ...init, headers: { ...init.headers, Authorization: `Bearer ${token}` }, cache: 'no-store' });
+    const headers = { ...init.headers, Authorization: `Bearer ${token}`, ...(await appCheckHeaders()) };
+    return await fetch(path, { ...init, headers, cache: 'no-store' });
   } catch {
     return null;
   }
