@@ -5,10 +5,11 @@
 // New tenants already get audit mode from `npm run platform:create-tenant`. Enforcement waits for
 // TC-13, so `--mode enforce` is refused. Like the tenant command it runs with the person's own
 // Google credentials (`gcloud auth application-default login`), never the app's, which cannot
-// change tenant settings (AGENTS.md rule 2: Firebase Auth settings are the owner's).
+// change tenant settings (AGENTS.md rule 2: Firebase Auth settings are the owner's). The project is
+// the one those credentials name (the gcloud default project), unless `--project` gives another.
 //
-//   npm run platform:recaptcha -- --project dryscope --tenant <tenant id> --mode audit
-//   npm run platform:recaptcha -- --project dryscope --tenant <tenant id> --mode off
+//   npm run platform:recaptcha -- --tenant <tenant id> --mode audit
+//   npm run platform:recaptcha -- --tenant <tenant id> --mode off
 //
 // Only the reCAPTCHA state for email and password is sent, with an update mask naming only it, so
 // the score rules, the keys Identity Platform provisions and every other setting stay as they are.
@@ -18,7 +19,7 @@ import { pathToFileURL } from 'node:url';
 import { PROJECT_ID } from './create-tenant';
 
 export type RecaptchaMode = 'AUDIT' | 'OFF';
-export type RecaptchaOptions = { project: string; tenant: string; mode: RecaptchaMode };
+export type RecaptchaOptions = { project?: string; tenant: string; mode: RecaptchaMode };
 
 // The id part of a tenant's resource name, as the tenant command reads it back.
 const TENANT_ID = /^[A-Za-z0-9-]{1,128}$/;
@@ -39,8 +40,7 @@ export function parseRecaptchaArgs(argv: string[]): RecaptchaOptions {
     else throw new Error(`unexpected argument ${arg}`);
   }
   const project = values['--project'];
-  if (!project) throw new Error('--project is required');
-  if (!PROJECT_ID.test(project)) throw new Error('--project must be a Google Cloud project id');
+  if (project !== undefined && !PROJECT_ID.test(project)) throw new Error('--project must be a Google Cloud project id');
   const tenant = values['--tenant'];
   if (!tenant) throw new Error('--tenant is required');
   if (!TENANT_ID.test(tenant)) throw new Error('--tenant must be a tenant id: letters, digits and hyphens');
@@ -53,6 +53,7 @@ export function parseRecaptchaArgs(argv: string[]): RecaptchaOptions {
 }
 
 export type RecaptchaDeps = {
+  projectId: () => Promise<string | null | undefined>;
   accessToken: () => Promise<string>;
   fetch: typeof fetch;
   log: (line: string) => void;
@@ -65,12 +66,15 @@ export async function setRecaptchaMode(options: RecaptchaOptions, deps: Recaptch
   // Checked again here so no caller can send ENFORCE before TC-13.
   if (options.mode !== 'AUDIT' && options.mode !== 'OFF') throw new Error(ENFORCE_REFUSED);
   const shown = options.mode.toLowerCase();
+  const project = options.project ?? (await deps.projectId());
+  if (!project) throw new Error('no Google Cloud project found: set a gcloud default project or pass --project');
+  if (!PROJECT_ID.test(project)) throw new Error('the Google Cloud project found is not a project id: pass --project');
   const mask = new URLSearchParams({ updateMask: 'recaptchaConfig.emailPasswordEnforcementState' });
-  const url = `https://identitytoolkit.googleapis.com/v2/projects/${options.project}/tenants/${options.tenant}?${mask}`;
+  const url = `https://identitytoolkit.googleapis.com/v2/projects/${project}/tenants/${options.tenant}?${mask}`;
   const token = await deps.accessToken();
   const response = await deps.fetch(url, {
     method: 'PATCH',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'X-Goog-User-Project': options.project },
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'X-Goog-User-Project': project },
     body: JSON.stringify({ recaptchaConfig: { emailPasswordEnforcementState: options.mode } }),
     signal: AbortSignal.timeout(30_000),
   });
@@ -91,6 +95,7 @@ async function main() {
   const { GoogleAuth } = await import('google-auth-library');
   const auth = new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-platform'] });
   await setRecaptchaMode(options, {
+    projectId: () => auth.getProjectId().catch(() => undefined),
     accessToken: async () => {
       const token = await auth.getAccessToken();
       if (!token) throw new Error('no Google credentials: run gcloud auth application-default login');

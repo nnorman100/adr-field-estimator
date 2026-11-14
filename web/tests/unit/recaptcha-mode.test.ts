@@ -8,7 +8,8 @@ import { parseRecaptchaArgs, setRecaptchaMode } from '../../scripts/recaptcha-mo
 type Call = { url: string; method: string; headers: Record<string, string>; body: unknown };
 
 // A fake Identity Toolkit that answers a PATCH with the tenant as Google would return it.
-function google(options: { status?: number; answer?: (sent: Record<string, unknown>) => unknown } = {}) {
+// `resolved` is the project the owner's Google credentials name (their gcloud default project).
+function google(options: { status?: number; answer?: (sent: Record<string, unknown>) => unknown; resolved?: string | null } = {}) {
   const calls: Call[] = [];
   const fetch = vi.fn(async (input: string, init: RequestInit = {}) => {
     const sent = JSON.parse(String(init.body)) as Record<string, unknown>;
@@ -25,22 +26,32 @@ function google(options: { status?: number; answer?: (sent: Record<string, unkno
     };
     return Response.json(options.answer ? options.answer(sent) : tenant);
   });
-  return { calls, deps: { accessToken: async () => 'ya29.owner-token', fetch: fetch as unknown as typeof globalThis.fetch } };
+  const projectId = vi.fn(async () => ('resolved' in options ? options.resolved : 'dryscope'));
+  const accessToken = vi.fn(async () => 'ya29.owner-token');
+  return { calls, projectId, accessToken, deps: { projectId, accessToken, fetch: fetch as unknown as typeof globalThis.fetch } };
 }
 
 async function run(argv: string[], options: Parameters<typeof google>[0] = {}) {
   const fake = google(options);
   const lines: string[] = [];
   const result = setRecaptchaMode(parseRecaptchaArgs(argv), { ...fake.deps, log: (line) => lines.push(line) });
-  return { result, lines, calls: fake.calls };
+  return { result, lines, calls: fake.calls, projectId: fake.projectId, accessToken: fake.accessToken };
 }
 
 const ARGS = ['--project', 'dryscope', '--tenant', 'test-company-a-x1y2z'];
+const APPROVED = ['--tenant', 'test-company-a-x1y2z', '--mode', 'audit'];
+const TENANT_URL = (project: string) => `https://identitytoolkit.googleapis.com/v2/projects/${project}/tenants/test-company-a-x1y2z`;
 
 describe('parseRecaptchaArgs', () => {
   it('reads the project, the tenant and the mode', () => {
     expect(parseRecaptchaArgs([...ARGS, '--mode', 'audit'])).toEqual({ project: 'dryscope', tenant: 'test-company-a-x1y2z', mode: 'AUDIT' });
     expect(parseRecaptchaArgs(['--mode', 'off', '--tenant', 'ops-1', '--project', 'dryscope'])).toEqual({ project: 'dryscope', tenant: 'ops-1', mode: 'OFF' });
+  });
+
+  it('reads the approved invocation, with no --project', () => {
+    const options = parseRecaptchaArgs(APPROVED);
+    expect(options).toEqual({ tenant: 'test-company-a-x1y2z', mode: 'AUDIT' });
+    expect(options.project).toBeUndefined();
   });
 
   it('refuses enforce until TC-13, whatever its case', () => {
@@ -56,7 +67,6 @@ describe('parseRecaptchaArgs', () => {
     expect(() => parseRecaptchaArgs(ARGS)).toThrow(/--mode is required/);
     expect(() => parseRecaptchaArgs([...ARGS, '--mode'])).toThrow(/--mode needs a value/);
     expect(() => parseRecaptchaArgs(['--project', 'dryscope', '--mode', 'audit'])).toThrow(/--tenant is required/);
-    expect(() => parseRecaptchaArgs(['--tenant', 'ops-1', '--mode', 'audit'])).toThrow(/--project is required/);
     expect(() => parseRecaptchaArgs(['--project', 'Dry Scope', '--tenant', 'ops-1', '--mode', 'audit'])).toThrow(/--project must be/);
     expect(() => parseRecaptchaArgs(['--project', 'dryscope', '--tenant', 'ops/1', '--mode', 'audit'])).toThrow(/--tenant must be/);
     expect(() => parseRecaptchaArgs(['--project', 'dryscope', '--tenant', '--mode', 'audit'])).toThrow(/--tenant needs a value/);
@@ -78,6 +88,48 @@ describe('setRecaptchaMode', () => {
     expect([...url.searchParams.entries()]).toEqual([['updateMask', 'recaptchaConfig.emailPasswordEnforcementState']]);
     expect(call!.headers).toMatchObject({ Authorization: 'Bearer ya29.owner-token', 'Content-Type': 'application/json', 'X-Goog-User-Project': 'dryscope' });
     expect(call!.body).toEqual({ recaptchaConfig: { emailPasswordEnforcementState: 'AUDIT' } });
+  });
+
+  it('sends the approved invocation to the project the owner\'s credentials name', async () => {
+    const { result, calls, lines, projectId } = await run(APPROVED, { resolved: 'dryscope' });
+    await result;
+    expect(projectId).toHaveBeenCalledTimes(1);
+    expect(calls).toHaveLength(1);
+    const url = new URL(calls[0]!.url);
+    expect(calls[0]!.method).toBe('PATCH');
+    expect(`${url.origin}${url.pathname}`).toBe(TENANT_URL('dryscope'));
+    expect(calls[0]!.headers).toMatchObject({ 'X-Goog-User-Project': 'dryscope' });
+    expect(calls[0]!.body).toEqual({ recaptchaConfig: { emailPasswordEnforcementState: 'AUDIT' } });
+    expect(lines).toEqual(['tenant test-company-a-x1y2z: audit']);
+  });
+
+  it('uses --project over the project the credentials name', async () => {
+    const { result, calls, projectId } = await run(['--project', 'dryscope', ...APPROVED], { resolved: 'other-project-1' });
+    await result;
+    expect(projectId).not.toHaveBeenCalled();
+    const url = new URL(calls[0]!.url);
+    expect(`${url.origin}${url.pathname}`).toBe(TENANT_URL('dryscope'));
+    expect(calls[0]!.headers).toMatchObject({ 'X-Goog-User-Project': 'dryscope' });
+  });
+
+  it('fails before asking for a token or calling Google when no project can be found', async () => {
+    for (const resolved of [undefined, null, '']) {
+      const { result, calls, lines, accessToken } = await run(APPROVED, { resolved });
+      await expect(result).rejects.toThrow(/^no Google Cloud project found: set a gcloud default project or pass --project$/);
+      expect(accessToken).not.toHaveBeenCalled();
+      expect(calls).toEqual([]);
+      expect(lines).toEqual([]);
+    }
+  });
+
+  it('refuses a found project that is not a project id', async () => {
+    for (const resolved of ['Dry Scope', 'dryscope/tenants/x', '../dryscope']) {
+      const { result, calls, lines, accessToken } = await run(APPROVED, { resolved });
+      await expect(result).rejects.toThrow(/^the Google Cloud project found is not a project id: pass --project$/);
+      expect(accessToken).not.toHaveBeenCalled();
+      expect(calls).toEqual([]);
+      expect(lines).toEqual([]);
+    }
   });
 
   it('turns it off the same way', async () => {

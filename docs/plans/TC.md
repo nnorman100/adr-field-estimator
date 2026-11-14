@@ -207,7 +207,7 @@ Format: **UI** screens, **FE** frontend, **BE** server routes and services, **DB
 **TC-6 reCAPTCHA Enterprise on sign-in, audit mode (S, High: sign-in settings).** Kind: agent code; the owner runs it.
 - BE (scripts):
   - `npm run platform:create-tenant` sets `recaptchaConfig { emailPasswordEnforcementState: "AUDIT" }` on each new tenant.
-  - A new owner-run command, `npm run platform:recaptcha -- --project dryscope --tenant <id> --mode audit|off`, for existing tenants (`--project` as in the other tenant commands). It refuses `enforce` until TC-13 and prints only the tenant id and the mode.
+  - A new owner-run command, `npm run platform:recaptcha -- --tenant <id> --mode audit|off`, for existing tenants. It refuses `enforce` until TC-13 and prints only the tenant id and the mode.
   - Run by the owner, because Firebase Auth settings are owner-only (`AGENTS.md` rule 2).
 - FE: none. Firebase JS SDK 13.1.0 loads reCAPTCHA for email/password flows once the tenant has a config (web SDK 9.20.0 or later).
 - Infra (TC-9): the reCAPTCHA Enterprise API and the `identitytoolkit` service identity with `roles/identitytoolkit.serviceAgent`.
@@ -365,7 +365,7 @@ TC adds **no database job**, so it never waits for that lane.
 | B | Re-plan and apply the **data root** with TC-9, after `check.sh` and `check-plan.js`. Scanning starts billing at once (C5). | TC-9 merged | The plan check passes with no deletes; the APIs are listed as enabled |
 | C | `gcloud beta services identity create --service=identitytoolkit.googleapis.com --project=dryscope`, then grant `roles/identitytoolkit.serviceAgent` to that identity. | B | The IAM policy shows the one grant |
 | D | Owner step 8 if not done (register the web app). Pass its app id as the TC-9 variable and re-apply (B), which registers App Check with the reCAPTCHA key. Leave every product **unenforced** in Firebase, App Check. | B | The App Check page shows the web app with reCAPTCHA Enterprise and no enforcement |
-| E | `npm run platform:recaptcha -- --project dryscope --tenant <id> --mode audit` for each test tenant made before TC-6 (from `web/`, with your own `gcloud auth application-default login`); tenants made after it already get audit mode. Google also requires each web domain that uses sign-in reCAPTCHA to be listed in Identity Platform, Settings, Security, Authorized domains. | C, TC-6 merged | It prints `tenant <id>: audit`; verdict metrics appear after a sign-in |
+| E | `npm run platform:recaptcha -- --tenant <id> --mode audit` for each test tenant (from `web/`, with your own `gcloud auth application-default login`). | C, TC-6 merged | Verdict metrics appear after a sign-in |
 | F | Add a value to `dryscope-test-synthetic-password`. As operator, invite the synthetic technician to test company A; create one fixed job; put its id in `envs/test.tfvars` (not a secret). | B, S5a-3 | The probe passes locally against `test` |
 | G | Apply the **app root** with TC-11 and TC-5's settings, with `TF_VAR_alert_email`, `TF_VAR_alert_channel_ids` and `TF_VAR_billing_account_id`. You need Billing Account Administrator on the billing account for the budget (C8). This is also owner step 9 if it has not run. | A, B, F, TC-11 merged | The plan check passes; one budget exists; the policies list the phone channels |
 | H | After each apply, push `infra-test-<data\|app>-YYYY.MM.DD-N` at the applied commit (C6). | G | The next manifest names it |
