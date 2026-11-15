@@ -82,10 +82,14 @@ export const claimBody = z.strictObject({
 // allowed, no other control character), at most 4,000 characters, kept as typed.
 const NOTES = /^[^\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]*$/;
 
-// PUT /api/jobs/{id}/coordination: the office notes, with the job revision the screen last saw and
-// this change's own id, as the customer save.
+// The coordination revision (S5b-1, job_coordination in 0015): 0 until the first note or field owner
+// change, then up by one with each.
+const coordinationRevision = z.int().min(0).max(2_147_483_647);
+
+// PUT /api/jobs/{id}/coordination: the office notes, with the coordination revision the screen last
+// saw and this change's own id, as the customer save.
 export const coordinationBody = z.strictObject({
-  revision,
+  revision: coordinationRevision,
   changeId: uuid,
   notes: z.string().max(4000).regex(NOTES),
 });
@@ -98,9 +102,9 @@ export const assignBody = z.strictObject({
 });
 
 // POST /api/jobs/{id}/field-owner/transfer (owner decision J5): who gets the field work, with the
-// job revision the screen last saw and this change's own id.
+// coordination revision the screen last saw and this change's own id.
 export const transferBody = z.strictObject({
-  revision,
+  revision: coordinationRevision,
   changeId: uuid,
   toActorId: uuid,
 });

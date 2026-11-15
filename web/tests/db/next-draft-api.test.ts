@@ -148,18 +148,19 @@ describe('Back to editing', () => {
     }
   });
 
-  it('only the owner and the estimator whose job it is go back to editing; another company never reaches the job', async () => {
+  it('only the estimator who owns the field work goes back to editing, not the owner who does not; another company never reaches the job', async () => {
     const { jobId, draftId } = await submittedJob();
     const before = await everything(h.admin);
     const fieldBefore = JSON.stringify(h.field.data());
     const body = { draftId: randomUUID(), fromDraftId: draftId };
     expect(await f.nextDraft(OFFICE_A, jobId, body)).toMatchObject({ status: 403, body: { error: 'not_allowed' } });
+    expect(await f.nextDraft(OWNER_A, jobId, body)).toMatchObject({ status: 403, body: { error: 'not_field_owner' } });
     expect(await f.nextDraft(ESTIMATOR_A2, jobId, body)).toMatchObject({ status: 404, body: { error: 'not_found' } });
     for (const claims of [OWNER_B, ESTIMATOR_B]) expect(await f.nextDraft(claims, jobId, body)).toMatchObject({ status: 404, body: { error: 'not_found' } });
     expect((await f.nextDraft(null, jobId, body)).status).toBe(401);
     expect(await everything(h.admin)).toBe(before);
     expect(JSON.stringify(h.field.data())).toBe(fieldBefore);
-    expect((await f.nextDraft(OWNER_A, jobId, body)).status).toBe(201);
+    expect((await f.nextDraft(ESTIMATOR_A, jobId, body)).status).toBe(201);
   });
 
   it('makes the missing draft when the same request is sent again after the field database failed', async () => {

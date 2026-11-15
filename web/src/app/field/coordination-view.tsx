@@ -102,7 +102,7 @@ function Coordination({ job, view, setView, reread }: { job: JobContext; view: V
       setHeld(null);
       setView(answer.value);
       setNotice({ at, message: done });
-      // The job's revision and field owner moved with it: the other views read the job again.
+      // The job's field owner may have moved with it: the other views read the job again.
       await job.reloadJob();
       return true;
     }
@@ -118,7 +118,7 @@ function Coordination({ job, view, setView, reread }: { job: JobContext; view: V
   const free = view.estimators.filter((one) => !assigned.has(one.actorId));
   const ownerId = job.session.actorId;
   const targets = [
-    ...(ownerId && view.fieldOwner?.actorId !== ownerId ? [{ value: ownerId, label: 'Me (company owner)' }] : []),
+    ...(view.fieldOwner?.actorId !== ownerId ? [{ value: ownerId, label: 'Me (company owner)' }] : []),
     ...view.assignments.filter((one) => one.actorId !== view.fieldOwner?.actorId).map((one) => ({ value: one.actorId, label: nameOf(one) })),
   ];
   // What is sent is what the box shows: a choice no longer offered falls back to the first one.
@@ -159,6 +159,24 @@ function Coordination({ job, view, setView, reread }: { job: JobContext; view: V
             </Button>
             <Outcome error={errorAt('move')} notice={noticeAt('move')} />
           </form>
+        ) : null}
+        {caps.includes('field_owner_transfer') && view.fieldOwner ? (
+          <div className="flex flex-col gap-2">
+            <p className="text-sm">If a move or a start of the field work did not reach every phone, send the field owner to the phones again.</p>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy !== null}
+              onClick={() => {
+                const to = view.fieldOwner!.actorId;
+                const body = { revision: view.revision, changeId: crypto.randomUUID(), toActorId: to };
+                void act('resend', `resend:${to}`, () => transferFieldOwner(user, jobId, body), 'The field owner was sent to the phones again.');
+              }}
+            >
+              {busy === 'resend' ? 'Sending…' : 'Send the field owner again'}
+            </Button>
+            <Outcome error={errorAt('resend')} notice={noticeAt('resend')} />
+          </div>
         ) : null}
       </Section>
 

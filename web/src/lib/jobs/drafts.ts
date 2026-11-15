@@ -7,8 +7,9 @@ import { firestoreSpan } from '@/lib/telemetry/spans';
 //
 // `fieldOwnerUid` on a draft is the server's copy of the job's field owner (jobs.field_owner_actor_id
 // in Postgres decides): the rules let only that person change the field work. `fieldOwnerRevision`
-// is the job revision at which the server last set it, so a slower request carrying an older owner
-// never overwrites a newer one (S5b-1). A draft with no revision was made with the job (revision 0).
+// is the job's coordination revision (job_coordination, 0015) at which the server last set it, so a
+// slower request carrying an older owner never overwrites a newer one (S5b-1). A draft with no
+// revision was made with its job or by Back to editing (revision 0).
 export type FieldOwnerResult =
   // Set now, or the draft already named this person at this revision or later.
   | 'set'

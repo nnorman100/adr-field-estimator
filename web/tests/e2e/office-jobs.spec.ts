@@ -161,6 +161,38 @@ test('the owner moves the field work to another assigned estimator, and the phon
   await expect(page.getByText('owner owns the field work.')).toBeVisible();
 });
 
+test('the phone that held the field work keeps what was typed when the owner moves it, read only', async ({ page, request }) => {
+  test.setTimeout(120_000);
+  const company = await seedCompany('keep-edits', { owner: 'owner', office: 'office', first: 'estimator', second: 'estimator' });
+  const office = { Authorization: `Bearer ${withSecondFactor(await idTokenFor(company.tenantId, company.people.office!.email, PASSWORD))}` };
+  const jobId = randomUUID();
+  expect((await request.post(`${JOBS_BASE_URL}/api/jobs`, { headers: office, data: { id: jobId, draftId: randomUUID(), propertyAddress: '52 Unsent Road' } })).status()).toBe(201);
+  const actors = await adminSql()<{ uid: string; id: string }[]>`SELECT uid, id::text FROM actors WHERE company_id = ${company.id}`;
+  const actorOf = (person: Person) => actors.find((one) => one.uid === person.uid)!.id;
+  for (const who of [company.people.first!, company.people.second!]) {
+    const assigned = await request.post(`${JOBS_BASE_URL}/api/jobs/${jobId}/assignments`, { headers: office, data: { id: randomUUID(), estimatorActorId: actorOf(who) } });
+    expect(assigned.status()).toBe(201);
+  }
+  const first = { Authorization: `Bearer ${await idTokenFor(company.tenantId, company.people.first!.email, PASSWORD)}` };
+  expect((await request.post(`${JOBS_BASE_URL}/api/jobs/${jobId}/field-owner`, { headers: first })).status()).toBe(201);
+
+  await signIn(page, company, company.people.first!);
+  await openJob(page, '52 Unsent Road');
+  await page.getByLabel('Year built').fill('1975');
+  // The owner moves the field work while the change is still on this phone.
+  const owner = { Authorization: `Bearer ${withSecondFactor(await idTokenFor(company.tenantId, company.people.owner!.email, PASSWORD))}` };
+  const moved = await request.post(`${JOBS_BASE_URL}/api/jobs/${jobId}/field-owner/transfer`, {
+    headers: owner,
+    data: { revision: 1, changeId: randomUUID(), toActorId: actorOf(company.people.second!) },
+  });
+  expect(moved.status()).toBe(200);
+  await page.getByRole('button', { name: 'Save scope' }).click();
+  await expect(page.getByText('Another person now owns this job’s field work', { exact: false })).toBeVisible();
+  await expect(page.getByLabel('Year built')).toHaveValue('1975');
+  await expect(page.getByLabel('Year built')).not.toBeEditable();
+  await expect(page.getByRole('button', { name: 'Save scope' })).toHaveCount(0);
+});
+
 test('an estimator whose field work the draft does not name yet starts it again and edits it', async ({ page, request }) => {
   test.setTimeout(120_000);
   const company = await seedCompany('owner-unset', { office: 'office', first: 'estimator' });

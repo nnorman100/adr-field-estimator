@@ -31,7 +31,7 @@ it. The first person who does field work and may see the job starts it (`POST /a
 Postgres records them once, then the server sets `fieldOwnerUid` in a Firestore transaction. When the
 owner moves the field work (owner decision J5) the server sets it again, so the phone that held it is
 refused from then on; its unsent changes stay on that phone (S6 offers Save as new draft). Each set also
-writes `fieldOwnerRevision`, the job revision it was made at, and a set carrying an older revision changes
+writes `fieldOwnerRevision`, the job's coordination revision (`job_coordination.revision`) it was made at, and a set carrying an older revision changes
 nothing, so a slow request never puts back an earlier owner. A client can change neither key: the rules
 let it change only `field`.
 

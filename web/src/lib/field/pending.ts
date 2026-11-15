@@ -148,7 +148,8 @@ export const pending = {
   removePhoto(jobId: string, photoId: string) {
     change({ photos: { ...state.photos, [jobId]: pending.photos(jobId).filter((photo) => photo.id !== photoId) } });
   },
-  // The job as the server last answered it; an older revision never replaces a newer one.
+  // The job as the server last answered it; an older revision never replaces a newer one. A move of
+  // the field work keeps the revision (it is coordination), so an answer at the same revision does.
   detail: (jobId: string): JobDetail | null => state.details[jobId] ?? null,
   // Taken before a request about the job is sent, and handed back with its answer.
   mark: (jobId: string): number => state.marks[jobId] ?? 0,
@@ -157,7 +158,7 @@ export const pending = {
   publishDetail(jobId: string, detail: JobDetail, mark: number): boolean {
     if (mark !== pending.mark(jobId)) return false;
     const known = state.details[jobId];
-    if (known && known.job.revision >= detail.job.revision) return true;
+    if (known && known.job.revision > detail.job.revision) return true;
     const denials = { ...state.denials };
     delete denials[jobId];
     change({ details: { ...state.details, [jobId]: detail }, denials });

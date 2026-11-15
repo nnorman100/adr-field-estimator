@@ -200,15 +200,17 @@ describe('field and office ownership (docs/spec.md 6.2)', () => {
     const first = await claim(ESTIMATOR_A, id);
     expect(first.status).toBe(201);
     expect(first.body.job.fieldOwnerActorId).toBe(h.seed.estimatorA.actor);
-    expect(first.body.job.revision).toBe(2);
+    // The field owner is coordination: the job revision stays, the coordination revision moves.
+    expect(first.body.job.revision).toBe(1);
+    expect((await coordination(OWNER_A, id)).body.revision).toBe(1);
     // The server named the field owner on the draft, in its transaction, at that revision.
-    expect(draftOf(draftId)).toEqual({ fieldOwnerUid: 'estimator-a', fieldOwnerRevision: 2 });
+    expect(draftOf(draftId)).toEqual({ fieldOwnerUid: 'estimator-a', fieldOwnerRevision: 1 });
     expect(await audits('job_field_owner_claimed')).toBe(1);
 
     // The same person again changes nothing; anyone else is refused, and adds nothing.
     const again = await claim(ESTIMATOR_A, id);
     expect(again.status).toBe(200);
-    expect(again.body.job.revision).toBe(2);
+    expect(again.body.job.revision).toBe(1);
     const second = await claim(ESTIMATOR_A2, id);
     expect(second).toEqual({ status: 409, body: { error: 'field_owner_taken' } });
     expect((await sendPhoto(ESTIMATOR_A2, id)).body.error).toBe('not_field_owner');
@@ -239,7 +241,7 @@ describe('field and office ownership (docs/spec.md 6.2)', () => {
     const before = await everything(h.admin);
     expect(await assign(ESTIMATOR_A, id, estimatorA2)).toEqual({ status: 403, body: { error: 'not_allowed' } });
     expect(await unassign(ESTIMATOR_A, id, assigned.body.assignments[0]!.id)).toEqual({ status: 403, body: { error: 'not_allowed' } });
-    expect(await saveNotes(ESTIMATOR_A, id, { revision: 2, changeId: randomUUID(), notes: 'Gate code 1234' })).toEqual({
+    expect(await saveNotes(ESTIMATOR_A, id, { revision: 1, changeId: randomUUID(), notes: 'Gate code 1234' })).toEqual({
       status: 403,
       body: { error: 'not_allowed' },
     });
@@ -253,12 +255,12 @@ describe('field and office ownership (docs/spec.md 6.2)', () => {
     await assign(OFFICE_A, id, estimatorA2);
     expect((await claim(ESTIMATOR_A, id)).status).toBe(201);
     const before = await everything(h.admin);
-    for (const refused of [await saveCustomer(ESTIMATOR_A2, id, 2), await saveClaim(ESTIMATOR_A2, id, 2)]) {
+    for (const refused of [await saveCustomer(ESTIMATOR_A2, id, 1), await saveClaim(ESTIMATOR_A2, id, 1)]) {
       expect(refused).toEqual({ status: 403, body: { error: 'not_field_owner' } });
     }
     expect(await everything(h.admin)).toBe(before);
-    expect((await saveCustomer(ESTIMATOR_A, id, 2)).status).toBe(200);
-    expect((await saveClaim(ESTIMATOR_A, id, 3)).status).toBe(200);
+    expect((await saveCustomer(ESTIMATOR_A, id, 1)).status).toBe(200);
+    expect((await saveClaim(ESTIMATOR_A, id, 2)).status).toBe(200);
   });
 
   it('grants no price approval with the field work', async () => {
@@ -301,7 +303,7 @@ describe('who sees an office job', () => {
   it('shows an estimator the customer view only: no office notes, assignments or estimators', async () => {
     const { id } = await officeJob();
     await assign(OFFICE_A, id, h.seed.estimatorA.actor);
-    expect((await saveNotes(OFFICE_A, id, { revision: 1, changeId: randomUUID(), notes: 'Gate code 1234\nDog in yard' })).status).toBe(200);
+    expect((await saveNotes(OFFICE_A, id, { revision: 0, changeId: randomUUID(), notes: 'Gate code 1234\nDog in yard' })).status).toBe(200);
     const seen = await read(ESTIMATOR_A, id);
     expect(seen.status).toBe(200);
     expect(Object.keys(seen.body).sort()).toEqual(['claim', 'customer', 'job']);
@@ -322,20 +324,23 @@ describe('office notes', () => {
   it('saves the notes once per change, refuses a stale copy, and answers a lost response with the same view', async () => {
     const { id } = await officeJob();
     const changeId = randomUUID();
-    const saved = await saveNotes(OFFICE_A, id, { revision: 1, changeId, notes: 'Call before arriving' });
+    // The coordination revision: 0 before the first note.
+    const saved = await saveNotes(OFFICE_A, id, { revision: 0, changeId, notes: 'Call before arriving' });
     expect(saved.status).toBe(200);
-    expect(saved.body).toMatchObject({ jobId: id, revision: 2, notes: 'Call before arriving', fieldOwner: null });
-    const again = await saveNotes(OFFICE_A, id, { revision: 1, changeId, notes: 'Call before arriving' });
+    expect(saved.body).toMatchObject({ jobId: id, revision: 1, notes: 'Call before arriving', fieldOwner: null });
+    // Notes are coordination: the job revision a reviewed estimate is bound to stays.
+    expect((await read(OFFICE_A, id)).body.job.revision).toBe(1);
+    const again = await saveNotes(OFFICE_A, id, { revision: 0, changeId, notes: 'Call before arriving' });
     expect(again).toEqual(saved);
     expect(await audits('job_coordination_saved')).toBe(1);
-    expect(await saveNotes(OFFICE_A, id, { revision: 1, changeId, notes: 'Something else' })).toEqual({ status: 409, body: { error: 'conflict' } });
-    expect(await saveNotes(OFFICE_A, id, { revision: 1, changeId: randomUUID(), notes: 'Late' })).toEqual({
+    expect(await saveNotes(OFFICE_A, id, { revision: 0, changeId, notes: 'Something else' })).toEqual({ status: 409, body: { error: 'conflict' } });
+    expect(await saveNotes(OFFICE_A, id, { revision: 0, changeId: randomUUID(), notes: 'Late' })).toEqual({
       status: 409,
-      body: { error: 'stale_revision', revision: 2 },
+      body: { error: 'stale_revision', revision: 1 },
     });
     // A control character other than a tab or a line break is refused at the boundary.
-    expect((await saveNotes(OFFICE_A, id, { revision: 2, changeId: randomUUID(), notes: 'bell\u0007' })).status).toBe(400);
-    expect((await saveNotes(OFFICE_A, id, { revision: 2, changeId: randomUUID(), notes: 'x'.repeat(4001) })).status).toBe(400);
+    expect((await saveNotes(OFFICE_A, id, { revision: 1, changeId: randomUUID(), notes: 'bell\u0007' })).status).toBe(400);
+    expect((await saveNotes(OFFICE_A, id, { revision: 1, changeId: randomUUID(), notes: 'x'.repeat(4001) })).status).toBe(400);
   });
 });
 
@@ -403,7 +408,7 @@ describe('the first capture', () => {
     expect(draftOf(draftId)?.fieldOwnerUid).toBeNull();
     const retry = await claim(ESTIMATOR_A, id);
     expect(retry.status).toBe(200);
-    expect(draftOf(draftId)).toEqual({ fieldOwnerUid: 'estimator-a', fieldOwnerRevision: 2 });
+    expect(draftOf(draftId)).toEqual({ fieldOwnerUid: 'estimator-a', fieldOwnerRevision: 1 });
     expect(await audits('job_field_owner_claimed')).toBe(1);
   });
 
@@ -436,22 +441,24 @@ describe('moving the field work (owner decision J5)', () => {
   it('moves the field work to an assigned estimator, audited, and the phone that held it can add no more', async () => {
     const { id, draftId } = await claimedJob();
     const changeId = randomUUID();
-    const moved = await transfer(OWNER_A, id, { revision: 2, changeId, toActorId: estimatorA2 });
+    const moved = await transfer(OWNER_A, id, { revision: 1, changeId, toActorId: estimatorA2 });
     expect(moved.status).toBe(200);
     expect(moved.body.fieldOwner?.actorId).toBe(estimatorA2);
-    expect(moved.body.revision).toBe(3);
-    expect(draftOf(draftId)).toEqual({ fieldOwnerUid: 'estimator-a2', fieldOwnerRevision: 3 });
+    expect(moved.body.revision).toBe(2);
+    // A move is coordination: the job revision stays.
+    expect((await read(OWNER_A, id)).body.job.revision).toBe(1);
+    expect(draftOf(draftId)).toEqual({ fieldOwnerUid: 'estimator-a2', fieldOwnerRevision: 2 });
     const [row] = await h.admin`SELECT details FROM audit_events WHERE action = 'job_field_owner_moved'`;
-    expect(row!.details).toEqual({ revision: 3, fromActorId: h.seed.estimatorA.actor, toActorId: estimatorA2 });
+    expect(row!.details).toEqual({ revision: 2, fromActorId: h.seed.estimatorA.actor, toActorId: estimatorA2 });
     expect((await sendPhoto(ESTIMATOR_A, id)).body.error).toBe('not_field_owner');
     expect((await sendPhoto(ESTIMATOR_A2, id)).status).toBe(201);
     // The same change again is the same answer, and sets the draft again; with another target it is a conflict.
-    expect(await transfer(OWNER_A, id, { revision: 2, changeId, toActorId: estimatorA2 })).toEqual(moved);
+    expect(await transfer(OWNER_A, id, { revision: 1, changeId, toActorId: estimatorA2 })).toEqual(moved);
     expect(await audits('job_field_owner_moved')).toBe(1);
-    expect(await transfer(OWNER_A, id, { revision: 2, changeId, toActorId: h.seed.ownerA.actor })).toEqual({ status: 409, body: { error: 'conflict' } });
-    expect(await transfer(OWNER_A, id, { revision: 2, changeId: randomUUID(), toActorId: h.seed.ownerA.actor })).toEqual({
+    expect(await transfer(OWNER_A, id, { revision: 1, changeId, toActorId: h.seed.ownerA.actor })).toEqual({ status: 409, body: { error: 'conflict' } });
+    expect(await transfer(OWNER_A, id, { revision: 1, changeId: randomUUID(), toActorId: h.seed.ownerA.actor })).toEqual({
       status: 409,
-      body: { error: 'stale_revision', revision: 3 },
+      body: { error: 'stale_revision', revision: 2 },
     });
   });
 
@@ -459,10 +466,10 @@ describe('moving the field work (owner decision J5)', () => {
     const { id, draftId } = await claimedJob();
     const before = await everything(h.admin);
     for (const actor of [h.seed.officeA.actor, h.seed.disabledA.actor, h.seed.estimatorB.actor, randomUUID()]) {
-      expect(await transfer(OWNER_A, id, { revision: 2, changeId: randomUUID(), toActorId: actor })).toEqual({ status: 409, body: { error: 'not_assignable' } });
+      expect(await transfer(OWNER_A, id, { revision: 1, changeId: randomUUID(), toActorId: actor })).toEqual({ status: 409, body: { error: 'not_assignable' } });
     }
     expect(await everything(h.admin)).toBe(before);
-    const toOwner = await transfer(OWNER_A, id, { revision: 2, changeId: randomUUID(), toActorId: h.seed.ownerA.actor });
+    const toOwner = await transfer(OWNER_A, id, { revision: 1, changeId: randomUUID(), toActorId: h.seed.ownerA.actor });
     expect(toOwner.status).toBe(200);
     expect(toOwner.body.fieldOwner?.actorId).toBe(h.seed.ownerA.actor);
     expect(draftOf(draftId)?.fieldOwnerUid).toBe('owner-a');
@@ -472,21 +479,21 @@ describe('moving the field work (owner decision J5)', () => {
     const { id } = await claimedJob();
     const before = await everything(h.admin);
     for (const who of [OFFICE_A, ESTIMATOR_A, ESTIMATOR_A2]) {
-      expect(await transfer(who, id, { revision: 2, changeId: randomUUID(), toActorId: estimatorA2 })).toEqual({ status: 403, body: { error: 'not_allowed' } });
+      expect(await transfer(who, id, { revision: 1, changeId: randomUUID(), toActorId: estimatorA2 })).toEqual({ status: 403, body: { error: 'not_allowed' } });
     }
-    expect(await transfer(OWNER_B, id, { revision: 2, changeId: randomUUID(), toActorId: estimatorA2 })).toEqual({ status: 404, body: { error: 'not_found' } });
+    expect(await transfer(OWNER_B, id, { revision: 1, changeId: randomUUID(), toActorId: estimatorA2 })).toEqual({ status: 404, body: { error: 'not_found' } });
     expect(await everything(h.admin)).toBe(before);
   });
 
   it('keeps the move when the draft could not be updated, and sets the draft when the same change is sent again', async () => {
     const { id, draftId } = await claimedJob();
-    const body = { revision: 2, changeId: randomUUID(), toActorId: estimatorA2 };
+    const body = { revision: 1, changeId: randomUUID(), toActorId: estimatorA2 };
     h.drafts.failNext = { on: true, afterWrite: false };
     expect(await transfer(OWNER_A, id, body)).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
     expect((await read(OWNER_A, id)).body.job.fieldOwnerActorId).toBe(estimatorA2);
     expect(draftOf(draftId)?.fieldOwnerUid).toBe('estimator-a');
     expect((await transfer(OWNER_A, id, body)).status).toBe(200);
-    expect(draftOf(draftId)).toEqual({ fieldOwnerUid: 'estimator-a2', fieldOwnerRevision: 3 });
+    expect(draftOf(draftId)).toEqual({ fieldOwnerUid: 'estimator-a2', fieldOwnerRevision: 2 });
   });
 
   it('names the new owner on every draft of the job, so the estimator who lost the field work reads no earlier draft', async () => {
@@ -495,7 +502,7 @@ describe('moving the field work (owner decision J5)', () => {
     expect((await submitDraft(ESTIMATOR_A, id, { id: randomUUID(), draftId, digest: await manifestDigest(MANIFEST) })).status).toBe(201);
     const later = randomUUID();
     expect((await nextDraft(ESTIMATOR_A, id, { draftId: later, fromDraftId: draftId })).status).toBe(201);
-    const { revision } = (await read(OWNER_A, id)).body.job;
+    const { revision } = (await coordination(OWNER_A, id)).body;
     expect((await transfer(OWNER_A, id, { revision, changeId: randomUUID(), toActorId: estimatorA2 })).status).toBe(200);
     expect(draftOf(later)).toEqual({ fieldOwnerUid: 'estimator-a2', fieldOwnerRevision: revision + 1 });
     expect(draftOf(draftId)).toEqual({ fieldOwnerUid: 'estimator-a2', fieldOwnerRevision: revision + 1 });
@@ -509,7 +516,7 @@ describe('moving the field work (owner decision J5)', () => {
     h.field.gate.read = () => hold.wait;
     const first = submitDraft(ESTIMATOR_A, id, { id: randomUUID(), draftId, digest });
     await until(() => h.field.draft(h.seed.a, draftId)?.state === 'submitting', 'the fence');
-    expect((await transfer(OWNER_A, id, { revision: 2, changeId: randomUUID(), toActorId: estimatorA2 })).status).toBe(200);
+    expect((await transfer(OWNER_A, id, { revision: 1, changeId: randomUUID(), toActorId: estimatorA2 })).status).toBe(200);
     hold.open();
     expect(await first).toEqual({ status: 403, body: { error: 'not_field_owner' } });
     expect(await count('job_submissions', "status = 'committed'")).toBe(0);
@@ -527,7 +534,7 @@ describe('moving the field work (owner decision J5)', () => {
     h.field.gate.read = () => hold.wait;
     const first = submitDraft(ESTIMATOR_A, id, { id: randomUUID(), draftId, digest });
     await until(() => h.field.draft(h.seed.a, draftId)?.state === 'submitting', 'the fence');
-    const moved = await transfer(OWNER_A, id, { revision: 2, changeId: randomUUID(), toActorId: estimatorA2 });
+    const moved = await transfer(OWNER_A, id, { revision: 1, changeId: randomUUID(), toActorId: estimatorA2 });
     expect(moved.status).toBe(200);
     const theirs = moved.body.assignments.find((one) => one.actorId === h.seed.estimatorA.actor)!.id;
     expect((await unassign(OFFICE_A, id, theirs)).status).toBe(200);
@@ -544,7 +551,7 @@ describe('moving the field work (owner decision J5)', () => {
     expect((await submitDraft(ESTIMATOR_A, id, { id: randomUUID(), draftId, digest: await manifestDigest(MANIFEST) })).status).toBe(201);
     const later = randomUUID();
     expect((await nextDraft(ESTIMATOR_A, id, { draftId: later, fromDraftId: draftId })).status).toBe(201);
-    const { revision } = (await read(OWNER_A, id)).body.job;
+    const { revision } = (await coordination(OWNER_A, id)).body;
     // One draft is set, then the field database stops answering.
     h.drafts.failNext = { on: true, afterWrite: true };
     expect(await transfer(OWNER_A, id, { revision, changeId: randomUUID(), toActorId: estimatorA2 })).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
@@ -554,11 +561,48 @@ describe('moving the field work (owner decision J5)', () => {
     expect(draftOf(draftId)).toEqual({ fieldOwnerUid: 'estimator-a2', fieldOwnerRevision: revision + 1 });
   });
 
+  it('refuses the company owner field work they do not own, until they move it to themself', async () => {
+    const { id, draftId } = await claimedJob();
+    h.field.put(h.seed.a, draftId, MANIFEST);
+    const digest = await manifestDigest(MANIFEST);
+    const before = await everything(h.admin);
+    expect(await sendPhoto(OWNER_A, id)).toEqual({ status: 403, body: { error: 'not_field_owner' } });
+    expect(await submitDraft(OWNER_A, id, { id: randomUUID(), draftId, digest })).toMatchObject({ status: 403, body: { error: 'not_field_owner' } });
+    expect(await everything(h.admin)).toBe(before);
+    expect((await transfer(OWNER_A, id, { revision: 1, changeId: randomUUID(), toActorId: h.seed.ownerA.actor })).status).toBe(200);
+    expect((await sendPhoto(OWNER_A, id)).status).toBe(201);
+    expect((await submitDraft(OWNER_A, id, { id: randomUUID(), draftId, digest })).status).toBe(201);
+    // Moved back to the estimator, the owner cannot make the next draft; moved to themself again, they can.
+    expect((await transfer(OWNER_A, id, { revision: 2, changeId: randomUUID(), toActorId: h.seed.estimatorA.actor })).status).toBe(200);
+    const next = { draftId: randomUUID(), fromDraftId: draftId };
+    expect(await nextDraft(OWNER_A, id, next)).toMatchObject({ status: 403, body: { error: 'not_field_owner' } });
+    expect((await transfer(OWNER_A, id, { revision: 3, changeId: randomUUID(), toActorId: h.seed.ownerA.actor })).status).toBe(200);
+    expect((await nextDraft(OWNER_A, id, next)).status).toBe(201);
+  });
+
+  it('sends the field owner to every draft again on a signed job, without allowing a new move', async () => {
+    const { id, draftId } = await claimedJob();
+    h.field.put(h.seed.a, draftId, MANIFEST);
+    expect((await submitDraft(ESTIMATOR_A, id, { id: randomUUID(), draftId, digest: await manifestDigest(MANIFEST) })).status).toBe(201);
+    // The move's draft step does not get through, then the job is signed before it is sent again.
+    h.drafts.failNext = { on: true, afterWrite: false };
+    expect(await transfer(OWNER_A, id, { revision: 1, changeId: randomUUID(), toActorId: estimatorA2 })).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
+    await h.admin`UPDATE jobs SET status = 'signed', revision = revision + 1 WHERE id = ${id}`;
+    expect(draftOf(draftId)?.fieldOwnerUid).toBe('estimator-a');
+    expect(await transfer(OWNER_A, id, { revision: 2, changeId: randomUUID(), toActorId: h.seed.ownerA.actor })).toEqual({ status: 409, body: { error: 'job_signed' } });
+    const again = await transfer(OWNER_A, id, { revision: 2, changeId: randomUUID(), toActorId: estimatorA2 });
+    expect(again.status).toBe(200);
+    expect(again.body.revision).toBe(2);
+    expect(draftOf(draftId)).toEqual({ fieldOwnerUid: 'estimator-a2', fieldOwnerRevision: 2 });
+    expect((await claim(ESTIMATOR_A2, id)).status).toBe(200);
+    expect(await audits('job_field_owner_moved')).toBe(1);
+  });
+
   it('never lets an older owner overwrite a newer one on the draft', async () => {
     const { id, draftId } = await claimedJob();
-    expect((await transfer(OWNER_A, id, { revision: 2, changeId: randomUUID(), toActorId: estimatorA2 })).status).toBe(200);
-    // A slow first-capture request that read the job at revision 2 arrives after the move.
-    expect(await h.drafts.setFieldOwner(h.seed.a, draftId, 'estimator-a', 2)).toBe('newer');
+    expect((await transfer(OWNER_A, id, { revision: 1, changeId: randomUUID(), toActorId: estimatorA2 })).status).toBe(200);
+    // A slow first-capture request made at coordination revision 1 arrives after the move.
+    expect(await h.drafts.setFieldOwner(h.seed.a, draftId, 'estimator-a', 1)).toBe('newer');
     expect(draftOf(draftId)?.fieldOwnerUid).toBe('estimator-a2');
     // And the estimator who lost the field work cannot take it back.
     expect(await claim(ESTIMATOR_A, id)).toEqual({ status: 409, body: { error: 'field_owner_taken' } });

@@ -384,11 +384,11 @@ describe('the full-size original', () => {
 });
 
 describe('who may send a photo', () => {
-  it('lets the owner and the estimator who owns the job, and refuses office with 403', async () => {
+  it('lets the estimator who owns the job, and refuses the owner who does not own its field work and office with 403', async () => {
     const { jobId } = await newJob(ESTIMATOR_A);
     expect((await sendPhoto(ESTIMATOR_A, jobId, randomUUID(), image('e'))).status).toBe(201);
-    expect((await sendPhoto(OWNER_A, jobId, randomUUID(), image('o'))).status).toBe(201);
     const before = await everything(h.admin);
+    expect(await sendPhoto(OWNER_A, jobId, randomUUID(), image('o'))).toEqual({ status: 403, body: { error: 'not_field_owner' } });
     expect(await sendPhoto(OFFICE_A, jobId, randomUUID(), image('office'))).toEqual({ status: 403, body: { error: 'not_allowed' } });
     expect(await everything(h.admin)).toBe(before);
   });

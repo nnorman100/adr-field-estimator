@@ -203,7 +203,7 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
   // Step 1.
   async function intent(caller: JobCaller, jobId: string, input: SubmitInput, digest: string): Promise<SubmissionRow> {
     return inCompany(caller.companyId, async (tx) => {
-      // Submit closes the field work: an estimator must own it, not only be assigned the job.
+      // Submit closes the field work: only its field owner submits, whatever their role.
       const job = await jobAccess(tx, caller, jobId, SUBMIT, { lock: true, fieldWork: true });
       const existing = await submissionRow(tx, caller.companyId, input.id);
       if (existing) {
@@ -420,7 +420,7 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
     async backToEditing(caller, jobId, input) {
       if (!hasAny(caller, SUBMIT)) throw new JobError('not_allowed');
       const made = await inCompany(caller.companyId, async (tx) => {
-        // A new draft version of the field work: the field owner's (or the owner's) to make.
+        // A new draft version of the field work: the field owner's to make.
         const job = await jobAccess(tx, caller, jobId, SUBMIT, { lock: true, fieldWork: true });
         // The job's latest record: a new draft is made only from it.
         const [latest] = await tx

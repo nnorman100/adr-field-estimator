@@ -29,7 +29,7 @@ type FieldWork = 'mine' | 'other' | 'nobody';
 function fieldWorkOf(session: FieldSession, detail: JobDetail): FieldWork {
   const owner = detail.job.fieldOwnerActorId;
   if (owner === null) return 'nobody';
-  return session.actorId !== null && owner === session.actorId ? 'mine' : 'other';
+  return owner === session.actorId ? 'mine' : 'other';
 }
 
 const readsEveryDraft = (session: FieldSession) => session.role === 'owner' || session.role === 'office';
@@ -97,8 +97,9 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     async (current?: JobDetail) => {
       const job = current ?? detail;
       if (!job || !session.db) return;
+      // Field work that is no longer this person's stays on screen as last read, read only, with
+      // whatever they changed and did not save (owner decision J5; S6 offers Save as new draft).
       if (!draftReadable(session, job)) {
-        setDraft(null);
         setDraftError(null);
         setOwnerUnset(false);
         return;
@@ -111,7 +112,6 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       } catch (error) {
         const refusal = fieldRefusal(error);
         if (refusal && refusal.status === 403 && !readsEveryDraft(session)) {
-          setDraft(null);
           setDraftError(null);
           setOwnerUnset(true);
           return;
@@ -153,17 +153,20 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     return apply(await readJob(session.user, jobId), sentAt);
   }, [apply, session, jobId]);
 
+  // A 403 may be the field work moving to another person: the job is read again, and only a refusal
+  // to show it drops it; the draft and what was typed stay on screen, read only.
   const checkAccess = useCallback(
     (refusal: Refusal | null) => {
       if (!refusal) return;
-      if (refusal.status === 401 || refusal.status === 403) return deny(refusal.message);
+      if (refusal.status === 401) return deny(refusal.message);
+      if (refusal.status === 403) return void reloadJob();
       if (refusal.status !== 404) return;
       const sentAt = pending.mark(jobId);
       void readJob(session.user, jobId).then((answer) => {
         if (pending.readAnswered(jobId, answer, sentAt) && !answer.ok && answer.denied) setDraft(null);
       });
     },
-    [deny, jobId, session.user],
+    [deny, jobId, session.user, reloadJob],
   );
 
   // The first read; each job is its own component (keyed by the parent).
@@ -202,7 +205,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   if (!detail) return <p role="status">Opening the job…</p>;
 
   const fieldWork = fieldWorkOf(session, detail);
-  const ownerOnJobOnly = fieldWork === 'mine' && detail.job.status !== 'signed' && (ownerUnset || (draft !== null && draft.fieldOwnerUid !== session.user.uid));
+  const ownerOnJobOnly = fieldWork === 'mine' && (ownerUnset || (draft !== null && draft.fieldOwnerUid !== session.user.uid));
   const context: JobContext = {
     session,
     detail,
@@ -212,7 +215,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     draftRef: { companyId: session.companyId, draftId: detail.job.currentDraftId },
     reloadDraft: () => reloadDraft(detail),
     checkAccess,
-    editable: draft !== null && canEditDraft(draft, session.user.uid, session.capabilities),
+    editable: draft !== null && fieldWork === 'mine' && !ownerUnset && canEditDraft(draft, session.user.uid, session.capabilities),
     stale: draft !== null && draftError !== null,
   };
 
@@ -234,12 +237,14 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       ) : null}
       {(view === 'scope' || view === 'photos') && fieldWork === 'other' && !readsEveryDraft(session) ? (
         <p className="rounded-md bg-foreground/5 p-3 text-sm">
-          Another person owns this job’s field work, so it is not shown here. The company owner can move it to you.
+          {draft === null
+            ? 'Another person owns this job’s field work, so it is not shown here. The company owner can move it to you.'
+            : 'Another person now owns this job’s field work, so this phone shows it read only. What you changed and did not save stays here, and is not saved to this job.'}
         </p>
       ) : null}
-      {(view === 'scope' || view === 'photos') && draft !== null && !context.editable ? (
+      {(view === 'scope' || view === 'photos') && draft !== null && !context.editable && !(fieldWork === 'other' && !readsEveryDraft(session)) ? (
         <p className="rounded-md bg-foreground/5 p-3 text-sm">
-          Read only. Only the estimator who owns this job&rsquo;s field work changes it, while the job is being edited.
+          Read only. Only the person who owns this job&rsquo;s field work changes it, while the job is being edited.
         </p>
       ) : null}
       {(view === 'scope' || view === 'photos') && !session.db ? (

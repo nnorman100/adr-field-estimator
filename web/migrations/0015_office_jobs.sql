@@ -1,5 +1,6 @@
 -- Office jobs, assignment and field owner (S5b-1, docs/plans/S5.md): the one database job of the
--- step. This file only adds three tables; nothing in 0001 to 0014 changes.
+-- step. This file adds three tables and lets a job's field owner change without its revision (5);
+-- no table or row of 0001 to 0014 changes.
 --
 -- 1. job_assignments: an estimator assigned to a job by the owner or office (`assignment`). An
 --    assignment is made from a client-made uuid, so a retried assign finds its row instead of making
@@ -8,12 +9,17 @@
 --    ended row never changes again. An estimator sees the jobs they are actively assigned.
 -- 2. job_coordination: the office notes of a job, one row per job, made when first saved. Owner and
 --    office (`coordination`) read and write them; an estimator never sees them (the customer view).
+--    Its revision counts the coordination changes (the notes and the field owner), apart from the
+--    job revision a reviewed estimate and a signing link are bound to (0011, 0014), so neither a note
+--    nor a move of the field work voids them.
 -- 3. agreement_corrections: a correction of an address, name or contact field on a signed job (for
 --    S5b-4, which adds the routes). Insert-only: the runtime has SELECT and INSERT, so a correction
 --    is never changed or removed, and the signed agreement it sits beside never changes either.
 -- 4. Every row belongs to a company and is held only inside withCompany (0003). A platform operator
 --    reads a company's rows through withOperator; every write policy refuses an active operator. No
 --    DELETE and no TRUNCATE for the runtime; a trigger holds which columns of an assignment may change.
+-- 5. The job revision (0010) still rises by exactly one with every change of a job, except one that
+--    changes only its field owner, which is coordination and keeps the revision.
 
 -- 1. Assignments.
 CREATE TABLE job_assignments (
@@ -52,6 +58,9 @@ CREATE TABLE job_coordination (
   job_id uuid NOT NULL,
   office_notes text NOT NULL DEFAULT ''
     CHECK (char_length(office_notes) <= 4000 AND office_notes !~ '[\x01-\x08\x0b\x0c\x0e-\x1f\x7f]'),
+  -- The coordination revision (1 when the row is made), and the client's id for its latest change.
+  revision integer NOT NULL DEFAULT 1 CHECK (revision >= 1),
+  last_change_id uuid,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (company_id, job_id),
@@ -173,4 +182,31 @@ CREATE POLICY agreement_corrections_insert ON agreement_corrections
 -- change may be updated; the corrections are insert-only.
 GRANT SELECT, INSERT ON job_assignments, job_coordination, agreement_corrections TO dryscope_runtime;
 GRANT UPDATE (ended_at, ended_by_actor_id) ON job_assignments TO dryscope_runtime;
-GRANT UPDATE (office_notes, updated_at) ON job_coordination TO dryscope_runtime;
+GRANT UPDATE (office_notes, revision, last_change_id, updated_at) ON job_coordination TO dryscope_runtime;
+
+-- 5. The job revision guard of 0010, the same but for an update that changes the field owner and
+-- nothing else.
+CREATE OR REPLACE FUNCTION jobs_guard_revision() RETURNS trigger
+  LANGUAGE plpgsql
+  SET search_path = pg_catalog
+AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.revision <> 1 THEN
+      RAISE EXCEPTION 'a new job starts at revision 1' USING ERRCODE = '23514';
+    END IF;
+    IF NEW.status <> 'draft' THEN
+      RAISE EXCEPTION 'a new job starts as a draft' USING ERRCODE = '23514';
+    END IF;
+  ELSIF NEW.revision = OLD.revision
+     AND NEW.field_owner_actor_id IS DISTINCT FROM OLD.field_owner_actor_id
+     AND to_jsonb(NEW) - 'field_owner_actor_id' = to_jsonb(OLD) - 'field_owner_actor_id' THEN
+    RETURN NEW;
+  ELSIF NEW.revision <> OLD.revision + 1 THEN
+    RAISE EXCEPTION 'a job revision rises by exactly one' USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+REVOKE ALL ON FUNCTION jobs_guard_revision() FROM PUBLIC;

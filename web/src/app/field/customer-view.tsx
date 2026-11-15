@@ -37,7 +37,7 @@ const claimOf = (detail: JobDetail): Values => ({ ...detail.claim, dateOfLoss: d
 // while the job is unsigned; the server decides, and its refusal is shown.
 export function CustomerView({ job }: { job: JobContext }) {
   const caps = job.session.capabilities;
-  const ownsFieldWork = job.session.actorId !== null && job.detail.job.fieldOwnerActorId === job.session.actorId;
+  const ownsFieldWork = job.detail.job.fieldOwnerActorId === job.session.actorId;
   const canSave = caps.includes('coordination') || (caps.includes('scope') && ownsFieldWork);
   return (
     <div className="flex flex-col gap-4">

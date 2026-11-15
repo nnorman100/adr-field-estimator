@@ -120,8 +120,8 @@ export function photosService(db: Database, store: EvidenceStore, drafts: DraftS
     async receive(caller, jobId, photoId, kind, input) {
       // 1. Access, and what the registry already holds for this id. No lock: nothing is changed yet.
       const seen = await withCompany(db, caller.companyId, async (tx) => {
-        // A new photo adds to the field work: an estimator must own it (an original or a signature
-        // does not).
+        // A new photo adds to the field work: only its field owner adds one, whatever their role (an
+        // original or a signature does not need it).
         const job = await jobAccess(tx, caller, jobId, sendNeeds(kind), { fieldWork: kind === 'photo' });
         const rows = await registryRows(tx, caller, jobId, photoId);
         const same = rows.find((row) => row.kind === kind);

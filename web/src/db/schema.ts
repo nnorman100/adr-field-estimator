@@ -770,6 +770,9 @@ export const jobCoordination = pgTable(
     companyId: uuid('company_id').notNull(),
     jobId: uuid('job_id').notNull(),
     officeNotes: text('office_notes').notNull().default(''),
+    // The coordination revision (notes and field owner), apart from the job revision (0015).
+    revision: integer('revision').notNull().default(1),
+    lastChangeId: uuid('last_change_id'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

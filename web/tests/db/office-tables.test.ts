@@ -74,7 +74,9 @@ describe('migration 0015: the office tables', () => {
     expect(updates).toEqual([
       { table: 'job_assignments', column: 'ended_at' },
       { table: 'job_assignments', column: 'ended_by_actor_id' },
+      { table: 'job_coordination', column: 'last_change_id' },
       { table: 'job_coordination', column: 'office_notes' },
+      { table: 'job_coordination', column: 'revision' },
       { table: 'job_coordination', column: 'updated_at' },
     ]);
     const job = await jobOf();
@@ -143,6 +145,17 @@ describe('migration 0015: the office tables', () => {
     expect(await run(h.seed.a, `UPDATE job_assignments SET ended_by_actor_id = '${h.seed.ownerA.actor}' WHERE id = '${id}'`)).toBe(CHECK_VIOLATION);
     await assignment(job.id);
     expect(await h.admin`SELECT count(*)::int AS n FROM job_assignments WHERE ended_at IS NULL`).toEqual([{ n: 1 }]);
+  });
+
+  it('lets a job change its field owner and nothing else without a new revision; every other change still moves it by one', async () => {
+    const job = await jobOf();
+    const [before] = await h.admin<{ revision: number }[]>`SELECT revision FROM jobs WHERE id = ${job.id}`;
+    const owner = h.seed.estimatorA.actor;
+    expect(await run(h.seed.a, `UPDATE jobs SET field_owner_actor_id = '${owner}' WHERE id = '${job.id}'`)).toBeUndefined();
+    expect(await h.admin`SELECT field_owner_actor_id::text AS owner, revision FROM jobs WHERE id = ${job.id}`).toEqual([{ owner, revision: before!.revision }]);
+    expect(await run(h.seed.a, `UPDATE jobs SET field_owner_actor_id = NULL, property_address = 'Elsewhere' WHERE id = '${job.id}'`)).toBe(CHECK_VIOLATION);
+    expect(await run(h.seed.a, `UPDATE jobs SET property_address = 'Elsewhere' WHERE id = '${job.id}'`)).toBe(CHECK_VIOLATION);
+    expect(await run(h.seed.a, `UPDATE jobs SET property_address = 'Elsewhere', revision = revision + 1 WHERE id = '${job.id}'`)).toBeUndefined();
   });
 
   it('holds office notes to 4,000 characters of text, with line breaks and tabs but no other control character', async () => {

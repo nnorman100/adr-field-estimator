@@ -5,7 +5,7 @@ import type { Capability } from '@/lib/access';
 import { hasAny, jobAccess, JobError, type JobCaller, type JobRow } from './access';
 import type { DraftStore } from './drafts';
 import { assignDigest, type AssignInput, type CoordinationInput, type TransferInput } from './schema';
-import { advance, audit, CHECK_VIOLATION, detailOf, errorCode, type JobDetail } from './service';
+import { audit, CHECK_VIOLATION, detailOf, errorCode, type JobDetail } from './service';
 
 // Office jobs, assignment and the field owner (S5b-1, docs/plans/S5.md; docs/spec.md 6.2). Every
 // function runs inside withCompany for the company of the verified sign-in and goes through the one
@@ -17,6 +17,10 @@ import { advance, audit, CHECK_VIOLATION, detailOf, errorCode, type JobDetail } 
 // Firestore draft's `fieldOwnerUid`, which the field rules read, is the server's copy of it, set in a
 // Firestore transaction after the Postgres change commits. A request whose Firestore step did not get
 // through answers 503 and, sent again, sets it.
+//
+// The notes and the field owner are coordination, not the document: they move the job's coordination
+// revision (job_coordination, 0015), never the job revision that a reviewed estimate and a signing
+// link are bound to (S5a-9), so saving notes or moving the field work never voids either.
 
 const COORDINATION: readonly Capability[] = ['coordination'];
 const VIEW_COORDINATION: readonly Capability[] = ['coordination', 'assignment'];
@@ -33,6 +37,7 @@ export type AssignmentView = PersonView & { id: string; assignedAt: string };
 export type CoordinationView = {
   jobId: string;
   status: JobRow['status'];
+  // The coordination revision: 0 until the first note or field owner change.
   revision: number;
   notes: string;
   // Who owns the field work now; null until the first capture.
@@ -56,12 +61,43 @@ function need(caller: JobCaller, keys: readonly Capability[]): void {
   if (!hasAny(caller, keys)) throw new JobError('not_allowed');
 }
 
-async function readNotes(tx: CompanyTransaction, row: JobRow): Promise<string> {
+type Coordination = { notes: string; revision: number; lastChangeId: string | null };
+
+async function readCoordination(tx: CompanyTransaction, row: JobRow): Promise<Coordination> {
   const [found] = await tx
-    .select({ notes: jobCoordination.officeNotes })
+    .select({ notes: jobCoordination.officeNotes, revision: jobCoordination.revision, lastChangeId: jobCoordination.lastChangeId })
     .from(jobCoordination)
     .where(and(eq(jobCoordination.companyId, row.companyId), eq(jobCoordination.jobId, row.id)));
-  return found?.notes ?? '';
+  return found ?? { notes: '', revision: 0, lastChangeId: null };
+}
+
+// Moves the coordination to its next revision under the job's row lock the caller holds, with the
+// notes when they change and the change id when the change has one. Answers the new revision.
+async function advanceCoordination(tx: CompanyTransaction, row: JobRow, changeId: string | null, notes?: string): Promise<number> {
+  const [saved] = await tx
+    .insert(jobCoordination)
+    .values({ companyId: row.companyId, jobId: row.id, officeNotes: notes ?? '', revision: 1, lastChangeId: changeId })
+    .onConflictDoUpdate({
+      target: [jobCoordination.companyId, jobCoordination.jobId],
+      set: {
+        ...(notes === undefined ? {} : { officeNotes: notes }),
+        ...(changeId === null ? {} : { lastChangeId: changeId }),
+        revision: sql`${jobCoordination.revision} + 1`,
+        updatedAt: sql`now()`,
+      },
+    })
+    .returning({ revision: jobCoordination.revision });
+  return saved!.revision;
+}
+
+// Names the field owner on the job. Only the field owner changes: the job revision stays (0015).
+async function setFieldOwner(tx: CompanyTransaction, row: JobRow, actorId: string): Promise<JobRow> {
+  const [next] = await tx
+    .update(jobs)
+    .set({ fieldOwnerActorId: actorId })
+    .where(and(eq(jobs.companyId, row.companyId), eq(jobs.id, row.id)))
+    .returning();
+  return next!;
 }
 
 async function person(tx: CompanyTransaction, companyId: string, actorId: string): Promise<PersonView | null> {
@@ -106,11 +142,12 @@ async function activeEstimators(tx: CompanyTransaction, companyId: string, only?
 }
 
 async function viewOf(tx: CompanyTransaction, row: JobRow): Promise<CoordinationView> {
+  const coordination = await readCoordination(tx, row);
   return {
     jobId: row.id,
     status: row.status,
-    revision: row.revision,
-    notes: await readNotes(tx, row),
+    revision: coordination.revision,
+    notes: coordination.notes,
     fieldOwner: row.fieldOwnerActorId ? await person(tx, row.companyId, row.fieldOwnerActorId) : null,
     assignments: await activeAssignments(tx, row),
     estimators: await activeEstimators(tx, row.companyId),
@@ -177,23 +214,17 @@ export function officeService(db: Database, drafts: DraftStore): OfficeService {
       need(caller, COORDINATION);
       return inCompany(caller.companyId, async (tx) => {
         const row = await jobAccess(tx, caller, jobId, COORDINATION, { lock: true });
+        const current = await readCoordination(tx, row);
         // The same change again (its response was lost): nothing more to do, as long as it says what
         // was saved. Office notes are coordination, not the signed record, so a signed job keeps them.
-        if (row.lastChangeId === input.changeId) {
-          if ((await readNotes(tx, row)) !== input.notes) throw new JobError('conflict');
+        if (current.lastChangeId === input.changeId) {
+          if (current.notes !== input.notes) throw new JobError('conflict');
           return viewOf(tx, row);
         }
-        if (row.revision !== input.revision) throw new JobError('stale_revision', { revision: row.revision });
-        await tx
-          .insert(jobCoordination)
-          .values({ companyId: row.companyId, jobId: row.id, officeNotes: input.notes })
-          .onConflictDoUpdate({
-            target: [jobCoordination.companyId, jobCoordination.jobId],
-            set: { officeNotes: input.notes, updatedAt: sql`now()` },
-          });
-        const next = await advance(tx, row, input.changeId);
-        await audit(tx, caller, 'job_coordination_saved', row.id, { revision: next.revision });
-        return viewOf(tx, next);
+        if (current.revision !== input.revision) throw new JobError('stale_revision', { revision: current.revision });
+        const revision = await advanceCoordination(tx, row, input.changeId, input.notes);
+        await audit(tx, caller, 'job_coordination_saved', row.id, { revision });
+        return viewOf(tx, row);
       });
     },
 
@@ -256,70 +287,69 @@ export function officeService(db: Database, drafts: DraftStore): OfficeService {
     // "First capture makes me field owner" (docs/spec.md 6.2): on a job nobody owns in the field yet,
     // the first person with `scope` who may see it (its creator, an assigned estimator, the owner)
     // becomes its field owner, once. Asked again by the same person it changes nothing and sets the
-    // draft again if that step was lost; asked by anyone else it is refused.
+    // drafts again if that step was lost, even on a signed job; asked by anyone else it is refused.
     async claimFieldOwner(caller, jobId) {
       need(caller, CLAIM);
       const made = await inCompany(caller.companyId, async (tx) => {
         const row = await jobAccess(tx, caller, jobId, CLAIM, { lock: true });
         if (row.fieldOwnerActorId !== null && row.fieldOwnerActorId !== caller.actorId) throw new JobError('field_owner_taken');
-        if (row.status === 'signed') throw new JobError('job_signed');
         let next = row;
+        let revision: number;
         if (row.fieldOwnerActorId === null) {
-          // The revision rises with the change (0010); the last change id is left as it is, so a
-          // customer save whose answer was lost is still recognised when it is sent again.
-          [next] = (await tx
-            .update(jobs)
-            .set({ fieldOwnerActorId: caller.actorId, revision: sql`${jobs.revision} + 1`, updatedAt: sql`now()` })
-            .where(and(eq(jobs.companyId, row.companyId), eq(jobs.id, row.id)))
-            .returning()) as [JobRow];
-          await audit(tx, caller, 'job_field_owner_claimed', row.id, { revision: next.revision });
+          if (row.status === 'signed') throw new JobError('job_signed');
+          next = await setFieldOwner(tx, row, caller.actorId);
+          revision = await advanceCoordination(tx, row, null);
+          await audit(tx, caller, 'job_field_owner_claimed', row.id, { revision });
+        } else {
+          revision = (await readCoordination(tx, row)).revision;
         }
-        return { claimed: next !== row, row: next, draftIds: await draftIdsOf(tx, next), detail: await detailOf(tx, next) };
+        return { claimed: next !== row, revision, draftIds: await draftIdsOf(tx, next), detail: await detailOf(tx, next) };
       });
-      await project(caller.companyId, made.draftIds, caller.uid, made.row.revision);
+      await project(caller.companyId, made.draftIds, caller.uid, made.revision);
       return { claimed: made.claimed, detail: made.detail };
     },
 
     // Owner decision J5: the owner moves the field work to themself or to an estimator assigned to
     // the job, audited. The phone that held it keeps its unsent changes (the field rules refuse them
-    // from now on; S6 offers Save as new draft). The same change again sets the draft again.
+    // from now on; S6 offers Save as new draft). The same change again sets the drafts again, and so
+    // does a move to the person who owns the field work already, even on a signed job: that changes
+    // nothing in Postgres and only sends the field owner to every draft once more.
     async transferFieldOwner(caller, jobId, input) {
       need(caller, TRANSFER);
       const made = await inCompany(caller.companyId, async (tx) => {
         const row = await jobAccess(tx, caller, jobId, TRANSFER, { lock: true });
+        const current = await readCoordination(tx, row);
         let next = row;
-        if (row.lastChangeId === input.changeId) {
+        let revision = current.revision;
+        if (current.lastChangeId === input.changeId) {
           if (row.fieldOwnerActorId !== input.toActorId) throw new JobError('conflict');
         } else {
-          if (row.status === 'signed') throw new JobError('job_signed');
-          if (row.revision !== input.revision) throw new JobError('stale_revision', { revision: row.revision });
+          if (current.revision !== input.revision) throw new JobError('stale_revision', { revision: current.revision });
+          const moving = row.fieldOwnerActorId !== input.toActorId;
+          if (moving && row.status === 'signed') throw new JobError('job_signed');
           if (input.toActorId !== caller.actorId) {
             const assigned = (await activeAssignments(tx, row)).some((one) => one.actorId === input.toActorId);
             const estimator = (await activeEstimators(tx, caller.companyId, input.toActorId)).length > 0;
             if (!assigned || !estimator) throw new JobError('not_assignable');
           }
-          if (row.fieldOwnerActorId !== input.toActorId) {
-            // One update: the revision rises by exactly one with each change (0010).
-            [next] = (await tx
-              .update(jobs)
-              .set({ fieldOwnerActorId: input.toActorId, revision: sql`${jobs.revision} + 1`, lastChangeId: input.changeId, updatedAt: sql`now()` })
-              .where(and(eq(jobs.companyId, row.companyId), eq(jobs.id, row.id)))
-              .returning()) as [JobRow];
+          if (moving) {
+            next = await setFieldOwner(tx, row, input.toActorId);
+            revision = await advanceCoordination(tx, row, input.changeId);
             await audit(tx, caller, 'job_field_owner_moved', row.id, {
-              revision: next.revision,
+              revision,
               fromActorId: row.fieldOwnerActorId ?? '',
               toActorId: input.toActorId,
             });
           }
         }
         return {
-          row: next,
+          revision,
           draftIds: await draftIdsOf(tx, next),
           uid: next.fieldOwnerActorId ? await uidOf(tx, caller.companyId, next.fieldOwnerActorId) : null,
           view: await viewOf(tx, next),
         };
       });
-      await project(caller.companyId, made.draftIds, made.uid, made.row.revision);
+      await project(caller.companyId, made.draftIds, made.uid, made.revision);
       return made.view;
     },
   };

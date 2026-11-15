@@ -20,7 +20,7 @@ company's rows only inside `withCompany`, with forced row-level security. A key 
   own transaction, and refuses a platform operator any change to the profile (the operator keeps 0006's
   status and sign-in tenant rights). That only the owner changes the profile is the route's rule
   (`profile_manage`, S5a-4).
-- `revision` starts at 1 and each change raises it by exactly one (a trigger), so a save made from an older
+- `revision` starts at 1 and each change raises it by exactly one (a trigger; since 0015 a change of the field owner alone keeps it), so a save made from an older
   copy is refused and a blind save fails the check (the jobs routes compare it under the job's row lock); a job
   starts as a `draft`.
   `last_change_id` is the client's id for the latest change, so a retry that carries it again is not a
@@ -56,12 +56,15 @@ the read-only operator policy (an operator reads through `withOperator`; every w
 | Table | What it holds | Runtime rights |
 | --- | --- | --- |
 | `job_assignments` | An estimator assigned to a job: `id` made on the phone, `job_id`, `estimator_actor_id`, `request_digest` (SHA-256 of the assign request), `assigned_by_actor_id`, `assigned_at`, and `ended_at` with `ended_by_actor_id` once unassigned. At most one active row per job and estimator | `SELECT`, `INSERT`, and `UPDATE` of `ended_at` and `ended_by_actor_id`; a trigger keeps every other column as made, lets an active row end once (the time from the clock) and freezes an ended row |
-| `job_coordination` | At most one row per job: `office_notes` (up to 4,000 characters; line breaks and tabs, no other control character) | `SELECT`, `INSERT`, and `UPDATE` of `office_notes` and `updated_at` |
+| `job_coordination` | At most one row per job: `office_notes` (up to 4,000 characters; line breaks and tabs, no other control character), `revision` (the coordination revision: 1 when the row is made, up by one with each note or field owner change), `last_change_id` | `SELECT`, `INSERT`, and `UPDATE` of `office_notes`, `revision`, `last_change_id` and `updated_at` |
 | `agreement_corrections` | A correction of a signed job's `property_address`, `customer_name`, `customer_phone` or `customer_email` beside its agreement (same job): `id` made on the phone, `field`, `value` (one line, the corrected column's limits), `request_digest`, `created_by_actor_id`, `created_at` | `SELECT`, `INSERT`; never changed or removed, and the agreement it sits beside never changes |
 
 - Who owns a job's field work is `jobs.field_owner_actor_id` (0010): empty on an office user's job until the
   first capture (`POST /api/jobs/{id}/field-owner`), then set once; only the owner moves it (owner decision
-  J5). The Firestore draft's `fieldOwnerUid` is the server's copy of it (`data/field-rules.md`).
+  J5). The Firestore draft's `fieldOwnerUid` is the server's copy of it (`data/field-rules.md`). A change of
+  the field owner alone keeps the job `revision` (0015 lets the revision trigger allow exactly that) and
+  moves the coordination revision instead, as a note does, so neither voids a reviewed estimate or a
+  signing link.
 - Personal data: `job_coordination.office_notes` is free text the office writes and may hold personal
   details (a gate code, a phone number); `agreement_corrections.value` holds the corrected address, name,
   phone or email. `job_assignments` holds ids and times only. Audit details hold ids and revisions only.
