@@ -6,7 +6,7 @@ import { readJob, type JobDetail, type Refusal } from '@/lib/field/api';
 import { loadJobProjection, type JobProjection } from '@/lib/field/job-projection';
 import { newerDetail, pending, usePending } from '@/lib/field/pending';
 import type { FieldSession } from '@/lib/field/session';
-import { canEditDraft, fieldRefusal, InvalidFieldData, loadDraft, type DraftRef, type FieldDraft } from '@/lib/field/store';
+import { canEditDraft, draftReads, fieldRefusal, IncompleteFieldData, InvalidFieldData, SUPERSEDED, type DraftRef, type FieldDraft } from '@/lib/field/store';
 import type { JobView } from '@/lib/field/views';
 import { CustomerView } from './customer-view';
 import { PhotosView } from './photos-view';
@@ -68,6 +68,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   const [draftAt, setDraftAt] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [draftError, setDraftError] = useState<string | null>(null);
+  const [readDraft] = useState(draftReads);
 
   // The server refused the job to this person: every copy of it goes (src/lib/field/pending.ts).
   const deny = useCallback(
@@ -83,7 +84,8 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       const draftId = currentDraftId ?? locator?.currentDraftId ?? detail?.job.currentDraftId;
       if (!draftId || !session.db) return;
       try {
-        const found = await loadDraft(session.db, { companyId: session.companyId, draftId }, source);
+        const found = await readDraft(session.db, { companyId: session.companyId, draftId }, source);
+        if (found === SUPERSEDED) return;
         setDraftAt(draftId);
         setDraft(found);
         setDraftError(found ? null : 'The field work of this job is not there yet. Try again in a moment.');
@@ -102,7 +104,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
         );
       }
     },
-    [detail, locator, session, deny],
+    [detail, locator, session, deny, readDraft],
   );
 
   // The locator first, then the draft it names; trying again repeats both.
@@ -183,7 +185,8 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       try {
         const head = await loadJobProjection(session.db, session.companyId, jobId, 'cache');
         if (!head) throw new Error('Job not kept on this phone');
-        const found = await loadDraft(session.db, { companyId: session.companyId, draftId: head.currentDraftId }, 'cache');
+        const found = await readDraft(session.db, { companyId: session.companyId, draftId: head.currentDraftId }, 'cache');
+        if (found === SUPERSEDED) return;
         if (!found) throw new Error('Draft not kept on this phone');
         if (!live) return;
         setLocator(head);
@@ -191,12 +194,17 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
         setDraft(found);
         setDraftError(null);
         setCachedError(null);
-      } catch {
-        if (live) setCachedError('Open this job once online to keep its field work on this phone.');
+      } catch (error) {
+        if (!live) return;
+        setCachedError(
+          error instanceof IncompleteFieldData
+            ? 'Only part of this job’s field work is kept on this phone. Open it once online to keep all of it.'
+            : 'Open this job once online to keep its field work on this phone.',
+        );
       }
     })();
     return () => { live = false; };
-  }, [session.online, session.db, session.companyId, jobId, draft, denial]);
+  }, [session.online, session.db, session.companyId, jobId, draft, denial, readDraft]);
 
   // A photo that settled after an earlier screen of this job closed changed the draft: read it again.
   useEffect(() => {

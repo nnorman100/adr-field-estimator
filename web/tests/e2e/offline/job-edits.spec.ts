@@ -13,6 +13,16 @@ import type { NetworkLane } from './lane';
 
 test.use({ serviceWorkers: 'allow', viewport: { width: 390, height: 844 } });
 
+// A small PNG, as a phone's camera would hand the page a picture.
+const PICTURE = {
+  name: 'photo.png',
+  mimeType: 'image/png',
+  buffer: Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAZ0lEQVR4nBWMQQ0AQAyDqmRKqgQlU1IlU1JFl+NJCBIaZARaFHSoSGKGMQOzTJhjykh4sDF4cfDhYokfm89C4KAgscP6y1027LFlJTLEP82SkCMlEjec/+CWC3dcOYkO9d92aejR0gf/sEsBLaIzfQAAAABJRU5ErkJggg==',
+    'base64',
+  ),
+};
+
 async function openJob(page: Page, lane: NetworkLane, world: World, jobId: string) {
   lane.serve('/api/me', { type: 'application/json', body: JSON.stringify({
     company: { id: world.companyId, name: 'Field Test' }, role: 'estimator',
@@ -118,6 +128,27 @@ test('a failed SQL job read keeps the cached field work open', async ({ context,
   await page.evaluate(() => window.dispatchEvent(new Event('offline')));
   await expect(page.getByText(/No signal/)).toBeVisible();
   await expect(page.getByLabel('Year built')).toBeEditable();
+});
+
+test('a photo taken while the camera hid the page is kept to send again', async ({ context, lane }) => {
+  const world = await seedCompany();
+  const phone = await signedIn(context, lane, world);
+  await openJob(phone.page, lane, world, randomUUID());
+  const page = phone.page;
+  await page.getByRole('link', { name: 'Photos', exact: true }).click();
+  const chooser = page.waitForEvent('filechooser');
+  await page.getByText('Take photo', { exact: true }).click();
+  const camera = await chooser;
+  lane.cut();
+  await page.evaluate(() => window.dispatchEvent(new Event('offline')));
+  await expect(page.getByText(/No signal/)).toBeVisible();
+  await camera.setFiles(PICTURE);
+  const sending = page.getByRole('list', { name: 'Photos being sent' });
+  await expect(sending.getByText('Not sent yet.')).toBeVisible();
+  await expect(sending.getByRole('button', { name: 'Send again' })).toBeDisabled();
+  await expect(page.getByLabel('Take photo')).toHaveCount(0);
+  expect(await mark(page, world)).toMatchObject({ photosInMemory: [expect.any(String)] });
+  await expectNothingSent(lane);
 });
 
 test('SQL customer and claim edits need a connection and are never queued offline', async ({ context, lane }) => {

@@ -41,6 +41,18 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
   }, []);
   const [error, setError] = useState<string | null>(null);
   const canTake = job.editable && job.session.capabilities.includes('photos') && job.session.online;
+  // A capture already opened keeps its input: the camera app hides this page, which takes the
+  // connection away until it is shown again, and the picture must still reach this page.
+  const [capturing, setCapturing] = useState(false);
+  const camera = useRef<HTMLInputElement>(null);
+  const cameraShown = canTake || capturing;
+  useEffect(() => {
+    const input = camera.current;
+    if (!input) return;
+    const cancel = () => setCapturing(false);
+    input.addEventListener('cancel', cancel);
+    return () => input.removeEventListener('cancel', cancel);
+  }, [cameraShown]);
   const roomOptions = [{ value: '', label: 'No room' }, ...draft.rooms.map((room) => ({ value: room.id, label: room.field.name ?? 'Room' }))];
   const roomName = (id: string | undefined) => draft.rooms.find((room) => room.id === id)?.field.name ?? null;
 
@@ -48,7 +60,7 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
 
   async function finish(item: PendingPhoto) {
     const db = job.session.db;
-    if (!db || !job.session.online) return;
+    if (!db || !job.session.online) return update(item.id, { step: 'send-failed', message: 'Needs a connection. Send it again when connected.' });
     update(item.id, { step: 'sending', message: undefined });
     const sent = await sendPhoto(job.session.user, jobId, item.id, item.bytes);
     if (!sent.ok) {
@@ -87,7 +99,7 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
     <div className="flex flex-col gap-4">
       <h3 className="sr-only">Photos</h3>
       {!job.session.online ? <p role="status">Needs a connection to send photos. Keep this window open until every photo is sent.</p> : null}
-      {canTake ? (
+      {cameraShown ? (
         <Section title="Take a photo">
           <Choice id="photo-room" label="Room" value={roomId} options={roomOptions} onChange={setRoomId} />
           <Choice id="photo-shot" label="Shot" value={shotTag} options={SHOT_OPTIONS} onChange={setShotTag} />
@@ -102,7 +114,10 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
               accept="image/*"
               capture="environment"
               className="sr-only"
+              ref={camera}
+              onClick={() => setCapturing(true)}
               onChange={(event) => {
+                setCapturing(false);
                 const file = event.target.files?.[0];
                 event.target.value = '';
                 void take(file);

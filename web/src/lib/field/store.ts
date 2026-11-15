@@ -45,6 +45,15 @@ export class InvalidFieldData extends Error {
   }
 }
 
+// The room order lists a room whose document this read did not get (a cache that holds only part of
+// the draft). The draft is not shown as if those rooms were never added.
+export class IncompleteFieldData extends Error {
+  constructor() {
+    super('the room order lists rooms this read did not get');
+    this.name = 'IncompleteFieldData';
+  }
+}
+
 // The field database's rules refusing this person (or a sign-in it no longer takes), put as the
 // jobs API would answer it; null for anything else (no signal, a timeout), which stays a failure to
 // try again.
@@ -63,7 +72,7 @@ function mapOf<T>(schema: { safeParse: (value: unknown) => { success: boolean; d
 
 // The draft, rooms and photo references through the sync-gated client, or explicitly from the
 // cache after a local edit. Returns null when there is no such draft. Throws InvalidFieldData when a stored map does not
-// follow the field map.
+// follow the field map, IncompleteFieldData when the room order lists a room the read did not get.
 export async function loadDraft(db: Firestore, ref: DraftRef, source?: 'cache'): Promise<FieldDraft | null> {
   const path = draftPath(ref);
   const readDoc = source === 'cache' ? getDocFromCache : getDoc;
@@ -77,12 +86,47 @@ export async function loadDraft(db: Firestore, ref: DraftRef, source?: 'cache'):
   const data = draft.data();
   const field = mapOf<DraftField>(draftFieldSchema, data.field);
   const byId = new Map(rooms.docs.map((room) => [room.id, mapOf<RoomField>(roomFieldSchema, room.data().field)]));
+  const order = field.roomOrder ?? [];
+  if (order.some((id) => !byId.has(id))) throw new IncompleteFieldData();
   return {
     state: typeof data.state === 'string' ? data.state : 'unknown',
     fieldOwnerUid: typeof data.fieldOwnerUid === 'string' ? data.fieldOwnerUid : null,
     field,
-    rooms: (field.roomOrder ?? []).filter((id) => byId.has(id)).map((id) => ({ id, field: byId.get(id)! })),
+    rooms: order.map((id) => ({ id, field: byId.get(id)! })),
     photos: photos.docs.map((photo) => ({ id: photo.id, field: mapOf<PhotoField>(photoFieldSchema, photo.data().field) })),
+  };
+}
+
+export const SUPERSEDED = Symbol('superseded');
+
+// One screen's reads of its draft: a read answers only while no newer read has started, so a slow
+// read never replaces the draft a newer read (one after a local edit) put on screen.
+// A superseded read answers only after the newest one has, so its caller never acts on the
+// draft before the newer read is on screen.
+export function draftReads() {
+  let latest = 0;
+  let newest: Promise<unknown> = Promise.resolve();
+  async function read(db: Firestore, ref: DraftRef, source: 'cache' | undefined, mine: number): Promise<FieldDraft | null | typeof SUPERSEDED> {
+    let outcome: { found: FieldDraft | null } | { error: unknown };
+    try {
+      outcome = { found: await loadDraft(db, ref, source) };
+    } catch (error) {
+      outcome = { error };
+    }
+    if (mine !== latest) {
+      for (let waited: Promise<unknown> | null = null; waited !== newest; ) {
+        waited = newest;
+        await waited.catch(() => undefined);
+      }
+      return SUPERSEDED;
+    }
+    if ('error' in outcome) throw outcome.error;
+    return outcome.found;
+  }
+  return (db: Firestore, ref: DraftRef, source?: 'cache'): Promise<FieldDraft | null | typeof SUPERSEDED> => {
+    const answer = read(db, ref, source, ++latest);
+    newest = answer;
+    return answer;
   };
 }
 
