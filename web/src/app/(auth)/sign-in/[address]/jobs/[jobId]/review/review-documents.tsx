@@ -233,12 +233,11 @@ export function PhotoLog({ photos, loadPhoto }: { photos: unknown[]; loadPhoto?:
   if (!photos.length) return <p className="pt-3">No photos.</p>;
   // By room the log is one list; by shot tag each album sits under its heading (S5a-9c). Photos are
   // numbered straight through the log, so an album's lines start where the one before it ended.
-  let start = 0;
+  const albums = photoAlbums(photos);
   return (
     <>
-      {photoAlbums(photos).map((album) => {
-        const first = start;
-        start += album.lines.length;
+      {albums.map((album, albumIndex) => {
+        const first = albums.slice(0, albumIndex).reduce((count, earlier) => count + earlier.lines.length, 0);
         return (
           <div key={album.heading ?? 'photos'}>
             {album.heading ? <h3 className="pt-3 font-semibold">{album.heading}</h3> : null}
