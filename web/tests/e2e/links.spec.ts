@@ -243,7 +243,7 @@ test('the documents page shows the homeowner’s set and the adjuster’s set, r
     if (set === 'homeowner') {
       return [200, { set, companyName: COMPANY, expiresAt: '2026-12-15T18:30:00.000Z', signed, signatureSha256: 'f'.repeat(64), proposalSha256: shown.proposalSha256, proposal: shown.proposal, photoLog: shown.documents.photo_log }];
     }
-    return [200, { set, companyName: COMPANY, expiresAt: '2026-12-15T18:30:00.000Z', signed, price: shown.proposal.price, itemizedClaim: shown.documents.itemized_claim, letter: shown.documents.letter, claim: shown.documents.claim }];
+    return [200, { set, companyName: COMPANY, expiresAt: '2026-12-15T18:30:00.000Z', signed, price: shown.proposal.price, itemizedClaim: shown.documents.itemized_claim, letter: shown.documents.letter }];
   });
   await page.goto(`/documents#${TOKEN}`);
   const main = page.getByRole('main');
@@ -261,6 +261,15 @@ test('the documents page shows the homeowner’s set and the adjuster’s set, r
   await page.reload();
   await expect(main.getByRole('heading', { name: 'Itemized claim' })).toBeVisible();
   await expect(main.getByRole('heading', { name: 'Scope defense letter' })).toBeVisible();
+  // The scope JSON is the itemized claim's scope-code rows, shown, and offered to download as the same JSON.
+  await expect(main.getByRole('heading', { name: 'Scope JSON' })).toBeVisible();
+  expect(JSON.parse((await main.getByTestId('scope-json').textContent()) ?? '')).toEqual(shown.documents.itemized_claim);
+  const download = main.getByRole('link', { name: 'Download the scope JSON' });
+  await expect(download).toHaveAttribute('download', 'scope.json');
+  const href = (await download.getAttribute('href')) ?? '';
+  expect(JSON.parse(decodeURIComponent(href.slice(href.indexOf(',') + 1)))).toEqual(shown.documents.itemized_claim);
+  await expect(main.getByRole('button', { name: 'Copy the scope JSON' })).toBeVisible();
+  await expect(main.getByRole('heading', { name: 'Claim', exact: true })).toHaveCount(0);
   await expect(main.getByRole('heading', { name: 'Signed proposal' })).toHaveCount(0);
   await expect(main.getByText('Synthetic start-work authorization.', { exact: false })).toHaveCount(0);
   await expectNoAxeViolations(page);

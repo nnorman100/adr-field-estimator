@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { FocusedPanel } from '@/app/(auth)/focused-panel';
 import { ItemizedClaim, PhotoLog, Proposal } from '@/app/(auth)/sign-in/[address]/jobs/[jobId]/review/review-documents';
 import { Button } from '@/components/ui/button';
@@ -11,7 +11,8 @@ import { documentsPageOf, fragmentToken, pageOutcomeOf, untilDay, watchFragment,
 // Your signed estimate documents (S5a-11b): one set of a signed estimate, read-only, from the signed
 // record's stored bytes. The homeowner's set is the signed proposal (with the company's terms, the
 // signature, who signed, when and how) and the photo log, each photo opened on request; the
-// adjuster's is the itemized claim, the scope defense letter and the claim.
+// adjuster's is the itemized claim, the scope defense letter and the scope JSON (the itemized claim's
+// scope-code rows as JSON, to copy or download).
 
 type Phase = { name: 'checking' } | { name: 'refused'; message: string; next: PageNext } | { name: 'ready'; page: DocumentsPage };
 
@@ -159,12 +160,55 @@ function AdjusterSet({ page }: { page: Extract<DocumentsPage, { set: 'adjuster' 
         </h2>
         <p className="break-words whitespace-pre-wrap">{page.letter}</p>
       </section>
-      <section aria-labelledby="documents-claim-details" className="flex flex-col gap-2">
-        <h2 id="documents-claim-details" className="text-lg font-semibold">
-          Claim
-        </h2>
-        <pre className="overflow-x-auto rounded-md border p-3 text-sm whitespace-pre-wrap break-words">{JSON.stringify(page.claim, null, 2)}</pre>
-      </section>
+      <ScopeJson rows={page.itemizedClaim} />
     </>
+  );
+}
+
+function ScopeJson({ rows }: { rows: unknown[] }) {
+  const text = JSON.stringify(rows, null, 2);
+  const [said, setSaid] = useState('');
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (timer.current) clearTimeout(timer.current);
+    };
+  }, []);
+
+  async function copy() {
+    let message = 'Scope JSON copied.';
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      message = 'The scope JSON could not be copied. Download it instead.';
+    }
+    if (timer.current) clearTimeout(timer.current);
+    setSaid(message);
+    timer.current = setTimeout(() => setSaid(''), 4000);
+  }
+
+  return (
+    <section aria-labelledby="documents-scope-json" className="flex flex-col gap-2">
+      <h2 id="documents-scope-json" className="text-lg font-semibold">
+        Scope JSON
+      </h2>
+      <pre data-testid="scope-json" className="max-h-96 overflow-auto rounded-md border p-3 text-sm whitespace-pre-wrap break-words">
+        {text}
+      </pre>
+      <div className="flex flex-wrap gap-2">
+        <Button type="button" variant="outline" onClick={() => void copy()}>
+          Copy the scope JSON
+        </Button>
+        <Button asChild variant="outline">
+          <a href={`data:application/json;charset=utf-8,${encodeURIComponent(text)}`} download="scope.json">
+            Download the scope JSON
+          </a>
+        </Button>
+      </div>
+      <p role="status" className="text-sm">
+        {said}
+      </p>
+    </section>
   );
 }

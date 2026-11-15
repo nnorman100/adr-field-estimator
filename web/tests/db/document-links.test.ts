@@ -247,7 +247,9 @@ describe('document links', () => {
   it('open the adjuster’s set: the itemized claim, the scope defense letter and the claim, without the proposal, signature or photos', async () => {
     const { record, issued, photoId } = await signedJob();
     const page = await open(issued.adjuster.token);
-    expect(page).toMatchObject({ status: 200, body: { set: 'adjuster', itemizedClaim: record.documents.itemized_claim, letter: record.documents.letter, claim: record.documents.claim } });
+    expect(page).toMatchObject({ status: 200, body: { set: 'adjuster', itemizedClaim: record.documents.itemized_claim, letter: record.documents.letter } });
+    expect(page.body.itemizedClaim.length).toBeGreaterThan(0);
+    expect(page.body).not.toHaveProperty('claim');
     expect(page.body).not.toHaveProperty('proposal');
     expect(JSON.stringify(page.body)).not.toContain(AUTHORIZATION.trim());
     expect((await signatureOf(issued.adjuster.token)).status).toBe(404);

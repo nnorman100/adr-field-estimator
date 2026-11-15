@@ -9,7 +9,7 @@ import { callApi } from '@/lib/firebase-client';
 import { documentLinkLine, documentLinksOf, issuedLinkOf, linkAddress, SET_NAMES, type DocumentLinkView } from '@/lib/links/screen';
 
 // Share the signed documents (S5a-11b): a read-only link to the homeowner's set (the signed proposal
-// and the photos) or the adjuster's (the itemized claim, the scope defense letter and the claim), for
+// and the photos) or the adjuster's (the itemized claim, the scope defense letter and the scope JSON), for
 // 30 days. Both are made at signing, and their tokens are shown here once, to share from the phone.
 // The owner or office may revoke one and make it again (a new link for a set stops the older one);
 // whoever may sign may make one again only once the set has no working link.

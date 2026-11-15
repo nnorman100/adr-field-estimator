@@ -31,7 +31,7 @@ export type { DocumentLinkState, DocumentLinkView } from './document-store';
 
 // Read-only document links (docs/plans/S5.md, S5a-11b; detail in S5b-3). Each is bound to one signed
 // agreement and one set: the homeowner's (the signed proposal, with who signed, when and how, and the
-// photos) or the adjuster's (the itemized claim, the scope defense letter and the claim). Both are
+// photos) or the adjuster's (the itemized claim, the scope defense letter and the scope JSON). Both are
 // made at signing (document-store.ts), their tokens answered once to whoever signed. Each works for
 // 30 days, any number of times, until the owner or office (`delivery_resend`) revokes it. Making one
 // again for a set: the owner or office, who may replace a working one; whoever may sign (`sign`) only
@@ -49,7 +49,7 @@ type Signed = { name: string; role?: SignerRole; signedAt: string; how: string }
 
 export type DocumentPage =
   | { set: 'homeowner'; companyName: string; expiresAt: string; signed: Signed; signatureSha256: string; proposalSha256: string; proposal: Proposal; photoLog: Json[] }
-  | { set: 'adjuster'; companyName: string; expiresAt: string; signed: Signed; price: Proposal['price']; itemizedClaim: Json[]; letter: string; claim: Json };
+  | { set: 'adjuster'; companyName: string; expiresAt: string; signed: Signed; price: Proposal['price']; itemizedClaim: Json[]; letter: string };
 
 export type DocumentLinksService = {
   create(caller: JobCaller, jobId: string, input: CreateDocumentLinkInput): Promise<{ created: boolean; links: DocumentLinkView[] } & IssuedDocumentLink>;
@@ -197,7 +197,6 @@ export function documentLinksService(db: Database, photos: PhotosService): Docum
         price: record.proposal.price,
         itemizedClaim: record.documents.itemized_claim,
         letter: record.documents.letter,
-        claim: record.documents.claim,
       };
     },
 

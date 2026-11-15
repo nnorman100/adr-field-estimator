@@ -137,7 +137,7 @@ export function signingPageOf(body: unknown): SigningPage | null {
 type Signed = { name: string; role?: SignerRole; signedAt: string; how: string };
 export type DocumentsPage =
   | { set: 'homeowner'; companyName: string; expiresAt: string; signed: Signed; signatureSha256: string; proposalSha256: string; proposal: Proposal; photoLog: Json[] }
-  | { set: 'adjuster'; companyName: string; expiresAt: string; signed: Signed; price: Proposal['price']; itemizedClaim: Json[]; letter: string; claim: Json };
+  | { set: 'adjuster'; companyName: string; expiresAt: string; signed: Signed; price: Proposal['price']; itemizedClaim: Json[]; letter: string };
 
 export function documentsPageOf(body: unknown): DocumentsPage | null {
   const set = field(body, 'set');

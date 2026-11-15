@@ -83,7 +83,7 @@ CREATE TABLE document_links (
   job_id uuid NOT NULL,
   agreement_id uuid NOT NULL,
   -- The homeowner's set (the signed proposal and the photo log) or the adjuster's (the itemized
-  -- claim, the scope defense letter and the claim).
+  -- claim, the scope defense letter and the scope JSON).
   document_set text NOT NULL CHECK (document_set IN ('homeowner', 'adjuster')),
   token_sha256 text NOT NULL CHECK (token_sha256 ~ '^[0-9a-f]{64}$'),
   status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'revoked')),
