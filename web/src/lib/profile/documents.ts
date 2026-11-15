@@ -36,7 +36,6 @@ export type Letterhead = {
 };
 
 /**
-/**
  * The document settings the documents print: the proposal layout and the company's own clauses
  * (S5a-9b) and the photo log grouping (S5a-9c). Widening these types is what makes a later step
  * handle a new option (the compiler finds every place that prints a document).
