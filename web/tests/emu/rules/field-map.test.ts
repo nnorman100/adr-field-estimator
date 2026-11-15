@@ -9,6 +9,7 @@ import {
   MAX_ROOMS,
   photoFieldSchema,
   roomFieldSchema,
+  SHOT_TAGS,
 } from '../../../src/lib/field/schema';
 import { createTenant, signIn, signUp } from '../auth-emulator';
 import { type Caller, commit, createDoc, type Data, serverSet, updateDoc, type Write } from './firestore-rest';
@@ -74,6 +75,18 @@ const ROOM: Data = {
   wastePercent: 10,
 };
 const PHOTO: Data = { roomId: 'hall', shotTag: 'meter' };
+// The room map with every key the Zod schema names, the v2 room inputs (S5a-10) beside the v1 keys.
+const EVERY_ROOM_KEY: Data = {
+  ...ROOM,
+  roomTypeId: 'bathroom',
+  waterClass: 2,
+  ceilingHeightFt: 8,
+  moldCondition: 1,
+  affectedSf: 10,
+  items: { flood_cut: '4' },
+  prepTasks: ['Cover the hallway floor.'],
+  findings: 'Wet drywall to 30 inches.',
+};
 
 const ids = (n: number) => Array.from({ length: n }, (_, i) => `room-${i}`);
 
@@ -113,6 +126,21 @@ describe('field map v1 rules', () => {
       expect(await updateDoc(who.caller, draft(company, 'editing'), { field: { summary: 'x' } }), company).toBe(
         200,
       );
+    }
+  });
+
+  it('accepts every key the Zod schema names in each map, and every shot tag', async () => {
+    const a = estimatorA.caller;
+    expect(Object.keys(DRAFT).sort()).toEqual(Object.keys(draftFieldSchema.shape).sort());
+    expect(Object.keys(EVERY_ROOM_KEY).sort()).toEqual(Object.keys(roomFieldSchema.shape).sort());
+    expect(Object.keys(PHOTO).sort()).toEqual(Object.keys(photoFieldSchema.shape).sort());
+    expect(roomFieldSchema.safeParse(EVERY_ROOM_KEY).success).toBe(true);
+    expect(await updateDoc(a, draft(A, 'editing'), { field: DRAFT })).toBe(200);
+    expect(await updateDoc(a, room(A, 'editing', 'kitchen'), { field: EVERY_ROOM_KEY })).toBe(200);
+    expect(await updateDoc(a, photo(A, 'editing', 'p1'), { field: PHOTO })).toBe(200);
+    for (const shotTag of SHOT_TAGS) {
+      expect(photoFieldSchema.safeParse({ roomId: 'hall', shotTag }).success, shotTag).toBe(true);
+      expect(await updateDoc(a, photo(A, 'editing', 'p1'), { field: { roomId: 'hall', shotTag } }), shotTag).toBe(200);
     }
   });
 

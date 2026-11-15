@@ -65,6 +65,11 @@ const OUTCOMES: Record<string, { message: string; next: Next }> = {
   submission_aborted: { message: 'That attempt was stopped before it was saved. Check the draft, then finish again.', next: 'reload' },
   photo_missing: { message: 'A photo has not finished uploading. Send it again from the Photos screen, then finish again.', next: 'reload' },
   draft_invalid: { message: 'Every room needs a name, and each room must be in the room list. Fix the draft, then finish again.', next: 'reload' },
+  unknown_price_ids: {
+    message: 'A room names a room type or an item that is not in this job’s price list. Open Check Scope, choose it again, then finish again.',
+    next: 'reload',
+  },
+  prices_unreadable: { message: 'This job’s price list could not be read. Ask the owner to check Prices, then finish again.', next: 'reload' },
   draft_missing: { message: 'This job has no draft to finish. Reload the job.', next: 'reload' },
   not_current_draft: { message: 'This job has a newer draft. Reload the job.', next: 'reload' },
   already_submitted: { message: 'This draft is already finished. Reload the job.', next: 'reload' },

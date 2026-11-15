@@ -1,5 +1,5 @@
-// Field map v1 (S5a-1): the `field` map of a draft, a room and a photo reference in the field
-// database. The phone writes these maps directly; `web/firestore.rules` checks the same keys,
+// Field map v2 (S5a-1, room inputs S5a-10): the `field` map of a draft, a room and a photo
+// reference in the field database. The phone writes these maps directly; `web/firestore.rules` checks the same keys,
 // types and sizes (a unit test keeps the two key lists equal), and the server parses them again
 // before pricing (`toInspection` in ./inspection.ts).
 //
@@ -21,6 +21,21 @@ export const MAX_COUNT = 100;
 export const MAX_DAYS = 60;
 export const MAX_HOURS = 500;
 export const EARLIEST_YEAR = 1800;
+/** Most items one room lists; the engine refuses more (MAX_ROOM_ITEMS in src/engine/inspection.ts). */
+export const MAX_ROOM_ITEMS = 50;
+/** Most prep tasks one room lists, and the longest one. */
+export const MAX_PREP_TASKS = 10;
+export const MAX_PREP_TASK = 300;
+/** The longest findings note of one room. */
+export const MAX_FINDINGS = 2_000;
+export const MAX_CEILING_FT = 60;
+
+/** The categories a room may be: water categories 1 to 3, or mold. */
+export const ROOM_CATEGORIES = [1, 2, 3, 'mold'] as const;
+/** A room type id as the price table names one (src/engine/table.ts); none means Other. */
+export const ROOM_TYPE_ID = /^[a-z][a-z0-9_]{1,29}$/;
+/** A price-list item id as the price table names one (src/engine/table.ts). */
+export const ITEM_ID = /^[a-z][a-z0-9_]{1,39}$/;
 
 /** The shot list an adjuster expects in each room (the old app's backend/shot_list.py). */
 export const SHOT_TAGS = ['overview', 'source', 'surface', 'meter', 'contents', 'equipment'] as const;
@@ -33,6 +48,14 @@ const hours = () => z.number().min(0).max(MAX_HOURS);
 const area = () => z.number().min(0).max(MAX_AREA_SF);
 
 export const fieldId = z.string().min(1).max(MAX_ID).regex(ID);
+
+/**
+ * A typed quantity as decimal text: 0 to 100,000 with at most two decimal places, as the engine
+ * reads one. Text, not a number, so the field rules can check every quantity of a room with one
+ * pattern (firestore.rules, okItems) and no binary fraction ever stands in for what was typed.
+ */
+export const ITEM_QUANTITY = /^(100000(\.0{1,2})?|\d{1,5}(\.\d{1,2})?)$/;
+export const itemQuantity = z.string().regex(ITEM_QUANTITY);
 
 export const draftFieldSchema = z.strictObject({
   yearBuilt: z
@@ -72,13 +95,37 @@ export const draftFieldSchema = z.strictObject({
 
 export const roomFieldSchema = z.strictObject({
   name: z.string().min(1).max(MAX_ROOM_NAME).optional(),
-  category: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
+  /** The room type from the price list the job is priced from; absent means Other. */
+  roomTypeId: z.string().regex(ROOM_TYPE_ID).optional(),
+  category: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal('mold')]).optional(),
+  /** Water rooms: the IICRC water class, and the ceiling height the drying suggestion needs. */
+  waterClass: z.int().min(1).max(4).optional(),
+  ceilingHeightFt: z.number().positive().max(MAX_CEILING_FT).optional(),
+  /** Mold rooms: the condition and the affected area. */
+  moldCondition: z.int().min(1).max(3).optional(),
+  affectedSf: area().optional(),
   unfinishedSf: area().optional(),
   finishedSf: area().optional(),
   /** The engine refuses a floor area of zero: delete the key instead. */
   floorSf: area().positive().optional(),
   wetFloorSf: area().optional(),
   wastePercent: z.number().min(0).max(100).optional(),
+  /**
+   * The items typed for this room, each price-list item id with its quantity (decimal text); a map,
+   * so an item is listed once. Whether each id is an item of the job's price list is the server's check, at
+   * Submit and again when it prices (src/lib/scope-lists/version.ts).
+   */
+  items: z
+    .record(z.string().regex(ITEM_ID), itemQuantity)
+    .refine((items) => Object.keys(items).length <= MAX_ROOM_ITEMS, `at most ${MAX_ROOM_ITEMS} items`)
+    .optional(),
+  /**
+   * The room's prep tasks, each the words themselves: a company template's text copied when picked
+   * (so the submitted record keeps them if the template changes later) or the estimator's own.
+   */
+  prepTasks: z.array(z.string().min(1).max(MAX_PREP_TASK)).max(MAX_PREP_TASKS).optional(),
+  /** The room's findings note. */
+  findings: z.string().max(MAX_FINDINGS).optional(),
 });
 
 export const photoFieldSchema = z.strictObject({

@@ -17,11 +17,13 @@ import {
 } from '@/lib/field/forms';
 import { MAX_NOTES } from '@/lib/field/schema';
 import { fieldRefusal, saveDraftField, type FieldDraft } from '@/lib/field/store';
+import { EquipmentSuggestion } from './equipment-suggestion';
 import type { JobContext } from './job-screens';
 import { RoomsSection } from './rooms-section';
 import { Box, Outcome, READ_AGAIN, Section, Tick } from './ui';
 
-// Check Scope (S5a-6): year built, the rooms, equipment counts, job charges, notes and the
+// Check Scope (S5a-6, room inputs S5a-10): year built, the rooms, equipment counts (with the counts
+// the rooms suggest), job charges, notes and the
 // scope-confirmed box, written straight to the job's field draft. The boxes hold only what the
 // person changed over the draft as last read; Save writes only those, and the screen then reads the
 // draft back, so a save never writes back a value someone else has since changed. The
@@ -94,6 +96,7 @@ export function ScopeView({ job, draft }: { job: JobContext; draft: FieldDraft }
         }}
       >
         <Section title="Equipment">
+          <EquipmentSuggestion draft={draft} />
           <div className="grid grid-cols-2 gap-3">{EQUIPMENT_FIELDS.map(box)}</div>
         </Section>
         <Section title="Job charges">
