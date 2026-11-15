@@ -35,7 +35,8 @@ const fenceOf = (submissionId = randomUUID(), epoch = randomUUID()) => ({
   expiresAt: new Date(Date.UTC(2031, 0, 2, 3, 4, 5)),
 });
 
-const same = (a: FieldManifest | null | undefined, b: FieldManifest) => (a ? canonicalManifest(a) : null) === canonicalManifest(b);
+const same = (a: Awaited<ReturnType<FenceStore['read']>> | undefined, b: FieldManifest) =>
+  (a && a !== 'too_large' ? canonicalManifest(a) : null) === canonicalManifest(b);
 
 export function fenceStoreContract(name: string, probe: () => FenceProbe): void {
   describe(`${name} fence store contract`, () => {
@@ -87,6 +88,28 @@ export function fenceStoreContract(name: string, probe: () => FenceProbe): void 
       expect(await store.read(company, draft, fence.epoch)).toBeNull();
       expect((await peek(company, draft))?.state).toBe('submitted');
       expect(await store.markSubmitted(company, randomUUID(), fence.epoch, fence.submissionId)).toBe('missing');
+    });
+
+    it('reads drafts at the safety caps and refuses one extra room or photo', async () => {
+      const { store, seed } = probe();
+      const company = randomUUID();
+      const rooms = Array.from({ length: 30 }, (_, i) => ({ id: `room-${i}`, field: { name: `Room ${i}` } }));
+      const photos = Array.from({ length: 300 }, () => ({ id: randomUUID(), field: {} }));
+      const manifest = { draft: { roomOrder: rooms.map((room) => room.id) }, rooms, photos };
+      const cases: Array<[string, FieldManifest]> = [
+        ['at-cap', manifest],
+        ['rooms', { ...manifest, rooms: [...rooms, { id: 'extra', field: {} }] }],
+        ['photos', { ...manifest, photos: [...photos, { id: randomUUID(), field: {} }] }],
+      ];
+      for (const [kind, data] of cases) {
+        const draft = randomUUID();
+        await seed(company, draft, data);
+        const fence = fenceOf();
+        await store.fence(company, draft, fence);
+        const read = await store.read(company, draft, fence.epoch);
+        if (kind === 'at-cap') expect(same(read, manifest)).toBe(true);
+        else expect(read).toBe('too_large');
+      }
     });
 
     it('releases its own fence back to editing, and nothing else', async () => {

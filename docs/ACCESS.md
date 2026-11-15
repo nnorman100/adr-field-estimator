@@ -144,7 +144,10 @@ A job another estimator owns, or another company's, is 404 on both (never a hint
 
 A job another estimator owns, or another company's, is 404 on both, an archived job is 410, and office is 403. Every write adds one audit row with the job id and counts only (`submission_started`, `submission_committed` with the revision and the room and photo counts, `submission_aborted` with a fixed reason code, `job_back_to_editing`). The scheduled worker (`POST /api/internal/access-projection`, the scheduler account only) also aborts attempts left pending past their expiry, writes the draft markers a request could not, and writes the release again for a recently aborted row (only in companies it visits for other work); its audit rows have no person. While a draft is `submitting` or `submitted`, the field rules refuse every phone write and the photo route refuses a new photo.
 
+F5 draft safety bounds: room and photo document ids, and every `roomOrder` entry, must match `[A-Za-z0-9_-]{1,64}`; the phone's UUIDs still pass. `roomOrder` has at most 30 distinct string ids. Rules cannot cap collection counts without a counter, so Submit reads at most 31 rooms and 301 photo references in its fenced transaction. More than 30 rooms or `MAX_PHOTO_REFS` (300, in `web/src/lib/field/schema.ts`) aborts with 409 `draft_invalid` and releases the draft for editing; no partial snapshot reaches an estimate. The photo ceiling is an abuse-protection safety cap the owner can raise, not a target for normal field work. Well-formed but unuploaded photo ids still fail the evidence-registry check with `photo_missing`. Existing submitted and signed records stay as stored; these checks apply when submitting an editable draft. No new route, permission or index.
+
 ## Estimate and review (rebuilt app, S5a-9)
+
 `web/src/lib/estimates/`, two handlers on one path, `/api/jobs/{id}/estimate`, both `requireFlag('price_books', ...)` (a company without price books gets 404) and both through the job-access function above. No new capability key. Neither takes a body: the company is the caller's own from the sign-in, the record is the job's own.
 
 | Route | Who | Rule |

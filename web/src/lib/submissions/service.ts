@@ -375,11 +375,15 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
       } else {
         problem = await closeFence(caller, row);
         if (!problem) {
-          manifest = await field(() => store.read(caller.companyId, row.draftId, row.epoch));
-          // No longer fenced by this epoch: the row was aborted meanwhile and its fence released.
-          if (!manifest) problem = 'submission_aborted';
-          else if ((await manifestDigest(manifest)) !== input.digest) problem = 'digest_mismatch';
-          else problem = manifestProblem(manifest);
+          const read = await field(() => store.read(caller.companyId, row.draftId, row.epoch));
+          if (read === 'too_large') problem = 'draft_invalid';
+          else {
+            manifest = read;
+            // No longer fenced by this epoch: the row was aborted meanwhile and its fence released.
+            if (!manifest) problem = 'submission_aborted';
+            else if ((await manifestDigest(manifest)) !== input.digest) problem = 'digest_mismatch';
+            else problem = manifestProblem(manifest);
+          }
         }
       }
 
