@@ -14,7 +14,7 @@ export const SNAPSHOT_FORMAT = 'dryscope-submission-v1';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-export type SnapshotPhoto = { id: string; sha256: string; sizeBytes: number; contentType: string };
+export type SnapshotPhoto = { id: string; sha256: string; sizeBytes: number; contentType: string; receivedAt?: string };
 
 export type Snapshot = {
   format: typeof SNAPSHOT_FORMAT;

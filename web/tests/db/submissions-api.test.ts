@@ -106,10 +106,12 @@ describe('Submit', () => {
       draftId,
       fieldSha256: body.digest,
       field: JSON.parse(canonicalManifest(manifest)),
-      photos: [{ id: photoId, sha256: sha256(photoBytes), sizeBytes: photoBytes.byteLength, contentType: 'image/png' }],
+      photos: [{ id: photoId, sha256: sha256(photoBytes), sizeBytes: photoBytes.byteLength, contentType: 'image/png', receivedAt: expect.stringMatching(/^\d{4}-/) }],
       job: { propertyAddress: '' },
       customer: { name: 'Synthetic Customer', phone: '555-0100', email: 'customer@example.test' },
     });
+    const [evidence] = await h.admin<{ created_at: Date }[]>`SELECT created_at FROM evidence_objects WHERE object_id = ${photoId}`;
+    expect(snapshot.photos[0].receivedAt).toBe(evidence!.created_at.toISOString());
     expect(h.field.draft(h.seed.a, draftId)).toMatchObject({ state: 'submitted', fence: { submissionId: body.id, epoch: row!.epoch } });
     expect(await f.expectOneOutcome(h.seed.a, jobId, draftId)).toBe('committed');
     // Audit rows hold ids and counts only.

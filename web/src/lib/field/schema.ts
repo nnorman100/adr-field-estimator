@@ -144,6 +144,8 @@ export const photoFieldSchema = z.strictObject({
   /** The room the photo was taken in; untagged when absent. */
   roomId: fieldId.optional(),
   shotTag: z.enum(SHOT_TAGS).optional(),
+  /** Client-clock ISO 8601 timestamp recorded when the photo was taken; absent on older records. */
+  capturedAt: z.iso.datetime({ offset: true }).max(40).optional(),
 });
 
 export type DraftField = z.infer<typeof draftFieldSchema>;
