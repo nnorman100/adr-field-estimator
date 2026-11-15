@@ -35,8 +35,8 @@ test:
   instructions: |
     Testing in the pipeline: the local test run is exactly `npm run lint`,
     `npx vitest run`, `npm --prefix web run typecheck`, `npm --prefix web run
-    lint`, `npm --prefix web test` (unit) and `npm --prefix web run test:emu`
-    (Firebase emulators). Do not run `npm run test:db`, `npm run test:e2e`,
+    lint`, `npm --prefix web test` (unit) and `EMU_PORTS=auto npm --prefix web
+    run test:emu` (Firebase emulators on free ports). Do not run `npm run test:db`, `npm run test:e2e`,
     `npm run test:browser`, `npm run build`, the root Firestore emulator suites
     or the full pytest run; do not start a database container or Playwright.
     GitHub CI runs the database, emulator, unit, end-to-end and build suites and

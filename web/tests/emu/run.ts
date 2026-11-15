@@ -54,8 +54,8 @@ if (files.some((file) => !/^tests\/emu\/[A-Za-z0-9_./-]+\.test\.ts$/.test(file) 
 // The CLI runs in its own process group, and the emulators it starts (Java processes the CLI
 // detaches into groups of their own, so they can outlive it) inherit a marker naming this run.
 // Whenever the run ends, whether the tests failed, the CLI died, or the runner was interrupted,
-// the group and every marked process are stopped, so no emulator is left holding a port. SIGKILL
-// of the runner itself cannot be caught.
+// the group, every marked process and every descendant of the CLI seen while it ran are stopped,
+// so no emulator is left holding a port. SIGKILL of the runner itself cannot be caught.
 const runId = randomUUID();
 const RUN_MARK = `DRYSCOPE_EMU_RUN=${runId}`;
 const child = spawn(
