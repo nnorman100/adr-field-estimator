@@ -1,6 +1,6 @@
 # Stage plans
 
-Each stage of the rebuild has its plan here, and the plan's corrections live in the same file. A pull request for a stage is checked against its plan; if the work needs the plan to change, the pull request changes the plan file too, with a dated entry under "Corrections" saying what changed and why. A plan or correction that lives only outside the repository does not count for review.
+Each stage of the rebuild has its plan here, and the plan's corrections live in the same file. A pull request for a stage is checked against its plan; if the work needs the plan to change, the pull request changes the plan file too, with a dated entry under "Corrections" saying what changed and why. The S5 and S6 plans keep each step and each dated correction in its own file under [`S5/`](S5/) and [`S6/`](S6/), linked in order from the plan file: a pull request changes its own step's file and adds its correction as a new file with one line in that list. A plan or correction that lives only outside the repository does not count for review.
 
 - [S3: Sign-in and company separation](S3.md): 18 steps, owner decisions D1 to D12 (all decided), the owner-run cloud steps, risks, and corrections.
 - [Pricing: owner-set prices for every estimate](pricing.md): steps S4-1 to S5b-4 (S4-4d to S4-4f added 2026-11-13; three database jobs), owner decisions Q1 to Q15 and M1 to M10 (all decided 2026-11-10), industry research, risks, and corrections.
