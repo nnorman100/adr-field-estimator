@@ -164,9 +164,16 @@ test('an estimator creates a job, adds two rooms and a photo, reloads and sees t
   await expectNoAxeViolations(page);
 
   // A photo of the kitchen's source of loss.
+  const beforePhoto = Date.now();
   await takePhoto(page, 'Kitchen', 'Source of loss');
   await expect(page.getByRole('heading', { name: 'Job photos (1)' })).toBeVisible();
   await expectPhoto(page, 'Photo 1, Kitchen, Source of loss');
+  const draftId = await currentDraftOf(company.id, jobIdOf(page));
+  const photos = await adminDb().collection(`companies/${company.id}/drafts/${draftId}/photos`).get();
+  const capturedAt = photos.docs[0]!.data().field.capturedAt as string;
+  expect(capturedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+  expect(Date.parse(capturedAt)).toBeGreaterThanOrEqual(beforePhoto - 5000);
+  expect(Date.parse(capturedAt)).toBeLessThanOrEqual(Date.now() + 5000);
   await expectNoSideways(page);
   await expectNoAxeViolations(page);
 
@@ -303,7 +310,9 @@ test('a dropped response after the server committed leaves one job and one photo
   // The same for a photo: the bytes are stored, the receipt is lost, the phone sends it again.
   await addRoom(page, 'Laundry');
   const received = await dropAnswers(page, '**/api/jobs/*/photos/*', 'PUT');
+  const beforeFailedTake = Date.now();
   await takePhoto(page, 'Laundry', 'Moisture meter');
+  const afterFailedTake = Date.now();
   await expect(page.getByRole('button', { name: 'Send again' })).toBeVisible();
   expect(received.statuses[0]).toBe(201);
   expect(await storedPhotos(company.id, jobId)).toHaveLength(1);
@@ -313,8 +322,13 @@ test('a dropped response after the server committed leaves one job and one photo
   // Leaving the screen keeps the unsent photo and its "Send again".
   await main(page).getByRole('link', { name: 'Customer and claim' }).click();
   await main(page).getByRole('link', { name: 'Photos' }).click();
+  await page.waitForTimeout(50);
   await page.getByRole('button', { name: 'Send again' }).click();
   await expect(page.getByRole('heading', { name: 'Job photos (1)' })).toBeVisible();
+  const retriedPhotos = await adminDb().collection(`companies/${company.id}/drafts/${await currentDraftOf(company.id, jobId)}/photos`).get();
+  const retriedCapturedAt = Date.parse(retriedPhotos.docs[0]!.data().field.capturedAt as string);
+  expect(retriedCapturedAt).toBeGreaterThanOrEqual(beforeFailedTake - 5000);
+  expect(retriedCapturedAt).toBeLessThanOrEqual(afterFailedTake + 5000);
   await page.reload();
   await expectPhoto(page, 'Photo 1, Laundry, Moisture meter');
   await expect(page.getByRole('list', { name: 'Job photos' }).getByRole('listitem')).toHaveCount(1);
@@ -494,7 +508,7 @@ test('a stored room the field map does not accept shows the load error, not empt
   await signIn(page, company, company.people.estimator!);
   const jobId = await startJob(page, '13 Broken Room Row');
   await addRoom(page, 'Attic');
-  const draftId = await currentDraftOf(company.id, jobId);
+  const draftId = await currentDraftOf(company.id, jobIdOf(page));
   const rooms = await adminDb().collection(`companies/${company.id}/drafts/${draftId}/rooms`).get();
   expect(rooms.size).toBe(1);
   // Written past the rules, as only a server or a bug could: a room name that is not text.

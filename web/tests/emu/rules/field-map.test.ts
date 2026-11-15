@@ -74,7 +74,7 @@ const ROOM: Data = {
   wetFloorSf: 60,
   wastePercent: 10,
 };
-const PHOTO: Data = { roomId: 'hall', shotTag: 'meter' };
+const PHOTO: Data = { roomId: 'hall', shotTag: 'meter', capturedAt: '2026-11-15T12:00:00.000Z' };
 // The room map with every key the Zod schema names, the v2 room inputs (S5a-10) beside the v1 keys.
 const EVERY_ROOM_KEY: Data = {
   ...ROOM,
@@ -168,6 +168,9 @@ describe('field map v1 rules', () => {
       ['room', room(A, 'editing', 'kitchen'), { unfinishedSf: '40' }],
       ['photo', photo(A, 'editing', 'p1'), { shotTag: 4 }],
       ['photo', photo(A, 'editing', 'p1'), { roomId: 4 }],
+      ['photo', photo(A, 'editing', 'p1'), { capturedAt: 42 }],
+      ['photo', photo(A, 'editing', 'p1'), { capturedAt: true }],
+      ['photo', photo(A, 'editing', 'p1'), { capturedAt: { seconds: 1 } }],
     ];
     for (const [kind, path, field] of cases) {
       const label = `${kind} ${JSON.stringify(field)}`;
@@ -198,7 +201,18 @@ describe('field map v1 rules', () => {
       expect(roomFieldSchema.safeParse(field).success, JSON.stringify(field)).toBe(false);
       expect(await updateDoc(a, room(A, 'editing', 'kitchen'), { field }), JSON.stringify(field)).toBe(403);
     }
-    for (const field of [{ shotTag: 'selfie' }, { roomId: '' }, { roomId: 'kitchen/../x' }]) {
+    for (const field of [
+      { shotTag: 'selfie' },
+      { roomId: '' },
+      { roomId: 'kitchen/../x' },
+      { capturedAt: '2026-11-15T12:00:00' },
+      { capturedAt: '2026-11-15t12:00:00z' },
+      { capturedAt: '2026-13-01T12:00:00Z' },
+      { capturedAt: '2026-11-15T25:00:00Z' },
+      { capturedAt: 'bad' },
+      { capturedAt: '' },
+      { capturedAt: `2026-11-15T12:00:00.${'1'.repeat(25)}Z` },
+    ]) {
       expect(photoFieldSchema.safeParse(field).success, JSON.stringify(field)).toBe(false);
       expect(await updateDoc(a, photo(A, 'editing', 'p1'), { field }), JSON.stringify(field)).toBe(403);
     }
