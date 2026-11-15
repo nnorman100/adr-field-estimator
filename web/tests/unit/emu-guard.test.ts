@@ -130,10 +130,16 @@ describe('npm run test:emu cleanup', () => {
       [
         `#!${process.execPath}`,
         "const { spawn } = require('node:child_process');",
-        "const emulator = spawn('sleep', ['300'], { detached: true, stdio: 'ignore' });",
+        "const { DRYSCOPE_EMU_RUN, ...unmarked } = process.env;",
+        "const emulator = spawn('sleep', ['300'], {",
+        '  detached: true,',
+        "  stdio: 'ignore',",
+        '  env: process.env.FAKE_UNMARKED ? unmarked : process.env,',
+        '});',
         'emulator.unref();',
         `require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(emulator.pid));`,
         "if (process.env.FAKE_END === 'fail') process.exit(3);",
+        "if (process.env.FAKE_END === 'late-fail') setTimeout(() => process.exit(3), 1500);",
         'setInterval(() => {}, 1000);',
         '',
       ].join('\n'),
@@ -159,13 +165,14 @@ describe('npm run test:emu cleanup', () => {
     }
   };
 
-  function start(end: 'fail' | 'hang') {
+  function start(end: 'fail' | 'late-fail' | 'hang', unmarked = false) {
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       PATH: `${dir}${delimiter}${process.env.PATH ?? ''}`,
       DRYSCOPE_EMU_LOCK: join(dir, 'host.lock'),
       FAKE_END: end,
     };
+    if (unmarked) env.FAKE_UNMARKED = '1';
     return spawn(process.execPath, ['--import', 'tsx', 'tests/emu/run.ts'], { cwd: webDir, env, stdio: 'ignore' });
   }
   const exited = (child: ReturnType<typeof start>) =>
@@ -187,6 +194,26 @@ describe('npm run test:emu cleanup', () => {
 
   it('stops what the CLI started when the run is interrupted', async () => {
     const child = start('hang');
+    await waitFor(() => existsSync(pidFile) && readFileSync(pidFile, 'utf8').trim() !== '');
+    const pid = Number(await readFile(pidFile, 'utf8'));
+    expect(alive(pid)).toBe(true);
+    const done = exited(child);
+    child.kill('SIGTERM');
+    await done;
+    await waitFor(() => !alive(pid));
+  }, 30_000);
+
+  // An emulator that does not carry the run marker, in a session of its own, is found only as a
+  // descendant of the CLI seen while the CLI ran.
+  it('stops an unmarked emulator in its own session when the CLI exits', async () => {
+    const child = start('late-fail', true);
+    expect(await exited(child)).toBe(3);
+    const pid = Number(await readFile(pidFile, 'utf8'));
+    await waitFor(() => !alive(pid));
+  }, 30_000);
+
+  it('stops an unmarked emulator in its own session when the run is interrupted', async () => {
+    const child = start('hang', true);
     await waitFor(() => existsSync(pidFile) && readFileSync(pidFile, 'utf8').trim() !== '');
     const pid = Number(await readFile(pidFile, 'utf8'));
     expect(alive(pid)).toBe(true);

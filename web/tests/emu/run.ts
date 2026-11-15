@@ -99,12 +99,61 @@ function markedPids(): number[] {
   });
 }
 
+// Every descendant of the CLI seen while it ran, with its start time so a recycled pid is never
+// mistaken for it. The CLI starts the emulators in sessions of their own that lose their parent
+// when it dies, and a process that does not pass on the marker above is found only this way.
+const descendants = new Map<number, string>();
+
+// pid -> parent and start time of every process, from `ps`. The start time is several words.
+function processTable(): Map<number, { ppid: number; start: string }> {
+  const table = new Map<number, { ppid: number; start: string }>();
+  let listing: string;
+  try {
+    listing = execFileSync('ps', ['-axo', 'pid=,ppid=,lstart='], {
+      encoding: 'latin1',
+      env: { ...process.env, LC_ALL: 'C' },
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+  } catch {
+    return table;
+  }
+  for (const line of listing.split('\n')) {
+    const [pid, ppid, ...start] = line.trim().split(/\s+/);
+    if (start.length > 0) table.set(Number(pid), { ppid: Number(ppid), start: start.join(' ') });
+  }
+  return table;
+}
+
+// Records the processes now under the CLI, however deep, and under any already recorded.
+function trackDescendants(): void {
+  if (child.pid === undefined) return;
+  const table = processTable();
+  const family = new Set<number>([child.pid]);
+  for (const [pid, start] of descendants) if (table.get(pid)?.start === start) family.add(pid);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const [pid, entry] of table) {
+      if (family.has(pid) || !family.has(entry.ppid)) continue;
+      family.add(pid);
+      descendants.set(pid, entry.start);
+      grew = true;
+    }
+  }
+}
+const tracking = setInterval(trackDescendants, 500);
+tracking.unref();
+child.on('spawn', trackDescendants);
+
 const GRACE_MS = 5_000;
-// Signals the CLI's group and every marked process; false when none of them is left.
-// Signal 0 only checks that something is still there.
+// Signals the CLI's group, every marked process and every recorded descendant still alive with the
+// start time it had; false when none of them is left. Signal 0 only checks that something is there.
 function signalRun(signal: NodeJS.Signals | 0): boolean {
+  const table = processTable();
+  const targets = new Set<number>([...(child.pid === undefined ? [] : [-child.pid]), ...markedPids()]);
+  for (const [pid, start] of descendants) if (table.get(pid)?.start === start) targets.add(pid);
   let any = false;
-  for (const target of [...(child.pid === undefined ? [] : [-child.pid]), ...markedPids()]) {
+  for (const target of targets) {
     try {
       process.kill(target, signal);
       any = true;
@@ -117,6 +166,7 @@ function signalRun(signal: NodeJS.Signals | 0): boolean {
 
 // Stops what the CLI left behind: ask politely, then force after a short grace.
 async function cleanUp(): Promise<void> {
+  trackDescendants();
   if (!signalRun('SIGTERM')) return;
   const deadline = Date.now() + GRACE_MS;
   while (Date.now() < deadline && signalRun(0)) {
@@ -146,6 +196,7 @@ child.on('error', (error) => {
 child.on('exit', (code, signal) => void finish(code ?? (signal ? 1 : 0)));
 for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
   process.on(signal, () => {
+    trackDescendants();
     signalRun(signal);
     // The child's exit finishes the run; if it does not exit, finish anyway after the grace.
     setTimeout(() => void finish(1), GRACE_MS + 1_000).unref();
