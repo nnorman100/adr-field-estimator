@@ -255,6 +255,24 @@ describe('signing on the phone', () => {
     expect(signed.record.proposal.payment_terms_text).toBe(PAYMENT_TERMS);
   });
 
+  it('signs a letter-layout proposal with the company’s own clause: the signed record holds those same bytes (S5a-9b)', async () => {
+    const clause = { title: 'Scheduling', text: 'We confirm the start date by phone.' };
+    await h.admin`
+      UPDATE companies SET profile_documents = ${JSON.stringify({ proposal_layout: 'letter', company_clauses: [clause], authorization_text: AUTHORIZATION, payment_terms_text: PAYMENT_TERMS })}::text::jsonb
+      WHERE id = ${h.seed.a}
+    `;
+    const { jobId, estimate, signatureId } = await readyToSign();
+    expect(estimate.proposal).toMatchObject({ company_clauses: [clause], letter: { area_inspected: ['Kitchen', 'Hall'] } });
+    const [stored] = await h.admin<{ proposal_bytes: Buffer; proposal_sha256: string }[]>`SELECT proposal_bytes, proposal_sha256 FROM job_estimates WHERE job_id = ${jobId}`;
+    const answer = await sign(ESTIMATOR_A, jobId, bodyFor(estimate, signatureId));
+    expect(answer.status).toBe(201);
+    const [row] = await agreementRows(jobId);
+    expect(row!.proposal_sha256).toBe(stored!.proposal_sha256);
+    expect(canonicalJson(answer.body.agreement.record.proposal)).toBe(stored!.proposal_bytes.toString('utf8'));
+    // The signed page reads the record back with the letter in it.
+    expect((await readSigned(OFFICE_A, jobId)).body.agreement.record.proposal).toMatchObject({ company_clauses: [clause], letter: { area_inspected: ['Kitchen', 'Hall'] } });
+  });
+
   it('the same signature twice returns one receipt and one agreement', async () => {
     const { jobId, estimate, signatureId, signature } = await readyToSign();
     const again = await putSignature(ESTIMATOR_A, jobId, signatureId, signature);

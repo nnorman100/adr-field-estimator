@@ -6,6 +6,7 @@ import { companySetupMissing } from './company-setup';
 import { Dec, HUNDRED, money, percentText } from './decimal';
 import type { JObj, Json } from './json';
 import type { Inspection } from './inspection';
+import { LAYOUT_SETTINGS, layoutKeys, letterOf, ROOM_WORDS, roomWordsFor } from './proposal-letter';
 import { letterParagraph, equipmentSizing } from './sizing';
 import type { Table } from './table';
 import { aiNote, plain, technicianStatement } from './text';
@@ -341,8 +342,14 @@ export function makeDocuments(input: {
   customerName: string;
   claim: Json | null;
   table: Table;
+  /** The company's layout and its own clauses (S5a-9b); absent means the itemized layout, no clauses. */
+  settings?: Json;
+  /** Each room's findings note and prep tasks, in the record's room order (S5a-10); absent means none. */
+  rooms?: Json[];
 }): JObj {
   const ai = parse(AI, input.ai, 'ai');
+  const settings = parse(LAYOUT_SETTINGS, input.settings, 'settings');
+  const roomWords = input.rooms === undefined ? null : parse(ROOM_WORDS, input.rooms, 'rooms');
   const photos = input.photos.map((photo) => photoOf(photo));
   const identity: Identity | null = input.identity === null ? null : parse(IDENTITY, input.identity, 'identity');
   const claim: Claim | null = input.claim === null ? null : parse(CLAIM, input.claim, 'claim');
@@ -391,12 +398,9 @@ export function makeDocuments(input: {
       observations.push(`Photo ${index + 1} (${photo.room}) — supporting photo; no verified meter reading.`);
     }
   });
-  const recommendations = [
-    ...(before ? [TESTING] : []),
-    PROTECTION.replaceAll('{company}', clauseCompany),
-    ...items.filter((item) => item.group !== 'job_charges').map((item) => item.description),
-    ADDITIONAL,
-  ];
+  const mandated = [...(before ? [TESTING] : []), PROTECTION.replaceAll('{company}', clauseCompany)];
+  const recommendations = [...mandated, ...items.filter((item) => item.group !== 'job_charges').map((item) => item.description), ADDITIONAL];
+  const words = roomWordsFor(data.rooms, roomWords);
   const customer = input.customerName.trim();
   const license = identity?.license ?? '';
   const head = letterhead([
@@ -428,6 +432,9 @@ export function makeDocuments(input: {
     property_address: data.address,
     proposed_cost: (high ?? low).toString(),
     recommendations,
+    ...layoutKeys(settings, () =>
+      letterOf({ rooms: data.rooms, words, lines: items, table: input.table, findings: [age], recommendations: mandated, additional: ADDITIONAL }),
+    ),
   };
   if (!single) proposal.proposed_cost_low = low.toString();
   const documents: JObj = {

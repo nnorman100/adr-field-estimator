@@ -1,4 +1,4 @@
-import type { EstimateEnd } from '@/engine/estimate';
+import type { EstimateEnd, LetterLine, ProposalLetter } from '@/engine/estimate';
 import type { EstimateView } from '@/lib/estimates/result';
 import { chargeRows, dollars, photoAlbums, priceLines, quantityNoteLine, warningText } from '@/lib/estimates/screen';
 
@@ -65,33 +65,118 @@ function List({ items }: { items: string[] }) {
   );
 }
 
+function Paragraphs({ items }: { items: string[] }) {
+  return items.map((item, index) => (
+    <p key={`${index}-${item}`} className="break-words">
+      {item}
+    </p>
+  ));
+}
+
+// The letter's work: each line, with its price only when the proposal carries one.
+function Work({ items, lines }: { items: string[]; lines: LetterLine[] }) {
+  return (
+    <ul role="list" className="flex flex-col gap-1">
+      {items.map((item, index) => (
+        <li key={`task-${index}-${item}`} className="break-words">
+          {item}
+        </li>
+      ))}
+      {lines.map((line, index) => (
+        <li key={`line-${index}-${line.text}`} className={ROW}>
+          <span className="min-w-0 break-words">{line.text}</span>
+          {line.total !== undefined ? <span className="shrink-0 tabular-nums">{dollars(line.total)}</span> : null}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** The letter layout (S5a-9b): area inspected, findings and recommendations, as the engine built them. */
+function Letter({ letter }: { letter: ProposalLetter }) {
+  return (
+    <>
+      <h3 className="font-semibold">Area inspected</h3>
+      <List items={letter.area_inspected} />
+      <h3 className="font-semibold">Findings</h3>
+      <Paragraphs items={letter.findings} />
+      {letter.room_findings.map((room, index) => (
+        <div key={`${index}-${room.room}`} className="flex flex-col gap-1">
+          <h4 className="font-medium break-words">{room.room}</h4>
+          <p className="break-words whitespace-pre-wrap">{room.text}</p>
+        </div>
+      ))}
+      <h3 className="font-semibold">Recommendations</h3>
+      <Paragraphs items={letter.recommendations} />
+      {letter.room_work.map((room, index) => (
+        <div key={`${index}-${room.room}`} className="flex flex-col gap-1">
+          <h4 className="font-medium break-words">{room.room}</h4>
+          <Work items={room.prep_tasks} lines={room.lines} />
+        </div>
+      ))}
+      {letter.job_work.length ? <Work items={[]} lines={letter.job_work} /> : null}
+      <p className="break-words">{letter.additional}</p>
+    </>
+  );
+}
+
+/** The company's own clauses, each exactly as entered, after the recommendations (S5a-9b). */
+function CompanyClauses({ clauses }: { clauses: Array<{ title: string; text: string }> }) {
+  return clauses.map((clause, index) => (
+    <div key={`${index}-${clause.title}`} className="flex flex-col gap-1">
+      <h3 className="font-semibold break-words whitespace-pre-wrap">{clause.title}</h3>
+      <p className="break-words whitespace-pre-wrap">{clause.text}</p>
+    </div>
+  ));
+}
+
 /** The proposal, shown from its stored bytes: on the review, and on the signed page (S5a-11). */
 export function Proposal({ proposal }: { proposal: NonNullable<EstimateView['proposal']> }) {
   const price = proposal.price;
-  return (
-    <div className="flex flex-col gap-2">
-      <p className="font-semibold">{proposal.heading}</p>
-      <p className="text-sm break-words">{proposal.letterhead.join(' · ')}</p>
-      {proposal.customer_name ? <p>Customer: {proposal.customer_name}</p> : null}
-      <p className="break-words">Property: {proposal.property_address}</p>
-      <ul className="flex flex-col gap-1">
-        {(price.lines ?? []).map((line, index) => (
-          <li key={`${index}-${line.description}`} className={ROW}>
-            <span className="min-w-0 break-words">{line.description}</span>
-            <span className="shrink-0 tabular-nums">{dollars(line.total)}</span>
-          </li>
-        ))}
-        <Charges end={price.low} afterHoursLabel={price.after_hours_label} />
-      </ul>
+  const priceLine = (
+    <>
       <p className="font-semibold">
         {price.mode === 'range' && price.high ? `Customer estimate range: ${dollars(price.low.total)} to ${dollars(price.high.total)}` : `Price: ${dollars(price.low.total)}`}
       </p>
       {price.explanation ? <p className="text-sm">{price.explanation}</p> : null}
-      <p className="font-semibold">Findings</p>
-      <List items={proposal.findings} />
-      <p className="font-semibold">Proposed scope</p>
-      <List items={proposal.recommendations} />
-      <List items={proposal.disclaimers} />
+    </>
+  );
+  const clauses = proposal.company_clauses ? <CompanyClauses clauses={proposal.company_clauses} /> : null;
+  return (
+    <div className="flex flex-col gap-2" data-layout={proposal.letter ? 'letter' : 'itemized'}>
+      <p className="font-semibold">{proposal.heading}</p>
+      <p className="text-sm break-words">{proposal.letterhead.join(' · ')}</p>
+      {proposal.customer_name ? <p>Customer: {proposal.customer_name}</p> : null}
+      <p className="break-words">Property: {proposal.property_address}</p>
+      {proposal.letter ? (
+        <>
+          <Letter letter={proposal.letter} />
+          {clauses}
+          <List items={proposal.disclaimers} />
+          {priceLine}
+        </>
+      ) : (
+        <>
+          {price.lines ? (
+            <ul className="flex flex-col gap-1">
+              {price.lines.map((line, index) => (
+                <li key={`${index}-${line.description}`} className={ROW}>
+                  <span className="min-w-0 break-words">{line.description}</span>
+                  <span className="shrink-0 tabular-nums">{dollars(line.total)}</span>
+                </li>
+              ))}
+              <Charges end={price.low} afterHoursLabel={price.after_hours_label} />
+            </ul>
+          ) : null}
+          {priceLine}
+          <p className="font-semibold">Findings</p>
+          <List items={proposal.findings} />
+          <p className="font-semibold">Proposed scope</p>
+          <List items={proposal.recommendations} />
+          {clauses}
+          <List items={proposal.disclaimers} />
+        </>
+      )}
       {proposal.authorization_text !== undefined ? (
         <>
           <p className="font-semibold">Start-work authorization</p>

@@ -45,6 +45,18 @@ const lineSchema = z.strictObject({
 
 const strings = z.array(z.string());
 
+// The letter layout's sections (S5a-9b, src/engine/proposal-letter.ts).
+const letterLine = z.strictObject({ text: z.string(), total: money.optional() });
+const letterSchema = z.strictObject({
+  area_inspected: strings,
+  findings: strings,
+  room_findings: z.array(z.strictObject({ room: z.string(), text: z.string() })),
+  recommendations: strings,
+  room_work: z.array(z.strictObject({ room: z.string(), prep_tasks: strings, lines: z.array(letterLine) })),
+  job_work: z.array(letterLine),
+  additional: z.string(),
+});
+
 const documentsSchema = z.strictObject({
   proposal: z.strictObject({
     customer_name: z.string(),
@@ -53,6 +65,9 @@ const documentsSchema = z.strictObject({
     findings: strings,
     recommendations: strings,
     disclaimers: strings,
+    // Each only when the company set it (S5a-9b); an estimate stored before has neither.
+    company_clauses: z.array(z.strictObject({ title: z.string(), text: z.string() })).optional(),
+    letter: letterSchema.optional(),
   }),
   letter: z.string(),
   compliance_notes: strings,
