@@ -72,10 +72,14 @@ function parsePort(name: string, value: string): number {
   return port;
 }
 
+function readPort(name: string, fallback: number, env: Env): number {
+  const value = env[name];
+  return isSet(value) ? parsePort(name, value) : fallback;
+}
+
 // The port a process should use: the pinned one when the variable is set, else the default.
 export function emuPort(key: EmuPort, env: Env = process.env): number {
-  const value = env[EMU_PORT_ENV[key]];
-  return isSet(value) ? parsePort(EMU_PORT_ENV[key], value) : EMU_PORT_DEFAULT[key];
+  return readPort(EMU_PORT_ENV[key], EMU_PORT_DEFAULT[key], env);
 }
 
 // Nothing listens on the port, on IPv4 or IPv6 loopback (the emulator hub opens both). Asks a
@@ -116,25 +120,30 @@ export type ClaimOptions = {
   candidate?: () => number;
 };
 
-export type Claim<K extends EmuPort> = {
+export type Claim<K extends string = EmuPort> = {
   ports: Record<K, number>;
   // False when no port setting was present: the defaults are in use and nothing was claimed.
   custom: boolean;
   release: () => void;
 };
 
-// Settles the ports for `keys` from the environment and claims them. With no EMU_* setting this
+// Settles the ports for `keys` from the environment and claims them. With no port setting this
 // returns the defaults and changes nothing. Otherwise it writes every port back into `env`
 // (with CLAIMED_ENV) for the processes it starts.
-export function claimEmuPorts<K extends EmuPort>(keys: readonly K[], options: ClaimOptions = {}): Claim<K> {
+export function claimPorts<K extends string>(
+  keys: readonly K[],
+  defaults: Readonly<Record<K, number>>,
+  envNames: Readonly<Record<K, string>>,
+  options: ClaimOptions = {},
+): Claim<K> {
   const env = options.env ?? process.env;
   const auto = env[AUTO_ENV];
   if (isSet(auto) && auto !== 'auto') throw new Error(`${AUTO_ENV} must be "auto" or unset, not ${JSON.stringify(auto)}`);
-  const pinned = keys.filter((key) => isSet(env[EMU_PORT_ENV[key]]));
+  const pinned = keys.filter((key) => isSet(env[envNames[key]]));
   const custom = isSet(auto) || pinned.length > 0 || isSet(env[CLAIMED_ENV]);
   const ports = {} as Record<K, number>;
   if (!custom || isSet(env[CLAIMED_ENV])) {
-    for (const key of keys) ports[key] = emuPort(key, env);
+    for (const key of keys) ports[key] = readPort(envNames[key], defaults[key], env);
     return { ports, custom, release: () => {} };
   }
 
@@ -158,13 +167,13 @@ export function claimEmuPorts<K extends EmuPort>(keys: readonly K[], options: Cl
   };
 
   try {
-    const wanted = keys.map((key) => ({ key, name: EMU_PORT_ENV[key], pinned: isSet(env[EMU_PORT_ENV[key]]) }));
+    const wanted = keys.map((key) => ({ key, name: envNames[key], pinned: isSet(env[envNames[key]]) }));
     // Pinned ports first (and defaults, for the ones a run leaves alone without asking for picks),
     // so picking cannot take one of them.
     const fixed = wanted.filter((one) => one.pinned || !isSet(auto));
     const seen = new Map<number, string>();
     for (const one of fixed) {
-      const port = emuPort(one.key, env);
+      const port = readPort(one.name, defaults[one.key], env);
       const other = seen.get(port);
       if (other) throw new Error(`${other} and ${one.name} name the same port (${port})`);
       seen.set(port, one.name);
@@ -194,10 +203,14 @@ export function claimEmuPorts<K extends EmuPort>(keys: readonly K[], options: Cl
     throw error;
   }
 
-  for (const key of keys) env[EMU_PORT_ENV[key]] = String(ports[key]);
+  for (const key of keys) env[envNames[key]] = String(ports[key]);
   env[CLAIMED_ENV] = '1';
   if (options.releaseOnExit ?? true) process.once('exit', release);
   return { ports, custom, release };
+}
+
+export function claimEmuPorts<K extends EmuPort>(keys: readonly K[], options: ClaimOptions = {}): Claim<K> {
+  return claimPorts(keys, EMU_PORT_DEFAULT, EMU_PORT_ENV, options);
 }
 
 export type ConfigPorts = { auth?: number; firestore?: number; firestoreWebsocket?: number; storage?: number; hub?: number; logging?: number };

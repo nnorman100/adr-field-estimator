@@ -9,11 +9,8 @@ import { STORAGE_CONFIG, STORAGE_EMULATOR_HOST } from './tests/e2e/jobs/backend'
 import { parseShard } from './tests/e2e/shard';
 import { APP_CHECK_ENV, APP_CHECK_JOBS_BASE_URL, APP_CHECK_PORT, APP_CHECK_SERVER_LOG } from './tests/e2e/app-check/server';
 
-const port = 3100;
-
-// The emulators' configs: the committed ones, unless this run has its own ports (EMU_*_PORT or
-// EMU_PORTS=auto, tests/emu/ports.ts), which the Firebase CLI can only take from a config file.
 const { ports, custom } = E2E_EMU;
+const port = ports.app;
 const AUTH_FIRESTORE_CONFIG = custom
   ? writeEmulatorConfig('firebase.json', {
       auth: ports.auth,
@@ -88,7 +85,7 @@ export default defineConfig({
       // A production build and server, not `next dev`: the dev server stopped listening in the
       // middle of a CI run (2026-11-11), and every later test got ECONNREFUSED. Its stdout, where
       // the structured log lines go, is kept in a file the tests read (tests/e2e/server-log.ts).
-      command: `npm run build && mkdir -p ${JSON.stringify(SERVER_LOG_DIR)} && npm run start > ${JSON.stringify(SERVER_LOG)}`,
+      command: `npm run build && mkdir -p ${JSON.stringify(SERVER_LOG_DIR)} && npx next start --port ${port} > ${JSON.stringify(SERVER_LOG)}`,
       url: `http://localhost:${port}/api/health`,
       env: appEnv,
       // A server started by hand would lack the emulator settings above.
