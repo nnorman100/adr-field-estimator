@@ -54,16 +54,38 @@ function record(jobId: string, draftId: string, more = false): Snapshot {
   };
 }
 
+// S5a-9b: a company that chose the letter layout, with a clause of its own and line prices shown.
+const CLAUSE = { title: 'Scheduling', text: 'We confirm the start date by phone.\nTwo days before.' };
+type Layout = { letter: boolean };
+
 // The server's answer for this record priced at $2.00 a square foot of wet floor, as `role` sees it.
-function estimateFor(team: TeamSeed, jobId: string, draftId: string, role: 'owner' | 'estimator' | 'office', photoLogGrouping: 'room' | 'shot_tag' | null = null): EstimateView {
+function estimateFor(
+  team: TeamSeed,
+  jobId: string,
+  draftId: string,
+  role: 'owner' | 'estimator' | 'office',
+  photoLogGrouping: 'room' | 'shot_tag' | null = null,
+  layout: Layout = { letter: false },
+): EstimateView {
   const company: CompanyDocuments = {
     identity: { companyId: team.companyId, name: team.companyName, address: '1 Synthetic Way, Testville', phone: '555-0100', email: 'office@example.invalid', license: '000001', signoff: 'Pat Example' },
     letterhead: NEUTRAL_LETTERHEAD,
-    settings: photoLogGrouping ? { ...NEUTRAL_SETTINGS, photoLogGrouping } : NEUTRAL_SETTINGS,
+    settings: {
+      ...NEUTRAL_SETTINGS,
+      ...(photoLogGrouping ? { photoLogGrouping } : {}),
+      ...(layout.letter ? { proposalLayout: 'letter' as const, companyClauses: [CLAUSE] } : {}),
+    },
     // The company's own wording for the signed page (S5a-11), synthetic text.
     signing: { authorizationText: 'Synthetic start-work authorization.', paymentTermsText: 'Synthetic payment terms.' },
   };
   const snapshot = record(jobId, draftId, photoLogGrouping !== null);
+  if (layout.letter) {
+    // The rooms' words the letter prints (S5a-10): a prep task in the kitchen, a findings note in the hall.
+    snapshot.field.rooms = [
+      { id: 'hall', field: { name: 'Hall', category: 2, floorSf: 40, wetFloorSf: 40, findings: 'Baseboards swollen along the east wall.' } },
+      { id: 'kitchen', field: { name: 'Kitchen', category: 2, floorSf: 120, wetFloorSf: 80, prepTasks: ['The homeowner clears the cabinet under the sink.'] } },
+    ];
+  }
   const table = {
     items: [{ item_id: 'extraction', group: 'treatment', name: 'Extraction', unit: 'sf', quantity_source: 'room:wet_floor', unit_price: '2.00' }],
     policy: {
@@ -73,12 +95,13 @@ function estimateFor(team: TeamSeed, jobId: string, draftId: string, role: 'owne
       category_multipliers: { '1': '1', '2': '1', '3': '1' },
       cabinetry: { multiplier: '1', scope: 'finished_only' },
       sales_tax: { enabled: false, percent: '0' },
+      show_line_breakdown: layout.letter,
     },
   };
   const priced = priceEstimate(table, estimateInput(snapshot, company).job);
   if (!priced.ok) throw new Error(priced.error);
   const { bytes, sha256 } = proposalBytes(
-    proposalOf({ estimate: priced, company, showLineBreakdown: false, submission: { id: snapshot.submissionId, snapshotSha256: 'e'.repeat(64) }, version: { sequence: 1 } }),
+    proposalOf({ estimate: priced, company, showLineBreakdown: layout.letter, submission: { id: snapshot.submissionId, snapshotSha256: 'e'.repeat(64) }, version: { sequence: 1 } }),
   );
   return estimateView(
     {
@@ -425,4 +448,56 @@ test('signing is refused with the setup check’s answer', async ({ page }) => {
   await main.getByRole('button', { name: 'Sign', exact: true }).click();
   await expect(main.getByRole('alert')).toContainText('Company settings are not finished: Payment terms.');
   await expect(main.getByRole('heading', { name: 'Signed', exact: true })).toHaveCount(0);
+});
+
+test('a company that chose the letter layout: the review and the signed page show the letter, its clause exactly as entered', async ({ page }) => {
+  const job = { id: randomUUID(), status: 'submitted', currentDraftId: randomUUID(), revision: 3 };
+  const made = estimateFor(team, job.id, job.currentDraftId, 'estimator', null, { letter: true });
+  let signed: SignedAgreement | null = null;
+  const signing: Signing = { signatures: [], agreements: [] };
+  await playApi(
+    page,
+    job,
+    {
+      estimate: made,
+      signature: () => [201, { photoId: 'x', kind: 'signature', sha256: 'f'.repeat(64) }],
+      sign: () => {
+        signed = signedFor(made, (signing.agreements[0] as { signatureId: string }).signatureId);
+        return [201, { job: { ...job, status: 'signed' }, agreement: signed }];
+      },
+    },
+    signing,
+  );
+  await signInTo(page, team.estimator);
+  await page.goto(`/sign-in/${team.address}/jobs/${job.id}/review`);
+  const main = page.getByRole('main');
+  await expect(main.getByRole('heading', { name: 'Review before signing' })).toBeVisible();
+  await main.getByText('Proposal', { exact: true }).click();
+  const proposal = main.locator('[data-layout="letter"]');
+  await expect(proposal.getByText(`${team.companyName} · Official proposal`)).toBeVisible();
+  for (const name of ['Area inspected', 'Findings', 'Recommendations']) await expect(proposal.getByRole('heading', { name, exact: true })).toBeVisible();
+  await expect(proposal.getByText('Due to property age (1968), California State Law requires third-party lead and asbestos testing prior to destructive demolition.')).toBeVisible();
+  await expect(proposal.getByText('Baseboards swollen along the east wall.')).toBeVisible();
+  await expect(proposal.getByText('* The homeowner clears the cabinet under the sink.')).toBeVisible();
+  // Each line with its price (the price table shows the line breakdown), then the one price line.
+  await expect(proposal.getByRole('listitem').filter({ hasText: 'Extraction: up to 80 sf' })).toContainText('$160.00');
+  await expect(proposal.getByText('Price: $240.00', { exact: true })).toBeVisible();
+  await expect(proposal.getByText('(this does not include the pretest for lead/asbestos)')).toBeVisible();
+  // The company's clause, exactly as entered, its line break kept.
+  expect(await proposal.getByText(/We confirm the start date/).evaluate((element) => element.textContent)).toBe(CLAUSE.text);
+  await expectNoAxeViolations(page);
+  await expectNoSideways(page);
+
+  await main.getByRole('checkbox', { name: /I reviewed the proposal/ }).check();
+  await main.getByLabel("Customer's full name").fill('Casey Customer');
+  await drawSignature(page);
+  await main.getByRole('button', { name: 'Sign', exact: true }).click();
+  await expect(main.getByRole('heading', { name: 'Signed', exact: true })).toBeVisible();
+  expect((signing.agreements[0] as Record<string, unknown>).proposalSha256).toBe(made.proposalSha256);
+  const signedProposal = main.getByRole('region', { name: 'Signed proposal' });
+  await expect(signedProposal.getByRole('heading', { name: 'Area inspected', exact: true })).toBeVisible();
+  await expect(signedProposal.getByRole('heading', { name: 'Scheduling', exact: true })).toBeVisible();
+  await expectTermsAboveSignature(page, 'Casey Customer');
+  await expectNoAxeViolations(page);
+  await expectNoSideways(page);
 });

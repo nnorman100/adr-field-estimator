@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { Estimate, EstimateEnd } from '@/engine/estimate';
+import type { Estimate, EstimateEnd, ProposalLetter } from '@/engine/estimate';
 import { canonicalJson } from '@/lib/field/canonical';
 import type { CompanyDocuments } from '@/lib/profile/documents';
 
@@ -13,6 +13,12 @@ import type { CompanyDocuments } from '@/lib/profile/documents';
 // Since S5a-11 (format v2) the proposal also holds the company's start-work authorization and payment
 // terms (S5a-4b document settings), exactly as the owner entered them, so the signature binds them
 // with everything else. A v1 proposal, made before, has neither and is never signable.
+//
+// Since S5a-9b the proposal is laid out as the company chose (its document settings): the itemized
+// proposal (the default, S5a-9's), or one plain letter (`letter`, built by the engine, in place of the
+// itemized findings and scope list). The company's own clauses (`company_clauses`) are added text,
+// printed exactly as entered after the recommendations and before the standard clauses. Each key is
+// present only when the company set it, so a company with no settings gets S5a-9's bytes exactly.
 
 export const PROPOSAL_FORMAT = 'dryscope-proposal-v2';
 export const PROPOSAL_FORMATS = ['dryscope-proposal-v1', PROPOSAL_FORMAT] as const;
@@ -30,16 +36,21 @@ export type ProposalPrice = {
   lines?: Array<{ description: string; quantity: string; unit: string; total: string }>;
 };
 
-export type Proposal = {
+// The itemized layout's findings and scope list, or the letter's sections: never both.
+type ProposalBody =
+  | { findings: string[]; recommendations: string[]; letter?: never }
+  | { letter: ProposalLetter; findings?: never; recommendations?: never };
+
+export type Proposal = ProposalBody & {
   format: (typeof PROPOSAL_FORMATS)[number];
   heading: string;
   letterhead: string[];
   customer_name: string;
   property_address: string;
   lead_notice_required: boolean;
-  findings: string[];
-  recommendations: string[];
   disclaimers: string[];
+  // The company's own clauses, exactly as entered (only when it has any).
+  company_clauses?: Array<{ title: string; text: string }>;
   price: ProposalPrice;
   // Printed above the signature, each exactly as the company entered it (absent in v1).
   authorization_text?: string;
@@ -93,10 +104,12 @@ export function proposalOf(input: ProposalInput): Proposal {
     explanation: totals.mode === 'range' ? totals.range_explanation : totals.explanation,
     after_hours_label: totals.after_hours_label,
   };
-  if (input.showLineBreakdown) {
+  const proposal = documents.proposal;
+  // The letter's own lines carry their prices, so its price is the one price line.
+  if (input.showLineBreakdown && !proposal.letter) {
     price.lines = estimate.lines.map((line) => ({ description: line.description, quantity: line.quantity, unit: line.unit, total: line.total }));
   }
-  const proposal = documents.proposal;
+  const body: ProposalBody = proposal.letter ? { letter: proposal.letter } : { findings: proposal.findings, recommendations: proposal.recommendations };
   return {
     format: PROPOSAL_FORMAT,
     heading: proposalHeading(company.identity.name),
@@ -104,9 +117,9 @@ export function proposalOf(input: ProposalInput): Proposal {
     customer_name: proposal.customer_name,
     property_address: proposal.property_address,
     lead_notice_required: proposal.lead_notice_required,
-    findings: proposal.findings,
-    recommendations: proposal.recommendations,
+    ...body,
     disclaimers: proposal.disclaimers,
+    ...(proposal.company_clauses ? { company_clauses: proposal.company_clauses } : {}),
     price,
     authorization_text: company.signing.authorizationText,
     payment_terms_text: company.signing.paymentTermsText,
