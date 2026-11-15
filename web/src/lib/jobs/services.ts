@@ -2,17 +2,24 @@ import { serverDatabase } from '@/lib/auth/services';
 import { parseProjectionConfig } from '@/lib/config';
 import { firestoreFor } from '@/lib/projection/firestore';
 import { firestoreDraftStore } from './drafts';
+import { officeService, type OfficeService } from './office';
 import { jobsService, type JobsService } from './service';
 
-let service: JobsService | null = null;
+// Every jobs route's service: the jobs themselves (S5a-3) and the office's coordination, assignment
+// and field owner (S5b-1), over one database and one field database.
+export type JobRoutesService = JobsService & OfficeService;
+
+let service: JobRoutesService | null = null;
 
 // Built on the first jobs request from the checked server configuration (the same project and field
 // database the access records use), then reused. A missing setting throws and that request fails
 // closed.
-export function jobsServices(): JobsService {
+export function jobsServices(): JobRoutesService {
   if (!service) {
     const config = parseProjectionConfig(process.env);
-    service = jobsService(serverDatabase(), firestoreDraftStore(firestoreFor(config)));
+    const db = serverDatabase();
+    const drafts = firestoreDraftStore(firestoreFor(config));
+    service = { ...jobsService(db, drafts), ...officeService(db, drafts) };
   }
   return service;
 }

@@ -103,6 +103,11 @@ describe('API sign-in gate', () => {
       '/api/jobs/:id/signing-link',
       '/api/jobs/:id/document-links',
       '/api/jobs/:id/document-links/:id',
+      '/api/jobs/:id/coordination',
+      '/api/jobs/:id/assignments',
+      '/api/jobs/:id/assignments/:id',
+      '/api/jobs/:id/field-owner',
+      '/api/jobs/:id/field-owner/transfer',
     ]);
     expect(call('/api/me').headers.get('x-middleware-next')).toBe('1');
     expect(call('/api/me/extra').status).toBe(401);

@@ -743,6 +743,60 @@ export const documentLinks = pgTable(
   (t) => [primaryKey({ columns: [t.companyId, t.id] }), unique('document_links_token_key').on(t.tokenSha256)],
 );
 
+// An estimator assigned to a job (0015), from a client-made id. Unassigning ends the row
+// (endedAt, endedByActorId), never deletes it; at most one active row per job and estimator.
+export const jobAssignments = pgTable(
+  'job_assignments',
+  {
+    id: uuid('id').notNull(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companies.id),
+    jobId: uuid('job_id').notNull(),
+    estimatorActorId: uuid('estimator_actor_id').notNull(),
+    requestDigest: text('request_digest').notNull(),
+    assignedByActorId: uuid('assigned_by_actor_id').notNull(),
+    assignedAt: timestamp('assigned_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    endedAt: optionalTime('ended_at'),
+    endedByActorId: uuid('ended_by_actor_id'),
+  },
+  (t) => [primaryKey({ columns: [t.companyId, t.id] })],
+);
+
+// A job's office notes (0015): at most one row per job; owner and office only.
+export const jobCoordination = pgTable(
+  'job_coordination',
+  {
+    companyId: uuid('company_id').notNull(),
+    jobId: uuid('job_id').notNull(),
+    officeNotes: text('office_notes').notNull().default(''),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [primaryKey({ columns: [t.companyId, t.jobId] })],
+);
+
+export const correctionFields = ['property_address', 'customer_name', 'customer_phone', 'customer_email'] as const;
+
+// A correction of a signed job's address, name or contact field (0015, for S5b-4): insert-only.
+export const agreementCorrections = pgTable(
+  'agreement_corrections',
+  {
+    id: uuid('id').notNull(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companies.id),
+    jobId: uuid('job_id').notNull(),
+    agreementId: uuid('agreement_id').notNull(),
+    field: text('field', { enum: correctionFields }).notNull(),
+    value: text('value').notNull(),
+    requestDigest: text('request_digest').notNull(),
+    createdByActorId: uuid('created_by_actor_id').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [primaryKey({ columns: [t.companyId, t.id] })],
+);
+
 export const schema = {
   migrationLedger,
   authTenants,
@@ -766,4 +820,7 @@ export const schema = {
   agreements,
   signingLinks,
   documentLinks,
+  jobAssignments,
+  jobCoordination,
+  agreementCorrections,
 };

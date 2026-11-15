@@ -44,3 +44,24 @@ company's rows only inside `withCompany`, with forced row-level security. A key 
   `deductible`, `date_of_loss`). `evidence_objects` holds object names made of ids, hashes and sizes only.
   The company profile columns are the company's own business details, printed on its documents. Logs and
   audit details hold ids and counts only.
+
+## Office jobs, assignment and the field owner (`0015_office_jobs`, S5b-1)
+
+`0015_office_jobs` adds three tables (S5b-1, `docs/plans/S5.md`); nothing earlier changes. The routes over the
+first two are under "Office jobs routes" in `docs/access/jobs.md`; `agreement_corrections` is for S5b-4,
+which adds its routes. Each holds a company's rows only inside `withCompany`, with forced row-level
+security, a company policy, keys that carry `company_id`, no `DELETE` or `TRUNCATE` for the runtime, and
+the read-only operator policy (an operator reads through `withOperator`; every write policy refuses one).
+
+| Table | What it holds | Runtime rights |
+| --- | --- | --- |
+| `job_assignments` | An estimator assigned to a job: `id` made on the phone, `job_id`, `estimator_actor_id`, `request_digest` (SHA-256 of the assign request), `assigned_by_actor_id`, `assigned_at`, and `ended_at` with `ended_by_actor_id` once unassigned. At most one active row per job and estimator | `SELECT`, `INSERT`, and `UPDATE` of `ended_at` and `ended_by_actor_id`; a trigger keeps every other column as made, lets an active row end once (the time from the clock) and freezes an ended row |
+| `job_coordination` | At most one row per job: `office_notes` (up to 4,000 characters; line breaks and tabs, no other control character) | `SELECT`, `INSERT`, and `UPDATE` of `office_notes` and `updated_at` |
+| `agreement_corrections` | A correction of a signed job's `property_address`, `customer_name`, `customer_phone` or `customer_email` beside its agreement (same job): `id` made on the phone, `field`, `value` (one line, the corrected column's limits), `request_digest`, `created_by_actor_id`, `created_at` | `SELECT`, `INSERT`; never changed or removed, and the agreement it sits beside never changes |
+
+- Who owns a job's field work is `jobs.field_owner_actor_id` (0010): empty on an office user's job until the
+  first capture (`POST /api/jobs/{id}/field-owner`), then set once; only the owner moves it (owner decision
+  J5). The Firestore draft's `fieldOwnerUid` is the server's copy of it (`data/field-rules.md`).
+- Personal data: `job_coordination.office_notes` is free text the office writes and may hold personal
+  details (a gate code, a phone number); `agreement_corrections.value` holds the corrected address, name,
+  phone or email. `job_assignments` holds ids and times only. Audit details hold ids and revisions only.

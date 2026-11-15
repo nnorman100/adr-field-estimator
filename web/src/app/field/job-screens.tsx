@@ -2,21 +2,38 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { readJob, type JobDetail, type Refusal } from '@/lib/field/api';
+import { claimFieldOwner, readJob, type JobDetail, type Refusal } from '@/lib/field/api';
 import { newerDetail, pending, usePending } from '@/lib/field/pending';
 import type { FieldSession } from '@/lib/field/session';
 import { canEditDraft, fieldRefusal, InvalidFieldData, loadDraft, type DraftRef, type FieldDraft } from '@/lib/field/store';
 import type { JobView } from '@/lib/field/views';
+import { CoordinationView } from './coordination-view';
 import { CustomerView } from './customer-view';
 import { PhotosView } from './photos-view';
 import { ScopeView } from './scope-view';
-import { FieldLink } from './ui';
+import { FieldLink, Outcome } from './ui';
 
 const TABS: { view: JobView; label: string }[] = [
   { view: 'scope', label: 'Check Scope' },
   { view: 'customer', label: 'Customer and claim' },
   { view: 'photos', label: 'Photos' },
+  { view: 'coordination', label: 'Job coordination' },
 ];
+
+// Who owns this job's field work, as this person sees it (S5b-1): the rules let the owner and office
+// read every draft, and anyone else only the drafts they own (web/firestore.rules), so an estimator
+// whose job is owned by someone else, or by nobody yet, is not sent to read a draft they would be
+// refused.
+type FieldWork = 'mine' | 'other' | 'nobody';
+
+function fieldWorkOf(session: FieldSession, detail: JobDetail): FieldWork {
+  const owner = detail.job.fieldOwnerActorId;
+  if (owner === null) return 'nobody';
+  return session.actorId !== null && owner === session.actorId ? 'mine' : 'other';
+}
+
+const readsEveryDraft = (session: FieldSession) => session.role === 'owner' || session.role === 'office';
+const draftReadable = (session: FieldSession, detail: JobDetail) => readsEveryDraft(session) || fieldWorkOf(session, detail) === 'mine';
 
 export type JobContext = {
   session: FieldSession;
@@ -77,6 +94,11 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     async (current?: JobDetail) => {
       const job = current ?? detail;
       if (!job || !session.db) return;
+      if (!draftReadable(session, job)) {
+        setDraft(null);
+        setDraftError(null);
+        return;
+      }
       try {
         const found = await loadDraft(session.db, { companyId: session.companyId, draftId: job.job.currentDraftId });
         setDraft(found);
@@ -168,6 +190,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   }
   if (!detail) return <p role="status">Opening the job…</p>;
 
+  const fieldWork = fieldWorkOf(session, detail);
   const context: JobContext = {
     session,
     detail,
@@ -186,12 +209,20 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       <FieldLink to={{ view: 'jobs', list: null }}>Back to jobs</FieldLink>
       <h2 className="text-xl font-semibold break-words">{detail.job.propertyAddress || 'No address yet'}</h2>
       <nav aria-label="Job" className="flex flex-wrap gap-x-4">
-        {TABS.map((tab) => (
+        {TABS.filter((tab) => tab.view !== 'coordination' || session.capabilities.some((key) => key === 'coordination' || key === 'assignment')).map((tab) => (
           <FieldLink key={tab.view} to={{ view: tab.view, jobId }} current={tab.view === view} className={tab.view === view ? 'font-semibold' : undefined}>
             {tab.label}
           </FieldLink>
         ))}
       </nav>
+      {(view === 'scope' || view === 'photos') && fieldWork === 'nobody' && detail.job.status === 'draft' && session.capabilities.includes('scope') ? (
+        <StartFieldWork context={context} />
+      ) : null}
+      {(view === 'scope' || view === 'photos') && fieldWork === 'other' && !readsEveryDraft(session) ? (
+        <p className="rounded-md bg-foreground/5 p-3 text-sm">
+          Another person owns this job’s field work, so it is not shown here. The company owner can move it to you.
+        </p>
+      ) : null}
       {(view === 'scope' || view === 'photos') && draft !== null && !context.editable ? (
         <p className="rounded-md bg-foreground/5 p-3 text-sm">
           Read only. Only the estimator who owns this job&rsquo;s field work changes it, while the job is being edited.
@@ -215,6 +246,44 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       <div hidden={view !== 'customer'}>
         <CustomerView job={context} />
       </div>
+      <div hidden={view !== 'coordination'}>
+        <CoordinationView job={context} open={view === 'coordination'} />
+      </div>
+    </div>
+  );
+}
+
+// "First capture makes me field owner" (S5b-1, docs/spec.md 6.2): on a job nobody owns in the field
+// yet, the first person who does field work starts it and owns it from then on; the server sets the
+// draft's field owner, and the draft is read again. Sent again after no answer, it is the same
+// request: the server answers the same person with the same job.
+function StartFieldWork({ context }: { context: JobContext }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function start() {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    const answer = await claimFieldOwner(context.session.user, context.detail.job.id);
+    setBusy(false);
+    // The job and its draft are read again: the draft now names this person as its field owner.
+    if (answer.ok) {
+      await context.reloadJob();
+      return;
+    }
+    setError(answer.message);
+    // Someone else started it meanwhile, or the job moved on: read it again.
+    if (answer.status === 409 || answer.status === 404) await context.reloadJob();
+  }
+
+  return (
+    <div className="flex flex-col gap-2 rounded-md bg-foreground/5 p-3">
+      <p className="text-sm">Nobody has started this job’s field work yet. Whoever starts it owns it: only they can change it from then on.</p>
+      <Button onClick={() => void start()} disabled={busy}>
+        {busy ? 'Starting…' : 'Start field work'}
+      </Button>
+      <Outcome error={error} notice={null} />
     </div>
   );
 }

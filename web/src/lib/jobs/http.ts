@@ -1,7 +1,7 @@
 import type { z } from 'zod';
 import { IdentityRefusal, type Identity } from '@/lib/auth';
 import { JobError, type JobCaller } from './access';
-import { claimBody, createBody, customerBody, parseListQuery } from './schema';
+import { assignBody, claimBody, coordinationBody, createBody, customerBody, parseListQuery, transferBody } from './schema';
 import { jobsServices } from './services';
 
 // The jobs routes (src/app/api/jobs/). Each route file wraps one of these in memberRoute; these add
@@ -33,12 +33,14 @@ async function respond(run: () => Promise<Response>): Promise<Response> {
 
 const callerOf = (identity: Identity): JobCaller => identity;
 
-// A path id: a uuid, or the job does not exist.
-async function jobId(context: RouteContext): Promise<string> {
-  const value = (await context.params).jobId;
-  if (typeof value !== 'string' || !UUID.test(value)) throw new JobError('not_found');
+// A path id: a uuid, or the job (or the assignment) does not exist.
+async function pathId(context: RouteContext, name: 'jobId' | 'assignmentId'): Promise<string> {
+  const value = (await context.params)[name];
+  if (typeof value !== 'string' || !UUID.test(value)) throw new JobError(name === 'jobId' ? 'not_found' : 'assignment_not_found');
   return value.toLowerCase();
 }
+
+const jobId = (context: RouteContext) => pathId(context, 'jobId');
 
 async function body<T>(request: Request, schema: z.ZodType<T>): Promise<T> {
   let raw: unknown;
@@ -90,5 +92,58 @@ export async function saveClaim(request: Request, identity: Identity, context: R
     const id = await jobId(context);
     const input = await body(request, claimBody);
     return json(await jobsServices().saveClaim(callerOf(identity), id, input));
+  });
+}
+
+// GET /api/jobs/{jobId}/coordination: office notes, the assigned estimators and the field owner
+// (owner and office; an estimator is refused, as the customer view is all they see).
+export async function readCoordination(_request: Request, identity: Identity, context: RouteContext): Promise<Response> {
+  return respond(async () => json(await jobsServices().coordination(callerOf(identity), await jobId(context))));
+}
+
+// PUT /api/jobs/{jobId}/coordination  { revision, changeId, notes }
+export async function saveCoordination(request: Request, identity: Identity, context: RouteContext): Promise<Response> {
+  return respond(async () => {
+    const id = await jobId(context);
+    const input = await body(request, coordinationBody);
+    return json(await jobsServices().saveCoordination(callerOf(identity), id, input));
+  });
+}
+
+// POST /api/jobs/{jobId}/assignments  { id, estimatorActorId }: 201 for a new assignment, 200 for
+// the same request again.
+export async function assignEstimator(request: Request, identity: Identity, context: RouteContext): Promise<Response> {
+  return respond(async () => {
+    const id = await jobId(context);
+    const input = await body(request, assignBody);
+    const { created, view } = await jobsServices().assign(callerOf(identity), id, input);
+    return json(view, created ? 201 : 200);
+  });
+}
+
+// DELETE /api/jobs/{jobId}/assignments/{assignmentId}: ends the assignment (sent again, the same answer).
+export async function unassignEstimator(_request: Request, identity: Identity, context: RouteContext): Promise<Response> {
+  return respond(async () => {
+    const id = await jobId(context);
+    const assignment = await pathId(context, 'assignmentId');
+    return json(await jobsServices().unassign(callerOf(identity), id, assignment));
+  });
+}
+
+// POST /api/jobs/{jobId}/field-owner: "first capture makes me field owner"; no body. 201 when the
+// caller became the field owner now, 200 when they already were.
+export async function claimFieldOwner(_request: Request, identity: Identity, context: RouteContext): Promise<Response> {
+  return respond(async () => {
+    const { claimed, detail } = await jobsServices().claimFieldOwner(callerOf(identity), await jobId(context));
+    return json(detail, claimed ? 201 : 200);
+  });
+}
+
+// POST /api/jobs/{jobId}/field-owner/transfer  { revision, changeId, toActorId } (owner decision J5).
+export async function transferFieldOwner(request: Request, identity: Identity, context: RouteContext): Promise<Response> {
+  return respond(async () => {
+    const id = await jobId(context);
+    const input = await body(request, transferBody);
+    return json(await jobsServices().transferFieldOwner(callerOf(identity), id, input));
   });
 }

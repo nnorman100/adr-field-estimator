@@ -249,7 +249,9 @@ review on Nov 6, 2026.
 An office-created job starts with no field owner. The first authorized estimator to capture field
 work on it becomes its field owner; office keeps customer details and assignment.
 
-Target acceptance checks (**not built**):
+Acceptance checks (built in the rebuilt app, S5b-1: `web/tests/db/office-jobs-api.test.ts`, "field and
+office ownership", and `web/tests/emu/field-owner.test.ts`; "office-owned customer details" are the job
+coordination, the office notes, since owner decision J3 lets the field owner set the customer):
 
 - On an office-created empty job, the first authorized estimator's first capture makes them field
   owner, and a second estimator's later field write is refused.
@@ -258,9 +260,11 @@ Target acceptance checks (**not built**):
 - A field owner cannot change assignment or office-owned customer details.
 - Becoming field owner grants no price approval.
 
-Still **[open]**: an explicit field-owner transfer (the plan's alternative, preserving pending work
-and an audit), and how today's rule that a company owner or assignee can edit scope maps onto
-field ownership.
+The explicit field-owner transfer was decided by owner decision J5 (`docs/plans/S5.md`, section 8)
+and is built in S5b-1: the owner moves the field work to themself or an assigned estimator, audited;
+the phone that held it keeps its unsent changes (S6 offers Save as new draft). In the rebuilt app an
+assigned estimator changes the field work only once they own it (the first capture, or a move to
+them); until then they see the job's customer view only.
 
 ### 6.3 Live voice walkthrough as the default
 

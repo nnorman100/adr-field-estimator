@@ -15,6 +15,9 @@ export type FieldSession = {
   // and photo screens then say they cannot open.
   db: Firestore | null;
   companyId: string;
+  // The signed-in person's id in this company (GET /api/me), to tell whether they own a job's field
+  // work (S5b-1); null when the answer did not name it.
+  actorId: string | null;
   role: string;
   capabilities: string[];
 };
@@ -28,6 +31,7 @@ export type SessionOutcome =
 
 const me = z.object({
   company: z.object({ id: z.string() }),
+  actor: z.object({ id: z.string() }).optional(),
   role: z.string(),
   capabilities: z.array(z.string()),
 });
@@ -75,6 +79,7 @@ export async function openSession(saved: DsMe): Promise<SessionOutcome> {
         user,
         db: fieldDatabase(saved),
         companyId: parsed.data.company.id,
+        actorId: parsed.data.actor?.id ?? null,
         role: parsed.data.role,
         capabilities: parsed.data.capabilities,
       },

@@ -3,7 +3,9 @@ import { openDatabase } from '@/db/client';
 import { databaseDirectory, databaseOperators } from '@/lib/auth/directory';
 import { IdentityRefusal, type TokenVerifier } from '@/lib/auth/identity';
 import type { IdentityServices, OperatorServices } from '@/lib/auth/services';
-import { jobsService, type JobsService } from '@/lib/jobs/service';
+import { officeService } from '@/lib/jobs/office';
+import { jobsService } from '@/lib/jobs/service';
+import type { JobRoutesService } from '@/lib/jobs/services';
 import { photosService, type PhotosService } from '@/lib/photos/service';
 import { noEmailService, platformService, type PlatformService } from '@/lib/platform/service';
 import { pricesService, type PricesService } from '@/lib/prices/service';
@@ -58,8 +60,9 @@ export type Harness = {
   prices: PricesService;
   // The company profile routes' service (S5a-4).
   profile: ProfileService;
-  // The jobs routes' service, over the same database and an in-memory stand-in for the field drafts.
-  jobs: JobsService;
+  // The jobs routes' services (S5a-3 and S5b-1's office service), over the same database and an
+  // in-memory stand-in for the field drafts.
+  jobs: JobRoutesService;
   drafts: FakeDrafts;
   // The photo routes' service, over the same database, an in-memory evidence bucket and the draft states.
   photos: PhotosService;
@@ -224,7 +227,7 @@ export async function resetTeamDatabase(
     platform: null as unknown as PlatformService,
     prices: pricesService(handle.db),
     profile: profileService(handle.db),
-    jobs: null as unknown as JobsService,
+    jobs: null as unknown as JobRoutesService,
     drafts: fakeDrafts(),
     photos: null as unknown as PhotosService,
     evidence: fakeEvidence(),
@@ -263,7 +266,7 @@ export async function resetTeamDatabase(
   };
   harness.platform = platformService(handle.db, users, projectInto, noEmailService);
   harness.team = teamService(handle.db, users, projectInto);
-  harness.jobs = jobsService(handle.db, harness.drafts);
+  harness.jobs = { ...jobsService(handle.db, harness.drafts), ...officeService(handle.db, harness.drafts) };
   harness.draftStates = fakeDraftStates(harness.drafts);
   harness.photos = photosService(handle.db, harness.evidence, harness.draftStates);
   harness.field = fakeField(memoryBacking(), { drafts: harness.drafts, states: harness.draftStates });

@@ -9,13 +9,14 @@
 //   /field?job={id}                Check Scope of one job
 //   /field?job={id}&view=customer  Customer and claim
 //   /field?job={id}&view=photos    Photos
+//   /field?job={id}&view=coordination  Job coordination (owner and office, S5b-1)
 //
 // tests/e2e/screens.ts lists every view with the browser test that runs axe on it.
 
-export const FIELD_VIEWS = ['jobs', 'new-job', 'scope', 'customer', 'photos'] as const;
+export const FIELD_VIEWS = ['jobs', 'new-job', 'scope', 'customer', 'photos', 'coordination'] as const;
 export type FieldView = (typeof FIELD_VIEWS)[number];
 
-export const JOB_VIEWS = ['scope', 'customer', 'photos'] as const;
+export const JOB_VIEWS = ['scope', 'customer', 'photos', 'coordination'] as const;
 export type JobView = (typeof JOB_VIEWS)[number];
 
 export type JobsList = 'mine' | 'company';

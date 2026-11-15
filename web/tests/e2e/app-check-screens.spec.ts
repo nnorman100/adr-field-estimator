@@ -243,6 +243,8 @@ const VISITS: Visit[] = [
         scope: () => expect(page.getByLabel('Year built')).toBeVisible(),
         customer: () => expect(page.getByLabel('Customer name')).toBeVisible(),
         photos: () => expect(page.getByRole('heading', { name: /^Job photos/ })).toBeVisible(),
+        // An estimator is told it is the office's (S5b-1); tests/e2e/office-jobs.spec.ts drives it as office.
+        coordination: () => expect(page.getByRole('heading', { name: 'Job coordination' })).toBeVisible(),
       };
       for (const [view, ready] of Object.entries(views) as [FieldView, () => Promise<void>][]) {
         const place = view === 'jobs' ? { view, list: null } : view === 'new-job' ? { view } : { view, jobId };

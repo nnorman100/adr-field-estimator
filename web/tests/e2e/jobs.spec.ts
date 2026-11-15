@@ -459,6 +459,8 @@ test('every field view passes axe', async ({ page }) => {
     scope: (p) => p.getByLabel('Year built'),
     customer: (p) => p.getByLabel('Customer name'),
     photos: (p) => p.getByRole('heading', { name: /^Job photos/ }),
+    // An estimator is told it is the office's (S5b-1); tests/e2e/office-jobs.spec.ts checks it as office.
+    coordination: (p) => p.getByRole('heading', { name: 'Job coordination' }),
   };
   for (const [view, ready] of Object.entries(views) as [FieldView, (page: Page) => Locator][]) {
     const place = view === 'jobs' ? { view, list: null } : view === 'new-job' ? { view } : { view, jobId };

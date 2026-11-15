@@ -12,6 +12,7 @@ export const BASE_CAPABILITIES = Object.freeze({
     'jobs_copy',
     'coordination',
     'assignment',
+    'field_owner_transfer',
     'scope',
     'places',
     'photos',
