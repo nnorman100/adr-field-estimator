@@ -205,7 +205,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftChanges]);
 
-  if ((error || denial) && !detail) {
+  if (!detail && (denial || (error && (!locator || !draft)))) {
     return (
       <div className="flex flex-col gap-2">
         <p role="alert">{error ?? denial}</p>
@@ -270,7 +270,18 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       <div hidden={view !== 'scope'}>{draft ? <ScopeView key={draftAt} job={context} draft={draft} /> : null}</div>
       <div hidden={view !== 'photos'}>{draft ? <PhotosView key={draftAt} job={context} draft={draft} open={view === 'photos'} /> : null}</div>
       <div hidden={view !== 'customer'}>
-        {detail ? <CustomerView job={{ ...context, detail }} /> : <p role="status">Needs a connection</p>}
+        {detail ? (
+          <CustomerView job={{ ...context, detail }} />
+        ) : (
+          <div className="flex flex-col gap-2">
+            <p role="status">{error ?? 'Needs a connection'}</p>
+            {error && session.online ? (
+              <Button variant="outline" onClick={() => void reloadJob()}>
+                Try again
+              </Button>
+            ) : null}
+          </div>
+        )}
       </div>
     </div>
   );

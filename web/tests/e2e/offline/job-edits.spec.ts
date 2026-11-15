@@ -97,6 +97,29 @@ test('a job opened earlier on the same page reopens its field work offline', asy
   await expectNothingSent(lane);
 });
 
+test('a failed SQL job read keeps the cached field work open', async ({ context, lane }) => {
+  const world = await seedCompany();
+  const phone = await signedIn(context, lane, world);
+  const jobId = randomUUID();
+  await openJob(phone.page, lane, world, jobId);
+  const page = phone.page;
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  lane.cut();
+  await page.reload();
+  await expect(page.getByLabel('Year built')).toBeEditable();
+  lane.serve(`/api/jobs/${jobId}`, { type: 'application/json', body: JSON.stringify({ error: 'unavailable' }), status: 503 });
+  lane.restore();
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await page.getByRole('link', { name: 'Customer and claim' }).click();
+  await expect(page.getByRole('button', { name: 'Try again', exact: true })).toBeVisible();
+  await page.getByRole('link', { name: 'Check Scope' }).click();
+  await expect(page.getByLabel('Year built')).toBeEditable();
+  lane.cut();
+  await page.evaluate(() => window.dispatchEvent(new Event('offline')));
+  await expect(page.getByText(/No signal/)).toBeVisible();
+  await expect(page.getByLabel('Year built')).toBeEditable();
+});
+
 test('SQL customer and claim edits need a connection and are never queued offline', async ({ context, lane }) => {
   const world = await seedCompany();
   const phone = await signedIn(context, lane, world);
