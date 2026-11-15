@@ -183,12 +183,19 @@ describe('document links made at signing', () => {
 
   it('the same signing request again answers the same agreement and no token, and the shared links keep working', async () => {
     const { token, signed, issued, jobId } = await signedJob();
+    // The signing answer carries the job's document links as the list reads them, with no token.
+    const listed = (await list(OWNER_A, jobId)).body.links;
+    expect(signed.answer.body.links).toEqual(listed);
+    expect(listed.map((link: { id: string }) => link.id).sort()).toEqual([issued.homeowner.link.id, issued.adjuster.link.id].sort());
+    expect(JSON.stringify(signed.answer.body.links)).not.toContain(issued.homeowner.token);
+    await revoke(OFFICE_A, jobId, issued.adjuster.link.id);
     const again = await l.signWith(token, signed.body);
     expect(again.status).toBe(200);
     expect(again.body.agreement.id).toBe(signed.answer.body.agreement.id);
     expect(again.body.documentLinks).toEqual([]);
+    expect(again.body.links).toEqual((await list(OWNER_A, jobId)).body.links);
+    expect(again.body.links.find((link: { id: string }) => link.id === issued.adjuster.link.id).status).toBe('revoked');
     expect((await open(issued.homeowner.token)).status).toBe(200);
-    expect((await open(issued.adjuster.token)).status).toBe(200);
     expect(await l.f.auditActions(jobId)).not.toContain('document_link_reissued');
   });
 

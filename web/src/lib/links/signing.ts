@@ -11,7 +11,7 @@ import { currentEstimateRow } from '@/lib/estimates/service';
 import { hasAny, jobAccess, JobError, type JobCaller, type JobRow } from '@/lib/jobs/access';
 import type { PhotoStream, PhotosService, Receipt, ReceiveInput } from '@/lib/photos/service';
 import { technicianCaller } from './caller';
-import type { IssuedDocumentLink } from './document-store';
+import { documentLinksOfJob, type DocumentLinkView, type IssuedDocumentLink } from './document-store';
 import { LinkError } from './errors';
 import { linkCompany, nextReadCount, nextWindowStart, overLinkLimit } from './lookup';
 import { requestDigest, type CreateSigningLinkInput, type LinkSignInput } from './schema';
@@ -73,7 +73,7 @@ export type SigningLinksService = {
   receiveSignature(tokenSha256: string, signatureId: string, input: ReceiveInput): Promise<{ created: boolean; receipt: Receipt }>;
   openSignature(tokenSha256: string): Promise<PhotoStream>;
   openPhoto(tokenSha256: string, photoId: string): Promise<PhotoStream>;
-  sign(tokenSha256: string, input: LinkSignInput): Promise<{ created: boolean; agreement: AgreementView; documentLinks: IssuedDocumentLink[] }>;
+  sign(tokenSha256: string, input: LinkSignInput): Promise<{ created: boolean; agreement: AgreementView; documentLinks: IssuedDocumentLink[]; links: DocumentLinkView[] }>;
 };
 
 const linkColumns = {
@@ -413,7 +413,7 @@ export function signingLinksService(db: Database, photos: PhotosService): Signin
           const found = await agreementViewById(tx, row.companyId, row.agreementId!);
           if (!found) throw new LinkError('link_unavailable');
           if (found.requestDigest !== digest) throw new LinkError('conflict');
-          return { created: false, agreement: found.view, documentLinks: [] };
+          return { created: false, agreement: found.view, documentLinks: [], links: await documentLinksOfJob(tx, row.companyId, row.jobId) };
         });
       }
       if (row.status === 'voided') throw new LinkError('link_voided');
@@ -460,7 +460,7 @@ export function signingLinksService(db: Database, photos: PhotosService): Signin
             digest,
             claim,
           );
-          return { created: signed.created, agreement: signed.agreement, documentLinks: signed.documentLinks };
+          return { created: signed.created, agreement: signed.agreement, documentLinks: signed.documentLinks, links: signed.links };
         });
       } catch (error) {
         if (error instanceof AgreementError) {

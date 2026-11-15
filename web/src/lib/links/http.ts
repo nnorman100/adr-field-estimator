@@ -143,13 +143,14 @@ export async function viewSigningLink(_request: Request, link: LinkToken): Promi
 
 // POST /api/sign  { id, signatureId, signerName, signerRole, documentsConfirmed: true, electronicConsent: true }
 // 201 when this request signed; 200 for the same request again. The answer that signed carries the
-// tokens of the document links made at signing, once; the same request again carries none.
+// tokens of the document links made at signing, once; the same request again carries none. Both carry
+// the job's document links as they now are (`links`), as the list reads them.
 export async function signWithLink(request: Request, link: LinkToken): Promise<Response> {
   return respond(async () => {
     const parsed = linkSignBody.safeParse(await bodyOf(request));
     if (!parsed.success) throw new LinkError('invalid_request');
-    const { created, agreement, documentLinks } = await signingLinksServices().sign(link.tokenSha256, parsed.data);
-    return json({ agreement, documentLinks }, created ? 201 : 200);
+    const { created, agreement, documentLinks, links } = await signingLinksServices().sign(link.tokenSha256, parsed.data);
+    return json({ agreement, documentLinks, links }, created ? 201 : 200);
   }, true);
 }
 
