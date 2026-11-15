@@ -80,11 +80,10 @@ export function letterOf(input: {
 }): ProposalLetter {
   const labels = new Map(input.table.items.map((item) => [item.item_id, item.customer_description || item.name]));
   const showPrices = input.table.policy.show_line_breakdown;
-  // The same work the itemized proposal lists: every line but the job charges.
-  const work = input.lines.filter((line) => line.group !== 'job_charges');
+  // Every priced line is listed, the job charges included, so the letter's lines account for the price.
   const roomWork = input.rooms.flatMap((room, index) => {
     const prepTasks = (input.words[index]?.prep_tasks ?? []).map((task) => `* ${task}`);
-    const lines = work.filter((line) => line.room === room.name).map((line) => letterLine(line, labels, showPrices));
+    const lines = input.lines.filter((line) => line.room === room.name).map((line) => letterLine(line, labels, showPrices));
     return prepTasks.length || lines.length ? [{ room: room.name, prep_tasks: prepTasks, lines }] : [];
   });
   const names = new Set(input.rooms.map((room) => room.name));
@@ -94,7 +93,7 @@ export function letterOf(input: {
     room_findings: input.words.filter((room) => room.findings.trim() !== '').map((room) => ({ room: room.name, text: room.findings })),
     recommendations: input.recommendations,
     room_work: roomWork,
-    job_work: work.filter((line) => line.room === null || !names.has(line.room)).map((line) => letterLine(line, labels, showPrices)),
+    job_work: input.lines.filter((line) => line.room === null || !names.has(line.room)).map((line) => letterLine(line, labels, showPrices)),
     additional: input.additional,
   };
 }

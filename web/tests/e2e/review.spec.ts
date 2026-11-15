@@ -219,6 +219,11 @@ test('the estimator opens the review from Finish, prices the job and reads the f
   for (const name of ['Proposal', 'Itemized claim', 'Scope defense letter', 'Photo audit log']) await main.getByText(name, { exact: true }).click();
   await expect(main.getByText(`${team.companyName} · Official proposal`)).toBeVisible();
   await expect(main.getByText('(this does not include the pretest for lead/asbestos)').first()).toBeVisible();
+  // The price table hides the line breakdown: the proposal shows the total only, no lines and no charge rows.
+  const itemized = main.locator('[data-layout="itemized"]');
+  await expect(itemized.getByText('Price: $240.00', { exact: true })).toBeVisible();
+  await expect(itemized.getByText('Subtotal')).toHaveCount(0);
+  await expect(itemized.getByText('$240.00', { exact: true })).toHaveCount(0);
   await expect(main.getByText(`Photo 1 · Kitchen · shot: source · SHA-256 ${'ab'.repeat(6)}…`)).toBeVisible();
   await expectNoAxeViolations(page);
   await expectNoSideways(page);

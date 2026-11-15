@@ -157,15 +157,17 @@ export function Proposal({ proposal }: { proposal: NonNullable<EstimateView['pro
         </>
       ) : (
         <>
-          <ul className="flex flex-col gap-1">
-            {(price.lines ?? []).map((line, index) => (
-              <li key={`${index}-${line.description}`} className={ROW}>
-                <span className="min-w-0 break-words">{line.description}</span>
-                <span className="shrink-0 tabular-nums">{dollars(line.total)}</span>
-              </li>
-            ))}
-            <Charges end={price.low} afterHoursLabel={price.after_hours_label} />
-          </ul>
+          {price.lines ? (
+            <ul className="flex flex-col gap-1">
+              {price.lines.map((line, index) => (
+                <li key={`${index}-${line.description}`} className={ROW}>
+                  <span className="min-w-0 break-words">{line.description}</span>
+                  <span className="shrink-0 tabular-nums">{dollars(line.total)}</span>
+                </li>
+              ))}
+              <Charges end={price.low} afterHoursLabel={price.after_hours_label} />
+            </ul>
+          ) : null}
           {priceLine}
           <p className="font-semibold">Findings</p>
           <List items={proposal.findings} />

@@ -224,6 +224,26 @@ describe('line prices follow the price table’s show_line_breakdown', () => {
     expect(letter.price.low.total).toBe('427.50');
   });
 
+  it('the letter lists a priced job charge like any other line, with its price only when the breakdown is on', () => {
+    const SERVICE_CALL = { item_id: 'service_call', group: 'job_charges', name: 'Emergency service call', unit: 'each', quantity_source: 'field:emergency_calls', unit_price: '150.00' };
+    const letterWith = (showLineBreakdown: boolean): Proposal => {
+      const base = table(showLineBreakdown) as { items: Json[]; policy: Json };
+      const result = priceEstimate({ ...base, items: [...base.items, SERVICE_CALL] }, estimateInput(snapshot(), LETTER).job);
+      if (!result.ok) expect.fail(`refused at ${result.stage}: ${result.error}`);
+      return proposalOf({ estimate: result, company: LETTER, showLineBreakdown, ...BASIS });
+    };
+    const off = letterWith(false);
+    expect(off.price.low.total).toBe('577.50');
+    expect(off.letter?.job_work).toEqual([{ text: 'Emergency service call: up to 1 each' }, { text: 'Matterport scan: up to 1 each' }]);
+    const on = letterWith(true);
+    expect(on.letter?.job_work).toEqual([
+      { text: 'Emergency service call: up to 1 each', total: '150.00' },
+      { text: 'Matterport scan: up to 1 each', total: '150.00' },
+    ]);
+    const listed = [...on.letter!.room_work.flatMap((room) => room.lines), ...on.letter!.job_work].reduce((sum, line) => sum + Number(line.total), 0);
+    expect(listed.toFixed(2)).toBe(on.price.low.subtotal);
+  });
+
   it('the itemized claim always shows each line’s price', () => {
     const estimate = priced(LETTER, snapshot(), false);
     expect(estimate.documents!.itemized_claim.map((line) => (line as { total: string }).total)).toEqual(['37.50', '80.00', '160.00', '150.00']);
