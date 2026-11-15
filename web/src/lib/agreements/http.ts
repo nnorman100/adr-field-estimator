@@ -40,8 +40,8 @@ async function jobId(context: RouteContext): Promise<string> {
 
 // POST /api/jobs/{jobId}/agreements  { id, estimateId, proposalSha256, signatureId, signerName, documentsConfirmed: true }
 // 201 when this request signed the job, 200 for the same request again after it was signed; the
-// answer is the signed record, read back from the stored bytes, the job's new state, and the tokens
-// of the document links made at signing (new ones for the same request again, while still active).
+// answer is the signed record, read back from the stored bytes, the job's new state, and, in the
+// answer that signed only, the tokens of the document links made at signing.
 export async function signJob(request: Request, identity: Identity, context: RouteContext): Promise<Response> {
   return respond(async () => {
     const id = await jobId(context);

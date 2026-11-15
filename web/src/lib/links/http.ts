@@ -107,6 +107,7 @@ export async function revokeSigningLink(_request: Request, identity: Identity, c
 // POST /api/jobs/{jobId}/document-links  { id, set: 'homeowner' | 'adjuster' }
 // Both sets' links are made at signing; this makes one again: the owner or office (who may replace a
 // working one), or whoever may sign once the set has no working link (409 `link_active` otherwise).
+// The same id and body again answers a new token to the owner or office only (403 otherwise).
 export async function createDocumentLink(request: Request, identity: Identity, context: RouteContext): Promise<Response> {
   return respond(async () => {
     const jobId = await jobIdOf(context);
@@ -139,8 +140,8 @@ export async function viewSigningLink(_request: Request, link: LinkToken): Promi
 }
 
 // POST /api/sign  { id, signatureId, signerName, signerRole, documentsConfirmed: true, electronicConsent: true }
-// 201 when this request signed; 200 for the same request again. The answer carries the tokens of the
-// document links made at signing (new ones for the same request again, while still active).
+// 201 when this request signed; 200 for the same request again. The answer that signed carries the
+// tokens of the document links made at signing, once; the same request again carries none.
 export async function signWithLink(request: Request, link: LinkToken): Promise<Response> {
   return respond(async () => {
     const parsed = linkSignBody.safeParse(await bodyOf(request));

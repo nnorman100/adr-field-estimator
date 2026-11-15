@@ -108,10 +108,8 @@ export function documentLinksService(db: Database, photos: PhotosService): Docum
         const job = await jobAccess(tx, caller, jobId, ISSUE, { lock: true });
         const existing = await documentLinkById(tx, caller.companyId, input.id, true);
         if (existing) {
-          // A retried create: the token nobody saw stops working and a new one is returned. Only its
-          // maker, or someone who may revoke it, may do that.
+          // A retried create: a new token, and the old one stops working; only for the owner or office.
           if (existing.jobId !== jobId || existing.requestDigest !== digest) throw new LinkError('conflict');
-          if (existing.createdByActorId !== caller.actorId && !replaces) throw new JobError('not_allowed');
           if (documentLinkState(existing) !== 'active') throw new LinkError('link_ended');
           return { created: false, ...(await reissueDocumentLink(tx, caller, existing)) };
         }

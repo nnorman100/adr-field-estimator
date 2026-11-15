@@ -2,14 +2,15 @@ import { randomUUID } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
 import { auditEvents, documentLinks } from '@/db/schema';
 import type { CompanyTransaction } from '@/db/tenant';
-import type { JobCaller } from '@/lib/jobs/access';
+import { hasAny, JobError, type JobCaller } from '@/lib/jobs/access';
 import { DOCUMENT_SETS, requestDigest, type DocumentSet } from './schema';
 import { linkTokenSha256, newLinkToken } from './token';
 
 // The document_links rows (S5a-11b, migration 0014) as the link services read and write them, and the
 // two links the signing transaction makes: one for the homeowner's set and one for the adjuster's,
 // made by whoever signs (the technician on the phone, or the one a signing link acts as), with their
-// tokens answered once to whoever signed.
+// tokens answered once, to whoever signed, with that signature only. The same signing request again
+// answers the same agreement and no token: a token is replaced only by the owner or office.
 
 export type DocumentLinkState = 'active' | 'revoked' | 'expired';
 
@@ -90,8 +91,10 @@ export async function insertDocumentLink(
   return { link: documentLinkView((await documentLinkById(tx, caller.companyId, values.id))!), token };
 }
 
-// A link's token replaced: the one nobody saw stops working, and the new one is answered once.
+// A link's token replaced: the old one stops working, and the new one is answered once. Replacing a
+// token revokes the old one, so only the owner or office (`delivery_resend`) may.
 export async function reissueDocumentLink(tx: CompanyTransaction, caller: JobCaller, row: DocumentLinkRow): Promise<IssuedDocumentLink> {
+  if (!hasAny(caller, ['delivery_resend'])) throw new JobError('not_allowed');
   const token = newLinkToken();
   await tx
     .update(documentLinks)
@@ -103,35 +106,11 @@ export async function reissueDocumentLink(tx: CompanyTransaction, caller: JobCal
 
 const signingDigest = (agreementId: string, set: DocumentSet) => requestDigest({ agreementId, set, madeAt: 'signing' });
 
-/**
- * The agreement's document links made at signing, inside the signing transaction: new ones when the
- * agreement was just made; for the same signing request again (an answer that was lost), new tokens
- * for the ones the same signer made that are still active, so the unseen tokens stop working.
- */
-export async function documentLinksAtSigning(tx: CompanyTransaction, caller: JobCaller, jobId: string, agreementId: string, created: boolean): Promise<IssuedDocumentLink[]> {
+/** The agreement's document links, made at signing inside the signing transaction. */
+export async function documentLinksAtSigning(tx: CompanyTransaction, caller: JobCaller, jobId: string, agreementId: string): Promise<IssuedDocumentLink[]> {
   const issued: IssuedDocumentLink[] = [];
   for (const set of DOCUMENT_SETS) {
-    const digest = signingDigest(agreementId, set);
-    if (created) {
-      issued.push(await insertDocumentLink(tx, caller, { id: randomUUID(), jobId, agreementId, set, digest }));
-      continue;
-    }
-    const [found] = await tx
-      .select(documentLinkColumns)
-      .from(documentLinks)
-      .where(
-        and(
-          eq(documentLinks.companyId, caller.companyId),
-          eq(documentLinks.agreementId, agreementId),
-          eq(documentLinks.documentSet, set),
-          eq(documentLinks.requestDigest, digest),
-          eq(documentLinks.createdByActorId, caller.actorId),
-          eq(documentLinks.status, 'active'),
-        ),
-      )
-      .for('update');
-    const row = found as DocumentLinkRow | undefined;
-    if (row && documentLinkState(row) === 'active') issued.push(await reissueDocumentLink(tx, caller, row));
+    issued.push(await insertDocumentLink(tx, caller, { id: randomUUID(), jobId, agreementId, set, digest: signingDigest(agreementId, set) }));
   }
   return issued;
 }

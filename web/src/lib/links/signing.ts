@@ -11,7 +11,7 @@ import { currentEstimateRow } from '@/lib/estimates/service';
 import { hasAny, jobAccess, JobError, type JobCaller, type JobRow } from '@/lib/jobs/access';
 import type { PhotoStream, PhotosService, Receipt, ReceiveInput } from '@/lib/photos/service';
 import { technicianCaller } from './caller';
-import { documentLinksAtSigning, type IssuedDocumentLink } from './document-store';
+import type { IssuedDocumentLink } from './document-store';
 import { LinkError } from './errors';
 import { linkCompany, nextReadCount, nextWindowStart, overLinkLimit } from './lookup';
 import { requestDigest, type CreateSigningLinkInput, type LinkSignInput } from './schema';
@@ -411,7 +411,7 @@ export function signingLinksService(db: Database, photos: PhotosService): Signin
           const found = await agreementViewById(tx, row.companyId, row.agreementId!);
           if (!found) throw new LinkError('link_unavailable');
           if (found.requestDigest !== digest) throw new LinkError('conflict');
-          return { created: false, agreement: found.view, documentLinks: await documentLinksAtSigning(tx, acting.caller, row.jobId, found.view.id, false) };
+          return { created: false, agreement: found.view, documentLinks: [] };
         });
       }
       if (row.status === 'voided') throw new LinkError('link_voided');

@@ -181,20 +181,18 @@ describe('document links made at signing', () => {
     expect(signed.answer.body.agreement.record.signer).toEqual({ name: 'Casey Customer', role: 'homeowner' });
   });
 
-  it('the same signing request again answers new tokens for the links still active, and the unseen ones stop working', async () => {
+  it('the same signing request again answers the same agreement and no token, and the shared links keep working', async () => {
     const { token, signed, issued, jobId } = await signedJob();
-    await revoke(OWNER_A, jobId, issued.adjuster.link.id);
     const again = await l.signWith(token, signed.body);
     expect(again.status).toBe(200);
-    const renewed = issuedOf(again);
-    expect(Object.keys(renewed)).toEqual(['homeowner']);
-    expect(renewed.homeowner.link.id).toBe(issued.homeowner.link.id);
-    expect(await open(issued.homeowner.token)).toMatchObject({ status: 404, body: { error: 'link_unavailable' } });
-    expect((await open(renewed.homeowner.token)).status).toBe(200);
-    expect(await l.f.auditActions(jobId)).toContain('document_link_reissued');
+    expect(again.body.agreement.id).toBe(signed.answer.body.agreement.id);
+    expect(again.body.documentLinks).toEqual([]);
+    expect((await open(issued.homeowner.token)).status).toBe(200);
+    expect((await open(issued.adjuster.token)).status).toBe(200);
+    expect(await l.f.auditActions(jobId)).not.toContain('document_link_reissued');
   });
 
-  it('signing on the phone makes them too, for the technician to share, and a retried signature renews their tokens', async () => {
+  it('signing on the phone makes them too, for the technician to share, and a retried signature replaces no token', async () => {
     const job = await phoneSigned();
     const first = await job.sign();
     expect(first.status).toBe(201);
@@ -204,9 +202,9 @@ describe('document links made at signing', () => {
     expect((await open(issued.adjuster.token)).body.set).toBe('adjuster');
     const again = await job.sign();
     expect(again.status).toBe(200);
-    const renewed = issuedOf(again);
-    expect((await open(issued.adjuster.token)).status).toBe(404);
-    expect((await open(renewed.adjuster.token)).status).toBe(200);
+    expect(again.body.documentLinks).toEqual([]);
+    expect((await open(issued.homeowner.token)).status).toBe(200);
+    expect((await open(issued.adjuster.token)).status).toBe(200);
     expect(await h.admin`SELECT 1 FROM document_links WHERE job_id = ${job.jobId}`).toHaveLength(2);
   });
 
@@ -307,12 +305,12 @@ describe('document links', () => {
     const estimators = await documentLink(ESTIMATOR_A, jobId, 'homeowner');
     expect((await open(estimators.token)).status).toBe(200);
     expect(await make(ESTIMATOR_A, jobId, { id: estimators.id, set: 'adjuster' })).toMatchObject({ status: 409, body: { error: 'conflict' } });
-    expect(await make(ESTIMATOR_A, jobId, { id: owners.id, set: 'homeowner' })).toMatchObject({ status: 403, body: { error: 'not_allowed' } });
+    expect(await make(ESTIMATOR_A, jobId, { id: owners.id, set: 'homeowner' })).toMatchObject({ status: 409, body: { error: 'link_ended' } });
     expect((await revoke(OWNER_A, jobId, estimators.id)).status).toBe(200);
     expect(await make(ESTIMATOR_A, jobId, { id: estimators.id, set: 'homeowner' })).toMatchObject({ status: 409, body: { error: 'link_ended' } });
   });
 
-  it('a retried create answers a new token, to the link’s maker or the owner or office only', async () => {
+  it('a retried create answers a new token to the owner or office only, never to its maker without the revoke right', async () => {
     const { jobId, issued } = await signedJob();
     const owners = await documentLink(OWNER_A, jobId, 'homeowner');
     // The estimator sending the owner's create again would replace the owner's token: refused.
@@ -324,10 +322,14 @@ describe('document links', () => {
     expect((await open(again.body.token)).status).toBe(200);
     expect((await revoke(OWNER_A, jobId, issued.adjuster.link.id)).status).toBe(200);
     const estimators = await documentLink(ESTIMATOR_A, jobId, 'adjuster');
-    const mine = await make(ESTIMATOR_A, jobId, { id: estimators.id, set: 'adjuster' });
-    expect(mine.status).toBe(200);
+    // The estimator's own create again would revoke a token they may already have shared: refused.
+    expect(await make(ESTIMATOR_A, jobId, { id: estimators.id, set: 'adjuster' })).toMatchObject({ status: 403, body: { error: 'not_allowed' } });
+    expect((await open(estimators.token)).status).toBe(200);
+    // Office may replace it.
+    const offices = await make(OFFICE_A, jobId, { id: estimators.id, set: 'adjuster' });
+    expect(offices.status).toBe(200);
     expect((await open(estimators.token)).status).toBe(404);
-    expect((await open(mine.body.token)).status).toBe(200);
+    expect((await open(offices.body.token)).status).toBe(200);
   });
 
   it('are unavailable after 30 days, then whoever may sign makes one again; and once their maker can no longer act for the job', async () => {

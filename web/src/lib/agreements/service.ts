@@ -31,7 +31,8 @@ import type { SignerRole } from './screen';
 // 5. The agreement row is inserted (insert-only; migration 0011's trigger checks it restates the
 //    estimate and that the pin has not moved) with the signed record's bytes, and the job becomes
 //    `signed`. One audit row. The agreement's two document links (the homeowner's set and the
-//    adjuster's, S5a-11b) are made with it and their tokens answered once, to whoever signed.
+//    adjuster's, S5a-11b) are made with it and their tokens answered once, to whoever signed, in
+//    the answer that made the agreement only.
 //
 // Nothing here runs the engine: the prices and documents are the estimate's as stored, and the
 // signed page is read from the agreement's own bytes. Who may: `sign` (owner, estimator), on a job
@@ -183,11 +184,12 @@ export async function signInTransaction(
 ): Promise<SignResult> {
   const job = await jobAccess(tx, caller, jobId, SIGN, { lock: true });
 
-  // 1. Sent before: the same agreement, and new tokens for its document links made at signing.
+  // 1. Sent before: the same agreement. Its document links' tokens were answered with the first
+  //    answer only; the owner or office replaces one.
   const existing = await agreementById(tx, caller.companyId, input.id);
   if (existing) {
     if (existing.jobId !== jobId || existing.requestDigest !== digest) throw new AgreementError('conflict');
-    return { created: false, job: jobState(job), agreement: viewOf(existing), documentLinks: await documentLinksAtSigning(tx, caller, jobId, existing.id, false) };
+    return { created: false, job: jobState(job), agreement: viewOf(existing), documentLinks: [] };
   }
 
   // 2 and 3.
@@ -261,7 +263,7 @@ export async function signInTransaction(
     target: jobId,
     details: { pin: estimate.pinSequence, version: estimate.versionSequence, ...(link ? { signingLink: link.linkId } : {}) },
   });
-  const documentLinks = await documentLinksAtSigning(tx, caller, jobId, input.id, true);
+  const documentLinks = await documentLinksAtSigning(tx, caller, jobId, input.id);
   return { created: true, job: jobState(signed!), agreement: viewOf({ ...made!, documentsBytes: Buffer.from(made!.documentsBytes) }), documentLinks };
 }
 
