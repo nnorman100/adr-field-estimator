@@ -10,15 +10,19 @@ import type { BrowserSignInConfig } from '@/lib/config';
 // browser both the web app id and the site key. With either missing (no key yet, TC-9) App Check
 // never starts and the app works as it did before it.
 //
-// Two waits are bounded here, because the SDK bounds neither:
-//   - Firebase Auth waits for an App Check token before every request it makes (sign-in, ID token
-//     refresh). The reCAPTCHA provider waits for Google's script with no error path or time limit,
-//     so a blocked or stalled script would hold every sign-in until Auth's own 30-second timeout.
+// Three waits are bounded here, because the SDK bounds none of them:
+//   - Firebase Auth and Firestore wait for an App Check token before every request they make
+//     (sign-in, ID token refresh, every Firestore stream). The SDK first reads its token cache in
+//     IndexedDB, and writes a new token back, with no time limit, so a stalled IndexedDB (the
+//     Safari reports of S6 section 2) would hold them. boundTokenWaits makes the token source they
+//     share answer within TOKEN_WAIT_MS, without a token when none came in time.
+//   - The reCAPTCHA provider waits for Google's script with no error path or time limit.
 //     BoundedRecaptchaProvider gives up on an attestation after ATTESTATION_LIMIT_MS; the SDK then
-//     lets Auth go ahead without a real token and retries later with its usual back-off.
+//     clears its running exchange and retries later with its usual back-off.
 //   - Our own /api calls (appCheckHeaders) wait at most TOKEN_WAIT_MS for a token, then go without
-//     one (the old app's rule). While a token request that outlasted that wait is still running,
-//     later calls go at once without waiting again.
+//     one (the old app's rule).
+// In each, while a request that outlasted its wait is still running, later ones go at once
+// without waiting again.
 //
 // The debug provider (self.FIREBASE_APPCHECK_DEBUG_TOKEN, docs: app-check/web/debug-provider) is
 // honoured only on localhost and 127.0.0.1: on any other address it is removed before App Check
@@ -127,6 +131,7 @@ export function startAppCheck(app: FirebaseApp, config: BrowserSignInConfig): Ap
       provider: new BoundedRecaptchaProvider(settings.siteKey),
       isTokenAutoRefreshEnabled: true,
     });
+    boundTokenWaits(app);
     started.set(app, appCheck);
     return newest(appCheck);
   } catch {
@@ -143,13 +148,19 @@ function activeAppCheck(): AppCheck | null {
   return null;
 }
 
-// A header source with its own "a token request is still running" state.
-export function tokenHeaders(fetchToken: () => Promise<string>, waitMs: number = TOKEN_WAIT_MS) {
+// Wraps an async call so that it answers within waitMs: with its result when that comes in time,
+// with fallback() when it is late or fails. While a call that was late is still running, later
+// calls answer fallback() at once.
+export function boundedWait<A extends unknown[], T>(
+  call: (...args: A) => Promise<T>,
+  fallback: () => T,
+  waitMs: number,
+): (...args: A) => Promise<T> {
   let stalled: Promise<unknown> | null = null;
-  return async (): Promise<Record<string, string>> => {
-    if (stalled) return {};
-    const attempt = fetchToken().then(
-      (token) => token,
+  return async (...args: A): Promise<T> => {
+    if (stalled) return fallback();
+    const attempt = call(...args).then(
+      (value) => ({ value }),
       () => null,
     );
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -163,10 +174,44 @@ export function tokenHeaders(fetchToken: () => Promise<string>, waitMs: number =
       void attempt.finally(() => {
         if (stalled === attempt) stalled = null;
       });
-      return {};
+      return fallback();
     }
-    return result ? { [APP_CHECK_HEADER]: result } : {};
+    return result ? result.value : fallback();
   };
+}
+
+// A header source with its own "a token request is still running" state.
+export function tokenHeaders(fetchToken: () => Promise<string>, waitMs: number = TOKEN_WAIT_MS) {
+  return boundedWait(
+    async (): Promise<Record<string, string>> => {
+      const token = await fetchToken();
+      return token ? { [APP_CHECK_HEADER]: token } : {};
+    },
+    () => ({}),
+    waitMs,
+  );
+}
+
+type InternalTokenResult = { readonly token: string; readonly error?: Error };
+type InternalAppCheck = { getToken(forceRefresh?: boolean): Promise<InternalTokenResult> };
+type ComponentContainer = {
+  getProvider(name: 'app-check-internal'): { getImmediate(options: { optional: true }): InternalAppCheck | null };
+};
+
+// Bounds the token wait of the App Check instance Auth and Firestore read their tokens from (the
+// SDK's internal 'app-check-internal' component of this app, reached through the app's component
+// container, as the SDK's own _getProvider does). A late token gives them an empty one, which
+// both send as no App Check header. tests/unit/app-check-client.test.ts fails if a Firebase
+// upgrade moves it.
+export function boundTokenWaits(app: FirebaseApp, waitMs: number = TOKEN_WAIT_MS): void {
+  const { container } = app as FirebaseApp & { container: ComponentContainer };
+  const internal = container.getProvider('app-check-internal').getImmediate({ optional: true });
+  if (!internal) return;
+  internal.getToken = boundedWait(
+    internal.getToken.bind(internal),
+    () => ({ token: '', error: new Error('App Check token took too long') }),
+    waitMs,
+  );
 }
 
 const headerSources = new WeakMap<AppCheck, () => Promise<Record<string, string>>>();

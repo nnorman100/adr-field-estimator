@@ -1,9 +1,11 @@
-import { ReCaptchaEnterpriseProvider } from 'firebase/app-check';
+import { deleteApp, initializeApp, type FirebaseApp } from 'firebase/app';
+import { CustomProvider, initializeAppCheck, ReCaptchaEnterpriseProvider } from 'firebase/app-check';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   APP_CHECK_HEADER,
   appCheckSettings,
   BoundedRecaptchaProvider,
+  boundTokenWaits,
   keepDebugTokenOnlyLocally,
   tokenHeaders,
 } from '@/lib/app-check-client';
@@ -25,6 +27,7 @@ const token = (value: string, ttlMs = 3_600_000): Token => ({
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('the bounded reCAPTCHA Enterprise provider', () => {
@@ -109,6 +112,63 @@ describe('the /api header', () => {
     await vi.advanceTimersByTimeAsync(0);
     fetchToken.mockResolvedValue('next-token');
     expect(await headers()).toEqual({ [APP_CHECK_HEADER]: 'next-token' });
+  });
+});
+
+describe('the token Auth and Firestore wait for', () => {
+  type TokenResult = { token: string; error?: Error };
+  type Internal = { getToken(forceRefresh?: boolean): Promise<TokenResult> };
+  // The App Check instance Auth and Firestore read their tokens from.
+  const internalOf = (app: FirebaseApp): Internal =>
+    (
+      app as FirebaseApp & {
+        container: { getProvider(name: string): { getImmediate(): Internal } };
+      }
+    ).container
+      .getProvider('app-check-internal')
+      .getImmediate();
+
+  it('comes within 3 seconds when the SDK’s token cache never answers (a stalled IndexedDB)', async () => {
+    vi.useFakeTimers();
+    const open = vi.fn(() => ({}));
+    vi.stubGlobal('indexedDB', { open });
+    const app = initializeApp({ apiKey: 'k', projectId: 'p', appId: '1:2:web:3' }, 'app-check-stalled-cache');
+    try {
+      const attest = vi.fn(() => new Promise<never>(() => {}));
+      initializeAppCheck(app, { provider: new CustomProvider({ getToken: attest }), isTokenAutoRefreshEnabled: false });
+      boundTokenWaits(app, 3_000);
+      expect(open).toHaveBeenCalled();
+      const first = internalOf(app).getToken(false);
+      let settled = false;
+      void first.then(() => (settled = true));
+      await vi.advanceTimersByTimeAsync(2_999);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await first).toMatchObject({ token: '' });
+      expect((await first).error).toBeInstanceOf(Error);
+      // While the cache read is still stalled, later requests do not wait at all.
+      const second = internalOf(app).getToken(false);
+      let secondSettled = false;
+      void second.then(() => (secondSettled = true));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(secondSettled).toBe(true);
+      expect(await second).toMatchObject({ token: '' });
+      expect(attest).not.toHaveBeenCalled();
+    } finally {
+      await deleteApp(app);
+    }
+  });
+
+  it('passes a token through when one comes in time', async () => {
+    const app = initializeApp({ apiKey: 'k', projectId: 'p', appId: '1:2:web:3' }, 'app-check-in-time');
+    try {
+      const attest = vi.fn(async () => ({ token: 'app-check-token', expireTimeMillis: Date.now() + 3_600_000 }));
+      initializeAppCheck(app, { provider: new CustomProvider({ getToken: attest }), isTokenAutoRefreshEnabled: false });
+      boundTokenWaits(app, 3_000);
+      expect(await internalOf(app).getToken(false)).toEqual({ token: 'app-check-token' });
+    } finally {
+      await deleteApp(app);
+    }
   });
 });
 
