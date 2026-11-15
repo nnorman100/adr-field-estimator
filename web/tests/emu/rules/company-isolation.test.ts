@@ -7,7 +7,7 @@
 import { randomUUID } from 'node:crypto';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { call, createTenant, projectId, signIn, signUp, withSecondFactor } from '../auth-emulator';
-import { type Caller, commit, createDoc, deleteDoc, getDoc, listDocs, serverSet, updateDoc } from './firestore-rest';
+import { type Caller, commit, createDoc, type Data, deleteDoc, getDoc, listDocs, queryDocs, serverSet, updateDoc } from './firestore-rest';
 
 type Person = { uid: string; caller: Caller; role: 'owner' | 'estimator' | 'office' };
 type Company = { id: string; tenant: string; people: Record<'owner' | 'estimator' | 'office', Person> };
@@ -114,6 +114,69 @@ describe('the field database rules, company against company', () => {
       expect(await getDoc(who.people.owner.caller, `${draft(who)}/rooms/kitchen`)).toBe(200);
       expect(await getDoc(who.people.owner.caller, `${draft(who)}/rooms/new`)).toBe(404);
       expect(await getDoc(who.people.owner.caller, `${draft(who)}/rooms/mixed`)).toBe(404);
+    }
+  });
+
+  // S5a-12: the records S5a leaves in the field database (field map v2, S5a-1 and S5a-10; the
+  // Submit fence, S5a-8; the next draft after Back to editing; a photo's capture time, S5a-9c), in
+  // both companies, against the other company's people with writes the rules would take from the
+  // draft's own field owner. The same writes then succeed for that owner, so each refusal is the
+  // company boundary and not a malformed write.
+  it('refuses the other company every S5a field record, with writes its own field owner may make', async () => {
+    const ROOM: Data = { name: 'Kitchen', category: 2, waterClass: 2, floorSf: 120, wetFloorSf: 80, items: { flood_cut: '4' }, prepTasks: ['Move the table'] };
+    const PHOTO: Data = { roomId: 'kitchen', shotTag: 'meter', capturedAt: '2026-11-15T12:00:00.000Z' };
+    const fence = { submissionId: randomUUID(), epoch: randomUUID(), expiresAt: later() };
+    for (const who of [a, b]) {
+      const owner = who.people.estimator.uid;
+      const field = { yearBuilt: 1972, roomOrder: ['kitchen'], summary: 'Category 2 water.', airMovers: 3 };
+      await serverSet(`companies/${who.id}/drafts/fenced`, { fieldOwnerUid: owner, state: 'submitting', fence, field });
+      await serverSet(`companies/${who.id}/drafts/submitted`, { fieldOwnerUid: owner, state: 'submitted', fence, field });
+      await serverSet(`companies/${who.id}/drafts/next`, { fieldOwnerUid: owner, state: 'editing', previous: 'submitted', field });
+      for (const id of ['fenced', 'submitted', 'next']) {
+        await serverSet(`companies/${who.id}/drafts/${id}/rooms/kitchen`, { field: ROOM });
+        await serverSet(`companies/${who.id}/drafts/${id}/photos/p1`, { field: PHOTO });
+      }
+    }
+    const at = (who: Company, id: string) => `companies/${who.id}/drafts/${id}`;
+    // The writes a field owner makes while editing: the draft's field map, a new room, a changed
+    // photo, a removed room, and all of them in one batch.
+    const writes = async (caller: Caller, who: Company) => ({
+      draft: await updateDoc(caller, at(who, 'next'), { field: { yearBuilt: 1980, roomOrder: ['kitchen', 'bath'] } }),
+      room: await createDoc(caller, `${at(who, 'next')}/rooms/bath`, { field: { ...ROOM, name: 'Bath' } }),
+      photo: await updateDoc(caller, `${at(who, 'next')}/photos/p1`, { field: { ...PHOTO, capturedAt: '2026-11-15T13:00:00.000Z' } }),
+      removed: await deleteDoc(caller, `${at(who, 'next')}/rooms/kitchen`),
+      batch: await commit(caller, [
+        { path: at(who, 'next'), data: { field: { roomOrder: ['hall'] } } },
+        { path: `${at(who, 'next')}/rooms/hall`, data: { field: { ...ROOM, name: 'Hall' } }, create: true },
+      ]),
+    });
+    for (const [attacker, victim] of [[b, a], [a, b]] as const) {
+      for (const p of people(attacker)) {
+        const who = `${attacker.id} ${p.role}`;
+        for (const id of ['fenced', 'submitted', 'next']) {
+          for (const path of [at(victim, id), `${at(victim, id)}/rooms/kitchen`, `${at(victim, id)}/photos/p1`]) {
+            expect(await getDoc(p.caller, path), `${who} reads ${path}`).toBe(403);
+          }
+          for (const path of [`${at(victim, id)}/rooms`, `${at(victim, id)}/photos`]) {
+            expect(await listDocs(p.caller, path), `${who} lists ${path}`).toBe(403);
+          }
+        }
+        // The query a phone would make for "my drafts", aimed at the other company's drafts, with
+        // the caller's own uid and with the other company's field owner's.
+        for (const uid of [p.uid, victim.people.estimator.uid]) {
+          expect(await queryDocs(p.caller, `companies/${victim.id}`, 'drafts', 'fieldOwnerUid', uid), `${who} queries for ${uid}`).toBe(403);
+        }
+        expect(await writes(p.caller, victim), who).toEqual({ draft: 403, room: 403, photo: 403, removed: 403, batch: 403 });
+      }
+    }
+    // Nothing changed, and each company's own field owner makes the same writes (in that order).
+    for (const who of [a, b]) {
+      const owner = who.people.owner.caller;
+      expect(await getDoc(owner, `${at(who, 'next')}/rooms/bath`)).toBe(404);
+      expect(await getDoc(owner, `${at(who, 'next')}/rooms/kitchen`)).toBe(200);
+      for (const id of ['fenced', 'submitted']) expect(await getDoc(owner, at(who, id)), `${who.id} owner reads ${id}`).toBe(200);
+      expect(await queryDocs(who.people.estimator.caller, `companies/${who.id}`, 'drafts', 'fieldOwnerUid', who.people.estimator.uid)).toBe(200);
+      expect(await writes(who.people.estimator.caller, who), who.id).toEqual({ draft: 200, room: 200, photo: 200, removed: 200, batch: 200 });
     }
   });
 
