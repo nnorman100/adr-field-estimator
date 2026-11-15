@@ -39,4 +39,4 @@ companies every record in the table above through the real routes, then:
   references (every read, list, query and write refused).
 
 The real bucket, field database, Cloud Run service and a real iPhone are the owner's
-[S5a real-service checks](../runbook/s5a-real-service-checks.md).
+[S5a real-service checks](../runbook/s5a-real-service-checks.md), pending and not yet run.

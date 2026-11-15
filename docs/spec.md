@@ -124,8 +124,8 @@ the original of company A") reads company A's photo and original as company B's 
 office user, by A's job id and by B's own job with A's photo id, and is refused (404) with no byte of
 A's, while A's own people read them; `web/tests/db/photos-api.test.ts` adds the other estimator of the
 same company. The bucket is a fake at its boundary in CI; the real bucket is the owner's check 1 in
-`docs/runbook/s5a-real-service-checks.md` (S5a-12). That closes the photo-bytes and original gap for the
-rebuilt app only; the old app's gap above stays.
+`docs/runbook/s5a-real-service-checks.md` (S5a-12), pending and not yet run. That closes the photo-bytes
+and original gap for the rebuilt app only; the old app's gap above stays.
 
 Rebuilt app, every S5a record (S5a-12): `web/tests/db/company-isolation-records.test.ts` gives both
 companies a job signed by the homeowner through a link (submission, price pin, estimate, agreement,
@@ -140,9 +140,11 @@ tries the field rules with two tenants on A's fenced, submitted and next drafts 
 photo references): every read, list, "my drafts" query and field-owner write by B's people is refused.
 The rebuilt app has no inspection, authorization, coordination, delivery, drying-watch or outcome records
 yet; those S5b and later records join the gate when they are built (a new route fails the suite until it
-has a matrix row, a new company table until the flow fills it or the suite names it). Not proven in CI:
-the real `test` services and a real iPhone, which are the owner steps in
-`docs/runbook/s5a-real-service-checks.md`.
+has a matrix row, a new company table until the flow fills it or the suite names it). **[open]** Not proven
+in CI: the real `test` services and a real iPhone. The bucket's create-only precondition, the fence on
+`dryscope-field-test`, a double submit against Cloud Run and a homeowner signing on a real iPhone are owner
+checks 1 to 4 in `docs/runbook/s5a-real-service-checks.md`, pending and not yet run; S5a is not closed until
+all four are recorded.
 
 ### 4.2 Double submit makes one record, and a signed record is rejected
 
@@ -171,7 +173,8 @@ receipt and one agreement`, `two phones signing at once with one request make on
 body with the same id is 409); a signed agreement and its estimate are never changed or removed (table
 grants and triggers, `docs/data/postgres-submissions.md`). These run against Postgres with a stand-in for
 the field database. **[open]** A double submit against Cloud Run itself, and a homeowner signing on a real
-iPhone, are owner checks 3 and 4 in `docs/runbook/s5a-real-service-checks.md`, not yet recorded.
+iPhone, are owner checks 3 and 4 in `docs/runbook/s5a-real-service-checks.md`, pending and not yet run;
+S5a is not closed until they are recorded.
 
 ### 4.3 Cutting the connection mid-save or mid-upload delivers exactly once
 
@@ -203,10 +206,10 @@ customer and the claim), `web/tests/db/photos-api.test.ts` (`answers the same re
 sent twice, with one object and one row`, `settles a lost answer by sending again: the stored bytes get
 their one row, with no second object`, and the same for an original), the Submit retries above, and
 `web/tests/e2e/offline/field-gate.spec.ts` (`an offline edit survives closing and reopening the app, and
-is sent once`). The bucket's create-only precondition, which makes a second upload of one photo id fail
-whatever its bytes, is observed against the real bucket in owner check 1 of
-`docs/runbook/s5a-real-service-checks.md`. **[open]** No rebuilt-app test cuts a request mid-body, and
-voice notes and drying readings are not built yet.
+is sent once`). **[open]** The bucket's create-only precondition, which should make a second upload of one
+photo id fail whatever its bytes, is not yet checked against the real bucket: it is owner check 1 of
+`docs/runbook/s5a-real-service-checks.md`, pending and not yet run. No rebuilt-app test cuts a request
+mid-body, and voice notes and drying readings are not built yet.
 
 ## 5. Not built (from VISION.md)
 

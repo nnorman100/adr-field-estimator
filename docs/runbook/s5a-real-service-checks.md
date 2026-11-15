@@ -5,6 +5,10 @@ runs in CI against a local Postgres, the Firestore emulator and an in-memory sta
 checks run the same promises once against the real `test` services and a real iPhone. They are owner steps: they use
 real test sign-ins, the owner's own `gcloud` login and a phone, so no agent and no workflow runs them.
 
+**Status: all four are owner checks pending, not yet run.** Checks 1 (create-only upload), 2 (the fence), 3 (double
+submit against Cloud Run) and 4 (homeowner signing on a real iPhone) have no result yet; their results are added in a
+small follow-up docs PR. S5a is not closed until all four are recorded in [Results](#results) with a pass.
+
 Use the two test companies only (company A and company B, each with an estimator account, as set up for the S3-18
 smoke check) and synthetic customers, addresses and photos. Never use a real customer's details.
 
@@ -208,7 +212,8 @@ on Safari on a real iPhone. Note the iPhone model and iOS version for the result
 
 ## Results
 
-Real-service results only, newest first. Mock and CI results are never written here.
+Real-service results only, newest first. Mock and CI results are never written here. No check has been run yet: all
+four are owner checks pending, and S5a is not closed until each has a passing row here.
 
 | Date | Release version | Check | Result | Run by | Notes (no token, name or address) |
 | ---- | --------------- | ----- | ------ | ------ | --------------------------------- |
