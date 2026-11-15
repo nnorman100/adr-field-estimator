@@ -232,9 +232,12 @@ describe('storing a photo', () => {
   it('refuses a request with no kind, another kind or a repeated kind, and a photo id that is not a uuid', async () => {
     const { jobId } = await newJob(ESTIMATOR_A);
     const photoId = randomUUID();
-    for (const kind of [null, 'signature', 'thumbnail', '']) {
+    // `signature` is a kind since S5a-11 (tests/db/agreements-api.test.ts); its spelling is exact.
+    for (const kind of [null, 'Signature', 'signatures', 'thumbnail', '']) {
       expect({ kind, ...(await put(ESTIMATOR_A, jobId, photoId, kind, image('k'))) }).toMatchObject({ kind, status: 400, body: { error: 'invalid_request' } });
     }
+    // A signature on a job still being edited has no estimate to sign: refused, nothing stored.
+    expect(await put(ESTIMATOR_A, jobId, photoId, 'signature', image('k'))).toMatchObject({ status: 409, body: { error: 'not_ready_to_sign' } });
     const twice = request(ESTIMATOR_A, `/api/jobs/${jobId}/photos/${photoId}?kind=photo&kind=original`, { method: 'PUT', body: image('k') });
     expect((await json(photoRoute.PUT(twice, params({ jobId, photoId })))).status).toBe(400);
     expect((await sendPhoto(ESTIMATOR_A, jobId, 'not-a-uuid', image('k'))).status).toBe(400);
@@ -482,7 +485,8 @@ describe('reading a photo', () => {
     const { jobId, photoId } = await newJob(ESTIMATOR_A).then((job) => ({ ...job, photoId: randomUUID() }));
     expect((await get(ESTIMATOR_A, jobId, photoId)).status).toBe(404);
     expect((await get(ESTIMATOR_A, jobId, photoId, '?kind=original')).status).toBe(404);
-    expect((await get(ESTIMATOR_A, jobId, photoId, '?kind=signature')).status).toBe(400);
+    expect((await get(ESTIMATOR_A, jobId, photoId, '?kind=signature')).status).toBe(404);
+    expect((await get(ESTIMATOR_A, jobId, photoId, '?kind=thumbnail')).status).toBe(400);
     expect((await get(ESTIMATOR_A, jobId, 'not-a-uuid')).status).toBe(400);
     expect((await get(null, jobId, photoId)).status).toBe(401);
   });

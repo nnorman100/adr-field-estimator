@@ -9,8 +9,13 @@ import type { CompanyDocuments } from '@/lib/profile/documents';
 // (S5a-11) binds to that hash, so the review screen shows the proposal from these bytes, never from
 // a copy rebuilt in the browser. Prices and the mandatory wording come only from the engine; nothing
 // here writes a sentence of its own except the heading and the letterhead labels.
+//
+// Since S5a-11 (format v2) the proposal also holds the company's start-work authorization and payment
+// terms (S5a-4b document settings), exactly as the owner entered them, so the signature binds them
+// with everything else. A v1 proposal, made before, has neither and is never signable.
 
-export const PROPOSAL_FORMAT = 'dryscope-proposal-v1';
+export const PROPOSAL_FORMAT = 'dryscope-proposal-v2';
+export const PROPOSAL_FORMATS = ['dryscope-proposal-v1', PROPOSAL_FORMAT] as const;
 
 export type ProposalPrice = {
   mode: 'range' | 'single';
@@ -26,7 +31,7 @@ export type ProposalPrice = {
 };
 
 export type Proposal = {
-  format: typeof PROPOSAL_FORMAT;
+  format: (typeof PROPOSAL_FORMATS)[number];
   heading: string;
   letterhead: string[];
   customer_name: string;
@@ -36,6 +41,9 @@ export type Proposal = {
   recommendations: string[];
   disclaimers: string[];
   price: ProposalPrice;
+  // Printed above the signature, each exactly as the company entered it (absent in v1).
+  authorization_text?: string;
+  payment_terms_text?: string;
   // What this proposal was built from: the submitted record and the pinned price version.
   basis: { submission_id: string; snapshot_sha256: string; price_version: number; content_sha256: string; engine_version: string };
 };
@@ -100,6 +108,8 @@ export function proposalOf(input: ProposalInput): Proposal {
     recommendations: proposal.recommendations,
     disclaimers: proposal.disclaimers,
     price,
+    authorization_text: company.signing.authorizationText,
+    payment_terms_text: company.signing.paymentTermsText,
     basis: {
       submission_id: input.submission.id,
       snapshot_sha256: input.submission.snapshotSha256,
@@ -111,6 +121,11 @@ export function proposalOf(input: ProposalInput): Proposal {
 }
 
 /** The stored bytes of a proposal (canonical JSON, UTF-8) and their SHA-256. */
+/** Whether a proposal holds both texts the signed page needs, so it may be signed. */
+export function hasSigningTexts(proposal: Proposal): boolean {
+  return proposal.format === PROPOSAL_FORMAT && !!proposal.authorization_text?.trim() && !!proposal.payment_terms_text?.trim();
+}
+
 export function proposalBytes(proposal: Proposal): { bytes: Buffer; sha256: string } {
   const bytes = Buffer.from(canonicalJson(proposal), 'utf8');
   return { bytes, sha256: createHash('sha256').update(bytes).digest('hex') };

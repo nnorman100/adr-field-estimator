@@ -20,9 +20,9 @@ function locks(): Locks | null {
   return found ?? null;
 }
 
-// Holds the lock for as long as this page lives (or until `release` is called). 'elsewhere' when
-// another window of the same storage holds it.
-export function holdWindow(): Promise<{ result: 'held'; release: () => void } | { result: 'elsewhere' | 'unavailable' }> {
+type Held = { result: 'held'; release: () => void } | { result: 'elsewhere' | 'unavailable' };
+
+function request(): Promise<Held> {
   const available = locks();
   if (!available) return Promise.resolve({ result: 'unavailable' });
   return new Promise((resolve) => {
@@ -41,14 +41,44 @@ export function holdWindow(): Promise<{ result: 'held'; release: () => void } | 
   });
 }
 
+// This page's field window holds the lock.
+let heldHere = false;
+// This page's own short holds (whileNoFieldWindow), one after another. A field window starting on
+// this page waits for them, so it never mistakes its own page's clean-up for another window.
+let passing: Promise<unknown> = Promise.resolve();
+
+// True while this page's field window holds the lock: no other window holds any field work, and
+// work removed from this page needs no second lock (retention.ts).
+export const holdsWindow = (): boolean => heldHere;
+
+// Holds the lock for as long as this page lives (or until `release` is called). 'elsewhere' when
+// another window of the same storage holds it.
+export async function holdWindow(): Promise<Held> {
+  await passing;
+  const lock = await request();
+  if (lock.result !== 'held') return lock;
+  heldHere = true;
+  return {
+    result: 'held',
+    release: () => {
+      heldHere = false;
+      lock.release();
+    },
+  };
+}
+
 // Runs `work` while holding the lock, or answers 'elsewhere' without running it when a field window
 // is open (a sign-out that empties the cache must not pull it from under that window).
-export async function whileNoFieldWindow<T>(work: () => Promise<T>): Promise<T | 'elsewhere'> {
-  const lock = await holdWindow();
-  if (lock.result === 'elsewhere') return 'elsewhere';
-  try {
-    return await work();
-  } finally {
-    if (lock.result === 'held') lock.release();
-  }
+export function whileNoFieldWindow<T>(work: () => Promise<T>): Promise<T | 'elsewhere'> {
+  const run = passing.then(async () => {
+    const lock = await request();
+    if (lock.result === 'elsewhere') return 'elsewhere' as const;
+    try {
+      return await work();
+    } finally {
+      if (lock.result === 'held') lock.release();
+    }
+  });
+  passing = run.catch(() => undefined);
+  return run;
 }

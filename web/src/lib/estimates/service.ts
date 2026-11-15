@@ -53,7 +53,7 @@ export type EstimatesService = {
 
 const jobState = (row: JobRow): EstimateJobState => ({ id: row.id, status: row.status, currentDraftId: row.currentDraftId, revision: row.revision });
 
-type SubmissionRow = { id: string; snapshotBytes: Buffer; snapshotSha256: string };
+export type SubmissionRow = { id: string; snapshotBytes: Buffer; snapshotSha256: string };
 type PinRow = { id: string; sequence: number; versionId: string };
 type VersionRow = { id: string; sequence: number; content: unknown; contentHash: string; engineVersion: string };
 
@@ -120,7 +120,7 @@ async function latestVersion(tx: CompanyTransaction, companyId: string): Promise
 }
 
 // The estimate stored for a record and a pin, with the pin's and its version's sequence numbers.
-type StoredRow = EstimateRecord & { versionId: string };
+export type StoredRow = EstimateRecord & { versionId: string };
 
 async function storedEstimate(tx: CompanyTransaction, companyId: string, submissionId: string, pinId: string): Promise<StoredRow | null> {
   const [row] = await tx
@@ -209,6 +209,20 @@ function proposalFor(estimate: Estimate, company: CompanyDocuments, table: Table
     submission: { id: submission.id, snapshotSha256: submission.snapshotSha256 },
     version: { sequence: version.sequence },
   });
+}
+
+/**
+ * The job's current estimate as stored: the one for the committed record of its current draft and
+ * its newest pin, or null when there is none (a job being edited, or not priced yet). Signing binds
+ * only to this one, so a new record or pin voids an older estimate for signing.
+ */
+export async function currentEstimateRow(tx: CompanyTransaction, companyId: string, job: JobRow): Promise<(StoredRow & { submission: SubmissionRow }) | null> {
+  if (job.status !== 'submitted' && job.status !== 'signed') return null;
+  const submission = await currentSubmission(tx, companyId, job);
+  const pin = await currentPin(tx, companyId, job.id);
+  if (!submission || !pin) return null;
+  const row = await storedEstimate(tx, companyId, submission.id, pin.id);
+  return row ? { ...row, submission } : null;
 }
 
 // The details the documents cannot be built without that a save after Finish can take away (the
@@ -319,12 +333,8 @@ export function estimatesService(db: Database): EstimatesService {
         const job = await jobAccess(tx, caller, jobId, READ);
         const none = { job: jobState(job), estimate: null };
         // A job being edited has no current estimate: the review of its last record is void (J4).
-        if (job.status !== 'submitted' && job.status !== 'signed') return none;
-        const submission = await currentSubmission(tx, caller.companyId, job);
-        const pin = await currentPin(tx, caller.companyId, jobId);
-        if (!submission || !pin) return none;
-        const row = await storedEstimate(tx, caller.companyId, submission.id, pin.id);
-        return row ? { job: jobState(job), estimate: await present(tx, caller, job, row, submission) } : none;
+        const row = await currentEstimateRow(tx, caller.companyId, job);
+        return row ? { job: jobState(job), estimate: await present(tx, caller, job, row, row.submission) } : none;
       });
     },
   };

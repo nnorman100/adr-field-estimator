@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { Estimate, EstimateDocuments, EstimateEnd, EstimateLine, Json } from '@/engine/estimate';
 import type { Capability } from '@/lib/access';
-import { PROPOSAL_FORMAT, type Proposal } from './proposal';
+import { PROPOSAL_FORMATS, type Proposal } from './proposal';
 
 // The stored estimate (job_estimates, migration 0011) read back through one schema, and what a
 // caller is shown of it. The priced result is the engine's output as stored at the estimate; the
@@ -95,7 +95,13 @@ export const storedEstimateSchema = z.strictObject({
 export type StoredEstimate = z.infer<typeof storedEstimateSchema>;
 
 const proposalSchema = z
-  .looseObject({ format: z.literal(PROPOSAL_FORMAT), heading: z.string(), basis: z.looseObject({ submission_id: z.string() }) })
+  .looseObject({
+    format: z.enum(PROPOSAL_FORMATS),
+    heading: z.string(),
+    authorization_text: z.string().optional(),
+    payment_terms_text: z.string().optional(),
+    basis: z.looseObject({ submission_id: z.string() }),
+  })
   .transform((value) => value as unknown as Proposal);
 
 export class StoredEstimateError extends Error {

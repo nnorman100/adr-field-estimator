@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { companies } from '@/db/schema';
 import type { CompanyTransaction } from '@/db/tenant';
+import type { SigningTexts } from '@/engine/company-setup';
 import { readDocumentSettings, type DocumentSettings as StoredSettings } from './settings';
 
 export type PhotoLogGrouping = StoredSettings['photo_log_grouping'];
@@ -8,10 +9,12 @@ export type PhotoLogGrouping = StoredSettings['photo_log_grouping'];
 // What the four documents take from the company (docs/plans/S5.md, S5a-9 and its 2026-11-13
 // correction): the profile the owner sets on Company settings (S5a-4), the letterhead fields and the
 // document settings. This is the one reader the documents use. The letterhead fields and the
-// document settings are stored since S5a-4b (migration 0013). Of them only the photo log grouping
-// (S5a-9c) is printed so far, read through the settings schema; the letterhead comes back empty and
-// the layout and company clauses at their neutral defaults (the itemized layout, no company clauses)
-// until S5a-9b reads them.
+// document settings are stored since S5a-4b (migration 0013). Of them the photo log grouping
+// (S5a-9c) and the start-work authorization and payment terms (S5a-11) are printed so far, read
+// through the settings schema; the letterhead comes back empty and the layout and company clauses at
+// their neutral defaults (the itemized layout, no company clauses) until S5a-9b reads them. The
+// proposal prints the authorization and the payment terms exactly as the owner entered them, above
+// the signature, inside the bytes the signature binds.
 // Nothing here is seeded with any company's own values; each company's identity comes only from its
 // own row and prints exactly as entered.
 
@@ -45,7 +48,7 @@ export type DocumentSettings = {
   photoLogGrouping: PhotoLogGrouping;
 };
 
-export type CompanyDocuments = { identity: CompanyIdentity; letterhead: Letterhead; settings: DocumentSettings };
+export type CompanyDocuments = { identity: CompanyIdentity; letterhead: Letterhead; settings: DocumentSettings; signing: SigningTexts };
 
 export const NEUTRAL_LETTERHEAD: Letterhead = Object.freeze({ emergencyPhone: '', fax: '', website: '', tagline: '', mailingAddress: '' });
 
@@ -53,8 +56,8 @@ export const NEUTRAL_SETTINGS: DocumentSettings = Object.freeze({ proposalLayout
 
 /**
  * The company's document inputs, read in the caller's transaction for its own company; null for no
- * such company. Stored settings that do not read through the settings schema throw (ZodError): they
- * are never used, as a price version that does not parse is never priced from.
+ * such company. Stored settings that do not read through their schema throw (ZodError): they are
+ * never printed, as the profile route answers 503 for them.
  */
 export async function readCompanyDocuments(tx: CompanyTransaction, companyId: string): Promise<CompanyDocuments | null> {
   const [row] = await tx
@@ -72,6 +75,11 @@ export async function readCompanyDocuments(tx: CompanyTransaction, companyId: st
     .where(eq(companies.id, companyId));
   if (!row) return null;
   const { documents, ...identity } = row;
-  const stored = readDocumentSettings(documents);
-  return { identity, letterhead: { ...NEUTRAL_LETTERHEAD }, settings: { ...NEUTRAL_SETTINGS, photoLogGrouping: stored.photo_log_grouping } };
+  const settings = readDocumentSettings(documents);
+  return {
+    identity,
+    letterhead: { ...NEUTRAL_LETTERHEAD },
+    settings: { ...NEUTRAL_SETTINGS, photoLogGrouping: settings.photo_log_grouping },
+    signing: { authorizationText: settings.authorization_text, paymentTermsText: settings.payment_terms_text },
+  };
 }

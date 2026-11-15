@@ -4,6 +4,8 @@ import type { User } from 'firebase/auth';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { authenticatorCount, callApi } from '@/lib/firebase-client';
+import { signInOf, type SignIn } from '@/lib/field/sign-out';
+import type { LockReason } from '@/lib/field/unsent';
 import {
   ACCEPT_SECOND_STEP_MESSAGE,
   ACCEPT_SIGN_IN_WITH_CODE_MESSAGE,
@@ -48,8 +50,8 @@ export function InvitationScreen({
   tenantId: string;
   user: User;
   onAccepted: () => Promise<void>;
-  onSignInAgain: (message: string) => void;
-  onNeedsSignIn: () => void;
+  onSignInAgain: (message: string, refusal: LockReason, from?: SignIn) => void;
+  onNeedsSignIn: (from: SignIn) => void;
   signOut: React.ReactNode;
 }) {
   const [state, setState] = useState<State>({ name: 'loading' });
@@ -75,6 +77,8 @@ export function InvitationScreen({
   async function accept(offer: InvitationOffer) {
     setBusy(true);
     setError(null);
+    // The sign-in this request is made with: a refusal of it ends that sign-in and no other.
+    const from = signInOf(user);
     try {
       const answer = await callApi(user, `/api/invitations/${invitationId}/accept`, { method: 'POST' });
       if (answer.status === 200 || answer.status === 201) {
@@ -85,7 +89,7 @@ export function InvitationScreen({
       if (answer.status === 403 && code === 'second_step_required') {
         const next = acceptSecondStepNext(await authenticatorCount(user));
         if (next === 'set-up') setState({ name: 'second-step', offer });
-        else if (next === 'sign-in-with-code') onSignInAgain(ACCEPT_SIGN_IN_WITH_CODE_MESSAGE);
+        else if (next === 'sign-in-with-code') onSignInAgain(ACCEPT_SIGN_IN_WITH_CODE_MESSAGE, 'sign-in-again', from);
         else setError(ACCEPT_SECOND_STEP_MESSAGE);
         return;
       }
@@ -140,7 +144,7 @@ export function InvitationScreen({
           void accept(offer);
         }}
         onNeedsSignIn={onNeedsSignIn}
-        onLeave={() => onSignInAgain('You are signed out.')}
+        onLeave={() => onSignInAgain('You are signed out.', 'second-step')}
       />
     );
   }

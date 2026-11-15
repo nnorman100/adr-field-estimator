@@ -1,4 +1,6 @@
 import { defineConfig } from '@playwright/test';
+import { writeEmulatorConfig } from './tests/emu/ports';
+import { E2E_EMU } from './tests/e2e/emu-ports';
 import { AUTH_EMULATOR_HOST, E2E_PROJECT } from './tests/e2e/sign-in/emulator';
 import { FIELD_DATABASE, FIRESTORE_EMULATOR_HOST } from './tests/e2e/offline/emulators';
 import { SERVER_LOG, SERVER_LOG_DIR } from './tests/e2e/server-log';
@@ -7,6 +9,22 @@ import { JOBS_BASE_URL, STORAGE_CONFIG, STORAGE_EMULATOR_HOST } from './tests/e2
 import { parseShard } from './tests/e2e/shard';
 
 const port = 3100;
+
+// The emulators' configs: the committed ones, unless this run has its own ports (EMU_*_PORT or
+// EMU_PORTS=auto, tests/emu/ports.ts), which the Firebase CLI can only take from a config file.
+const { ports, custom } = E2E_EMU;
+const AUTH_FIRESTORE_CONFIG = custom
+  ? writeEmulatorConfig('firebase.json', {
+      auth: ports.auth,
+      firestore: ports.firestore,
+      firestoreWebsocket: ports.firestoreWebsocket,
+      hub: ports.hub,
+      logging: ports.logging,
+    })
+  : 'firebase.json';
+const STORAGE_RUN_CONFIG = custom
+  ? writeEmulatorConfig(STORAGE_CONFIG, { storage: ports.storage, hub: ports.storageHub, logging: ports.storageLogging })
+  : STORAGE_CONFIG;
 
 // Same pinned CLI as tests/emu/run.ts. The Firestore emulator needs Java 21, as test:emu does.
 const FIREBASE_TOOLS = 'firebase-tools@15.31.0';
@@ -43,7 +61,7 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: `npx --yes ${FIREBASE_TOOLS} emulators:start --only auth,firestore --project ${E2E_PROJECT} --config firebase.json`,
+      command: `npx --yes ${FIREBASE_TOOLS} emulators:start --only auth,firestore --project ${E2E_PROJECT} --config ${AUTH_FIRESTORE_CONFIG}`,
       // Firestore's emulator is the slower of the two to start, so its answer means both are up.
       url: `http://${FIRESTORE_EMULATOR_HOST}/`,
       reuseExistingServer: false,
@@ -74,7 +92,7 @@ export default defineConfig({
       timeout: 300_000,
     },
     {
-      command: `npx --yes ${FIREBASE_TOOLS} emulators:start --only storage --project ${E2E_PROJECT} --config ${STORAGE_CONFIG}`,
+      command: `npx --yes ${FIREBASE_TOOLS} emulators:start --only storage --project ${E2E_PROJECT} --config ${STORAGE_RUN_CONFIG}`,
       // Its root answers 501, which Playwright does not take as ready; the open port is.
       port: Number(STORAGE_EMULATOR_HOST.split(':')[1]),
       reuseExistingServer: false,

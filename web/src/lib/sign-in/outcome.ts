@@ -57,7 +57,9 @@ export function meOutcome(status: number, body: unknown): MeOutcome {
 }
 
 // Outcomes after which this phone should not keep the sign-in.
-export function endsSession(outcome: MeOutcome): boolean {
+export function endsSession(
+  outcome: MeOutcome,
+): outcome is Extract<MeOutcome, { kind: 'sign-in-again' | 'not-this-company' | 'account-disabled' }> {
   return outcome.kind === 'sign-in-again' || outcome.kind === 'not-this-company' || outcome.kind === 'account-disabled';
 }
 

@@ -56,6 +56,7 @@ const company = (photoLogGrouping: 'room' | 'shot_tag'): CompanyDocuments => ({
   identity: { companyId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', name: 'Valley Water Pros', address: '1 Synthetic Way', phone: '555-0199', email: 'o@example.invalid', license: '000002', signoff: 'Robin Example' },
   letterhead: NEUTRAL_LETTERHEAD,
   settings: { ...NEUTRAL_SETTINGS, photoLogGrouping },
+  signing: { authorizationText: 'Synthetic start-work authorization.', paymentTermsText: 'Synthetic payment terms.' },
 });
 
 const TABLE: Json = {

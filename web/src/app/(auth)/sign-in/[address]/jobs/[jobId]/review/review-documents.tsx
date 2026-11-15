@@ -65,7 +65,8 @@ function List({ items }: { items: string[] }) {
   );
 }
 
-function Proposal({ proposal }: { proposal: NonNullable<EstimateView['proposal']> }) {
+/** The proposal, shown from its stored bytes: on the review, and on the signed page (S5a-11). */
+export function Proposal({ proposal }: { proposal: NonNullable<EstimateView['proposal']> }) {
   const price = proposal.price;
   return (
     <div className="flex flex-col gap-2">
@@ -91,7 +92,69 @@ function Proposal({ proposal }: { proposal: NonNullable<EstimateView['proposal']
       <p className="font-semibold">Proposed scope</p>
       <List items={proposal.recommendations} />
       <List items={proposal.disclaimers} />
+      {proposal.authorization_text !== undefined ? (
+        <>
+          <p className="font-semibold">Start-work authorization</p>
+          <p className="break-words whitespace-pre-wrap" data-testid="authorization-text">
+            {proposal.authorization_text}
+          </p>
+        </>
+      ) : null}
+      {proposal.payment_terms_text !== undefined ? (
+        <>
+          <p className="font-semibold">Payment terms</p>
+          <p className="break-words whitespace-pre-wrap" data-testid="payment-terms-text">
+            {proposal.payment_terms_text}
+          </p>
+        </>
+      ) : null}
     </div>
+  );
+}
+
+/** The itemized claim's lines, then the charges and the itemized total of the end given. */
+export function ItemizedClaim({ rows, end, afterHoursLabel }: { rows: unknown[]; end: EstimateEnd; afterHoursLabel: string }) {
+  return (
+    <ul className="flex flex-col gap-2 pt-3">
+      {rows.map((row, index) => {
+        const line = (row ?? {}) as Record<string, unknown>;
+        const note = text(line.xactimate_code);
+        return (
+          <li key={`${index}-${text(line.description)}`} className="flex flex-col">
+            <span className={ROW}>
+              <span className="min-w-0 break-words">
+                {text(line.code)} · {text(line.description)}
+              </span>
+              <span className="shrink-0 tabular-nums">{dollars(text(line.total))}</span>
+            </span>
+            <span className="text-sm">
+              {text(line.quantity)} {text(line.unit)} at {text(line.unit_price)}, waste {text(line.waste_percent)}%{note ? ` · matches Xactimate line ${note}` : ''}
+            </span>
+          </li>
+        );
+      })}
+      <Charges end={end} afterHoursLabel={afterHoursLabel} />
+      <li className={`${ROW} font-semibold`}>
+        <span>Itemized total</span>
+        <span className="shrink-0 tabular-nums">{dollars(end.total)}</span>
+      </li>
+    </ul>
+  );
+}
+
+/** The photo audit log as lines. */
+export function PhotoLog({ photos }: { photos: unknown[] }) {
+  if (!photos.length) return <p className="pt-3">No photos.</p>;
+  // By room the log is one list; by shot tag each album sits under its heading (S5a-9c).
+  return (
+    <>
+      {photoAlbums(photos).map((album) => (
+        <div key={album.heading ?? 'photos'}>
+          {album.heading ? <h3 className="pt-3 font-semibold">{album.heading}</h3> : null}
+          <List items={album.lines} />
+        </div>
+      ))}
+    </>
   );
 }
 
@@ -112,30 +175,7 @@ export function EstimateDocuments({ estimate }: { estimate: EstimateView }) {
       </details>
       <details className="rounded-md border p-3">
         <summary className="cursor-pointer font-semibold">Itemized claim</summary>
-        <ul className="flex flex-col gap-2 pt-3">
-          {documents.itemizedClaim.map((row, index) => {
-            const line = row as Record<string, unknown>;
-            const note = text(line.xactimate_code);
-            return (
-              <li key={`${index}-${text(line.description)}`} className="flex flex-col">
-                <span className={ROW}>
-                  <span className="min-w-0 break-words">
-                    {text(line.code)} · {text(line.description)}
-                  </span>
-                  <span className="shrink-0 tabular-nums">{dollars(text(line.total))}</span>
-                </span>
-                <span className="text-sm">
-                  {text(line.quantity)} {text(line.unit)} at {text(line.unit_price)}, waste {text(line.waste_percent)}%{note ? ` · matches Xactimate line ${note}` : ''}
-                </span>
-              </li>
-            );
-          })}
-          <Charges end={estimate.totals.low} afterHoursLabel={estimate.totals.after_hours_label} />
-          <li className={`${ROW} font-semibold`}>
-            <span>Itemized total</span>
-            <span className="shrink-0 tabular-nums">{dollars(estimate.totals.low.total)}</span>
-          </li>
-        </ul>
+        <ItemizedClaim rows={documents.itemizedClaim} end={estimate.totals.low} afterHoursLabel={estimate.totals.after_hours_label} />
       </details>
       <details className="rounded-md border p-3">
         <summary className="cursor-pointer font-semibold">Scope defense letter</summary>
@@ -143,16 +183,7 @@ export function EstimateDocuments({ estimate }: { estimate: EstimateView }) {
       </details>
       <details className="rounded-md border p-3">
         <summary className="cursor-pointer font-semibold">Photo audit log</summary>
-        {documents.photoLog.length ? (
-          photoAlbums(documents.photoLog).map((album) => (
-            <div key={album.heading ?? 'photos'}>
-              {album.heading ? <h3 className="pt-3 font-semibold">{album.heading}</h3> : null}
-              <List items={album.lines} />
-            </div>
-          ))
-        ) : (
-          <p className="pt-3">No photos.</p>
-        )}
+        <PhotoLog photos={documents.photoLog} />
       </details>
     </section>
   );

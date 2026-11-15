@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { callApi } from '@/lib/firebase-client';
+import { signInOf, type SignIn } from '@/lib/field/sign-out';
 import {
   fullTeam,
   invitationStatusText,
@@ -36,14 +37,16 @@ export function TeamBoard({
   user: User;
   companyId: string;
   initial: Team;
-  onSignInAgain: () => Promise<void>;
+  // Ends `from`, the sign-in the refused change was sent with.
+  onSignInAgain: (from: SignIn) => Promise<void>;
 }) {
   const [team, setTeam] = useState<Team>(initial);
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<'estimator' | 'office'>('estimator');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [needsSignIn, setNeedsSignIn] = useState(false);
+  // The sign-in a change was refused for with "sign in again": what the button ends.
+  const [needsSignIn, setNeedsSignIn] = useState<SignIn | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   // The link of the invitation just made or resent, for the owner to copy while it is still open.
   const [link, setLink] = useState<{ id: string; email: string; url: string } | null>(null);
@@ -66,10 +69,11 @@ export function TeamBoard({
     setError(null);
     setNotice(null);
     try {
+      const from = signInOf(user);
       const answer = await callApi(user, path, init);
       if (answer.status < 200 || answer.status >= 300) {
         setError(teamErrorMessage(answer.status, answer.body));
-        setNeedsSignIn(isSignInAgain(answer.status, answer.body));
+        setNeedsSignIn(isSignInAgain(answer.status, answer.body) ? from : null);
         return;
       }
       done?.(answer.body);
@@ -97,7 +101,7 @@ export function TeamBoard({
       <p role="alert" className="text-sm font-medium text-red-800 empty:hidden">
         {error ?? ''}
       </p>
-      {needsSignIn ? <Button onClick={() => void onSignInAgain()}>Sign in again</Button> : null}
+      {needsSignIn ? <Button onClick={() => void onSignInAgain(needsSignIn)}>Sign in again</Button> : null}
       <p role="status" className="text-sm empty:hidden">
         {notice ?? ''}
       </p>

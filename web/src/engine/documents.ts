@@ -92,6 +92,10 @@ const IDENTITY = z.strictObject({
   signoff: z.string(),
   logo_data_url: z.string().default(''),
   water_heater_notice: z.string().default(''),
+  // The company's own wording for the signed page (S5a-4b document settings). Given both, the setup
+  // check also lists an empty one, so documents without them are not signable (S5a-11).
+  authorization_text: z.string().optional(),
+  payment_terms_text: z.string().optional(),
 });
 
 type Identity = z.output<typeof IDENTITY>;
@@ -345,7 +349,11 @@ export function makeDocuments(input: {
   const data = input.data;
   const companyName = identity?.name ?? '';
   const clauseCompany = companyName.trim() || 'the contractor';
-  const setup = identity ? companySetupMissing(identity) : [];
+  const signing =
+    identity?.authorization_text !== undefined && identity.payment_terms_text !== undefined
+      ? { authorizationText: identity.authorization_text, paymentTermsText: identity.payment_terms_text }
+      : undefined;
+  const setup = identity ? companySetupMissing(identity, signing) : [];
   if (!data.address.trim() || data.yearBuilt === null || data.rooms.length === 0) {
     fail('Enter the address, year built and rooms before auditing.');
   }
