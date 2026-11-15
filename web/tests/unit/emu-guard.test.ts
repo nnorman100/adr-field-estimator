@@ -1,4 +1,5 @@
-import { execFile } from 'node:child_process';
+import { spawn, execFile } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
@@ -72,7 +73,12 @@ describe('npm run test:emu runner', () => {
   });
 
   function runRunner(projectId: string | undefined) {
-    const env: NodeJS.ProcessEnv = { ...process.env, PATH: `${fakeBin}${delimiter}${process.env.PATH ?? ''}` };
+    // A private host lock: another test:emu run holding the real one must not make these wait.
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      PATH: `${fakeBin}${delimiter}${process.env.PATH ?? ''}`,
+      DRYSCOPE_EMU_LOCK: join(fakeBin, 'host.lock'),
+    };
     if (projectId === undefined) delete env.DRYSCOPE_EMU_PROJECT;
     else env.DRYSCOPE_EMU_PROJECT = projectId;
     return exec(process.execPath, ['--import', 'tsx', 'tests/emu/run.ts'], { cwd: webDir, env });
@@ -106,4 +112,75 @@ describe('npm run test:emu runner', () => {
       'npx vitest run --config vitest.emu.config.ts',
     ]);
   });
+});
+
+// The Firebase CLI starts the emulators as processes that can outlive it. The stand-in `npx` here
+// starts a background process the way the CLI does, then ends the way a run can end; the runner
+// must leave nothing of it running.
+describe('npm run test:emu cleanup', () => {
+  let dir: string;
+  let pidFile: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'dryscope-emu-cleanup-'));
+    pidFile = join(dir, 'emulator.pid');
+    const npx = join(dir, 'npx');
+    await writeFile(npx, `#!/bin/sh\nsleep 300 &\necho $! > '${pidFile}'\n${'$FAKE_END'}\n`);
+    await chmod(npx, 0o755);
+  });
+
+  afterEach(async () => {
+    try {
+      process.kill(Number(await readFile(pidFile, 'utf8')), 'SIGKILL');
+    } catch {
+      // already stopped, which is the point
+    }
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const alive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  function start(end: string) {
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      PATH: `${dir}${delimiter}${process.env.PATH ?? ''}`,
+      DRYSCOPE_EMU_LOCK: join(dir, 'host.lock'),
+      FAKE_END: end,
+    };
+    return spawn(process.execPath, ['--import', 'tsx', 'tests/emu/run.ts'], { cwd: webDir, env, stdio: 'ignore' });
+  }
+  const exited = (child: ReturnType<typeof start>) =>
+    new Promise<number | null>((resolve) => child.on('exit', (code) => resolve(code)));
+  async function waitFor(condition: () => boolean | Promise<boolean>) {
+    for (let i = 0; i < 100; i += 1) {
+      if (await condition()) return;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error('timed out waiting');
+  }
+
+  it('stops what the CLI started when the tests fail', async () => {
+    const child = start('exit 3');
+    expect(await exited(child)).toBe(3);
+    const pid = Number(await readFile(pidFile, 'utf8'));
+    await waitFor(() => !alive(pid));
+  });
+
+  it('stops what the CLI started when the run is interrupted', async () => {
+    const child = start('sleep 300');
+    await waitFor(() => existsSync(pidFile) && readFileSync(pidFile, 'utf8').trim() !== '');
+    const pid = Number(await readFile(pidFile, 'utf8'));
+    expect(alive(pid)).toBe(true);
+    const done = exited(child);
+    child.kill('SIGTERM');
+    await done;
+    await waitFor(() => !alive(pid));
+  }, 30_000);
 });

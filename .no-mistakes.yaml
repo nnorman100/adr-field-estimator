@@ -26,8 +26,10 @@ commands:
   # The run worktree starts with tracked files only, so install both packages.
   prepare: "npm ci --prefer-offline && npm --prefix web ci --prefer-offline"
   # Root lint and vitest, then web type check, lint, unit tests and the Firebase
-  # emulator suite (demo- project only, needs Java 21+, takes a few minutes).
-  test: "npm run lint && npx vitest run && npm --prefix web run typecheck && npm --prefix web run lint && npm --prefix web test && npm --prefix web run test:emu"
+  # emulator suite (demo- project only, needs Java 21+, takes a few minutes). Only test:emu gets
+  # EMU_PORTS=auto (free emulator ports per run, so concurrent runs never collide); the unit
+  # step must see the defaults.
+  test: "npm run lint && npx vitest run && npm --prefix web run typecheck && npm --prefix web run lint && npm --prefix web test && EMU_PORTS=auto npm --prefix web run test:emu"
 
 test:
   instructions: |

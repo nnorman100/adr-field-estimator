@@ -50,6 +50,10 @@ if (files.some((file) => !/^tests\/emu\/[A-Za-z0-9_./-]+\.test\.ts$/.test(file) 
   process.exit(2);
 }
 
+// The CLI runs in its own process group so that everything it starts (the emulators are Java
+// processes that can outlive it) can be stopped together. Whenever the run ends, whether the tests
+// failed, the CLI died, or the runner was interrupted, the whole group is stopped, so no emulator
+// is left holding a port. SIGKILL of the runner itself cannot be caught.
 const child = spawn(
   'npx',
   [
@@ -64,13 +68,53 @@ const child = spawn(
     config,
     ['npx vitest run --config vitest.emu.config.ts', ...files].join(' '),
   ],
-  { cwd: webDir, stdio: 'inherit' },
+  { cwd: webDir, stdio: 'inherit', detached: true },
 );
+
+const GRACE_MS = 5_000;
+function stopGroup(signal: NodeJS.Signals | 0): boolean {
+  if (child.pid === undefined) return false;
+  try {
+    process.kill(-child.pid, signal); // signal 0 only checks that the group still has members
+    return true;
+  } catch {
+    return false; // nobody left in the group
+  }
+}
+
+// Stops what the CLI left behind: ask politely, then force after a short grace.
+async function cleanUp(): Promise<void> {
+  if (!stopGroup('SIGTERM')) return;
+  const deadline = Date.now() + GRACE_MS;
+  while (Date.now() < deadline && stopGroup(0)) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  stopGroup('SIGKILL');
+}
+// Last resort if the process is torn down without going through the paths below.
+process.on('exit', () => {
+  stopGroup('SIGKILL');
+});
+
+let finishing = false;
+async function finish(code: number): Promise<never> {
+  if (!finishing) {
+    finishing = true;
+    await cleanUp();
+    release();
+  }
+  process.exit(code);
+}
+
 child.on('error', (error) => {
   console.error(`Could not start the Firebase CLI: ${error.message}`);
-  process.exit(1);
+  void finish(1);
 });
-child.on('exit', (code, signal) => process.exit(code ?? (signal ? 1 : 0)));
+child.on('exit', (code, signal) => void finish(code ?? (signal ? 1 : 0)));
 for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
-  process.on(signal, () => child.kill(signal)); // the child's exit then releases the lock
+  process.on(signal, () => {
+    stopGroup(signal);
+    // The child's exit finishes the run; if it does not exit, finish anyway after the grace.
+    setTimeout(() => void finish(1), GRACE_MS + 1_000).unref();
+  });
 }

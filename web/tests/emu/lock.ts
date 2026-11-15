@@ -8,7 +8,8 @@ import { closeSync, openSync, readFileSync, rmSync, statSync, writeSync } from '
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-export const DEFAULT_LOCK_PATH = join(tmpdir(), 'dryscope-test-emu.lock');
+// DRYSCOPE_EMU_LOCK moves it (tests use a private path so they never wait on a real run's lock).
+export const DEFAULT_LOCK_PATH = process.env.DRYSCOPE_EMU_LOCK || join(tmpdir(), 'dryscope-test-emu.lock');
 export const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
 const POLL_MS = 500;
 // A lock file that exists but has no pid yet is a holder in the middle of creating it.

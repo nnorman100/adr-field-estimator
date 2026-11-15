@@ -72,8 +72,8 @@ describe('claiming emulator ports', () => {
     await Promise.all(servers.splice(0).map(closeServer));
     rmSync(dir, { recursive: true, force: true });
   });
-  const claim = (env: Record<string, string | undefined>, keys: EmuPort[] = ALL) => {
-    const result = claimEmuPorts(keys, { env, lockDir: dir, releaseOnExit: false });
+  const claim = (env: Record<string, string | undefined>, keys: EmuPort[] = ALL, isFree?: (port: number) => boolean) => {
+    const result = claimEmuPorts(keys, { env, lockDir: dir, releaseOnExit: false, isFree });
     released.push(result.release);
     return result;
   };
@@ -90,7 +90,9 @@ describe('claiming emulator ports', () => {
   it('uses explicit ports, takes the rest from the defaults, and writes them back for child processes', async () => {
     const free = await freeNearby();
     const env: Record<string, string | undefined> = { EMU_AUTH_PORT: String(free) };
-    const result = claim(env, ['auth', 'firestore']);
+    // Whether something on this host already listens on the default firestore port is not what is
+    // under test, so that one port counts as free.
+    const result = claim(env, ['auth', 'firestore'], (port) => port === EMU_PORT_DEFAULT.firestore || isPortFree(port));
     expect(result.custom).toBe(true);
     expect(result.ports).toEqual({ auth: free, firestore: 8399 });
     expect(env.EMU_AUTH_PORT).toBe(String(free));
@@ -299,7 +301,20 @@ describe('npm run test:emu with its own ports', () => {
     const record = join(fakeBin, 'record');
     const auth = await freeNearby();
     const firestore = await freeNearby(auth + 1);
-    const result = await run({ EMU_AUTH_PORT: String(auth), EMU_FIRESTORE_PORT: String(firestore) }, record);
+    // The ports left unpinned would be the defaults, and a run beside this one may hold those.
+    const ws = await freeNearby(firestore);
+    const hub = await freeNearby(ws);
+    const logging = await freeNearby(hub);
+    const result = await run(
+      {
+        EMU_AUTH_PORT: String(auth),
+        EMU_FIRESTORE_PORT: String(firestore),
+        EMU_FIRESTORE_WS_PORT: String(ws),
+        EMU_HUB_PORT: String(hub),
+        EMU_LOGGING_PORT: String(logging),
+      },
+      record,
+    );
     expect(result.code).toBe(0);
     const { args, configPath, config } = await started(record);
     expect(args.slice(0, 9)).toEqual([
