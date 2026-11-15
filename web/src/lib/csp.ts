@@ -24,7 +24,7 @@ export function cspReportOnly(env: {
     "default-src 'self'",
     `script-src 'self' 'unsafe-inline' https://apis.google.com https://www.google.com/recaptcha/ https://www.gstatic.com/recaptcha/${development ? " 'unsafe-eval'" : ''}`,
     "script-src-attr 'none'",
-    `connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firestore.googleapis.com https://firebaseappcheck.googleapis.com https://www.google.com/recaptcha/${loopback}${development ? ' ws://localhost:* ws://127.0.0.1:*' : ''}`,
+    `connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firestore.googleapis.com https://content-firebaseappcheck.googleapis.com https://www.google.com/recaptcha/${loopback}${development ? ' ws://localhost:* ws://127.0.0.1:*' : ''}`,
     `frame-src 'self'${authOrigin} https://www.google.com/recaptcha/ https://recaptcha.google.com/recaptcha/${loopback}`,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' blob: data:",

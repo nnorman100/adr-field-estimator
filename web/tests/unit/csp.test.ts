@@ -31,7 +31,7 @@ describe('full CSP is observation only', () => {
       'https://identitytoolkit.googleapis.com',
       'https://securetoken.googleapis.com',
       'https://firestore.googleapis.com',
-      'https://firebaseappcheck.googleapis.com',
+      'https://content-firebaseappcheck.googleapis.com',
       'https://www.google.com/recaptcha/',
     ]);
     expect(sources('frame-src')).toEqual([

@@ -70,6 +70,19 @@ describe('native CSP reports share the client-error intake', () => {
     );
   });
 
+  it('labels the App Check token exchange host the SDK calls', async () => {
+    expect(
+      await accepted(
+        await send(
+          legacy(
+            'https://content-firebaseappcheck.googleapis.com/v1/projects/p/apps/a:exchangeRecaptchaEnterpriseToken',
+          ),
+        ),
+      ),
+    ).toBe(1);
+    expect(JSON.parse(lines[0]!).message).toBe('CspViolation: connect-src appcheck');
+  });
+
   it('never logs attacker-controlled directive names or unknown origins', async () => {
     const body = legacy('https://person-name.example/123-Main-St?secret=abc');
     body['csp-report']['effective-directive'] = 'private directive';

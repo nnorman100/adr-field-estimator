@@ -46,7 +46,7 @@ const ORIGINS: Record<string, string> = {
   'https://identitytoolkit.googleapis.com': 'identity',
   'https://securetoken.googleapis.com': 'token',
   'https://firestore.googleapis.com': 'firestore',
-  'https://firebaseappcheck.googleapis.com': 'appcheck',
+  'https://content-firebaseappcheck.googleapis.com': 'appcheck',
   'https://apis.google.com': 'google-api',
   'https://www.google.com': 'google',
   'https://www.gstatic.com': 'gstatic',
