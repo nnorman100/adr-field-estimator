@@ -125,15 +125,17 @@ async function uidOf(tx: CompanyTransaction, companyId: string, actorId: string)
   return found?.uid ?? null;
 }
 
-// The job's drafts: its current draft first, then each earlier draft a submission was made from.
+// The job's drafts: each earlier draft a submission was made from, then its current draft last.
 // Every one of them names the job's field owner, so a person who no longer owns the field work
-// reads none of them (web/firestore.rules).
+// reads none of them (web/firestore.rules). The current draft is set last, so while any draft does
+// not name the owner yet, the current one does not either, and the job screens offer Start field
+// work, which sets them all again.
 async function draftIdsOf(tx: CompanyTransaction, row: JobRow): Promise<string[]> {
   const found = await tx
     .selectDistinct({ draftId: jobSubmissions.draftId })
     .from(jobSubmissions)
     .where(and(eq(jobSubmissions.companyId, row.companyId), eq(jobSubmissions.jobId, row.id)));
-  return [row.currentDraftId, ...found.map((one) => one.draftId).filter((id) => id !== row.currentDraftId)];
+  return [...found.map((one) => one.draftId).filter((id) => id !== row.currentDraftId), row.currentDraftId];
 }
 
 export function officeService(db: Database, drafts: DraftStore): OfficeService {
@@ -161,7 +163,7 @@ export function officeService(db: Database, drafts: DraftStore): OfficeService {
         console.error('job field owner unavailable', error instanceof Error ? error.name : 'unknown');
         throw new JobError('draft_unavailable');
       }
-      if (result === 'missing' && index === 0) throw new JobError('draft_unavailable');
+      if (result === 'missing' && index === draftIds.length - 1) throw new JobError('draft_unavailable');
     }
   }
 

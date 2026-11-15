@@ -511,11 +511,47 @@ describe('moving the field work (owner decision J5)', () => {
     await until(() => h.field.draft(h.seed.a, draftId)?.state === 'submitting', 'the fence');
     expect((await transfer(OWNER_A, id, { revision: 2, changeId: randomUUID(), toActorId: estimatorA2 })).status).toBe(200);
     hold.open();
-    expect(await first).toEqual({ status: 409, body: { error: 'submission_aborted' } });
+    expect(await first).toEqual({ status: 403, body: { error: 'not_field_owner' } });
     expect(await count('job_submissions', "status = 'committed'")).toBe(0);
+    expect(await count('job_submissions', "status = 'aborted'")).toBe(1);
     expect((await read(OWNER_A, id)).body.job.status).toBe('draft');
     expect(h.field.draft(h.seed.a, draftId)).toMatchObject({ state: 'editing', fence: null });
     expect((await submitDraft(ESTIMATOR_A2, id, { id: randomUUID(), draftId, digest })).status).toBe(201);
+  });
+
+  it('stops and releases a Submit whose estimator lost the job while it ran, so the new owner can submit at once', async () => {
+    const { id, draftId } = await claimedJob();
+    h.field.put(h.seed.a, draftId, MANIFEST);
+    const digest = await manifestDigest(MANIFEST);
+    const hold = latch();
+    h.field.gate.read = () => hold.wait;
+    const first = submitDraft(ESTIMATOR_A, id, { id: randomUUID(), draftId, digest });
+    await until(() => h.field.draft(h.seed.a, draftId)?.state === 'submitting', 'the fence');
+    const moved = await transfer(OWNER_A, id, { revision: 2, changeId: randomUUID(), toActorId: estimatorA2 });
+    expect(moved.status).toBe(200);
+    const theirs = moved.body.assignments.find((one) => one.actorId === h.seed.estimatorA.actor)!.id;
+    expect((await unassign(OFFICE_A, id, theirs)).status).toBe(200);
+    hold.open();
+    expect(await first).toEqual({ status: 404, body: { error: 'not_found' } });
+    expect(await count('job_submissions', "status = 'aborted'")).toBe(1);
+    expect(h.field.draft(h.seed.a, draftId)).toMatchObject({ state: 'editing', fence: null });
+    expect((await submitDraft(ESTIMATOR_A2, id, { id: randomUUID(), draftId, digest })).status).toBe(201);
+  });
+
+  it('names the current draft last, so a move whose draft step stopped part way is finished by the new owner’s Start field work', async () => {
+    const { id, draftId } = await claimedJob();
+    h.field.put(h.seed.a, draftId, MANIFEST);
+    expect((await submitDraft(ESTIMATOR_A, id, { id: randomUUID(), draftId, digest: await manifestDigest(MANIFEST) })).status).toBe(201);
+    const later = randomUUID();
+    expect((await nextDraft(ESTIMATOR_A, id, { draftId: later, fromDraftId: draftId })).status).toBe(201);
+    const { revision } = (await read(OWNER_A, id)).body.job;
+    // One draft is set, then the field database stops answering.
+    h.drafts.failNext = { on: true, afterWrite: true };
+    expect(await transfer(OWNER_A, id, { revision, changeId: randomUUID(), toActorId: estimatorA2 })).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
+    expect(draftOf(later)?.fieldOwnerUid).toBe('estimator-a');
+    expect((await claim(ESTIMATOR_A2, id)).status).toBe(200);
+    expect(draftOf(later)).toEqual({ fieldOwnerUid: 'estimator-a2', fieldOwnerRevision: revision + 1 });
+    expect(draftOf(draftId)).toEqual({ fieldOwnerUid: 'estimator-a2', fieldOwnerRevision: revision + 1 });
   });
 
   it('never lets an older owner overwrite a newer one on the draft', async () => {
