@@ -1,6 +1,7 @@
-// Maps field map v1 (./schema.ts) to the engine's inspection JSON (`priceEstimate`'s
+// Maps the field map (./schema.ts) to the engine's inspection JSON (`priceEstimate`'s
 // `job.inspection`). A key the technician has not set is left out, so the engine applies its own
-// default, as it did for the old app's drafts.
+// default, as it did for the old app's drafts. A room's prep tasks and findings note are words for
+// the documents, not inputs to a price: they stay in the submitted record (its snapshot), not here.
 import type { z } from 'zod';
 import type { Json } from '@/engine/estimate';
 import { type DraftField, draftFieldSchema, type RoomField, roomFieldSchema } from './schema';
@@ -39,7 +40,12 @@ const DRAFT_KEYS: Array<[keyof DraftField, string]> = [
 
 const ROOM_KEYS: Array<[keyof RoomField, string]> = [
   ['name', 'name'],
+  ['roomTypeId', 'room_type_id'],
   ['category', 'category'],
+  ['waterClass', 'water_class'],
+  ['ceilingHeightFt', 'ceiling_height_ft'],
+  ['moldCondition', 'mold_condition'],
+  ['affectedSf', 'affected_sf'],
   ['unfinishedSf', 'unfinished_sf'],
   ['finishedSf', 'finished_sf'],
   ['floorSf', 'floor_sf'],
@@ -81,7 +87,13 @@ export function toInspection(draftField: unknown, rooms: RoomDoc[]): { [key: str
   inspection.rooms = order.map((id) => {
     const room = byId.get(id) as RoomField;
     if (room.name === undefined) throw new FieldMapError('a room has no name');
-    return copy(room, ROOM_KEYS);
+    const out = copy(room, ROOM_KEYS);
+    if (room.category !== undefined) out.loss = room.category === 'mold' ? 'mold' : 'water';
+    // The engine takes a list, one entry per item; the map's ids in code-unit order, so the same
+    // room always gives the same list.
+    const items = Object.entries(room.items ?? {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    if (items.length > 0) out.items = items.map(([itemId, quantity]) => ({ item_id: itemId, quantity }));
+    return out;
   });
   return inspection;
 }

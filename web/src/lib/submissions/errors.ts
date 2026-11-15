@@ -21,6 +21,11 @@ export const SUBMISSION_ERRORS = {
   // The draft cannot be recorded as it is (a room with no name, a room order that does not list
   // the rooms, a value the field map does not allow).
   draft_invalid: 409,
+  // A room names a room type or an item that is not in the job's price version (its pin, else the
+  // company's current version): pick it again on Check Scope, then Finish with a new submission id.
+  unknown_price_ids: 409,
+  // The job's price version cannot be read, so its room types and items cannot be checked.
+  prices_unreadable: 503,
   // There is no field draft for the job's current draft id.
   draft_missing: 409,
   // Back to editing on a job that is not submitted.

@@ -129,6 +129,8 @@ export const MATRIX: readonly MatrixRow[] = [
   // job is 404 to every role, and no agreement is made.
   row('api/jobs/[jobId]/agreements', 'POST', 'company', { body: JOB_SIGN, own: 'cross' }),
   row('api/jobs/[jobId]/agreements', 'GET', 'company', { own: 'cross' }),
+  // S5a-10: what Check Scope picks from; another company's job is 404 to every role.
+  row('api/jobs/[jobId]/scope-lists', 'GET', 'company', { own: 'cross' }),
 
   row('api/invitations/[invitationId]', 'GET', 'invitation'),
   row('api/invitations/[invitationId]/accept', 'POST', 'invitation'),

@@ -36,7 +36,7 @@ export type FieldDraft = {
 
 export const draftPath = ({ companyId, draftId }: DraftRef) => `companies/${companyId}/drafts/${draftId}`;
 
-// A stored map that does not follow field map v1 (./schema.ts). The draft is not shown at all
+// A stored map that does not follow the field map (./schema.ts). The draft is not shown at all
 // rather than shown as empty or partial work.
 export class InvalidFieldData extends Error {
   constructor() {

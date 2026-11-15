@@ -1,37 +1,9 @@
-// Field map v1 (S5a-1): the mapper to the engine's inspection JSON, and the field rules kept in
-// step with the Zod schema. The rules themselves are tested against the emulator in
+// Field map v1 (S5a-1): the mapper to the engine's inspection JSON. The field rules, and that they
+// accept every key the Zod schema names, are tested against the emulator in
 // tests/emu/rules/field-map.test.ts.
-import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { FieldMapError, type RoomDoc, toInspection } from '../../src/lib/field/inspection';
-import { draftFieldSchema, photoFieldSchema, roomFieldSchema, SHOT_TAGS } from '../../src/lib/field/schema';
 import { item, lineTotals, priced, table } from './estimate-fixtures';
-
-const RULES = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
-const CODE = RULES.split('\n')
-  .filter((line) => !line.trim().startsWith('//'))
-  .join('\n');
-
-/** The key list a rules function allows with `f.keys().hasOnly([...])`. */
-function ruleKeys(fn: string): string[] {
-  const body = CODE.slice(CODE.indexOf(`function ${fn}(`));
-  const list = /f\.keys\(\)\.hasOnly\(\[([^\]]*)\]\)/.exec(body)?.[1];
-  if (list === undefined) throw new Error(`no key list in ${fn}`);
-  return [...list.matchAll(/'([^']+)'/g)].map((match) => match[1] as string).sort();
-}
-
-describe('field rules and the Zod schema', () => {
-  it('allow the same keys in each document', () => {
-    expect(ruleKeys('validDraftField')).toEqual(Object.keys(draftFieldSchema.shape).sort());
-    expect(ruleKeys('validRoomField')).toEqual(Object.keys(roomFieldSchema.shape).sort());
-    expect(ruleKeys('validPhotoField')).toEqual(Object.keys(photoFieldSchema.shape).sort());
-  });
-
-  it('allow the same shot tags', () => {
-    const list = /f\.shotTag in \[([^\]]*)\]/.exec(CODE)?.[1] ?? '';
-    expect([...list.matchAll(/'([^']+)'/g)].map((match) => match[1])).toEqual([...SHOT_TAGS]);
-  });
-});
 
 // A worked example. The table prices unfinished-area demolition at $2.00 per sq ft (with the
 // room's waste), a service call at $150.00 each and labour at $50.00 an hour; every multiplier is
@@ -70,8 +42,8 @@ describe('toInspection', () => {
       emergency_calls: 1,
       labor_hours: 2,
       rooms: [
-        { name: 'Hall', category: 1, unfinished_sf: 50, waste_percent: 10 },
-        { name: 'Kitchen', category: 1, unfinished_sf: 120 },
+        { name: 'Hall', category: 1, loss: 'water', unfinished_sf: 50, waste_percent: 10 },
+        { name: 'Kitchen', category: 1, loss: 'water', unfinished_sf: 120 },
       ],
     });
   });

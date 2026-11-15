@@ -515,18 +515,21 @@ may also delete a room document of an editing draft (owner decision, 2026-11-13,
 removes the room from `roomOrder` in the same batch); a photo reference is never deleted by a
 client. A draft that is `submitting` or `submitted` refuses every client write.
 
-Each `field` map follows field map v1 (S5a-1, `web/src/lib/field/schema.ts`), and the rules refuse
+Each `field` map follows field map v2 (S5a-1, room inputs S5a-10, `web/src/lib/field/schema.ts`), and the rules refuse
 a key it does not name, a value of the wrong type, and a text, number or list outside its size. Every
 key is optional; clearing a value deletes its key.
 
 | Document | `field` keys |
 | --- | --- |
 | Draft | `yearBuilt`; `roomOrder` (room ids, at most 30, no repeats); `notes` (up to 40,000 characters) and `summary` (the written summary of findings, up to 6,000); `scopeConfirmed`; equipment counts `airMovers`, `dehumidifiers`, `airScrubbers`, `woodFloorSystems` with `dryingDays` and `woodFloorDays`; job charges `emergencyCalls`, `monitoringHours`, `haulLoads`, `hepaFilters`, `matterportScans`, `dumpTruckLoads`, `equipmentDecon`, `powerDistribution`, `laborHours`, `isAfterHours` |
-| Room | `name`, `category` (1 to 3), `unfinishedSf`, `finishedSf`, `floorSf`, `wetFloorSf`, `wastePercent` |
+| Room | `name`; `roomTypeId` (a room type of the job's price version; absent is Other); `category` (1 to 3, or `mold`); `waterClass` (1 to 4) and `ceilingHeightFt` for a water room, `moldCondition` (1 to 3) and `affectedSf` for a mold room; `unfinishedSf`, `finishedSf`, `floorSf`, `wetFloorSf`, `wastePercent`; `items` (a map of price-list item id to typed quantity, at most 50); `prepTasks` (at most 10 texts of up to 300 characters: a company template's words, copied when picked, or the estimator's own); `findings` (the room's findings note, up to 2,000 characters) |
 | Photo reference | `roomId`, `shotTag` (overview, source, surface, meter, contents or equipment) |
 
-`notes` and `summary` are free text and may hold personal details, so they are personal data. The
-rules cannot check a list's entries; the server checks `roomOrder` when it reads the draft
+`notes`, `summary`, a room's `prepTasks` and `findings` are free text and may hold personal details,
+so they are personal data. The rules cannot loop over a list: `roomOrder` is checked for type, size
+and repeats only, and a room's `items` and `prepTasks`, which have a fixed largest size, entry by
+entry. Whether a room type or item is in the job's price version is the server's check at Submit
+(and the estimate's again). The server checks `roomOrder` when it reads the draft
 (`toInspection` in `web/src/lib/field/inspection.ts` maps a draft and its rooms to the engine's
 inspection JSON). Each write reads the company header, the access record and, for a room or photo,
 the draft: three documents of the 10 a write may read. A batched write may read 20 in all; counted
