@@ -108,6 +108,7 @@ export const API_ROUTES: readonly string[] = [
   '/api/jobs/[jobId]/drafts',
   '/api/jobs/[jobId]/estimate',
   '/api/jobs/[jobId]/photos/[photoId]',
+  '/api/jobs/[jobId]/scope-lists',
   '/api/jobs/[jobId]/submissions',
   '/api/me',
   '/api/platform/companies',
