@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { photoAddress, sendPhoto, SHOT_NAMES } from '@/lib/field/api';
 import { pending as unsent, usePending, type PendingPhoto } from '@/lib/field/pending';
 import { preparePhoto } from '@/lib/field/photo';
-import { SHOT_TAGS, type PhotoField } from '@/lib/field/schema';
+import { MAX_PHOTO_REFS, SHOT_TAGS, type PhotoField } from '@/lib/field/schema';
 import { fieldRefusal, savePhotoRef, type FieldDraft } from '@/lib/field/store';
 import type { JobContext } from './job-screens';
 import { Choice, Outcome, Section } from './ui';
@@ -40,6 +40,9 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
   }, []);
   const [error, setError] = useState<string | null>(null);
   const canTake = job.editable && job.session.capabilities.includes('photos');
+  // Photos on the draft and those of this page not yet on it: the server refuses past the cap.
+  const held = draft.photos.length + pending.filter((item) => !draft.photos.some((photo) => photo.id === item.id)).length;
+  const full = held >= MAX_PHOTO_REFS;
   const roomOptions = [{ value: '', label: 'No room' }, ...draft.rooms.map((room) => ({ value: room.id, label: room.field.name ?? 'Room' }))];
   const roomName = (id: string | undefined) => draft.rooms.find((room) => room.id === id)?.field.name ?? null;
 
@@ -87,7 +90,7 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
           <Choice id="photo-shot" label="Shot" value={shotTag} options={SHOT_OPTIONS} onChange={setShotTag} />
           <label
             htmlFor="photo-camera"
-            className="inline-flex h-12 cursor-pointer items-center justify-center rounded-md bg-primary px-6 text-base font-medium text-primary-foreground focus-within:ring-2 focus-within:ring-ring"
+            className={`inline-flex h-12 items-center justify-center rounded-md bg-primary px-6 text-base font-medium text-primary-foreground focus-within:ring-2 focus-within:ring-ring ${full ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
           >
             Take photo
             <input
@@ -96,6 +99,8 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
               accept="image/*"
               capture="environment"
               className="sr-only"
+              disabled={full}
+              aria-describedby={full ? 'photo-limit' : undefined}
               onChange={(event) => {
                 const file = event.target.files?.[0];
                 event.target.value = '';
@@ -103,6 +108,11 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
               }}
             />
           </label>
+          {full ? (
+            <p id="photo-limit" className="text-sm">
+              This job has the most photos it can hold ({MAX_PHOTO_REFS}).
+            </p>
+          ) : null}
           <Outcome error={error} notice={null} />
         </Section>
       ) : null}

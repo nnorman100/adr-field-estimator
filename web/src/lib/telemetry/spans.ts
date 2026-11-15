@@ -49,7 +49,7 @@ export function transactionSpan<T>(work: () => Promise<T>): Promise<T> {
   return inSpan('withCompany transaction', SpanKind.INTERNAL, { 'db.system.name': 'postgresql', 'dryscope.db.scope': 'company' }, work);
 }
 
-export type FirestoreOperation = 'get' | 'create' | 'set' | 'update' | 'delete' | 'runTransaction';
+export type FirestoreOperation = 'get' | 'count' | 'create' | 'set' | 'update' | 'delete' | 'runTransaction';
 
 // One Firestore Admin SDK call. `collection` is the collection's name as the code spells it
 // ('drafts', 'access'), never a document path or id.

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Firestore } from 'firebase-admin/firestore';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { parseProjectionConfig } from '@/lib/config';
+import { MAX_PHOTO_REFS } from '@/lib/field/schema';
 import { firestoreDraftStore } from '@/lib/jobs/drafts';
 import { firestoreDraftStates, type DraftStates } from '@/lib/photos/drafts';
 import { firestoreFor } from '@/lib/projection/firestore';
@@ -54,5 +55,22 @@ describe('the state of a draft', () => {
     expect(await states.state(company, draft)).toBe('');
     await db.doc(path(company, draft)).set({ field: {} });
     expect(await states.state(company, draft)).toBe('');
+  });
+
+  it('counts the photo references of the draft asked for, up to the cap and no further', async () => {
+    const company = randomUUID();
+    const draft = randomUUID();
+    await firestoreDraftStore(db).ensure(company, draft, 'uid-1');
+    expect(await states.photoRefs(company, draft)).toBe(0);
+    const add = async (count: number) => {
+      const batch = db.batch();
+      for (let i = 0; i < count; i++) batch.set(db.doc(`${path(company, draft)}/photos/${randomUUID()}`), { field: {} });
+      await batch.commit();
+    };
+    await add(MAX_PHOTO_REFS - 1);
+    expect(await states.photoRefs(company, draft)).toBe(MAX_PHOTO_REFS - 1);
+    expect(await states.photoRefs(randomUUID(), draft)).toBe(0);
+    await add(2);
+    expect(await states.photoRefs(company, draft)).toBe(MAX_PHOTO_REFS);
   });
 });

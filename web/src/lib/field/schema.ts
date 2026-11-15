@@ -11,6 +11,8 @@ import { z } from 'zod';
 
 /** Most rooms on one draft; the engine refuses more than 30. */
 export const MAX_ROOMS = 30;
+/** Abuse-protection ceiling per draft (F5); the owner may raise it for larger evidence sets. */
+export const MAX_PHOTO_REFS = 300;
 /** Longest room or photo id the phone may use (it makes uuids, 36 characters). */
 export const MAX_ID = 64;
 export const MAX_NOTES = 40_000;

@@ -125,6 +125,7 @@ describe('answer messages', () => {
     expect(answerMessage(0, null)).toMatch(/No answer/);
     expect(answerMessage(409, { error: 'stale_revision', revision: 4 })).toMatch(/Someone else changed/);
     expect(answerMessage(409, { error: 'draft_locked' })).toMatch(/no longer being edited/);
+    expect(answerMessage(409, { error: 'photo_limit' })).toBe('This job has the most photos it can hold (300).');
     expect(answerMessage(404, { error: 'not_found' })).toMatch(/not in your list/);
     expect(answerMessage(401, { error: 'whatever <b>' })).toBe('Sign in again to continue.');
     expect(answerMessage(500, { error: 'a message with a name in it' })).toMatch(/could not do this/);
