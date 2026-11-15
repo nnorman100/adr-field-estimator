@@ -23,11 +23,15 @@ const PICTURE = {
   ),
 };
 
-async function openJob(page: Page, lane: NetworkLane, world: World, jobId: string) {
+function serveMe(lane: NetworkLane, world: World) {
   lane.serve('/api/me', { type: 'application/json', body: JSON.stringify({
     company: { id: world.companyId, name: 'Field Test' }, role: 'estimator',
     capabilities: ['scope', 'jobs_create', 'photos'], fieldAccessExpiresAt: inDays(7).toISOString(),
   }) });
+}
+
+async function openJob(page: Page, lane: NetworkLane, world: World, jobId: string) {
+  serveMe(lane, world);
   lane.serve(`/api/jobs/${jobId}`, { type: 'application/json', body: JSON.stringify({
     job: { id: jobId, status: 'draft', currentDraftId: world.draftId, fieldOwnerActorId: 'actor',
       propertyAddress: 'Offline test job', revision: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
@@ -149,6 +153,55 @@ test('a photo taken while the camera hid the page is kept to send again', async 
   await expect(page.getByLabel('Take photo')).toHaveCount(0);
   expect(await mark(page, world)).toMatchObject({ photosInMemory: [expect.any(String)] });
   await expectNothingSent(lane);
+});
+
+test('a page of jobs asked for before the list is read again on resume is not added to it', async ({ context, lane }) => {
+  const world = await seedCompany();
+  const phone = await signedIn(context, lane, world);
+  const page = phone.page;
+  serveMe(lane, world);
+  const now = new Date().toISOString();
+  const pageOf = (n: number, nextCursor: string | null) => ({ type: 'application/json', body: JSON.stringify({
+    jobs: [{ id: randomUUID(), status: 'draft', propertyAddress: `Job ${n}`, revision: 1, createdAt: now, updatedAt: now, customerName: '', mine: true }],
+    nextCursor,
+  }) });
+  let releaseThird!: () => void;
+  const third = new Promise<void>((done) => (releaseThird = done));
+  lane.serve('/api/jobs', async (_headers, url) => {
+    const cursor = new URL(url, 'http://lane').searchParams.get('cursor');
+    if (cursor === 'two') return pageOf(2, 'three');
+    if (cursor === 'three') {
+      await third;
+      return pageOf(3, null);
+    }
+    return pageOf(1, 'two');
+  });
+  await page.goto(`${lane.appUrl}/field`);
+  await page.getByRole('button', { name: 'Keep jobs on this phone' }).click();
+  const jobs = page.getByRole('list', { name: 'My jobs' });
+  await expect(jobs.getByText('Job 1', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Show more jobs' }).click();
+  await expect(jobs.getByText('Job 2', { exact: true })).toBeVisible();
+  const asked = page.waitForRequest((request) => request.url().includes('cursor=three'));
+  await page.getByRole('button', { name: 'Show more jobs' }).click();
+  await asked;
+  await page.evaluate(() => {
+    const shown = { value: false };
+    Object.defineProperty(document, 'visibilityState', { get: () => (shown.value ? 'visible' : 'hidden'), configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+    (window as unknown as { shown: typeof shown }).shown = shown;
+  });
+  await expect(page.getByText('Needs a connection', { exact: true })).toBeVisible();
+  await page.evaluate(() => {
+    (window as unknown as { shown: { value: boolean } }).shown.value = true;
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await expect(jobs.getByText('Job 2', { exact: true })).toHaveCount(0);
+  await expect(jobs.getByText('Job 1', { exact: true })).toBeVisible();
+  releaseThird();
+  await page.getByRole('button', { name: 'Show more jobs' }).click();
+  await expect(jobs.getByText('Job 2', { exact: true })).toBeVisible();
+  await expect(jobs.getByText('Job 3', { exact: true })).toHaveCount(0);
 });
 
 test('SQL customer and claim edits need a connection and are never queued offline', async ({ context, lane }) => {

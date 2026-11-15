@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { listJobs, type JobListItem } from '@/lib/field/api';
 import type { FieldSession } from '@/lib/field/session';
@@ -23,6 +23,9 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
   const [cursor, setCursor] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Only the newest request answers: a page asked for before the list was read again from its first
+  // page is not added to it, and no page is asked for until that first page is back.
+  const latest = useRef(0);
 
   function apply(answer: Awaited<ReturnType<typeof listJobs>>, from: string | null) {
     setBusy(false);
@@ -41,18 +44,19 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
 
   async function load(from: string | null) {
     if (!session.online) return;
-    apply(await listJobs(session.user, shown, from), from);
+    const mine = ++latest.current;
+    const answer = await listJobs(session.user, shown, from);
+    if (mine === latest.current) apply(answer, from);
   }
 
-  // Each list is its own component (keyed by the parent), so it starts empty and loads once.
+  // Each list is its own component (keyed by the parent), so it starts empty and loads once, and
+  // again from its first page each time the connection comes back.
   useEffect(() => {
     if (!session.online) return;
-    let live = true;
-    void listJobs(session.user, shown, null).then((answer) => {
-      if (live) apply(answer, null);
-    });
+    void load(null);
     return () => {
-      live = false;
+      latest.current += 1;
+      setBusy(true);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.online]);

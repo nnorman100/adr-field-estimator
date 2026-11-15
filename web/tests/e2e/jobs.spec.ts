@@ -110,6 +110,8 @@ async function addRoom(page: Page, name: string) {
   await page.getByLabel('New room name').fill(name);
   await page.getByRole('button', { name: 'Add room' }).click();
   await expect(page.getByRole('form', { name })).toBeVisible();
+  // Shown on this phone first; the field database has it once the server acknowledges it.
+  await expect(page.getByRole('form', { name: 'Add a room' }).getByRole('status')).toHaveText(`${name} added.`);
 }
 
 async function takePhoto(page: Page, room: string, shot: string) {
