@@ -134,9 +134,9 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
               This job has the most photos it can hold ({MAX_PHOTO_REFS}).
             </p>
           ) : null}
-          <Outcome error={error} notice={null} />
         </Section>
       ) : null}
+      <Outcome error={error} notice={null} />
       {pending.length > 0 ? (
         <Section title="Sending">
           <ul className="flex flex-col gap-2" aria-label="Photos being sent">

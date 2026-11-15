@@ -155,6 +155,32 @@ test('a photo taken while the camera hid the page is kept to send again', async 
   await expectNothingSent(lane);
 });
 
+test('a photo the phone cannot record after the camera hid the page says so', async ({ context, lane }) => {
+  const world = await seedCompany();
+  const phone = await signedIn(context, lane, world);
+  await openJob(phone.page, lane, world, randomUUID());
+  const page = phone.page;
+  await page.getByRole('link', { name: 'Photos', exact: true }).click();
+  const chooser = page.waitForEvent('filechooser');
+  await page.getByText('Take photo', { exact: true }).click();
+  const camera = await chooser;
+  lane.cut();
+  await page.evaluate(() => window.dispatchEvent(new Event('offline')));
+  await expect(page.getByText(/No signal/)).toBeVisible();
+  await page.evaluate((key) => {
+    const real = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (name, value) {
+      if (name === key) throw new DOMException('Full', 'QuotaExceededError');
+      return real.call(this, name, value);
+    };
+  }, unsentKey(world.tenantId, world.owner.uid));
+  await camera.setFiles(PICTURE);
+  await expect(page.getByRole('alert').filter({ hasText: 'could not record the photo' })).toBeVisible();
+  await expect(page.getByLabel('Take photo')).toHaveCount(0);
+  await expect(page.getByRole('list', { name: 'Photos being sent' })).toHaveCount(0);
+  await expectNothingSent(lane);
+});
+
 test('a page of jobs asked for before the list is read again on resume is not added to it', async ({ context, lane }) => {
   const world = await seedCompany();
   const phone = await signedIn(context, lane, world);
