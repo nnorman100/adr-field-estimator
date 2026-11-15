@@ -18,5 +18,6 @@ The sections of this document, one file per area (each keeps its original headin
 - [Rebuilt app Postgres: AI and Live tables](data/postgres-ai-live.md): `0012_ai_live_tables`.
 - [Rebuilt app Postgres: company documents, signing links and document links](data/postgres-documents-and-links.md): `0013_company_documents` and `0014_signing_links`.
 - [Rebuilt app Postgres: how migrations are changed](data/postgres-migration-rules.md): The additive rule (add, switch, remove) and the migrator.
+- [Rebuilt app S5a: personal data at a glance](data/s5a-personal-data.md): Where the rebuilt app's jobs, photos, signing and links hold personal data, who reads it, and how the isolation gate proves each place (S5a-12).
 - [Rebuilt app field database: Firestore rules](data/field-rules.md): Rebuilt app field database (not deployed): what the rules allow and check.
 - [Rebuilt app field database: how the access records follow Postgres](data/field-access-records.md): The access projection (S3-12); the S6 job locator projection.
