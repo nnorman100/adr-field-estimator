@@ -304,7 +304,7 @@ describe('Submit', () => {
       ['draft_invalid', (m) => m.rooms.push({ id: 'attic', field: { category: 1 } })],
       ['draft_invalid', (m) => (m.draft = { roomOrder: ['kitchen'] })],
       ['draft_invalid', (m) => (m.rooms = Array.from({ length: 31 }, (_, i) => ({ id: `room-${i}`, field: { name: 'Room' } })))],
-      ['draft_invalid', (m) => (m.photos = Array.from({ length: 301 }, () => ({ id: randomUUID(), field: {} })))],
+      ['too_many_photos', (m) => (m.photos = Array.from({ length: 301 }, () => ({ id: randomUUID(), field: {} })))],
       ['photo_missing', (m) => m.photos.push({ id: randomUUID(), field: {} })],
       ['photo_missing', (m) => m.photos.push({ id: 'not-a-uuid', field: {} })],
     ];

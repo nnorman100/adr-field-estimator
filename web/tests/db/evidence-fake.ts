@@ -1,4 +1,5 @@
 import type { ReadableStream as WebReadableStream } from 'node:stream/web';
+import { MAX_PHOTO_REFS } from '@/lib/field/schema';
 import type { DraftStates } from '@/lib/photos/drafts';
 import type { EvidenceStore } from '@/lib/photos/store';
 import type { FakeDrafts } from './draft-fake';
@@ -57,17 +58,22 @@ export function fakeEvidence(): FakeEvidence {
 }
 
 // The state of each draft the jobs service made through the fake drafts: `editing` until a test
-// sets another, null for a draft nobody made.
-export type FakeDraftStates = DraftStates & { set: Map<string, string>; fail: boolean };
+// sets another, null for a draft nobody made. `refs` is each draft's photo-reference count (0 unless set).
+export type FakeDraftStates = DraftStates & { set: Map<string, string>; refs: Map<string, number>; fail: boolean };
 
 export function fakeDraftStates(drafts: FakeDrafts): FakeDraftStates {
   const states: FakeDraftStates = {
     set: new Map(),
+    refs: new Map(),
     fail: false,
     async state(companyId, draftId) {
       if (states.fail) throw new Error('field database unreachable');
       const key = `${companyId}/${draftId}`;
       return states.set.get(key) ?? (drafts.made.has(key) ? 'editing' : null);
+    },
+    async photoRefs(companyId, draftId) {
+      if (states.fail) throw new Error('field database unreachable');
+      return Math.min(states.refs.get(`${companyId}/${draftId}`) ?? 0, MAX_PHOTO_REFS);
     },
   };
   return states;

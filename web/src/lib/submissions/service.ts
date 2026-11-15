@@ -376,7 +376,8 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
         problem = await closeFence(caller, row);
         if (!problem) {
           const read = await field(() => store.read(caller.companyId, row.draftId, row.epoch));
-          if (read === 'too_large') problem = 'draft_invalid';
+          if (read === 'too_many_rooms') problem = 'draft_invalid';
+          else if (read === 'too_many_photos') problem = 'too_many_photos';
           else {
             manifest = read;
             // No longer fenced by this epoch: the row was aborted meanwhile and its fence released.

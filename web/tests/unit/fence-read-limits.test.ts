@@ -30,13 +30,13 @@ function database(counts: { rooms: number; photos: number }) {
 describe('fenced draft read budgets', () => {
   it('reads no more than 31 rooms from an overfilled draft, and refuses it', async () => {
     const { store, reads } = database({ rooms: 1000, photos: 0 });
-    expect(await store.read('c', 'd', 'e')).toBe('too_large');
+    expect(await store.read('c', 'd', 'e')).toBe('too_many_rooms');
     expect(reads.find((read) => read.name === 'rooms')).toEqual({ name: 'rooms', count: 31 });
   });
 
   it('reads no more than 301 photos from an overfilled draft, and refuses it', async () => {
     const { store, reads } = database({ rooms: 1, photos: 1000 });
-    expect(await store.read('c', 'd', 'e')).toBe('too_large');
+    expect(await store.read('c', 'd', 'e')).toBe('too_many_photos');
     expect(reads).toEqual([{ name: 'rooms', count: 1 }, { name: 'photos', count: 301 }]);
   });
 });

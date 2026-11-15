@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { appCheckHeaders } from '@/lib/app-check-client';
 import { callApi } from '@/lib/firebase-client';
 import type { ClaimView, CustomerView, JobDetail, JobListItem, JobPage } from '@/lib/jobs/service';
+import { MAX_PHOTO_REFS } from './schema';
 import type { JobsList } from './views';
 
 const jobView = z.object({
@@ -56,6 +57,7 @@ const MESSAGES: Record<string, string> = {
   job_signed: 'This job is signed; the office corrects its details.',
   conflict: 'This was already sent with other details. Start again.',
   draft_locked: 'This job is no longer being edited.',
+  photo_limit: `This job has the most photos it can hold (${MAX_PHOTO_REFS}).`,
   photo_conflict: 'A different photo was already sent with this id. Take it again.',
   unsupported_image: 'This picture type cannot be used. Take the photo with the camera.',
   too_large: 'This picture is too large.',

@@ -36,7 +36,7 @@ const fenceOf = (submissionId = randomUUID(), epoch = randomUUID()) => ({
 });
 
 const same = (a: Awaited<ReturnType<FenceStore['read']>> | undefined, b: FieldManifest) =>
-  (a && a !== 'too_large' ? canonicalManifest(a) : null) === canonicalManifest(b);
+  (a && typeof a !== 'string' ? canonicalManifest(a) : null) === canonicalManifest(b);
 
 export function fenceStoreContract(name: string, probe: () => FenceProbe): void {
   describe(`${name} fence store contract`, () => {
@@ -98,8 +98,8 @@ export function fenceStoreContract(name: string, probe: () => FenceProbe): void 
       const manifest = { draft: { roomOrder: rooms.map((room) => room.id) }, rooms, photos };
       const cases: Array<[string, FieldManifest]> = [
         ['at-cap', manifest],
-        ['rooms', { ...manifest, rooms: [...rooms, { id: 'extra', field: {} }] }],
-        ['photos', { ...manifest, photos: [...photos, { id: randomUUID(), field: {} }] }],
+        ['too_many_rooms', { ...manifest, rooms: [...rooms, { id: 'extra', field: {} }] }],
+        ['too_many_photos', { ...manifest, photos: [...photos, { id: randomUUID(), field: {} }] }],
       ];
       for (const [kind, data] of cases) {
         const draft = randomUUID();
@@ -108,7 +108,7 @@ export function fenceStoreContract(name: string, probe: () => FenceProbe): void 
         await store.fence(company, draft, fence);
         const read = await store.read(company, draft, fence.epoch);
         if (kind === 'at-cap') expect(same(read, manifest)).toBe(true);
-        else expect(read).toBe('too_large');
+        else expect(read).toBe(kind);
       }
     });
 

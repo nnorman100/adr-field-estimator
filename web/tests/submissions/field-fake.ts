@@ -88,6 +88,7 @@ export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts:
     if (!linked) return;
     for (const [at, draft] of Object.entries(data)) {
       linked.states.set.set(at, draft.state);
+      linked.states.refs.set(at, Object.keys(draft.photos).length);
       if (!linked.drafts.made.has(at)) linked.drafts.made.set(at, { fieldOwnerUid: draft.fieldOwnerUid });
     }
   }
@@ -152,7 +153,8 @@ export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts:
       call('read', (data) => {
         const draft = data[key(companyId, draftId)];
         if (!draft || draft.state !== 'submitting' || draft.fence?.epoch !== epoch) return null;
-        if (Object.keys(draft.rooms).length > MAX_ROOMS || Object.keys(draft.photos).length > MAX_PHOTO_REFS) return 'too_large' as const;
+        if (Object.keys(draft.rooms).length > MAX_ROOMS) return 'too_many_rooms' as const;
+        if (Object.keys(draft.photos).length > MAX_PHOTO_REFS) return 'too_many_photos' as const;
         return {
           draft: draft.field ?? {},
           rooms: Object.entries(draft.rooms).map(([id, field]) => ({ id, field: field ?? {} })),
