@@ -1,0 +1,5 @@
+# S5 plan correction: 2026-11-12, S7 plan (S7.md), owner-approved
+
+Part of [the S5 plan](../S5.md), section 12, "Corrections".
+
+- **2026-11-12, S7 plan ([S7.md](../S7.md)), owner-approved.** Four changes. (a) Section 6: "S7 once S5a-12" becomes: S7 wave A (S7-0, S7-1, S7-2, S7-5, S7-11, S7-15) starts now on fakes (V12 B); the AI features follow their screens, routes and the database lane (S7 plan, section 6). (b) S5a-8 and step 4 of the handoff: the snapshot also joins the draft's `passed` live turns and the reviewed voice-note transcripts (Postgres), filling the engine's `technician_transcript` and `assistant_transcript` (`web/src/engine/inspection.ts:314-315`), and the Submit intent-row transaction ends any open live session for the draft through the S7 end path (settled, hold released) and bumps its epoch. (c) J1 and S5a-9: the documents' `ai` block comes from the submitted `summary` and `aiNotes` fields only, and the AI notice (V11 A) prints under the findings summary when `summarySource` is `ai`. (d) S5a-1: field map v3 (S7-6, S7-8) adds `summarySource`, `aiNotes` and the photo `meterReading`.
