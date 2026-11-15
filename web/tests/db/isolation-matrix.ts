@@ -19,7 +19,9 @@ import { starterTable } from '@/lib/prices/starter';
 //   session     answers about the caller's own sign-in only
 //   public      open to anyone; must return nothing of another company
 //               beyond what its own comment says is public
-export type RouteKind = 'company' | 'invitation' | 'operator' | 'service' | 'session' | 'public';
+//   link        a homeowner or adjuster holding a link token (S5a-11b); a sign-in of any company
+//               is never read, so every company user without the token is refused (404)
+export type RouteKind = 'company' | 'invitation' | 'operator' | 'service' | 'session' | 'public' | 'link';
 
 export type Method = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
 
@@ -74,6 +76,18 @@ const JOB_SIGN = {
   signatureId: '8c2a6e13-9d4f-4b70-a5e8-2f1b7c9d0e36',
   signerName: 'Isolation Check',
   documentsConfirmed: true,
+};
+
+// Link bodies (S5a-11b), with the suite's own ids.
+const JOB_LINK = { id: '7a1c3e59-2b84-4d60-9f17-5c3e8a0b2d49', estimateId: '5b8e1c47-3f2a-4d96-8e01-4c7a9b2d6f15', proposalSha256: '0'.repeat(64) };
+const JOB_DOCUMENT_LINK = { id: '1e5b9d27-6a40-4c83-b2f9-8d0e3a7c6b15', set: 'homeowner' };
+const LINK_SIGN = {
+  id: '4c8e2a60-9b17-4f35-8d02-6e1a3c5b7f98',
+  signatureId: '8c2a6e13-9d4f-4b70-a5e8-2f1b7c9d0e36',
+  signerName: 'Isolation Check',
+  signerRole: 'homeowner',
+  documentsConfirmed: true,
+  electronicConsent: true,
 };
 
 const JOB_PHOTO = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, ...Buffer.from('planted photo')]);
@@ -131,6 +145,14 @@ export const MATRIX: readonly MatrixRow[] = [
   row('api/jobs/[jobId]/agreements', 'GET', 'company', { own: 'cross' }),
   // S5a-10: what Check Scope picks from; another company's job is 404 to every role.
   row('api/jobs/[jobId]/scope-lists', 'GET', 'company', { own: 'cross' }),
+  // S5a-11b: a signing link or document link of another company's job is 404 to every role, and
+  // nothing is made; the bodies carry the suite's own ids.
+  row('api/jobs/[jobId]/signing-link', 'POST', 'company', { body: JOB_LINK, own: 'cross' }),
+  row('api/jobs/[jobId]/signing-link', 'GET', 'company', { own: 'cross' }),
+  row('api/jobs/[jobId]/signing-link', 'DELETE', 'company', { own: 'cross' }),
+  row('api/jobs/[jobId]/document-links', 'POST', 'company', { body: JOB_DOCUMENT_LINK, own: 'cross' }),
+  row('api/jobs/[jobId]/document-links', 'GET', 'company', { own: 'cross' }),
+  row('api/jobs/[jobId]/document-links/[linkId]', 'DELETE', 'company', { own: 'cross' }),
 
   row('api/invitations/[invitationId]', 'GET', 'invitation'),
   row('api/invitations/[invitationId]/accept', 'POST', 'invitation'),
@@ -145,6 +167,17 @@ export const MATRIX: readonly MatrixRow[] = [
   }),
 
   row('api/internal/access-projection', 'POST', 'service'),
+
+  // S5a-11b: the link routes read no sign-in; a company user's call carries no link token and is
+  // refused. A real link of one company used against the other is in signing-links.test.ts.
+  row('api/sign', 'GET', 'link'),
+  row('api/sign', 'POST', 'link', { body: LINK_SIGN }),
+  row('api/sign/signature', 'GET', 'link'),
+  row('api/sign/signature/[signatureId]', 'PUT', 'link', { body: JOB_PHOTO }),
+  row('api/sign/photos/[photoId]', 'GET', 'link'),
+  row('api/documents', 'GET', 'link'),
+  row('api/documents/signature', 'GET', 'link'),
+  row('api/documents/photos/[photoId]', 'GET', 'link'),
 
   row(PLATFORM, 'GET', 'operator'),
   row(PLATFORM, 'POST', 'operator', { body: { name: 'Another Co', signInSlug: 'another-co' } }),

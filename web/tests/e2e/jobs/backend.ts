@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { E2E_EMU } from '../emu-ports';
 
-export const JOBS_PORT = 3101;
+export const JOBS_PORT = E2E_EMU.ports.jobs;
 export const JOBS_BASE_URL = `http://localhost:${JOBS_PORT}`;
 export const STORAGE_EMULATOR_HOST = `127.0.0.1:${E2E_EMU.ports.storage}`;
 export const EVIDENCE_BUCKET = 'dryscope-evidence-e2e';

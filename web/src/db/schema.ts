@@ -476,6 +476,7 @@ export const pinReasons = ['first_price', 'owner_reprice'] as const;
 export type PinReason = (typeof pinReasons)[number];
 export const signerKinds = ['device', 'link'] as const;
 export type SignerKind = (typeof signerKinds)[number];
+export const signerRoles = ['homeowner', 'adjuster', 'other'] as const;
 
 // Submit's rows (0011), made `pending` first, then moved once to `committed` (with the canonical
 // snapshot and its SHA-256) or `aborted`. A trigger freezes every column of a decided row except
@@ -631,6 +632,10 @@ export const agreements = pgTable(
     requestDigest: text('request_digest').notNull(),
     createdByActorId: uuid('created_by_actor_id').notNull(),
     signedAt: timestamp('signed_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    // The signing link it was signed through (0014): set exactly when signerKind is 'link'.
+    signingLinkId: uuid('signing_link_id'),
+    // Who signed, as the signer said (0014): asked by a signing link, not on the phone.
+    signerRole: text('signer_role', { enum: signerRoles }),
   },
   (t) => [
     primaryKey({ columns: [t.companyId, t.id] }),
@@ -679,6 +684,65 @@ export const agreements = pgTable(
   ],
 );
 
+export const signingLinkStatuses = ['pending', 'used', 'revoked', 'voided'] as const;
+export const documentLinkStatuses = ['active', 'revoked'] as const;
+export const documentSets = ['homeowner', 'adjuster'] as const;
+
+// A homeowner signing link (0014): the token's SHA-256 only, for one estimate of one job. Made
+// pending, it ends once (used, revoked or voided); a trigger holds which columns may change.
+export const signingLinks = pgTable(
+  'signing_links',
+  {
+    id: uuid('id').notNull(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companies.id),
+    jobId: uuid('job_id').notNull(),
+    estimateId: uuid('estimate_id').notNull(),
+    tokenSha256: text('token_sha256').notNull(),
+    status: text('status', { enum: signingLinkStatuses }).notNull().default('pending'),
+    requestDigest: text('request_digest').notNull(),
+    createdByActorId: uuid('created_by_actor_id').notNull(),
+    createdAt: createdAt(),
+    tokenIssuedAt: timestamp('token_issued_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true, mode: 'date' }).notNull(),
+    endedAt: optionalTime('ended_at'),
+    endedByActorId: uuid('ended_by_actor_id'),
+    agreementId: uuid('agreement_id'),
+    usedAt: optionalTime('used_at'),
+    signAttempts: integer('sign_attempts').notNull().default(0),
+    readWindowStart: timestamp('read_window_start', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    readCount: integer('read_count').notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.companyId, t.id] }), unique('signing_links_token_key').on(t.tokenSha256)],
+);
+
+// A read-only document link (0014) to one signed agreement's homeowner or adjuster set.
+export const documentLinks = pgTable(
+  'document_links',
+  {
+    id: uuid('id').notNull(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companies.id),
+    jobId: uuid('job_id').notNull(),
+    agreementId: uuid('agreement_id').notNull(),
+    documentSet: text('document_set', { enum: documentSets }).notNull(),
+    tokenSha256: text('token_sha256').notNull(),
+    status: text('status', { enum: documentLinkStatuses }).notNull().default('active'),
+    requestDigest: text('request_digest').notNull(),
+    createdByActorId: uuid('created_by_actor_id').notNull(),
+    createdAt: createdAt(),
+    tokenIssuedAt: timestamp('token_issued_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true, mode: 'date' }).notNull(),
+    endedAt: optionalTime('ended_at'),
+    endedByActorId: uuid('ended_by_actor_id'),
+    readWindowStart: timestamp('read_window_start', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    readCount: integer('read_count').notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.companyId, t.id] }), unique('document_links_token_key').on(t.tokenSha256)],
+);
+
 export const schema = {
   migrationLedger,
   authTenants,
@@ -700,4 +764,6 @@ export const schema = {
   jobPricePins,
   jobEstimates,
   agreements,
+  signingLinks,
+  documentLinks,
 };

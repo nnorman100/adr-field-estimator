@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { Json } from '@/engine/estimate';
 import { PROPOSAL_FORMATS, type Proposal } from '@/lib/estimates/proposal';
 import { canonicalJson } from '@/lib/field/canonical';
+import { SIGNER_ROLES, type SignerRole } from './screen';
 
 // The signed record (docs/plans/S5.md, S5a-11 and the 2026-11-13 correction, part 3): the documents
 // as the customer signed them, stored once as canonical JSON in agreements.documents_bytes and never
@@ -24,7 +25,8 @@ export type SignedRecord = {
   kind: 'original';
   // The server's time of signing, ISO 8601 in UTC; the same instant as agreements.signed_at.
   signed_at: string;
-  signer: { name: string };
+  // The role is the signer's own answer on a signing link's page; signing on the phone does not ask it.
+  signer: { name: string; role?: SignerRole };
   signed_with: SignedWith;
   signature: { id: string; sha256: string; content_type: string };
   // The proposal exactly as stored with the estimate; its canonical text hashes to proposal_sha256.
@@ -44,7 +46,7 @@ const signedSchema = z.strictObject({
   job_id: z.string(),
   kind: z.literal('original'),
   signed_at: z.iso.datetime(),
-  signer: z.strictObject({ name: z.string().min(1) }),
+  signer: z.strictObject({ name: z.string().min(1), role: z.enum(SIGNER_ROLES).optional() }),
   signed_with: z.discriminatedUnion('kind', [
     z.strictObject({ kind: z.literal('device'), presented_by: z.strictObject({ actor_id: z.string(), name: z.string() }) }),
     z.strictObject({ kind: z.literal('link'), link_id: z.string() }),

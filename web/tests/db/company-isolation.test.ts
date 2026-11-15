@@ -42,6 +42,14 @@ vi.mock('@/lib/agreements/services', async () => {
   const { agreementsService } = await import('@/lib/agreements/service');
   return { agreementsServices: () => agreementsService(live.harness!.handle.db) };
 });
+vi.mock('@/lib/links/services', async () => {
+  const { signingLinksService } = await import('@/lib/links/signing');
+  const { documentLinksService } = await import('@/lib/links/documents');
+  return {
+    signingLinksServices: () => signingLinksService(live.harness!.handle.db, live.harness!.photos),
+    documentLinksServices: () => documentLinksService(live.harness!.handle.db, live.harness!.photos),
+  };
+});
 vi.mock('@/lib/sign-in/services', async () => {
   const { databaseSignInDirectory } = await import('@/lib/sign-in/database-directory');
   return { signInDirectory: () => databaseSignInDirectory(live.harness!.handle.db) };
@@ -259,6 +267,10 @@ const idsOf = (victim: Side, company: Side = victim): Record<string, string> => 
   address: victim.ids.address,
   jobId: victim.ids.jobId,
   photoId: victim.ids.photoId,
+  // No link is seeded (a document link needs a signed agreement); the other company's photo id
+  // stands in, and signing-links.test.ts uses real links across companies.
+  linkId: victim.ids.photoId,
+  signatureId: victim.ids.photoId,
 });
 
 const rowsOfKind = (...kinds: MatrixRow['kind'][]) => MATRIX.filter((row) => kinds.includes(row.kind));

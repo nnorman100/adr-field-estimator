@@ -1,57 +1,56 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import ts from 'typescript';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { accessRuleOf, accountRoute, linkRoute, memberRoute, operatorRoute, publicRoute, requireFlag, serviceRoute, type AccessRule } from '@/lib/auth/route';
 
-// Every route handler must be wrapped in an access rule from src/lib/auth/route.ts, where it is
-// defined. This finds every route file by searching src/app, so a new route with no rule fails
-// here (and so in CI) without anyone editing a shared list.
+// Every route handler must be made by an access rule from src/lib/auth/route.ts. This finds every
+// route file by searching src/app, so a new route with no rule fails here (and so in CI) without
+// anyone editing a shared list. It loads each route module, as Next.js does, and runs every handler
+// that is not public with a request that carries no sign-in, token or link: each must refuse before
+// anything checks a token or reads the database.
+
+const checked = vi.hoisted(() => ({
+  verifier: {
+    verify: async () => {
+      throw new Error('a token was checked');
+    },
+    verifyNotRevoked: async () => {
+      throw new Error('a token was checked');
+    },
+  },
+}));
+vi.mock('@/lib/auth/services', async (original) => ({
+  ...(await original<typeof import('@/lib/auth/services')>()),
+  identityServices: () => ({ verifier: checked.verifier, directory: {} }),
+  operatorServices: () => ({ verifier: checked.verifier, operators: {} }),
+  serverDatabase: () => {
+    throw new Error('the database was read');
+  },
+}));
+vi.mock('@/lib/auth/service-caller', async (original) => ({
+  ...(await original<typeof import('@/lib/auth/service-caller')>()),
+  serviceCallerServices: () => ({ caller: { email: 'scheduler@example.invalid', audienceFor: (job: string) => job }, verifier: checked.verifier }),
+}));
 
 const APP_DIR = fileURLToPath(new URL('../../src/app', import.meta.url));
-const METHODS = new Set(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']);
-const RULES = new Set(['publicRoute', 'memberRoute', 'accountRoute', 'requireFlag', 'serviceRoute', 'operatorRoute']);
+const METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'];
 const ROUTE_FILE = /^route\.(ts|tsx|js|jsx|mjs)$/;
+const ID = '0b5a1c1e-7d2f-4c8e-9a6b-3f4e5d6c7b8a';
 
-function hasExport(node: ts.Node): boolean {
-  return ts.canHaveModifiers(node) && (ts.getModifiers(node) ?? []).some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
-}
+type Handler = (request: Request, context: { params: Promise<Record<string, string>> }) => Response | Promise<Response>;
 
-function ruleOf(expression: ts.Expression | undefined): string | null {
-  if (!expression || !ts.isCallExpression(expression) || !ts.isIdentifier(expression.expression)) return null;
-  return RULES.has(expression.expression.text) ? expression.expression.text : null;
-}
+// Every path parameter, whatever its name, as one id.
+const params = () => ({ params: Promise.resolve(new Proxy({} as Record<string, string>, { get: (_target, key) => (typeof key === 'string' ? ID : undefined) })) });
 
-// The problems in one route file's source; empty when every handler declares a rule.
-function routeRuleProblems(source: string, fileName = 'route.ts'): string[] {
-  const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  const problems: string[] = [];
-  let handlers = 0;
-  for (const statement of file.statements) {
-    if (ts.isExportAssignment(statement)) problems.push('default export');
-    else if (ts.isExportDeclaration(statement)) problems.push('re-export hides the access rule');
-    else if (ts.isFunctionDeclaration(statement) && hasExport(statement)) {
-      const name = statement.name?.text ?? 'default';
-      if (METHODS.has(name)) {
-        handlers += 1;
-        problems.push(`${name} has no access rule`);
-      }
-    } else if (ts.isVariableStatement(statement) && hasExport(statement)) {
-      for (const declaration of statement.declarationList.declarations) {
-        if (!ts.isIdentifier(declaration.name)) {
-          problems.push('destructured export');
-          continue;
-        }
-        const name = declaration.name.text;
-        if (!METHODS.has(name)) continue;
-        handlers += 1;
-        if (!ruleOf(declaration.initializer)) problems.push(`${name} has no access rule`);
-      }
-    }
-  }
-  if (handlers === 0) problems.push('no handler found');
-  return problems;
-}
+// What a request with nothing in it gets from each rule, before its handler runs.
+const REFUSED: Record<Exclude<AccessRule, 'public'>, { status: number; error: string }> = {
+  member: { status: 401, error: 'missing_token' },
+  account: { status: 401, error: 'missing_token' },
+  operator: { status: 401, error: 'missing_token' },
+  service: { status: 401, error: 'missing_token' },
+  link: { status: 404, error: 'link_unavailable' },
+};
 
 async function routeFiles(dir: string): Promise<string[]> {
   const found: string[] = [];
@@ -63,44 +62,68 @@ async function routeFiles(dir: string): Promise<string[]> {
   return found.sort();
 }
 
+// The problems of one loaded route module; empty when every handler was made by a rule and every
+// rule but public refused an empty request.
+async function routeProblems(module: Record<string, unknown>): Promise<string[]> {
+  const problems: string[] = [];
+  if ('default' in module) problems.push('default export');
+  const handlers = METHODS.filter((method) => method in module);
+  if (handlers.length === 0) problems.push('no handler found');
+  for (const method of handlers) {
+    const handler = module[method];
+    const rule = accessRuleOf(handler);
+    if (!rule) {
+      problems.push(`${method} has no access rule`);
+      continue;
+    }
+    if (rule === 'public') continue;
+    const answer = await (handler as Handler)(new Request(`http://localhost/api/${ID}`, { method }), params());
+    const body = await answer.json().catch(() => null);
+    if (answer.status !== REFUSED[rule].status || body?.error !== REFUSED[rule].error || answer.headers.get('cache-control') !== 'no-store') {
+      problems.push(`${method} (${rule}) answered ${answer.status} ${JSON.stringify(body)} to a request with no sign-in`);
+    }
+  }
+  return problems;
+}
+
+const ok = async () => Response.json({ ran: true });
+
 describe('route access rules', () => {
   it('finds the known routes by searching src/app', async () => {
     const files = (await routeFiles(APP_DIR)).map((path) => relative(APP_DIR, path));
-    expect(files).toEqual(expect.arrayContaining(['api/echo/route.ts', 'api/health/route.ts', 'api/me/route.ts']));
+    expect(files).toEqual(expect.arrayContaining(['api/echo/route.ts', 'api/health/route.ts', 'api/me/route.ts', 'api/sign/route.ts']));
   });
 
-  it('every route file wraps every handler in an access rule', async () => {
+  it('every route file’s handlers are made by an access rule, and every rule but public refuses a request with nothing in it', async () => {
     const problems: Record<string, string[]> = {};
     for (const path of await routeFiles(APP_DIR)) {
-      const found = routeRuleProblems(await readFile(path, 'utf8'), path);
+      const found = await routeProblems(await import(path));
       if (found.length > 0) problems[relative(APP_DIR, path)] = found;
     }
     expect(problems).toEqual({});
   });
 
-  it('fails a route file whose handler has no access rule', () => {
-    expect(routeRuleProblems('export async function GET() { return Response.json({}); }')).toEqual([
-      'GET has no access rule',
-    ]);
-    expect(routeRuleProblems('export const POST = async () => Response.json({});')).toEqual([
-      'POST has no access rule',
-    ]);
-    expect(routeRuleProblems('export const GET = someOtherWrapper(() => Response.json({}));')).toEqual([
-      'GET has no access rule',
-    ]);
-    expect(routeRuleProblems("export { GET } from './elsewhere';")).toContain('re-export hides the access rule');
-    expect(routeRuleProblems('export default function handler() {}')).toContain('no handler found');
-    expect(routeRuleProblems("export const dynamic = 'force-dynamic';")).toEqual(['no handler found']);
+  it('fails a route module whose handler no rule made, or that has no handler', async () => {
+    expect(await routeProblems({ GET: ok })).toEqual(['GET has no access rule']);
+    expect(await routeProblems({ POST: (handler: Handler) => handler })).toEqual(['POST has no access rule']);
+    expect(await routeProblems({ default: publicRoute(ok) })).toEqual(['default export', 'no handler found']);
+    expect(await routeProblems({ dynamic: 'force-dynamic' })).toEqual(['no handler found']);
   });
 
-  it('accepts handlers wrapped in a rule, with route settings beside them', () => {
-    const source = [
-      "import { memberRoute, publicRoute } from '@/lib/auth';",
-      "export const dynamic = 'force-dynamic';",
-      'export const GET = publicRoute(() => Response.json({}));',
-      'export const POST = memberRoute((_r, identity) => Response.json({ id: identity.companyId }));',
-      "export const PUT = requireFlag('price_books', (_r, identity) => Response.json({ id: identity.companyId }));",
-    ].join('\n');
-    expect(routeRuleProblems(source)).toEqual([]);
+  it('accepts handlers each rule made, with route settings beside them, and runs no handler but the public one', async () => {
+    const handler = vi.fn(ok);
+    const routeModule = {
+      dynamic: 'force-dynamic',
+      GET: publicRoute(ok),
+      POST: memberRoute(handler),
+      PUT: requireFlag('price_books', handler),
+      PATCH: accountRoute(handler),
+      DELETE: operatorRoute(handler),
+      OPTIONS: linkRoute(handler),
+      HEAD: serviceRoute('access-projection', handler),
+    };
+    expect(METHODS.map((method) => accessRuleOf(routeModule[method as keyof typeof routeModule]))).toEqual(['public', 'service', 'member', 'member', 'account', 'operator', 'link']);
+    expect(await routeProblems(routeModule)).toEqual([]);
+    expect(handler).not.toHaveBeenCalled();
   });
 });

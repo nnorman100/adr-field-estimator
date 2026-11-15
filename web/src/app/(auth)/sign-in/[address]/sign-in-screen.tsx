@@ -25,12 +25,14 @@ import { meFacts } from '@/lib/field/sync-gate';
 import { evaluate, watchRetention } from '@/lib/field/retention';
 import type { LockReason } from '@/lib/field/unsent';
 import {
+  acrossUserReload,
   hasUnsentWork,
   signOutDiscarding,
   signOutKeeping,
   signOutOnRefusal,
   signInOf,
   signOutOrShow,
+  stillSameSignIn,
   WorkNotSecuredError,
   type FailedSignOut,
   type SignIn,
@@ -159,12 +161,19 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
     async (user: User, fresh = false) => {
       setScreen({ name: 'checking' });
       // The sign-in this check is for: the same person signing in again in another tab keeps the
-      // user object, so its time tells them apart.
-      const signedInAt = user.metadata.lastSignInTime;
-      const stillCurrent = () => authRef.current?.currentUser === user && user.metadata.lastSignInTime === signedInAt;
-      const from = signInOf(user);
-      const { outcome, body } = await checkSignIn(user, fresh);
-      const authenticators = outcome.kind === 'second-step' ? await authenticatorCount(user) : 0;
+      // user object, so its time tells them apart. `acrossUserReload` keeps `from` bound to this
+      // phone's sign-in when `user.reload()` refreshes account metadata from the server.
+      let from = signInOf(user);
+      const stillCurrent = () => stillSameSignIn(authRef.current, from);
+      const { outcome, body } = await checkSignIn(user, fresh, async () => {
+        from = await acrossUserReload(from, () => user.reload());
+      });
+      const authenticators =
+        outcome.kind === 'second-step'
+          ? await authenticatorCount(user, async () => {
+              from = await acrossUserReload(from, () => user.reload());
+            })
+          : 0;
       const current = authRef.current?.currentUser ?? null;
       if (current !== user) {
         if (!current) showSignedOut();
