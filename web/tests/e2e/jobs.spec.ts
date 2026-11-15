@@ -504,3 +504,32 @@ test('a stored room the field map does not accept shows the load error, not empt
   await expect(page.getByRole('list', { name: 'Rooms' })).toHaveCount(0);
   await expect(page.getByLabel('Year built')).toHaveCount(0);
 });
+
+test('the phone takes the photo that fills a job to its cap, then stops offering Take photo and says why', async ({ page }) => {
+  const company = await seedCompany('photo-cap', { estimator: 'estimator' });
+  await signIn(page, company, company.people.estimator!);
+  const jobId = await startJob(page, '17 Full Album Lane');
+  const draftId = await currentDraftOf(company.id, jobId);
+  // One short of the cap, written past the rules. The route holds none of their bytes, so their
+  // downloads are dropped here: a missing thumbnail is not what this test is about.
+  const batch = adminDb().batch();
+  for (let i = 0; i < 299; i++) batch.set(adminDb().doc(`companies/${company.id}/drafts/${draftId}/photos/${randomUUID()}`), { field: {} });
+  await batch.commit();
+  await page.route('**/api/jobs/*/photos/*', (route) => (route.request().method() === 'GET' ? route.abort() : route.fallback()));
+  await page.reload();
+  await main(page).getByRole('link', { name: 'Photos' }).click();
+  await expect(page.getByRole('heading', { name: 'Job photos (299)' })).toBeVisible();
+  const camera = page.getByLabel('Take photo');
+  const reason = 'This job has the most photos it can hold (300).';
+  await expect(camera).toBeEnabled();
+  await expect(page.getByText(reason)).toHaveCount(0);
+
+  // The three hundredth photo is taken, stored and listed.
+  await camera.setInputFiles(PICTURE);
+  await expect(page.getByRole('heading', { name: 'Job photos (300)' })).toBeVisible();
+  expect(await storedPhotos(company.id, jobId)).toHaveLength(1);
+  await expect(camera).toBeDisabled();
+  await expect(camera).toHaveAccessibleDescription(reason);
+  await expect(page.getByText(reason)).toBeVisible();
+  await expectNoSideways(page);
+});

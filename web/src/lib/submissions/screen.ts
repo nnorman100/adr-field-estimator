@@ -1,4 +1,5 @@
 import type { FieldManifest } from '@/lib/field/canonical';
+import { MAX_PHOTO_REFS } from '@/lib/field/schema';
 
 // What the Finish and review screen decides in the browser, as pure functions so they are
 // unit-tested. Everything here is convenience: the server checks the sign-in, the job, the role and
@@ -65,6 +66,10 @@ const OUTCOMES: Record<string, { message: string; next: Next }> = {
   submission_aborted: { message: 'That attempt was stopped before it was saved. Check the draft, then finish again.', next: 'reload' },
   photo_missing: { message: 'A photo has not finished uploading. Send it again from the Photos screen, then finish again.', next: 'reload' },
   draft_invalid: { message: 'Every room needs a name, and each room must be in the room list. Fix the draft, then finish again.', next: 'reload' },
+  too_many_photos: {
+    message: `This job has more than ${MAX_PHOTO_REFS} photos, the most a job can hold, so it cannot be finished. Ask the owner for help.`,
+    next: 'reload',
+  },
   unknown_price_ids: {
     message: 'A room names a room type or an item that is not in this job’s price list. Open Check Scope, choose it again, then finish again.',
     next: 'reload',
