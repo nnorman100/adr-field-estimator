@@ -5,6 +5,7 @@ import { Fragment, useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import type { Table } from '@/engine/table';
 import { callApi } from '@/lib/firebase-client';
+import type { SignIn } from '@/lib/field/sign-out';
 import { changed, updateItem } from '@/lib/prices/edit';
 import { pricesMessage, pricesView, workingCopyOf, type CurrentVersion, type WorkingCopy } from '@/lib/prices/screen';
 import { ItemCard } from './item-card';
@@ -28,7 +29,7 @@ export function PricesEditor({
   user: User;
   initialWorking: WorkingCopy;
   initialCurrent: CurrentVersion | null;
-  onSignInAgain: () => void;
+  onSignInAgain: (from: SignIn) => void;
 }) {
   const [saved, setSaved] = useState<WorkingCopy>(initialWorking);
   const [draft, setDraft] = useState<Table>(initialWorking.table);

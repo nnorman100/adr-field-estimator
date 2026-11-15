@@ -117,21 +117,58 @@ export async function readLatestMe(): Promise<DsMe | null | 'unavailable'> {
   }
 }
 
-// This (tenant, person)'s row, or null when there is none or the storage cannot be read.
-export async function readMe(tenantId: string, uid: string): Promise<DsMe | null> {
-  let db: IDBDatabase;
-  try {
-    db = await openDb();
-  } catch {
-    return null;
-  }
-  try {
-    return parseMe(await done(db.transaction(ME_STORE, 'readonly').objectStore(ME_STORE).get(meKey(tenantId, uid))));
-  } catch {
-    return null;
-  } finally {
-    db.close();
-  }
+// This (tenant, person)'s row; null when there is none, or the storage cannot be opened at all (the
+// shell cannot start from it either); false when it cannot be read or does not answer within
+// WRITE_WITHIN_MS, so the row may be there.
+export function readMe(tenantId: string, uid: string): Promise<DsMe | null | false> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), WRITE_WITHIN_MS);
+    const answer = (row: DsMe | null | false) => {
+      clearTimeout(timer);
+      resolve(row);
+    };
+    openDb().then(
+      (db) => {
+        try {
+          const request = db.transaction(ME_STORE, 'readonly').objectStore(ME_STORE).get(meKey(tenantId, uid));
+          request.onsuccess = () => answer(parseMe(request.result));
+          request.onerror = () => answer(false);
+        } catch {
+          answer(false);
+        } finally {
+          db.close();
+        }
+      },
+      () => answer(null),
+    );
+  });
+}
+
+// Every readable row, for judging each saved sign-in's age (retention.ts). None when the phone's
+// storage cannot be read or does not answer within WRITE_WITHIN_MS: a row that cannot be read is
+// never judged.
+export function readAllMe(): Promise<DsMe[]> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve([]), WRITE_WITHIN_MS);
+    const answer = (rows: DsMe[]) => {
+      clearTimeout(timer);
+      resolve(rows);
+    };
+    openDb().then(
+      (db) => {
+        try {
+          const request = db.transaction(ME_STORE, 'readonly').objectStore(ME_STORE).getAll();
+          request.onsuccess = () => answer((request.result as unknown[]).map(parseMe).filter((row): row is DsMe => row !== null));
+          request.onerror = () => answer([]);
+        } catch {
+          answer([]);
+        } finally {
+          db.close();
+        }
+      },
+      () => answer([]),
+    );
+  });
 }
 
 // A change to the rows, settled when the transaction has committed (not when its request was
@@ -236,18 +273,41 @@ export function updateMe(me: Omit<DsMe, 'savedAt'>): Promise<boolean> {
 }
 
 // Removes this sign-in's row (the phone is signed out of this company). Only this (tenant, person)'s
-// row: another company's stays. Resolves to the row it removed (null when there was none, or the
-// phone's storage cannot be opened at all), or false when the row may still be there.
-export async function forgetMe(tenantId: string, uid: string): Promise<DsMe | null | false> {
+// row: another company's stays. `savedAt` is that of the row the sign-out found (null: none), and
+// only that row goes: one saved since, by a newer sign-in, stays. Resolves to the row it removed
+// (null when there was none, or the phone's storage cannot be opened at all), or false when a row
+// may still be there.
+export async function forgetMe(tenantId: string, uid: string, savedAt: number | null): Promise<DsMe | null | false> {
   const key = meKey(tenantId, uid);
   let removed: unknown = null;
+  let newer = false;
   const gone = await write((store) => {
     const row = store.get(key);
     row.onsuccess = () => {
+      if ((parseMe(row.result)?.savedAt ?? null) !== savedAt) {
+        newer = true;
+        return;
+      }
       removed = row.result;
+      store.delete(key);
     };
-    store.delete(key);
   });
+  if (newer) return false;
   if (gone) return parseMe(removed);
   return (await mayHold(key)) ? false : null;
+}
+
+// Puts back a row forgetMe removed, when the sign-out it was part of failed, unless a newer
+// sign-in has saved one since. True when it was put back.
+export function restoreMe(me: DsMe): Promise<boolean> {
+  let saved = false;
+  return write((store) => {
+    const key = meKey(me.tenantId, me.uid);
+    const row = store.get(key);
+    row.onsuccess = () => {
+      if (parseMe(row.result)) return;
+      store.put({ ...me, key });
+      saved = true;
+    };
+  }).then((committed) => committed && saved);
 }

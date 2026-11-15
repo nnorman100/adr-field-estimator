@@ -127,6 +127,9 @@ export function estimateInput(snapshot: Snapshot, company: CompanyDocuments): Es
           email: identity.email,
           license: identity.license,
           signoff: identity.signoff,
+          // Exactly as entered: the setup check lists an empty one, so the documents are not signable.
+          authorization_text: company.signing.authorizationText,
+          payment_terms_text: company.signing.paymentTermsText,
         },
         claim: claimOf(snapshot.claim),
         photos: photoLog(snapshot),

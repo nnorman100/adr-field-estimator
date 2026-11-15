@@ -11,6 +11,8 @@
 // the owner's decision of 2026-11-14 (sign-in security review F1 and F2), a password rule of at
 // least 12 characters, enforced, and email enumeration protection. Tenants made before that are
 // brought up to the same settings by `npm run platform:secure-tenants` (scripts/secure-tenants.ts).
+// Since TC-6 it also turns on sign-in reCAPTCHA in audit mode (it assesses, never blocks); an
+// existing tenant is set by `npm run platform:recaptcha` (scripts/recaptcha-mode.ts).
 // It prints the new tenant id. A company tenant is then bound to its company with the operator route
 // POST /api/platform/companies/{id}/tenant; an operator tenant is registered by
 // `npm run platform:add-operator`. Binding the app's user role on the tenant (step 7) and turning
@@ -68,6 +70,13 @@ export function passwordPolicyConfig() {
 // to an address that is not verified (docs.cloud.google.com/identity-platform/docs/admin/email-enumeration-protection).
 export const EMAIL_PRIVACY_CONFIG = Object.freeze({ enableImprovedEmailPrivacy: true });
 
+// Sign-in reCAPTCHA (Identity Platform bot protection for email and password sign-in, sign-up,
+// email-link sign-in and password reset), in the field names of the v2 REST reference
+// (docs.cloud.google.com/identity-platform/docs/reference/rest/v2/projects.tenants#RecaptchaConfig).
+// AUDIT: "reCAPTCHA assessment is created, result is not used to enforce"
+// (docs.cloud.google.com/identity-platform/docs/recaptcha-enterprise). ENFORCE waits for TC-13.
+export const RECAPTCHA_AUDIT = Object.freeze({ emailPasswordEnforcementState: 'AUDIT' });
+
 // The tenant body (Identity Platform v2 projects.tenants).
 export function tenantBody(name: string) {
   return {
@@ -78,6 +87,7 @@ export function tenantBody(name: string) {
     mfaConfig: { state: 'ENABLED', providerConfigs: [{ state: 'ENABLED', totpProviderConfig: { adjacentIntervals: 1 } }] },
     passwordPolicyConfig: passwordPolicyConfig(),
     emailPrivacyConfig: { ...EMAIL_PRIVACY_CONFIG },
+    recaptchaConfig: { ...RECAPTCHA_AUDIT },
   };
 }
 

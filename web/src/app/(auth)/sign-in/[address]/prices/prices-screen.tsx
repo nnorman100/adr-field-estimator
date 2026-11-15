@@ -8,10 +8,12 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import type { BrowserSignInConfig } from '@/lib/config';
 import { belongsTo, callApi, companyAuth } from '@/lib/firebase-client';
-import { signOutOfCompany } from '@/lib/field/sign-out';
+import { signInOf, signOutOnRefusal, signOutOrShow, type FailedSignOut, type SignIn } from '@/lib/field/sign-out';
+import type { LockReason } from '@/lib/field/unsent';
 import { pricesAccess, pricesView, type OwnerPrices, type ReaderPrices } from '@/lib/prices/screen';
 import { endsSession, meOutcome } from '@/lib/sign-in/outcome';
 import { FocusedPanel } from '../../../focused-panel';
+import { WorkNotSecured } from '../work-not-secured';
 import { Panel } from '../../../panel';
 import { ReadOnlyItems } from './price-list';
 import { PricesEditor } from './prices-editor';
@@ -32,7 +34,7 @@ type Phase =
   // The company's prices are not open to this sign-in: the price_books switch is off for the
   // company (or the role holds no prices key). Nothing about prices is requested or shown.
   | { name: 'hidden' }
-  | { name: 'unavailable' }
+  | FailedSignOut
   | { name: 'owner'; user: User; prices: OwnerPrices }
   | { name: 'reader'; prices: ReaderPrices };
 
@@ -57,15 +59,18 @@ function CompanyPrices({ address, companyName, tenantId, config }: PricesScreenP
     authRef.current = auth;
     // The latest sign-in wins: an answer for a user who has since signed out is dropped.
     const stale = (user: User) => authRef.current?.currentUser !== user;
-    const signOutOrUnavailable = () => signOutOfCompany(auth, tenantId).catch(() => setPhase({ name: 'unavailable' }));
+    const signOutOrUnavailable = (refusal: LockReason, fromServer = false, from?: SignIn) =>
+      signOutOrShow(() => signOutOnRefusal(auth, tenantId, config, refusal, fromServer, from), setPhase);
 
     async function open(user: User) {
       setPhase({ name: 'checking' });
+      // The sign-in this check is for, kept as the request goes.
+      const from = signInOf(user);
       const me = await callApi(user, '/api/me');
       if (stale(user)) return;
       const outcome = meOutcome(me.status, me.body);
       if (endsSession(outcome)) {
-        await signOutOrUnavailable();
+        await signOutOrUnavailable(outcome.kind, true, from);
         return;
       }
       if (outcome.kind === 'unavailable') return setPhase({ name: 'unavailable' });
@@ -84,7 +89,7 @@ function CompanyPrices({ address, companyName, tenantId, config }: PricesScreenP
 
     return onAuthStateChanged(auth, (user) => {
       if (!user) return setPhase({ name: 'signed-out' });
-      if (!belongsTo(user, tenantId)) return void signOutOrUnavailable();
+      if (!belongsTo(user, tenantId)) return void signOutOrUnavailable('not-this-company');
       void open(user);
     });
   }, [config, tenantId]);
@@ -123,6 +128,8 @@ function CompanyPrices({ address, companyName, tenantId, config }: PricesScreenP
           {signInLink}
         </FocusedPanel>
       );
+    case 'not-secured':
+      return <WorkNotSecured retry={phase.retry} />;
     case 'unavailable':
       return (
         <FocusedPanel title="We could not open the prices">
@@ -138,13 +145,10 @@ function CompanyPrices({ address, companyName, tenantId, config }: PricesScreenP
             user={phase.user}
             initialWorking={phase.prices.workingCopy}
             initialCurrent={phase.prices.current}
-            onSignInAgain={async () => {
-              try {
-                if (authRef.current) await signOutOfCompany(authRef.current, tenantId);
-              } catch {
-                return setPhase({ name: 'unavailable' });
-              }
-              router.push(`/sign-in/${address}`);
+            onSignInAgain={async (from) => {
+              const auth = authRef.current;
+              const toSignIn = () => router.push(`/sign-in/${address}`);
+              return auth ? signOutOrShow(() => signOutOnRefusal(auth, tenantId, config, 'sign-in-again', false, from), setPhase, toSignIn) : toSignIn();
             }}
           />
         </PricesFrame>

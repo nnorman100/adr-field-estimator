@@ -67,6 +67,14 @@ const JOB_CLAIM = { revision: 1, changeId: '8d2f4a90-61b3-4c7e-a5d8-0e9b3c1f7a24
 // Submit and Back to editing bodies (S5a-8): the suite's own ids, and a digest of nothing.
 const JOB_SUBMIT = { id: '6f1d9c34-2a7e-4b80-9c15-3e8a0d7b5f42', draftId: 'c4e8a2d6-7b19-4f53-8a0e-1d6b9f3c2e75', digest: '0'.repeat(64) };
 const JOB_NEXT_DRAFT = { draftId: '9a3b5c7d-1e2f-4a6b-8c9d-0e1f2a3b4c5d', fromDraftId: 'c4e8a2d6-7b19-4f53-8a0e-1d6b9f3c2e75' };
+const JOB_SIGN = {
+  id: '2d7f4a91-6c3b-4e85-9a12-7b5c8e0f3d64',
+  estimateId: '5b8e1c47-3f2a-4d96-8e01-4c7a9b2d6f15',
+  proposalSha256: '0'.repeat(64),
+  signatureId: '8c2a6e13-9d4f-4b70-a5e8-2f1b7c9d0e36',
+  signerName: 'Isolation Check',
+  documentsConfirmed: true,
+};
 
 const JOB_PHOTO = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, ...Buffer.from('planted photo')]);
 
@@ -117,6 +125,10 @@ export const MATRIX: readonly MatrixRow[] = [
   // S5a-9: the estimate takes no body; another company's job is 404 to every role.
   row('api/jobs/[jobId]/estimate', 'POST', 'company', { own: 'cross' }),
   row('api/jobs/[jobId]/estimate', 'GET', 'company', { own: 'cross' }),
+  // S5a-11: signing names the phone's own agreement, estimate and signature ids; another company's
+  // job is 404 to every role, and no agreement is made.
+  row('api/jobs/[jobId]/agreements', 'POST', 'company', { body: JOB_SIGN, own: 'cross' }),
+  row('api/jobs/[jobId]/agreements', 'GET', 'company', { own: 'cross' }),
   // S5a-10: what Check Scope picks from; another company's job is 404 to every role.
   row('api/jobs/[jobId]/scope-lists', 'GET', 'company', { own: 'cross' }),
 

@@ -38,6 +38,10 @@ vi.mock('@/lib/estimates/services', async () => {
   const { estimatesService } = await import('@/lib/estimates/service');
   return { estimatesServices: () => estimatesService(live.harness!.handle.db) };
 });
+vi.mock('@/lib/agreements/services', async () => {
+  const { agreementsService } = await import('@/lib/agreements/service');
+  return { agreementsServices: () => agreementsService(live.harness!.handle.db) };
+});
 vi.mock('@/lib/sign-in/services', async () => {
   const { databaseSignInDirectory } = await import('@/lib/sign-in/database-directory');
   return { signInDirectory: () => databaseSignInDirectory(live.harness!.handle.db) };

@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { keepAnswer, saveKeepAnswer } from '@/lib/field/keep-consent';
 import {
   forgetUnsent,
+  LOCKED_LIMIT_MS,
+  lockOutlived,
   mayHaveUnsent,
   noteLocked,
   noteUnlocked,
@@ -24,6 +26,10 @@ function fakeStorage() {
     getItem: (key: string) => items.get(key) ?? null,
     setItem: (key: string, value: string) => void items.set(key, value),
     removeItem: (key: string) => void items.delete(key),
+    get length() {
+      return items.size;
+    },
+    key: (index: number) => [...items.keys()][index] ?? null,
   };
 }
 
@@ -147,6 +153,45 @@ describe('unsent work marks', () => {
     forgetUnsent('t-a', 'ana');
     expect(mayHaveUnsent('t-a', 'ana')).toBe(false);
     expect(mayHaveUnsent('t-b', 'ana')).toBe(true);
+  });
+
+  // S6-3b: the O5 limit is judged from the mark alone, so it holds after the saved sign-in is gone.
+  it('say whose lock outlived the 30 days: a refusal O5 removes work for, in that company only', () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    const now = 100 * DAY;
+    noteLocked('t-a', 'ana', 'session-revoked', now - LOCKED_LIMIT_MS - 1);
+    noteLocked('t-a', 'ben', 'sign-in-again', now - LOCKED_LIMIT_MS + 1);
+    noteLocked('t-a', 'cleo', 'second-step', now - 40 * DAY);
+    noteLocked('t-a', 'dan', 'company-inactive', now - 40 * DAY);
+    noteUnlocked('t-a', 'dan');
+    noteLocked('t-a', 'eve', 'sign-in-again', now - 40 * DAY);
+    noteLocked('t-ab', 'fay', 'member-disabled', now - 40 * DAY);
+    noteWrite('t-a', 'gus', now - 40 * DAY);
+    storage.items.set(unsentKey('t-a', 'hal'), '{not json');
+    storage.items.set('ds-keep/t-a', 'keep');
+
+    expect(lockOutlived('t-a', 'ana', now)).toBe(true);
+    expect(lockOutlived('t-a', 'ben', now)).toBe(false);
+    expect(lockOutlived('t-a', 'ben', now + 2)).toBe(true);
+    expect(lockOutlived('t-a', 'cleo', now)).toBe(false);
+    expect(lockOutlived('t-a', 'dan', now)).toBe(false);
+    expect(lockOutlived('t-a', 'gus', now)).toBe(false);
+    // A mark that cannot be read is never taken as permission to remove anything.
+    expect(lockOutlived('t-a', 'hal', now)).toBe(false);
+    expect(lockOutlived('t-a', 'eve', now)).toBe(true);
+    expect(lockOutlived('t-ab', 'fay', now)).toBe(true);
+    expect(lockOutlived('t-a', 'fay', now)).toBe(false);
+    expect(lockOutlived('t-b', 'ana', now)).toBe(false);
+  });
+
+  it('count nobody as outlived when the phone\'s storage cannot be read', () => {
+    noteLocked('t-a', 'ana', 'session-revoked', Date.now() - LOCKED_LIMIT_MS - 1);
+    vi.stubGlobal('window', {
+      get localStorage(): Storage {
+        throw new DOMException('denied', 'SecurityError');
+      },
+    });
+    expect(lockOutlived('t-a', 'ana', Date.now())).toBe(false);
   });
 
   it('hold counts and times only', () => {

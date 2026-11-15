@@ -4,6 +4,7 @@ import {
   APP_CHECK_MONITOR_WAIT_MS,
   ASK_WITHIN_MS,
   judgeMe,
+  OFFLINE_RETRY_MS,
   sessionValid,
   SyncGate,
   type GateDeps,
@@ -440,6 +441,200 @@ describe('the gate', () => {
     g.stop();
   });
 
+  // S6-3b: a stalled /api/me must never wedge the gate.
+  describe('an /api/me that hangs', () => {
+    const hangsOnce = () => {
+      let first = true;
+      return async () => {
+        calls.push('ask');
+        if (first) {
+          first = false;
+          return new Promise<MeAnswer>(() => undefined);
+        }
+        return me(NOW + 7 * DAY);
+      };
+    };
+
+    it.each([
+      ['a poke (a sign-in change, a tap)', (g: SyncGate) => g.poke()],
+      ['the signal going and coming back', (g: SyncGate) => void g.networkLost().then(() => g.poke())],
+      ['the page hidden and shown again', (g: SyncGate) => void g.suspend().then(() => g.resume())],
+    ])('is called off by %s, which asks afresh at once', async (_name, wake) => {
+      const g = gate({ ask: hangsOnce() });
+      g.start();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(calls).toEqual(['ask']);
+      wake(g);
+      await vi.advanceTimersByTimeAsync(0);
+      // Well before the 15 seconds the hanging call would have been given.
+      expect(calls.slice(0, 2)).toEqual(['ask', 'ask']);
+      expect(calls).toContain('enable');
+      expect(g.current()).toMatchObject({ kind: 'open' });
+      // The call that was given up on publishes nothing.
+      expect(states.map((s) => s.kind)).not.toContain('offline');
+      g.stop();
+    });
+
+    it('that rejects counts as no answer, and the next check still runs', async () => {
+      let first = true;
+      const g = gate({
+        ask: async () => {
+          calls.push('ask');
+          if (first) {
+            first = false;
+            throw new Error('fetch failed');
+          }
+          return me(NOW + 7 * DAY);
+        },
+      });
+      g.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(g.current()).toEqual({ kind: 'offline' });
+      g.poke();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(calls).toEqual(['ask', 'ask', 'enable']);
+    });
+
+    it('with no answer, asks again on the fixed retry after each give-up, and after any other answer on its own', async () => {
+      const asks = () => calls.filter((c) => c === 'ask').length;
+      const g = gate({
+        ask: () => {
+          calls.push('ask');
+          return new Promise<MeAnswer>(() => undefined);
+        },
+      });
+      g.start();
+      // Asked at 0; given up on at 15 s; asked again 10 s after each give-up, every time.
+      await vi.advanceTimersByTimeAsync(ASK_WITHIN_MS + OFFLINE_RETRY_MS);
+      expect(asks()).toBe(2);
+      for (const expected of [3, 4, 5]) {
+        await vi.advanceTimersByTimeAsync(ASK_WITHIN_MS + OFFLINE_RETRY_MS - 1);
+        expect(asks()).toBe(expected - 1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(asks()).toBe(expected);
+      }
+      g.stop();
+
+      // No answer, then a renewal: each waits its own fixed time.
+      calls = [];
+      answers = [{ status: 0, body: null }, { status: 0, body: null }, me(NOW - DAY), { status: 0, body: null }, { status: 0, body: null }];
+      const h = gate();
+      h.start();
+      await vi.advanceTimersByTimeAsync(2 * OFFLINE_RETRY_MS);
+      expect(asks()).toBe(3);
+      expect(h.current()).toEqual({ kind: 'renewing' });
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(asks()).toBe(4);
+      await vi.advanceTimersByTimeAsync(OFFLINE_RETRY_MS - 1);
+      expect(asks()).toBe(4);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(asks()).toBe(5);
+      h.stop();
+    });
+  });
+
+  // O5 (S6-3b): the phone's refusal bookkeeping never depends on the sign-in still counting.
+  describe('refusals and work that may no longer be sent', () => {
+    it.each([
+      [refused(401, 'sign_in_revoked'), 'session-revoked'],
+      [refused(401, 'missing_token'), 'sign-in-again'],
+      [refused(403, 'member_disabled'), 'member-disabled'],
+    ] as const)('reports a refusal before it judges the sign-in\'s age (%j)', async (answer, reason) => {
+      answers = [answer];
+      const refusals: string[] = [];
+      const g = gate({ sessionValid: () => false, onRefused: (why) => void refusals.push(why) });
+      g.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(refusals).toEqual([reason]);
+      expect(g.current()).toEqual({ kind: 'expired' });
+      expect(calls).not.toContain('enable');
+      g.stop();
+    });
+
+    it('reports a refusal while the sign-in counts too, but not one for a sign-in that changed', async () => {
+      const refusals: string[] = [];
+      answers = [refused(403, 'company_inactive')];
+      const g = gate({ onRefused: (why) => void refusals.push(why) });
+      g.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(refusals).toEqual(['company-inactive']);
+      expect(g.current()).toEqual({ kind: 'locked', reason: 'company-inactive' });
+      g.stop();
+
+      refusals.length = 0;
+      let who: string | null = 'ana';
+      const h = gate({
+        session: () => who,
+        onRefused: (why) => void refusals.push(why),
+        ask: async () => {
+          who = who === 'ana' ? 'ben' : who;
+          return refused(401, 'sign_in_revoked');
+        },
+      });
+      h.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(refusals).toEqual(['session-revoked']);
+      h.stop();
+    });
+
+    it('stops, with nothing asked, when the page is shown again after the work outlived the limit while hidden, the sign-in expired and no answer', async () => {
+      // Reopened offline on day 29 past the role's limit; hidden; shown again on day 31.
+      answers = [{ status: 0, body: null }];
+      let sendable = true;
+      const g = gate({ sessionValid: () => false, mayOpen: () => sendable });
+      g.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(g.current()).toEqual({ kind: 'expired' });
+      await g.suspend();
+      sendable = false;
+      g.resume();
+      await vi.advanceTimersByTimeAsync(60_000);
+      g.poke();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(calls).toEqual(['ask']);
+      expect(states).toEqual([{ kind: 'expired' }]);
+    });
+
+    it('stops at the next session check, every minute, whatever the state', async () => {
+      answers = [refused(403, 'company_inactive')];
+      let sendable = true;
+      const g = gate({ initial: { kind: 'locked', reason: 'company-inactive' }, mayOpen: () => sendable });
+      g.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(g.current()).toEqual({ kind: 'locked', reason: 'company-inactive' });
+      sendable = false;
+      g.checkSession();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(calls).toEqual(['ask']);
+    });
+
+    it('stops after an answer that does not open the network, once the work outlived the limit', async () => {
+      answers = [{ status: 0, body: null }];
+      let sendable = true;
+      const g = gate({ initial: { kind: 'locked', reason: 'company-inactive' }, mayOpen: () => sendable });
+      g.start();
+      await vi.advanceTimersByTimeAsync(0);
+      sendable = false;
+      await vi.advanceTimersByTimeAsync(OFFLINE_RETRY_MS);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(calls).toEqual(['ask', 'ask']);
+    });
+
+    it('does not open the network, and stops, when the work on the phone may no longer be sent', async () => {
+      answers = [me(NOW + 7 * DAY)];
+      let sendable = false;
+      const g = gate({ mayOpen: () => sendable });
+      g.start();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(calls).toEqual(['ask']);
+      expect(states).toEqual([]);
+      g.poke();
+      sendable = true;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(calls).toEqual(['ask']);
+    });
+  });
+
   describe('App Check (TC-7)', () => {
     it('fetches a token before the network goes on', async () => {
       answers = [me(NOW + 7 * DAY)];
@@ -507,6 +702,45 @@ describe('the gate', () => {
       fail = false;
       await vi.advanceTimersByTimeAsync(3_000);
       expect(calls).toEqual(['ask', 'ask', 'enable']);
+      g.stop();
+    });
+
+    it('under enforcement, a token that will not come is asked for again 3 seconds after each give-up, and a poke asks at once', async () => {
+      answers = [me(NOW + 7 * DAY)];
+      const asks = () => calls.filter((c) => c === 'ask').length;
+      const g = gate({ appCheck: { mode: 'enforce', token: () => new Promise(() => undefined) } });
+      g.start();
+      // Given up on at 10 s; asked again 3 s after each give-up, every time.
+      await vi.advanceTimersByTimeAsync(APP_CHECK_ENFORCE_WITHIN_MS + 3_000);
+      expect(asks()).toBe(2);
+      for (const expected of [3, 4]) {
+        await vi.advanceTimersByTimeAsync(APP_CHECK_ENFORCE_WITHIN_MS + 3_000 - 1);
+        expect(asks()).toBe(expected - 1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(asks()).toBe(expected);
+      }
+      expect(g.current()).toEqual({ kind: 'checking-phone' });
+      // Waiting for a token, a poke (the page shown again, the signal back) asks afresh at once.
+      await vi.advanceTimersByTimeAsync(1_000);
+      g.poke();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(asks()).toBe(5);
+      expect(calls).not.toContain('enable');
+      g.stop();
+    });
+
+    it('under enforcement, a token that fails while the network is open closes it', async () => {
+      answers = [me(NOW + 7 * DAY)];
+      let fail = false;
+      const g = gate({ appCheck: { mode: 'enforce', token: async () => (fail ? Promise.reject(new Error('no token')) : 'fresh') } });
+      g.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(calls).toEqual(['ask', 'enable']);
+      fail = true;
+      g.poke();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(g.current()).toEqual({ kind: 'checking-phone' });
+      expect(calls).toEqual(['ask', 'enable', 'ask', 'disable']);
       g.stop();
     });
   });

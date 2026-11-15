@@ -69,6 +69,8 @@ const COMPANY: CompanyDocuments = {
   },
   letterhead: NEUTRAL_LETTERHEAD,
   settings: NEUTRAL_SETTINGS,
+  // The company's own wording for the signed page (S5a-11), synthetic text.
+  signing: { authorizationText: 'Synthetic start-work authorization.', paymentTermsText: 'Synthetic payment terms.' },
 };
 
 // $2.00 per square foot of wet floor, one price, nothing else.

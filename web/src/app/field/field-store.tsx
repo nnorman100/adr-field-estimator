@@ -5,8 +5,9 @@ import { createContext, useContext, useEffect, useRef, useState, type ReactNode 
 import { Button } from '@/components/ui/button';
 import { companyAuth } from '@/lib/firebase-client';
 import { mirrorSignIn, startFieldClient, type CacheKind, type FieldClient } from '@/lib/field-db';
-import type { DsMe } from '@/lib/field/ds-me';
+import { meKey, type DsMe } from '@/lib/field/ds-me';
 import { runFieldSync } from '@/lib/field/field-sync';
+import { contentHidden, evaluate, onWorkRemoved, takeRemoved } from '@/lib/field/retention';
 import { askToPersist, keepAnswer, saveKeepAnswer, type KeepAnswer } from '@/lib/field/keep-consent';
 import type { FieldSurface } from '@/lib/field/platform';
 import { sessionValid, type GateState, type SyncGate } from '@/lib/field/sync-gate';
@@ -66,6 +67,31 @@ function KeepQuestion({ onAnswer }: { onAnswer: (answer: KeepAnswer) => void }) 
       </Button>
     </Notice>
   );
+}
+
+// Whether the person's work is hidden (decisions 010, 011; contentHidden in retention.ts): asked again
+// as the page is shown and every minute while it stays shown, as the shell's other entry points run.
+function useHidden(tenantId: string, uid: string): boolean {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const tick = () => setNow(Date.now());
+    document.addEventListener('visibilitychange', tick);
+    window.addEventListener('pageshow', tick);
+    const timer = setInterval(tick, 60_000);
+    return () => {
+      document.removeEventListener('visibilitychange', tick);
+      window.removeEventListener('pageshow', tick);
+      clearInterval(timer);
+    };
+  }, []);
+  return contentHidden(tenantId, uid, now);
+}
+
+// The boundary of the person's field screens (jobs, scope, customer, photos and what is typed in
+// them): none of it stays mounted while their work is hidden. FieldStore applies the same rule to
+// what it shows, and keeps its gate asking the server.
+export function UnlessHidden({ me, children }: { me: DsMe; children: ReactNode }) {
+  return useHidden(me.tenantId, me.uid) ? null : <>{children}</>;
 }
 
 function SignInLink({ address }: { address: string }) {
@@ -133,6 +159,19 @@ export function FieldStore({
     let live = true;
     let release = () => undefined as void;
     const person = { tenantId: me.tenantId, uid: me.uid, config: me.config };
+    const own = meKey(me.tenantId, me.uid);
+    // The retention routine removed this person's work (hidden past the 30-day limit, then refused by
+    // the server, decision 010), before this started or while it runs: the shell says so, nothing of
+    // it shows, and nothing more is started for it.
+    let gone = false;
+    const removed = (): boolean => {
+      if (takeRemoved(own)) {
+        gone = true;
+        if (live) setPhase({ kind: 'removed' });
+      }
+      return gone;
+    };
+    const stopWatching = onWorkRemoved(removed);
     void (async () => {
       const lock = await holdWindow();
       if (!live) return lock.result === 'held' ? lock.release() : undefined;
@@ -142,9 +181,14 @@ export function FieldStore({
         return setPhase({ kind: 'no-lock' });
       }
       release = lock.release;
+      // The phone's retention routine runs before anything starts (O5, S6-3b). Work locked past the
+      // 30-day limit still starts its client and gate, so the server can be asked, but nothing of it
+      // shows (below) until the server refuses the person (it is removed) or lets them in.
+      await evaluate(Date.now(), { kind: 'entry', person, saved: me }).done;
+      if (!live || removed()) return;
       await mirrorSignIn(person).catch(() => false);
       const started = await startFieldClient(person, cache);
-      if (!live) return;
+      if (!live || removed()) return;
       if (started.kind === 'no-database') return;
       if (started.kind === 'reopen') return setPhase({ kind: 'reopen' });
       onStorage(started.client.cache === 'persistent' ? 'kept' : started.fellBack ? 'not-saved' : 'online-only');
@@ -153,6 +197,7 @@ export function FieldStore({
       gateRef.current = runFieldSync(started.client, me, (event) => {
         if (!live) return;
         if ('removed' in event) return setPhase({ kind: 'removed' });
+        if ('reopen' in event) return setPhase({ kind: 'reopen' });
         if ('me' in event) return setKnown(event.me);
         setGate(event.state);
         setNow(Date.now());
@@ -175,6 +220,7 @@ export function FieldStore({
     window.addEventListener('offline', offline);
     return () => {
       live = false;
+      stopWatching();
       stopAuth();
       document.removeEventListener('visibilitychange', shown);
       window.removeEventListener('offline', offline);
@@ -194,9 +240,10 @@ export function FieldStore({
   }, [reachable]);
 
   useEffect(() => {
+    // A hidden page asks nothing and removes nothing; shown again, the gate is resumed (above).
     const tick = setInterval(() => {
       setNow(Date.now());
-      gateRef.current?.checkSession();
+      if (document.visibilityState === 'visible') gateRef.current?.checkSession();
     }, 60_000);
     return () => clearInterval(tick);
   }, []);
@@ -251,6 +298,15 @@ export function FieldStore({
     return (
       <Notice>
         <p className="text-base">{text.REMOVED_TEXT}</p>
+      </Notice>
+    );
+  }
+  // Locked for more than 30 days (decisions 010, 011): asked of the retention routine each time, and
+  // nothing of the work shows while it is.
+  if (contentHidden(me.tenantId, me.uid, now)) {
+    return (
+      <Notice>
+        <p className="text-base">{text.HIDDEN_TEXT}</p>
       </Notice>
     );
   }

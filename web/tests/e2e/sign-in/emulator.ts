@@ -2,9 +2,10 @@
 // runs beside the dev server (playwright.config.ts) under a demo- project only, so nothing here can
 // reach a real project. Error text carries only the emulator's error code.
 import { requireDemoProject } from '../../emu/guard';
+import { E2E_EMU } from '../emu-ports';
 
 export const E2E_PROJECT = requireDemoProject('demo-dryscope');
-export const AUTH_EMULATOR_HOST = '127.0.0.1:9399';
+export const AUTH_EMULATOR_HOST = `127.0.0.1:${E2E_EMU.ports.auth}`;
 
 const base = `http://${AUTH_EMULATOR_HOST}`;
 const ADMIN = { Authorization: 'Bearer owner', 'Content-Type': 'application/json' };

@@ -11,9 +11,10 @@ import { companyAuth } from '../../../../src/lib/firebase-client';
 import { fieldWrite, mirrorSignIn, setAppCheckSeam, startFieldClient, stopFieldClient, type CacheKind, type FieldClient } from '../../../../src/lib/field-db';
 import { readLatestMe, saveMe, updateMe, type DsMe } from '../../../../src/lib/field/ds-me';
 import { runFieldSync } from '../../../../src/lib/field/field-sync';
-import { signOutDiscarding, signOutOfCompany } from '../../../../src/lib/field/sign-out';
+import { evaluate } from '../../../../src/lib/field/retention';
+import { signOutDiscarding, signOutKeeping, signOutOnRefusal } from '../../../../src/lib/field/sign-out';
 import type { GateState, SyncGate } from '../../../../src/lib/field/sync-gate';
-import { readUnsent, unsentKey } from '../../../../src/lib/field/unsent';
+import { readUnsent, unsentKey, type LockReason } from '../../../../src/lib/field/unsent';
 
 setLogLevel('silent');
 
@@ -43,9 +44,11 @@ function bareRow(person: Person): DsMe {
   return { ...person, companyName: 'Field Test', address: 'field-test', savedAt: Date.now() };
 }
 
-// The row the gate starts from: an estimator signed in just now.
-function savedRow(person: Person): DsMe {
-  return { ...bareRow(person), role: 'estimator', authTime: Date.now() };
+const DAY = 24 * 60 * 60 * 1000;
+
+// The row the gate starts from: an estimator signed in `days` ago (just now by default).
+function savedRow(person: Person, days = 0): DsMe {
+  return { ...bareRow(person), role: 'estimator', authTime: Date.now() - days * DAY };
 }
 
 function get(person: Pick<Person, 'tenantId' | 'uid'>): Running {
@@ -65,10 +68,26 @@ const f = {
     return (await signInWithEmailAndPassword(auth, email, password)).user.uid;
   },
   // The two sign-outs of src/lib/field/sign-out.ts: keep (every sign-out the person did not choose,
-  // and Keep), and the person's own one that discards.
-  async signOutKeep(person: Person): Promise<void> {
+  // and Keep), and the person's own one that discards. `refusal`: the server's refusal that made
+  // the app sign the person out.
+  async signOutKeep(person: Person, refusal?: LockReason): Promise<void> {
     running.delete(key(person));
-    await signOutOfCompany(companyAuth(person), person.tenantId);
+    const auth = companyAuth(person);
+    await (refusal ? signOutOnRefusal(auth, person.tenantId, person.config, refusal, true) : signOutKeeping(auth, person.tenantId));
+  },
+  // What the field shell and the sign-in page do as they open (S6-3b): the phone's one retention
+  // routine, which removes nothing (decision 010). Answers the person's state ('none', 'locked',
+  // 'hidden') once it is over, and who was removed (nobody).
+  async enter(person?: Person): Promise<{ state: string; removed: string[] }> {
+    const { state, done } = evaluate(Date.now(), person ? { kind: 'entry', person } : { kind: 'entry' });
+    return { state, removed: await done };
+  },
+  // The sign-in page when the server lets a person in: their own lock is lifted, however old
+  // ('unlocked'), or stays when the phone cannot save that ('locked').
+  async letIn(person: Person): Promise<'unlocked' | 'locked'> {
+    const { state, done } = evaluate(Date.now(), { kind: 'let-in', person });
+    await done;
+    return state === 'none' ? 'unlocked' : 'locked';
   },
   async signOutDiscard(person: Person): Promise<string> {
     running.delete(key(person));
@@ -83,10 +102,10 @@ const f = {
     running.set(key(person), { client: started.client, gate: null, states: [], removed: false });
     return `${started.client.cache}${started.fellBack ? ' (fell back)' : ''}${signedIn ? '' : ' (signed out)'}`;
   },
-  // Runs the sync gate for it, as the field shell does.
-  sync(person: Person): void {
+  // Runs the sync gate for it, as the field shell does, from a sign-in made `signedInDaysAgo`.
+  sync(person: Person, signedInDaysAgo = 0): void {
     const entry = get(person);
-    entry.gate = runFieldSync(entry.client, savedRow(person), (event) => {
+    entry.gate = runFieldSync(entry.client, savedRow(person, signedInDaysAgo), (event) => {
       if ('state' in event) entry.states.push(event.state);
       if ('removed' in event) entry.removed = true;
     });
@@ -98,6 +117,13 @@ const f = {
   },
   poke(person: Pick<Person, 'tenantId' | 'uid'>): void {
     get(person).gate?.poke();
+  },
+  // The page hidden and shown again, as field-store.tsx tells the gate.
+  async suspend(person: Pick<Person, 'tenantId' | 'uid'>): Promise<void> {
+    await get(person).gate?.suspend();
+  },
+  resume(person: Pick<Person, 'tenantId' | 'uid'>): void {
+    get(person).gate?.resume();
   },
   async stop(person: Person): Promise<void> {
     get(person).gate?.stop();

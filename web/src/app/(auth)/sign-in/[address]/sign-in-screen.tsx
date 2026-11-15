@@ -21,8 +21,19 @@ import {
 import { saveMe } from '@/lib/field/ds-me';
 import { prepareFieldShell } from '@/lib/field/register-worker';
 import { meFacts } from '@/lib/field/sync-gate';
-import { noteUnlocked } from '@/lib/field/unsent';
-import { hasUnsentWork, signOutDiscarding, signOutOfCompany } from '@/lib/field/sign-out';
+import { evaluate, watchRetention } from '@/lib/field/retention';
+import type { LockReason } from '@/lib/field/unsent';
+import {
+  hasUnsentWork,
+  signOutDiscarding,
+  signOutKeeping,
+  signOutOnRefusal,
+  signInOf,
+  signOutOrShow,
+  WorkNotSecuredError,
+  type FailedSignOut,
+  type SignIn,
+} from '@/lib/field/sign-out';
 import { endsSession, errorCode, signInErrorMessage, type MeOutcome } from '@/lib/sign-in/outcome';
 import { rememberSignInAddress } from '@/lib/sign-in/remember';
 import { offersCompanyScreen } from '@/lib/profile/screen';
@@ -36,6 +47,7 @@ import { SecondStepSection } from '../../second-step/second-step-section';
 import { InvitationScreen } from './invitation-screen';
 import { UnsentSignOutDialog, type UnsentChoice } from './unsent-sign-out-dialog';
 import { NOT_READY_OFFLINE_TEXT, PREPARING_TEXT } from './offline-ready-text';
+import { WorkNotSecured } from './work-not-secured';
 
 export type SignInScreenProps = {
   address: string;
@@ -55,6 +67,9 @@ type Screen =
   | { name: 'checking' }
   // Signed in: the field worker is being installed so the field app opens with no signal.
   | { name: 'preparing' }
+  // A sign-out the app had to make could not save the refusal first: nothing was signed out, and
+  // `retry` makes that sign-out again.
+  | { name: 'not-secured'; retry: () => Promise<void> }
   // The password or Google account was right and the person has a second step: the code is next.
   | { name: 'code'; challenge: SecondStepChallenge }
   // A signed-in person adds an authenticator app (the required first setup is the outcome below).
@@ -97,23 +112,42 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
     );
   }, []);
 
-  const endSession = useCallback(async (message: string | null) => {
-    const auth = authRef.current;
-    if (auth) await signOutOfCompany(auth, tenantId);
+  // `refusal`: why the app ends the session, kept for the 30-day limit (O5); 'kept' for the person's
+  // own sign-out that keeps their work.
+  const signedOut = useCallback((message: string | null) => {
     setError(null);
     setNotice(message);
     setScreen({ name: 'signed-out' });
-  }, [tenantId]);
+  }, []);
 
-  const refuse = useCallback(
-    async (message: string) => {
-      try {
-        await endSession(message);
-      } catch {
-        setScreen({ name: 'outcome', outcome: { kind: 'unavailable' } });
-      }
+  const endSession = useCallback(
+    async (message: string | null, refusal: LockReason | 'kept') => {
+      const auth = authRef.current;
+      if (auth) await (refusal === 'kept' ? signOutKeeping(auth, tenantId) : signOutOnRefusal(auth, tenantId, config, refusal));
+      signedOut(message);
     },
-    [endSession],
+    [config, signedOut, tenantId],
+  );
+
+  const showFailed = useCallback(
+    (failed: FailedSignOut) => setScreen(failed.name === 'not-secured' ? failed : { name: 'outcome', outcome: { kind: 'unavailable' } }),
+    [],
+  );
+
+  // `fromServer`: the server's own answer refused the person just now (decision 010). `from`: the
+  // sign-in refused, kept when the request was sent; the current one when left out.
+  const refuse = useCallback(
+    (message: string, refusal: LockReason, fromServer = false, from?: SignIn) => {
+      const auth = authRef.current;
+      return signOutOrShow(
+        async () => {
+          if (auth) await signOutOnRefusal(auth, tenantId, config, refusal, fromServer, from);
+        },
+        showFailed,
+        () => signedOut(message),
+      );
+    },
+    [config, showFailed, signedOut, tenantId],
   );
 
   // When the server still wants the second step, Firebase is asked how many authenticator apps the
@@ -123,6 +157,11 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
   const check = useCallback(
     async (user: User, fresh = false) => {
       setScreen({ name: 'checking' });
+      // The sign-in this check is for: the same person signing in again in another tab keeps the
+      // user object, so its time tells them apart.
+      const signedInAt = user.metadata.lastSignInTime;
+      const stillCurrent = () => authRef.current?.currentUser === user && user.metadata.lastSignInTime === signedInAt;
+      const from = signInOf(user);
       const { outcome, body } = await checkSignIn(user, fresh);
       const authenticators = outcome.kind === 'second-step' ? await authenticatorCount(user) : 0;
       const current = authRef.current?.currentUser ?? null;
@@ -135,7 +174,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
         return;
       }
       if (authenticators > 0) {
-        await refuse('Your authenticator app is set up. Sign in again and enter its code.');
+        await refuse('Your authenticator app is set up. Sign in again and enter its code.', 'sign-in-again', false, from);
         return;
       }
       if (endsSession(outcome)) {
@@ -145,7 +184,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
             : outcome.kind === 'account-disabled'
               ? `This account is turned off. Ask the owner of ${companyName}.`
               : 'Please sign in again.';
-        await refuse(message);
+        await refuse(message, outcome.kind, true, from);
         return;
       }
       // The field shell starts from this row with no signal (S6-2), so it is saved before the screen
@@ -154,13 +193,16 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
       // is not saved. The field worker is installed here too, and the signed-in screen waits for
       // it ("Getting DryScope ready…"), so a phone that loses signal before ever opening the field
       // app can still open it; when that does not finish in time, the screen says so. The server
-      // just let this person in, so a refusal saved on the phone for them is lifted.
+      // just let this person in, so once the row is saved a refusal saved on the phone for them is
+      // lifted, however old (decision 010; retention.ts). The row goes first, so the phone never
+      // finds an old sign-in with no lock. A phone that cannot save the lifting offers nothing of
+      // the field app: "Try again" lifts it again.
       if (outcome.kind === 'signed-in') {
-        noteUnlocked(tenantId, user.uid);
         const authTime = await user.getIdTokenResult().then(
           (result) => Date.parse(result.authTime),
           () => NaN,
         );
+        if (!stillCurrent()) return;
         await saveMe({
           tenantId,
           uid: user.uid,
@@ -171,16 +213,27 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
           ...(meFacts(body) ?? {}),
           ...(Number.isFinite(authTime) ? { authTime } : {}),
         });
-        if ((authRef.current?.currentUser ?? null) !== user) return;
-        setScreen({ name: 'preparing' });
-        const ready = await prepareFieldShell();
-        if ((authRef.current?.currentUser ?? null) !== user) return;
-        setOfflineReady(ready);
+        const signedIn = outcome;
+        async function openField(): Promise<void> {
+          if (!stillCurrent()) return;
+          const { state } = evaluate(Date.now(), { kind: 'let-in', person: { tenantId, uid: user.uid, config } });
+          if (state === 'unsaved') return setScreen({ name: 'not-secured', retry: openField });
+          setScreen({ name: 'preparing' });
+          const ready = await prepareFieldShell();
+          if (!stillCurrent()) return;
+          setOfflineReady(ready);
+          setScreen({ name: 'outcome', outcome: signedIn });
+        }
+        return openField();
       }
       setScreen({ name: 'outcome', outcome: outcome as Extract<Screen, { name: 'outcome' }>['outcome'] });
     },
     [address, companyName, config, refuse, showSignedOut, tenantId],
   );
+
+  // The phone's retention routine (O5, S6-3b), for anyone on this phone: as the page opens and each
+  // time it is shown again.
+  useEffect(() => watchRetention({ tenantId, config }), [config, tenantId]);
 
   useEffect(() => {
     rememberSignInAddress(address);
@@ -194,7 +247,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
       }
       // Belt and braces: this company's Auth instance only ever holds this tenant's sign-in.
       if (!belongsTo(user, tenantId)) {
-        void refuse(`That sign-in is not for ${companyName}.`);
+        void refuse(`That sign-in is not for ${companyName}.`, 'not-this-company');
         return;
       }
       void check(user);
@@ -213,10 +266,14 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
     }
   }
 
-  // Firebase wants a newer sign-in before it changes a second step.
-  const needsFreshSignIn = useCallback(() => {
-    void refuse('For your safety, sign in again before changing your second step.');
-  }, [refuse]);
+  // Firebase wants a newer sign-in before it changes a second step: `from`, the sign-in the
+  // authenticator request was made with, is the one that ends.
+  const needsFreshSignIn = useCallback(
+    (from: SignIn) => {
+      void refuse('For your safety, sign in again before changing your second step.', 'sign-in-again', false, from);
+    },
+    [refuse],
+  );
 
   const auth = () => authRef.current!;
   const currentUser = () => authRef.current?.currentUser ?? null;
@@ -225,14 +282,21 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
   // yet, it asks to keep or discard it; otherwise, and on Discard, this person's cache for this
   // company goes too. Kept work stays for the same person's next sign-in here (D7). Work made only
   // in a window's memory (Online only) is not kept by anything, so nothing is promised for it.
+  // A saved sign-in past its role's limit is locked before it goes; a phone that cannot save that
+  // keeps the sign-in and offers "Try again", which finishes this sign-out.
   const signOutChosen = (choice: UnsentChoice) =>
     run(async () => {
-      if (choice === 'keep') return endSession('You are signed out. Your unsent work is kept on this phone.');
-      const result = await signOutDiscarding(auth(), tenantId, config);
-      if (result === 'elsewhere') return setError('DryScope is open in another window. Close it there, then sign out.');
-      if (result === 'failed') return setError('Your work on this phone could not be removed. Try again.');
-      setNotice('You are signed out.');
-      setScreen({ name: 'signed-out' });
+      const message = choice === 'keep' ? 'You are signed out. Your unsent work is kept on this phone.' : 'You are signed out.';
+      try {
+        if (choice === 'keep') return await endSession(message, 'kept');
+        const result = await signOutDiscarding(auth(), tenantId, config);
+        if (result === 'elsewhere') return setError('DryScope is open in another window. Close it there, then sign out.');
+        if (result === 'failed') return setError('Your work on this phone could not be removed. Try again.');
+        signedOut(message);
+      } catch (failure) {
+        if (!(failure instanceof WorkNotSecuredError)) throw failure;
+        setScreen({ name: 'not-secured', retry: () => signOutOrShow(failure.retry, showFailed, () => signedOut(message)) });
+      }
     });
 
   const signOutButton = (
@@ -263,6 +327,8 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
       </FocusedPanel>
     );
   }
+
+  if (screen.name === 'not-secured') return <WorkNotSecured retry={screen.retry} />;
 
   if (screen.name === 'preparing') {
     return (
@@ -437,7 +503,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
               tenantId={tenantId}
               user={user}
               onAccepted={() => check(user, true)}
-              onSignInAgain={(message) => void refuse(message)}
+              onSignInAgain={(message, refusal, from) => void refuse(message, refusal, false, from)}
               onNeedsSignIn={needsFreshSignIn}
               signOut={signOutButton}
             />
@@ -484,7 +550,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
               void check(user);
             }}
             onNeedsSignIn={needsFreshSignIn}
-            onLeave={() => void refuse('You are signed out.')}
+            onLeave={() => void refuse('You are signed out.', 'second-step')}
           />
         );
       }
@@ -498,7 +564,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
                 run(async () => {
                   const user = currentUser();
                   if (user) await check(user, true);
-                  else await endSession(null);
+                  else await endSession(null, 'sign-in-again');
                 })
               }
             >

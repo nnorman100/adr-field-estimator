@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { finishAuthenticatorSetup, startAuthenticatorSetup, type AuthenticatorSetup } from '@/lib/firebase-client';
+import { signInOf, type SignIn } from '@/lib/field/sign-out';
 import { errorCode } from '@/lib/sign-in/outcome';
 import {
   CODE_SHAPE_MESSAGE,
@@ -29,8 +30,9 @@ export type EnrolScreenProps = {
   // Authenticator apps the person has already, for the name the new one is saved under.
   existingCount: number;
   onEnrolled: () => void;
-  // Firebase wants a newer sign-in before it changes a second step.
-  onNeedsSignIn: () => void;
+  // Firebase wants a newer sign-in before it changes a second step: `from`, the sign-in the request
+  // was made with.
+  onNeedsSignIn: (from: SignIn) => void;
   // Sign out ('required') or go back ('add').
   onLeave: () => void;
 };
@@ -63,6 +65,7 @@ function EnrolAttempt({
 
   useEffect(() => {
     let current = true;
+    const from = signInOf(user);
     startAuthenticatorSetup(user, `DryScope ${companyName}`).then(
       (started) => {
         if (current) setSetup(started);
@@ -70,7 +73,7 @@ function EnrolAttempt({
       (failure: unknown) => {
         if (!current) return;
         const failed = errorCode(failure);
-        if (enrolNeedsFreshSignIn(failed)) onNeedsSignIn();
+        if (enrolNeedsFreshSignIn(failed)) onNeedsSignIn(from);
         else {
           setError(enrolErrorMessage(failed));
           setExpired(true);
@@ -91,13 +94,14 @@ function EnrolAttempt({
     }
     setBusy(true);
     setError(null);
+    const from = signInOf(user);
     try {
       await finishAuthenticatorSetup(user, setup, digits, authenticatorName(existingCount));
       onEnrolled();
     } catch (failure) {
       const failed = errorCode(failure);
       if (enrolNeedsFreshSignIn(failed)) {
-        onNeedsSignIn();
+        onNeedsSignIn(from);
         return;
       }
       setCode('');
