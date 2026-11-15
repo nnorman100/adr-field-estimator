@@ -5,23 +5,39 @@ import { FocusedPanel } from '@/app/(auth)/focused-panel';
 import { ItemizedClaim, PhotoLog, Proposal } from '@/app/(auth)/sign-in/[address]/jobs/[jobId]/review/review-documents';
 import { clearPad, padPng, SignaturePad } from '@/app/(auth)/sign-in/[address]/jobs/[jobId]/review/signature-pad';
 import { SignedAgreementView } from '@/app/(auth)/sign-in/[address]/jobs/[jobId]/review/signing';
+import { ShareLink } from '@/components/links/share-link';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { agreementAnswerOf, SIGNER_NAME_LIMIT, type SignedAgreement } from '@/lib/agreements/screen';
+import { agreementAnswerOf, SIGNER_NAME_LIMIT, SIGNER_ROLE_NAMES, SIGNER_ROLES, type SignedAgreement, type SignerRole } from '@/lib/agreements/screen';
 import { linkCall, linkImageAddress, type LinkAnswer } from '@/lib/links/client';
-import { CONSENTS, fragmentToken, pageOutcomeOf, signingPageOf, untilDay, watchFragment, type LinkEstimate, type PageNext } from '@/lib/links/screen';
+import {
+  CONSENTS,
+  fragmentToken,
+  issuedLinksOf,
+  linkAddress,
+  pageOutcomeOf,
+  SET_NAMES,
+  signingPageOf,
+  untilDay,
+  watchFragment,
+  type LinkEstimate,
+  type PageNext,
+} from '@/lib/links/screen';
 
 // Review and sign your estimate (S5a-11b): the documents the technician's phone shows on site, with
-// the company's start-work authorization and payment terms in the proposal, then the customer's
-// name, two boxes, a signature and Sign. Once signed, the same signed page the company keeps, read
-// from the agreement's stored bytes, for 30 days. Every request keeps its ids until the server
+// the company's start-work authorization and payment terms in the proposal and each photo on
+// request, then the signer's name and role, two boxes, a signature and Sign. Once signed, the same
+// signed page the company keeps, read from the agreement's stored bytes, for 30 days, with the links
+// to the signed documents made at signing (shown once). Every request keeps its ids until the server
 // answers, so "Try again" after a lost answer is the same request, never a second signature.
 
 type Phase =
   | { name: 'checking' }
   | { name: 'refused'; message: string; next: PageNext }
   | { name: 'pending'; companyName: string; expiresAt: string; estimate: LinkEstimate }
-  | { name: 'signed'; companyName: string; viewUntil: string; agreement: SignedAgreement };
+  | { name: 'signed'; companyName: string; viewUntil: string; agreement: SignedAgreement; issued?: Issued[] };
+
+type Issued = ReturnType<typeof issuedLinksOf>[number];
 
 // The page for the link routes' answer.
 function phaseOf(answer: LinkAnswer): Phase {
@@ -83,6 +99,7 @@ function SignPage({ token }: { token: string }) {
   }, [token]);
 
   const loadSignature = useCallback(() => linkImageAddress(token, '/api/sign/signature'), [token]);
+  const loadPhoto = useCallback((photoId: string) => linkImageAddress(token, `/api/sign/photos/${encodeURIComponent(photoId)}`), [token]);
 
   switch (phase.name) {
     case 'checking':
@@ -101,7 +118,23 @@ function SignPage({ token }: { token: string }) {
             Signed with {phase.companyName}. You can open this page until {untilDay(phase.viewUntil)}. Print or save a copy
             from your browser to keep one.
           </p>
-          <SignedAgreementView agreement={phase.agreement} loadSignature={loadSignature} />
+          {phase.issued?.length ? (
+            <section aria-labelledby="link-issued" className="flex flex-col gap-3 rounded-md border p-3">
+              <h2 id="link-issued" className="text-lg font-semibold">
+                Links to your signed documents
+              </h2>
+              <p className="text-sm">Each works for 30 days. Copy or share them now: they are shown only this once.</p>
+              {phase.issued.map((shown) => (
+                <ShareLink
+                  key={shown.set}
+                  address={linkAddress(window.location.origin, 'documents', shown.token)}
+                  label={`${SET_NAMES[shown.set]} link`}
+                  shareTitle="Your signed estimate documents"
+                />
+              ))}
+            </section>
+          ) : null}
+          <SignedAgreementView agreement={phase.agreement} loadSignature={loadSignature} loadPhoto={loadPhoto} />
         </FocusedPanel>
       );
     case 'pending':
@@ -111,10 +144,10 @@ function SignPage({ token }: { token: string }) {
             From {phase.companyName}. This link works until {untilDay(phase.expiresAt)}. Read the proposal and the documents below, then sign at the
             bottom.
           </p>
-          <LinkDocuments estimate={phase.estimate} />
+          <LinkDocuments estimate={phase.estimate} loadPhoto={loadPhoto} />
           <LinkSigning
             token={token}
-            onSigned={(agreement) => setPhase({ name: 'signed', companyName: phase.companyName, viewUntil: viewUntilOf(agreement), agreement })}
+            onSigned={(agreement, issued) => setPhase({ name: 'signed', companyName: phase.companyName, viewUntil: viewUntilOf(agreement), agreement, issued })}
             onRefused={(outcome) => setPhase({ name: 'refused', ...outcome })}
           />
         </FocusedPanel>
@@ -124,7 +157,7 @@ function SignPage({ token }: { token: string }) {
 
 // The documents as the signed record will hold them: the proposal with its terms, then the itemized
 // claim, the scope defense letter and the photo audit log.
-function LinkDocuments({ estimate }: { estimate: LinkEstimate }) {
+function LinkDocuments({ estimate, loadPhoto }: { estimate: LinkEstimate; loadPhoto: (photoId: string) => Promise<string | null> }) {
   const end = estimate.proposal.price.low;
   return (
     <>
@@ -150,7 +183,7 @@ function LinkDocuments({ estimate }: { estimate: LinkEstimate }) {
         </details>
         <details className="rounded-md border p-3">
           <summary className="cursor-pointer font-semibold">Photo audit log</summary>
-          <PhotoLog photos={estimate.documents.photo_log} />
+          <PhotoLog photos={estimate.documents.photo_log} loadPhoto={loadPhoto} />
         </details>
       </section>
     </>
@@ -160,12 +193,21 @@ function LinkDocuments({ estimate }: { estimate: LinkEstimate }) {
 // A used link shows the signed record for 30 days after signing (the server's own rule).
 const viewUntilOf = (agreement: SignedAgreement) => new Date(Date.parse(agreement.signedAt) + 30 * 86_400_000).toISOString();
 
-type Attempt = { signatureId: string; agreementId: string; png: Uint8Array; name: string; uploaded: boolean };
+type Attempt = { signatureId: string; agreementId: string; png: Uint8Array; name: string; role: SignerRole; uploaded: boolean };
 
-function LinkSigning({ token, onSigned, onRefused }: { token: string; onSigned: (agreement: SignedAgreement) => void; onRefused: (outcome: { message: string; next: PageNext }) => void }) {
+function LinkSigning({
+  token,
+  onSigned,
+  onRefused,
+}: {
+  token: string;
+  onSigned: (agreement: SignedAgreement, issued: Issued[]) => void;
+  onRefused: (outcome: { message: string; next: PageNext }) => void;
+}) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const attempt = useRef<Attempt | null>(null);
   const [name, setName] = useState('');
+  const [role, setRole] = useState<SignerRole | null>(null);
   const [reviewed, setReviewed] = useState(false);
   const [electronic, setElectronic] = useState(false);
   const [drawn, setDrawn] = useState(false);
@@ -195,7 +237,7 @@ function LinkSigning({ token, onSigned, onRefused }: { token: string; onSigned: 
 
   async function sign() {
     setChecked(true);
-    if (nameMissing || !drawn || !reviewed || !electronic || busy) return;
+    if (nameMissing || !role || !drawn || !reviewed || !electronic || busy) return;
     setBusy(true);
     setProblem(null);
     const signerName = name.trim();
@@ -206,10 +248,10 @@ function LinkSigning({ token, onSigned, onRefused }: { token: string; onSigned: 
         setBusy(false);
         return setProblem({ message: 'The signature could not be read. Clear it, draw it again, then sign.', next: 'redraw' });
       }
-      sending = { signatureId: crypto.randomUUID(), agreementId: crypto.randomUUID(), png, name: signerName, uploaded: false };
+      sending = { signatureId: crypto.randomUUID(), agreementId: crypto.randomUUID(), png, name: signerName, role, uploaded: false };
       setLocked(true);
-    } else if (sending.name !== signerName) {
-      sending = { ...sending, agreementId: crypto.randomUUID(), name: signerName };
+    } else if (sending.name !== signerName || sending.role !== role) {
+      sending = { ...sending, agreementId: crypto.randomUUID(), name: signerName, role };
     }
     attempt.current = sending;
 
@@ -224,11 +266,11 @@ function LinkSigning({ token, onSigned, onRefused }: { token: string; onSigned: 
     }
     const answer = await linkCall(token, '/api/sign', {
       method: 'POST',
-      json: { id: sending.agreementId, signatureId: sending.signatureId, signerName, documentsConfirmed: true, electronicConsent: true },
+      json: { id: sending.agreementId, signatureId: sending.signatureId, signerName, signerRole: sending.role, documentsConfirmed: true, electronicConsent: true },
     });
     setBusy(false);
     const signed = answer.status === 200 || answer.status === 201 ? agreementAnswerOf(answer.body)?.agreement : null;
-    if (signed) return onSigned(signed);
+    if (signed) return onSigned(signed, issuedLinksOf(answer.body));
     refused(pageOutcomeOf(answer.status === 200 || answer.status === 201 ? 0 : answer.status, answer.body));
   }
 
@@ -261,6 +303,20 @@ function LinkSigning({ token, onSigned, onRefused }: { token: string; onSigned: 
       {checked && nameMissing ? (
         <p id="link-signer-name-missing" className="text-sm text-red-700">
           Write your name.
+        </p>
+      ) : null}
+      <fieldset className="flex flex-col gap-2" aria-describedby={checked && !role ? 'link-signer-role-missing' : undefined}>
+        <legend className="font-semibold">You are signing as</legend>
+        {SIGNER_ROLES.map((value) => (
+          <label key={value} className="flex items-center gap-3">
+            <input type="radio" name="link-signer-role" className="size-5 shrink-0" value={value} checked={role === value} disabled={busy} onChange={() => setRole(value)} />
+            <span>{SIGNER_ROLE_NAMES[value]}</span>
+          </label>
+        ))}
+      </fieldset>
+      {checked && !role ? (
+        <p id="link-signer-role-missing" className="text-sm text-red-700">
+          Choose who is signing.
         </p>
       ) : null}
       <p id="link-signature-pad-label" className="font-semibold">

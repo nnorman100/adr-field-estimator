@@ -8,10 +8,12 @@ import { hasSigningTexts } from '@/lib/estimates/proposal';
 import { readStoredEstimate, readStoredProposal } from '@/lib/estimates/result';
 import { currentEstimateRow } from '@/lib/estimates/service';
 import { hasAny, jobAccess, JobError, type JobCaller, type JobRow } from '@/lib/jobs/access';
+import { documentLinksAtSigning, type IssuedDocumentLink } from '@/lib/links/document-store';
 import { readCompanyDocuments } from '@/lib/profile/documents';
 import { AgreementError } from './errors';
 import { readSignedRecord, SIGNED_FORMAT, signedRecordBytes, type SignedRecord } from './record';
 import { signDigest, type SignInput } from './schema';
+import type { SignerRole } from './screen';
 
 // Sign on the phone (docs/plans/S5.md, S5a-11). The customer signs the job's current estimate on the
 // technician's phone: the signature image is received first through the photo receipt route
@@ -28,7 +30,8 @@ import { signDigest, type SignInput } from './schema';
 // 4. The signature was received for this job.
 // 5. The agreement row is inserted (insert-only; migration 0011's trigger checks it restates the
 //    estimate and that the pin has not moved) with the signed record's bytes, and the job becomes
-//    `signed`. One audit row.
+//    `signed`. One audit row. The agreement's two document links (the homeowner's set and the
+//    adjuster's, S5a-11b) are made with it and their tokens answered once, to whoever signed.
 //
 // Nothing here runs the engine: the prices and documents are the estimate's as stored, and the
 // signed page is read from the agreement's own bytes. Who may: `sign` (owner, estimator), on a job
@@ -50,7 +53,7 @@ export type AgreementView = {
 };
 
 export type AgreementsService = {
-  sign(caller: JobCaller, jobId: string, input: SignInput): Promise<{ created: boolean; job: AgreementJobState; agreement: AgreementView }>;
+  sign(caller: JobCaller, jobId: string, input: SignInput): Promise<SignResult>;
   read(caller: JobCaller, jobId: string): Promise<{ job: AgreementJobState; agreement: AgreementView | null }>;
 };
 
@@ -139,7 +142,7 @@ export type LinkClaim = {
   consume(tx: CompanyTransaction, agreementId: string): Promise<void>;
 };
 
-export type SignResult = { created: boolean; job: AgreementJobState; agreement: AgreementView };
+export type SignResult = { created: boolean; job: AgreementJobState; agreement: AgreementView; documentLinks: IssuedDocumentLink[] };
 
 /**
  * Steps 2 and 3: the job is submitted and not signed, the company's setup check passes, and the
@@ -174,17 +177,17 @@ export async function signInTransaction(
   tx: CompanyTransaction,
   caller: JobCaller,
   jobId: string,
-  input: SignInput,
+  input: SignInput & { signerRole?: SignerRole },
   digest: string,
   link?: LinkClaim,
 ): Promise<SignResult> {
   const job = await jobAccess(tx, caller, jobId, SIGN, { lock: true });
 
-  // 1. Sent before.
+  // 1. Sent before: the same agreement, and new tokens for its document links made at signing.
   const existing = await agreementById(tx, caller.companyId, input.id);
   if (existing) {
     if (existing.jobId !== jobId || existing.requestDigest !== digest) throw new AgreementError('conflict');
-    return { created: false, job: jobState(job), agreement: viewOf(existing) };
+    return { created: false, job: jobState(job), agreement: viewOf(existing), documentLinks: await documentLinksAtSigning(tx, caller, jobId, existing.id, false) };
   }
 
   // 2 and 3.
@@ -203,7 +206,7 @@ export async function signInTransaction(
     job_id: jobId,
     kind: 'original',
     signed_at: signedAt.toISOString(),
-    signer: { name: input.signerName },
+    signer: input.signerRole ? { name: input.signerName, role: input.signerRole } : { name: input.signerName },
     signed_with: link
       ? { kind: 'link', link_id: link.linkId }
       : { kind: 'device', presented_by: { actor_id: caller.actorId, name: await presenterName(tx, caller.companyId, caller.actorId) } },
@@ -232,6 +235,7 @@ export async function signInTransaction(
       signerKind: link ? 'link' : 'device',
       signingLinkId: link ? link.linkId : null,
       signerName: input.signerName,
+      signerRole: input.signerRole ?? null,
       signatureEvidenceId: signature.id,
       proposalSha256: estimate.proposalSha256,
       pricedResult: estimate.pricedResult as Record<string, unknown>,
@@ -257,7 +261,8 @@ export async function signInTransaction(
     target: jobId,
     details: { pin: estimate.pinSequence, version: estimate.versionSequence, ...(link ? { signingLink: link.linkId } : {}) },
   });
-  return { created: true, job: jobState(signed!), agreement: viewOf({ ...made!, documentsBytes: Buffer.from(made!.documentsBytes) }) };
+  const documentLinks = await documentLinksAtSigning(tx, caller, jobId, input.id, true);
+  return { created: true, job: jobState(signed!), agreement: viewOf({ ...made!, documentsBytes: Buffer.from(made!.documentsBytes) }), documentLinks };
 }
 
 export function agreementsService(db: Database): AgreementsService {

@@ -112,6 +112,7 @@ export function linkFlow(h: () => Harness, routes: LinkRoutes, publish: (company
     id: randomUUID(),
     signatureId,
     signerName: 'Casey Customer',
+    signerRole: 'homeowner',
     documentsConfirmed: true,
     electronicConsent: true,
     ...extra,
@@ -132,8 +133,8 @@ export function linkFlow(h: () => Harness, routes: LinkRoutes, publish: (company
       SELECT id::text, status, token_sha256, agreement_id::text, ended_by_actor_id::text, sign_attempts FROM signing_links WHERE job_id = ${jobId} ORDER BY created_at, id
     `;
   const agreementRows = (jobId: string) =>
-    h().admin<{ id: string; signer_kind: string; signer_name: string; signing_link_id: string | null; created_by_actor_id: string; estimate_id: string; documents_bytes: Buffer }[]>`
-      SELECT id::text, signer_kind, signer_name, signing_link_id::text, created_by_actor_id::text, estimate_id::text, documents_bytes FROM agreements WHERE job_id = ${jobId}
+    h().admin<{ id: string; signer_kind: string; signer_name: string; signer_role: string | null; signing_link_id: string | null; created_by_actor_id: string; estimate_id: string; documents_bytes: Buffer }[]>`
+      SELECT id::text, signer_kind, signer_name, signer_role, signing_link_id::text, created_by_actor_id::text, estimate_id::text, documents_bytes FROM agreements WHERE job_id = ${jobId}
     `;
 
   // Moves a link's clock back by `days` (creation, expiry and, when used, signing), as if made then.

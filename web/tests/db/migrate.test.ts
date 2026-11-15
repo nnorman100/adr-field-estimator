@@ -571,15 +571,21 @@ describe('numbered migration ledger', () => {
         (sql) => sql`SELECT (SELECT count(*)::int FROM signing_links) AS signing, (SELECT count(*)::int FROM document_links) AS documents`,
       );
       expect(counts).toEqual([{ signing: 0, documents: 0 }]);
-      // agreements gains one nullable column, last, so every row signed so far (on a device) keeps
-      // it empty.
+      // agreements gains two nullable columns, last, so every row signed so far (on a device) keeps
+      // them empty.
       const columns = await withSql(
         (sql) => sql`
           SELECT column_name, is_nullable FROM information_schema.columns
-          WHERE table_schema = 'public' AND table_name = 'agreements' ORDER BY ordinal_position DESC LIMIT 1
+          WHERE table_schema = 'public' AND table_name = 'agreements' ORDER BY ordinal_position DESC LIMIT 2
         `,
       );
-      expect(columns).toEqual([{ column_name: 'signing_link_id', is_nullable: 'YES' }]);
+      expect(columns).toEqual([
+        { column_name: 'signer_role', is_nullable: 'YES' },
+        { column_name: 'signing_link_id', is_nullable: 'YES' },
+      ]);
+      const signedSoFar = await withSql((sql) => sql`SELECT count(*)::int AS rows, count(signer_role)::int AS roles, count(signing_link_id)::int AS links FROM agreements`);
+      expect(signedSoFar[0]!.roles).toBe(0);
+      expect(signedSoFar[0]!.links).toBe(0);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

@@ -11,9 +11,11 @@ import { currentEstimateRow } from '@/lib/estimates/service';
 import { hasAny, jobAccess, JobError, type JobCaller, type JobRow } from '@/lib/jobs/access';
 import type { PhotoStream, PhotosService, Receipt, ReceiveInput } from '@/lib/photos/service';
 import { technicianCaller } from './caller';
+import { documentLinksAtSigning, type IssuedDocumentLink } from './document-store';
 import { LinkError } from './errors';
 import { linkCompany, nextReadCount, nextWindowStart, overLinkLimit } from './lookup';
 import { requestDigest, type CreateSigningLinkInput, type LinkSignInput } from './schema';
+import { requireSnapshotPhoto } from './snapshot-photos';
 import { linkTokenSha256, newLinkToken } from './token';
 
 // Homeowner signing links (docs/plans/S5.md, S5a-11b; detail in S5b-3). The technician makes a link
@@ -70,7 +72,8 @@ export type SigningLinksService = {
   view(tokenSha256: string): Promise<SigningLinkPage>;
   receiveSignature(tokenSha256: string, signatureId: string, input: ReceiveInput): Promise<{ created: boolean; receipt: Receipt }>;
   openSignature(tokenSha256: string): Promise<PhotoStream>;
-  sign(tokenSha256: string, input: LinkSignInput): Promise<{ created: boolean; agreement: AgreementView }>;
+  openPhoto(tokenSha256: string, photoId: string): Promise<PhotoStream>;
+  sign(tokenSha256: string, input: LinkSignInput): Promise<{ created: boolean; agreement: AgreementView; documentLinks: IssuedDocumentLink[] }>;
 };
 
 const linkColumns = {
@@ -365,6 +368,36 @@ export function signingLinksService(db: Database, photos: PhotosService): Signin
       return photos.open(caller, row.jobId, signatureId, 'signature');
     },
 
+    // A photo of the record the page shows: the estimate's submitted record while the link is
+    // pending, the signed record's once it is used, while that is shown.
+    async openPhoto(tokenSha256, photoId) {
+      const row = await resolve(tokenSha256);
+      let caller: JobCaller;
+      if (row.status === 'used') {
+        if (row.viewEnded || !row.agreementId) throw new LinkError('link_unavailable');
+        caller = await withCompany(db, row.companyId, async (tx) => {
+          const acting = await actingFor(tx, row);
+          const found = acting ? await agreementViewById(tx, row.companyId, row.agreementId!) : null;
+          if (!acting || !found) throw new LinkError('link_unavailable');
+          await requireSnapshotPhoto(tx, row.companyId, row.jobId, found.view.record.basis.submission_id, photoId);
+          return acting.caller;
+        });
+      } else {
+        if (row.status === 'voided') throw new LinkError('link_voided');
+        if (row.status !== 'pending') throw new LinkError('link_unavailable');
+        caller = (await requirePending(row)).caller;
+        await withCompany(db, row.companyId, async (tx) => {
+          const [estimate] = await tx
+            .select({ submissionId: jobEstimates.submissionId })
+            .from(jobEstimates)
+            .where(and(eq(jobEstimates.companyId, row.companyId), eq(jobEstimates.id, row.estimateId)));
+          if (!estimate) throw new LinkError('link_unavailable');
+          await requireSnapshotPhoto(tx, row.companyId, row.jobId, estimate.submissionId, photoId);
+        });
+      }
+      return photos.open(caller, row.jobId, photoId, 'photo');
+    },
+
     async sign(tokenSha256, input) {
       let row = await resolve(tokenSha256);
       const digest = requestDigest({ ...input, signingLinkId: row.id });
@@ -373,11 +406,12 @@ export function signingLinksService(db: Database, photos: PhotosService): Signin
       if (row.status === 'used') {
         if (row.viewEnded || row.agreementId !== input.id) throw new LinkError(row.viewEnded ? 'link_unavailable' : 'already_signed');
         return withCompany(db, row.companyId, async (tx) => {
-          if (!(await actingFor(tx, row))) throw new LinkError('link_unavailable');
+          const acting = await actingFor(tx, row);
+          if (!acting) throw new LinkError('link_unavailable');
           const found = await agreementViewById(tx, row.companyId, row.agreementId!);
           if (!found) throw new LinkError('link_unavailable');
           if (found.requestDigest !== digest) throw new LinkError('conflict');
-          return { created: false, agreement: found.view };
+          return { created: false, agreement: found.view, documentLinks: await documentLinksAtSigning(tx, acting.caller, row.jobId, found.view.id, false) };
         });
       }
       if (row.status === 'voided') throw new LinkError('link_voided');
@@ -412,11 +446,19 @@ export function signingLinksService(db: Database, photos: PhotosService): Signin
             tx,
             caller,
             row.jobId,
-            { id: input.id, estimateId: row.estimateId, proposalSha256: estimate.proposalSha256, signatureId: input.signatureId, signerName: input.signerName, documentsConfirmed: true },
+            {
+              id: input.id,
+              estimateId: row.estimateId,
+              proposalSha256: estimate.proposalSha256,
+              signatureId: input.signatureId,
+              signerName: input.signerName,
+              signerRole: input.signerRole,
+              documentsConfirmed: true,
+            },
             digest,
             claim,
           );
-          return { created: signed.created, agreement: signed.agreement };
+          return { created: signed.created, agreement: signed.agreement, documentLinks: signed.documentLinks };
         });
       } catch (error) {
         if (error instanceof AgreementError) {

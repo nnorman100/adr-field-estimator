@@ -24,6 +24,8 @@ export const LINK_ERRORS = {
   not_signed: 409,
   // A retried create for a link that has already ended: make a new one.
   link_ended: 409,
+  // The set already has a working document link; only the owner or office may replace it.
+  link_active: 409,
   // The signature image is over its size limit, or not an image this app takes.
   too_large: 413,
   unsupported_image: 415,

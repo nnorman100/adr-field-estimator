@@ -20,7 +20,7 @@ import { WorkNotSecured } from '../../../work-not-secured';
 import { EstimateDocuments, EstimatePrice, StaffNotes } from './review-documents';
 import { DocumentLinks } from './document-links';
 import { SendLink } from './send-link';
-import { SignedAgreementView, SigningForm } from './signing';
+import { SignedAgreementView, SigningForm, type IssuedLink } from './signing';
 
 export type ReviewScreenProps = {
   address: string;
@@ -178,6 +178,7 @@ function Review({ address, companyName, tenantId, jobId, config }: ReviewScreenP
 function ReviewBody({ user, reviewer, links, job, estimate: first, agreement: signedFirst, finishHref, reload }: Ready & { finishHref: string; reload: () => void }) {
   const [estimate, setEstimate] = useState<EstimateView | null>(first);
   const [agreement, setAgreement] = useState<SignedAgreement | null>(signedFirst);
+  const [issued, setIssued] = useState<IssuedLink[]>([]);
   const signatureId = agreement?.record.signature.id ?? null;
   const loadSignature = useCallback(() => (signatureId ? signatureAddress(user, job.id, signatureId) : Promise.resolve(null)), [user, job.id, signatureId]);
   const [busy, setBusy] = useState(false);
@@ -205,7 +206,7 @@ function ReviewBody({ user, reviewer, links, job, estimate: first, agreement: si
     return (
       <FocusedPanel title="Signed">
         <SignedAgreementView agreement={agreement} loadSignature={loadSignature} />
-        <DocumentLinks user={user} jobId={job.id} canSend={links.canSend} canRevoke={links.canRevoke} />
+        <DocumentLinks user={user} jobId={job.id} canSend={links.canSend} canRevoke={links.canRevoke} issued={issued} />
       </FocusedPanel>
     );
   }
@@ -276,7 +277,17 @@ function ReviewBody({ user, reviewer, links, job, estimate: first, agreement: si
           <p role="status" className="text-sm">
             {confirmed ? 'Documents confirmed.' : ''}
           </p>
-          {confirmed ? <SigningForm user={user} jobId={job.id} estimate={estimate} onSigned={setAgreement} /> : null}
+          {confirmed ? (
+            <SigningForm
+              user={user}
+              jobId={job.id}
+              estimate={estimate}
+              onSigned={(signed, links) => {
+                setIssued(links);
+                setAgreement(signed);
+              }}
+            />
+          ) : null}
         </section>
       ) : null}
       {!reasons.length && reviewer.canSign ? <SendLink user={user} jobId={job.id} estimate={estimate} /> : null}

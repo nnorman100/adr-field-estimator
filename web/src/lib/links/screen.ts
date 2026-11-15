@@ -1,4 +1,4 @@
-import type { SignedAgreement } from '@/lib/agreements/screen';
+import type { SignedAgreement, SignerRole } from '@/lib/agreements/screen';
 import type { Json } from '@/engine/estimate';
 import type { Proposal } from '@/lib/estimates/proposal';
 
@@ -47,6 +47,17 @@ export function signingLinkOf(body: unknown): SigningLinkView | null {
   const link = field(body, 'link');
   if (typeof field(link, 'id') !== 'string' || !STATES.includes(field(link, 'status') as string) || typeof field(link, 'expiresAt') !== 'string') return null;
   return link as SigningLinkView;
+}
+
+/** The document links answered with a signature (made at signing), each with its token, shown once. */
+export function issuedLinksOf(body: unknown): { set: DocumentLinkView['set']; token: string }[] {
+  const issued = field(body, 'documentLinks');
+  if (!Array.isArray(issued)) return [];
+  return issued.flatMap((entry) => {
+    const set = field(field(entry, 'link'), 'set');
+    const token = field(entry, 'token');
+    return (set === 'homeowner' || set === 'adjuster') && typeof token === 'string' && TOKEN.test(token) ? [{ set, token }] : [];
+  });
 }
 
 export function documentLinksOf(body: unknown): DocumentLinkView[] | null {
@@ -116,7 +127,7 @@ export function signingPageOf(body: unknown): SigningPage | null {
   return null;
 }
 
-type Signed = { name: string; signedAt: string; how: string };
+type Signed = { name: string; role?: SignerRole; signedAt: string; how: string };
 export type DocumentsPage =
   | { set: 'homeowner'; companyName: string; expiresAt: string; signed: Signed; signatureSha256: string; proposalSha256: string; proposal: Proposal; photoLog: Json[] }
   | { set: 'adjuster'; companyName: string; expiresAt: string; signed: Signed; price: Proposal['price']; itemizedClaim: Json[]; letter: string; claim: Json };

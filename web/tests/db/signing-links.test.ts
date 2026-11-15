@@ -45,6 +45,7 @@ const signingLinkRoute = await import('@/app/api/jobs/[jobId]/signing-link/route
 const signRoute = await import('@/app/api/sign/route');
 const signatureRoute = await import('@/app/api/sign/signature/[signatureId]/route');
 const signedSignatureRoute = await import('@/app/api/sign/signature/route');
+const signPhotoRoute = await import('@/app/api/sign/photos/[photoId]/route');
 const { contentHash, ENGINE_VERSION, parseTable } = await import('@/engine/table');
 const { params, request, resetTeamDatabase, startTeamServer } = await import('./team-harness');
 
@@ -109,6 +110,7 @@ afterAll(async () => {
 });
 
 const signedImage = async (token: string) => signedSignatureRoute.GET(l.linkRequest(token, '/api/sign/signature'), params({}));
+const photo = (token: string | null, photoId: string) => signPhotoRoute.GET(l.linkRequest(token, `/api/sign/photos/${photoId}`), params({ photoId }));
 // Everything stored about links and their audit rows, as text, to search for a token.
 const storedText = async () =>
   JSON.stringify([
@@ -253,6 +255,32 @@ describe('the homeowner’s page', () => {
     for (const token of [null, 'short', 'A'.repeat(43)]) expect(await l.view(token)).toMatchObject({ status: 404, body: { error: 'link_unavailable' } });
   });
 
+  it('shows each photo of the record on request: only a photo of the link’s submitted record, never another job’s or company’s', async () => {
+    const { token, photoId, photoBytes } = await l.linkedJob();
+    const page = await l.view(token);
+    expect(page.body.estimate.documents.photo_log.map((row: { id: string }) => row.id)).toEqual([photoId]);
+    const shown = await photo(token, photoId);
+    expect(shown.status).toBe(200);
+    expect(shown.headers.get('cache-control')).toBe('no-store');
+    expect(shown.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(new Uint8Array(await shown.arrayBuffer())).toEqual(photoBytes);
+    // A photo of another job of the same company, one of company B, and an id nobody holds.
+    const other = await l.f.readyJob(ESTIMATOR_A, h.seed.a);
+    const elsewhere = await l.f.readyJob(OWNER_B, h.seed.b);
+    for (const id of [other.photoId, elsewhere.photoId, randomUUID()]) {
+      expect(await json(photo(token, id))).toMatchObject({ status: 404, body: { error: 'link_unavailable' } });
+    }
+    expect((await photo(null, photoId)).status).toBe(404);
+    // After signing, while the signed record is shown.
+    expect((await l.homeownerSigns(token)).answer.status).toBe(201);
+    expect((await photo(token, photoId)).status).toBe(200);
+    expect((await photo(token, other.photoId)).status).toBe(404);
+    // A revoked link shows none.
+    const revoked = await l.linkedJob();
+    expect((await l.revokeLink(ESTIMATOR_A, revoked.jobId)).status).toBe(200);
+    expect((await photo(revoked.token, revoked.photoId)).status).toBe(404);
+  });
+
   it('is unavailable after seven days', async () => {
     const { token, linkId } = await l.linkedJob();
     await l.age('signing_links', linkId, 7);
@@ -268,8 +296,16 @@ describe('signing through a link', () => {
     const { answer, signatureId, bytes } = await l.homeownerSigns(token);
     expect(answer.status).toBe(201);
     const [row] = await l.agreementRows(jobId);
-    expect(row).toMatchObject({ signer_kind: 'link', signer_name: 'Casey Customer', signing_link_id: linkId, created_by_actor_id: h.seed.estimatorA.actor, estimate_id: estimate.id });
+    expect(row).toMatchObject({
+      signer_kind: 'link',
+      signer_name: 'Casey Customer',
+      signer_role: 'homeowner',
+      signing_link_id: linkId,
+      created_by_actor_id: h.seed.estimatorA.actor,
+      estimate_id: estimate.id,
+    });
     const record = answer.body.agreement.record;
+    expect(record.signer).toEqual({ name: 'Casey Customer', role: 'homeowner' });
     expect(record.signed_with).toEqual({ kind: 'link', link_id: linkId });
     expect(record.signature).toEqual({ id: signatureId, sha256: sha256(bytes), content_type: 'image/png' });
     expect(record.proposal.authorization_text).toBe(AUTHORIZATION);
@@ -284,6 +320,20 @@ describe('signing through a link', () => {
     const audit = await h.admin<{ actor_id: string; details: Body }[]>`SELECT actor_id::text, details FROM audit_events WHERE target = ${jobId} AND action = 'agreement_signed'`;
     expect(audit).toEqual([{ actor_id: h.seed.estimatorA.actor, details: expect.objectContaining({ signingLink: linkId }) }]);
     expect(await storedText()).not.toContain(token);
+  });
+
+  it('asks who signs: a request without a role, or with one the page does not offer, is refused', async () => {
+    const { jobId, token } = await l.linkedJob();
+    const signatureId = randomUUID();
+    expect((await l.sendSignature(token, signatureId, image('role'))).status).toBe(201);
+    const without = { id: randomUUID(), signatureId, signerName: 'Casey Customer', documentsConfirmed: true, electronicConsent: true };
+    expect(await l.signWith(token, without)).toMatchObject({ status: 400, body: { error: 'invalid_request' } });
+    expect(await l.signWith(token, l.signBody(signatureId, { signerRole: 'landlord' }))).toMatchObject({ status: 400, body: { error: 'invalid_request' } });
+    expect(await l.agreementRows(jobId)).toEqual([]);
+    const adjuster = await l.signWith(token, l.signBody(signatureId, { signerRole: 'adjuster' }));
+    expect(adjuster.status).toBe(201);
+    expect(adjuster.body.agreement.record.signer).toEqual({ name: 'Casey Customer', role: 'adjuster' });
+    expect((await l.agreementRows(jobId))[0]!.signer_role).toBe('adjuster');
   });
 
   it('the same request sent twice returns the same receipt; a changed one with the same id is refused', async () => {

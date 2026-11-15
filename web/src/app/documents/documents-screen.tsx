@@ -4,14 +4,14 @@ import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { FocusedPanel } from '@/app/(auth)/focused-panel';
 import { ItemizedClaim, PhotoLog, Proposal } from '@/app/(auth)/sign-in/[address]/jobs/[jobId]/review/review-documents';
 import { Button } from '@/components/ui/button';
-import { signedWhen } from '@/lib/agreements/screen';
+import { signedBy, signedWhen } from '@/lib/agreements/screen';
 import { linkCall, linkImageAddress, type LinkAnswer } from '@/lib/links/client';
 import { documentsPageOf, fragmentToken, pageOutcomeOf, untilDay, watchFragment, type DocumentsPage, type PageNext } from '@/lib/links/screen';
 
 // Your signed estimate documents (S5a-11b): one set of a signed estimate, read-only, from the signed
 // record's stored bytes. The homeowner's set is the signed proposal (with the company's terms, the
-// signature, who signed, when and how) and the photo log; the adjuster's is the itemized claim, the
-// scope defense letter and the claim.
+// signature, who signed, when and how) and the photo log, each photo opened on request; the
+// adjuster's is the itemized claim, the scope defense letter and the claim.
 
 type Phase = { name: 'checking' } | { name: 'refused'; message: string; next: PageNext } | { name: 'ready'; page: DocumentsPage };
 
@@ -82,7 +82,7 @@ function LinkDocumentsPage({ token }: { token: string }) {
   return (
     <FocusedPanel title="Signed estimate documents">
       <p>
-        From {page.companyName}. Signed by {page.signed.name}, {signedWhen(page.signed.signedAt)}. This link works until {untilDay(page.expiresAt)}; print
+        From {page.companyName}. {signedBy(page.signed)}, {signedWhen(page.signed.signedAt)}. This link works until {untilDay(page.expiresAt)}; print
         or save a copy from your browser to keep one.
       </p>
       {page.set === 'homeowner' ? <HomeownerSet page={page} token={token} /> : null}
@@ -129,7 +129,7 @@ function HomeownerSet({ page, token }: { page: Extract<DocumentsPage, { set: 'ho
         ) : (
           <p className="text-sm">The signature image is not loaded. It is kept with the signed record.</p>
         )}
-        <p>Signed by {page.signed.name}</p>
+        <p>{signedBy(page.signed)}</p>
         <p>{signedWhen(page.signed.signedAt)}</p>
         <p>{page.signed.how}</p>
         <p className="text-sm break-all">Proposal SHA-256 {page.proposalSha256}</p>
@@ -138,7 +138,7 @@ function HomeownerSet({ page, token }: { page: Extract<DocumentsPage, { set: 'ho
         <h2 id="documents-photos" className="text-lg font-semibold">
           Photo audit log
         </h2>
-        <PhotoLog photos={page.photoLog} />
+        <PhotoLog photos={page.photoLog} loadPhoto={(photoId) => linkImageAddress(token, `/api/documents/photos/${encodeURIComponent(photoId)}`)} />
       </section>
     </>
   );

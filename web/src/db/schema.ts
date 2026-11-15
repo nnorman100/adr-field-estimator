@@ -476,6 +476,7 @@ export const pinReasons = ['first_price', 'owner_reprice'] as const;
 export type PinReason = (typeof pinReasons)[number];
 export const signerKinds = ['device', 'link'] as const;
 export type SignerKind = (typeof signerKinds)[number];
+export const signerRoles = ['homeowner', 'adjuster', 'other'] as const;
 
 // Submit's rows (0011), made `pending` first, then moved once to `committed` (with the canonical
 // snapshot and its SHA-256) or `aborted`. A trigger freezes every column of a decided row except
@@ -633,6 +634,8 @@ export const agreements = pgTable(
     signedAt: timestamp('signed_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
     // The signing link it was signed through (0014): set exactly when signerKind is 'link'.
     signingLinkId: uuid('signing_link_id'),
+    // Who signed, as the signer said (0014): asked by a signing link, not on the phone.
+    signerRole: text('signer_role', { enum: signerRoles }),
   },
   (t) => [
     primaryKey({ columns: [t.companyId, t.id] }),

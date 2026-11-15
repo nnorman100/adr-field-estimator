@@ -99,8 +99,10 @@ const LINK_ROUTES: [string, () => Promise<RouteModule>, string[]][] = [
   ['/api/sign', () => import('@/app/api/sign/route'), ['GET', 'POST']],
   ['/api/sign/signature', () => import('@/app/api/sign/signature/route'), ['GET']],
   ['/api/sign/signature/00000000-0000-4000-8000-000000000001', () => import('@/app/api/sign/signature/[signatureId]/route'), ['PUT']],
+  ['/api/sign/photos/00000000-0000-4000-8000-000000000004', () => import('@/app/api/sign/photos/[photoId]/route'), ['GET']],
   ['/api/documents', () => import('@/app/api/documents/route'), ['GET']],
   ['/api/documents/signature', () => import('@/app/api/documents/signature/route'), ['GET']],
+  ['/api/documents/photos/00000000-0000-4000-8000-000000000004', () => import('@/app/api/documents/photos/[photoId]/route'), ['GET']],
 ];
 
 const TECHNICIAN_ROUTES: [string, () => Promise<RouteModule>, string[]][] = [

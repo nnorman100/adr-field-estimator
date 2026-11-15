@@ -56,7 +56,15 @@ export const memberApiPaths: readonly string[] = [
 // Link routes (S5a-11b) that check a link token themselves with linkRoute (src/lib/auth/route.ts):
 // a homeowner or adjuster with no sign-in reaches them, and gets only what the token's own link
 // opens. A missing or unknown token is refused there with the same answer.
-export const linkApiPaths: readonly string[] = ['/api/sign', '/api/sign/signature', '/api/sign/signature/:id', '/api/documents', '/api/documents/signature'];
+export const linkApiPaths: readonly string[] = [
+  '/api/sign',
+  '/api/sign/signature',
+  '/api/sign/signature/:id',
+  '/api/sign/photos/:id',
+  '/api/documents',
+  '/api/documents/signature',
+  '/api/documents/photos/:id',
+];
 
 // Platform operator routes that check the operator sign-in themselves with operatorRoute
 // (src/lib/auth/route.ts): only an active platform operator gets past them, never a company user.

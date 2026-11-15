@@ -1,6 +1,6 @@
 -- Signing links and document links (S5a-11b, docs/plans/S5.md; the step's detail is S5b-3): the
 -- one database job of the step. This file only adds; nothing in 0001 to 0013 changes except that
--- `agreements` gains one nullable column with its checks.
+-- `agreements` gains two nullable columns with their checks.
 --
 -- 1. signing_links: a homeowner signing link for one estimate of one job. The token is made by the
 --    server, shown once to the technician and never stored: only its SHA-256 is. A link is made
@@ -13,10 +13,13 @@
 --    minute.
 -- 2. document_links: a read-only link to one signed agreement's homeowner or adjuster set, the token
 --    kept as a SHA-256 only, for 30 days from when it was made, revocable. At most one active link
---    per agreement and set.
+--    per agreement and set. Both sets' links are made in the signing transaction; the owner or office
+--    may revoke one and make it again.
 -- 3. agreements.signing_link_id: the link an agreement was signed through, set exactly when the
 --    signer kind is `link`, and pointing at a link for that same estimate, so the locked record says
---    which link was used. A link signs at most one agreement.
+--    which link was used. A link signs at most one agreement. agreements.signer_role: who signed,
+--    as the signer said (`homeowner`, `adjuster` or `other`, docs/spec.md 2.5); a signing link asks
+--    it, so it is set for every link signature; signing on the phone does not ask it.
 -- 4. signing_link_company(sha256) and document_link_company(sha256): the one lookup before a
 --    company is known, on the 0004 pattern: a token's hash to its company id, nothing else. Every
 --    other read runs inside withCompany under the company policies below.
@@ -109,10 +112,13 @@ CREATE TABLE document_links (
 
 CREATE UNIQUE INDEX document_links_one_active_per_set ON document_links (company_id, agreement_id, document_set) WHERE status = 'active';
 
--- 3. Which link an agreement was signed through. Every agreement so far was signed on a device, so
--- every existing row passes the check.
+-- 3. Which link an agreement was signed through, and the signer's role. Every agreement so far was
+-- signed on a device, with no role asked, so every existing row passes the checks.
 ALTER TABLE agreements
   ADD COLUMN signing_link_id uuid,
+  ADD COLUMN signer_role text,
+  ADD CONSTRAINT agreements_signer_role_check CHECK (signer_role IN ('homeowner', 'adjuster', 'other')),
+  ADD CONSTRAINT agreements_link_signer_role_check CHECK (signer_kind <> 'link' OR signer_role IS NOT NULL),
   ADD CONSTRAINT agreements_signing_link_check CHECK ((signer_kind = 'link') = (signing_link_id IS NOT NULL)),
   ADD CONSTRAINT agreements_company_signing_link_key UNIQUE (company_id, signing_link_id),
   ADD CONSTRAINT agreements_signing_link_fkey FOREIGN KEY (company_id, signing_link_id, estimate_id)

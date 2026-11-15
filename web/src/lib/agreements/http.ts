@@ -40,7 +40,8 @@ async function jobId(context: RouteContext): Promise<string> {
 
 // POST /api/jobs/{jobId}/agreements  { id, estimateId, proposalSha256, signatureId, signerName, documentsConfirmed: true }
 // 201 when this request signed the job, 200 for the same request again after it was signed; the
-// answer is the signed record, read back from the stored bytes, and the job's new state.
+// answer is the signed record, read back from the stored bytes, the job's new state, and the tokens
+// of the document links made at signing (new ones for the same request again, while still active).
 export async function signJob(request: Request, identity: Identity, context: RouteContext): Promise<Response> {
   return respond(async () => {
     const id = await jobId(context);
@@ -52,8 +53,8 @@ export async function signJob(request: Request, identity: Identity, context: Rou
     }
     const parsed = signBody.safeParse(raw);
     if (!parsed.success) throw new AgreementError('invalid_request');
-    const { created, job, agreement } = await agreementsServices().sign(identity, id, parsed.data);
-    return json({ job, agreement }, created ? 201 : 200);
+    const { created, job, agreement, documentLinks } = await agreementsServices().sign(identity, id, parsed.data);
+    return json({ job, agreement, documentLinks }, created ? 201 : 200);
   });
 }
 

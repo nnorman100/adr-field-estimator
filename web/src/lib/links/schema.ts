@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { signerName } from '@/lib/agreements/schema';
+import { SIGNER_ROLES } from '@/lib/agreements/screen';
 import { canonicalJson } from '@/lib/field/canonical';
 import { uuid } from '@/lib/jobs/schema';
 
@@ -19,13 +20,14 @@ export const createSigningLinkBody = z.strictObject({
 export type CreateSigningLinkInput = z.infer<typeof createSigningLinkBody>;
 
 // POST /api/sign: the agreement's id and the signature's (made in the homeowner's browser), the
-// signer's name, and the two boxes the page asks the homeowner to tick: the documents reviewed, and
-// agreeing to sign and receive the record electronically. The estimate and its proposal hash come
-// from the link, never from the browser.
+// signer's name and role (homeowner, adjuster or other, docs/spec.md 2.5), and the two boxes the page
+// asks the homeowner to tick: the documents reviewed, and agreeing to sign and receive the record
+// electronically. The estimate and its proposal hash come from the link, never from the browser.
 export const linkSignBody = z.strictObject({
   id: uuid,
   signatureId: uuid,
   signerName,
+  signerRole: z.enum(SIGNER_ROLES),
   documentsConfirmed: z.literal(true),
   electronicConsent: z.literal(true),
 });

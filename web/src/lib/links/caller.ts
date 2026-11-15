@@ -1,7 +1,7 @@
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { actors, companies, companyFeatureFlags, memberships } from '@/db/schema';
 import type { CompanyTransaction } from '@/db/tenant';
-import { capabilitiesFor } from '@/lib/access';
+import { capabilitiesFor, type Capability } from '@/lib/access';
 import { accessFlags, flagsFromRows } from '@/lib/flags';
 import type { JobCaller } from '@/lib/jobs/access';
 
@@ -9,8 +9,10 @@ import type { JobCaller } from '@/lib/jobs/access';
 // now: on every use their membership, role and the company's switches are read again, inside the
 // link's company, so a technician who was disabled, lost `sign` or lost the job, a company that is
 // not active, or a company whose prices were switched off, makes the link unavailable. The job
-// itself then goes through the one job-access function with that caller.
-export async function technicianCaller(tx: CompanyTransaction, companyId: string, actorId: string): Promise<JobCaller | null> {
+// itself then goes through the one job-access function with that caller. A signing link needs its
+// maker to hold `sign`; a document link, `sign` or `delivery_resend` (the owner or office may make one
+// again after revoking it).
+export async function technicianCaller(tx: CompanyTransaction, companyId: string, actorId: string, needs: readonly Capability[] = ['sign']): Promise<JobCaller | null> {
   const [company] = await tx.select({ status: companies.status }).from(companies).where(eq(companies.id, companyId));
   if (company?.status !== 'active') return null;
   const [actor] = await tx
@@ -31,6 +33,6 @@ export async function technicianCaller(tx: CompanyTransaction, companyId: string
   // The link routes are part of the estimate and signing work, which needs the company's prices on.
   if (flags.price_books !== true) return null;
   const capabilities = capabilitiesFor(membership.role, accessFlags(flags));
-  if (!capabilities.includes('sign')) return null;
+  if (!needs.some((need) => capabilities.includes(need))) return null;
   return { companyId, actorId: actor.id, uid: actor.uid, role: membership.role, capabilities };
 }

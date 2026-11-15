@@ -159,18 +159,18 @@ describe('migration 0014: the link tables', () => {
     expect(await update(h.seed.a, id, 'read_count = read_count + 1')).toBeUndefined();
   });
 
-  it('agreements name their link exactly when signed through one, and only a link for that estimate', async () => {
+  it('agreements name their link exactly when signed through one, only a link for that estimate, and the signer’s role with it', async () => {
     const c = await seedChain(h.admin, h.seed.a, h.seed.ownerA.actor);
     const { id: linkId } = await signingLink(c);
     // Signed through a link, naming none.
     expect(await errorCode(as(c.company, (tx) => insertAgreement(tx, agreementOf(c, { signerKind: 'link' }))))).toBe(CHECK_VIOLATION);
-    const withLink = (signerKind: string, link: string) =>
+    const withLink = (signerKind: string, link: string, role: string | null = 'homeowner') =>
       errorCode(
         as(c.company, (tx) =>
           tx.execute(sql`
-            INSERT INTO agreements (id, company_id, job_id, submission_id, estimate_id, kind, signer_kind, signer_name, signature_evidence_id, proposal_sha256, priced_result,
+            INSERT INTO agreements (id, company_id, job_id, submission_id, estimate_id, kind, signer_kind, signer_name, signer_role, signature_evidence_id, proposal_sha256, priced_result,
                                     version_id, content_hash, engine_version, documents_bytes, request_digest, created_by_actor_id, signing_link_id)
-            SELECT ${randomUUID()}::uuid, company_id, job_id, submission_id, id, 'original', ${signerKind}, 'Pat Customer', ${c.signature}::uuid, proposal_sha256, priced_result,
+            SELECT ${randomUUID()}::uuid, company_id, job_id, submission_id, id, 'original', ${signerKind}, 'Pat Customer', ${role}, ${c.signature}::uuid, proposal_sha256, priced_result,
                    ${c.version.id}::uuid, table_hash, engine_version, '\\x7b7d'::bytea, ${digestOf(link)}, ${c.actor}::uuid, ${link}::uuid
             FROM job_estimates WHERE id = ${c.estimate.id}::uuid
           `),
@@ -178,12 +178,17 @@ describe('migration 0014: the link tables', () => {
       );
     expect(await withLink('device', linkId)).toBe(CHECK_VIOLATION);
     expect(await withLink('link', randomUUID())).toBe(FOREIGN_KEY_VIOLATION);
+    // A link signature always says who signed, as one of the three roles.
+    expect(await withLink('link', linkId, null)).toBe(CHECK_VIOLATION);
+    expect(await withLink('link', linkId, 'landlord')).toBe(CHECK_VIOLATION);
     expect(await withLink('link', linkId)).toBeUndefined();
-    const [row] = await h.admin<{ signer_kind: string; signing_link_id: string }[]>`SELECT signer_kind, signing_link_id::text FROM agreements WHERE job_id = ${c.job.id}`;
-    expect(row).toEqual({ signer_kind: 'link', signing_link_id: linkId });
-    // A device agreement keeps the column empty.
+    const [row] = await h.admin<{ signer_kind: string; signer_role: string; signing_link_id: string }[]>`
+      SELECT signer_kind, signer_role, signing_link_id::text FROM agreements WHERE job_id = ${c.job.id}
+    `;
+    expect(row).toEqual({ signer_kind: 'link', signer_role: 'homeowner', signing_link_id: linkId });
+    // A device agreement keeps both columns empty.
     const other = await seedChain(h.admin, h.seed.a, h.seed.ownerA.actor);
     await as(other.company, (tx) => insertAgreement(tx, agreementOf(other)));
-    expect(await h.admin`SELECT signing_link_id FROM agreements WHERE job_id = ${other.job.id}`).toEqual([{ signing_link_id: null }]);
+    expect(await h.admin`SELECT signing_link_id, signer_role FROM agreements WHERE job_id = ${other.job.id}`).toEqual([{ signing_link_id: null, signer_role: null }]);
   });
 });

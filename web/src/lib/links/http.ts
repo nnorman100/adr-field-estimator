@@ -105,6 +105,8 @@ export async function revokeSigningLink(_request: Request, identity: Identity, c
 }
 
 // POST /api/jobs/{jobId}/document-links  { id, set: 'homeowner' | 'adjuster' }
+// Both sets' links are made at signing; this makes one again: the owner or office (who may replace a
+// working one), or whoever may sign once the set has no working link (409 `link_active` otherwise).
 export async function createDocumentLink(request: Request, identity: Identity, context: RouteContext): Promise<Response> {
   return respond(async () => {
     const jobId = await jobIdOf(context);
@@ -136,14 +138,15 @@ export async function viewSigningLink(_request: Request, link: LinkToken): Promi
   return respond(async () => json(await signingLinksServices().view(link.tokenSha256)), true);
 }
 
-// POST /api/sign  { id, signatureId, signerName, documentsConfirmed: true, electronicConsent: true }
-// 201 when this request signed; 200 for the same request again.
+// POST /api/sign  { id, signatureId, signerName, signerRole, documentsConfirmed: true, electronicConsent: true }
+// 201 when this request signed; 200 for the same request again. The answer carries the tokens of the
+// document links made at signing (new ones for the same request again, while still active).
 export async function signWithLink(request: Request, link: LinkToken): Promise<Response> {
   return respond(async () => {
     const parsed = linkSignBody.safeParse(await bodyOf(request));
     if (!parsed.success) throw new LinkError('invalid_request');
-    const { created, agreement } = await signingLinksServices().sign(link.tokenSha256, parsed.data);
-    return json({ agreement }, created ? 201 : 200);
+    const { created, agreement, documentLinks } = await signingLinksServices().sign(link.tokenSha256, parsed.data);
+    return json({ agreement, documentLinks }, created ? 201 : 200);
   }, true);
 }
 
@@ -170,6 +173,15 @@ export async function readLinkSignature(_request: Request, link: LinkToken): Pro
   return respond(async () => image(await signingLinksServices().openSignature(link.tokenSha256)), true);
 }
 
+// GET /api/sign/photos/{photoId}: one photo of the record the link shows, by the id its photo log
+// carries; only a photo of that submitted record, on the link's own job.
+export async function readLinkPhoto(_request: Request, link: LinkToken, context: RouteContext): Promise<Response> {
+  return respond(async () => {
+    const photoId = await param(context, 'photoId', () => new LinkError('link_unavailable'));
+    return image(await signingLinksServices().openPhoto(link.tokenSha256, photoId));
+  }, true);
+}
+
 // GET /api/documents: the document set the link opens.
 export async function viewDocumentLink(_request: Request, link: LinkToken): Promise<Response> {
   return respond(async () => json(await documentLinksServices().view(link.tokenSha256)), true);
@@ -178,4 +190,12 @@ export async function viewDocumentLink(_request: Request, link: LinkToken): Prom
 // GET /api/documents/signature: the signature on the homeowner's set.
 export async function readDocumentSignature(_request: Request, link: LinkToken): Promise<Response> {
   return respond(async () => image(await documentLinksServices().openSignature(link.tokenSha256)), true);
+}
+
+// GET /api/documents/photos/{photoId}: one photo of the homeowner's set, as /api/sign/photos.
+export async function readDocumentPhoto(_request: Request, link: LinkToken, context: RouteContext): Promise<Response> {
+  return respond(async () => {
+    const photoId = await param(context, 'photoId', () => new LinkError('link_unavailable'));
+    return image(await documentLinksServices().openPhoto(link.tokenSha256, photoId));
+  }, true);
 }

@@ -23,9 +23,17 @@ describe('API sign-in gate', () => {
   // S5a-11b: a homeowner or adjuster with no sign-in reaches the link routes, which refuse any
   // request without a link token of their own (linkRoute), and nothing that only looks like them.
   it('passes only the link routes on to their own link-token check', () => {
-    expect([...linkApiPaths].sort()).toEqual(['/api/documents', '/api/documents/signature', '/api/sign', '/api/sign/signature', '/api/sign/signature/:id']);
+    expect([...linkApiPaths].sort()).toEqual([
+      '/api/documents',
+      '/api/documents/photos/:id',
+      '/api/documents/signature',
+      '/api/sign',
+      '/api/sign/photos/:id',
+      '/api/sign/signature',
+      '/api/sign/signature/:id',
+    ]);
     const id = '0b5a1c1e-7d2f-4c8e-9a6b-3f4e5d6c7b8a';
-    for (const path of ['/api/sign', '/api/sign/signature', `/api/sign/signature/${id}`, '/api/documents', '/api/documents/signature']) {
+    for (const path of ['/api/sign', '/api/sign/signature', `/api/sign/signature/${id}`, `/api/sign/photos/${id}`, '/api/documents', '/api/documents/signature', `/api/documents/photos/${id}`]) {
       expect({ path, next: call(path).headers.get('x-middleware-next') }).toEqual({ path, next: '1' });
     }
     for (const path of ['/api/sign/', '/api/sign/x', '/api/sign/signature/not-a-uuid', '/api/signs', '/api/documents/x', `/api/documents/${id}`, '/api/sign/..%2Fme']) {

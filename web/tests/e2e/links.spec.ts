@@ -24,6 +24,7 @@ const TOKEN = 'T0kenForTheLinkPageTestsOnly_abcdefghijklmn'.slice(0, 43);
 const COMPANY = 'Synthetic Restoration Test Co';
 const AUTHORIZATION = 'Synthetic start-work authorization.\nSecond line, as entered.';
 const PAYMENT = 'Synthetic payment terms.';
+const OTHER_TOKEN = 'D0cumentsLinkTokenForTheLinkPageTestsOnly_abcdef'.slice(0, 43);
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=', 'base64');
 
 function estimate(): LinkEstimate {
@@ -74,14 +75,14 @@ function estimate(): LinkEstimate {
   };
 }
 
-function signedFor(shown: LinkEstimate, signatureId: string, name: string): SignedAgreement {
+function signedFor(shown: LinkEstimate, signatureId: string, name: string, role?: 'homeowner' | 'adjuster' | 'other'): SignedAgreement {
   const record: SignedRecord = {
     format: SIGNED_FORMAT,
     agreement_id: randomUUID(),
     job_id: randomUUID(),
     kind: 'original',
     signed_at: '2026-11-15T18:30:00.000Z',
-    signer: { name },
+    signer: role ? { name, role } : { name },
     signed_with: { kind: 'link', link_id: randomUUID() },
     signature: { id: signatureId, sha256: 'f'.repeat(64), content_type: 'image/png' },
     proposal_sha256: shown.proposalSha256,
@@ -124,6 +125,7 @@ async function expectNoSideways(page: Page) {
 
 async function drawSignature(page: Page) {
   const pad = page.getByRole('img', { name: /signature/i }).or(page.locator('canvas')).first();
+  await pad.scrollIntoViewIfNeeded();
   const box = (await pad.boundingBox())!;
   await page.mouse.move(box.x + 20, box.y + 30);
   await page.mouse.down();
@@ -139,16 +141,23 @@ test('the homeowner reads the documents with the company’s terms, signs once, 
     if (call.method === 'GET' && call.path === '/api/sign') return [200, { status: 'pending', companyName: COMPANY, expiresAt: '2026-11-22T18:00:00.000Z', estimate: shown }];
     if (call.method === 'PUT' && call.path.startsWith('/api/sign/signature/')) return [201, { signatureId: call.path.split('/').pop(), sha256: 'f'.repeat(64) }];
     if (call.method === 'POST' && call.path === '/api/sign') {
-      const body = call.body as { signatureId: string; signerName: string };
-      signed = signedFor(shown, body.signatureId, body.signerName);
-      return [201, { agreement: signed }];
+      const body = call.body as { signatureId: string; signerName: string; signerRole: 'homeowner' };
+      signed = signedFor(shown, body.signatureId, body.signerName, body.signerRole);
+      const link = (set: string) => ({ id: randomUUID(), set, status: 'active', createdAt: '2026-11-15T18:30:00.000Z', expiresAt: '2026-12-15T18:30:00.000Z', endedAt: null });
+      return [201, { agreement: signed, documentLinks: [{ link: link('homeowner'), token: OTHER_TOKEN }] }];
     }
     if (call.method === 'GET' && call.path === '/api/sign/signature') return PNG;
+    if (call.method === 'GET' && call.path.startsWith('/api/sign/photos/')) return PNG;
     return [500, { error: 'unexpected' }];
   });
   await page.goto(`/sign#${TOKEN}`);
   const main = page.getByRole('main');
   await expect(main.getByRole('heading', { name: 'Review and sign your estimate' })).toBeVisible();
+  // Each photo of the log opens on request, through the link's own photo route.
+  const photoId = (shown.documents.photo_log[0] as { id: string }).id;
+  await main.getByText('Photo audit log').click();
+  await main.getByRole('button', { name: 'Show photo 1' }).click();
+  await expect(main.getByRole('img', { name: 'Photo 1' })).toBeVisible();
   await expect(main.getByText(`From ${COMPANY}.`, { exact: false })).toBeVisible();
   await expect(main.getByText('Synthetic start-work authorization.', { exact: false })).toBeVisible();
   await expect(main.getByText(PAYMENT, { exact: false })).toBeVisible();
@@ -164,11 +173,18 @@ test('the homeowner reads the documents with the company’s terms, signs once, 
   await main.getByRole('checkbox', { name: /I agree to sign electronically/ }).check();
   await main.getByLabel('Your full name').fill('  Casey Customer ');
   await drawSignature(page);
+  // Who signs is asked too.
+  await main.getByRole('button', { name: 'Sign', exact: true }).click();
+  await expect(main.getByText('Choose who is signing.')).toBeVisible();
+  await main.getByRole('radio', { name: 'Homeowner' }).check();
   await expectNoAxeViolations(page);
   await main.getByRole('button', { name: 'Sign', exact: true }).click();
 
   await expect(main.getByRole('heading', { name: 'Your signed estimate' })).toBeVisible();
-  await expect(main.getByTestId('signed-by')).toHaveText('Signed by Casey Customer');
+  await expect(main.getByTestId('signed-by')).toHaveText('Signed by Casey Customer, homeowner');
+  // The link to the signed documents made at signing, shown this once.
+  await expect(main.getByRole('heading', { name: 'Links to your signed documents' })).toBeVisible();
+  await expect(main.getByRole('textbox', { name: "Homeowner's documents link" })).toHaveValue(new RegExp(`/documents#${OTHER_TOKEN}$`));
   await expect(main.getByTestId('signed-how')).toContainText('Signed through signing link');
   await expectNoAxeViolations(page);
   await expectNoSideways(page);
@@ -181,7 +197,8 @@ test('the homeowner reads the documents with the company’s terms, signs once, 
   }
   const posted = sent.filter((call) => call.method === 'POST');
   expect(posted).toHaveLength(1);
-  expect(posted[0]!.body).toMatchObject({ signerName: 'Casey Customer', documentsConfirmed: true, electronicConsent: true });
+  expect(posted[0]!.body).toMatchObject({ signerName: 'Casey Customer', signerRole: 'homeowner', documentsConfirmed: true, electronicConsent: true });
+  expect(sent.filter((call) => call.path.startsWith('/api/sign/photos/')).map((call) => call.path)).toEqual([`/api/sign/photos/${photoId}`]);
   expect(posted[0]!.body).not.toHaveProperty('estimateId');
 });
 
@@ -219,10 +236,10 @@ test('a used link shows the signed page read-only', async ({ page }) => {
 
 test('the documents page shows the homeowner’s set and the adjuster’s set, read-only', async ({ page }) => {
   const shown = estimate();
-  const signed = { name: 'Casey Customer', signedAt: '2026-11-15T18:30:00.000Z', how: 'Signed through signing link.' };
+  const signed = { name: 'Casey Customer', role: 'homeowner', signedAt: '2026-11-15T18:30:00.000Z', how: 'Signed through signing link.' };
   let set: 'homeowner' | 'adjuster' = 'homeowner';
   await playLinks(page, (call) => {
-    if (call.path === '/api/documents/signature') return PNG;
+    if (call.path === '/api/documents/signature' || call.path.startsWith('/api/documents/photos/')) return PNG;
     if (set === 'homeowner') {
       return [200, { set, companyName: COMPANY, expiresAt: '2026-12-15T18:30:00.000Z', signed, signatureSha256: 'f'.repeat(64), proposalSha256: shown.proposalSha256, proposal: shown.proposal, photoLog: shown.documents.photo_log }];
     }
@@ -233,6 +250,9 @@ test('the documents page shows the homeowner’s set and the adjuster’s set, r
   await expect(main.getByRole('heading', { name: 'Signed proposal' })).toBeVisible();
   await expect(main.getByText('Synthetic start-work authorization.', { exact: false })).toBeVisible();
   await expect(main.getByRole('img', { name: 'Signature of Casey Customer' })).toBeVisible();
+  await expect(main.getByText('Signed by Casey Customer, homeowner').first()).toBeVisible();
+  await main.getByRole('button', { name: 'Show photo 1' }).click();
+  await expect(main.getByRole('img', { name: 'Photo 1' })).toBeVisible();
   await expect(main.getByRole('heading', { name: 'Itemized claim' })).toHaveCount(0);
   await expectNoAxeViolations(page);
   await expectNoSideways(page);
@@ -316,6 +336,7 @@ test('signing again after the answer was lost returns the agreement already made
   await main.getByRole('checkbox', { name: /I reviewed the proposal/ }).check();
   await main.getByRole('checkbox', { name: /I agree to sign electronically/ }).check();
   await main.getByLabel('Your full name').fill('Casey Customer');
+  await main.getByRole('radio', { name: 'Homeowner' }).check();
   await drawSignature(page);
   await main.getByRole('button', { name: 'Sign', exact: true }).click();
   await expect(main.getByRole('alert')).toContainText('We could not reach DryScope.');
