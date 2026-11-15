@@ -1,20 +1,11 @@
 name: Deploy
 
-# Releases a master commit to production after its CI run succeeds, using the manual release path
-# (scripts/auto_deploy.py): stage a tagged 0% revision, run the staged checks, promote, deploy only
-# hosting:alert-disaster, verify, and roll back automatically if verification fails. It never deploys
-# Firestore rules or indexes; a merge that changes them stops here for a hand release. The release
-# record is this run's job summary. Setup and the one-time owner steps: docs/firebase-isolation.md,
-# "Automatic deploys".
+# Legacy deployment is manual-only; automatic deployment is disabled.
+# Setup and owner instructions: docs/firebase-isolation.md.
 #
 # workflow_dispatch with version blank runs the same refusal checks with nothing staged or deployed,
-# to prove the setup. With version set, it rolls production back to that version. An automatic run
-# never confirms a baseline that turns off a serving feature; only a rollback dispatch or a hand run can.
+# to prove the setup. With version set, it rolls production back to that version.
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
-    branches: [master]
   workflow_dispatch:
     inputs:
       version:
@@ -39,9 +30,7 @@ permissions:
 
 jobs:
   deploy:
-    # AUTO_DEPLOY_ENABLED is a repository variable the owner sets to 'true' after the one-time setup;
-    # set it to anything else to pause automatic deploys. Only a successful CI push run on master
-    # in this repository qualifies; pull request runs never deploy.
+    # AUTO_DEPLOY_ENABLED must be true for a manual dispatch to run.
     if: >-
       vars.AUTO_DEPLOY_ENABLED == 'true' && (
         github.event_name == 'workflow_dispatch' || (
