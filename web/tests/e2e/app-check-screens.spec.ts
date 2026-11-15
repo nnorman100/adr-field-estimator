@@ -103,6 +103,20 @@ const VISITS: Visit[] = [
     },
   },
   {
+    // The homeowner's pages need Postgres, which this server does not run, so the link routes'
+    // answers are played at the network boundary, as links.spec.ts does: an unavailable link.
+    name: 'the signing and documents link pages',
+    baseURL: APP_CHECK_BASE_URL,
+    screens: ['/sign', '/documents'],
+    run: async (page) => {
+      await page.route(/\/api\/(sign|documents)(\/|\?|$)/, (route) => route.fulfill({ status: 404, json: { error: 'link_unavailable' } }));
+      for (const path of ['/sign', '/documents']) {
+        await open(page, `${path}#${'a'.repeat(43)}`);
+        await expect(page.getByRole('main').getByRole('heading', { name: 'This link cannot be used' })).toBeVisible();
+      }
+    },
+  },
+  {
     name: 'sign-in, team with a new invitation, the invitation, and company settings',
     baseURL: APP_CHECK_BASE_URL,
     screens: ['/sign-in/[address]', '/sign-in/[address]/team', '/sign-in/[address]/invitations/[invitationId]', '/sign-in/[address]/company'],

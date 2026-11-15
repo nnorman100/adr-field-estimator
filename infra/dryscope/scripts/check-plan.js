@@ -375,7 +375,7 @@ function expectedPlan(root, env) {
         condition: null,
       };
     }
-    addAiData(env, { sa, others, grants, attrs, absent, optional, wif });
+    addAiData(env, { sa, others, grants, attrs, absent, optional, wif, empty, unchangedNoOp });
     addTcData(env, { sa, others, grants, attrs, absent, optional });
     lists['google_project_iam_custom_role.identity_users'] = { permissions: IDENTITY_PERMISSIONS };
     attrs['google_project_iam_custom_role.identity_users'] = {
@@ -520,11 +520,11 @@ function expectedPlan(root, env) {
 }
 
 const get = (obj, path) => path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
-const same = (want, got) =>
+const same = (want, got, rc) =>
   want instanceof RegExp
     ? typeof got === 'string' && want.test(got)
     : typeof want === 'function'
-      ? want(got)
+      ? want(got, rc)
       : JSON.stringify(want) === JSON.stringify(got);
 // Unset, as the provider reports it against real state: null, an empty list or map, or "" (a
 // scheduler job's `headers = {}` and `body = ""`, a never-released service's revision name).
@@ -532,6 +532,27 @@ const empty = (v) =>
   v == null ||
   v === '' ||
   (Array.isArray(v) ? v.length === 0 : typeof v === 'object' && Object.keys(v).length === 0);
+const canon = (v) =>
+  Array.isArray(v)
+    ? v.map(canon)
+    : v && typeof v === 'object'
+      ? Object.fromEntries(
+          Object.keys(v)
+            .sort()
+            .map((k) => [k, canon(v[k])]),
+        )
+      : v;
+// True when a resource change is an unchanged no-op whose planned state equals existing state.
+const unchangedNoOp = (rc) => {
+  const { actions = [], before, after } = rc?.change ?? {};
+  return (
+    actions.length === 1 &&
+    actions[0] === 'no-op' &&
+    before != null &&
+    after != null &&
+    same(canon(before), canon(after))
+  );
+};
 // Plain (not secret) env settings of a Cloud Run service's first container, by name.
 const envOf = (state) => state?.template?.[0]?.containers?.[0]?.env ?? [];
 const plainEnv = (state) =>
@@ -643,16 +664,6 @@ function checkPlan(resourceChanges, { root, environment, complete = true, reappl
       if (copy.template?.[0]) delete copy.template[0].revision;
       return copy;
     };
-    const canon = (v) =>
-      Array.isArray(v)
-        ? v.map(canon)
-        : v && typeof v === 'object'
-          ? Object.fromEntries(
-              Object.keys(v)
-                .sort()
-                .map((k) => [k, canon(v[k])]),
-            )
-          : v;
     return same(canon(strip(before)), canon(strip(after)));
   };
 
@@ -757,10 +768,11 @@ function checkPlan(resourceChanges, { root, environment, complete = true, reappl
   }
 
   for (const [address, expected] of Object.entries(want.attrs)) {
-    const after = byAddress.get(address)?.change?.after;
+    const rc = byAddress.get(address);
+    const after = rc?.change?.after;
     if (!after) continue;
     for (const [path, value] of Object.entries(expected)) {
-      if (!same(value, get(after, path))) {
+      if (!same(value, get(after, path), rc)) {
         problems.push(
           `${address}: ${path} is ${JSON.stringify(get(after, path))}, expected ${value}`,
         );
