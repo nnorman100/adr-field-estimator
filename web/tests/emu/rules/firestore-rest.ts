@@ -96,6 +96,17 @@ export function deleteDoc(caller: Caller, path: string): Promise<number> {
   return send(caller, `${documents}/${path}`, 'DELETE');
 }
 
+// Runs a structured query on one collection under `parentPath` (a document path, or '' for the
+// root), filtered by one string field, as a client SDK's `where(field, '==', value)` sends it.
+export function queryDocs(caller: Caller, parentPath: string, collectionId: string, field: string, value: string): Promise<number> {
+  return send(caller, `${documents}${parentPath ? `/${parentPath}` : ''}:runQuery`, 'POST', {
+    structuredQuery: {
+      from: [{ collectionId }],
+      where: { fieldFilter: { field: { fieldPath: field }, op: 'EQUAL', value: encode(value) } },
+    },
+  });
+}
+
 export type Write = { path: string; data: Data; create?: boolean };
 
 // One batched write (a `commit` with several writes), as the phone's SDK sends a `writeBatch`.
