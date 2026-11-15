@@ -22,15 +22,16 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
   const readOnly = !job.editable;
   const full = draft.rooms.length >= MAX_ROOMS;
   const { user } = job.session;
-  const jobId = job.detail.job.id;
+  const jobId = job.jobId;
 
   function loadLists() {
+    if (!job.session.online) return;
     void readScopeLists(user, jobId).then((answer) => {
       setLists(answer.ok ? answer.value : null);
       setListsError(answer.ok ? null : 'The room types, items and prep tasks could not be read. ' + answer.message);
     });
   }
-  useEffect(loadLists, [user, jobId]);
+  useEffect(loadLists, [user, jobId, job.session.online]);
 
   async function remove(roomId: string, label: string) {
     if (!window.confirm(`Remove ${label} from this job?`)) return;

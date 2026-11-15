@@ -2,6 +2,7 @@
 // Only the SQL reads are stand-ins; field writes and their receipts use the real emulator/rules.
 import { randomUUID } from 'node:crypto';
 import { HIDDEN_TEXT } from '../../../src/app/field/field-store-text';
+import { firestoreJobProjectionStore } from '../../../src/lib/jobs/projection';
 import { keepKey } from '../../../src/lib/field/keep-consent';
 import { unsentKey } from '../../../src/lib/field/unsent';
 import { expect, expectNothingSent, SEND_MS, test } from './fixture';
@@ -27,6 +28,7 @@ async function openJob(page: Page, lane: NetworkLane, world: World, jobId: strin
   lane.serve(`/api/jobs/${jobId}/scope-lists`, { type: 'application/json', body: JSON.stringify({
     version: null, roomTypes: [], items: [], prepTasks: ['Protect contents'],
   }) });
+  await firestoreJobProjectionStore(adminDb()).projectJob(world.companyId, jobId, { currentDraftId: world.draftId, revision: 1 });
   await page.goto(`${lane.appUrl}/field?job=${jobId}`);
   await page.getByRole('button', { name: 'Keep jobs on this phone' }).click();
   await expect(page.getByLabel('Year built')).toBeEditable();
@@ -111,8 +113,7 @@ test('a person locked out past 30 days sees no job inputs offline, and no local 
   expect(await mark(phone.page, world)).toMatchObject({ unsentSince: expect.any(Number), lockedReason: 'member-disabled' });
 });
 
-// This proves persistence of the screen's edit, independent of the pending design for displaying
-// the entire job while offline after reload: it must be intact when the job next opens online.
+// The same job-only URL reopens the current field draft with no SQL/API copy on the phone.
 test('a scope edit made by the screen survives an offline reload and syncs after reconnect', async ({ context, lane }) => {
   const world = await seedCompany();
   const phone = await signedIn(context, lane, world);
@@ -130,6 +131,11 @@ test('a scope edit made by the screen survives an offline reload and syncs after
   await expect(page.getByRole('form', { name: 'Job scope' }).getByRole('status')).toContainText('Saved on this phone');
   const unsentBefore = await mark(page, world);
   await page.reload();
+  await expect(page.getByLabel('Year built')).toHaveValue('1962');
+  await page.getByRole('link', { name: 'Customer and claim' }).click();
+  await expect(page.getByText('Needs a connection', { exact: true }).first()).toBeVisible();
+  await expect(page.getByLabel('Customer name')).toHaveCount(0);
+  await page.getByRole('link', { name: 'Check Scope' }).click();
   await expect.poll(() => mark(page, world)).toMatchObject({ unsentSince: unsentBefore.unsentSince });
   expect((await readDraft(world)).field).not.toHaveProperty('yearBuilt');
   await expectNothingSent(lane);
@@ -157,4 +163,33 @@ test('a phone that cannot save its unsent mark makes no field edit and keeps the
   await expect(page.getByRole('form', { name: 'Job scope' }).getByRole('alert')).toContainText('phone could not record');
   await expect(page.getByLabel('Year built')).toHaveValue('1962');
   expect((await readDraft(world)).field).not.toHaveProperty('yearBuilt');
+});
+
+test('an online-refreshed current-draft locator reopens the newer field draft offline', async ({ context, lane }) => {
+  const world = await seedCompany();
+  const phone = await signedIn(context, lane, world);
+  const page = phone.page;
+  const jobId = randomUUID();
+  await openJob(page, lane, world, jobId);
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  // Unsaved inputs from the retired draft cannot become inputs on the new draft.
+  await page.getByLabel('Year built').fill('1962');
+  lane.cut();
+  await page.evaluate(() => window.dispatchEvent(new Event('offline')));
+  await expect(page.getByText(/No signal/)).toBeVisible();
+  const nextDraftId = randomUUID();
+  await adminDb().doc(`companies/${world.companyId}/drafts/${nextDraftId}`).set({
+    fieldOwnerUid: world.owner.uid, state: 'editing', field: { yearBuilt: 2001 },
+  });
+  await firestoreJobProjectionStore(adminDb()).projectJob(world.companyId, jobId, { currentDraftId: nextDraftId, revision: 2 });
+  // The slower SQL response still names the old draft; the newer server-owned locator wins.
+  lane.restore();
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await expect(page.getByLabel('Year built')).toHaveValue('2001');
+  await page.reload();
+  await expect(page.getByLabel('Year built')).toHaveValue('2001');
+  lane.cut();
+  await page.reload();
+  await expect(page.getByLabel('Year built')).toHaveValue('2001');
+  await expect(page.getByLabel('Year built')).toBeEditable();
 });

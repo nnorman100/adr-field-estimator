@@ -29,7 +29,7 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
   const [shotTag, setShotTag] = useState('');
   // Photos sent and not yet settled, kept for the life of the page (src/lib/field/pending.ts), so
   // leaving this screen never drops one: its id and bytes stay for "Send again".
-  const jobId = job.detail.job.id;
+  const jobId = job.jobId;
   const pending = usePending(() => unsent.photos(jobId));
   // Whether this screen is still open when a send settles.
   const live = useRef(true);
@@ -161,7 +161,7 @@ function Thumbnail({ job, load, photoId, label }: { job: JobContext; load: boole
   useEffect(() => {
     if (!fetching) return;
     let live = true;
-    void photoAddress(job.session.user, job.detail.job.id, photoId).then((found) => {
+    void photoAddress(job.session.user, job.jobId, photoId).then((found) => {
       if (typeof found === 'string') {
         if (live) setAddress(found);
         else URL.revokeObjectURL(found);
@@ -173,7 +173,7 @@ function Thumbnail({ job, load, photoId, label }: { job: JobContext; load: boole
     return () => {
       live = false;
     };
-  }, [fetching, job.session.user, job.detail.job.id, photoId, checkAccess]);
+  }, [fetching, job.session.user, job.jobId, photoId, checkAccess]);
   useEffect(
     () => () => {
       if (address !== null && address !== 'missing') URL.revokeObjectURL(address);

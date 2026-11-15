@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import type { JobProjection } from '@/lib/field/job-projection';
 import type { FieldManifest } from '@/lib/field/canonical';
 import type { FenceResult, FenceStore, Provenance } from '@/lib/submissions/fence';
 import type { FakeDrafts } from '../db/draft-fake';
@@ -52,6 +53,7 @@ type Method = keyof FenceStore;
 export type FakeField = FenceStore & {
   // The drafts as stored now (a copy).
   data(): FieldData;
+  projected: Map<string, JobProjection>;
   draft(companyId: string, draftId: string): FakeDraft | null;
   // Writes field data as the phone would while the draft is editing (the rules are not modelled:
   // tests/emu/ checks them).
@@ -112,6 +114,11 @@ export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts:
     failNext: {},
     gate: {},
     calls: [],
+    projected: new Map(),
+    projectJob: (companyId, jobId, projection) => call('projectJob', () => {
+      const at = key(companyId, jobId);
+      if ((fake.projected.get(at)?.revision ?? -1) < projection.revision) fake.projected.set(at, { ...projection });
+    }),
     data: () => load(),
     draft: (companyId, draftId) => load()[key(companyId, draftId)] ?? null,
     put(companyId, draftId, manifest, fieldOwnerUid = null) {

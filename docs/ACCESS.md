@@ -228,3 +228,8 @@ The standard's required test, one named suite (S3-17), run by `npm run test:isol
 - Refuse before reading when the caller lacks the role, so refusals cannot probe other companies.
 - Add the route's row to `web/tests/db/isolation-matrix.ts` (the isolation gate fails without it) and give any new table a case in the SQL part of the suite if it is not found from the catalog.
 - Audit anything superadmins do.
+
+
+## Field database job locators (S6 follow-up)
+
+`companies/{companyId}/jobs/{jobId}` is server-written, containing only the current draft ID and SQL revision. Its single-document `get` requires the same tenant, unexpired company access, second-step policy and field-draft read permission as the target draft: owner/office may read company drafts; an estimator only their field-owned draft. A locator never grants access by itself. Collection queries and every client create/update/delete are denied. No new capability or API route is introduced. Existing job create/read and Back to editing server paths project only their authorized SQL result; the SQL revision prevents older delayed writes from restoring an old draft. The phone caches the locator in the existing person-scoped field client, behind the sync gate and retention boundary. SQL customer/claim/job operations remain online-only.

@@ -8,6 +8,8 @@ rules_version = '2';
 // - companies/{companyId}/access/{uid}: one person's access to that company, written by the
 //   server after a membership change commits in Postgres. `role` is owner, estimator or office;
 //   `expiresAt` is a timestamp, and the record stops working at that time.
+// - companies/{companyId}/jobs/{jobId}: server-only locator { currentDraftId: string (1..64), revision: nonnegative int }.
+//   Single-document reads need permission on its current draft; no listing or client writes.
 // - companies/{companyId}/drafts/{draftId}: a draft. `fieldOwnerUid`, `state` (editing,
 //   submitting or submitted), `fence` (the submission holding it, S5a-8) and `previous` (the
 //   submitted draft a "Back to editing" version came from) are the server's
@@ -190,6 +192,18 @@ service cloud.firestore {
         && okId(f, 'roomId')
         && (!('shotTag' in f)
           || f.shotTag in ['overview', 'source', 'surface', 'meter', 'contents', 'equipment']);
+    }
+
+    match /companies/{companyId}/jobs/{jobId} {
+      // A locator grants no rights: the live draft and company access record decide. All client
+      // creates, updates, deletes and collection queries stay denied by default.
+      allow get: if resource.data.keys().hasOnly(['currentDraftId', 'revision'])
+        && resource.data.currentDraftId is string
+        && resource.data.currentDraftId.size() > 0
+        && resource.data.currentDraftId.size() <= 64
+        && resource.data.currentDraftId.matches('[A-Za-z0-9_-]+')
+        && resource.data.revision is int && resource.data.revision >= 0
+        && canRead(companyId, get(/databases/$(database)/documents/companies/$(companyId)/drafts/$(resource.data.currentDraftId)).data);
     }
 
     match /companies/{companyId}/drafts/{draftId} {

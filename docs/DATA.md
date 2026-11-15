@@ -528,6 +528,7 @@ The rules deny every path they do not name. They read three server-written recor
 | Path | Fields the rules read | Who may change it |
 | --- | --- | --- |
 | `companies/{companyId}` (company header) | `authTenantId`, the company's sign-in tenant | server only |
+| `companies/{companyId}/jobs/{jobId}` (job locator) | `currentDraftId` (one document ID, 1..64 characters) and `revision` (nonnegative SQL job revision); no SQL customer/claim/header data | server only; create and authorized job reads populate it, Back to editing advances it; delayed older revisions cannot replace a newer locator |
 | `companies/{companyId}/access/{uid}` (access record) | `role` (owner, estimator or office) and `expiresAt` (a timestamp; the record stops working then) | server only |
 | `companies/{companyId}/drafts/{draftId}`, its `rooms/{roomId}` and its `photos/{photoId}` | draft: `fieldOwnerUid` and `state` (editing, submitting or submitted); client data sits in one `field` map in each document | the draft's field owner changes only `field`, while the draft is `editing`; the server creates and removes drafts. `POST /api/jobs` (S5a-3) makes a job's first draft after its Postgres row, as `{ fieldOwnerUid, state: 'editing', field: {} }` (no `fieldOwnerUid` key while nobody owns the field work), and a retry makes it only if it is missing |
 
@@ -614,3 +615,6 @@ How the access records follow Postgres (S3-12, `web/src/lib/projection/`):
   later membership change of the same member projects them. Opening
   the app does not retry them: a removed member is refused before renewal runs, and renewal leaves a
   row alone while it waits out its back-off.
+
+
+The S6 job locator is a read-only Firestore projection, not job authority. `web/src/lib/jobs/projection.ts` writes it after the SQL job commit and after the new draft is materialized. An authorized `GET /api/jobs/{id}` lazily populates existing jobs and repairs missing projections; there is no bulk migration. Its Firestore transaction keeps the highest observed SQL revision and leaves identical retries unchanged. The phone reads the actual locator and draft into its per-person Firestore cache before showing field inputs, so the same job URL can reopen with no signal. Offline it displays only field data, with a generic heading; customer, claim and new-job actions need a connection. The worker never caches that API response. Only a single locator read is allowed, and only with permission on the projected draft in that company; all client writes and collection queries are denied. Signing and submitted field-state fences remain authoritative and unchanged. An unseen server change cannot be learned offline; the next online open refreshes the locator.

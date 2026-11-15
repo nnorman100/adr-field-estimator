@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { readJob, type JobDetail, type Refusal } from '@/lib/field/api';
+import { loadJobProjection, type JobProjection } from '@/lib/field/job-projection';
 import { newerDetail, pending, usePending } from '@/lib/field/pending';
 import type { FieldSession } from '@/lib/field/session';
 import { canEditDraft, fieldRefusal, InvalidFieldData, loadDraft, type DraftRef, type FieldDraft } from '@/lib/field/store';
@@ -20,7 +21,8 @@ const TABS: { view: JobView; label: string }[] = [
 
 export type JobContext = {
   session: FieldSession;
-  detail: JobDetail;
+  detail: JobDetail | null;
+  jobId: string;
   // Keeps a job answered to a request made under `mark` (src/lib/field/pending.ts).
   setDetail: (detail: JobDetail, mark: number) => void;
   // Reads the job again and answers it (null when it could not be read).
@@ -60,7 +62,10 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     [jobId],
   );
   const draftChanges = usePending(() => pending.draftChanges(jobId));
+  const [locator, setLocator] = useState<JobProjection | null>(null);
+  const [cachedError, setCachedError] = useState<string | null>(null);
   const [draft, setDraft] = useState<FieldDraft | null>(null);
+  const [draftAt, setDraftAt] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [draftError, setDraftError] = useState<string | null>(null);
 
@@ -74,11 +79,12 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   );
 
   const reloadDraft = useCallback(
-    async (current?: JobDetail, source?: 'cache') => {
-      const job = current ?? detail;
-      if (!job || !session.db) return;
+    async (currentDraftId?: string, source?: 'cache') => {
+      const draftId = currentDraftId ?? locator?.currentDraftId ?? detail?.job.currentDraftId;
+      if (!draftId || !session.db) return;
       try {
-        const found = await loadDraft(session.db, { companyId: session.companyId, draftId: job.job.currentDraftId }, source);
+        const found = await loadDraft(session.db, { companyId: session.companyId, draftId }, source);
+        setDraftAt(draftId);
         setDraft(found);
         setDraftError(found ? null : 'The field work of this job is not there yet. Try again in a moment.');
       } catch (error) {
@@ -96,7 +102,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
         );
       }
     },
-    [detail, session, deny],
+    [detail, locator, session, deny],
   );
 
   const apply = useCallback(
@@ -109,10 +115,22 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
         return null;
       }
       setDetail(answer.value, sentAt);
-      await reloadDraft(answer.value);
+      try {
+        // The API populated this server-owned locator, including for jobs made before S6. Read
+        // the document itself to warm the person cache; never cache the API response.
+        const head = await loadJobProjection(session.db, session.companyId, jobId);
+        if (!head) throw new Error('Job locator unavailable');
+        setLocator(head);
+        setCachedError(null);
+        await reloadDraft(head.currentDraftId);
+      } catch (error) {
+        const refusal = fieldRefusal(error);
+        if (refusal) deny(refusal.message);
+        else setDraftError('The field work could not be opened. Try again when connected.');
+      }
       return answer.value;
     },
-    [reloadDraft, setDetail, jobId],
+    [reloadDraft, setDetail, jobId, session, deny],
   );
 
   const reloadJob = useCallback(async () => {
@@ -150,6 +168,30 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.online]);
 
+  // An offline start needs only the locator and field maps already in this person's cache.
+  // The gate still owns all network access and retention. No SQL job/customer/claim is invented.
+  useEffect(() => {
+    if (session.online || detail || denial) return;
+    let live = true;
+    void (async () => {
+      try {
+        const head = await loadJobProjection(session.db, session.companyId, jobId, 'cache');
+        if (!head) throw new Error('Job not kept on this phone');
+        const found = await loadDraft(session.db, { companyId: session.companyId, draftId: head.currentDraftId }, 'cache');
+        if (!found) throw new Error('Draft not kept on this phone');
+        if (!live) return;
+        setLocator(head);
+        setDraftAt(head.currentDraftId);
+        setDraft(found);
+        setDraftError(null);
+        setCachedError(null);
+      } catch {
+        if (live) setCachedError('Open this job once online to keep its field work on this phone.');
+      }
+    })();
+    return () => { live = false; };
+  }, [session.online, session.db, session.companyId, jobId, detail, denial]);
+
   // A photo that settled after an earlier screen of this job closed changed the draft: read it again.
   useEffect(() => {
     // Read after this render, as an answer to the change the store posted.
@@ -168,25 +210,31 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       </div>
     );
   }
-  if (!detail) return <p role="status">{session.online ? 'Opening the job…' : 'Needs a connection'}</p>;
+  if (!detail && (!locator || !draft)) {
+    return <p role="status">{session.online ? 'Opening the job…' : cachedError ?? 'Opening saved field work…'}</p>;
+  }
+  const draftId = locator?.currentDraftId ?? detail!.job.currentDraftId;
 
   const context: JobContext = {
     session,
     detail,
+    jobId,
     setDetail,
     reloadJob,
     draft,
-    draftRef: { companyId: session.companyId, draftId: detail.job.currentDraftId },
-    reloadDraft: (source) => reloadDraft(detail, source),
+    // Until a newer locator's draft finishes loading, the old form remains bound to its own
+    // document and read-only. Typed values from it must never be written onto a different draft.
+    draftRef: { companyId: session.companyId, draftId: draftAt ?? draftId },
+    reloadDraft: (source) => reloadDraft(draftAt ?? draftId, source),
     checkAccess,
-    editable: draft !== null && canEditDraft(draft, session.user.uid, session.capabilities) && (session.online || session.offlineCapture),
+    editable: draftAt === draftId && draft !== null && canEditDraft(draft, session.user.uid, session.capabilities) && (session.online || session.offlineCapture),
     stale: draft !== null && draftError !== null,
   };
 
   return (
     <div className="flex flex-col gap-4">
       <FieldLink to={{ view: 'jobs', list: null }}>Back to jobs</FieldLink>
-      <h2 className="text-xl font-semibold break-words">{detail.job.propertyAddress || 'No address yet'}</h2>
+      <h2 className="text-xl font-semibold break-words">{detail ? detail.job.propertyAddress || 'No address yet' : 'Saved field work'}</h2>
       <nav aria-label="Job" className="flex flex-wrap gap-x-4">
         {TABS.map((tab) => (
           <FieldLink key={tab.view} to={{ view: tab.view, jobId }} current={tab.view === view} className={tab.view === view ? 'font-semibold' : undefined}>
@@ -205,17 +253,17 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       {(view === 'scope' || view === 'photos') && draftError ? (
         <div className="flex flex-col gap-2">
           <p role="alert">{draftError}</p>
-          <Button variant="outline" onClick={() => void reloadDraft(detail)}>
+          <Button variant="outline" onClick={() => void reloadDraft(draftId)}>
             Try again
           </Button>
         </div>
       ) : null}
       {/* The views of one job stay mounted and only the open one shows, so moving between them
           keeps what the person has typed and not saved. */}
-      <div hidden={view !== 'scope'}>{draft ? <ScopeView job={context} draft={draft} /> : null}</div>
-      <div hidden={view !== 'photos'}>{draft ? <PhotosView job={context} draft={draft} open={view === 'photos'} /> : null}</div>
+      <div hidden={view !== 'scope'}>{draft ? <ScopeView key={draftAt} job={context} draft={draft} /> : null}</div>
+      <div hidden={view !== 'photos'}>{draft ? <PhotosView key={draftAt} job={context} draft={draft} open={view === 'photos'} /> : null}</div>
       <div hidden={view !== 'customer'}>
-        <CustomerView job={context} />
+        {detail ? <CustomerView job={{ ...context, detail }} /> : <p role="status">Needs a connection</p>}
       </div>
     </div>
   );

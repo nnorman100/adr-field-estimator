@@ -81,6 +81,7 @@ describe('Back to editing', () => {
     const answer = await f.nextDraft(ESTIMATOR_A, jobId, { draftId: next, fromDraftId: draftId });
     expect(answer).toEqual({ status: 201, body: { job: { id: jobId, status: 'draft', currentDraftId: next, revision: before.revision + 1 } } });
     expect(await f.job(jobId)).toMatchObject({ status: 'draft', current_draft_id: next, last_change_id: next });
+    expect(h.field.projected.get(`${h.seed.a}/${jobId}`)).toEqual({ currentDraftId: next, revision: before.revision + 1 });
     const made = h.field.draft(h.seed.a, next)!;
     expect(made).toMatchObject({ state: 'editing', fence: null, fieldOwnerUid: 'estimator-a', previous: { draftId, submissionId } });
     const stored = JSON.parse(canonicalManifest(manifest));
@@ -212,4 +213,18 @@ describe('Back to editing', () => {
     expect((await f.nextDraft(ESTIMATOR_A, jobId, { draftId: third, fromDraftId: second })).status).toBe(200);
     expect(h.field.draft(h.seed.a, third)?.previous).toMatchObject({ draftId: second });
   });
+});
+
+
+it('retries a failed locator after the SQL draft change without making another draft', async () => {
+  const { jobId, draftId } = await submittedJob();
+  const body = { draftId: randomUUID(), fromDraftId: draftId };
+  h.field.failNext.projectJob = true;
+  expect((await f.nextDraft(ESTIMATOR_A, jobId, body)).status).toBe(503);
+  const after = await f.job(jobId);
+  expect(after.current_draft_id).toBe(body.draftId);
+  expect(h.field.draft(h.seed.a, body.draftId)).not.toBeNull();
+  expect((await f.nextDraft(ESTIMATOR_A, jobId, body)).status).toBe(200);
+  expect(await f.job(jobId)).toEqual(after);
+  expect(h.field.projected.get(`${h.seed.a}/${jobId}`)).toEqual({ currentDraftId: body.draftId, revision: after.revision });
 });
