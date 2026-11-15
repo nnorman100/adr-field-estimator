@@ -1,9 +1,8 @@
 // `npm run test:emu`: starts the Firebase Auth and Firestore emulators, runs tests/emu against
 // them and stops them. DRYSCOPE_EMU_PROJECT picks the project id; anything not starting with
 // `demo-` is refused before the Firebase CLI starts.
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_EMU_PROJECT, requireDemoProject } from './guard';
@@ -81,20 +80,22 @@ const child = spawn(
   },
 );
 
-// Processes started under this run, wherever they now sit (Linux /proc; elsewhere only the group).
+// Processes started under this run, wherever they now sit: `ps e` lists each process with its
+// environment after its command, on Linux and macOS alike.
 function markedPids(): number[] {
-  let entries: string[];
+  let listing: string;
   try {
-    entries = readdirSync('/proc');
+    listing = execFileSync('ps', ['axeww', '-o', 'pid=', '-o', 'command='], {
+      encoding: 'latin1',
+      maxBuffer: 256 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
   } catch {
     return [];
   }
-  return entries.filter((entry) => /^\d+$/.test(entry)).flatMap((entry) => {
-    try {
-      return readFileSync(`/proc/${entry}/environ`, 'latin1').split('\0').includes(RUN_MARK) ? [Number(entry)] : [];
-    } catch {
-      return []; // gone, or not ours to read
-    }
+  return listing.split('\n').flatMap((line) => {
+    const [pid, ...words] = line.trim().split(/\s+/);
+    return words.includes(RUN_MARK) ? [Number(pid)] : [];
   });
 }
 
