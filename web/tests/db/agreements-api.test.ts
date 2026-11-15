@@ -491,4 +491,19 @@ describe('what signing refuses, writing nothing', () => {
     const { jobId, estimate, signatureId } = await readyToSign(OWNER_A);
     expect((await sign(OWNER_A, jobId, bodyFor(estimate, signatureId))).status).toBe(201);
   });
+
+  it('a signed agreement keeps its exact stored bytes and photo log unchanged', async () => {
+    const { jobId, estimate, signatureId } = await readyToSign();
+    const signed = await sign(ESTIMATOR_A, jobId, bodyFor(estimate, signatureId));
+    expect(signed.status).toBe(201);
+    const before = await storedBytes(jobId);
+
+    // Turning on shot-tag grouping afterward never mutates the signed agreement or its photo log.
+    await h.admin`UPDATE companies SET profile_documents = '{"photo_log_grouping": "shot_tag"}'::jsonb WHERE id = ${h.seed.a}`;
+    expect(await storedBytes(jobId)).toEqual(before);
+    const reloaded = await readSigned(ESTIMATOR_A, jobId);
+    expect(reloaded.status).toBe(200);
+    expect(reloaded.body.agreement.documentsSha256).toBe(signed.body.agreement.documentsSha256);
+    expect(reloaded.body.agreement.record.documents.photo_log).toEqual(estimate.documents.photoLog);
+  });
 });
