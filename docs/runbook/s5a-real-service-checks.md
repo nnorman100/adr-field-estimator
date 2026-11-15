@@ -163,19 +163,22 @@ Submit is idempotent by the submission id the phone makes, and the database allo
    ```
 
    Expected: `HTTP 200` with the record from step 2.
-4. Two phones at once (two submission ids for one draft): on a fresh job, repeat steps 1 and 2 to get its `BODY`, then make
-   a second body with a new id and send both together:
+4. Two phones at once (two submission ids for one draft): on a fresh job, repeat step 1 and only the blocked-request part
+   of step 2 (submit with blocking on, copy the blocked request's JSON, untick blocking), and do not run step 2's `curl`
+   loop, so the fresh draft is still unsubmitted. Set `JOB` and `BODY` from that request, then make a second body with a
+   new id and send both together:
 
    ```bash
+   JOB=<the fresh job's id, from the blocked request's path>
+   BODY='<the JSON you copied from the fresh job>'
    BODY2=$(printf '%s' "$BODY" | sed -E "s/\"id\":\"[0-9a-f-]{36}\"/\"id\":\"$(uuidgen | tr 'A-F' 'a-f')\"/")
    curl -sS -o one.json -w "first: HTTP %{http_code}\n" -X POST "$BASE/api/jobs/$JOB/submissions" -H "Authorization: Bearer $DS_TOKEN_A" -H 'Content-Type: application/json' --data "$BODY" &
    curl -sS -o two.json -w "second: HTTP %{http_code}\n" -X POST "$BASE/api/jobs/$JOB/submissions" -H "Authorization: Bearer $DS_TOKEN_A" -H 'Content-Type: application/json' --data "$BODY2" &
    wait; cat one.json; echo; cat two.json; echo
    ```
 
-   (Set `JOB` to the fresh job's id first.) Expected: exactly one `HTTP 201`; the other is `HTTP 409` with
-   `submission_in_progress` or `already_submitted`. Sending the losing body again answers `409` (`already_submitted` or
-   `submission_aborted`), never `201`.
+   Expected: exactly one `HTTP 201`; the other is `HTTP 409` with `submission_in_progress` or `already_submitted`.
+   Sending the losing body again answers `409` (`already_submitted` or `submission_aborted`), never `201`.
 5. On the phone, reload the job: it shows as submitted once, and **Review before signing** prices one record.
 6. Remove the answer files: `rm -f submit-1.json submit-2.json one.json two.json`.
 
