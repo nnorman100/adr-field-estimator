@@ -8,7 +8,7 @@ import { sendSignature } from '@/lib/agreements/client';
 import { agreementAnswerOf, signedBy, signedHow, signedWhen, signOutcomeOf, SIGNER_NAME_LIMIT, type SignedAgreement, type SignNext } from '@/lib/agreements/screen';
 import type { EstimateView } from '@/lib/estimates/result';
 import { callApi } from '@/lib/firebase-client';
-import { issuedLinksOf } from '@/lib/links/screen';
+import { documentLinksOf, issuedLinksOf, type DocumentLinkView } from '@/lib/links/screen';
 import { ItemizedClaim, PhotoLog, Proposal } from './review-documents';
 import { clearPad, padPng, SignaturePad } from './signature-pad';
 
@@ -33,7 +33,7 @@ export function SigningForm({
   user: User;
   jobId: string;
   estimate: EstimateView;
-  onSigned: (agreement: SignedAgreement, issued: IssuedLink[]) => void;
+  onSigned: (agreement: SignedAgreement, issued: IssuedLink[], listed: DocumentLinkView[]) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const attempt = useRef<Attempt | null>(null);
@@ -104,7 +104,7 @@ export function SigningForm({
     });
     setBusy(false);
     const signed = answer.status === 200 || answer.status === 201 ? agreementAnswerOf(answer.body)?.agreement : null;
-    if (signed) return onSigned(signed, issuedLinksOf(answer.body));
+    if (signed) return onSigned(signed, issuedLinksOf(answer.body), documentLinksOf(answer.body) ?? []);
     refused(answer.status === 200 || answer.status === 201 ? signOutcomeOf(0, null) : signOutcomeOf(answer.status, answer.body));
   }
 

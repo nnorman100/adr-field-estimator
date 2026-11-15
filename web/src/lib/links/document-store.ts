@@ -66,6 +66,16 @@ export async function documentLinkById(tx: CompanyTransaction, companyId: string
   return (row as DocumentLinkRow | undefined) ?? null;
 }
 
+/** The job's document links and their state now, newest first, never a token. */
+export async function documentLinksOfJob(tx: CompanyTransaction, companyId: string, jobId: string): Promise<DocumentLinkView[]> {
+  const rows = await tx
+    .select(documentLinkColumns)
+    .from(documentLinks)
+    .where(and(eq(documentLinks.companyId, companyId), eq(documentLinks.jobId, jobId)))
+    .orderBy(sql`${documentLinks.createdAt} DESC`, sql`${documentLinks.id} DESC`);
+  return (rows as DocumentLinkRow[]).map(documentLinkView);
+}
+
 export async function auditDocumentLink(tx: CompanyTransaction, caller: JobCaller, action: string, jobId: string, row: { id: string; set: DocumentSet }): Promise<void> {
   await tx.insert(auditEvents).values({ companyId: caller.companyId, actorId: caller.actorId, action, target: jobId, details: { documentLink: row.id, set: row.set } });
 }

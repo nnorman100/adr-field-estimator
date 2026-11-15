@@ -8,7 +8,7 @@ import { hasSigningTexts } from '@/lib/estimates/proposal';
 import { readStoredEstimate, readStoredProposal } from '@/lib/estimates/result';
 import { currentEstimateRow } from '@/lib/estimates/service';
 import { hasAny, jobAccess, JobError, type JobCaller, type JobRow } from '@/lib/jobs/access';
-import { documentLinksAtSigning, type IssuedDocumentLink } from '@/lib/links/document-store';
+import { documentLinksAtSigning, documentLinksOfJob, type DocumentLinkView, type IssuedDocumentLink } from '@/lib/links/document-store';
 import { readCompanyDocuments } from '@/lib/profile/documents';
 import { AgreementError } from './errors';
 import { readSignedRecord, SIGNED_FORMAT, signedRecordBytes, type SignedRecord } from './record';
@@ -143,7 +143,7 @@ export type LinkClaim = {
   consume(tx: CompanyTransaction, agreementId: string): Promise<void>;
 };
 
-export type SignResult = { created: boolean; job: AgreementJobState; agreement: AgreementView; documentLinks: IssuedDocumentLink[] };
+export type SignResult = { created: boolean; job: AgreementJobState; agreement: AgreementView; documentLinks: IssuedDocumentLink[]; links: DocumentLinkView[] };
 
 /**
  * Steps 2 and 3: the job is submitted and not signed, the company's setup check passes, and the
@@ -189,7 +189,7 @@ export async function signInTransaction(
   const existing = await agreementById(tx, caller.companyId, input.id);
   if (existing) {
     if (existing.jobId !== jobId || existing.requestDigest !== digest) throw new AgreementError('conflict');
-    return { created: false, job: jobState(job), agreement: viewOf(existing), documentLinks: [] };
+    return { created: false, job: jobState(job), agreement: viewOf(existing), documentLinks: [], links: await documentLinksOfJob(tx, caller.companyId, jobId) };
   }
 
   // 2 and 3.
@@ -264,7 +264,13 @@ export async function signInTransaction(
     details: { pin: estimate.pinSequence, version: estimate.versionSequence, ...(link ? { signingLink: link.linkId } : {}) },
   });
   const documentLinks = await documentLinksAtSigning(tx, caller, jobId, input.id);
-  return { created: true, job: jobState(signed!), agreement: viewOf({ ...made!, documentsBytes: Buffer.from(made!.documentsBytes) }), documentLinks };
+  return {
+    created: true,
+    job: jobState(signed!),
+    agreement: viewOf({ ...made!, documentsBytes: Buffer.from(made!.documentsBytes) }),
+    documentLinks,
+    links: await documentLinksOfJob(tx, caller.companyId, jobId),
+  };
 }
 
 export function agreementsService(db: Database): AgreementsService {

@@ -12,7 +12,7 @@ import type { EstimateView } from '@/lib/estimates/result';
 import { notReadyReasons, outcomeOf, reviewAnswerOf, reviewerOf, type Next, type ReviewJob, type Reviewer } from '@/lib/estimates/screen';
 import { signInOf, signOutOnRefusal, signOutOrShow, type FailedSignOut } from '@/lib/field/sign-out';
 import { belongsTo, callApi, companyAuth } from '@/lib/firebase-client';
-import { linkRightsOf } from '@/lib/links/screen';
+import { linkRightsOf, type DocumentLinkView } from '@/lib/links/screen';
 import { endsSession, meOutcome } from '@/lib/sign-in/outcome';
 import { FocusedPanel } from '../../../../../focused-panel';
 import { Panel } from '../../../../../panel';
@@ -178,7 +178,7 @@ function Review({ address, companyName, tenantId, jobId, config }: ReviewScreenP
 function ReviewBody({ user, reviewer, links, job, estimate: first, agreement: signedFirst, finishHref, reload }: Ready & { finishHref: string; reload: () => void }) {
   const [estimate, setEstimate] = useState<EstimateView | null>(first);
   const [agreement, setAgreement] = useState<SignedAgreement | null>(signedFirst);
-  const [issued, setIssued] = useState<IssuedLink[]>([]);
+  const [issued, setIssued] = useState<{ tokens: IssuedLink[]; listed: DocumentLinkView[] }>({ tokens: [], listed: [] });
   const signatureId = agreement?.record.signature.id ?? null;
   const loadSignature = useCallback(() => (signatureId ? signatureAddress(user, job.id, signatureId) : Promise.resolve(null)), [user, job.id, signatureId]);
   const [busy, setBusy] = useState(false);
@@ -206,7 +206,7 @@ function ReviewBody({ user, reviewer, links, job, estimate: first, agreement: si
     return (
       <FocusedPanel title="Signed">
         <SignedAgreementView agreement={agreement} loadSignature={loadSignature} />
-        <DocumentLinks user={user} jobId={job.id} canSend={links.canSend} canRevoke={links.canRevoke} issued={issued} />
+        <DocumentLinks user={user} jobId={job.id} canSend={links.canSend} canRevoke={links.canRevoke} issued={issued.tokens} listed={issued.listed} />
       </FocusedPanel>
     );
   }
@@ -282,8 +282,8 @@ function ReviewBody({ user, reviewer, links, job, estimate: first, agreement: si
               user={user}
               jobId={job.id}
               estimate={estimate}
-              onSigned={(signed, links) => {
-                setIssued(links);
+              onSigned={(signed, tokens, listed) => {
+                setIssued({ tokens, listed });
                 setAgreement(signed);
               }}
             />

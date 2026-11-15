@@ -310,6 +310,44 @@ describe('document links', () => {
     expect(await make(ESTIMATOR_A, jobId, { id: estimators.id, set: 'homeowner' })).toMatchObject({ status: 409, body: { error: 'link_ended' } });
   });
 
+  it('answer every change with the job’s document links as they now are, as the list reads them', async () => {
+    const job = await phoneSigned();
+    const signed = await job.sign();
+    const issued = issuedOf(signed);
+    const states = (body: Reply['body']) => (body.links as { id: string; set: string; status: string }[]).map((link) => [link.id, link.set, link.status]).sort();
+    expect(states(signed.body)).toEqual(
+      [
+        [issued.homeowner.link.id, 'homeowner', 'active'],
+        [issued.adjuster.link.id, 'adjuster', 'active'],
+      ].sort(),
+    );
+    const replaced = await make(OWNER_A, job.jobId, { id: randomUUID(), set: 'homeowner' });
+    expect(replaced.status).toBe(201);
+    expect(states(replaced.body)).toEqual(
+      [
+        [replaced.body.link.id, 'homeowner', 'active'],
+        [issued.homeowner.link.id, 'homeowner', 'revoked'],
+        [issued.adjuster.link.id, 'adjuster', 'active'],
+      ].sort(),
+    );
+    expect(replaced.body.links).toEqual((await list(OWNER_A, job.jobId)).body.links);
+    const revoked = await revoke(OFFICE_A, job.jobId, replaced.body.link.id);
+    expect(revoked.status).toBe(200);
+    expect(states(revoked.body)).toEqual(
+      [
+        [replaced.body.link.id, 'homeowner', 'revoked'],
+        [issued.homeowner.link.id, 'homeowner', 'revoked'],
+        [issued.adjuster.link.id, 'adjuster', 'active'],
+      ].sort(),
+    );
+    expect(revoked.body.links).toEqual((await list(OWNER_A, job.jobId)).body.links);
+    // The same signature again answers the list too, with no token.
+    const again = await job.sign();
+    expect(again.body.documentLinks).toEqual([]);
+    expect(again.body.links).toEqual(revoked.body.links);
+    expect(JSON.stringify([replaced.body.links, revoked.body.links, signed.body.links])).not.toContain(issued.homeowner.token);
+  });
+
   it('a retried create answers a new token to the owner or office only, never to its maker without the revoke right', async () => {
     const { jobId, issued } = await signedJob();
     const owners = await documentLink(OWNER_A, jobId, 'homeowner');

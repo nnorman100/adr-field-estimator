@@ -46,7 +46,7 @@ export function SendLink({ user, jobId, estimate }: { user: User; jobId: string;
     setBusy(true);
     setProblem(null);
     setShown(null);
-    generation.current += 1;
+    const at = ++generation.current;
     pending.current ??= crypto.randomUUID();
     const answer = await callApi(user, path, { method: 'POST', json: { id: pending.current, estimateId: estimate.id, proposalSha256: estimate.proposalSha256 } });
     setBusy(false);
@@ -54,7 +54,7 @@ export function SendLink({ user, jobId, estimate }: { user: User; jobId: string;
     const body = answer.body as { token?: unknown; error?: unknown } | null;
     if (made && typeof body?.token === 'string') {
       pending.current = null;
-      setLink(made);
+      if (at === generation.current) setLink(made);
       return setShown({ id: made.id, token: body.token });
     }
     if (answer.status !== 0 && answer.status < 500) pending.current = null;
@@ -66,14 +66,18 @@ export function SendLink({ user, jobId, estimate }: { user: User; jobId: string;
     setBusy(true);
     setProblem(null);
     setShown(null);
-    generation.current += 1;
+    const at = ++generation.current;
     const answer = await callApi(user, path, { method: 'DELETE' });
     setBusy(false);
-    if (answer.status === 200) return setLink(signingLinkOf(answer.body));
+    if (answer.status === 200) {
+      if (at === generation.current) setLink(signingLinkOf(answer.body));
+      return;
+    }
     setProblem(signOutcomeOf(answer.status, answer.body).message);
   }
 
   const out = link?.status === 'pending';
+  const token = shown && out && link?.id === shown.id ? shown.token : null;
   return (
     <section aria-labelledby="send-link-heading" className="flex flex-col gap-3 rounded-md border p-3">
       <h2 id="send-link-heading" className="text-lg font-semibold">
@@ -91,9 +95,9 @@ export function SendLink({ user, jobId, estimate }: { user: User; jobId: string;
           {problem}
         </p>
       ) : null}
-      {shown ? <ShareLink address={linkAddress(window.location.origin, 'sign', shown.token)} label="Signing link" shareTitle="Review and sign your estimate" /> : null}
+      {token ? <ShareLink address={linkAddress(window.location.origin, 'sign', token)} label="Signing link" shareTitle="Review and sign your estimate" /> : null}
       <div className="flex flex-wrap gap-2">
-        <Button type="button" variant={shown ? 'outline' : 'default'} disabled={busy} onClick={() => void make()}>
+        <Button type="button" variant={token ? 'outline' : 'default'} disabled={busy} onClick={() => void make()}>
           {out ? 'Make a new signing link' : 'Make a signing link'}
         </Button>
         {out ? (

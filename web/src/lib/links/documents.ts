@@ -1,4 +1,4 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { agreements, companies, documentLinks } from '@/db/schema';
 import { withCompany, type Database } from '@/db/tenant';
 import { agreementViewById } from '@/lib/agreements/service';
@@ -13,6 +13,7 @@ import {
   auditDocumentLink,
   documentLinkById,
   documentLinkColumns,
+  documentLinksOfJob,
   documentLinkState,
   documentLinkView,
   insertDocumentLink,
@@ -51,9 +52,9 @@ export type DocumentPage =
   | { set: 'adjuster'; companyName: string; expiresAt: string; signed: Signed; price: Proposal['price']; itemizedClaim: Json[]; letter: string; claim: Json };
 
 export type DocumentLinksService = {
-  create(caller: JobCaller, jobId: string, input: CreateDocumentLinkInput): Promise<{ created: boolean } & IssuedDocumentLink>;
+  create(caller: JobCaller, jobId: string, input: CreateDocumentLinkInput): Promise<{ created: boolean; links: DocumentLinkView[] } & IssuedDocumentLink>;
   list(caller: JobCaller, jobId: string): Promise<{ links: DocumentLinkView[] }>;
-  revoke(caller: JobCaller, jobId: string, linkId: string): Promise<{ link: DocumentLinkView }>;
+  revoke(caller: JobCaller, jobId: string, linkId: string): Promise<{ link: DocumentLinkView; links: DocumentLinkView[] }>;
   view(tokenSha256: string): Promise<DocumentPage>;
   openSignature(tokenSha256: string): Promise<PhotoStream>;
   openPhoto(tokenSha256: string, photoId: string): Promise<PhotoStream>;
@@ -111,7 +112,8 @@ export function documentLinksService(db: Database, photos: PhotosService): Docum
           // A retried create: a new token, and the old one stops working; only for the owner or office.
           if (existing.jobId !== jobId || existing.requestDigest !== digest) throw new LinkError('conflict');
           if (documentLinkState(existing) !== 'active') throw new LinkError('link_ended');
-          return { created: false, ...(await reissueDocumentLink(tx, caller, existing)) };
+          const reissued = await reissueDocumentLink(tx, caller, existing);
+          return { created: false, ...reissued, links: await documentLinksOfJob(tx, caller.companyId, jobId) };
         }
         if (job.status !== 'signed') throw new LinkError('not_signed');
         const [agreement] = await tx
@@ -140,7 +142,8 @@ export function documentLinksService(db: Database, photos: PhotosService): Docum
             .set({ status: 'revoked', endedByActorId: caller.actorId })
             .where(and(eq(documentLinks.companyId, caller.companyId), eq(documentLinks.id, row.id)));
         }
-        return { created: true, ...(await insertDocumentLink(tx, caller, { id: input.id, jobId, agreementId: agreement.id, set: input.set, digest })) };
+        const made = await insertDocumentLink(tx, caller, { id: input.id, jobId, agreementId: agreement.id, set: input.set, digest });
+        return { created: true, ...made, links: await documentLinksOfJob(tx, caller.companyId, jobId) };
       });
     },
 
@@ -148,12 +151,7 @@ export function documentLinksService(db: Database, photos: PhotosService): Docum
       if (!hasAny(caller, READ)) throw new JobError('not_allowed');
       return withCompany(db, caller.companyId, async (tx) => {
         await jobAccess(tx, caller, jobId, READ);
-        const rows = await tx
-          .select(documentLinkColumns)
-          .from(documentLinks)
-          .where(and(eq(documentLinks.companyId, caller.companyId), eq(documentLinks.jobId, jobId)))
-          .orderBy(sql`${documentLinks.createdAt} DESC`, sql`${documentLinks.id} DESC`);
-        return { links: (rows as DocumentLinkRow[]).map(documentLinkView) };
+        return { links: await documentLinksOfJob(tx, caller.companyId, jobId) };
       });
     },
 
@@ -170,7 +168,7 @@ export function documentLinksService(db: Database, photos: PhotosService): Docum
             .where(and(eq(documentLinks.companyId, caller.companyId), eq(documentLinks.id, linkId)));
           await auditDocumentLink(tx, caller, 'document_link_revoked', jobId, row);
         }
-        return { link: documentLinkView((await documentLinkById(tx, caller.companyId, linkId))!) };
+        return { link: documentLinkView((await documentLinkById(tx, caller.companyId, linkId))!), links: await documentLinksOfJob(tx, caller.companyId, jobId) };
       });
     },
 

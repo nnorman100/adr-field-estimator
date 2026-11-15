@@ -568,11 +568,11 @@ test('the owner replaces and revokes a document link, and its token is no longer
       for (const old of links) if (old.set === body.set && old.status === 'active') Object.assign(old, { status: 'revoked', endedAt: '2026-11-15T18:05:00.000Z' });
       const fresh = link(body.id, body.set);
       links.unshift(fresh);
-      return route.fulfill({ status: 201, json: { link: fresh, token } });
+      return route.fulfill({ status: 201, json: { link: fresh, token, links } });
     }
     const found = links.find((one) => path.endsWith(`/${one.id}`))!;
     Object.assign(found, { status: 'revoked', endedAt: '2026-11-15T18:06:00.000Z' });
-    return route.fulfill({ json: { link: found } });
+    return route.fulfill({ json: { link: found, links } });
   });
   await signInTo(page, team.owner);
   await page.goto(`/sign-in/${team.address}/jobs/${job.id}/review`);
@@ -603,7 +603,7 @@ test('a revoked document link’s token stays hidden when the revoke answer is l
     const fresh = link((request.postDataJSON() as { id: string }).id);
     Object.assign(links[0]!, { status: 'revoked', endedAt: '2026-11-15T18:05:00.000Z' });
     links.unshift(fresh);
-    return route.fulfill({ status: 201, json: { link: fresh, token } });
+    return route.fulfill({ status: 201, json: { link: fresh, token, links } });
   });
   await signInTo(page, team.owner);
   await page.goto(`/sign-in/${team.address}/jobs/${job.id}/review`);
@@ -637,7 +637,8 @@ test('the document links made at signing on the phone are offered even when thei
       signature: () => [201, { photoId: 'x', kind: 'signature', sha256: 'f'.repeat(64) }],
       sign: () => {
         const id = (signing.agreements[0] as { signatureId: string }).signatureId;
-        return [201, { job: { ...job, status: 'signed' }, agreement: signedFor(made, id), documentLinks: [issued('homeowner', homeowner), issued('adjuster', adjuster)] }];
+        const both = [issued('homeowner', homeowner), issued('adjuster', adjuster)];
+        return [201, { job: { ...job, status: 'signed' }, agreement: signedFor(made, id), documentLinks: both, links: both.map((one) => one.link) }];
       },
     },
     signing,
@@ -738,13 +739,13 @@ test('a slow first read of the document links does not undo a replacement made m
       const fresh = link((request.postDataJSON() as { id: string }).id);
       Object.assign(first, { status: 'revoked', endedAt: '2026-11-15T18:05:00.000Z' });
       links.unshift(fresh);
-      return route.fulfill({ status: 201, json: { link: fresh, token } });
+      return route.fulfill({ status: 201, json: { link: fresh, token, links } });
     }
     const id = new URL(request.url()).pathname.split('/').pop()!;
     deleted.push(id);
     const found = links.find((one) => one.id === id)!;
     Object.assign(found, { status: 'revoked', endedAt: '2026-11-15T18:06:00.000Z' });
-    return route.fulfill({ json: { link: found } });
+    return route.fulfill({ json: { link: found, links } });
   });
   await signInTo(page, team.owner);
   await page.goto(`/sign-in/${team.address}/jobs/${job.id}/review`);
@@ -763,4 +764,45 @@ test('a slow first read of the document links does not undo a replacement made m
   await expect(panel.getByRole('textbox', { name: "Homeowner's documents link" })).toHaveCount(0);
   expect(deleted).toEqual([links[0]!.id]);
   expect(deleted).not.toContain(first.id);
+});
+
+test('after replacing a document link with the list unreadable, Revoke reaches the new link from the answer', async ({ page }) => {
+  const job = { id: randomUUID(), status: 'signed', currentDraftId: randomUUID(), revision: 4 };
+  const made = estimateFor(team, job.id, job.currentDraftId, 'owner');
+  await playApi(page, job, { estimate: made, agreement: signedFor(made, randomUUID()) });
+  const token = 'D0cLinkTokenShownOnceInTheReviewPageTest_gh'.slice(0, 43);
+  const link = (id: string) => ({ id, set: 'homeowner', status: 'active', createdAt: '2026-11-15T18:00:00.000Z', expiresAt: '2026-12-15T18:00:00.000Z', endedAt: null as string | null });
+  const first = link(randomUUID());
+  const links = [first];
+  let reads = 0;
+  const deleted: string[] = [];
+  await page.route(`**/api/jobs/${job.id}/document-links**`, async (route: Route, request: Request) => {
+    if (request.method() === 'GET') {
+      reads += 1;
+      // Only the first read works; every later one fails.
+      return reads === 1 ? route.fulfill({ json: { links } }) : route.fulfill({ status: 503, json: { error: 'links_unavailable' } });
+    }
+    if (request.method() === 'POST') {
+      const fresh = link((request.postDataJSON() as { id: string }).id);
+      Object.assign(first, { status: 'revoked', endedAt: '2026-11-15T18:05:00.000Z' });
+      links.unshift(fresh);
+      return route.fulfill({ status: 201, json: { link: fresh, token, links } });
+    }
+    const id = new URL(request.url()).pathname.split('/').pop()!;
+    deleted.push(id);
+    const found = links.find((one) => one.id === id)!;
+    Object.assign(found, { status: 'revoked', endedAt: '2026-11-15T18:06:00.000Z' });
+    return route.fulfill({ json: { link: found, links } });
+  });
+  await signInTo(page, team.owner);
+  await page.goto(`/sign-in/${team.address}/jobs/${job.id}/review`);
+  const panel = page.getByRole('main').getByRole('region', { name: 'Share the signed documents' });
+  await panel.getByRole('button', { name: "Replace the link: Homeowner's documents" }).click();
+  await expect(panel.getByRole('textbox', { name: "Homeowner's documents link" })).toHaveValue(new RegExp(`/documents#${token}$`));
+  await expect(panel.getByText("Homeowner's documents: revoked.")).toBeVisible();
+  await expect(panel.getByRole('button', { name: "Revoke the homeowner's documents link" })).toHaveCount(1);
+  await panel.getByRole('button', { name: "Revoke the homeowner's documents link" }).click();
+  await expect(panel.getByRole('textbox', { name: "Homeowner's documents link" })).toHaveCount(0);
+  await expect(panel.getByText("Homeowner's documents: revoked.")).toHaveCount(2);
+  expect(deleted).toEqual([links.find((one) => one.id !== first.id)!.id]);
 });

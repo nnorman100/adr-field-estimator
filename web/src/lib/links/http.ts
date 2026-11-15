@@ -107,14 +107,15 @@ export async function revokeSigningLink(_request: Request, identity: Identity, c
 // POST /api/jobs/{jobId}/document-links  { id, set: 'homeowner' | 'adjuster' }
 // Both sets' links are made at signing; this makes one again: the owner or office (who may replace a
 // working one), or whoever may sign once the set has no working link (409 `link_active` otherwise).
-// The same id and body again answers a new token to the owner or office only (403 otherwise).
+// The same id and body again answers a new token to the owner or office only (403 otherwise). The
+// answer also carries the job's document links as they now are, as GET reads them.
 export async function createDocumentLink(request: Request, identity: Identity, context: RouteContext): Promise<Response> {
   return respond(async () => {
     const jobId = await jobIdOf(context);
     const parsed = createDocumentLinkBody.safeParse(await bodyOf(request));
     if (!parsed.success) throw new LinkError('invalid_request');
-    const { created, link, token } = await documentLinksServices().create(identity, jobId, parsed.data);
-    return json({ link, token }, created ? 201 : 200);
+    const { created, link, token, links } = await documentLinksServices().create(identity, jobId, parsed.data);
+    return json({ link, token, links }, created ? 201 : 200);
   });
 }
 
@@ -123,7 +124,8 @@ export async function listDocumentLinks(_request: Request, identity: Identity, c
   return respond(async () => json(await documentLinksServices().list(identity, await jobIdOf(context))));
 }
 
-// DELETE /api/jobs/{jobId}/document-links/{linkId}: owner or office.
+// DELETE /api/jobs/{jobId}/document-links/{linkId}: owner or office. The answer carries the link and
+// the job's document links as they now are.
 export async function revokeDocumentLink(_request: Request, identity: Identity, context: RouteContext): Promise<Response> {
   return respond(async () => {
     const jobId = await jobIdOf(context);

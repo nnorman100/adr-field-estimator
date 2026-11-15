@@ -17,8 +17,22 @@ import { documentLinkLine, documentLinksOf, issuedLinkOf, linkAddress, SET_NAMES
 type Set = keyof typeof SET_NAMES;
 type Made = { id: string; set: Set; token: string };
 
-export function DocumentLinks({ user, jobId, canSend, canRevoke, issued = [] }: { user: User; jobId: string; canSend: boolean; canRevoke: boolean; issued?: Made[] }) {
-  const [links, setLinks] = useState<DocumentLinkView[]>([]);
+export function DocumentLinks({
+  user,
+  jobId,
+  canSend,
+  canRevoke,
+  issued = [],
+  listed = [],
+}: {
+  user: User;
+  jobId: string;
+  canSend: boolean;
+  canRevoke: boolean;
+  issued?: Made[];
+  listed?: DocumentLinkView[];
+}) {
+  const [links, setLinks] = useState<DocumentLinkView[]>(listed);
   const [made, setMade] = useState<Made[]>(issued);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -26,18 +40,15 @@ export function DocumentLinks({ user, jobId, canSend, canRevoke, issued = [] }: 
   const generation = useRef(0);
   const path = `/api/jobs/${encodeURIComponent(jobId)}/document-links`;
 
-  const listed = useCallback((answer: { status: number; body: unknown }) => {
-    if (answer.status !== 200) return;
-    const list = documentLinksOf(answer.body) ?? [];
-    setLinks(list);
-    setMade((shown) => shown.filter((one) => !list.some((link) => link.id === one.id && link.status !== 'active')));
+  const apply = useCallback((at: number, answer: { status: number; body: unknown }) => {
+    const list = answer.status === 200 || answer.status === 201 ? documentLinksOf(answer.body) : null;
+    if (list && at === generation.current) setLinks(list);
   }, []);
 
   const reload = useCallback(async () => {
     const at = ++generation.current;
-    const answer = await callApi(user, path);
-    if (at === generation.current) listed(answer);
-  }, [user, path, listed]);
+    apply(at, await callApi(user, path));
+  }, [user, path, apply]);
 
   useEffect(() => {
     void reload();
@@ -50,11 +61,11 @@ export function DocumentLinks({ user, jobId, canSend, canRevoke, issued = [] }: 
     setBusy(true);
     setProblem(null);
     setMade((shown) => shown.filter((one) => one.set !== set));
-    generation.current += 1;
+    const at = ++generation.current;
     if (pending.current?.set !== set) pending.current = { set, id: crypto.randomUUID() };
     const answer = await callApi(user, path, { method: 'POST', json: { id: pending.current.id, set } });
     setBusy(false);
-    void reload();
+    apply(at, answer);
     const one = answer.status === 200 || answer.status === 201 ? issuedLinkOf(answer.body) : null;
     if (one) {
       pending.current = null;
@@ -69,16 +80,17 @@ export function DocumentLinks({ user, jobId, canSend, canRevoke, issued = [] }: 
     setBusy(true);
     setProblem(null);
     setMade((shown) => shown.filter((one) => one.id !== id));
-    generation.current += 1;
+    const at = ++generation.current;
     const answer = await callApi(user, `${path}/${encodeURIComponent(id)}`, { method: 'DELETE' });
     setBusy(false);
-    void reload();
+    apply(at, answer);
     if (answer.status !== 200) setProblem(signOutcomeOf(answer.status, answer.body).message);
   }
 
+  const shareable = made.filter((shown) => links.some((link) => link.id === shown.id && link.status === 'active'));
+
   // Making a link for a set with a working one would revoke it: only for someone who may revoke.
-  const canMake = (set: Set) =>
-    canRevoke || (canSend && !links.some((link) => link.set === set && link.status === 'active') && !made.some((shown) => shown.set === set));
+  const canMake = (set: Set) => canRevoke || (canSend && !links.some((link) => link.set === set && link.status === 'active'));
   const makeable = (Object.keys(SET_NAMES) as Set[]).filter(canMake);
 
   if (!canSend && !canRevoke && links.length === 0) return null;
@@ -99,7 +111,7 @@ export function DocumentLinks({ user, jobId, canSend, canRevoke, issued = [] }: 
           {problem}
         </p>
       ) : null}
-      {made.map((shown) => (
+      {shareable.map((shown) => (
         <ShareLink
           key={shown.id}
           address={linkAddress(window.location.origin, 'documents', shown.token)}
