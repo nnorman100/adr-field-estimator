@@ -192,3 +192,20 @@ describe('the e2e job', () => {
     expect(java.with['java-version']).toBe('21');
   });
 });
+
+describe('emulator ports', () => {
+  // web/tests/emu/ports.ts: with EMU_PORTS=auto, test:emu, test:isolation and test:e2e each claim
+  // free ports. `check` runs the unit tests, one of which pins the default config, so it must not set it.
+  it('are picked per run in the jobs that start emulators, so runners sharing a machine never collide', () => {
+    const jobs = web().jobs as Record<string, Data>;
+    for (const name of ['emulators', 'company-isolation', 'e2e']) {
+      expect(jobs[name].env?.EMU_PORTS, `job ${name}`).toBe('auto');
+    }
+    for (const name of Object.keys(jobs).filter(
+      (name) => !['emulators', 'company-isolation', 'e2e'].includes(name),
+    )) {
+      expect(jobs[name].env?.EMU_PORTS, `job ${name}`).toBeUndefined();
+    }
+    expect(web().env?.EMU_PORTS).toBeUndefined();
+  });
+});

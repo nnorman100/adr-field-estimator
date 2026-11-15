@@ -2,9 +2,11 @@
 // them and stops them. DRYSCOPE_EMU_PROJECT picks the project id; anything not starting with
 // `demo-` is refused before the Firebase CLI starts.
 import { spawn } from 'node:child_process';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_EMU_PROJECT, requireDemoProject } from './guard';
 import { acquireEmulatorLock } from './lock';
+import { claimEmuPorts, writeEmulatorConfig } from './ports';
 
 // Same pinned CLI as the root app's emulator job (.github/workflows/ci.yml). It stays out of
 // package.json so the other web jobs do not install it.
@@ -19,10 +21,20 @@ try {
   process.exit(2);
 }
 
-// The emulators use fixed ports, so only one run per machine may hold them at a time.
+// By default the emulators use the fixed ports in firebase.json, so only one such run per machine
+// may hold them at a time and a second waits for the lock. A run with its own ports (EMU_*_PORT
+// or EMU_PORTS=auto, ports.ts) claims just those and runs beside the others.
 let release: () => void;
+let config = 'firebase.json';
 try {
-  release = await acquireEmulatorLock();
+  const claim = claimEmuPorts(['auth', 'firestore', 'firestoreWebsocket', 'hub', 'logging']);
+  if (claim.custom) {
+    release = claim.release;
+    config = writeEmulatorConfig(join(webDir, 'firebase.json'), claim.ports);
+    console.error(`test:emu ports: ${Object.entries(claim.ports).map(([name, port]) => `${name} ${port}`).join(', ')}`);
+  } else {
+    release = await acquireEmulatorLock();
+  }
 } catch (error) {
   console.error((error as Error).message);
   process.exit(1);
@@ -49,7 +61,7 @@ const child = spawn(
     '--project',
     projectId,
     '--config',
-    'firebase.json',
+    config,
     ['npx vitest run --config vitest.emu.config.ts', ...files].join(' '),
   ],
   { cwd: webDir, stdio: 'inherit' },
