@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { sql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { image, json, sha256 } from './submission-flow';
 import { AUTHORIZATION, ESTIMATOR_A, linkFlow, OFFICE_A, OWNER_A, OWNER_B, PAYMENT_TERMS, type Body } from './link-flow';
@@ -7,7 +8,7 @@ import type { Harness } from './team-harness';
 // S5a-11b, homeowner signing links (docs/plans/S5.md; docs/spec.md 2.5 and 4.2), through the real
 // route files as the runtime role against Postgres. The technician makes the link from the job's
 // priced estimate; the homeowner's calls carry only the token, in the X-Link-Token header.
-const live = vi.hoisted(() => ({ harness: null as Harness | null }));
+const live = vi.hoisted(() => ({ harness: null as Harness | null, linksDb: null as Harness['handle']['db'] | null }));
 vi.mock('@/lib/auth/services', () => ({
   identityServices: () => live.harness!.identity,
   serverDatabase: () => live.harness!.handle.db,
@@ -27,7 +28,7 @@ vi.mock('@/lib/links/services', async () => {
   const { signingLinksService } = await import('@/lib/links/signing');
   const { documentLinksService } = await import('@/lib/links/documents');
   return {
-    signingLinksServices: () => signingLinksService(live.harness!.handle.db, live.harness!.photos),
+    signingLinksServices: () => signingLinksService(live.linksDb ?? live.harness!.handle.db, live.harness!.photos),
     documentLinksServices: () => documentLinksService(live.harness!.handle.db, live.harness!.photos),
   };
 });
@@ -95,6 +96,7 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
+  live.linksDb = null;
   h = await resetTeamDatabase(base, live.harness);
   live.harness = h;
   await l.setUp();
@@ -172,6 +174,48 @@ describe('making a signing link', () => {
     expect(rows[0]!.ended_by_actor_id).toBe(h.seed.estimatorA.actor);
     // The older link's id cannot be brought back by sending its create again.
     expect(await l.makeLink(ESTIMATOR_A, jobId, { id: linkId, estimateId: estimate.id, proposalSha256: estimate.proposalSha256 })).toMatchObject({ status: 409, body: { error: 'link_ended' } });
+  });
+
+  it('shows the link made last as the job’s link, even when its create started before another and waited', async () => {
+    const { jobId, estimate } = await l.pricedJob();
+    // The first create runs on a connection of its own, as on another server instance.
+    const { openDatabase } = await import('@/db/client');
+    const instance = openDatabase({ APP_ENV: 'test', DATABASE_URL: h.apiUrl });
+    const db = instance.db;
+    try {
+      let begun!: () => void;
+      let release!: () => void;
+      const started = new Promise<void>((resolve) => (begun = resolve));
+      const held = new Promise<void>((resolve) => (release = resolve));
+      // The first create's transaction starts, then waits before it reaches the job, while a second create runs to the end.
+      live.linksDb = new Proxy(db, {
+        get(target, key, receiver) {
+          if (key !== 'transaction') return Reflect.get(target, key, receiver);
+          return (run: (tx: unknown) => Promise<unknown>) =>
+            target.transaction(async (tx) => {
+              await tx.execute(sql`SELECT 1`);
+              begun();
+              await held;
+              return run(tx);
+            });
+        },
+      });
+      const first = l.linkBody(estimate);
+      const waiting = l.makeLink(ESTIMATOR_A, jobId, first);
+      await started;
+      live.linksDb = null;
+      const second = await l.makeLink(ESTIMATOR_A, jobId, l.linkBody(estimate));
+      expect(second.status).toBe(201);
+      release();
+      const made = await waiting;
+      expect(made.status).toBe(201);
+      expect(await l.view(made.body.token)).toMatchObject({ status: 200, body: { status: 'pending' } });
+      expect(await l.view(second.body.token)).toMatchObject({ status: 404, body: { error: 'link_unavailable' } });
+      expect(await l.linkStatus(ESTIMATOR_A, jobId)).toMatchObject({ status: 200, body: { link: { id: first.id, status: 'pending' } } });
+      expect(await l.revokeLink(ESTIMATOR_A, jobId)).toMatchObject({ status: 200, body: { link: { id: first.id, status: 'revoked' } } });
+    } finally {
+      await instance.close();
+    }
   });
 
   it('is revoked by the technician, after which the homeowner sees the unavailable answer', async () => {

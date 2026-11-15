@@ -72,6 +72,20 @@ type OperatorHandler = (request: Request, operator: Operator, context: RouteCont
 
 const NO_STORE = { 'Cache-Control': 'no-store' };
 
+export type AccessRule = 'public' | 'member' | 'account' | 'service' | 'link' | 'operator';
+
+const RULES = new WeakMap<Handler, AccessRule>();
+
+function ruled<H extends Handler>(rule: AccessRule, handler: H): H {
+  RULES.set(handler, rule);
+  return handler;
+}
+
+/** The access rule that made a route handler, or null for a handler no rule wraps. */
+export function accessRuleOf(handler: unknown): AccessRule | null {
+  return typeof handler === 'function' ? (RULES.get(handler as Handler) ?? null) : null;
+}
+
 function refusal(code: string, status: number): Response {
   return Response.json({ error: code }, { status, headers: NO_STORE });
 }
@@ -85,8 +99,8 @@ function refusalOf(error: unknown): Response {
 
 // Open to anyone. Use only for routes that read no company data.
 export function publicRoute<H extends Handler>(handler: H): H {
-  return ((request: Request, context: RouteContext) =>
-    monitorAppCheck(request, () => handler(request, context))) as H;
+  return ruled('public', ((request: Request, context: RouteContext) =>
+    monitorAppCheck(request, () => handler(request, context))) as H);
 }
 
 // Only a signed-in, active member of an active company. The identity comes from the verified
@@ -97,7 +111,7 @@ export function memberRoute(
   services: () => IdentityServices = identityServices,
 ): Handler {
   const route = Object.freeze({ ...rule });
-  return (request, context) =>
+  return ruled('member', (request, context) =>
     monitorAppCheck(request, async () => {
       let identity: Identity;
       try {
@@ -107,7 +121,8 @@ export function memberRoute(
         return refusalOf(error);
       }
       return handler(request, identity, context);
-    });
+    }),
+  );
 }
 
 // A member route of a switched-off feature. When the caller's company does not have the flag on,
@@ -131,7 +146,7 @@ export function requireFlag(
 // routes that act on what is addressed to that email (an invitation); the handler applies the
 // session rules for the role it grants.
 export function accountRoute(handler: AccountHandler, services: () => IdentityServices = identityServices): Handler {
-  return (request, context) =>
+  return ruled('account', (request, context) =>
     monitorAppCheck(request, async () => {
       let account: Account;
       try {
@@ -141,7 +156,8 @@ export function accountRoute(handler: AccountHandler, services: () => IdentitySe
         return refusalOf(error);
       }
       return handler(request, account, context);
-    });
+    }),
+  );
 }
 
 // Only the environment's scheduler service account (service-caller.ts), with a Google-signed ID
@@ -152,7 +168,7 @@ export function serviceRoute(
   handler: Handler,
   services: () => ServiceCallerServices = serviceCallerServices,
 ): Handler {
-  return async (request, context) => {
+  return ruled('service', async (request, context) => {
     let found: ServiceCallerServices;
     try {
       found = services();
@@ -174,7 +190,7 @@ export function serviceRoute(
     }
     if (!claims.emailVerified || claims.email !== found.caller.email) return refusal('not_allowed', 403);
     return handler(request, context);
-  };
+  });
 }
 
 // What a link route's handler is given: the SHA-256 of the link token the request carried. The
@@ -188,12 +204,12 @@ export type LinkToken = { tokenSha256: string };
 // and the technician it acts as from the hash alone; no path, query or body names a company or job.
 // A bearer sign-in is never read here, and a link token is never accepted by any other rule.
 export function linkRoute(handler: LinkHandler, take: (headers: Headers) => boolean = takeLinkRequest): Handler {
-  return async (request, context) => {
+  return ruled('link', async (request, context) => {
     if (!take(request.headers)) return refusal('too_many_requests', 429);
     const tokenSha256 = linkTokenHashOf(request);
     if (!tokenSha256) return refusal('link_unavailable', 404);
     return handler(request, { tokenSha256 }, context);
-  };
+  });
 }
 
 // Only a signed-in, active platform operator with an authenticator-app second step and a sign-in
@@ -206,7 +222,7 @@ export function operatorRoute(
   services: () => OperatorServices = operatorServices,
 ): Handler {
   const freshSignIn = rule.freshSignIn === true;
-  return (request, context) =>
+  return ruled('operator', (request, context) =>
     monitorAppCheck(request, async () => {
       let operator: Operator;
       try {
@@ -216,5 +232,6 @@ export function operatorRoute(
         return refusalOf(error);
       }
       return handler(request, operator, context);
-    });
+    }),
+  );
 }

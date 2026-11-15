@@ -262,6 +262,7 @@ export function signingLinksService(db: Database, photos: PhotosService): Signin
           .update(signingLinks)
           .set({ status: 'revoked', endedByActorId: caller.actorId })
           .where(and(eq(signingLinks.companyId, caller.companyId), eq(signingLinks.jobId, jobId), eq(signingLinks.status, 'pending')));
+        const [made] = (await tx.execute(sql`SELECT clock_timestamp()::text AS at`)) as unknown as { at: string }[];
         await tx.insert(signingLinks).values({
           id: input.id,
           companyId: caller.companyId,
@@ -270,7 +271,8 @@ export function signingLinksService(db: Database, photos: PhotosService): Signin
           tokenSha256: linkTokenSha256(token),
           requestDigest: digest,
           createdByActorId: caller.actorId,
-          expiresAt: sql`now() + interval '7 days'`,
+          createdAt: sql`${made!.at}::timestamptz`,
+          expiresAt: sql`${made!.at}::timestamptz + interval '7 days'`,
         });
         await audit(tx, caller, 'signing_link_created', jobId, input.id);
         return { created: true, link: viewOf((await linkById(tx, caller.companyId, input.id))!, 'pending'), token };
