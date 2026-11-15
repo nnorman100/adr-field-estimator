@@ -22,14 +22,39 @@ function phaseOf(answer: LinkAnswer): Phase {
 
 export function DocumentsScreen() {
   const token = useSyncExternalStore(watchFragment, fragmentToken, () => null);
-  const [phase, setPhase] = useState<Phase>({ name: 'checking' });
   const [missing, setMissing] = useState(false);
 
   useEffect(() => {
-    if (!token) {
-      const later = setTimeout(() => setMissing(true), 50);
-      return () => clearTimeout(later);
-    }
+    if (token) return;
+    const later = setTimeout(() => setMissing(true), 50);
+    return () => clearTimeout(later);
+  }, [token]);
+
+  if (!token) {
+    return missing ? (
+      <FocusedPanel title="This link cannot be used">
+        <p role="alert">{pageOutcomeOf(404, { error: 'link_unavailable' }).message}</p>
+      </FocusedPanel>
+    ) : (
+      <Opening />
+    );
+  }
+  // A new token in the address is a new page: no document of another link stays on screen.
+  return <LinkDocumentsPage key={token} token={token} />;
+}
+
+function Opening() {
+  return (
+    <FocusedPanel title="Signed estimate documents">
+      <p role="status">Opening the documents…</p>
+    </FocusedPanel>
+  );
+}
+
+function LinkDocumentsPage({ token }: { token: string }) {
+  const [phase, setPhase] = useState<Phase>({ name: 'checking' });
+
+  useEffect(() => {
     let gone = false;
     void linkCall(token, '/api/documents').then((answer) => {
       if (!gone) setPhase(phaseOf(answer));
@@ -39,30 +64,17 @@ export function DocumentsScreen() {
     };
   }, [token]);
 
-  const load = useCallback(async (found: string) => {
+  const load = useCallback(async () => {
     setPhase({ name: 'checking' });
-    setPhase(phaseOf(await linkCall(found, '/api/documents')));
-  }, []);
+    setPhase(phaseOf(await linkCall(token, '/api/documents')));
+  }, [token]);
 
-  if (!token && missing) {
-    return (
-      <FocusedPanel title="This link cannot be used">
-        <p role="alert">{pageOutcomeOf(404, { error: 'link_unavailable' }).message}</p>
-      </FocusedPanel>
-    );
-  }
-  if (phase.name === 'checking') {
-    return (
-      <FocusedPanel title="Signed estimate documents">
-        <p role="status">Opening the documents…</p>
-      </FocusedPanel>
-    );
-  }
+  if (phase.name === 'checking') return <Opening />;
   if (phase.name === 'refused') {
     return (
       <FocusedPanel title="This link cannot be used">
         <p role="alert">{phase.message}</p>
-        {phase.next === 'retry' || phase.next === 'reload' ? <Button onClick={() => token && void load(token)}>Try again</Button> : null}
+        {phase.next === 'retry' || phase.next === 'reload' ? <Button onClick={() => void load()}>Try again</Button> : null}
       </FocusedPanel>
     );
   }
@@ -73,7 +85,7 @@ export function DocumentsScreen() {
         From {page.companyName}. Signed by {page.signed.name}, {signedWhen(page.signed.signedAt)}. This link works until {untilDay(page.expiresAt)}; print
         or save a copy from your browser to keep one.
       </p>
-      {page.set === 'homeowner' && token ? <HomeownerSet page={page} token={token} /> : null}
+      {page.set === 'homeowner' ? <HomeownerSet page={page} token={token} /> : null}
       {page.set === 'adjuster' ? <AdjusterSet page={page} /> : null}
     </FocusedPanel>
   );

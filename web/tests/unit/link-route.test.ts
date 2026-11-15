@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { linkRoute } from '@/lib/auth/route';
 import { LINK_REQUESTS_PER_ADDRESS_PER_MINUTE, linkAddressTableSize, resetLinkRequestLimits, takeLinkRequest } from '@/lib/links/address-limit';
 import { isLinkToken, LINK_TOKEN_HEADER, linkTokenHashOf, newLinkToken } from '@/lib/links/token';
@@ -85,5 +85,76 @@ describe('the per-address limit of the link routes', () => {
 
   it('lets a request with no usable address through to the per-link limits', () => {
     for (let i = 0; i < 200; i += 1) expect(takeLinkRequest(new Headers({ 'x-forwarded-for': 'not an address' }))).toBe(true);
+  });
+});
+
+// The route files themselves, run: every handler of a link route refuses a request that carries no
+// link token, and the technician's link routes never take a link token as a sign-in. The routes'
+// answers with a real token, and company isolation, are in tests/db/signing-links.test.ts and
+// document-links.test.ts.
+type RouteHandler = (request: Request, context: typeof params) => Response | Promise<Response>;
+type RouteModule = Partial<Record<'GET' | 'POST' | 'PUT' | 'DELETE', RouteHandler>>;
+
+const LINK_ROUTES: [string, () => Promise<RouteModule>, string[]][] = [
+  ['/api/sign', () => import('@/app/api/sign/route'), ['GET', 'POST']],
+  ['/api/sign/signature', () => import('@/app/api/sign/signature/route'), ['GET']],
+  ['/api/sign/signature/00000000-0000-4000-8000-000000000001', () => import('@/app/api/sign/signature/[signatureId]/route'), ['PUT']],
+  ['/api/documents', () => import('@/app/api/documents/route'), ['GET']],
+  ['/api/documents/signature', () => import('@/app/api/documents/signature/route'), ['GET']],
+];
+
+const TECHNICIAN_ROUTES: [string, () => Promise<RouteModule>, string[]][] = [
+  ['/api/jobs/00000000-0000-4000-8000-000000000002/signing-link', () => import('@/app/api/jobs/[jobId]/signing-link/route'), ['GET', 'POST', 'DELETE']],
+  ['/api/jobs/00000000-0000-4000-8000-000000000002/document-links', () => import('@/app/api/jobs/[jobId]/document-links/route'), ['GET', 'POST']],
+  ['/api/jobs/00000000-0000-4000-8000-000000000002/document-links/00000000-0000-4000-8000-000000000003', () => import('@/app/api/jobs/[jobId]/document-links/[linkId]/route'), ['DELETE']],
+];
+
+describe('the link route files', () => {
+  const verify = vi.fn(async () => {
+    throw new Error('a link route checked a sign-in');
+  });
+  beforeAll(() => {
+    vi.resetModules();
+    vi.doMock('@/lib/auth/services', () => ({
+      identityServices: () => ({ verifier: { verify, verifyNotRevoked: verify }, directory: {} }),
+      operatorServices: () => {
+        throw new Error('no operator here');
+      },
+    }));
+  });
+  afterAll(() => {
+    vi.doUnmock('@/lib/auth/services');
+    vi.resetModules();
+  });
+
+  it('answers 404 link_unavailable to every handler of a link route without a link token, a sign-in included', async () => {
+    for (const [path, load, methods] of LINK_ROUTES) {
+      const route = await load();
+      expect(Object.keys(route).filter((key) => /^[A-Z]+$/.test(key)).sort()).toEqual([...methods].sort());
+      for (const method of methods) {
+        for (const headers of [{}, { [LINK_TOKEN_HEADER]: 'short' }, { authorization: `Bearer ${newLinkToken()}` }] as Record<string, string>[]) {
+          const answer = await route[method as keyof RouteModule]!(new Request(`http://localhost${path}`, { method, headers }), params);
+          expect({ path, method, status: answer.status, body: await answer.json(), cache: answer.headers.get('cache-control') }).toEqual({
+            path,
+            method,
+            status: 404,
+            body: { error: 'link_unavailable' },
+            cache: 'no-store',
+          });
+        }
+      }
+    }
+    expect(verify).not.toHaveBeenCalled();
+  });
+
+  it('refuses a link token as a sign-in on the technician’s link routes', async () => {
+    for (const [path, load, methods] of TECHNICIAN_ROUTES) {
+      const route = await load();
+      for (const method of methods) {
+        const answer = await route[method as keyof RouteModule]!(new Request(`http://localhost${path}`, { method, headers: { [LINK_TOKEN_HEADER]: newLinkToken() } }), params);
+        expect({ path, method, status: answer.status }).toEqual({ path, method, status: 401 });
+      }
+    }
+    expect(verify).not.toHaveBeenCalled();
   });
 });

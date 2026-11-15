@@ -34,15 +34,40 @@ function phaseOf(answer: LinkAnswer): Phase {
 export function SignScreen() {
   // The token from the address's fragment; null on the server's render and when there is none.
   const token = useSyncExternalStore(watchFragment, fragmentToken, () => null);
-  const [phase, setPhase] = useState<Phase>({ name: 'checking' });
   const [missing, setMissing] = useState(false);
 
   useEffect(() => {
-    if (!token) {
-      // The fragment is read once the page is in the browser: wait a moment before saying none came.
-      const later = setTimeout(() => setMissing(true), 50);
-      return () => clearTimeout(later);
-    }
+    if (token) return;
+    // The fragment is read once the page is in the browser: wait a moment before saying none came.
+    const later = setTimeout(() => setMissing(true), 50);
+    return () => clearTimeout(later);
+  }, [token]);
+
+  if (!token) {
+    return missing ? (
+      <FocusedPanel title="This link cannot be used">
+        <p role="alert">{pageOutcomeOf(404, { error: 'link_unavailable' }).message}</p>
+      </FocusedPanel>
+    ) : (
+      <Opening />
+    );
+  }
+  // A new token in the address is a new page: nothing shown, ticked or drawn for another link stays.
+  return <SignPage key={token} token={token} />;
+}
+
+function Opening() {
+  return (
+    <FocusedPanel title="Your estimate">
+      <p role="status">Opening the estimate…</p>
+    </FocusedPanel>
+  );
+}
+
+function SignPage({ token }: { token: string }) {
+  const [phase, setPhase] = useState<Phase>({ name: 'checking' });
+
+  useEffect(() => {
     let gone = false;
     void linkCall(token, '/api/sign').then((answer) => {
       if (!gone) setPhase(phaseOf(answer));
@@ -52,32 +77,21 @@ export function SignScreen() {
     };
   }, [token]);
 
-  const load = useCallback(async (found: string) => {
+  const load = useCallback(async () => {
     setPhase({ name: 'checking' });
-    setPhase(phaseOf(await linkCall(found, '/api/sign')));
-  }, []);
+    setPhase(phaseOf(await linkCall(token, '/api/sign')));
+  }, [token]);
 
-  const loadSignature = useCallback(() => (token ? linkImageAddress(token, '/api/sign/signature') : Promise.resolve(null)), [token]);
+  const loadSignature = useCallback(() => linkImageAddress(token, '/api/sign/signature'), [token]);
 
-  if (!token && missing) {
-    return (
-      <FocusedPanel title="This link cannot be used">
-        <p role="alert">{pageOutcomeOf(404, { error: 'link_unavailable' }).message}</p>
-      </FocusedPanel>
-    );
-  }
   switch (phase.name) {
     case 'checking':
-      return (
-        <FocusedPanel title="Your estimate">
-          <p role="status">Opening the estimate…</p>
-        </FocusedPanel>
-      );
+      return <Opening />;
     case 'refused':
       return (
         <FocusedPanel title="This link cannot be used">
           <p role="alert">{phase.message}</p>
-          {phase.next === 'retry' || phase.next === 'reload' ? <Button onClick={() => token && void load(token)}>Try again</Button> : null}
+          {phase.next === 'retry' || phase.next === 'reload' ? <Button onClick={() => void load()}>Try again</Button> : null}
         </FocusedPanel>
       );
     case 'signed':
@@ -98,13 +112,11 @@ export function SignScreen() {
             bottom.
           </p>
           <LinkDocuments estimate={phase.estimate} />
-          {token ? (
-            <LinkSigning
-              token={token}
-              onSigned={(agreement) => setPhase({ name: 'signed', companyName: phase.companyName, viewUntil: viewUntilOf(agreement), agreement })}
-              onRefused={(outcome) => setPhase({ name: 'refused', ...outcome })}
-            />
-          ) : null}
+          <LinkSigning
+            token={token}
+            onSigned={(agreement) => setPhase({ name: 'signed', companyName: phase.companyName, viewUntil: viewUntilOf(agreement), agreement })}
+            onRefused={(outcome) => setPhase({ name: 'refused', ...outcome })}
+          />
         </FocusedPanel>
       );
   }
@@ -148,7 +160,7 @@ function LinkDocuments({ estimate }: { estimate: LinkEstimate }) {
 // A used link shows the signed record for 30 days after signing (the server's own rule).
 const viewUntilOf = (agreement: SignedAgreement) => new Date(Date.parse(agreement.signedAt) + 30 * 86_400_000).toISOString();
 
-type Attempt = { signatureId: string; agreementId: string; png: Uint8Array; name: string };
+type Attempt = { signatureId: string; agreementId: string; png: Uint8Array; name: string; uploaded: boolean };
 
 function LinkSigning({ token, onSigned, onRefused }: { token: string; onSigned: (agreement: SignedAgreement) => void; onRefused: (outcome: { message: string; next: PageNext }) => void }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -194,17 +206,21 @@ function LinkSigning({ token, onSigned, onRefused }: { token: string; onSigned: 
         setBusy(false);
         return setProblem({ message: 'The signature could not be read. Clear it, draw it again, then sign.', next: 'redraw' });
       }
-      sending = { signatureId: crypto.randomUUID(), agreementId: crypto.randomUUID(), png, name: signerName };
+      sending = { signatureId: crypto.randomUUID(), agreementId: crypto.randomUUID(), png, name: signerName, uploaded: false };
       setLocked(true);
     } else if (sending.name !== signerName) {
       sending = { ...sending, agreementId: crypto.randomUUID(), name: signerName };
     }
     attempt.current = sending;
 
-    const receipt = await linkCall(token, `/api/sign/signature/${encodeURIComponent(sending.signatureId)}`, { method: 'PUT', bytes: sending.png, type: 'image/png' });
-    if (receipt.status !== 200 && receipt.status !== 201) {
-      setBusy(false);
-      return refused(pageOutcomeOf(receipt.status, receipt.body));
+    if (!sending.uploaded) {
+      const receipt = await linkCall(token, `/api/sign/signature/${encodeURIComponent(sending.signatureId)}`, { method: 'PUT', bytes: sending.png, type: 'image/png' });
+      if (receipt.status !== 200 && receipt.status !== 201) {
+        setBusy(false);
+        return refused(pageOutcomeOf(receipt.status, receipt.body));
+      }
+      sending = { ...sending, uploaded: true };
+      attempt.current = sending;
     }
     const answer = await linkCall(token, '/api/sign', {
       method: 'POST',

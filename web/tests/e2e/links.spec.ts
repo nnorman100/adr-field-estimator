@@ -95,7 +95,10 @@ function signedFor(shown: LinkEstimate, signatureId: string, name: string): Sign
 // Every call the page made to the link routes, with what it carried.
 type Sent = { method: string; path: string; search: string; token: string | undefined; referer: string | undefined; authorization: string | undefined; body: unknown };
 
-async function playLinks(page: Page, answer: (sent: Sent) => [number, unknown] | Buffer) {
+type Played = [number, unknown] | Buffer | 'lost';
+
+// An answer of 'lost' drops the connection, as when the server acted but its answer never arrived.
+async function playLinks(page: Page, answer: (sent: Sent) => Played | Promise<Played>) {
   const sent: Sent[] = [];
   const handle = async (route: Route, request: Request) => {
     const url = new URL(request.url());
@@ -104,7 +107,8 @@ async function playLinks(page: Page, answer: (sent: Sent) => [number, unknown] |
     if (request.method() === 'POST') body = request.postDataJSON();
     const call = { method: request.method(), path: url.pathname, search: url.search, token: headers['x-link-token'], referer: headers.referer, authorization: headers.authorization, body };
     sent.push(call);
-    const made = answer(call);
+    const made = await answer(call);
+    if (made === 'lost') return route.abort('connectionreset');
     if (Buffer.isBuffer(made)) return route.fulfill({ status: 200, contentType: 'image/png', body: made });
     return route.fulfill({ status: made[0], json: made[1], headers: { 'cache-control': 'no-store' } });
   };
@@ -182,7 +186,7 @@ test('the homeowner reads the documents with the company’s terms, signs once, 
 });
 
 test('a link with no token, an unknown one or a voided one says what to do, and offers nothing to sign', async ({ page }) => {
-  let next: [number, unknown] = [404, { error: 'link_unavailable' }];
+  let next: Played = [404, { error: 'link_unavailable' }];
   await playLinks(page, () => next);
   await page.goto('/sign');
   const main = page.getByRole('main');
@@ -241,4 +245,85 @@ test('the documents page shows the homeowner’s set and the adjuster’s set, r
   await expect(main.getByText('Synthetic start-work authorization.', { exact: false })).toHaveCount(0);
   await expectNoAxeViolations(page);
   await expectNoSideways(page);
+});
+
+test('a new link in the same tab starts a new page: nothing shown, ticked or drawn for the first link stays', async ({ page }) => {
+  const first = estimate();
+  const second = estimate();
+  const OTHER = 'An0therLinkForTheSameTabTestOnly_abcdefghij'.slice(0, 43);
+  const OTHER_COMPANY = 'Second Synthetic Restoration Co';
+  let release: () => void = () => {};
+  const secondHeld = new Promise<void>((resolve) => (release = resolve));
+  const sent = await playLinks(page, async (call) => {
+    if (call.method === 'GET' && call.path === '/api/sign' && call.token === TOKEN) return [200, { status: 'pending', companyName: COMPANY, expiresAt: '2026-11-22T18:00:00.000Z', estimate: first }];
+    if (call.method === 'GET' && call.path === '/api/sign' && call.token === OTHER) {
+      await secondHeld;
+      return [200, { status: 'pending', companyName: OTHER_COMPANY, expiresAt: '2026-11-22T18:00:00.000Z', estimate: second }];
+    }
+    return [500, { error: 'unexpected' }];
+  });
+  await page.goto(`/sign#${TOKEN}`);
+  const main = page.getByRole('main');
+  await expect(main.getByText(`From ${COMPANY}.`, { exact: false })).toBeVisible();
+  await main.getByRole('checkbox', { name: /I reviewed the proposal/ }).check();
+  await main.getByRole('checkbox', { name: /I agree to sign electronically/ }).check();
+  await main.getByLabel('Your full name').fill('Casey Customer');
+  await drawSignature(page);
+
+  await page.evaluate((token) => {
+    window.location.hash = token;
+  }, OTHER);
+  // While the second link's estimate is on its way, nothing of the first is shown and nothing can be signed.
+  await expect(main.getByRole('status')).toHaveText('Opening the estimate…');
+  await expect(main.getByText(`From ${COMPANY}.`, { exact: false })).toHaveCount(0);
+  await expect(main.getByRole('button', { name: 'Sign', exact: true })).toHaveCount(0);
+
+  release();
+  await expect(main.getByText(`From ${OTHER_COMPANY}.`, { exact: false })).toBeVisible();
+  await expect(main.getByRole('checkbox', { name: /I reviewed the proposal/ })).not.toBeChecked();
+  await expect(main.getByRole('checkbox', { name: /I agree to sign electronically/ })).not.toBeChecked();
+  await expect(main.getByLabel('Your full name')).toHaveValue('');
+  await main.getByRole('button', { name: 'Sign', exact: true }).click();
+  await expect(main.getByText('Draw your signature in the box.')).toBeVisible();
+  expect(sent.filter((call) => call.method !== 'GET')).toEqual([]);
+});
+
+test('signing again after the answer was lost returns the agreement already made, not "already signed"', async ({ page }) => {
+  const shown = estimate();
+  let signed: SignedAgreement | null = null;
+  let signedId: string | null = null;
+  const sent = await playLinks(page, (call) => {
+    if (call.method === 'GET' && call.path === '/api/sign') return [200, { status: 'pending', companyName: COMPANY, expiresAt: '2026-11-22T18:00:00.000Z', estimate: shown }];
+    if (call.method === 'PUT' && call.path.startsWith('/api/sign/signature/')) {
+      // A used link takes no more signatures (src/lib/links/signing.ts, receiveSignature).
+      return signed ? [409, { error: 'already_signed' }] : [201, { signatureId: call.path.split('/').pop(), sha256: 'f'.repeat(64) }];
+    }
+    if (call.method === 'POST' && call.path === '/api/sign') {
+      const body = call.body as { id: string; signatureId: string; signerName: string };
+      if (!signed) {
+        signed = signedFor(shown, body.signatureId, body.signerName);
+        signedId = body.id;
+        return 'lost';
+      }
+      // The same request again answers the link's own agreement; any other is refused.
+      return body.id === signedId ? [200, { agreement: signed }] : [409, { error: 'already_signed' }];
+    }
+    if (call.method === 'GET' && call.path === '/api/sign/signature') return PNG;
+    return [500, { error: 'unexpected' }];
+  });
+  await page.goto(`/sign#${TOKEN}`);
+  const main = page.getByRole('main');
+  await main.getByRole('checkbox', { name: /I reviewed the proposal/ }).check();
+  await main.getByRole('checkbox', { name: /I agree to sign electronically/ }).check();
+  await main.getByLabel('Your full name').fill('Casey Customer');
+  await drawSignature(page);
+  await main.getByRole('button', { name: 'Sign', exact: true }).click();
+  await expect(main.getByRole('alert')).toContainText('We could not reach DryScope.');
+
+  await main.getByRole('button', { name: 'Try signing again' }).click();
+  await expect(main.getByRole('heading', { name: 'Your signed estimate' })).toBeVisible();
+  await expect(main.getByTestId('signed-by')).toHaveText('Signed by Casey Customer');
+  expect(sent.filter((call) => call.method === 'PUT')).toHaveLength(1);
+  const posted = sent.filter((call) => call.method === 'POST').map((call) => (call.body as { id: string }).id);
+  expect(posted).toEqual([signedId, signedId]);
 });
