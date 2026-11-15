@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import {
+  isLinkApiPath,
   isMemberApiPath,
   isOperatorApiPath,
   isPublicApiPath,
@@ -12,7 +13,7 @@ import { addCspReportOnly } from '@/lib/csp';
 // access itself, because Proxy is a backstop, not the authorization layer. The release smoke check
 // (scripts/smoke-release.ts) relies on this refusal. An internal job route (serviceRoute) checks its
 // service token itself in the same way, and a platform operator route (operatorRoute) the operator
-// sign-in.
+// sign-in. A link route (linkRoute) checks the link token it carries.
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const api = pathname === '/api' || pathname.startsWith('/api/');
@@ -21,7 +22,8 @@ export function proxy(request: NextRequest) {
     isPublicApiPath(pathname) ||
     isMemberApiPath(pathname) ||
     isOperatorApiPath(pathname) ||
-    isServiceApiPath(pathname);
+    isServiceApiPath(pathname) ||
+    isLinkApiPath(pathname);
   const response = allowed
     ? NextResponse.next()
     : NextResponse.json(
