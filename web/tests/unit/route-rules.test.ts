@@ -1,4 +1,4 @@
-import { readdir } from 'node:fs/promises';
+import { readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
@@ -52,11 +52,11 @@ const REFUSED: Record<Exclude<AccessRule, 'public'>, { status: number; error: st
   link: { status: 404, error: 'link_unavailable' },
 };
 
-async function routeFiles(dir: string): Promise<string[]> {
+function routeFiles(dir: string): string[] {
   const found: string[] = [];
-  for (const entry of await readdir(dir, { withFileTypes: true })) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name);
-    if (entry.isDirectory()) found.push(...(await routeFiles(path)));
+    if (entry.isDirectory()) found.push(...routeFiles(path));
     else if (ROUTE_FILE.test(entry.name)) found.push(path);
   }
   return found.sort();
@@ -86,21 +86,20 @@ async function routeProblems(module: Record<string, unknown>): Promise<string[]>
   return problems;
 }
 
+// Found once, when the file is collected, so each route file gets its own test and its own time
+// budget, and a failure names the route.
+const ROUTE_FILES = routeFiles(APP_DIR).map((path) => ({ file: relative(APP_DIR, path), path }));
+
 const ok = async () => Response.json({ ran: true });
 
 describe('route access rules', () => {
   it('finds the known routes by searching src/app', async () => {
-    const files = (await routeFiles(APP_DIR)).map((path) => relative(APP_DIR, path));
+    const files = ROUTE_FILES.map(({ file }) => file);
     expect(files).toEqual(expect.arrayContaining(['api/echo/route.ts', 'api/health/route.ts', 'api/me/route.ts', 'api/sign/route.ts']));
   });
 
-  it('every route file’s handlers are made by an access rule, and every rule but public refuses a request with nothing in it', async () => {
-    const problems: Record<string, string[]> = {};
-    for (const path of await routeFiles(APP_DIR)) {
-      const found = await routeProblems(await import(path));
-      if (found.length > 0) problems[relative(APP_DIR, path)] = found;
-    }
-    expect(problems).toEqual({});
+  it.each(ROUTE_FILES)('$file: every handler is made by an access rule, and every rule but public refuses a request with nothing in it', async ({ path }) => {
+    expect(await routeProblems(await import(path))).toEqual([]);
   });
 
   it('fails a route module whose handler no rule made, or that has no handler', async () => {
