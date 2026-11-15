@@ -2,6 +2,8 @@
 // them and stops them. DRYSCOPE_EMU_PROJECT picks the project id; anything not starting with
 // `demo-` is refused before the Firebase CLI starts.
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_EMU_PROJECT, requireDemoProject } from './guard';
@@ -50,10 +52,13 @@ if (files.some((file) => !/^tests\/emu\/[A-Za-z0-9_./-]+\.test\.ts$/.test(file) 
   process.exit(2);
 }
 
-// The CLI runs in its own process group so that everything it starts (the emulators are Java
-// processes that can outlive it) can be stopped together. Whenever the run ends, whether the tests
-// failed, the CLI died, or the runner was interrupted, the whole group is stopped, so no emulator
-// is left holding a port. SIGKILL of the runner itself cannot be caught.
+// The CLI runs in its own process group, and the emulators it starts (Java processes the CLI
+// detaches into groups of their own, so they can outlive it) inherit a marker naming this run.
+// Whenever the run ends, whether the tests failed, the CLI died, or the runner was interrupted,
+// the group and every marked process are stopped, so no emulator is left holding a port. SIGKILL
+// of the runner itself cannot be caught.
+const runId = randomUUID();
+const RUN_MARK = `DRYSCOPE_EMU_RUN=${runId}`;
 const child = spawn(
   'npx',
   [
@@ -68,32 +73,59 @@ const child = spawn(
     config,
     ['npx vitest run --config vitest.emu.config.ts', ...files].join(' '),
   ],
-  { cwd: webDir, stdio: 'inherit', detached: true },
+  {
+    cwd: webDir,
+    stdio: 'inherit',
+    detached: true,
+    env: { ...process.env, DRYSCOPE_EMU_RUN: runId },
+  },
 );
 
-const GRACE_MS = 5_000;
-function stopGroup(signal: NodeJS.Signals | 0): boolean {
-  if (child.pid === undefined) return false;
+// Processes started under this run, wherever they now sit (Linux /proc; elsewhere only the group).
+function markedPids(): number[] {
+  let entries: string[];
   try {
-    process.kill(-child.pid, signal); // signal 0 only checks that the group still has members
-    return true;
+    entries = readdirSync('/proc');
   } catch {
-    return false; // nobody left in the group
+    return [];
   }
+  return entries.filter((entry) => /^\d+$/.test(entry)).flatMap((entry) => {
+    try {
+      return readFileSync(`/proc/${entry}/environ`, 'latin1').split('\0').includes(RUN_MARK) ? [Number(entry)] : [];
+    } catch {
+      return []; // gone, or not ours to read
+    }
+  });
+}
+
+const GRACE_MS = 5_000;
+// Signals the CLI's group and every marked process; false when none of them is left.
+// Signal 0 only checks that something is still there.
+function signalRun(signal: NodeJS.Signals | 0): boolean {
+  let any = false;
+  for (const target of [...(child.pid === undefined ? [] : [-child.pid]), ...markedPids()]) {
+    try {
+      process.kill(target, signal);
+      any = true;
+    } catch {
+      // already gone
+    }
+  }
+  return any;
 }
 
 // Stops what the CLI left behind: ask politely, then force after a short grace.
 async function cleanUp(): Promise<void> {
-  if (!stopGroup('SIGTERM')) return;
+  if (!signalRun('SIGTERM')) return;
   const deadline = Date.now() + GRACE_MS;
-  while (Date.now() < deadline && stopGroup(0)) {
+  while (Date.now() < deadline && signalRun(0)) {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  stopGroup('SIGKILL');
+  signalRun('SIGKILL');
 }
 // Last resort if the process is torn down without going through the paths below.
 process.on('exit', () => {
-  stopGroup('SIGKILL');
+  signalRun('SIGKILL');
 });
 
 let finishing = false;
@@ -113,7 +145,7 @@ child.on('error', (error) => {
 child.on('exit', (code, signal) => void finish(code ?? (signal ? 1 : 0)));
 for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
   process.on(signal, () => {
-    stopGroup(signal);
+    signalRun(signal);
     // The child's exit finishes the run; if it does not exit, finish anyway after the grace.
     setTimeout(() => void finish(1), GRACE_MS + 1_000).unref();
   });

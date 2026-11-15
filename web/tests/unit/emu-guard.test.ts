@@ -114,9 +114,9 @@ describe('npm run test:emu runner', () => {
   });
 });
 
-// The Firebase CLI starts the emulators as processes that can outlive it. The stand-in `npx` here
-// starts a background process the way the CLI does, then ends the way a run can end; the runner
-// must leave nothing of it running.
+// The Firebase CLI starts the emulators as detached processes (their own process group) that can
+// outlive it. The stand-in `npx` here starts one the same way, then ends the way a run can end; the
+// runner must leave nothing of it running.
 describe('npm run test:emu cleanup', () => {
   let dir: string;
   let pidFile: string;
@@ -125,7 +125,19 @@ describe('npm run test:emu cleanup', () => {
     dir = await mkdtemp(join(tmpdir(), 'dryscope-emu-cleanup-'));
     pidFile = join(dir, 'emulator.pid');
     const npx = join(dir, 'npx');
-    await writeFile(npx, `#!/bin/sh\nsleep 300 &\necho $! > '${pidFile}'\n${'$FAKE_END'}\n`);
+    await writeFile(
+      npx,
+      [
+        `#!${process.execPath}`,
+        "const { spawn } = require('node:child_process');",
+        "const emulator = spawn('sleep', ['300'], { detached: true, stdio: 'ignore' });",
+        'emulator.unref();',
+        `require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(emulator.pid));`,
+        "if (process.env.FAKE_END === 'fail') process.exit(3);",
+        'setInterval(() => {}, 1000);',
+        '',
+      ].join('\n'),
+    );
     await chmod(npx, 0o755);
   });
 
@@ -147,7 +159,7 @@ describe('npm run test:emu cleanup', () => {
     }
   };
 
-  function start(end: string) {
+  function start(end: 'fail' | 'hang') {
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       PATH: `${dir}${delimiter}${process.env.PATH ?? ''}`,
@@ -167,14 +179,14 @@ describe('npm run test:emu cleanup', () => {
   }
 
   it('stops what the CLI started when the tests fail', async () => {
-    const child = start('exit 3');
+    const child = start('fail');
     expect(await exited(child)).toBe(3);
     const pid = Number(await readFile(pidFile, 'utf8'));
     await waitFor(() => !alive(pid));
   });
 
   it('stops what the CLI started when the run is interrupted', async () => {
-    const child = start('sleep 300');
+    const child = start('hang');
     await waitFor(() => existsSync(pidFile) && readFileSync(pidFile, 'utf8').trim() !== '');
     const pid = Number(await readFile(pidFile, 'utf8'));
     expect(alive(pid)).toBe(true);

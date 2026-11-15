@@ -299,12 +299,8 @@ describe('npm run test:emu with its own ports', () => {
 
   it('hands the Firebase CLI a config with the ports from EMU_*_PORT', async () => {
     const record = join(fakeBin, 'record');
-    const auth = await freeNearby();
-    const firestore = await freeNearby(auth + 1);
     // The ports left unpinned would be the defaults, and a run beside this one may hold those.
-    const ws = await freeNearby(firestore);
-    const hub = await freeNearby(ws);
-    const logging = await freeNearby(hub);
+    const [auth, firestore, ws, hub, logging] = (await freePorts(5)) as [number, number, number, number, number];
     const result = await run(
       {
         EMU_AUTH_PORT: String(auth),
@@ -442,8 +438,7 @@ describe('claimPorts and claimE2ePorts', () => {
   });
 
   it('honors explicit E2E server port env vars without modifying them', async () => {
-    const appCheckPort = await freeNearby(30_000);
-    const appCheckJobsPort = await freeNearby(appCheckPort);
+    const [appCheckPort, appCheckJobsPort] = (await freePorts(2)) as [number, number];
     const env: Record<string, string | undefined> = {
       E2E_APP_CHECK_PORT: String(appCheckPort),
       E2E_APP_CHECK_JOBS_PORT: String(appCheckJobsPort),
@@ -467,16 +462,15 @@ function sequence(values: number[]): () => number {
   return () => values[index++ % values.length]!;
 }
 
-// A free port that is not one of the real emulator ports, found by binding port 0 and letting go.
-async function freeNearby(minimum = 0): Promise<number> {
-  for (;;) {
-    const server = await new Promise<Server>((resolve, reject) => {
-      const s = createServer();
-      s.once('error', reject);
-      s.listen(0, '127.0.0.1', () => resolve(s));
-    });
-    const port = (server.address() as { port: number }).port;
-    await closeServer(server);
-    if (port > minimum) return port;
-  }
+// Distinct free ports that are not the real emulator ports, found by binding port 0 that many times
+// at once and letting go.
+async function freePorts(count: number): Promise<number[]> {
+  const held = await Promise.all(Array.from({ length: count }, () => holdPort(0)));
+  const ports = held.map((server) => (server.address() as { port: number }).port);
+  await Promise.all(held.map(closeServer));
+  return ports;
+}
+
+async function freeNearby(): Promise<number> {
+  return (await freePorts(1))[0]!;
 }
