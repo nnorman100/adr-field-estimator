@@ -1,5 +1,11 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { isMemberApiPath, isOperatorApiPath, isPublicApiPath, isServiceApiPath } from '@/lib/public-api';
+import {
+  isMemberApiPath,
+  isOperatorApiPath,
+  isPublicApiPath,
+  isServiceApiPath,
+} from '@/lib/public-api';
+import { addCspReportOnly } from '@/lib/csp';
 
 // Deny by default: an /api route outside the public and member lists refuses a caller with no
 // sign-in. A member route (memberRoute in src/lib/auth/route.ts) checks the token, company and job
@@ -9,13 +15,22 @@ import { isMemberApiPath, isOperatorApiPath, isPublicApiPath, isServiceApiPath }
 // sign-in.
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  if (isPublicApiPath(pathname) || isMemberApiPath(pathname) || isOperatorApiPath(pathname) || isServiceApiPath(pathname)) {
-    return NextResponse.next();
-  }
-  return NextResponse.json(
-    { error: 'sign_in_required' },
-    { status: 401, headers: { 'cache-control': 'no-store', 'www-authenticate': 'Bearer' } },
-  );
+  const api = pathname === '/api' || pathname.startsWith('/api/');
+  const allowed =
+    !api ||
+    isPublicApiPath(pathname) ||
+    isMemberApiPath(pathname) ||
+    isOperatorApiPath(pathname) ||
+    isServiceApiPath(pathname);
+  const response = allowed
+    ? NextResponse.next()
+    : NextResponse.json(
+        { error: 'sign_in_required' },
+        { status: 401, headers: { 'cache-control': 'no-store', 'www-authenticate': 'Bearer' } },
+      );
+  addCspReportOnly(response, pathname);
+  return response;
 }
 
-export const config = { matcher: '/api/:path*' };
+// Pages and the offline shell need the runtime auth domain in their report-only policy too.
+export const config = { matcher: '/:path*' };

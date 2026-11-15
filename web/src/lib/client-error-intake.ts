@@ -11,6 +11,7 @@ import {
   scrubMessage,
 } from './client-error-report';
 import { emit, log } from './log';
+import { cspReports } from './csp-report';
 
 // POST /api/client-errors (TC-2, docs/plans/TC.md): the way a browser or phone error reaches Error
 // Reporting. Public, because the sign-in pages fail before anyone is signed in; so it is write-only
@@ -27,6 +28,8 @@ import { emit, log } from './log';
 //   - the content: every report is scrubbed again with the browser's own rules before it is
 //     written, and a frame that is not the app's own script is dropped. Nothing else in the body is
 //     read, so a field a caller invents is not written.
+// Native CSP reports use this same intake and all its caps (csp-report.ts). Only fixed categories
+// and a page route pattern survive; no URL, script sample or original policy is written.
 // The event is Error Reporting's ReportedErrorEvent shape in a JSON log line
 // (docs.cloud.google.com/error-reporting/docs/formatting-error-messages), service
 // "dryscope-web-client", so browser errors group apart from the server's "dryscope-api".
@@ -174,7 +177,9 @@ function eventFor(report: Report, version: string): Record<string, unknown> {
 }
 
 export async function handleClientErrors(request: Request): Promise<Response> {
-  if (!/^application\/json\b/i.test(request.headers.get('content-type') ?? '')) return refuse('unsupported_media_type', 415);
+  const type = (request.headers.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase();
+  if (!['application/json', 'application/csp-report', 'application/reports+json'].includes(type))
+    return refuse('unsupported_media_type', 415);
   const text = await readLimited(request);
   if (text === null) return refuse('payload_too_large', 413);
   let body: unknown;
@@ -183,15 +188,24 @@ export async function handleClientErrors(request: Request): Promise<Response> {
   } catch {
     return refuse('invalid_request', 400);
   }
-  const parsed = bodySchema.safeParse(body);
+  const native = type !== 'application/json';
+  const csp = native ? cspReports(body, type, request.headers.get('user-agent') ?? '') : null;
+  if (native && csp === null) return refuse('invalid_request', 400);
+  const parsed = bodySchema.safeParse(native ? { reports: csp } : body);
   if (!parsed.success) return refuse('invalid_request', 400);
 
   const now = Date.now();
   const key = callerKey(request.headers);
-  const mine = key === null ? parsed.data.reports.length : takeCaller(key, parsed.data.reports.length, now);
+  const mine =
+    key === null ? parsed.data.reports.length : takeCaller(key, parsed.data.reports.length, now);
   if (mine < parsed.data.reports.length && now - capLoggedAt >= 60_000) {
     capLoggedAt = now;
-    log('WARNING', 'client error reports capped for one caller', { component: 'client-errors', event: 'caller_cap' }, request.headers);
+    log(
+      'WARNING',
+      'client error reports capped for one caller',
+      { component: 'client-errors', event: 'caller_cap' },
+      request.headers,
+    );
   }
   // Only what the caller's share allows counts against the instance's allowance.
   const reports = parsed.data.reports.slice(0, take(mine, now));
