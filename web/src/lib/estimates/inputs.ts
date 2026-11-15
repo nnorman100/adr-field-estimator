@@ -74,14 +74,24 @@ function claimOf(claim: Snapshot['claim']): Json {
   return out;
 }
 
+type PhotoLogEntry = { id: string; rank: number; capturedAt: number | null; row: Json };
+
+function comparePhotoLogEntry(a: PhotoLogEntry, b: PhotoLogEntry): number {
+  if (a.rank !== b.rank) return a.rank - b.rank;
+  if (a.capturedAt === null && b.capturedAt === null) return 0;
+  if (a.capturedAt === null) return 1;
+  if (b.capturedAt === null) return -1;
+  if (a.capturedAt !== b.capturedAt) return a.capturedAt - b.capturedAt;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
 /**
- * The photo log in the company's grouping (S5a-9c). By room, the default: the photos of each room in
- * the record's room order, then the photos tied to no room, with the rows as S5a-9 made them. By shot
- * tag: albums in the field map's shot-tag order, photos with no tag last, each row naming its album.
- * Either way each photo is the record's own: its id, its room and the hash the evidence registry held
- * when it was submitted; only the order and the album headings differ. Within a room or an album the
- * photos keep the snapshot's order (sorted by photo id), which is not capture order: the snapshot
- * holds no capture time.
+ * The photo log in the company's grouping (S5a-9c, capture order follow-up). By room, the default:
+ * the photos of each room in the record's room order, then the photos tied to no room, with the rows
+ * as S5a-9 made them. By shot tag: albums in the field map's shot-tag order, photos with no tag
+ * last, each row naming its album. Within each room or album, timed photos come first in capture
+ * order (ties broken by photo id), followed by photos without a capture time keeping their order.
+ * A record whose photos have no capture times omits `captured_at` and produces identical documents.
  */
 function photoLog(snapshot: Snapshot, grouping: CompanyDocuments['settings']['photoLogGrouping']): Json[] {
   const draft = draftFieldSchema.parse(snapshot.field.draft ?? {});
@@ -89,19 +99,20 @@ function photoLog(snapshot: Snapshot, grouping: CompanyDocuments['settings']['ph
   for (const room of snapshot.field.rooms) names.set(room.id, roomFieldSchema.parse(room.field ?? {}).name ?? '');
   const order = draft.roomOrder ?? [];
   const hashes = new Map(snapshot.photos.map((photo) => [photo.id, photo.sha256]));
-  const rows = snapshot.field.photos.map((doc) => {
+  const rows: PhotoLogEntry[] = snapshot.field.photos.map((doc) => {
     const field = photoFieldSchema.parse(doc.field ?? {});
     const sha256 = hashes.get(doc.id);
     if (!sha256) throw new SnapshotError('a photo reference has no stored photo in the record');
     const roomId = field.roomId !== undefined && names.has(field.roomId) ? field.roomId : null;
     const row: { [key: string]: Json } = { id: doc.id, room: roomId === null ? NO_ROOM : names.get(roomId)!, sha256 };
+    if (field.capturedAt !== undefined) row.captured_at = field.capturedAt;
     if (field.shotTag !== undefined) row.shot_tag = field.shotTag;
     if (grouping === 'shot_tag') row.album = field.shotTag === undefined ? UNTAGGED_ALBUM : SHOT_NAMES[field.shotTag];
     const rank = grouping === 'shot_tag' ? (field.shotTag === undefined ? SHOT_TAGS.length : SHOT_TAGS.indexOf(field.shotTag)) : roomId === null ? order.length : order.indexOf(roomId);
-    return { row, rank };
+    const capturedAt = field.capturedAt === undefined ? null : Date.parse(field.capturedAt);
+    return { id: doc.id, rank, capturedAt, row };
   });
-  // A stable sort: within a room or an album the photos keep the snapshot's order.
-  return rows.sort((a, b) => a.rank - b.rank).map((photo) => photo.row);
+  return rows.sort(comparePhotoLogEntry).map((photo) => photo.row);
 }
 
 /**

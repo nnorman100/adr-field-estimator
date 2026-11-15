@@ -14,10 +14,11 @@ import { Choice, Outcome, Section } from './ui';
 
 const SHOT_OPTIONS = [{ value: '', label: 'Not tagged' }, ...SHOT_TAGS.map((tag) => ({ value: tag, label: SHOT_NAMES[tag] }))];
 
-function fieldOf(roomId: string, shotTag: string): PhotoField {
+function fieldOf(roomId: string, shotTag: string, capturedAt: string): PhotoField {
   return {
     ...(roomId ? { roomId } : {}),
     ...(shotTag ? { shotTag: shotTag as PhotoField['shotTag'] & string } : {}),
+    capturedAt,
   };
 }
 
@@ -88,9 +89,10 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
   async function take(file: File | undefined) {
     setError(null);
     if (!file) return;
+    const capturedAt = new Date().toISOString();
     const bytes = await preparePhoto(file);
     if (!bytes) return setError('This picture could not be read. Take the photo with the camera.');
-    const item: PendingPhoto = { id: crypto.randomUUID(), bytes, field: fieldOf(roomId, shotTag), step: 'sending' };
+    const item: PendingPhoto = { id: crypto.randomUUID(), bytes, field: fieldOf(roomId, shotTag, capturedAt), step: 'sending' };
     if (!notePhoto(job.session.client.person.tenantId, job.session.user.uid, item.id)) {
       return setError('This phone could not record the photo as unsent. Try again.');
     }

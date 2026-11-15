@@ -45,7 +45,10 @@ function record(jobId: string, draftId: string, more = false): Snapshot {
         { id: 'hall', field: { name: 'Hall', category: 2, floorSf: 40, wetFloorSf: 40 } },
         { id: 'kitchen', field: { name: 'Kitchen', category: 2, floorSf: 120, wetFloorSf: 80 } },
       ],
-      photos: [{ id: PHOTO, field: { roomId: 'kitchen', shotTag: 'source' } }, ...(more ? [{ id: PHOTO_TWO, field: { roomId: 'hall', shotTag: 'overview' } }] : [])],
+      photos: [
+        { id: PHOTO, field: { roomId: 'kitchen', shotTag: 'source', capturedAt: '2026-11-14T18:01:00.000Z' } },
+        ...(more ? [{ id: PHOTO_TWO, field: { roomId: 'hall', shotTag: 'overview', capturedAt: '2026-11-14T18:00:00.000Z' } }] : []),
+      ],
     },
     photos: [{ id: PHOTO, sha256: 'ab'.repeat(32), sizeBytes: 1000, contentType: 'image/jpeg' }, ...(more ? [{ id: PHOTO_TWO, sha256: 'cd'.repeat(32), sizeBytes: 1000, contentType: 'image/jpeg' }] : [])],
     job: { propertyAddress: '12 Synthetic Lane, Testville' },
@@ -58,11 +61,9 @@ function record(jobId: string, draftId: string, more = false): Snapshot {
 const CLAUSE = { title: 'Scheduling', text: 'We confirm the start date by phone.\nTwo days before.' };
 type Layout = { letter: boolean };
 
-// The server's answer for this record priced at $2.00 a square foot of wet floor, as `role` sees it.
-function estimateFor(
+function estimateOfSnapshot(
   team: TeamSeed,
-  jobId: string,
-  draftId: string,
+  snapshot: Snapshot,
   role: 'owner' | 'estimator' | 'office',
   photoLogGrouping: 'room' | 'shot_tag' | null = null,
   layout: Layout = { letter: false },
@@ -78,14 +79,6 @@ function estimateFor(
     // The company's own wording for the signed page (S5a-11), synthetic text.
     signing: { authorizationText: 'Synthetic start-work authorization.', paymentTermsText: 'Synthetic payment terms.' },
   };
-  const snapshot = record(jobId, draftId, photoLogGrouping !== null);
-  if (layout.letter) {
-    // The rooms' words the letter prints (S5a-10): a prep task in the kitchen, a findings note in the hall.
-    snapshot.field.rooms = [
-      { id: 'hall', field: { name: 'Hall', category: 2, floorSf: 40, wetFloorSf: 40, findings: 'Baseboards swollen along the east wall.' } },
-      { id: 'kitchen', field: { name: 'Kitchen', category: 2, floorSf: 120, wetFloorSf: 80, prepTasks: ['The homeowner clears the cabinet under the sink.'] } },
-    ];
-  }
   const table = {
     items: [{ item_id: 'extraction', group: 'treatment', name: 'Extraction', unit: 'sf', quantity_source: 'room:wet_floor', unit_price: '2.00' }],
     policy: {
@@ -106,7 +99,7 @@ function estimateFor(
   return estimateView(
     {
       id: randomUUID(),
-      jobId,
+      jobId: snapshot.jobId,
       submissionId: snapshot.submissionId,
       pinSequence: 1,
       versionSequence: 1,
@@ -119,6 +112,26 @@ function estimateFor(
     },
     capabilitiesFor(role, { priceBooks: true }),
   );
+}
+
+// The server's answer for this record priced at $2.00 a square foot of wet floor, as `role` sees it.
+function estimateFor(
+  team: TeamSeed,
+  jobId: string,
+  draftId: string,
+  role: 'owner' | 'estimator' | 'office',
+  photoLogGrouping: 'room' | 'shot_tag' | null = null,
+  layout: Layout = { letter: false },
+): EstimateView {
+  const snapshot = record(jobId, draftId, photoLogGrouping !== null);
+  if (layout.letter) {
+    // The rooms' words the letter prints (S5a-10): a prep task in the kitchen, a findings note in the hall.
+    snapshot.field.rooms = [
+      { id: 'hall', field: { name: 'Hall', category: 2, floorSf: 40, wetFloorSf: 40, findings: 'Baseboards swollen along the east wall.' } },
+      { id: 'kitchen', field: { name: 'Kitchen', category: 2, floorSf: 120, wetFloorSf: 80, prepTasks: ['The homeowner clears the cabinet under the sink.'] } },
+    ];
+  }
+  return estimateOfSnapshot(team, snapshot, role, photoLogGrouping, layout);
 }
 
 type Job = { id: string; status: string; currentDraftId: string; revision: number };
@@ -289,6 +302,40 @@ test('the photo audit log shows the company’s grouping: by room as one list, b
     await expectNoAxeViolations(page);
     await expectNoSideways(page);
   }
+});
+
+test('the photo audit log orders each album by capture time even when photo ids sort the other way', async ({ page }) => {
+  const job = { id: randomUUID(), status: 'submitted', currentDraftId: randomUUID(), revision: 3 };
+  const early = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+  const late = '11111111-1111-4111-8111-111111111111';
+  const snapshot: Snapshot = {
+    ...record(job.id, job.currentDraftId, false),
+    field: {
+      draft: { yearBuilt: 1968, roomOrder: ['kitchen', 'hall'], summary: 'Category 2 water in two rooms.', scopeConfirmed: true },
+      rooms: [
+        { id: 'hall', field: { name: 'Hall', category: 2, floorSf: 40, wetFloorSf: 40 } },
+        { id: 'kitchen', field: { name: 'Kitchen', category: 2, floorSf: 120, wetFloorSf: 80 } },
+      ],
+      photos: [
+        { id: late, field: { roomId: 'kitchen', shotTag: 'source', capturedAt: '2026-11-14T18:02:00.000Z' } },
+        { id: early, field: { roomId: 'hall', shotTag: 'source', capturedAt: '2026-11-14T18:01:00.000Z' } },
+      ],
+    },
+    photos: [
+      { id: late, sha256: '11'.repeat(32), sizeBytes: 1000, contentType: 'image/jpeg' },
+      { id: early, sha256: 'ff'.repeat(32), sizeBytes: 1000, contentType: 'image/jpeg' },
+    ],
+  };
+  const estimate = estimateOfSnapshot(team, snapshot, 'office', 'shot_tag');
+  await playApi(page, job, { estimate });
+  await signInTo(page, team.office);
+  await page.goto(`/sign-in/${team.address}/jobs/${job.id}/review`);
+  const main = page.getByRole('main');
+  await main.getByText('Photo audit log', { exact: true }).click();
+  await expect(main.locator('details', { hasText: 'Photo audit log' }).getByRole('listitem')).toHaveText([
+    `Photo 1 · Hall · shot: source · SHA-256 ${'ff'.repeat(6)}…`,
+    `Photo 2 · Kitchen · shot: source · SHA-256 ${'11'.repeat(6)}…`,
+  ]);
 });
 
 // A 1×1 white PNG: the stored signature image the signed page reads back.

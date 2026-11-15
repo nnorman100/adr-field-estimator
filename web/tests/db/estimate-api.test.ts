@@ -593,4 +593,52 @@ describe('the photo log grouping of the company', () => {
     expect(await estimates(jobId)).toEqual([]);
     expect(await pins(jobId)).toEqual([]);
   });
+
+  it('orders each album and room group by capture time, leaving older untimed photos after timed ones', async () => {
+    await publish(h.seed.a, '2.00');
+    await setGrouping(h.seed.a, '{"photo_log_grouping": "shot_tag"}');
+
+    const first = '11111111-1111-4111-8111-111111111111';
+    const second = '22222222-2222-4222-8222-222222222222';
+    const third = '33333333-3333-4333-8333-333333333333';
+    const fourth = '44444444-4444-4444-8444-444444444444';
+    const jobId = randomUUID();
+    const draftId = randomUUID();
+    expect((await jobsRoute.POST(request(ESTIMATOR_A, '/api/jobs', { method: 'POST', body: { id: jobId, draftId } }), params({}))).status).toBe(201);
+    const customer = { revision: (await f.job(jobId)).revision, changeId: randomUUID(), name: 'Casey Customer', phone: '555-0101', email: 'casey@example.invalid', propertyAddress: '12 Synthetic Lane, Testville' };
+    expect((await customerRoute.PUT(request(ESTIMATOR_A, `/api/jobs/${jobId}/customer`, { method: 'PUT', body: customer }), params({ jobId }))).status).toBe(200);
+
+    const bytesOf = new Map<string, Uint8Array>();
+    for (const id of [first, second, third, fourth]) {
+      const bytes = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, ...Buffer.from(`photo-${id}`)]);
+      bytesOf.set(id, bytes);
+      expect((await photoRoute.PUT(request(ESTIMATOR_A, `/api/jobs/${jobId}/photos/${id}?kind=photo`, { method: 'PUT', body: bytes }), params({ jobId, photoId: id }))).status).toBe(201);
+    }
+
+    const manifest: FieldManifest = {
+      draft: { yearBuilt: 1995, roomOrder: ['kitchen', 'hall'], summary: 'Supply line failure.', scopeConfirmed: true },
+      rooms: [
+        { id: 'kitchen', field: { name: 'Kitchen', category: 2, floorSf: 120, wetFloorSf: 80 } },
+        { id: 'hall', field: { name: 'Hall', category: 2, floorSf: 40, wetFloorSf: 40 } },
+      ],
+      photos: [
+        { id: fourth, field: { roomId: 'kitchen', shotTag: 'source', capturedAt: '2026-11-15T10:00:00.000Z' } },
+        { id: second, field: { roomId: 'kitchen', shotTag: 'source', capturedAt: '2026-11-15T10:01:00.000Z' } },
+        { id: third, field: { roomId: 'kitchen', shotTag: 'source', capturedAt: '2026-11-15T10:01:00.000Z' } },
+        { id: first, field: { roomId: 'hall', shotTag: 'source' } },
+      ],
+    };
+    h.field.put(h.seed.a, draftId, manifest);
+    const { answer: submitted } = await f.submitShown(ESTIMATOR_A, jobId, draftId, manifest);
+    expect(submitted.status).toBe(201);
+
+    const estimated = await make(ESTIMATOR_A, jobId);
+    expect(estimated.status).toBe(201);
+    expect(estimated.body.estimate.documents.photoLog).toEqual([
+      { id: fourth, room: 'Kitchen', sha256: sha256(bytesOf.get(fourth)!), shot_tag: 'source', album: 'Source of loss', captured_at: '2026-11-15T10:00:00.000Z' },
+      { id: second, room: 'Kitchen', sha256: sha256(bytesOf.get(second)!), shot_tag: 'source', album: 'Source of loss', captured_at: '2026-11-15T10:01:00.000Z' },
+      { id: third, room: 'Kitchen', sha256: sha256(bytesOf.get(third)!), shot_tag: 'source', album: 'Source of loss', captured_at: '2026-11-15T10:01:00.000Z' },
+      { id: first, room: 'Hall', sha256: sha256(bytesOf.get(first)!), shot_tag: 'source', album: 'Source of loss' },
+    ]);
+  });
 });
