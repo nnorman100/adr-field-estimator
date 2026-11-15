@@ -327,7 +327,7 @@ export function officeService(db: Database, drafts: DraftStore): OfficeService {
           if (current.revision !== input.revision) throw new JobError('stale_revision', { revision: current.revision });
           const moving = row.fieldOwnerActorId !== input.toActorId;
           if (moving && row.status === 'signed') throw new JobError('job_signed');
-          if (input.toActorId !== caller.actorId) {
+          if (moving && input.toActorId !== caller.actorId) {
             const assigned = (await activeAssignments(tx, row)).some((one) => one.actorId === input.toActorId);
             const estimator = (await activeEstimators(tx, caller.companyId, input.toActorId)).length > 0;
             if (!assigned || !estimator) throw new JobError('not_assignable');

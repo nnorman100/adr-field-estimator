@@ -157,9 +157,10 @@ function RecordForm({
       setNotice(`${title} saved.`);
       return;
     }
-    // Not this person's to see any more: every copy of the job goes. Changed elsewhere: read the job
-    // again; the person's edits stay on top of the new values.
-    if (answer.denied) pending.denyDetail(jobId, answer.message);
+    // Refused (src/app/field/job-screens.tsx, checkAccess): signed out drops the job; not this
+    // person's to change any more (the field work moved) reads it again, the edits kept; not theirs to
+    // see any more drops it. Changed elsewhere: read the job again; the edits stay on top.
+    if (answer.denied) job.checkAccess(answer);
     if (answer.stale) await job.reloadJob();
     if (!refused) setError(answer.message);
   }

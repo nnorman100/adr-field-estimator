@@ -263,6 +263,21 @@ describe('field and office ownership (docs/spec.md 6.2)', () => {
     expect((await saveClaim(ESTIMATOR_A, id, 2)).status).toBe(200);
   });
 
+  it('lets the field owner set the customer only while the job is unsigned (owner decision J3)', async () => {
+    const { id } = await officeJob();
+    await assign(OFFICE_A, id, h.seed.estimatorA.actor);
+    expect((await claim(ESTIMATOR_A, id)).status).toBe(201);
+    expect((await saveCustomer(ESTIMATOR_A, id, 1)).status).toBe(200);
+    await h.admin`UPDATE jobs SET status = 'signed', revision = revision + 1 WHERE id = ${id}`;
+    const before = await everything(h.admin);
+    // After signing only office and the owner correct it, through a correction (S5b-4).
+    for (const who of [ESTIMATOR_A, OFFICE_A, OWNER_A]) {
+      expect(await saveCustomer(who, id, 3)).toEqual({ status: 409, body: { error: 'job_signed' } });
+      expect(await saveClaim(who, id, 3)).toEqual({ status: 409, body: { error: 'job_signed' } });
+    }
+    expect(await everything(h.admin)).toBe(before);
+  });
+
   it('grants no price approval with the field work', async () => {
     await h.admin`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${h.seed.a}, 'price_books', true)`;
     const { id } = await officeJob();
@@ -595,6 +610,19 @@ describe('moving the field work (owner decision J5)', () => {
     expect(again.body.revision).toBe(2);
     expect(draftOf(draftId)).toEqual({ fieldOwnerUid: 'estimator-a2', fieldOwnerRevision: 2 });
     expect((await claim(ESTIMATOR_A2, id)).status).toBe(200);
+    expect(await audits('job_field_owner_moved')).toBe(1);
+  });
+
+  it('sends the field owner to the drafts again after they lost their estimator role, which no move to them would allow', async () => {
+    const { id, draftId } = await claimedJob();
+    h.drafts.failNext = { on: true, afterWrite: false };
+    expect(await transfer(OWNER_A, id, { revision: 1, changeId: randomUUID(), toActorId: estimatorA2 })).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
+    await h.admin`UPDATE jobs SET status = 'signed', revision = revision + 1 WHERE id = ${id}`;
+    await h.admin`UPDATE memberships SET status = 'disabled' WHERE company_id = ${h.seed.a} AND actor_id = ${estimatorA2}`;
+    const again = await transfer(OWNER_A, id, { revision: 2, changeId: randomUUID(), toActorId: estimatorA2 });
+    expect(again.status).toBe(200);
+    expect(again.body.fieldOwner?.actorId).toBe(estimatorA2);
+    expect(draftOf(draftId)).toEqual({ fieldOwnerUid: 'estimator-a2', fieldOwnerRevision: 2 });
     expect(await audits('job_field_owner_moved')).toBe(1);
   });
 
