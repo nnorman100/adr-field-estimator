@@ -197,6 +197,16 @@
            "value_source": []
           },
           {
+           "name": "APP_CHECK_MODE",
+           "value": "monitor",
+           "value_source": []
+          },
+          {
+           "name": "APP_CHECK_SITE_KEY",
+           "value": "stand-in-recaptcha-site-key-0000",
+           "value_source": []
+          },
+          {
            "name": "APP_ENV",
            "value": "live",
            "value_source": []
@@ -204,6 +214,11 @@
           {
            "name": "EVIDENCE_BUCKET",
            "value": "dryscope-evidence-live",
+           "value_source": []
+          },
+          {
+           "name": "FIREBASE_APP_ID",
+           "value": "1:000000000000:web:0000000000e2e000",
            "value_source": []
           },
           {
@@ -429,6 +444,16 @@
            "value_source": []
           },
           {
+           "name": "APP_CHECK_MODE",
+           "value": "monitor",
+           "value_source": []
+          },
+          {
+           "name": "APP_CHECK_SITE_KEY",
+           "value": "stand-in-recaptcha-site-key-0000",
+           "value_source": []
+          },
+          {
            "name": "APP_ENV",
            "value": "live",
            "value_source": []
@@ -436,6 +461,11 @@
           {
            "name": "EVIDENCE_BUCKET",
            "value": "dryscope-evidence-live",
+           "value_source": []
+          },
+          {
+           "name": "FIREBASE_APP_ID",
+           "value": "1:000000000000:web:0000000000e2e000",
            "value_source": []
           },
           {

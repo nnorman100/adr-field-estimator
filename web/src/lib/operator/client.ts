@@ -1,4 +1,5 @@
 import type { User } from 'firebase/auth';
+import { appCheckHeaders } from '@/lib/app-check-client';
 import type { CompanyView } from '@/lib/platform/service';
 import type { MemberView, TeamView } from '@/lib/team/service';
 
@@ -18,6 +19,7 @@ export async function operatorCall<T>(user: Pick<User, 'getIdToken'>, path: stri
       method: call.method ?? 'GET',
       headers: {
         Authorization: `Bearer ${token}`,
+        ...(await appCheckHeaders()),
         ...(call.body === undefined ? {} : { 'Content-Type': 'application/json' }),
       },
       body: call.body === undefined ? undefined : JSON.stringify(call.body),

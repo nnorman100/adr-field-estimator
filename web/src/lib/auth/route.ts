@@ -1,3 +1,4 @@
+import { monitorAppCheck } from '@/lib/app-check';
 import { parseFlagName, type FlagName } from '@/lib/flags';
 import {
   bearerToken,
@@ -45,6 +46,10 @@ import { identityServices, operatorServices, type IdentityServices, type Operato
 //   export const GET = operatorRoute(async (request, operator) => ...);
 //   export const POST = operatorRoute(handler, { freshSignIn: true }); // changes a team or a second step
 //
+// Every browser-facing wrapper (all but serviceRoute) also records the call's App Check outcome
+// (src/lib/app-check.ts, TC-5 monitor mode). That never refuses a call or changes its answer. The
+// scheduler's calls carry no App Check token by design, so serviceRoute does not record them.
+//
 // tests/unit/route-rules.test.ts finds every route file and fails on a handler that is not
 // wrapped, so a route with no rule cannot ship; tests/unit/platform-routes.test.ts fails a file
 // under api/platform that is not an operator route. Later rules (a capability) are added here as
@@ -71,7 +76,8 @@ function refusalOf(error: unknown): Response {
 
 // Open to anyone. Use only for routes that read no company data.
 export function publicRoute<H extends Handler>(handler: H): H {
-  return handler;
+  return ((request: Request, context: RouteContext) =>
+    monitorAppCheck(request, () => handler(request, context))) as H;
 }
 
 // Only a signed-in, active member of an active company. The identity comes from the verified
@@ -82,16 +88,17 @@ export function memberRoute(
   services: () => IdentityServices = identityServices,
 ): Handler {
   const route = Object.freeze({ ...rule });
-  return async (request, context) => {
-    let identity: Identity;
-    try {
-      const { verifier, directory } = services();
-      identity = await resolveIdentity(request, verifier, directory, { route });
-    } catch (error) {
-      return refusalOf(error);
-    }
-    return handler(request, identity, context);
-  };
+  return (request, context) =>
+    monitorAppCheck(request, async () => {
+      let identity: Identity;
+      try {
+        const { verifier, directory } = services();
+        identity = await resolveIdentity(request, verifier, directory, { route });
+      } catch (error) {
+        return refusalOf(error);
+      }
+      return handler(request, identity, context);
+    });
 }
 
 // A member route of a switched-off feature. When the caller's company does not have the flag on,
@@ -115,16 +122,17 @@ export function requireFlag(
 // routes that act on what is addressed to that email (an invitation); the handler applies the
 // session rules for the role it grants.
 export function accountRoute(handler: AccountHandler, services: () => IdentityServices = identityServices): Handler {
-  return async (request, context) => {
-    let account: Account;
-    try {
-      const { verifier, directory } = services();
-      account = await resolveAccount(request, verifier, directory);
-    } catch (error) {
-      return refusalOf(error);
-    }
-    return handler(request, account, context);
-  };
+  return (request, context) =>
+    monitorAppCheck(request, async () => {
+      let account: Account;
+      try {
+        const { verifier, directory } = services();
+        account = await resolveAccount(request, verifier, directory);
+      } catch (error) {
+        return refusalOf(error);
+      }
+      return handler(request, account, context);
+    });
 }
 
 // Only the environment's scheduler service account (service-caller.ts), with a Google-signed ID
@@ -170,14 +178,15 @@ export function operatorRoute(
   services: () => OperatorServices = operatorServices,
 ): Handler {
   const freshSignIn = rule.freshSignIn === true;
-  return async (request, context) => {
-    let operator: Operator;
-    try {
-      const { verifier, operators } = services();
-      operator = await resolveOperator(request, verifier, operators, { freshSignIn });
-    } catch (error) {
-      return refusalOf(error);
-    }
-    return handler(request, operator, context);
-  };
+  return (request, context) =>
+    monitorAppCheck(request, async () => {
+      let operator: Operator;
+      try {
+        const { verifier, operators } = services();
+        operator = await resolveOperator(request, verifier, operators, { freshSignIn });
+      } catch (error) {
+        return refusalOf(error);
+      }
+      return handler(request, operator, context);
+    });
 }

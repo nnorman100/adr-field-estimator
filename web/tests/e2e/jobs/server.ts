@@ -18,18 +18,21 @@ import {
   quoteDiscardName,
   startOwnedServer,
 } from '../../db/postgres-harness';
+import { APP_CHECK_ENV, APP_CHECK_JOBS_PORT } from '../app-check/server';
 import { FIRESTORE_EMULATOR_HOST, FIELD_DATABASE } from '../offline/emulators';
 import { AUTH_EMULATOR_HOST, E2E_PROJECT } from '../sign-in/emulator';
-import { EVIDENCE_BUCKET, JOBS_PORT, JOBS_STATE, STORAGE_EMULATOR_HOST, type JobsState } from './backend';
+import { EVIDENCE_BUCKET, JOBS_BASE_URL, JOBS_PORT, JOBS_STATE, STORAGE_EMULATOR_HOST, type JobsState } from './backend';
 
 async function main() {
   const server = await startOwnedServer();
   let app: ChildProcess | null = null;
+  let appCheckApp: ChildProcess | null = null;
   let stopping = false;
   const stop = async (code: number) => {
     if (stopping) return;
     stopping = true;
     app?.kill('SIGTERM');
+    appCheckApp?.kill('SIGTERM');
     await server.stop();
     process.exit(code);
   };
@@ -66,10 +69,30 @@ async function main() {
     delete env.LOCAL_SIGN_IN_FIXTURE;
     app = spawn('npx', ['next', 'start', '--port', String(JOBS_PORT)], { stdio: 'inherit', env });
     app.on('exit', (code) => void stop(code ?? 1));
+    // Then the App Check copy (tests/e2e/app-check.spec.ts) on the same database, once the first
+    // answers, so playwright.config.ts can wait on this one alone.
+    await untilAnswering(`${JOBS_BASE_URL}/api/health`);
+    appCheckApp = spawn('npx', ['next', 'start', '--port', String(APP_CHECK_JOBS_PORT)], {
+      stdio: 'inherit',
+      env: { ...env, ...APP_CHECK_ENV },
+    });
+    appCheckApp.on('exit', (code) => void stop(code ?? 1));
   } catch (error) {
     console.error(error instanceof Error ? error.message : 'the jobs test server did not start');
     await stop(1);
   }
+}
+
+async function untilAnswering(url: string) {
+  for (let i = 0; i < 600; i += 1) {
+    try {
+      if ((await fetch(url)).ok) return;
+    } catch {
+      // Not listening yet.
+    }
+    await new Promise((done) => setTimeout(done, 250));
+  }
+  throw new Error('the jobs test server did not answer');
 }
 
 void main();
