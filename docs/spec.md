@@ -123,8 +123,28 @@ Rebuilt app (S5a-5): `web/tests/db/company-isolation.test.ts` ("never gives comp
 the original of company A") reads company A's photo and original as company B's owner, estimator and
 office user, by A's job id and by B's own job with A's photo id, and is refused (404) with no byte of
 A's, while A's own people read them; `web/tests/db/photos-api.test.ts` adds the other estimator of the
-same company. The bucket is a fake at its boundary in CI; the real bucket is checked in S5a-12. That
-closes the photo-bytes and original gap for the rebuilt app only; the old app's gap above stays.
+same company. The bucket is a fake at its boundary in CI; the real bucket is the owner's check 1 in
+`docs/runbook/s5a-real-service-checks.md` (S5a-12), pending and not yet run. That closes the photo-bytes
+and original gap for the rebuilt app only; the old app's gap above stays.
+
+Rebuilt app, every S5a record (S5a-12): `web/tests/db/company-isolation-records.test.ts` gives both
+companies a job signed by the homeowner through a link (submission, price pin, estimate, agreement,
+signature and both document links) and a job with a pending signing link, through the real routes.
+Every S5a route, read from the generated route list (`web/src/lib/api-routes.generated.ts`), as B's
+owner, estimator and office user with A's real job, link, photo and signature ids answers 401, 403 or
+404 with no id, hash, name or token of A and no change; B's own lists and reads hold none of A's rows;
+the link routes with B's own live tokens open nothing of A. Every Postgres table with a company column,
+found from the catalog, holds both companies' rows, and as the runtime role in B's context shows none of
+A's and refuses to insert, change, move or delete them. `web/tests/emu/rules/company-isolation.test.ts`
+tries the field rules with two tenants on A's fenced, submitted and next drafts (field map v2 rooms and
+photo references): every read, list, "my drafts" query and field-owner write by B's people is refused.
+The rebuilt app has no inspection, authorization, coordination, delivery, drying-watch or outcome records
+yet; those S5b and later records join the gate when they are built (a new route fails the suite until it
+has a matrix row, a new company table until the flow fills it or the suite names it). **[open]** Not proven
+in CI: the real `test` services and a real iPhone. The bucket's create-only precondition, the fence on
+`dryscope-field-test`, a double submit against Cloud Run and a homeowner signing on a real iPhone are owner
+checks 1 to 4 in `docs/runbook/s5a-real-service-checks.md`, pending and not yet run; S5a is not closed until
+all four are recorded.
 
 ### 4.2 Double submit makes one record, and a signed record is rejected
 
@@ -143,6 +163,18 @@ Existing proof: `tests/test_firestore_emulator.py::test_concurrent_signing_retri
 the old app has no HTTP-level race of two simultaneous homeowner signing requests (it is tested at
 store level in the emulator). The rebuilt app closes this at its route handlers: `web/tests/db/signing-links.test.ts`
 (`two simultaneous homeowner signatures give one agreement`, and a link and the technician's phone signing at once).
+
+Rebuilt app, Submit and signing (S5a-12 summary): `web/tests/db/submissions-api.test.ts` (`the same id
+twice answers the same record`, `the same id sent twice at once makes one record`, `two phones with
+different ids at once: one record and one 409`, and the same-id retries racing an attempt that fails or
+aborts), `web/tests/db/submission-crash.test.ts` (a request killed after its intent row, after the fence
+and after the commit), and `web/tests/db/agreements-api.test.ts` (`the same signature twice returns one
+receipt and one agreement`, `two phones signing at once with one request make one agreement`, a changed
+body with the same id is 409); a signed agreement and its estimate are never changed or removed (table
+grants and triggers, `docs/data/postgres-submissions.md`). These run against Postgres with a stand-in for
+the field database. **[open]** A double submit against Cloud Run itself, and a homeowner signing on a real
+iPhone, are owner checks 3 and 4 in `docs/runbook/s5a-real-service-checks.md`, pending and not yet run;
+S5a is not closed until they are recorded.
 
 ### 4.3 Cutting the connection mid-save or mid-upload delivers exactly once
 
@@ -165,6 +197,19 @@ to audit or to signing-link creation; and a drying reading, which has no idempot
 server mints a new id per request, so a resend after a lost response could add a second
 reading). The browser tests use a fake server, so none is observed against Cloud Run and
 Firestore.
+
+Rebuilt app (S5a-12 summary): a lost answer is settled by sending the same request again, which the
+server answers with the first result. `web/tests/db/jobs-api.test.ts` (`makes one job and one draft when
+the same create is sent twice`, `makes no second draft when the draft was written but its answer was
+lost`, `gives no false conflict when the answer was lost and the same change is sent again` for the
+customer and the claim), `web/tests/db/photos-api.test.ts` (`answers the same receipt for the same photo
+sent twice, with one object and one row`, `settles a lost answer by sending again: the stored bytes get
+their one row, with no second object`, and the same for an original), the Submit retries above, and
+`web/tests/e2e/offline/field-gate.spec.ts` (`an offline edit survives closing and reopening the app, and
+is sent once`). **[open]** The bucket's create-only precondition, which should make a second upload of one
+photo id fail whatever its bytes, is not yet checked against the real bucket: it is owner check 1 of
+`docs/runbook/s5a-real-service-checks.md`, pending and not yet run. No rebuilt-app test cuts a request
+mid-body, and voice notes and drying readings are not built yet.
 
 ## 5. Not built (from VISION.md)
 

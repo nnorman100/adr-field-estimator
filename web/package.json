@@ -17,7 +17,7 @@
     "test": "vitest run",
     "test:db": "vitest run --config vitest.db.config.ts",
     "test:emu": "tsx tests/emu/run.ts",
-    "test:isolation": "vitest run --config vitest.db.config.ts tests/db/company-isolation.test.ts && tsx tests/emu/run.ts tests/emu/rules/company-isolation.test.ts",
+    "test:isolation": "vitest run --config vitest.db.config.ts tests/db/company-isolation.test.ts tests/db/company-isolation-records.test.ts && tsx tests/emu/run.ts tests/emu/rules/company-isolation.test.ts",
     "test:e2e": "playwright test",
     "db:migrate": "tsx src/db/cli.ts",
     "build:migrate": "node scripts/build-migrate.mjs",
