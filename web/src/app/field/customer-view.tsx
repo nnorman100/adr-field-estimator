@@ -38,7 +38,7 @@ const claimOf = (detail: JobDetail): Values => ({ ...detail.claim, dateOfLoss: d
 export function CustomerView({ job }: { job: JobContext }) {
   const caps = job.session.capabilities;
   const ownsFieldWork = job.detail.job.fieldOwnerActorId === job.session.actorId;
-  const canSave = caps.includes('coordination') || (caps.includes('scope') && ownsFieldWork);
+  const canSave = !job.gone && (caps.includes('coordination') || (caps.includes('scope') && ownsFieldWork));
   return (
     <div className="flex flex-col gap-4">
       <h3 className="sr-only">Customer and claim</h3>

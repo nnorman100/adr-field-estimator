@@ -46,9 +46,12 @@ export type JobContext = {
   draft: FieldDraft | null;
   draftRef: DraftRef;
   reloadDraft: () => Promise<void>;
-  // Takes a refusal of the photo route or the field database (null for none): 401 or 403 drops the
-  // job from the screen; a 404 may be a missing photo, so the job is read again and that decides.
+  // Takes a refusal of the photo route or the field database (null for none): 401 drops the job
+  // from the screen; a 403 or 404 reads the job again, and that decides.
   checkAccess: (refusal: Refusal | null) => void;
+  // The server no longer shows this job to this person, but the field work on screen was theirs:
+  // it stays, read only, with what they changed and did not save (owner decision J5).
+  gone: boolean;
   // Whether this person may change the field work now (the rules' own test).
   editable: boolean;
   // The last read of the draft did not get through, so the draft on screen may be older than what is
@@ -92,6 +95,9 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     },
     [jobId],
   );
+  // A refusal to show the job after a read: the field work stays on screen only while the draft as
+  // last read names this person as its field owner.
+  const dropUnlessMine = useCallback(() => setDraft((current) => (current?.fieldOwnerUid === session.user.uid ? current : null)), [session.user.uid]);
 
   const reloadDraft = useCallback(
     async (current?: JobDetail) => {
@@ -138,14 +144,14 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       setError(answer.ok ? null : answer.message);
       if (!answer.ok) {
         // A refusal to show the job drops every copy of it; no answer keeps the one on screen.
-        if (answer.denied) setDraft(null);
+        if (answer.denied) dropUnlessMine();
         return null;
       }
       setDetail(answer.value, sentAt);
       await reloadDraft(answer.value);
       return answer.value;
     },
-    [reloadDraft, setDetail, jobId],
+    [reloadDraft, setDetail, jobId, dropUnlessMine],
   );
 
   const reloadJob = useCallback(async () => {
@@ -163,10 +169,10 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       if (refusal.status !== 404) return;
       const sentAt = pending.mark(jobId);
       void readJob(session.user, jobId).then((answer) => {
-        if (pending.readAnswered(jobId, answer, sentAt) && !answer.ok && answer.denied) setDraft(null);
+        if (pending.readAnswered(jobId, answer, sentAt) && !answer.ok && answer.denied) dropUnlessMine();
       });
     },
-    [deny, jobId, session.user, reloadJob],
+    [deny, jobId, session.user, reloadJob, dropUnlessMine],
   );
 
   // The first read; each job is its own component (keyed by the parent).
@@ -191,7 +197,9 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftChanges]);
 
-  if ((error || denial) && !detail) {
+  // Refused to this person while their field work was on screen: the job as last read stays, read only.
+  const kept = !detail && denial !== null && draft !== null && draft.fieldOwnerUid === session.user.uid ? (read?.detail ?? null) : null;
+  if ((error || denial) && !detail && !kept) {
     return (
       <div className="flex flex-col gap-2">
         <p role="alert">{error ?? denial}</p>
@@ -202,27 +210,30 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       </div>
     );
   }
-  if (!detail) return <p role="status">Opening the job…</p>;
+  const shown = detail ?? kept;
+  if (!shown) return <p role="status">Opening the job…</p>;
+  const gone = kept !== null;
 
-  const fieldWork = fieldWorkOf(session, detail);
-  const ownerOnJobOnly = fieldWork === 'mine' && (ownerUnset || (draft !== null && draft.fieldOwnerUid !== session.user.uid));
+  const fieldWork = fieldWorkOf(session, shown);
+  const ownerOnJobOnly = !gone && fieldWork === 'mine' && (ownerUnset || (draft !== null && draft.fieldOwnerUid !== session.user.uid));
   const context: JobContext = {
     session,
-    detail,
+    detail: shown,
     setDetail,
     reloadJob,
     draft,
-    draftRef: { companyId: session.companyId, draftId: detail.job.currentDraftId },
-    reloadDraft: () => reloadDraft(detail),
+    draftRef: { companyId: session.companyId, draftId: shown.job.currentDraftId },
+    reloadDraft: () => reloadDraft(shown),
     checkAccess,
-    editable: draft !== null && fieldWork === 'mine' && !ownerUnset && canEditDraft(draft, session.user.uid, session.capabilities),
+    gone,
+    editable: !gone && draft !== null && fieldWork === 'mine' && !ownerUnset && canEditDraft(draft, session.user.uid, session.capabilities),
     stale: draft !== null && draftError !== null,
   };
 
   return (
     <div className="flex flex-col gap-4">
       <FieldLink to={{ view: 'jobs', list: null }}>Back to jobs</FieldLink>
-      <h2 className="text-xl font-semibold break-words">{detail.job.propertyAddress || 'No address yet'}</h2>
+      <h2 className="text-xl font-semibold break-words">{shown.job.propertyAddress || 'No address yet'}</h2>
       <nav aria-label="Job" className="flex flex-wrap gap-x-4">
         {TABS.filter((tab) => tab.view !== 'coordination' || session.capabilities.some((key) => key === 'coordination' || key === 'assignment')).map((tab) => (
           <FieldLink key={tab.view} to={{ view: tab.view, jobId }} current={tab.view === view} className={tab.view === view ? 'font-semibold' : undefined}>
@@ -230,19 +241,24 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
           </FieldLink>
         ))}
       </nav>
+      {gone ? (
+        <p role="alert" className="rounded-md bg-foreground/5 p-3 text-sm">
+          {denial} What you changed and did not save stays on this phone, read only, and is not saved to this job.
+        </p>
+      ) : null}
       {(view === 'scope' || view === 'photos') &&
       session.capabilities.includes('scope') &&
-      ((fieldWork === 'nobody' && detail.job.status === 'draft') || ownerOnJobOnly) ? (
+      ((!gone && fieldWork === 'nobody' && shown.job.status === 'draft') || ownerOnJobOnly) ? (
         <StartFieldWork context={context} resume={ownerOnJobOnly} />
       ) : null}
-      {(view === 'scope' || view === 'photos') && fieldWork === 'other' && !readsEveryDraft(session) ? (
+      {(view === 'scope' || view === 'photos') && !gone && fieldWork === 'other' && !readsEveryDraft(session) ? (
         <p className="rounded-md bg-foreground/5 p-3 text-sm">
           {draft === null
             ? 'Another person owns this job’s field work, so it is not shown here. The company owner can move it to you.'
             : 'Another person now owns this job’s field work, so this phone shows it read only. What you changed and did not save stays here, and is not saved to this job.'}
         </p>
       ) : null}
-      {(view === 'scope' || view === 'photos') && draft !== null && !context.editable && !(fieldWork === 'other' && !readsEveryDraft(session)) ? (
+      {(view === 'scope' || view === 'photos') && !gone && draft !== null && !context.editable && !(fieldWork === 'other' && !readsEveryDraft(session)) ? (
         <p className="rounded-md bg-foreground/5 p-3 text-sm">
           Read only. Only the person who owns this job&rsquo;s field work changes it, while the job is being edited.
         </p>
@@ -253,7 +269,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       {(view === 'scope' || view === 'photos') && draftError ? (
         <div className="flex flex-col gap-2">
           <p role="alert">{draftError}</p>
-          <Button variant="outline" onClick={() => void reloadDraft(detail)}>
+          <Button variant="outline" onClick={() => void reloadDraft(shown)}>
             Try again
           </Button>
         </div>
