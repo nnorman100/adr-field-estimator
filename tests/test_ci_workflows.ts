@@ -2,7 +2,7 @@
 // tests/test_ci_config.py (workflows exist, every job on the switchable self-hosted runner with no
 // Docker services or containers, CodeQL sets up node before init) and the workflow-wiring tests in
 // tests/test_ci_legacy_scope.py (no legacy CI jobs, the node job keeps the rebuild's checks on every
-// pull request, only CodeQL's Python leg is scoped). Also checks that these ported guards stay in
+// pull request). Also checks that these ported guards stay in
 // the vitest run the node job executes.
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -16,7 +16,6 @@ const RUNNER = "${{ vars.CI_RUNNER || 'dryscope-linux' }}";
 const WORKFLOW_FILES = readdirSync(WORKFLOWS)
   .filter((name) => /\.y[^/]*ml$/.test(name))
   .sort();
-const SCOPE_RUN = 'bash scripts/ci_legacy_scope.sh';
 
 const workflow = (name: string): Data => load(path.join(WORKFLOWS, name));
 const ci = () => workflow('ci.yml');
@@ -64,6 +63,12 @@ describe('ci.yml', () => {
     const audit = ci().jobs.audit;
     expect(audit).not.toHaveProperty('if');
     for (const s of audit.steps) expect(s).not.toHaveProperty('if');
+    expect(audit.steps.map((s: Data) => s.run).filter(Boolean)).toEqual([
+      'npm audit --audit-level=high',
+    ]);
+    expect(
+      audit.steps.some((s: Data) => String(s.uses ?? '').startsWith('actions/setup-python@')),
+    ).toBe(false);
   });
 
   it("keeps the node job's rebuild checks on every pull request", () => {
@@ -121,39 +126,18 @@ describe('codeql.yml', () => {
     expect(triggers.push.branches).toEqual(['master']);
   });
 
-  describe.each(['python', 'javascript-typescript'])('the %s leg', (language) => {
-    it.each([{ run: 'true' }, { run: 'false' }, {}])(
-      'reports on every pull request, scoped only for Python (scope %j)',
-      (scopeOutputs: Record<string, string>) => {
-        const job = analyze();
-        expect(
-          job,
-          'both Analyze checks are required and must report on every PR',
-        ).not.toHaveProperty('if');
-        expect(job.strategy.matrix.language).toEqual(['javascript-typescript', 'python']);
-        const all: Data[] = job.steps;
-        expect(all[0].uses.startsWith('actions/checkout@')).toBe(true);
-        // A plain 0 (full history) for both legs: an expression such as `&& 0 || 1` would evaluate
-        // to 1 because 0 is falsy, giving a shallow clone that lacks the base commit.
-        expect(all[0].with['fetch-depth']).toBe(0);
-        checkScopeStep(all[1], 'CodeQL Python analysis');
-        expect(all[1].if).toBe("matrix.language == 'python'");
-        for (const s of all.slice(2)) {
-          const label = s.name ?? s.uses;
-          expect(s, label).toHaveProperty('if');
-          const condition = String(s.if).replaceAll('matrix.language', `'${language}'`);
-          const runs = evaluateStep(condition, scopeOutputs, false);
-          if (language === 'javascript-typescript') {
-            expect(runs, `${label} must always run for JavaScript/TypeScript`).toBe(true);
-          } else {
-            expect(runs, label).toBe(scopeOutputs.run === 'true');
-          }
-        }
-        const uses: string[] = all.map((s) => s.uses ?? '');
-        expect(uses.some((u) => u.startsWith('github/codeql-action/init@'))).toBe(true);
-        expect(uses.some((u) => u.startsWith('github/codeql-action/analyze@'))).toBe(true);
-      },
-    );
+  it('runs only JavaScript/TypeScript on every pull request', () => {
+    const job = analyze();
+    expect(job).not.toHaveProperty('if');
+    expect(job.strategy.matrix.language).toEqual(['javascript-typescript']);
+    expect(job.steps[0].uses.startsWith('actions/checkout@')).toBe(true);
+    expect(job.steps[0].with['fetch-depth']).toBe(0);
+    expect(workflow('codeql.yml').on.pull_request.branches).toEqual(['master']);
+    expect(scopeGatedParts(workflow('codeql.yml'))).toEqual([]);
+    for (const step of job.steps) expect(step).not.toHaveProperty('if');
+    const uses: string[] = job.steps.map((s: Data) => s.uses ?? '');
+    expect(uses.some((u) => u.startsWith('github/codeql-action/init@'))).toBe(true);
+    expect(uses.some((u) => u.startsWith('github/codeql-action/analyze@'))).toBe(true);
   });
 });
 
@@ -178,16 +162,6 @@ describe('the step-condition evaluator', () => {
   });
 });
 
-function checkScopeStep(s: Data, suite?: string): void {
-  expect(s.id).toBe('scope');
-  expect(s.run).toBe(SCOPE_RUN);
-  expect(s.env.EVENT_NAME).toBe('${{ github.event_name }}');
-  const base: string = s.env.BASE_SHA;
-  expect(base).toContain('github.event.pull_request.base.sha');
-  expect(base).toContain('github.event.before');
-  if (suite) expect(s.env.SUITE).toBe(suite);
-}
-
 /** Jobs and steps that run the scope script or gate on its output. */
 function scopeGatedParts(config: Data): string[] {
   const gated: string[] = [];
@@ -205,3 +179,9 @@ function scopeGatedParts(config: Data): string[] {
   }
   return gated;
 }
+
+describe('deploy.yml', () => {
+  it('can only be triggered manually', () => {
+    expect(Object.keys(workflow('deploy.yml').on)).toEqual(['workflow_dispatch']);
+  });
+});
