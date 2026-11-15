@@ -12,9 +12,9 @@ import {
   type Role,
 } from '@/lib/access';
 
-// The matrix in docs/ACCESS.md is the owner-approved intent. The table is read from that file here,
+// The matrix in docs/access/roles.md (docs/ACCESS.md lists it) is the owner-approved intent. The table is read from that file here,
 // so a change to either side without the other fails this test.
-const ACCESS_DOC = fileURLToPath(new URL('../../../docs/ACCESS.md', import.meta.url));
+const ACCESS_DOC = fileURLToPath(new URL('../../../docs/access/roles.md', import.meta.url));
 const ROLE_COLUMNS: Role[] = ['owner', 'estimator', 'office'];
 const PRICE_KEYS = ['prices_read', 'prices_manage'];
 
@@ -43,7 +43,7 @@ function docMatrix(): Map<string, Record<Role, boolean>> {
 const on = { priceBooks: true };
 const off = { priceBooks: false };
 
-describe('access table against docs/ACCESS.md', () => {
+describe('access table against docs/access/roles.md', () => {
   const matrix = docMatrix();
 
   it('lists exactly 22 keys in the document, and the table knows the same keys', () => {

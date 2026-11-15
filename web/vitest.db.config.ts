@@ -1,6 +1,10 @@
 import { availableParallelism } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
+import { writeApiRoutes } from './scripts/gen-api-routes';
+
+// The App Check route list is generated, not committed (scripts/gen-api-routes.ts).
+writeApiRoutes();
 
 // Files run in parallel, each in a database of its own on one shared server (tests/db/global-setup.ts).
 // A runner with a few cores gets few workers: half the cores, at least two and at most four.

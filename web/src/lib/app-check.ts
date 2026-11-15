@@ -1,6 +1,7 @@
 import { getAppCheck } from 'firebase-admin/app-check';
 import { firebaseApp } from '@/lib/auth/firebase';
 import { parseAppCheckMode, parseIdentityConfig, type AppCheckMode } from '@/lib/config';
+import { GENERATED_API_ROUTES } from '@/lib/api-routes.generated';
 import { log } from '@/lib/log';
 
 // App Check in monitor mode (docs/plans/TC.md, TC-5). The route wrappers (src/lib/auth/route.ts)
@@ -81,70 +82,10 @@ export async function appCheckOutcome(
   }
 }
 
-// The API routes of the app, as route patterns. tests/unit/app-check.test.ts checks this matches
-// the route files under src/app/api.
-export const API_ROUTES: readonly string[] = [
-  '/api/client-errors',
-  '/api/companies/[companyId]/ai-usage',
-  '/api/companies/[companyId]/invitations',
-  '/api/companies/[companyId]/invitations/[invitationId]/cancel',
-  '/api/companies/[companyId]/invitations/[invitationId]/clear',
-  '/api/companies/[companyId]/invitations/[invitationId]/resend',
-  '/api/companies/[companyId]/members/[membershipId]',
-  '/api/companies/[companyId]/members/[membershipId]/disable',
-  '/api/companies/[companyId]/members/[membershipId]/enable',
-  '/api/companies/[companyId]/profile',
-  '/api/companies/[companyId]/team',
-  '/api/documents',
-  '/api/documents/photos/[photoId]',
-  '/api/documents/signature',
-  '/api/echo',
-  '/api/health',
-  '/api/internal/access-projection',
-  '/api/invitations/[invitationId]',
-  '/api/invitations/[invitationId]/accept',
-  '/api/jobs',
-  '/api/jobs/[jobId]',
-  '/api/jobs/[jobId]/agreements',
-  '/api/jobs/[jobId]/claim',
-  '/api/jobs/[jobId]/customer',
-  '/api/jobs/[jobId]/document-links',
-  '/api/jobs/[jobId]/document-links/[linkId]',
-  '/api/jobs/[jobId]/drafts',
-  '/api/jobs/[jobId]/estimate',
-  '/api/jobs/[jobId]/photos/[photoId]',
-  '/api/jobs/[jobId]/scope-lists',
-  '/api/jobs/[jobId]/signing-link',
-  '/api/jobs/[jobId]/submissions',
-  '/api/me',
-  '/api/platform/companies',
-  '/api/platform/companies/[companyId]/ai-settings',
-  '/api/platform/companies/[companyId]/flags',
-  '/api/platform/companies/[companyId]/invitations/[invitationId]/cancel',
-  '/api/platform/companies/[companyId]/invitations/[invitationId]/resend',
-  '/api/platform/companies/[companyId]/members/[membershipId]',
-  '/api/platform/companies/[companyId]/members/[membershipId]/enable',
-  '/api/platform/companies/[companyId]/members/[membershipId]/reset-second-step',
-  '/api/platform/companies/[companyId]/owner',
-  '/api/platform/companies/[companyId]/prices',
-  '/api/platform/companies/[companyId]/status',
-  '/api/platform/companies/[companyId]/team',
-  '/api/platform/companies/[companyId]/tenant',
-  '/api/prices',
-  '/api/prices/export',
-  '/api/prices/import',
-  '/api/prices/preview',
-  '/api/prices/publish',
-  '/api/prices/versions',
-  '/api/prices/versions/[versionId]',
-  '/api/prices/versions/[versionId]/restore',
-  '/api/prices/working-copy',
-  '/api/sign',
-  '/api/sign/photos/[photoId]',
-  '/api/sign/signature',
-  '/api/sign/signature/[signatureId]',
-  '/api/sign-in/[address]',
-];
+// The API routes of the app, as route patterns: one for each route file under src/app/api, made by
+// scripts/gen-api-routes.ts (not committed, so a new route never edits a shared list).
+// tests/unit/app-check.test.ts checks this matches the route files.
+export const API_ROUTES: readonly string[] = GENERATED_API_ROUTES;
 
 // The route pattern a call's address matches, or 'unknown'; the query is never included. A `[name]`
 // segment stands for any one non-empty segment and a fixed segment must match exactly, so a

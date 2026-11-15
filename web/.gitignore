@@ -11,3 +11,6 @@ coverage/
 
 # The service worker is generated from sw/sw.js by scripts/build-sw.ts after next build (S6-2).
 public/sw.js
+
+# The App Check route list is generated from src/app/api by scripts/gen-api-routes.ts.
+src/lib/api-routes.generated.ts

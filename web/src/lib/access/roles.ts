@@ -1,5 +1,5 @@
 // Company roles and the capability table, ported from CAPABILITIES in backend/workspaces.py. The
-// matrix in docs/ACCESS.md is the approved intent; tests/unit/access.test.ts reads that document
+// matrix in docs/access/roles.md is the approved intent; tests/unit/access.test.ts reads that document
 // and fails when this table drifts from it. Superadmin is not a company role and is not listed.
 export const ROLES = Object.freeze(['owner', 'estimator', 'office'] as const);
 export type Role = (typeof ROLES)[number];
