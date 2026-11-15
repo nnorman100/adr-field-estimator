@@ -506,3 +506,46 @@ test('a company that chose the letter layout: the review and the signed page sho
   await expectNoAxeViolations(page);
   await expectNoSideways(page);
 });
+
+// S5a-11b: Send to the homeowner. The link routes are played at the network boundary
+// (tests/db/signing-links.test.ts holds the real ones); the page shows the token once, as the
+// address it sends, with copy, share and QR, and revokes it.
+test('the estimator makes a signing link, sees it once with copy and a QR code, and revokes it', async ({ page }) => {
+  const job = { id: randomUUID(), status: 'submitted', currentDraftId: randomUUID(), revision: 3 };
+  const made = estimateFor(team, job.id, job.currentDraftId, 'estimator');
+  await playApi(page, job, { estimate: made });
+  const token = 'L1nkTokenShownOnceInTheReviewPageTest_abcde'.slice(0, 43);
+  const calls: Array<{ method: string; body: unknown }> = [];
+  const link = { id: '', estimateId: made.id, status: 'pending', createdAt: '2026-11-15T18:00:00.000Z', expiresAt: '2026-11-22T18:00:00.000Z', usedAt: null, endedAt: null };
+  await page.route(`**/api/jobs/${job.id}/signing-link`, async (route: Route, request: Request) => {
+    expect(request.headers().authorization).toMatch(/^Bearer /);
+    const body = request.method() === 'POST' ? request.postDataJSON() : null;
+    calls.push({ method: request.method(), body });
+    if (request.method() === 'GET') return route.fulfill({ json: { link: null } });
+    if (request.method() === 'POST') {
+      link.id = (body as { id: string }).id;
+      return route.fulfill({ status: 201, json: { link, token } });
+    }
+    return route.fulfill({ json: { link: { ...link, status: 'revoked', endedAt: '2026-11-15T18:05:00.000Z' } } });
+  });
+  await signInTo(page, team.estimator);
+  await page.goto(`/sign-in/${team.address}/jobs/${job.id}/review`);
+  const main = page.getByRole('main');
+  const panel = main.getByRole('region', { name: 'Send to the homeowner' });
+  await expect(panel.getByText('No signing link has been made for this job.')).toBeVisible();
+  await panel.getByRole('button', { name: 'Make a signing link' }).click();
+
+  const address = panel.getByRole('textbox', { name: 'Signing link' });
+  await expect(address).toHaveValue(new RegExp(`/sign#${token}$`));
+  await expect(panel.getByRole('button', { name: 'Copy link' })).toBeVisible();
+  await expect(panel.getByRole('img', { name: 'QR code of the signing link' })).toBeVisible();
+  await expect(panel.getByText(/A signing link is out\. It works until November 22, 2026/)).toBeVisible();
+  expect(calls.filter((call) => call.method === 'POST')).toEqual([{ method: 'POST', body: { id: link.id, estimateId: made.id, proposalSha256: made.proposalSha256 } }]);
+  await expectNoAxeViolations(page);
+  await expectNoSideways(page);
+
+  await panel.getByRole('button', { name: 'Revoke the link' }).click();
+  await expect(panel.getByText('The signing link was revoked.')).toBeVisible();
+  await expect(panel.getByRole('textbox', { name: 'Signing link' })).toHaveCount(0);
+  expect(calls.map((call) => call.method)).toEqual(['GET', 'POST', 'DELETE']);
+});

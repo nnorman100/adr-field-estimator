@@ -200,15 +200,17 @@ export type AgreementInput = {
   result?: Record<string, unknown>;
   documents?: Buffer;
   digest?: string;
+  // The signing link a `link` agreement was signed through (0014, S5a-11b).
+  signingLink?: string | null;
 };
 
 export const insertAgreement = (tx: CompanyTransaction, a: AgreementInput) =>
   tx.execute(sql`
     INSERT INTO agreements (id, company_id, job_id, submission_id, estimate_id, kind, parent_agreement_id, signer_kind, signer_name, signature_evidence_id,
-                            proposal_sha256, priced_result, version_id, content_hash, engine_version, documents_bytes, request_digest, created_by_actor_id)
+                            proposal_sha256, priced_result, version_id, content_hash, engine_version, documents_bytes, request_digest, created_by_actor_id, signing_link_id)
     VALUES (${a.id}::uuid, ${a.company}::uuid, ${a.job}::uuid, ${a.submission}::uuid, ${a.estimate}::uuid, ${a.kind ?? 'original'}, ${a.parent ?? null}::uuid,
             ${a.signerKind ?? 'device'}, ${a.signerName ?? 'Pat Customer'}, ${a.signature}::uuid, ${a.proposalSha}, ${JSON.stringify(a.result ?? pricedResult)}::text::jsonb,
-            ${a.version}::uuid, ${a.hash}, ${a.engine ?? 'dryscope-v3'}, ${a.documents ?? Buffer.from('{"documents":"as signed"}')}, ${a.digest ?? digestOf(a.id)}, ${a.actor}::uuid)
+            ${a.version}::uuid, ${a.hash}, ${a.engine ?? 'dryscope-v3'}, ${a.documents ?? Buffer.from('{"documents":"as signed"}')}, ${a.digest ?? digestOf(a.id)}, ${a.actor}::uuid, ${a.signingLink ?? null}::uuid)
     RETURNING id::text, signed_at
   `) as unknown as Promise<{ id: string; signed_at: string }[]>;
 

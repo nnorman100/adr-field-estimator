@@ -5,17 +5,21 @@ import { onAuthStateChanged } from 'firebase/auth';
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { signatureAddress } from '@/lib/agreements/client';
 import { agreementAnswerOf, type SignedAgreement } from '@/lib/agreements/screen';
 import type { BrowserSignInConfig } from '@/lib/config';
 import type { EstimateView } from '@/lib/estimates/result';
 import { notReadyReasons, outcomeOf, reviewAnswerOf, reviewerOf, type Next, type ReviewJob, type Reviewer } from '@/lib/estimates/screen';
 import { signInOf, signOutOnRefusal, signOutOrShow, type FailedSignOut } from '@/lib/field/sign-out';
 import { belongsTo, callApi, companyAuth } from '@/lib/firebase-client';
+import { linkRightsOf } from '@/lib/links/screen';
 import { endsSession, meOutcome } from '@/lib/sign-in/outcome';
 import { FocusedPanel } from '../../../../../focused-panel';
 import { Panel } from '../../../../../panel';
 import { WorkNotSecured } from '../../../work-not-secured';
 import { EstimateDocuments, EstimatePrice, StaffNotes } from './review-documents';
+import { DocumentLinks } from './document-links';
+import { SendLink } from './send-link';
 import { SignedAgreementView, SigningForm } from './signing';
 
 export type ReviewScreenProps = {
@@ -27,7 +31,15 @@ export type ReviewScreenProps = {
   config: BrowserSignInConfig | null;
 };
 
-type Ready = { user: User; reviewer: Reviewer; job: ReviewJob; estimate: EstimateView | null; agreement: SignedAgreement | null };
+type Ready = {
+  user: User;
+  reviewer: Reviewer;
+  // Who may send links (S5a-11b): `sign` makes them, `delivery_resend` revokes document links.
+  links: { canSend: boolean; canRevoke: boolean };
+  job: ReviewJob;
+  estimate: EstimateView | null;
+  agreement: SignedAgreement | null;
+};
 
 type Phase =
   | { name: 'checking' }
@@ -92,7 +104,7 @@ function Review({ address, companyName, tenantId, jobId, config }: ReviewScreenP
         if (!parsed?.agreement) return setPhase({ name: 'unavailable' });
         agreement = parsed.agreement;
       }
-      setPhase({ name: 'ready', user, reviewer, ...read, agreement });
+      setPhase({ name: 'ready', user, reviewer, links: linkRightsOf(me.body), ...read, agreement });
     },
     [config, jobId, tenantId],
   );
@@ -163,9 +175,11 @@ function Review({ address, companyName, tenantId, jobId, config }: ReviewScreenP
   }
 }
 
-function ReviewBody({ user, reviewer, job, estimate: first, agreement: signedFirst, finishHref, reload }: Ready & { finishHref: string; reload: () => void }) {
+function ReviewBody({ user, reviewer, links, job, estimate: first, agreement: signedFirst, finishHref, reload }: Ready & { finishHref: string; reload: () => void }) {
   const [estimate, setEstimate] = useState<EstimateView | null>(first);
   const [agreement, setAgreement] = useState<SignedAgreement | null>(signedFirst);
+  const signatureId = agreement?.record.signature.id ?? null;
+  const loadSignature = useCallback(() => (signatureId ? signatureAddress(user, job.id, signatureId) : Promise.resolve(null)), [user, job.id, signatureId]);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<{ message: string; next: Next } | null>(null);
   const [confirmed, setConfirmed] = useState(false);
@@ -190,7 +204,8 @@ function ReviewBody({ user, reviewer, job, estimate: first, agreement: signedFir
   if (agreement) {
     return (
       <FocusedPanel title="Signed">
-        <SignedAgreementView user={user} jobId={job.id} agreement={agreement} />
+        <SignedAgreementView agreement={agreement} loadSignature={loadSignature} />
+        <DocumentLinks user={user} jobId={job.id} canSend={links.canSend} canRevoke={links.canRevoke} />
       </FocusedPanel>
     );
   }
@@ -264,6 +279,7 @@ function ReviewBody({ user, reviewer, job, estimate: first, agreement: signedFir
           {confirmed ? <SigningForm user={user} jobId={job.id} estimate={estimate} onSigned={setAgreement} /> : null}
         </section>
       ) : null}
+      {!reasons.length && reviewer.canSign ? <SendLink user={user} jobId={job.id} estimate={estimate} /> : null}
       {finishLink}
     </FocusedPanel>
   );

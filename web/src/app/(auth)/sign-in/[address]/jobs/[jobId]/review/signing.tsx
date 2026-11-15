@@ -4,7 +4,7 @@ import type { User } from 'firebase/auth';
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { signatureAddress, sendSignature } from '@/lib/agreements/client';
+import { sendSignature } from '@/lib/agreements/client';
 import { agreementAnswerOf, signedHow, signedWhen, signOutcomeOf, SIGNER_NAME_LIMIT, type SignedAgreement, type SignNext } from '@/lib/agreements/screen';
 import type { EstimateView } from '@/lib/estimates/result';
 import { callApi } from '@/lib/firebase-client';
@@ -150,14 +150,15 @@ export function SigningForm({ user, jobId, estimate, onSigned }: { user: User; j
 
 // The signed page: the proposal with its terms, then the signature, who signed, when (the server's
 // clock) and how, then the other documents, all from the agreement's stored bytes. Nothing on it can be changed here.
-export function SignedAgreementView({ user, jobId, agreement }: { user: User; jobId: string; agreement: SignedAgreement }) {
+// `loadSignature` reads the stored signature image (the technician's photo route, or a link's own).
+export function SignedAgreementView({ agreement, loadSignature }: { agreement: SignedAgreement; loadSignature: () => Promise<string | null> }) {
   const { record } = agreement;
   const [image, setImage] = useState<string | null>(null);
 
   useEffect(() => {
     let address: string | null = null;
     let gone = false;
-    void signatureAddress(user, jobId, record.signature.id).then((made) => {
+    void loadSignature().then((made) => {
       if (gone) {
         if (made) URL.revokeObjectURL(made);
         return;
@@ -169,7 +170,7 @@ export function SignedAgreementView({ user, jobId, agreement }: { user: User; jo
       gone = true;
       if (address) URL.revokeObjectURL(address);
     };
-  }, [user, jobId, record.signature.id]);
+  }, [loadSignature]);
 
   const end = record.proposal.price.low;
   return (

@@ -32,7 +32,8 @@ import { signDigest, type SignInput } from './schema';
 //
 // Nothing here runs the engine: the prices and documents are the estimate's as stored, and the
 // signed page is read from the agreement's own bytes. Who may: `sign` (owner, estimator), on a job
-// they can see; there is no owner gate before signing (J2).
+// they can see; there is no owner gate before signing (J2). A signing link (S5a-11b) signs through
+// the same transaction as the technician who made it, with a LinkClaim (below).
 
 const SIGN: readonly Capability[] = ['sign'];
 const READ: readonly Capability[] = ['jobs_read'];
@@ -81,6 +82,12 @@ async function agreementById(tx: CompanyTransaction, companyId: string, id: stri
   return row ? { ...row, documentsBytes: Buffer.from(row.documentsBytes) } : null;
 }
 
+/** An agreement of the company by id, as its stored record, or null (a signing link's own, S5a-11b). */
+export async function agreementViewById(tx: CompanyTransaction, companyId: string, id: string): Promise<{ jobId: string; requestDigest: string; view: AgreementView } | null> {
+  const row = await agreementById(tx, companyId, id);
+  return row ? { jobId: row.jobId, requestDigest: row.requestDigest, view: viewOf(row) } : null;
+}
+
 // The job's original agreement: one per job (migration 0011). Change orders and revised estimates
 // (S5b-9) add their own kinds.
 async function originalOf(tx: CompanyTransaction, companyId: string, jobId: string): Promise<AgreementRow | null> {
@@ -123,104 +130,143 @@ async function serverTime(tx: CompanyTransaction): Promise<Date> {
   return new Date(rows[0]!.now);
 }
 
+// A signing link (S5a-11b) signing through the same transaction: `check` runs under the job's row
+// lock once the estimate is known to be the job's current, signable one, and refuses a link that
+// cannot sign it; `consume` runs after the agreement row is inserted and marks the link used.
+export type LinkClaim = {
+  linkId: string;
+  check(tx: CompanyTransaction, estimateId: string): Promise<void>;
+  consume(tx: CompanyTransaction, agreementId: string): Promise<void>;
+};
+
+export type SignResult = { created: boolean; job: AgreementJobState; agreement: AgreementView };
+
+/**
+ * Steps 2 and 3: the job is submitted and not signed, the company's setup check passes, and the
+ * estimate named is the job's current one with the proposal hash shown, not needing review and
+ * signable. Making a signing link (S5a-11b) applies the same checks. Run under the job's row lock.
+ */
+export async function signableEstimate(tx: CompanyTransaction, caller: JobCaller, job: JobRow, estimateId: string, proposalSha256: string) {
+  if (job.status === 'signed') throw new AgreementError('already_signed');
+  if (job.status !== 'submitted') throw new AgreementError('not_submitted');
+  const company = await readCompanyDocuments(tx, caller.companyId);
+  if (!company) throw new JobError('not_found');
+  const missing = companySetupMissing(company.identity, company.signing);
+  if (missing.length) throw new AgreementError('company_setup_missing', { missing });
+  // The estimate is the current one, as shown, and signable.
+  const estimate = await currentEstimateRow(tx, caller.companyId, job);
+  if (!estimate) throw new AgreementError('not_submitted');
+  if (estimate.id !== estimateId) throw new AgreementError('estimate_superseded');
+  if (estimate.proposalSha256 !== proposalSha256) throw new AgreementError('proposal_changed');
+  const stored = readStoredEstimate(estimate.pricedResult);
+  if (stored.job_revision === null || stored.job_revision < job.revision) throw new AgreementError('needs_review');
+  const proposal = readStoredProposal(estimate.proposalBytes);
+  if (!stored.documents.signable || !hasSigningTexts(proposal)) throw new AgreementError('not_signable');
+  return { estimate, stored, proposal };
+}
+
+/**
+ * The one signing transaction (steps 1 to 5 above), for the phone and for a signing link alike.
+ * Runs inside the caller's withCompany transaction; `caller` is the technician who signs (on a link,
+ * the one who made it, as they are now).
+ */
+export async function signInTransaction(
+  tx: CompanyTransaction,
+  caller: JobCaller,
+  jobId: string,
+  input: SignInput,
+  digest: string,
+  link?: LinkClaim,
+): Promise<SignResult> {
+  const job = await jobAccess(tx, caller, jobId, SIGN, { lock: true });
+
+  // 1. Sent before.
+  const existing = await agreementById(tx, caller.companyId, input.id);
+  if (existing) {
+    if (existing.jobId !== jobId || existing.requestDigest !== digest) throw new AgreementError('conflict');
+    return { created: false, job: jobState(job), agreement: viewOf(existing) };
+  }
+
+  // 2 and 3.
+  const { estimate, stored, proposal } = await signableEstimate(tx, caller, job, input.estimateId, input.proposalSha256);
+  if (link) await link.check(tx, estimate.id);
+
+  // 4. The signature.
+  const signature = await signatureOf(tx, caller.companyId, jobId, input.signatureId);
+  if (!signature) throw new AgreementError('signature_missing');
+
+  // 5. The agreement, and the job signed.
+  const signedAt = await serverTime(tx);
+  const record: SignedRecord = {
+    format: SIGNED_FORMAT,
+    agreement_id: input.id,
+    job_id: jobId,
+    kind: 'original',
+    signed_at: signedAt.toISOString(),
+    signer: { name: input.signerName },
+    signed_with: link
+      ? { kind: 'link', link_id: link.linkId }
+      : { kind: 'device', presented_by: { actor_id: caller.actorId, name: await presenterName(tx, caller.companyId, caller.actorId) } },
+    signature: { id: input.signatureId, sha256: signature.sha256, content_type: signature.contentType },
+    proposal_sha256: estimate.proposalSha256,
+    proposal,
+    documents: {
+      itemized_claim: stored.documents.itemized_claim,
+      letter: stored.documents.letter,
+      photo_log: stored.documents.photo_log,
+      claim: stored.documents.claim,
+      compliance_notes: stored.documents.compliance_notes,
+    },
+    basis: { estimate_id: estimate.id, submission_id: estimate.submissionId },
+  };
+  const bytes = signedRecordBytes(record);
+  const [made] = await tx
+    .insert(agreements)
+    .values({
+      id: input.id,
+      companyId: caller.companyId,
+      jobId,
+      submissionId: estimate.submissionId,
+      estimateId: estimate.id,
+      kind: 'original',
+      signerKind: link ? 'link' : 'device',
+      signingLinkId: link ? link.linkId : null,
+      signerName: input.signerName,
+      signatureEvidenceId: signature.id,
+      proposalSha256: estimate.proposalSha256,
+      pricedResult: estimate.pricedResult as Record<string, unknown>,
+      versionId: estimate.versionId,
+      contentHash: estimate.tableHash,
+      engineVersion: estimate.engineVersion,
+      documentsBytes: bytes,
+      requestDigest: digest,
+      createdByActorId: caller.actorId,
+      signedAt,
+    })
+    .returning(agreementColumns);
+  if (link) await link.consume(tx, input.id);
+  const [signed] = await tx
+    .update(jobs)
+    .set({ status: 'signed', revision: sql`${jobs.revision} + 1`, updatedAt: sql`now()` })
+    .where(and(eq(jobs.companyId, caller.companyId), eq(jobs.id, jobId)))
+    .returning();
+  await tx.insert(auditEvents).values({
+    companyId: caller.companyId,
+    actorId: caller.actorId,
+    action: 'agreement_signed',
+    target: jobId,
+    details: { pin: estimate.pinSequence, version: estimate.versionSequence, ...(link ? { signingLink: link.linkId } : {}) },
+  });
+  return { created: true, job: jobState(signed!), agreement: viewOf({ ...made!, documentsBytes: Buffer.from(made!.documentsBytes) }) };
+}
+
 export function agreementsService(db: Database): AgreementsService {
   return {
     async sign(caller, jobId, input) {
       // Refused before anything is read when the role cannot sign.
       if (!hasAny(caller, SIGN)) throw new JobError('not_allowed');
       const digest = signDigest(input);
-      return withCompany(db, caller.companyId, async (tx) => {
-        const job = await jobAccess(tx, caller, jobId, SIGN, { lock: true });
-
-        // 1. Sent before.
-        const existing = await agreementById(tx, caller.companyId, input.id);
-        if (existing) {
-          if (existing.jobId !== jobId || existing.requestDigest !== digest) throw new AgreementError('conflict');
-          return { created: false, job: jobState(job), agreement: viewOf(existing) };
-        }
-
-        // 2. The job and the company.
-        if (job.status === 'signed') throw new AgreementError('already_signed');
-        if (job.status !== 'submitted') throw new AgreementError('not_submitted');
-        const company = await readCompanyDocuments(tx, caller.companyId);
-        if (!company) throw new JobError('not_found');
-        const missing = companySetupMissing(company.identity, company.signing);
-        if (missing.length) throw new AgreementError('company_setup_missing', { missing });
-
-        // 3. The estimate is the current one, as shown, and signable.
-        const estimate = await currentEstimateRow(tx, caller.companyId, job);
-        if (!estimate) throw new AgreementError('not_submitted');
-        if (estimate.id !== input.estimateId) throw new AgreementError('estimate_superseded');
-        if (estimate.proposalSha256 !== input.proposalSha256) throw new AgreementError('proposal_changed');
-        const stored = readStoredEstimate(estimate.pricedResult);
-        if (stored.job_revision === null || stored.job_revision < job.revision) throw new AgreementError('needs_review');
-        const proposal = readStoredProposal(estimate.proposalBytes);
-        if (!stored.documents.signable || !hasSigningTexts(proposal)) throw new AgreementError('not_signable');
-
-        // 4. The signature.
-        const signature = await signatureOf(tx, caller.companyId, jobId, input.signatureId);
-        if (!signature) throw new AgreementError('signature_missing');
-
-        // 5. The agreement, and the job signed.
-        const signedAt = await serverTime(tx);
-        const record: SignedRecord = {
-          format: SIGNED_FORMAT,
-          agreement_id: input.id,
-          job_id: jobId,
-          kind: 'original',
-          signed_at: signedAt.toISOString(),
-          signer: { name: input.signerName },
-          signed_with: { kind: 'device', presented_by: { actor_id: caller.actorId, name: await presenterName(tx, caller.companyId, caller.actorId) } },
-          signature: { id: input.signatureId, sha256: signature.sha256, content_type: signature.contentType },
-          proposal_sha256: estimate.proposalSha256,
-          proposal,
-          documents: {
-            itemized_claim: stored.documents.itemized_claim,
-            letter: stored.documents.letter,
-            photo_log: stored.documents.photo_log,
-            claim: stored.documents.claim,
-            compliance_notes: stored.documents.compliance_notes,
-          },
-          basis: { estimate_id: estimate.id, submission_id: estimate.submissionId },
-        };
-        const bytes = signedRecordBytes(record);
-        const [made] = await tx
-          .insert(agreements)
-          .values({
-            id: input.id,
-            companyId: caller.companyId,
-            jobId,
-            submissionId: estimate.submissionId,
-            estimateId: estimate.id,
-            kind: 'original',
-            signerKind: 'device',
-            signerName: input.signerName,
-            signatureEvidenceId: signature.id,
-            proposalSha256: estimate.proposalSha256,
-            pricedResult: estimate.pricedResult as Record<string, unknown>,
-            versionId: estimate.versionId,
-            contentHash: estimate.tableHash,
-            engineVersion: estimate.engineVersion,
-            documentsBytes: bytes,
-            requestDigest: digest,
-            createdByActorId: caller.actorId,
-            signedAt,
-          })
-          .returning(agreementColumns);
-        const [signed] = await tx
-          .update(jobs)
-          .set({ status: 'signed', revision: sql`${jobs.revision} + 1`, updatedAt: sql`now()` })
-          .where(and(eq(jobs.companyId, caller.companyId), eq(jobs.id, jobId)))
-          .returning();
-        await tx.insert(auditEvents).values({
-          companyId: caller.companyId,
-          actorId: caller.actorId,
-          action: 'agreement_signed',
-          target: jobId,
-          details: { pin: estimate.pinSequence, version: estimate.versionSequence },
-        });
-        return { created: true, job: jobState(signed!), agreement: viewOf({ ...made!, documentsBytes: Buffer.from(made!.documentsBytes) }) };
-      });
+      return withCompany(db, caller.companyId, (tx) => signInTransaction(tx, caller, jobId, input, digest));
     },
 
     async read(caller, jobId) {

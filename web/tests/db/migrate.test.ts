@@ -15,7 +15,7 @@ import { emptyDiscardDatabase, startDisposablePostgres, type DisposablePostgres 
 const exec = promisify(execFile);
 const webRoot = fileURLToPath(new URL('../..', import.meta.url));
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const SHIPPED = ['0001_foundation', '0002_identity', '0003_runtime_role', '0004_sign_in_lookup', '0005_access_projection', '0006_platform_operator', '0007_sign_in_address', '0008_feature_flag_writes', '0009_price_tables', '0010_core_job_tables', '0011_submissions_agreements', '0012_ai_live_tables', '0013_company_documents'];
+const SHIPPED = ['0001_foundation', '0002_identity', '0003_runtime_role', '0004_sign_in_lookup', '0005_access_projection', '0006_platform_operator', '0007_sign_in_address', '0008_feature_flag_writes', '0009_price_tables', '0010_core_job_tables', '0011_submissions_agreements', '0012_ai_live_tables', '0013_company_documents', '0014_signing_links'];
 const SHIPPED_TABLES = [
   'access_projection_outbox',
   'actors',
@@ -27,6 +27,7 @@ const SHIPPED_TABLES = [
   'companies',
   'company_ai_settings',
   'company_feature_flags',
+  'document_links',
   'evidence_objects',
   'invitations',
   'job_claims',
@@ -44,8 +45,11 @@ const SHIPPED_TABLES = [
   'platform_admins',
   'price_table_versions',
   'price_table_working_copies',
+  'signing_links',
   'voice_notes',
 ];
+// The tables as of 0013, for the test of that file, which a later file (0014) adds tables after.
+const TABLES_TO_0013 = SHIPPED_TABLES.filter((table) => table !== 'document_links' && table !== 'signing_links');
 
 // Every column of companies from 0001 to 0012, so a test of an earlier file compares the rows it
 // planted while a later file (0013) adds columns of its own.
@@ -500,13 +504,17 @@ describe('numbered migration ledger', () => {
         await sql`INSERT INTO company_ai_settings (company_id) VALUES (${company!.id})`;
       });
       const before = await holding();
-      const migrated = await applyMigrations(disposable.databaseUrl, migrationsDirectory);
-      expect(migrated.applied).toEqual(SHIPPED.slice(12));
+      // Up to and including 0013 only: 0014 adds tables of its own (its own test is below).
+      const through = await tempMigrations(
+        Object.fromEntries((await readMigrations(migrationsDirectory)).filter((file) => file.id < '0014').map((file) => [`${file.id}.sql`, file.sql])),
+      );
+      const migrated = await applyMigrations(disposable.databaseUrl, through).finally(() => rm(through, { recursive: true, force: true }));
+      expect(migrated.applied).toEqual(SHIPPED.slice(12, 13));
       expect(migrated.applied).toEqual(['0013_company_documents']);
       const after = await holding();
       // Every row and every earlier column is as it was, and no table is added.
       expect(after).toEqual(before);
-      expect(after.tables).toEqual(SHIPPED_TABLES);
+      expect(after.tables).toEqual(TABLES_TO_0013);
       // Both companies start with the letterhead empty and the settings at their neutral defaults
       // ('{}'): no company's own values are seeded.
       const added = await withSql(
@@ -520,6 +528,58 @@ describe('numbered migration ledger', () => {
         { sign_in_slug: 'existing', ...empty },
         { sign_in_slug: 'other', ...empty },
       ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('adds the signing and document link tables to a database already holding 0001 to 0013 and its rows', async () => {
+    const earlier = (await readMigrations(migrationsDirectory)).filter((file) => file.id < '0014');
+    expect(earlier.map((file) => file.id)).toEqual(SHIPPED.slice(0, 13));
+    const dir = await tempMigrations(Object.fromEntries(earlier.map((file) => [`${file.id}.sql`, file.sql])));
+    try {
+      expect((await applyMigrations(disposable.databaseUrl, dir)).applied).toEqual(SHIPPED.slice(0, 13));
+      const holding = async () =>
+        withSql(async (sql) => ({
+          companies: await sql`SELECT * FROM companies ORDER BY id`,
+          actors: await sql`SELECT * FROM actors ORDER BY id`,
+          jobs: await sql`SELECT * FROM jobs ORDER BY id`,
+          tables: await tableNames(),
+        }));
+      await withSql(async (sql) => {
+        await sql`INSERT INTO auth_tenants (id, kind) VALUES ('tenant-x', 'company')`;
+        const [company] = await sql<{ id: string }[]>`
+          INSERT INTO companies (name, sign_in_slug, auth_tenant_id) VALUES ('Existing', 'existing', 'tenant-x') RETURNING id
+        `;
+        const [actor] = await sql<{ id: string }[]>`
+          INSERT INTO actors (company_id, auth_tenant_id, uid, email) VALUES (${company!.id}, 'tenant-x', 'u1', 'u1@example.test') RETURNING id
+        `;
+        await sql`
+          INSERT INTO jobs (id, company_id, created_by_actor_id, current_draft_id, request_digest)
+          VALUES (gen_random_uuid(), ${company!.id}, ${actor!.id}, gen_random_uuid(), ${'b'.repeat(64)})
+        `;
+      });
+      const before = await holding();
+      expect(before.tables).toEqual(TABLES_TO_0013);
+      const migrated = await applyMigrations(disposable.databaseUrl, migrationsDirectory);
+      expect(migrated.applied).toEqual(['0014_signing_links']);
+      const after = await holding();
+      // Every row is as it was; the two link tables are added, empty.
+      expect({ ...after, tables: [] }).toEqual({ ...before, tables: [] });
+      expect(after.tables).toEqual(SHIPPED_TABLES);
+      const counts = await withSql(
+        (sql) => sql`SELECT (SELECT count(*)::int FROM signing_links) AS signing, (SELECT count(*)::int FROM document_links) AS documents`,
+      );
+      expect(counts).toEqual([{ signing: 0, documents: 0 }]);
+      // agreements gains one nullable column, last, so every row signed so far (on a device) keeps
+      // it empty.
+      const columns = await withSql(
+        (sql) => sql`
+          SELECT column_name, is_nullable FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'agreements' ORDER BY ordinal_position DESC LIMIT 1
+        `,
+      );
+      expect(columns).toEqual([{ column_name: 'signing_link_id', is_nullable: 'YES' }]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

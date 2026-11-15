@@ -5,10 +5,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { IdentityRefusal, type IdentityDirectory, type TokenVerifier } from '@/lib/auth/identity';
 import { accountRoute } from '@/lib/auth/route';
 import {
+  isLinkApiPath,
   isMemberApiPath,
   isOperatorApiPath,
   isPublicApiPath,
   isServiceApiPath,
+  linkApiPaths,
   memberApiPaths,
   operatorApiPaths,
   serviceApiPaths,
@@ -37,11 +39,11 @@ describe('team routes and the proxy', () => {
     // A public route's placeholder segment is checked with a real value of its shape.
     const files = (await routePaths(API_DIR)).filter((path) => !isPublicApiPath(path.replace('[address]', 'company-a')));
     const patterns = files.map((path) => path.replace(/\[[A-Za-z]+\]/g, ':id'));
-    expect([...patterns].sort()).toEqual([...memberApiPaths, ...operatorApiPaths, ...serviceApiPaths].sort());
+    expect([...patterns].sort()).toEqual([...memberApiPaths, ...operatorApiPaths, ...serviceApiPaths, ...linkApiPaths].sort());
     // A real path of each route file passes the proxy.
     for (const path of files) {
       const real = path.replace(/\[[A-Za-z]+\]/g, ID);
-      expect({ path, passes: isMemberApiPath(real) || isOperatorApiPath(real) || isServiceApiPath(real) }).toEqual({ path, passes: true });
+      expect({ path, passes: isMemberApiPath(real) || isOperatorApiPath(real) || isServiceApiPath(real) || isLinkApiPath(real) }).toEqual({ path, passes: true });
     }
   });
 

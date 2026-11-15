@@ -1,5 +1,7 @@
 import { monitorAppCheck } from '@/lib/app-check';
 import { parseFlagName, type FlagName } from '@/lib/flags';
+import { takeLinkRequest } from '@/lib/links/address-limit';
+import { linkTokenHashOf } from '@/lib/links/token';
 import {
   bearerToken,
   IdentityRefusal,
@@ -41,6 +43,12 @@ import { identityServices, operatorServices, type IdentityServices, type Operato
 //   export const POST = serviceRoute('access-projection', async (request) => ...);
 //                                         // the scheduler service account, token minted for this job
 //
+// And one is for a homeowner or adjuster holding a link (S5a-11b), never a company user:
+//
+//   export const GET = linkRoute(async (request, link) => ...);
+//                                         // a link token in the X-Link-Token header; the handler gets
+//                                         // only its SHA-256 and finds the link's company from it
+//
 // And one is for the platform operator (owner decision D6), never a company user:
 //
 //   export const GET = operatorRoute(async (request, operator) => ...);
@@ -59,6 +67,7 @@ type RouteContext = { params: Promise<Record<string, string | string[] | undefin
 type Handler = (request: Request, context: RouteContext) => Response | Promise<Response>;
 type MemberHandler = (request: Request, identity: Identity, context: RouteContext) => Response | Promise<Response>;
 type AccountHandler = (request: Request, account: Account, context: RouteContext) => Response | Promise<Response>;
+type LinkHandler = (request: Request, link: LinkToken, context: RouteContext) => Response | Promise<Response>;
 type OperatorHandler = (request: Request, operator: Operator, context: RouteContext) => Response | Promise<Response>;
 
 const NO_STORE = { 'Cache-Control': 'no-store' };
@@ -165,6 +174,25 @@ export function serviceRoute(
     }
     if (!claims.emailVerified || claims.email !== found.caller.email) return refusal('not_allowed', 403);
     return handler(request, context);
+  };
+}
+
+// What a link route's handler is given: the SHA-256 of the link token the request carried. The
+// token itself is never passed on, stored or logged.
+export type LinkToken = { tokenSha256: string };
+
+// Only a request carrying a link token (src/lib/links/token.ts) in its X-Link-Token header, from a
+// client address that has not used its share of link requests for this minute (120 a minute,
+// src/lib/links/address-limit.ts; 429 otherwise, before any token is looked up). A missing or
+// malformed token answers the same 404 as an unknown one. The handler finds the link, its company
+// and the technician it acts as from the hash alone; no path, query or body names a company or job.
+// A bearer sign-in is never read here, and a link token is never accepted by any other rule.
+export function linkRoute(handler: LinkHandler, take: (headers: Headers) => boolean = takeLinkRequest): Handler {
+  return async (request, context) => {
+    if (!take(request.headers)) return refusal('too_many_requests', 429);
+    const tokenSha256 = linkTokenHashOf(request);
+    if (!tokenSha256) return refusal('link_unavailable', 404);
+    return handler(request, { tokenSha256 }, context);
   };
 }
 
