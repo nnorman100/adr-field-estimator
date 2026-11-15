@@ -1,6 +1,7 @@
 import { FieldValue, Timestamp, type DocumentReference, type Firestore } from 'firebase-admin/firestore';
 import type { FieldDoc, FieldManifest } from '@/lib/field/canonical';
 import { firestoreJobProjectionStore, type JobProjectionStore } from '@/lib/jobs/projection';
+import { MAX_PHOTO_REFS, MAX_ROOMS } from '@/lib/field/schema';
 import { firestoreSpan } from '@/lib/telemetry/spans';
 
 // The Firestore side of Submit (docs/plans/S5.md, section 4): the fence on a field draft, the read
@@ -38,8 +39,9 @@ export type FenceStore = JobProjectionStore & {
   // whose submission is known to be aborted; a fence of exactly that epoch is replaced.
   fence(companyId: string, draftId: string, fence: Fence, replacing?: string): Promise<FenceResult>;
   // The draft's field map and nested documents, read in one consistent read, or null when the
-  // draft is not fenced by this epoch.
-  read(companyId: string, draftId: string, epoch: string): Promise<FieldManifest | null>;
+  // draft is not fenced by this epoch; `too_many_rooms` or `too_many_photos` when that nested
+  // collection exceeds its safety cap. A read never returns a truncated manifest for hashing or storing.
+  read(companyId: string, draftId: string, epoch: string): Promise<FieldManifest | 'too_many_rooms' | 'too_many_photos' | null>;
   // After a commit: `submitting` with this epoch becomes `submitted`. `marked` also when it is
   // already submitted by this submission; `missing` when there is no draft; `conflict` otherwise.
   markSubmitted(companyId: string, draftId: string, epoch: string, submissionId: string): Promise<'marked' | 'missing' | 'conflict'>;
@@ -116,8 +118,11 @@ export function firestoreFenceStore(db: Firestore): FenceStore {
             const draft = await tx.get(ref);
             const data = draft.data();
             if (!draft.exists || data?.state !== 'submitting' || fenceOf(data)?.epoch !== epoch) return null;
-            const rooms = await tx.get(ref.collection('rooms'));
-            const photos = await tx.get(ref.collection('photos'));
+            // One above each cap detects overflow without reading an attacker-sized collection.
+            const rooms = await tx.get(ref.collection('rooms').limit(MAX_ROOMS + 1));
+            if (rooms.size > MAX_ROOMS) return 'too_many_rooms' as const;
+            const photos = await tx.get(ref.collection('photos').limit(MAX_PHOTO_REFS + 1));
+            if (photos.size > MAX_PHOTO_REFS) return 'too_many_photos' as const;
             return { draft: data.field ?? {}, rooms: docs(rooms), photos: docs(photos) } satisfies FieldManifest;
           },
           { readOnly: true },

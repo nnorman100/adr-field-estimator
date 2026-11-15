@@ -260,6 +260,37 @@ describe('field map v1 rules', () => {
     expect(await createDoc(a, room(A, 'editing', 'control'), { field: ROOM })).toBe(200);
   });
 
+  it('bounds every room-order entry to a string field id, including the last entry', async () => {
+    const a = estimatorA.caller;
+    const path = draft(A, 'editing');
+    for (const entry of ['', 'x'.repeat(65), 'x'.repeat(200_000), 'room.with.dot', 'a,b', 1, null, { room: 'kitchen' }]) {
+      const roomOrder = [...ids(MAX_ROOMS - 1), entry];
+      expect(draftFieldSchema.safeParse({ roomOrder }).success).toBe(false);
+      expect(await updateDoc(a, path, { field: { roomOrder } })).toBe(403);
+    }
+    for (const roomOrder of [[], [randomUUID()], ['A', '_', '-', 'a'.repeat(64)], ids(MAX_ROOMS)]) {
+      expect(await updateDoc(a, path, { field: { roomOrder } })).toBe(200);
+    }
+  });
+
+  it('refuses malformed room and photo document ids on create and update', async () => {
+    const a = estimatorA.caller;
+    for (const nested of [room, photo]) {
+      for (const id of ['x'.repeat(65), 'x'.repeat(1000), 'id.with.dot', 'id,comma', 'id space', 'é']) {
+        const path = nested(A, 'editing', id);
+        expect(await createDoc(a, path, { field: {} })).toBe(403);
+        // Old malformed references cannot be edited into apparently valid ones either.
+        await serverSet(path, { field: {} });
+        expect(await updateDoc(a, path, { field: {} })).toBe(403);
+      }
+      for (const id of [randomUUID(), 'A', '_', '-', 'a'.repeat(64)]) {
+        const path = nested(A, 'editing', id);
+        expect(await createDoc(a, path, { field: {} })).toBe(200);
+        expect(await updateDoc(a, path, { field: {} })).toBe(200);
+      }
+    }
+  });
+
   it('passes a batched write at the lookup limits', async () => {
     // Each write reads the company, the access record and, for a room or photo, the draft: two
     // or three documents, under the limit of 10 per write. A batch may read 20 documents in all;

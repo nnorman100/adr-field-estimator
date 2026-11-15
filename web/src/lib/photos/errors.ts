@@ -10,6 +10,8 @@ export const PHOTO_ERRORS = {
   // The job's draft is not being edited (it is being submitted or was submitted), or the job is no
   // longer a draft: no new photo.
   draft_locked: 409,
+  // The draft already holds the most photo references a job may (MAX_PHOTO_REFS): no new photo.
+  photo_limit: 409,
   // A signature arrived for a job with no current unsigned estimate: it is not submitted and priced,
   // or it is already signed.
   not_ready_to_sign: 409,

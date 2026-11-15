@@ -21,6 +21,8 @@ export const SUBMISSION_ERRORS = {
   // The draft cannot be recorded as it is (a room with no name, a room order that does not list
   // the rooms, a value the field map does not allow).
   draft_invalid: 409,
+  // The draft holds more photo references than a job may (MAX_PHOTO_REFS in src/lib/field/schema.ts).
+  too_many_photos: 409,
   // A room names a room type or an item that is not in the job's price version (its pin, else the
   // company's current version): pick it again on Check Scope, then Finish with a new submission id.
   unknown_price_ids: 409,
