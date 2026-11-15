@@ -77,19 +77,27 @@ export function stillSameSignIn(auth: Auth | null, from: SignIn): boolean {
   return auth !== null && auth.currentUser === from.user && stillSignedIn(auth, from);
 }
 
+function authTimeOf(user: User): Promise<string | null> {
+  return user.getIdTokenResult().then(
+    (result) => result.authTime,
+    () => null,
+  );
+}
+
 /**
  * Runs `reload` (`user.reload()`) while keeping `from` bound to the same local sign-in.
  *
  * `user.reload()` overwrites `user.metadata.lastSignInTime` in place with the server's latest
- * `lastLoginAt` (which advances if another phone signs in), whereas `refreshToken` changes only
- * when another tab on this phone replaces the session (`_assign`).
+ * `lastLoginAt` (which advances if another phone signs in), and may refresh the ID token, which
+ * may rotate `refreshToken`. The ID token's `auth_time` stays the same through a refresh and
+ * changes only when this phone's session is replaced by a new sign-in (another tab, `_assign`).
  */
 export async function acrossUserReload<T>(from: SignIn, reload: () => Promise<T>): Promise<[T, SignIn]> {
   const { user } = from;
-  if (!user || sessionKey(user) !== from.key) return [await reload(), from];
-  const tokenBefore = user.refreshToken;
+  const before = user ? await authTimeOf(user) : null;
+  if (!user || before === null || sessionKey(user) !== from.key) return [await reload(), from];
   const result = await reload();
-  if (sessionKey(user) !== from.key && user.refreshToken === tokenBefore) {
+  if (sessionKey(user) !== from.key && (await authTimeOf(user)) === before) {
     return [result, signInOf(user)];
   }
   return [result, from];

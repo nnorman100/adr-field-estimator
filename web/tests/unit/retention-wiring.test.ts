@@ -373,12 +373,19 @@ describe('the sign-in a refusal ends', () => {
     expect(signOutCompany).toHaveBeenCalledOnce();
   });
 
+  // A phone's session: its ID token's auth_time stays the same through a token refresh (which may
+  // rotate the refresh token) and changes only when a new sign-in replaces it.
+  const sessionOn = (uid: string) => {
+    const user = { ...signedInAs(uid), refreshToken: 'r-1', authTime: 'Fri, 13 Nov 2026 09:00:00 GMT' };
+    return Object.assign(user, { getIdTokenResult: async () => ({ authTime: user.authTime }) });
+  };
+
   it('still ends the sign-in when user.reload refreshes lastSignInTime on the same local session', async () => {
-    const user = { ...signedInAs('ana'), refreshToken: 'r-1' };
+    const user = sessionOn('ana');
     const auth = { currentUser: user };
     const started = signInOf(user as unknown as User);
     // Firebase user.reload() reads a newer lastLoginAt from the server (e.g. another phone
-    // signed in) and mutates user.metadata in place, while this phone's refreshToken stays r-1.
+    // signed in) and mutates user.metadata in place; this phone's session is unchanged.
     const [count, nextFrom] = await acrossUserReload(started, async () => {
       user.metadata = { lastSignInTime: 'Sat, 14 Nov 2026 09:00:00 GMT' };
       return 1;
@@ -390,22 +397,38 @@ describe('the sign-in a refusal ends', () => {
     expect(signOutCompany).toHaveBeenCalledOnce();
   });
 
+  it('still ends the sign-in when user.reload refreshes an expired token and the refresh token rotates', async () => {
+    const user = sessionOn('ana');
+    const auth = { currentUser: user };
+    const started = signInOf(user as unknown as User);
+    // The check was left open past the ID token's expiry while she signed in on another phone:
+    // reload refreshes the token (a new refresh token, the same auth_time) and reads the newer time.
+    const [, nextFrom] = await acrossUserReload(started, async () => {
+      user.refreshToken = 'r-2';
+      user.metadata = { lastSignInTime: 'Sat, 14 Nov 2026 09:00:00 GMT' };
+    });
+    await signOutOnRefusal(auth as unknown as Auth, 't-a', config, 'sign-in-again', false, nextFrom);
+    expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: NOW, lockedReason: 'sign-in-again' });
+    expect(forgetMe).toHaveBeenCalledOnce();
+    expect(signOutCompany).toHaveBeenCalledOnce();
+  });
+
   it('leaves a newer sign-in alone when another tab replaced it before or during user.reload', async () => {
-    const beforeReloadUser = { ...signedInAs('ana'), refreshToken: 'r-1' };
+    const beforeReloadUser = sessionOn('ana');
     const startedBefore = signInOf(beforeReloadUser as unknown as User);
     beforeReloadUser.metadata = { lastSignInTime: 'Sat, 14 Nov 2026 09:00:00 GMT' };
-    beforeReloadUser.refreshToken = 'r-2';
+    beforeReloadUser.authTime = 'Sat, 14 Nov 2026 09:00:00 GMT';
     const [, afterBefore] = await acrossUserReload(startedBefore, async () => {
       beforeReloadUser.metadata = { lastSignInTime: 'Sun, 15 Nov 2026 09:00:00 GMT' };
       return 1;
     });
     await signOutOnRefusal({ currentUser: beforeReloadUser } as unknown as Auth, 't-a', config, 'sign-in-again', false, afterBefore);
 
-    const duringReloadUser = { ...signedInAs('ana'), refreshToken: 'r-1' };
+    const duringReloadUser = sessionOn('ana');
     const startedDuring = signInOf(duringReloadUser as unknown as User);
     const [, afterDuring] = await acrossUserReload(startedDuring, async () => {
       duringReloadUser.metadata = { lastSignInTime: 'Sat, 14 Nov 2026 09:00:00 GMT' };
-      duringReloadUser.refreshToken = 'r-2';
+      duringReloadUser.authTime = 'Sat, 14 Nov 2026 09:00:00 GMT';
       return 1;
     });
     await signOutOnRefusal({ currentUser: duringReloadUser } as unknown as Auth, 't-a', config, 'sign-in-again', false, afterDuring);
