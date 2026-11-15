@@ -73,13 +73,14 @@ export function linkFlow(h: () => Harness, routes: LinkRoutes, publish: (company
   const price = (claims: FakeClaims, jobId: string): Promise<Reply> =>
     json(routes.estimate(request(claims, `/api/jobs/${jobId}/estimate`, { method: 'POST' }), params({ jobId })));
 
-  // A submitted, priced job of company A: what a signing link needs.
-  async function pricedJob(claims: FakeClaims = ESTIMATOR_A) {
-    await publish(h().seed.a, '2.00');
-    const ready = await f.readyJob(claims, h().seed.a);
-    expect((await saveCustomer(claims, ready.jobId, '12 Synthetic Lane, Testville')).status).toBe(200);
+  // A submitted, priced job of company A (or of `company`, made by one of its people): what a
+  // signing link needs. `customer` names the job's customer and property.
+  async function pricedJob(claims: FakeClaims = ESTIMATOR_A, company: string = h().seed.a, customer: { name: string; address: string } = { name: 'Casey Customer', address: '12 Synthetic Lane, Testville' }) {
+    await publish(company, '2.00');
+    const ready = await f.readyJob(claims, company);
+    expect((await saveCustomer(claims, ready.jobId, customer.address, customer.name)).status).toBe(200);
     const manifest = manifestOf(ready.photoId);
-    h().field.put(h().seed.a, ready.draftId, manifest);
+    h().field.put(company, ready.draftId, manifest);
     expect((await f.submitShown(claims, ready.jobId, ready.draftId, manifest)).answer.status).toBe(201);
     const estimate = (await price(claims, ready.jobId)).body.estimate as Body;
     expect(estimate.documents.signable).toBe(true);
@@ -96,12 +97,12 @@ export function linkFlow(h: () => Harness, routes: LinkRoutes, publish: (company
   const linkBody = (estimate: Body, id: string = randomUUID()) => ({ id, estimateId: estimate.id, proposalSha256: estimate.proposalSha256 });
 
   // A job with a link made for its estimate by `claims`, and the token.
-  async function linkedJob(claims: FakeClaims = ESTIMATOR_A) {
-    const job = await pricedJob(claims);
-    const body = linkBody(job.estimate);
-    const made = await makeLink(claims, job.jobId, body);
+  async function linkedJob(claims: FakeClaims = ESTIMATOR_A, ...job: [company?: string, customer?: { name: string; address: string }]) {
+    const priced = await pricedJob(claims, ...job);
+    const body = linkBody(priced.estimate);
+    const made = await makeLink(claims, priced.jobId, body);
     expect(made.status).toBe(201);
-    return { ...job, link: made.body.link as Body, linkId: body.id, token: made.body.token as string, body };
+    return { ...priced, link: made.body.link as Body, linkId: body.id, token: made.body.token as string, body };
   }
 
   const view = (token: string | null): Promise<Reply> => json(routes.sign.GET(linkRequest(token, '/api/sign'), params({})));
