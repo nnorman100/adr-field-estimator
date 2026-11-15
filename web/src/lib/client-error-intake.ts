@@ -18,8 +18,9 @@ import { cspReports } from './csp-report';
 // and reads nothing: no database, no Firestore, no identity (tests/unit/client-errors-route.test.ts
 // calls it with both trapped). What it accepts is bounded three ways, and what it writes is built
 // from fixed fields only:
-//   - the body: JSON, at most 8 KB (counted in bytes while it is read, never trusted from the
-//     header), at most 20 reports, every field bounded by the schema below;
+//   - the body: JSON, at most 8 KB (64 KB for a browser's batched application/reports+json CSP
+//     reports, which repeat the whole policy in every report), counted in bytes while it is read
+//     and never trusted from the header; at most 20 reports, every field bounded by the schema below;
 //   - the rate: each caller (its connecting address) may have at most 20 reports a minute written, so one caller cannot use up the instance's allowance; and each
 //     instance writes at most 60 reports a minute in all. The rest are answered 202 (the sender
 //     can do nothing about them) and only counted. The instance cap logs nothing; a caller hitting
@@ -36,6 +37,7 @@ import { cspReports } from './csp-report';
 
 export const CLIENT_SERVICE = 'dryscope-web-client';
 export const MAX_BODY_BYTES = 8192;
+export const MAX_CSP_BATCH_BYTES = 65536;
 export const MAX_REPORTS = 20;
 export const REPORTS_PER_MINUTE = 60;
 export const REPORTS_PER_CALLER_PER_MINUTE = 20;
@@ -135,9 +137,9 @@ function takeCaller(key: string, count: number, now: number): number {
 
 // The body as text, or null when it is over the limit. The limit is enforced on the bytes as they
 // arrive, so a sender cannot make the server buffer more by understating its length.
-async function readLimited(request: Request): Promise<string | null> {
+async function readLimited(request: Request, limit: number): Promise<string | null> {
   const declared = Number(request.headers.get('content-length'));
-  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) return null;
+  if (Number.isFinite(declared) && declared > limit) return null;
   const reader = request.body?.getReader();
   if (!reader) return '';
   const chunks: Uint8Array[] = [];
@@ -146,7 +148,7 @@ async function readLimited(request: Request): Promise<string | null> {
     const { done, value } = await reader.read();
     if (done) break;
     total += value.byteLength;
-    if (total > MAX_BODY_BYTES) {
+    if (total > limit) {
       await reader.cancel().catch(() => {});
       return null;
     }
@@ -180,7 +182,10 @@ export async function handleClientErrors(request: Request): Promise<Response> {
   const type = (request.headers.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase();
   if (!['application/json', 'application/csp-report', 'application/reports+json'].includes(type))
     return refuse('unsupported_media_type', 415);
-  const text = await readLimited(request);
+  const text = await readLimited(
+    request,
+    type === 'application/reports+json' ? MAX_CSP_BATCH_BYTES : MAX_BODY_BYTES,
+  );
   if (text === null) return refuse('payload_too_large', 413);
   let body: unknown;
   try {

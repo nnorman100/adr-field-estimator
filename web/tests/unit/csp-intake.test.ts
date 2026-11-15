@@ -39,6 +39,26 @@ const modern = () => ({
     sample: 'private transcript',
   },
 });
+const chrome = () => ({
+  age: 1200,
+  type: 'csp-violation',
+  url: documentURL,
+  user_agent:
+    'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36',
+  body: {
+    documentURL,
+    referrer: documentURL,
+    blockedURL: 'https://person-name.example/123-Main-St/loader.js?secret=abc',
+    effectiveDirective: 'script-src-elem',
+    originalPolicy: `default-src 'self'; script-src 'self' 'unsafe-inline' private-policy ${'https://www.google.com/recaptcha/ '.repeat(20)}`,
+    sourceFile: 'https://app.example/_next/static/chunks/private-file.js',
+    sample: '',
+    disposition: 'report',
+    statusCode: 200,
+    lineNumber: 1,
+    columnNumber: 2048,
+  },
+});
 const send = (body: unknown, type = 'application/csp-report', ip?: string) =>
   POST(
     new Request('https://app.example/api/client-errors', {
@@ -81,6 +101,30 @@ describe('native CSP reports share the client-error intake', () => {
       ),
     ).toBe(1);
     expect(JSON.parse(lines[0]!).message).toBe('CspViolation: connect-src appcheck');
+  });
+
+  it('accepts a real-size 20-report Chrome batch and logs none of its policy or URLs', async () => {
+    const batch = Array.from({ length: 20 }, chrome);
+    const size = new TextEncoder().encode(JSON.stringify(batch)).length;
+    expect(size).toBeGreaterThan(8192);
+    expect(size).toBeLessThanOrEqual(65536);
+    expect(await accepted(await send(batch, 'application/reports+json'))).toBe(20);
+    expect(lines).toHaveLength(20);
+    expect(JSON.parse(lines[0]!).message).toBe('CspViolation: script-src-elem external');
+    expect(lines.join('')).not.toMatch(
+      /private|policy|recaptcha|person-name|Main-St|secret|app\.example|Pixel/,
+    );
+  });
+
+  it('refuses a Chrome batch over 64 KB and keeps 8 KB for single reports', async () => {
+    const batch = Array.from({ length: 20 }, chrome);
+    for (const report of batch) report.body.originalPolicy += 'x'.repeat(2400);
+    expect(new TextEncoder().encode(JSON.stringify(batch)).length).toBeGreaterThan(65536);
+    expect((await send(batch, 'application/reports+json')).status).toBe(413);
+    const single = legacy();
+    single['csp-report']['original-policy'] = 'x'.repeat(8192);
+    expect((await send(single)).status).toBe(413);
+    expect(lines).toEqual([]);
   });
 
   it('never logs attacker-controlled directive names or unknown origins', async () => {

@@ -67,8 +67,13 @@ route list. Native browser reports cannot attach an App Check token; the current
 App Check monitor records a missing token without refusing the report.
 
 The same intake handles `application/csp-report` and `application/reports+json`
-through bounded Zod schemas, under the existing streamed 8 KB body limit, at most
-20 reports per request, 20 per caller per minute and 60 per instance per minute.
+through bounded Zod schemas. A single report keeps the existing streamed 8 KB body
+limit; a Reporting API batch (`application/reports+json`) may be up to 64 KB,
+because Chrome sends a minute's reports in one request and every report repeats
+the whole policy. Every request carries at most 20 reports, and the caps of 20 per
+caller per minute and 60 per instance per minute are unchanged. Only the directive,
+blocked URL and document URL of each report are read; the original policy and
+every other field are dropped before anything is logged.
 These budgets are shared with JavaScript error reports. No database or identity
 lookup is added. Error Reporting gets `CspViolation`, a fixed directive and blocked
 resource category, a page route pattern, and the browser family. Unknown domains
