@@ -12,6 +12,8 @@ export const SCREENS: Record<string, string> = {
   '/sign-in/[address]/jobs/[jobId]/finish': 'finish.spec.ts',
   '/sign-in/[address]/jobs/[jobId]/review': 'review.spec.ts',
   '/sign-in/[address]/invitations/[invitationId]': 'sign-in.spec.ts',
+  '/sign': 'links.spec.ts',
+  '/documents': 'links.spec.ts',
   '/operator/[tenantId]': 'operator.spec.ts',
   '/operator/[tenantId]/companies/[companyId]': 'operator.spec.ts',
   '/operator/[tenantId]/companies/[companyId]/team': 'operator.spec.ts',

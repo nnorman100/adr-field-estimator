@@ -10,6 +10,7 @@ import {
   INSUFFICIENT_PRIVILEGE,
   UNIQUE_VIOLATION,
   errorCode,
+  digestOf,
   newJob,
   seedJob,
 } from './job-harness';
@@ -321,11 +322,17 @@ describe('agreements', () => {
   it('is signed once for a committed submission and its estimate, and stores what the documents print', async () => {
     const documents = Buffer.from('{"proposal":"signed"}');
     const id = randomUUID();
-    const [made] = await sign({ id, documents, signerKind: 'link', signerName: 'Pat Customer' });
+    // Signed through a link, which the agreement names (0014, S5a-11b: set exactly for a link).
+    const link = randomUUID();
+    await h.admin`
+      INSERT INTO signing_links (id, company_id, job_id, estimate_id, token_sha256, request_digest, created_by_actor_id, expires_at)
+      VALUES (${link}, ${c.company}, ${c.job.id}, ${c.estimate.id}, ${digestOf(`token ${link}`)}, ${digestOf(link)}, ${c.actor}, now() + interval '7 days')
+    `;
+    const [made] = await sign({ id, documents, signerKind: 'link', signerName: 'Pat Customer', signingLink: link });
     expect(made).toMatchObject({ id, signed_at: expect.anything() });
     const [row] = await h.admin`
       SELECT kind, parent_agreement_id, signer_kind, signer_name, signature_evidence_id::text AS signature, proposal_sha256, priced_result, version_id::text AS version,
-             content_hash, engine_version, documents_bytes, created_by_actor_id::text AS actor
+             content_hash, engine_version, documents_bytes, created_by_actor_id::text AS actor, signing_link_id::text AS link
       FROM agreements WHERE id = ${id}
     `;
     expect(row).toEqual({
@@ -341,6 +348,7 @@ describe('agreements', () => {
       engine_version: 'dryscope-v3',
       documents_bytes: documents,
       actor: c.actor,
+      link,
     });
   });
 
@@ -389,6 +397,8 @@ describe('agreements', () => {
       { name: 'agreements_company_estimate_key', columns: ['company_id', 'estimate_id'] },
       { name: 'agreements_company_job_id_key', columns: ['company_id', 'id', 'job_id'] },
       { name: 'agreements_company_signature_key', columns: ['company_id', 'signature_evidence_id'] },
+      // 0014 (S5a-11b): a signing link signs at most one agreement.
+      { name: 'agreements_company_signing_link_key', columns: ['company_id', 'signing_link_id'] },
       { name: 'agreements_company_submission_key', columns: ['company_id', 'submission_id'] },
     ]);
   });

@@ -4,10 +4,11 @@ import type { User } from 'firebase/auth';
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { signatureAddress, sendSignature } from '@/lib/agreements/client';
-import { agreementAnswerOf, signedHow, signedWhen, signOutcomeOf, SIGNER_NAME_LIMIT, type SignedAgreement, type SignNext } from '@/lib/agreements/screen';
+import { sendSignature } from '@/lib/agreements/client';
+import { agreementAnswerOf, signedBy, signedHow, signedWhen, signOutcomeOf, SIGNER_NAME_LIMIT, type SignedAgreement, type SignNext } from '@/lib/agreements/screen';
 import type { EstimateView } from '@/lib/estimates/result';
 import { callApi } from '@/lib/firebase-client';
+import { documentLinksOf, issuedLinksOf, type DocumentLinkView } from '@/lib/links/screen';
 import { ItemizedClaim, PhotoLog, Proposal } from './review-documents';
 import { clearPad, padPng, SignaturePad } from './signature-pad';
 
@@ -16,11 +17,24 @@ import { clearPad, padPng, SignaturePad } from './signature-pad';
 // the agreement; success shows only after the server's answer, and the signed page is then read
 // from the agreement's stored bytes. Both requests carry ids made here and kept until the server
 // answers, so "Try again" after a lost answer is the same request, never a second signature.
-// "Email me a copy" is not offered: email arrives in S9 (J7).
+// "Email me a copy" is not offered: email arrives in S9 (J7). The answer carries the tokens of the
+// document links made at signing, which the signed page then offers to share.
 
 type Attempt = { signatureId: string; agreementId: string; png: Uint8Array; name: string };
 
-export function SigningForm({ user, jobId, estimate, onSigned }: { user: User; jobId: string; estimate: EstimateView; onSigned: (agreement: SignedAgreement) => void }) {
+export type IssuedLink = ReturnType<typeof issuedLinksOf>[number];
+
+export function SigningForm({
+  user,
+  jobId,
+  estimate,
+  onSigned,
+}: {
+  user: User;
+  jobId: string;
+  estimate: EstimateView;
+  onSigned: (agreement: SignedAgreement, issued: IssuedLink[], listed: DocumentLinkView[]) => void;
+}) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const attempt = useRef<Attempt | null>(null);
   const [name, setName] = useState('');
@@ -90,7 +104,7 @@ export function SigningForm({ user, jobId, estimate, onSigned }: { user: User; j
     });
     setBusy(false);
     const signed = answer.status === 200 || answer.status === 201 ? agreementAnswerOf(answer.body)?.agreement : null;
-    if (signed) return onSigned(signed);
+    if (signed) return onSigned(signed, issuedLinksOf(answer.body), documentLinksOf(answer.body) ?? []);
     refused(answer.status === 200 || answer.status === 201 ? signOutcomeOf(0, null) : signOutcomeOf(answer.status, answer.body));
   }
 
@@ -150,14 +164,24 @@ export function SigningForm({ user, jobId, estimate, onSigned }: { user: User; j
 
 // The signed page: the proposal with its terms, then the signature, who signed, when (the server's
 // clock) and how, then the other documents, all from the agreement's stored bytes. Nothing on it can be changed here.
-export function SignedAgreementView({ user, jobId, agreement }: { user: User; jobId: string; agreement: SignedAgreement }) {
+// `loadSignature` reads the stored signature image (the technician's photo route, or a link's own);
+// `loadPhoto`, on a link's page, a photo of the photo log.
+export function SignedAgreementView({
+  agreement,
+  loadSignature,
+  loadPhoto,
+}: {
+  agreement: SignedAgreement;
+  loadSignature: () => Promise<string | null>;
+  loadPhoto?: (photoId: string) => Promise<string | null>;
+}) {
   const { record } = agreement;
   const [image, setImage] = useState<string | null>(null);
 
   useEffect(() => {
     let address: string | null = null;
     let gone = false;
-    void signatureAddress(user, jobId, record.signature.id).then((made) => {
+    void loadSignature().then((made) => {
       if (gone) {
         if (made) URL.revokeObjectURL(made);
         return;
@@ -169,7 +193,7 @@ export function SignedAgreementView({ user, jobId, agreement }: { user: User; jo
       gone = true;
       if (address) URL.revokeObjectURL(address);
     };
-  }, [user, jobId, record.signature.id]);
+  }, [loadSignature]);
 
   const end = record.proposal.price.low;
   return (
@@ -192,7 +216,7 @@ export function SignedAgreementView({ user, jobId, agreement }: { user: User; jo
         ) : (
           <p className="text-sm">The signature image is not loaded. It is kept with the signed record.</p>
         )}
-        <p data-testid="signed-by">Signed by {record.signer.name}</p>
+        <p data-testid="signed-by">{signedBy(record.signer)}</p>
         <p data-testid="signed-when">{signedWhen(record.signed_at)}</p>
         <p data-testid="signed-how">{signedHow(record)}</p>
         <p className="text-sm break-all">Proposal SHA-256 {record.proposal_sha256}</p>
@@ -212,7 +236,7 @@ export function SignedAgreementView({ user, jobId, agreement }: { user: User; jo
         </details>
         <details className="rounded-md border p-3">
           <summary className="cursor-pointer font-semibold">Photo audit log</summary>
-          <PhotoLog photos={record.documents.photo_log} />
+          <PhotoLog photos={record.documents.photo_log} loadPhoto={loadPhoto} />
         </details>
       </section>
     </>

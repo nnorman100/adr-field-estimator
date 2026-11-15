@@ -1,3 +1,4 @@
+import { LinkPhoto } from '@/components/links/link-photo';
 import type { EstimateEnd, LetterLine, ProposalLetter } from '@/engine/estimate';
 import type { EstimateView } from '@/lib/estimates/result';
 import { chargeRows, dollars, photoAlbums, priceLines, quantityNoteLine, warningText } from '@/lib/estimates/screen';
@@ -227,20 +228,44 @@ export function ItemizedClaim({ rows, end, afterHoursLabel }: { rows: unknown[];
   );
 }
 
-/** The photo audit log as lines. */
-export function PhotoLog({ photos }: { photos: unknown[] }) {
+/** The photo audit log as lines; with `loadPhoto` (a link's page), each line can open its photo. */
+export function PhotoLog({ photos, loadPhoto }: { photos: unknown[]; loadPhoto?: (photoId: string) => Promise<string | null> }) {
   if (!photos.length) return <p className="pt-3">No photos.</p>;
-  // By room the log is one list; by shot tag each album sits under its heading (S5a-9c).
+  // By room the log is one list; by shot tag each album sits under its heading (S5a-9c). Photos are
+  // numbered straight through the log, so an album's lines start where the one before it ended.
+  const albums = photoAlbums(photos);
   return (
     <>
-      {photoAlbums(photos).map((album) => (
-        <div key={album.heading ?? 'photos'}>
-          {album.heading ? <h3 className="pt-3 font-semibold">{album.heading}</h3> : null}
-          <List items={album.lines} />
-        </div>
-      ))}
+      {albums.map((album, albumIndex) => {
+        const first = albums.slice(0, albumIndex).reduce((count, earlier) => count + earlier.lines.length, 0);
+        return (
+          <div key={album.heading ?? 'photos'}>
+            {album.heading ? <h3 className="pt-3 font-semibold">{album.heading}</h3> : null}
+            {loadPhoto ? (
+              <ul className="flex flex-col gap-3 pt-3">
+                {album.lines.map((line, offset) => {
+                  const index = first + offset;
+                  const id = photoIdOf(photos[index]);
+                  return (
+                    <li key={`${index}-${id}`} className="flex flex-col gap-1">
+                      <span className="break-words">{line}</span>
+                      {id ? <LinkPhoto label={`Photo ${index + 1}`} load={() => loadPhoto(id)} /> : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <List items={album.lines} />
+            )}
+          </div>
+        );
+      })}
     </>
   );
+}
+
+function photoIdOf(photo: unknown): string {
+  return photo !== null && typeof photo === 'object' ? text((photo as Record<string, unknown>).id) : '';
 }
 
 export function EstimateDocuments({ estimate }: { estimate: EstimateView }) {
