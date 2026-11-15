@@ -1,8 +1,13 @@
 import type { NextConfig } from 'next';
+import { writeApiRoutes } from './scripts/gen-api-routes';
 import { SECURITY_HEADER_RULES } from './src/lib/security-headers';
 
 // The repo root has its own package-lock.json; pin the app root so Next does not guess.
 const root = import.meta.dirname;
+
+// The App Check route list is generated, not committed (scripts/gen-api-routes.ts); dev, build and
+// start all read this config.
+writeApiRoutes();
 
 const nextConfig: NextConfig = {
   output: 'standalone',
