@@ -25,27 +25,29 @@ export function DocumentLinks({ user, jobId, canSend, canRevoke, issued = [] }: 
   const pending = useRef<{ set: Set; id: string } | null>(null);
   const path = `/api/jobs/${encodeURIComponent(jobId)}/document-links`;
 
-  const reload = useCallback(
-    () =>
-      callApi(user, path).then((answer) => {
-        if (answer.status === 200) setLinks(documentLinksOf(answer.body) ?? []);
-      }),
-    [user, path],
-  );
+  const listed = useCallback((answer: { status: number; body: unknown }) => {
+    if (answer.status !== 200) return;
+    const list = documentLinksOf(answer.body) ?? [];
+    setLinks(list);
+    setMade((shown) => shown.filter((one) => !list.some((link) => link.id === one.id && link.status !== 'active')));
+  }, []);
+
+  const reload = useCallback(() => callApi(user, path).then(listed), [user, path, listed]);
 
   useEffect(() => {
     let gone = false;
     void callApi(user, path).then((answer) => {
-      if (!gone && answer.status === 200) setLinks(documentLinksOf(answer.body) ?? []);
+      if (!gone) listed(answer);
     });
     return () => {
       gone = true;
     };
-  }, [user, path]);
+  }, [user, path, listed]);
 
   async function make(set: Set) {
     setBusy(true);
     setProblem(null);
+    setMade((shown) => shown.filter((one) => one.set !== set));
     if (pending.current?.set !== set) pending.current = { set, id: crypto.randomUUID() };
     const answer = await callApi(user, path, { method: 'POST', json: { id: pending.current.id, set } });
     setBusy(false);
@@ -63,18 +65,16 @@ export function DocumentLinks({ user, jobId, canSend, canRevoke, issued = [] }: 
   async function revoke(id: string) {
     setBusy(true);
     setProblem(null);
+    setMade((shown) => shown.filter((one) => one.id !== id));
     const answer = await callApi(user, `${path}/${encodeURIComponent(id)}`, { method: 'DELETE' });
     setBusy(false);
     void reload();
     if (answer.status !== 200) setProblem(signOutcomeOf(answer.status, answer.body).message);
   }
 
-  // A token is offered only while its link is listed as working: once revoked, replaced or expired,
-  // it is not shown again.
-  const shareable = made.filter((shown) => links.some((link) => link.id === shown.id && link.status === 'active'));
-
   // Making a link for a set with a working one would revoke it: only for someone who may revoke.
-  const canMake = (set: Set) => canRevoke || (canSend && !links.some((link) => link.set === set && link.status === 'active'));
+  const canMake = (set: Set) =>
+    canRevoke || (canSend && !links.some((link) => link.set === set && link.status === 'active') && !made.some((shown) => shown.set === set));
   const makeable = (Object.keys(SET_NAMES) as Set[]).filter(canMake);
 
   if (!canSend && !canRevoke && links.length === 0) return null;
@@ -95,7 +95,7 @@ export function DocumentLinks({ user, jobId, canSend, canRevoke, issued = [] }: 
           {problem}
         </p>
       ) : null}
-      {shareable.map((shown) => (
+      {made.map((shown) => (
         <ShareLink
           key={shown.id}
           address={linkAddress(window.location.origin, 'documents', shown.token)}

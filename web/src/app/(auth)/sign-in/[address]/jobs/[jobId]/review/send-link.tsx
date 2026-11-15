@@ -24,7 +24,7 @@ const LINK_OUTCOMES: Record<string, string> = {
 
 export function SendLink({ user, jobId, estimate }: { user: User; jobId: string; estimate: EstimateView }) {
   const [link, setLink] = useState<SigningLinkView | null>(null);
-  const [token, setToken] = useState<string | null>(null);
+  const [shown, setShown] = useState<{ id: string; token: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   // The id of a create whose answer has not come back yet: a retry sends the same one.
@@ -44,6 +44,7 @@ export function SendLink({ user, jobId, estimate }: { user: User; jobId: string;
   async function make() {
     setBusy(true);
     setProblem(null);
+    setShown(null);
     pending.current ??= crypto.randomUUID();
     const answer = await callApi(user, path, { method: 'POST', json: { id: pending.current, estimateId: estimate.id, proposalSha256: estimate.proposalSha256 } });
     setBusy(false);
@@ -52,7 +53,7 @@ export function SendLink({ user, jobId, estimate }: { user: User; jobId: string;
     if (made && typeof body?.token === 'string') {
       pending.current = null;
       setLink(made);
-      return setToken(body.token);
+      return setShown({ id: made.id, token: body.token });
     }
     if (answer.status !== 0 && answer.status < 500) pending.current = null;
     const code = typeof body?.error === 'string' ? body.error : '';
@@ -62,12 +63,10 @@ export function SendLink({ user, jobId, estimate }: { user: User; jobId: string;
   async function revoke() {
     setBusy(true);
     setProblem(null);
+    setShown(null);
     const answer = await callApi(user, path, { method: 'DELETE' });
     setBusy(false);
-    if (answer.status === 200) {
-      setToken(null);
-      return setLink(signingLinkOf(answer.body));
-    }
+    if (answer.status === 200) return setLink(signingLinkOf(answer.body));
     setProblem(signOutcomeOf(answer.status, answer.body).message);
   }
 
@@ -89,9 +88,9 @@ export function SendLink({ user, jobId, estimate }: { user: User; jobId: string;
           {problem}
         </p>
       ) : null}
-      {token ? <ShareLink address={linkAddress(window.location.origin, 'sign', token)} label="Signing link" shareTitle="Review and sign your estimate" /> : null}
+      {shown ? <ShareLink address={linkAddress(window.location.origin, 'sign', shown.token)} label="Signing link" shareTitle="Review and sign your estimate" /> : null}
       <div className="flex flex-wrap gap-2">
-        <Button type="button" variant={token ? 'outline' : 'default'} disabled={busy} onClick={() => void make()}>
+        <Button type="button" variant={shown ? 'outline' : 'default'} disabled={busy} onClick={() => void make()}>
           {out ? 'Make a new signing link' : 'Make a signing link'}
         </Button>
         {out ? (

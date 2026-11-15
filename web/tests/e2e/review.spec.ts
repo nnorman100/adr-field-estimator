@@ -588,3 +588,96 @@ test('the owner replaces and revokes a document link, and its token is no longer
   await expect(panel.getByRole('textbox', { name: "Homeowner's documents link" })).toHaveCount(0);
   await expect(panel.getByRole('button', { name: 'Copy link' })).toHaveCount(0);
 });
+
+test('a revoked document link’s token stays hidden when the revoke answer is lost and the list cannot be read', async ({ page }) => {
+  const job = { id: randomUUID(), status: 'signed', currentDraftId: randomUUID(), revision: 4 };
+  const made = estimateFor(team, job.id, job.currentDraftId, 'owner');
+  await playApi(page, job, { estimate: made, agreement: signedFor(made, randomUUID()) });
+  const token = 'D0cLinkTokenShownOnceInTheReviewPageTest_cd'.slice(0, 43);
+  const link = (id: string) => ({ id, set: 'homeowner', status: 'active', createdAt: '2026-11-15T18:00:00.000Z', expiresAt: '2026-12-15T18:00:00.000Z', endedAt: null as string | null });
+  const links = [link(randomUUID())];
+  let broken = false;
+  await page.route(`**/api/jobs/${job.id}/document-links**`, async (route: Route, request: Request) => {
+    if (broken) return request.method() === 'GET' ? route.fulfill({ status: 503, json: { error: 'links_unavailable' } }) : route.abort('connectionreset');
+    if (request.method() === 'GET') return route.fulfill({ json: { links } });
+    const fresh = link((request.postDataJSON() as { id: string }).id);
+    Object.assign(links[0]!, { status: 'revoked', endedAt: '2026-11-15T18:05:00.000Z' });
+    links.unshift(fresh);
+    return route.fulfill({ status: 201, json: { link: fresh, token } });
+  });
+  await signInTo(page, team.owner);
+  await page.goto(`/sign-in/${team.address}/jobs/${job.id}/review`);
+  const panel = page.getByRole('main').getByRole('region', { name: 'Share the signed documents' });
+  await panel.getByRole('button', { name: "Replace the link: Homeowner's documents" }).click();
+  await expect(panel.getByRole('textbox', { name: "Homeowner's documents link" })).toHaveValue(new RegExp(`/documents#${token}$`));
+  await expect(panel.getByText("Homeowner's documents: revoked.")).toBeVisible();
+  // The revoke's answer is lost and the list cannot be read: the token is not offered again.
+  broken = true;
+  await panel.getByRole('button', { name: "Revoke the homeowner's documents link" }).click();
+  await expect(panel.getByRole('alert')).toBeVisible();
+  await expect(panel.getByRole('textbox', { name: "Homeowner's documents link" })).toHaveCount(0);
+  await expect(panel.getByRole('button', { name: 'Copy link' })).toHaveCount(0);
+});
+
+test('the document links made at signing on the phone are offered even when their list cannot be read', async ({ page }) => {
+  const job = { id: randomUUID(), status: 'submitted', currentDraftId: randomUUID(), revision: 3 };
+  const made = estimateFor(team, job.id, job.currentDraftId, 'estimator');
+  const signing: Signing = { signatures: [], agreements: [] };
+  const issued = (set: 'homeowner' | 'adjuster', token: string) => ({
+    link: { id: randomUUID(), set, status: 'active', createdAt: '2026-11-15T18:00:00.000Z', expiresAt: '2026-12-15T18:00:00.000Z', endedAt: null },
+    token,
+  });
+  const homeowner = 'H0meownerTokenMadeAtSigningOnThePhone_abcde'.slice(0, 43);
+  const adjuster = 'Adjust3rTokenMadeAtSigningOnThePhone_abcdef'.slice(0, 43);
+  await playApi(
+    page,
+    job,
+    {
+      estimate: made,
+      signature: () => [201, { photoId: 'x', kind: 'signature', sha256: 'f'.repeat(64) }],
+      sign: () => {
+        const id = (signing.agreements[0] as { signatureId: string }).signatureId;
+        return [201, { job: { ...job, status: 'signed' }, agreement: signedFor(made, id), documentLinks: [issued('homeowner', homeowner), issued('adjuster', adjuster)] }];
+      },
+    },
+    signing,
+  );
+  await page.route(`**/api/jobs/${job.id}/document-links**`, (route: Route) => route.fulfill({ status: 503, json: { error: 'links_unavailable' } }));
+  await signInTo(page, team.estimator);
+  await page.goto(`/sign-in/${team.address}/jobs/${job.id}/review`);
+  const main = page.getByRole('main');
+  await main.getByRole('checkbox', { name: /I reviewed the proposal/ }).check();
+  await main.getByLabel("Customer's full name").fill('Casey Customer');
+  await drawSignature(page);
+  await main.getByRole('button', { name: 'Sign', exact: true }).click();
+  await expect(main.getByRole('heading', { name: 'Signed', exact: true })).toBeVisible();
+  const panel = main.getByRole('region', { name: 'Share the signed documents' });
+  await expect(panel.getByRole('textbox', { name: "Homeowner's documents link" })).toHaveValue(new RegExp(`/documents#${homeowner}$`));
+  await expect(panel.getByRole('textbox', { name: "Adjuster's documents link" })).toHaveValue(new RegExp(`/documents#${adjuster}$`));
+  // With both shown, the estimator is not offered a new link that the server would refuse.
+  await expect(panel.getByRole('button', { name: /Make a link/ })).toHaveCount(0);
+});
+
+test('the signing link’s token is not offered again once its revoke starts, even when the answer is lost', async ({ page }) => {
+  const job = { id: randomUUID(), status: 'submitted', currentDraftId: randomUUID(), revision: 3 };
+  const made = estimateFor(team, job.id, job.currentDraftId, 'estimator');
+  await playApi(page, job, { estimate: made });
+  const token = 'L1nkTokenShownOnceInTheReviewPageTest_fghij'.slice(0, 43);
+  const link = { id: '', estimateId: made.id, status: 'pending', createdAt: '2026-11-15T18:00:00.000Z', expiresAt: '2026-11-22T18:00:00.000Z', usedAt: null, endedAt: null };
+  await page.route(`**/api/jobs/${job.id}/signing-link`, async (route: Route, request: Request) => {
+    if (request.method() === 'GET') return route.fulfill({ json: { link: null } });
+    if (request.method() === 'POST') {
+      link.id = (request.postDataJSON() as { id: string }).id;
+      return route.fulfill({ status: 201, json: { link, token } });
+    }
+    return route.abort('connectionreset');
+  });
+  await signInTo(page, team.estimator);
+  await page.goto(`/sign-in/${team.address}/jobs/${job.id}/review`);
+  const panel = page.getByRole('main').getByRole('region', { name: 'Send to the homeowner' });
+  await panel.getByRole('button', { name: 'Make a signing link' }).click();
+  await expect(panel.getByRole('textbox', { name: 'Signing link' })).toHaveValue(new RegExp(`/sign#${token}$`));
+  await panel.getByRole('button', { name: 'Revoke the link' }).click();
+  await expect(panel.getByRole('alert')).toBeVisible();
+  await expect(panel.getByRole('textbox', { name: 'Signing link' })).toHaveCount(0);
+});
