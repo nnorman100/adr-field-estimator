@@ -102,6 +102,7 @@ export const API_ROUTES: readonly string[] = [
   '/api/invitations/[invitationId]/accept',
   '/api/jobs',
   '/api/jobs/[jobId]',
+  '/api/jobs/[jobId]/agreements',
   '/api/jobs/[jobId]/claim',
   '/api/jobs/[jobId]/customer',
   '/api/jobs/[jobId]/drafts',
