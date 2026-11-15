@@ -71,7 +71,7 @@ vi.mock('firebase/auth', () => ({ getIdTokenResult: vi.fn(async () => ({ authTim
 const { evaluate, forgetPending } = await import('@/lib/field/retention');
 const { discardFieldWork } = await import('@/lib/field-db');
 const { runFieldSync } = await import('@/lib/field/field-sync');
-const { signInOf, signOutOnRefusal, signOutOrShow } = await import('@/lib/field/sign-out');
+const { acrossUserReload, signInOf, signOutOnRefusal, signOutOrShow } = await import('@/lib/field/sign-out');
 const { noteWrite, readUnsent, unsentKey } = await import('@/lib/field/unsent');
 
 const letIn = () => ({
@@ -371,6 +371,48 @@ describe('the sign-in a refusal ends', () => {
     expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: NOW, lockedReason: 'sign-in-again' });
     expect(forgetMe).toHaveBeenCalledOnce();
     expect(signOutCompany).toHaveBeenCalledOnce();
+  });
+
+  it('still ends the sign-in when user.reload refreshes lastSignInTime on the same local session', async () => {
+    const user = { ...signedInAs('ana'), refreshToken: 'r-1' };
+    const auth = { currentUser: user };
+    const started = signInOf(user as unknown as User);
+    // Firebase user.reload() reads a newer lastLoginAt from the server (e.g. another phone
+    // signed in) and mutates user.metadata in place, while this phone's refreshToken stays r-1.
+    const [count, nextFrom] = await acrossUserReload(started, async () => {
+      user.metadata = { lastSignInTime: 'Sat, 14 Nov 2026 09:00:00 GMT' };
+      return 1;
+    });
+    expect(count).toBe(1);
+    await signOutOnRefusal(auth as unknown as Auth, 't-a', config, 'sign-in-again', false, nextFrom);
+    expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: NOW, lockedReason: 'sign-in-again' });
+    expect(forgetMe).toHaveBeenCalledOnce();
+    expect(signOutCompany).toHaveBeenCalledOnce();
+  });
+
+  it('leaves a newer sign-in alone when another tab replaced it before or during user.reload', async () => {
+    const beforeReloadUser = { ...signedInAs('ana'), refreshToken: 'r-1' };
+    const startedBefore = signInOf(beforeReloadUser as unknown as User);
+    beforeReloadUser.metadata = { lastSignInTime: 'Sat, 14 Nov 2026 09:00:00 GMT' };
+    beforeReloadUser.refreshToken = 'r-2';
+    const [, afterBefore] = await acrossUserReload(startedBefore, async () => {
+      beforeReloadUser.metadata = { lastSignInTime: 'Sun, 15 Nov 2026 09:00:00 GMT' };
+      return 1;
+    });
+    await signOutOnRefusal({ currentUser: beforeReloadUser } as unknown as Auth, 't-a', config, 'sign-in-again', false, afterBefore);
+
+    const duringReloadUser = { ...signedInAs('ana'), refreshToken: 'r-1' };
+    const startedDuring = signInOf(duringReloadUser as unknown as User);
+    const [, afterDuring] = await acrossUserReload(startedDuring, async () => {
+      duringReloadUser.metadata = { lastSignInTime: 'Sat, 14 Nov 2026 09:00:00 GMT' };
+      duringReloadUser.refreshToken = 'r-2';
+      return 1;
+    });
+    await signOutOnRefusal({ currentUser: duringReloadUser } as unknown as Auth, 't-a', config, 'sign-in-again', false, afterDuring);
+
+    expect(forgetMe).not.toHaveBeenCalled();
+    expect(signOutCompany).not.toHaveBeenCalled();
+    expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: null });
   });
 });
 

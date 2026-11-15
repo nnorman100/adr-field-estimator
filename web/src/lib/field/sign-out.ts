@@ -72,6 +72,29 @@ function stillSignedIn(auth: Auth, from: Session): boolean {
   return sessionKey(auth.currentUser) === from.key;
 }
 
+/** Whether `auth` is still on the exact sign-in captured in `from` (same user object and session). */
+export function stillSameSignIn(auth: Auth | null, from: SignIn): boolean {
+  return auth !== null && auth.currentUser === from.user && stillSignedIn(auth, from);
+}
+
+/**
+ * Runs `reload` (`user.reload()`) while keeping `from` bound to the same local sign-in.
+ *
+ * `user.reload()` overwrites `user.metadata.lastSignInTime` in place with the server's latest
+ * `lastLoginAt` (which advances if another phone signs in), whereas `refreshToken` changes only
+ * when another tab on this phone replaces the session (`_assign`).
+ */
+export async function acrossUserReload<T>(from: SignIn, reload: () => Promise<T>): Promise<[T, SignIn]> {
+  const { user } = from;
+  if (!user || sessionKey(user) !== from.key) return [await reload(), from];
+  const tokenBefore = user.refreshToken;
+  const result = await reload();
+  if (sessionKey(user) !== from.key && user.refreshToken === tokenBefore) {
+    return [result, signInOf(user)];
+  }
+  return [result, from];
+}
+
 // A lock (a refusal, or a saved sign-in past its limit) could not be saved on the phone: nothing was
 // signed out or removed, and the screen asks the person to try again. `retry` is the same sign-out
 // for the same sign-in; it does nothing once anyone has signed in since.
