@@ -140,8 +140,9 @@ Existing proof: `tests/test_firestore_emulator.py::test_concurrent_signing_retri
 `tests/browser/workflows.spec.js` (failed save keeps the retry reference),
 `tests/browser/signing-link.spec.js` (homeowner retry).
 **[open]** No browser test double-clicks the sign buttons (the buttons disable during the call);
-no HTTP-level race of two simultaneous homeowner signing requests exists (the race is tested at
-store level in the emulator).
+the old app has no HTTP-level race of two simultaneous homeowner signing requests (it is tested at
+store level in the emulator). The rebuilt app closes this at its route handlers: `web/tests/db/signing-links.test.ts`
+(`two simultaneous homeowner signatures give one agreement`, and a link and the technician's phone signing at once).
 
 ### 4.3 Cutting the connection mid-save or mid-upload delivers exactly once
 
