@@ -204,12 +204,14 @@ export type LinkToken = { tokenSha256: string };
 // and the technician it acts as from the hash alone; no path, query or body names a company or job.
 // A bearer sign-in is never read here, and a link token is never accepted by any other rule.
 export function linkRoute(handler: LinkHandler, take: (headers: Headers) => boolean = takeLinkRequest): Handler {
-  return ruled('link', async (request, context) => {
-    if (!take(request.headers)) return refusal('too_many_requests', 429);
-    const tokenSha256 = linkTokenHashOf(request);
-    if (!tokenSha256) return refusal('link_unavailable', 404);
-    return handler(request, { tokenSha256 }, context);
-  });
+  return ruled('link', (request, context) =>
+    monitorAppCheck(request, async () => {
+      if (!take(request.headers)) return refusal('too_many_requests', 429);
+      const tokenSha256 = linkTokenHashOf(request);
+      if (!tokenSha256) return refusal('link_unavailable', 404);
+      return handler(request, { tokenSha256 }, context);
+    }),
+  );
 }
 
 // Only a signed-in, active platform operator with an authenticator-app second step and a sign-in
