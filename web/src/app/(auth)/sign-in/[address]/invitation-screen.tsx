@@ -4,7 +4,7 @@ import type { User } from 'firebase/auth';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { authenticatorCount, callApi } from '@/lib/firebase-client';
-import { signInOf, type SignIn } from '@/lib/field/sign-out';
+import { acrossUserReload, signInOf, type SignIn } from '@/lib/field/sign-out';
 import type { LockReason } from '@/lib/field/unsent';
 import {
   ACCEPT_SECOND_STEP_MESSAGE,
@@ -78,7 +78,7 @@ export function InvitationScreen({
     setBusy(true);
     setError(null);
     // The sign-in this request is made with: a refusal of it ends that sign-in and no other.
-    const from = signInOf(user);
+    let from = signInOf(user);
     try {
       const answer = await callApi(user, `/api/invitations/${invitationId}/accept`, { method: 'POST' });
       if (answer.status === 200 || answer.status === 201) {
@@ -87,7 +87,10 @@ export function InvitationScreen({
       }
       const code = (answer.body as { error?: unknown } | null)?.error;
       if (answer.status === 403 && code === 'second_step_required') {
-        const next = acceptSecondStepNext(await authenticatorCount(user));
+        const count = await authenticatorCount(user, async () => {
+          from = await acrossUserReload(from, () => user.reload());
+        });
+        const next = acceptSecondStepNext(count);
         if (next === 'set-up') setState({ name: 'second-step', offer });
         else if (next === 'sign-in-with-code') onSignInAgain(ACCEPT_SIGN_IN_WITH_CODE_MESSAGE, 'sign-in-again', from);
         else setError(ACCEPT_SECOND_STEP_MESSAGE);
