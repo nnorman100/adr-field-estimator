@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { manifestDigest } from '@/lib/field/canonical';
+import { latch, until } from './submission-flow';
 import type { FakeClaims, Harness } from './team-harness';
 
 // S5b-1, office jobs, assignment and the field owner, through the real route files as the runtime
@@ -21,6 +23,8 @@ vi.mock('@/lib/prices/services', () => ({ pricesServices: () => live.harness!.pr
 const jobsRoute = await import('@/app/api/jobs/route');
 const jobRoute = await import('@/app/api/jobs/[jobId]/route');
 const customerRoute = await import('@/app/api/jobs/[jobId]/customer/route');
+const claimRoute = await import('@/app/api/jobs/[jobId]/claim/route');
+const draftsRoute = await import('@/app/api/jobs/[jobId]/drafts/route');
 const coordinationRoute = await import('@/app/api/jobs/[jobId]/coordination/route');
 const assignmentsRoute = await import('@/app/api/jobs/[jobId]/assignments/route');
 const assignmentRoute = await import('@/app/api/jobs/[jobId]/assignments/[assignmentId]/route');
@@ -101,6 +105,28 @@ const saveCustomer = (claims: FakeClaims, jobId: string, revision: number) =>
       job(jobId),
     ),
   );
+const saveClaim = (claims: FakeClaims, jobId: string, revision: number) =>
+  answer(
+    claimRoute.PUT(
+      request(claims, `/api/jobs/${jobId}/claim`, {
+        method: 'PUT',
+        body: {
+          revision,
+          changeId: randomUUID(),
+          carrier: 'Sample Mutual',
+          claimNumber: 'CL-1',
+          policyNumber: 'PO-1',
+          dateOfLoss: '2026-10-30',
+          lossCause: 'Burst supply line',
+          adjusterName: 'Alex Adjuster',
+          adjusterEmail: 'alex@example.test',
+          adjusterPhone: '555-0111',
+          deductible: '$1,000',
+        },
+      }),
+      job(jobId),
+    ),
+  );
 const coordination = (claims: FakeClaims, jobId: string) => answer(coordinationRoute.GET(request(claims, `/api/jobs/${jobId}/coordination`), job(jobId)));
 const saveNotes = (claims: FakeClaims, jobId: string, body: unknown) =>
   answer(coordinationRoute.PUT(request(claims, `/api/jobs/${jobId}/coordination`, { method: 'PUT', body }), job(jobId)));
@@ -128,6 +154,13 @@ const submit = (claims: FakeClaims, jobId: string, draftId: string) =>
       job(jobId),
     ),
   );
+
+// Field work the server can record: one named room, no photos and no price ids.
+const MANIFEST = { draft: { roomOrder: ['kitchen'] }, rooms: [{ id: 'kitchen', field: { name: 'Kitchen' } }], photos: [] };
+const submitDraft = (claims: FakeClaims, jobId: string, body: { id: string; draftId: string; digest: string }) =>
+  answer(submissionsRoute.POST(request(claims, `/api/jobs/${jobId}/submissions`, { method: 'POST', body }), job(jobId)));
+const nextDraft = (claims: FakeClaims, jobId: string, body: { draftId: string; fromDraftId: string }) =>
+  answer(draftsRoute.POST(request(claims, `/api/jobs/${jobId}/drafts`, { method: 'POST', body }), job(jobId)));
 
 const count = async (table: string, where = 'true') => Number((await h.admin.unsafe(`SELECT count(*) AS n FROM ${table} WHERE ${where}`))[0]!.n);
 const audits = (action: string) => count('audit_events', `action = '${action}'`);
@@ -212,6 +245,20 @@ describe('field and office ownership (docs/spec.md 6.2)', () => {
     });
     expect(await coordination(ESTIMATOR_A, id)).toEqual({ status: 403, body: { error: 'not_allowed' } });
     expect(await everything(h.admin)).toBe(before);
+  });
+
+  it('lets only the estimator who owns the field work set the customer and the claim, not one who is only assigned', async () => {
+    const { id } = await officeJob();
+    await assign(OFFICE_A, id, h.seed.estimatorA.actor);
+    await assign(OFFICE_A, id, estimatorA2);
+    expect((await claim(ESTIMATOR_A, id)).status).toBe(201);
+    const before = await everything(h.admin);
+    for (const refused of [await saveCustomer(ESTIMATOR_A2, id, 2), await saveClaim(ESTIMATOR_A2, id, 2)]) {
+      expect(refused).toEqual({ status: 403, body: { error: 'not_field_owner' } });
+    }
+    expect(await everything(h.admin)).toBe(before);
+    expect((await saveCustomer(ESTIMATOR_A, id, 2)).status).toBe(200);
+    expect((await saveClaim(ESTIMATOR_A, id, 3)).status).toBe(200);
   });
 
   it('grants no price approval with the field work', async () => {
@@ -440,6 +487,35 @@ describe('moving the field work (owner decision J5)', () => {
     expect(draftOf(draftId)?.fieldOwnerUid).toBe('estimator-a');
     expect((await transfer(OWNER_A, id, body)).status).toBe(200);
     expect(draftOf(draftId)).toEqual({ fieldOwnerUid: 'estimator-a2', fieldOwnerRevision: 3 });
+  });
+
+  it('names the new owner on every draft of the job, so the estimator who lost the field work reads no earlier draft', async () => {
+    const { id, draftId } = await claimedJob();
+    h.field.put(h.seed.a, draftId, MANIFEST);
+    expect((await submitDraft(ESTIMATOR_A, id, { id: randomUUID(), draftId, digest: await manifestDigest(MANIFEST) })).status).toBe(201);
+    const later = randomUUID();
+    expect((await nextDraft(ESTIMATOR_A, id, { draftId: later, fromDraftId: draftId })).status).toBe(201);
+    const { revision } = (await read(OWNER_A, id)).body.job;
+    expect((await transfer(OWNER_A, id, { revision, changeId: randomUUID(), toActorId: estimatorA2 })).status).toBe(200);
+    expect(draftOf(later)).toEqual({ fieldOwnerUid: 'estimator-a2', fieldOwnerRevision: revision + 1 });
+    expect(draftOf(draftId)).toEqual({ fieldOwnerUid: 'estimator-a2', fieldOwnerRevision: revision + 1 });
+  });
+
+  it('stops a Submit whose field work moved to another person while it ran, and frees the draft for the new owner', async () => {
+    const { id, draftId } = await claimedJob();
+    h.field.put(h.seed.a, draftId, MANIFEST);
+    const digest = await manifestDigest(MANIFEST);
+    const hold = latch();
+    h.field.gate.read = () => hold.wait;
+    const first = submitDraft(ESTIMATOR_A, id, { id: randomUUID(), draftId, digest });
+    await until(() => h.field.draft(h.seed.a, draftId)?.state === 'submitting', 'the fence');
+    expect((await transfer(OWNER_A, id, { revision: 2, changeId: randomUUID(), toActorId: estimatorA2 })).status).toBe(200);
+    hold.open();
+    expect(await first).toEqual({ status: 409, body: { error: 'submission_aborted' } });
+    expect(await count('job_submissions', "status = 'committed'")).toBe(0);
+    expect((await read(OWNER_A, id)).body.job.status).toBe('draft');
+    expect(h.field.draft(h.seed.a, draftId)).toMatchObject({ state: 'editing', fence: null });
+    expect((await submitDraft(ESTIMATOR_A2, id, { id: randomUUID(), draftId, digest })).status).toBe(201);
   });
 
   it('never lets an older owner overwrite a newer one on the draft', async () => {

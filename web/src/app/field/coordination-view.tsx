@@ -106,8 +106,9 @@ function Coordination({ job, view, setView, reread }: { job: JobContext; view: V
       await job.reloadJob();
       return true;
     }
-    // No answer: kept to send again as it was. An answer settles it.
-    if (answer.status !== 0) setHeld(null);
+    // No answer, or a 503 (saved, but its field draft step did not get through): kept to send again
+    // as it was. Any other answer settles it.
+    if (answer.status !== 0 && answer.status !== 503) setHeld(null);
     setError({ at, message: answer.message });
     if (answer.stale || answer.status === 404) reread();
     return false;
@@ -120,6 +121,9 @@ function Coordination({ job, view, setView, reread }: { job: JobContext; view: V
     ...(ownerId && view.fieldOwner?.actorId !== ownerId ? [{ value: ownerId, label: 'Me (company owner)' }] : []),
     ...view.assignments.filter((one) => one.actorId !== view.fieldOwner?.actorId).map((one) => ({ value: one.actorId, label: nameOf(one) })),
   ];
+  // What is sent is what the box shows: a choice no longer offered falls back to the first one.
+  const moveChoice = targets.some((one) => one.value === moveTo) ? moveTo : targets[0]?.value;
+  const pickChoice = free.some((one) => one.actorId === pick) ? pick : free[0]?.actorId;
   const typedNotes = notes ?? view.notes;
   const errorAt = (at: string) => (error?.at === at ? error.message : null);
   const noticeAt = (at: string) => (notice?.at === at ? notice.message : null);
@@ -135,9 +139,11 @@ function Coordination({ job, view, setView, reread }: { job: JobContext; view: V
             className="flex flex-col gap-3"
             onSubmit={(event) => {
               event.preventDefault();
-              const to = moveTo || targets[0]!.value;
+              const to = moveChoice!;
               const body = { revision: view.revision, changeId: crypto.randomUUID(), toActorId: to };
-              void act('move', `move:${to}`, () => transferFieldOwner(user, jobId, body), 'The field work was moved.');
+              void act('move', `move:${to}`, () => transferFieldOwner(user, jobId, body), 'The field work was moved.').then((ok) => {
+                if (ok) setMoveTo('');
+              });
             }}
           >
             <h4 id="move-heading" className="font-medium">
@@ -147,7 +153,7 @@ function Coordination({ job, view, setView, reread }: { job: JobContext; view: V
               Only the new owner can change the field work from then on. Changes not yet sent from the other phone stay on that phone and are not
               saved to this job.
             </p>
-            <Choice id="move-to" label="Move it to" value={moveTo || targets[0]!.value} options={targets} onChange={setMoveTo} />
+            <Choice id="move-to" label="Move it to" value={moveChoice!} options={targets} onChange={setMoveTo} />
             <Button type="submit" disabled={busy !== null}>
               {busy === 'move' ? 'Moving…' : held?.key.startsWith('move:') ? 'Try again' : 'Move field work'}
             </Button>
@@ -191,7 +197,7 @@ function Coordination({ job, view, setView, reread }: { job: JobContext; view: V
               className="flex flex-col gap-3"
               onSubmit={(event) => {
                 event.preventDefault();
-                const estimator = pick || free[0]!.actorId;
+                const estimator = pickChoice!;
                 // A held assignment of the same estimator is sent again with its own id (act keeps it).
                 const id = crypto.randomUUID();
                 void act('assign', `assign:${estimator}`, () => assignEstimator(user, jobId, { id, estimatorActorId: estimator }), 'The estimator was assigned.').then((ok) => {
@@ -205,7 +211,7 @@ function Coordination({ job, view, setView, reread }: { job: JobContext; view: V
               <Choice
                 id="assign-estimator"
                 label="Estimator"
-                value={pick || free[0]!.actorId}
+                value={pickChoice!}
                 options={free.map((one) => ({ value: one.actorId, label: nameOf(one) }))}
                 onChange={setPick}
               />

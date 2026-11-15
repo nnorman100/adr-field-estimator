@@ -36,7 +36,9 @@ const claimOf = (detail: JobDetail): Values => ({ ...detail.claim, dateOfLoss: d
 // may save follows owner decision J3: the estimator who owns the field work, the owner and office,
 // while the job is unsigned; the server decides, and its refusal is shown.
 export function CustomerView({ job }: { job: JobContext }) {
-  const canSave = job.session.capabilities.some((key) => key === 'scope' || key === 'coordination');
+  const caps = job.session.capabilities;
+  const ownsFieldWork = job.session.actorId !== null && job.detail.job.fieldOwnerActorId === job.session.actorId;
+  const canSave = caps.includes('coordination') || (caps.includes('scope') && ownsFieldWork);
   return (
     <div className="flex flex-col gap-4">
       <h3 className="sr-only">Customer and claim</h3>

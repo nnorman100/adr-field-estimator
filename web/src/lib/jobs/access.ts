@@ -69,6 +69,12 @@ export function canSeeJob(caller: JobCaller, job: Pick<JobRow, 'createdByActorId
   return seesEveryJob(caller) || isOwnJob(caller, job);
 }
 
+// Whether the caller may add to the job's field work: the owner and office keep the access their role
+// gives; anyone else must own the job's field work (docs/spec.md 6.2).
+export function ownsFieldWork(caller: Pick<JobCaller, 'role' | 'actorId'>, job: Pick<JobRow, 'fieldOwnerActorId'>): boolean {
+  return seesEveryJob(caller) || job.fieldOwnerActorId === caller.actorId;
+}
+
 export function hasAny(caller: Pick<JobCaller, 'capabilities'>, keys: readonly Capability[]): boolean {
   return keys.some((key) => caller.capabilities.includes(key));
 }
@@ -95,8 +101,9 @@ export async function isAssigned(tx: CompanyTransaction, caller: Pick<JobCaller,
 // query both enforce), then the estimator's own or assigned job, then archived (410), then the
 // capability. A job the caller may not see is "not found", so a refusal never says whether another
 // person's job exists. `lock` takes the row lock a write needs. `fieldWork` is for a route that adds
-// to the field work (photos, Submit, Back to editing): an estimator must own the job's field work,
-// not only be assigned to it (docs/spec.md 6.2); the owner keeps the access the role gives.
+// to the field work (photos, Submit, Back to editing) or, under owner decision J3, sets the customer
+// and claim: an estimator must own the job's field work, not only be assigned to it (docs/spec.md
+// 6.2); the owner keeps the access the role gives.
 export async function jobAccess(
   tx: CompanyTransaction,
   caller: JobCaller,
@@ -113,6 +120,6 @@ export async function jobAccess(
   if (!row || !(canSeeJob(caller, row) || (await isAssigned(tx, caller, row.id)))) throw new JobError('not_found');
   if (row.status === 'archived') throw new JobError('archived');
   if (!hasAny(caller, needs)) throw new JobError('not_allowed');
-  if (options.fieldWork && !seesEveryJob(caller) && row.fieldOwnerActorId !== caller.actorId) throw new JobError('not_field_owner');
+  if (options.fieldWork && !ownsFieldWork(caller, row)) throw new JobError('not_field_owner');
   return row;
 }

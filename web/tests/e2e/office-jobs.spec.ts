@@ -154,4 +154,29 @@ test('the owner moves the field work to another assigned estimator, and the phon
   await signIn(secondPage, company, company.people.second!);
   await openJob(secondPage, '33 Moving Lane');
   await expect(secondPage.getByLabel('Year built')).toBeEditable();
+
+  // What the choice shows is what is sent: the estimator just moved to is no longer offered, so the
+  // next move goes to the first choice shown (the owner).
+  await page.getByRole('button', { name: 'Move field work' }).click();
+  await expect(page.getByText('owner owns the field work.')).toBeVisible();
+});
+
+test('an estimator whose field work the draft does not name yet starts it again and edits it', async ({ page, request }) => {
+  test.setTimeout(120_000);
+  const company = await seedCompany('owner-unset', { office: 'office', first: 'estimator' });
+  const office = { Authorization: `Bearer ${withSecondFactor(await idTokenFor(company.tenantId, company.people.office!.email, PASSWORD))}` };
+  const jobId = randomUUID();
+  expect((await request.post(`${JOBS_BASE_URL}/api/jobs`, { headers: office, data: { id: jobId, draftId: randomUUID(), propertyAddress: '45 Retry Lane' } })).status()).toBe(201);
+  const [first] = await adminSql()<{ id: string }[]>`SELECT id::text FROM actors WHERE company_id = ${company.id} AND uid = ${company.people.first!.uid}`;
+  const assigned = await request.post(`${JOBS_BASE_URL}/api/jobs/${jobId}/assignments`, { headers: office, data: { id: randomUUID(), estimatorActorId: first!.id } });
+  expect(assigned.status()).toBe(201);
+  // The first capture was saved in the database, and its field draft step did not get through (a 503).
+  await adminSql()`UPDATE jobs SET field_owner_actor_id = ${first!.id}::uuid, revision = revision + 1 WHERE id = ${jobId}::uuid`;
+
+  await signIn(page, company, company.people.first!);
+  await openJob(page, '45 Retry Lane');
+  await expect(page.getByText('This job’s field work is yours, but this phone cannot open it yet.', { exact: false })).toBeVisible();
+  await page.getByRole('button', { name: 'Start field work' }).click();
+  await expect(page.getByLabel('Year built')).toBeEditable();
+  await expect(page.getByRole('button', { name: 'Start field work' })).toHaveCount(0);
 });

@@ -310,7 +310,7 @@ export function jobsService(db: Database, drafts: DraftStore): JobsService {
     async saveCustomer(caller, jobId, input) {
       need(caller, EDIT_CUSTOMER);
       return inCompany(caller.companyId, async (tx) => {
-        const row = await jobAccess(tx, caller, jobId, EDIT_CUSTOMER, { lock: true });
+        const row = await jobAccess(tx, caller, jobId, EDIT_CUSTOMER, { lock: true, fieldWork: true });
         const stored = await readCustomer(tx, row.companyId, row.id);
         // The same change again (its response was lost): nothing more to do, and no conflict, as
         // long as it says what was saved.
@@ -336,7 +336,7 @@ export function jobsService(db: Database, drafts: DraftStore): JobsService {
     async saveClaim(caller, jobId, input) {
       need(caller, EDIT_CLAIM);
       return inCompany(caller.companyId, async (tx) => {
-        const row = await jobAccess(tx, caller, jobId, EDIT_CLAIM, { lock: true });
+        const row = await jobAccess(tx, caller, jobId, EDIT_CLAIM, { lock: true, fieldWork: true });
         const stored = await readClaim(tx, row.companyId, row.id);
         if (row.lastChangeId === input.changeId) {
           if (!sameValues(stored, input)) throw new JobError('conflict');

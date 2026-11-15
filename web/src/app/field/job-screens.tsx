@@ -80,6 +80,9 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   const [draft, setDraft] = useState<FieldDraft | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [draftError, setDraftError] = useState<string | null>(null);
+  // The job names this person as its field owner but the draft does not yet (the server's draft step
+  // did not get through): Start field work, sent again, sets it.
+  const [ownerUnset, setOwnerUnset] = useState(false);
 
   // The server refused the job to this person: every copy of it goes (src/lib/field/pending.ts).
   const deny = useCallback(
@@ -97,14 +100,22 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       if (!draftReadable(session, job)) {
         setDraft(null);
         setDraftError(null);
+        setOwnerUnset(false);
         return;
       }
       try {
         const found = await loadDraft(session.db, { companyId: session.companyId, draftId: job.job.currentDraftId });
         setDraft(found);
+        setOwnerUnset(false);
         setDraftError(found ? null : 'The field work of this job is not there yet. Try again in a moment.');
       } catch (error) {
         const refusal = fieldRefusal(error);
+        if (refusal && refusal.status === 403 && !readsEveryDraft(session)) {
+          setDraft(null);
+          setDraftError(null);
+          setOwnerUnset(true);
+          return;
+        }
         if (refusal) return deny(refusal.message);
         // A read that did not get through keeps the draft as last read on screen, and with it any
         // boxes the person has changed and not saved; field work the app cannot read is not shown.
@@ -191,6 +202,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   if (!detail) return <p role="status">Opening the job…</p>;
 
   const fieldWork = fieldWorkOf(session, detail);
+  const ownerOnJobOnly = fieldWork === 'mine' && detail.job.status !== 'signed' && (ownerUnset || (draft !== null && draft.fieldOwnerUid !== session.user.uid));
   const context: JobContext = {
     session,
     detail,
@@ -215,8 +227,10 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
           </FieldLink>
         ))}
       </nav>
-      {(view === 'scope' || view === 'photos') && fieldWork === 'nobody' && detail.job.status === 'draft' && session.capabilities.includes('scope') ? (
-        <StartFieldWork context={context} />
+      {(view === 'scope' || view === 'photos') &&
+      session.capabilities.includes('scope') &&
+      ((fieldWork === 'nobody' && detail.job.status === 'draft') || ownerOnJobOnly) ? (
+        <StartFieldWork context={context} resume={ownerOnJobOnly} />
       ) : null}
       {(view === 'scope' || view === 'photos') && fieldWork === 'other' && !readsEveryDraft(session) ? (
         <p className="rounded-md bg-foreground/5 p-3 text-sm">
@@ -257,7 +271,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
 // yet, the first person who does field work starts it and owns it from then on; the server sets the
 // draft's field owner, and the draft is read again. Sent again after no answer, it is the same
 // request: the server answers the same person with the same job.
-function StartFieldWork({ context }: { context: JobContext }) {
+function StartFieldWork({ context, resume }: { context: JobContext; resume: boolean }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -279,7 +293,11 @@ function StartFieldWork({ context }: { context: JobContext }) {
 
   return (
     <div className="flex flex-col gap-2 rounded-md bg-foreground/5 p-3">
-      <p className="text-sm">Nobody has started this job’s field work yet. Whoever starts it owns it: only they can change it from then on.</p>
+      <p className="text-sm">
+        {resume
+          ? 'This job’s field work is yours, but this phone cannot open it yet. Start field work again to finish.'
+          : 'Nobody has started this job’s field work yet. Whoever starts it owns it: only they can change it from then on.'}
+      </p>
       <Button onClick={() => void start()} disabled={busy}>
         {busy ? 'Starting…' : 'Start field work'}
       </Button>

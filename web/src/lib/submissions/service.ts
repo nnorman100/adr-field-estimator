@@ -5,7 +5,7 @@ import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant
 import type { Capability } from '@/lib/access';
 import { manifestDigest, type FieldManifest } from '@/lib/field/canonical';
 import { roomFieldSchema } from '@/lib/field/schema';
-import { hasAny, jobAccess, JobError, type JobCaller, type JobRow } from '@/lib/jobs/access';
+import { hasAny, jobAccess, JobError, ownsFieldWork, type JobCaller, type JobRow } from '@/lib/jobs/access';
 import { jobPriceTable, namesPriceIds, priceIdsKnown, PricesUnreadable } from '@/lib/scope-lists/version';
 import { readJobDetails } from './details';
 import { SubmissionError, type SubmissionErrorCode } from './errors';
@@ -265,6 +265,8 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
       if (row.status !== 'pending') return { row, job, decidedHere: false, problem: null };
 
       let failure = problem;
+      // The field work moved to another person after this attempt started: theirs to submit now.
+      if (!failure && !ownsFieldWork(caller, job)) failure = 'submission_aborted';
       if (!failure && (job.status !== 'draft' || job.currentDraftId !== row.draftId)) failure = 'not_current_draft';
       let photos: (typeof evidenceObjects.$inferSelect)[] = [];
       if (!failure && manifest) {
@@ -336,6 +338,11 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
     const fence = { submissionId: row.id, epoch: row.epoch, expiresAt: row.expiresAt };
     return inCompany(caller.companyId, async (tx) => {
       if ((await submissionRow(tx, caller.companyId, row.id, true))?.status !== 'pending') return 'submission_aborted';
+      const [job] = await tx
+        .select({ fieldOwnerActorId: jobs.fieldOwnerActorId })
+        .from(jobs)
+        .where(and(eq(jobs.companyId, caller.companyId), eq(jobs.id, row.jobId)));
+      if (!job || !ownsFieldWork(caller, job)) return 'submission_aborted';
       let result = await field(() => store.fence(caller.companyId, row.draftId, fence));
       if (result.outcome === 'held') {
         const held = result.epoch;

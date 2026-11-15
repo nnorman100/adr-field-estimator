@@ -1,5 +1,5 @@
 import { and, asc, eq, isNull, sql } from 'drizzle-orm';
-import { actors, jobAssignments, jobCoordination, jobs, memberships } from '@/db/schema';
+import { actors, jobAssignments, jobCoordination, jobs, jobSubmissions, memberships } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
 import { hasAny, jobAccess, JobError, type JobCaller, type JobRow } from './access';
@@ -125,6 +125,17 @@ async function uidOf(tx: CompanyTransaction, companyId: string, actorId: string)
   return found?.uid ?? null;
 }
 
+// The job's drafts: its current draft first, then each earlier draft a submission was made from.
+// Every one of them names the job's field owner, so a person who no longer owns the field work
+// reads none of them (web/firestore.rules).
+async function draftIdsOf(tx: CompanyTransaction, row: JobRow): Promise<string[]> {
+  const found = await tx
+    .selectDistinct({ draftId: jobSubmissions.draftId })
+    .from(jobSubmissions)
+    .where(and(eq(jobSubmissions.companyId, row.companyId), eq(jobSubmissions.jobId, row.id)));
+  return [row.currentDraftId, ...found.map((one) => one.draftId).filter((id) => id !== row.currentDraftId)];
+}
+
 export function officeService(db: Database, drafts: DraftStore): OfficeService {
   async function inCompany<T>(companyId: string, run: (tx: CompanyTransaction) => Promise<T>): Promise<T> {
     try {
@@ -135,21 +146,23 @@ export function officeService(db: Database, drafts: DraftStore): OfficeService {
     }
   }
 
-  // The Firestore step: the draft names the job's field owner as Postgres has it, at that revision.
-  // A draft that is not there yet (Back to editing makes its draft after its own commit) or a
-  // Firestore that cannot be reached answers 503; the same request again sets it. A newer owner
-  // already on the draft means a later change won, which is the answer Postgres holds too.
-  async function project(companyId: string, draftId: string, uid: string | null, revision: number): Promise<void> {
+  // The Firestore step: each of the job's drafts names its field owner as Postgres has it, at that
+  // revision. A current draft that is not there yet (Back to editing makes its draft after its own
+  // commit) or a Firestore that cannot be reached answers 503; the same request again sets it. A
+  // newer owner already on a draft means a later change won, which is the answer Postgres holds too.
+  async function project(companyId: string, draftIds: readonly string[], uid: string | null, revision: number): Promise<void> {
     if (uid === null) throw new JobError('draft_unavailable');
-    let result;
-    try {
-      result = await drafts.setFieldOwner(companyId, draftId, uid, revision);
-    } catch (error) {
-      // Fixed text only: the SDK's message may quote a path.
-      console.error('job field owner unavailable', error instanceof Error ? error.name : 'unknown');
-      throw new JobError('draft_unavailable');
+    for (const [index, draftId] of draftIds.entries()) {
+      let result;
+      try {
+        result = await drafts.setFieldOwner(companyId, draftId, uid, revision);
+      } catch (error) {
+        // Fixed text only: the SDK's message may quote a path.
+        console.error('job field owner unavailable', error instanceof Error ? error.name : 'unknown');
+        throw new JobError('draft_unavailable');
+      }
+      if (result === 'missing' && index === 0) throw new JobError('draft_unavailable');
     }
-    if (result === 'missing') throw new JobError('draft_unavailable');
   }
 
   return {
@@ -259,9 +272,9 @@ export function officeService(db: Database, drafts: DraftStore): OfficeService {
             .returning()) as [JobRow];
           await audit(tx, caller, 'job_field_owner_claimed', row.id, { revision: next.revision });
         }
-        return { claimed: next !== row, row: next, detail: await detailOf(tx, next) };
+        return { claimed: next !== row, row: next, draftIds: await draftIdsOf(tx, next), detail: await detailOf(tx, next) };
       });
-      await project(caller.companyId, made.row.currentDraftId, caller.uid, made.row.revision);
+      await project(caller.companyId, made.draftIds, caller.uid, made.row.revision);
       return { claimed: made.claimed, detail: made.detail };
     },
 
@@ -297,9 +310,14 @@ export function officeService(db: Database, drafts: DraftStore): OfficeService {
             });
           }
         }
-        return { row: next, uid: next.fieldOwnerActorId ? await uidOf(tx, caller.companyId, next.fieldOwnerActorId) : null, view: await viewOf(tx, next) };
+        return {
+          row: next,
+          draftIds: await draftIdsOf(tx, next),
+          uid: next.fieldOwnerActorId ? await uidOf(tx, caller.companyId, next.fieldOwnerActorId) : null,
+          view: await viewOf(tx, next),
+        };
       });
-      await project(caller.companyId, made.row.currentDraftId, made.uid, made.row.revision);
+      await project(caller.companyId, made.draftIds, made.uid, made.row.revision);
       return made.view;
     },
   };
