@@ -681,3 +681,86 @@ test('the signing link’s token is not offered again once its revoke starts, ev
   await expect(panel.getByRole('alert')).toBeVisible();
   await expect(panel.getByRole('textbox', { name: 'Signing link' })).toHaveCount(0);
 });
+
+test('a slow first read of the signing link does not undo a link made meanwhile', async ({ page }) => {
+  const job = { id: randomUUID(), status: 'submitted', currentDraftId: randomUUID(), revision: 3 };
+  const made = estimateFor(team, job.id, job.currentDraftId, 'estimator');
+  await playApi(page, job, { estimate: made });
+  const token = 'L1nkTokenShownOnceInTheReviewPageTest_klmno'.slice(0, 43);
+  const link = { id: '', estimateId: made.id, status: 'pending', createdAt: '2026-11-15T18:00:00.000Z', expiresAt: '2026-11-22T18:00:00.000Z', usedAt: null, endedAt: null };
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route(`**/api/jobs/${job.id}/signing-link`, async (route: Route, request: Request) => {
+    if (request.method() === 'GET') {
+      await held;
+      return route.fulfill({ json: { link: null } });
+    }
+    link.id = (request.postDataJSON() as { id: string }).id;
+    return route.fulfill({ status: 201, json: { link, token } });
+  });
+  await signInTo(page, team.estimator);
+  await page.goto(`/sign-in/${team.address}/jobs/${job.id}/review`);
+  const panel = page.getByRole('main').getByRole('region', { name: 'Send to the homeowner' });
+  await panel.getByRole('button', { name: 'Make a signing link' }).click();
+  await expect(panel.getByRole('textbox', { name: 'Signing link' })).toHaveValue(new RegExp(`/sign#${token}$`));
+  // The first read, sent before the link was made, answers only now.
+  const answered = page.waitForResponse((response) => response.url().endsWith('/signing-link') && response.request().method() === 'GET');
+  release();
+  await answered;
+  await page.waitForTimeout(250);
+  await expect(panel.getByText(/A signing link is out\./)).toBeVisible();
+  await expect(panel.getByRole('button', { name: 'Revoke the link' })).toBeVisible();
+});
+
+test('a slow first read of the document links does not undo a replacement made meanwhile', async ({ page }) => {
+  const job = { id: randomUUID(), status: 'signed', currentDraftId: randomUUID(), revision: 4 };
+  const made = estimateFor(team, job.id, job.currentDraftId, 'owner');
+  await playApi(page, job, { estimate: made, agreement: signedFor(made, randomUUID()) });
+  const token = 'D0cLinkTokenShownOnceInTheReviewPageTest_ef'.slice(0, 43);
+  const link = (id: string) => ({ id, set: 'homeowner', status: 'active', createdAt: '2026-11-15T18:00:00.000Z', expiresAt: '2026-12-15T18:00:00.000Z', endedAt: null as string | null });
+  const first = link(randomUUID());
+  const links = [first];
+  const before = JSON.parse(JSON.stringify(links)) as typeof links;
+  let reads = 0;
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  const deleted: string[] = [];
+  await page.route(`**/api/jobs/${job.id}/document-links**`, async (route: Route, request: Request) => {
+    if (request.method() === 'GET') {
+      reads += 1;
+      if (reads === 1) {
+        await held;
+        return route.fulfill({ json: { links: before } });
+      }
+      return route.fulfill({ json: { links } });
+    }
+    if (request.method() === 'POST') {
+      const fresh = link((request.postDataJSON() as { id: string }).id);
+      Object.assign(first, { status: 'revoked', endedAt: '2026-11-15T18:05:00.000Z' });
+      links.unshift(fresh);
+      return route.fulfill({ status: 201, json: { link: fresh, token } });
+    }
+    const id = new URL(request.url()).pathname.split('/').pop()!;
+    deleted.push(id);
+    const found = links.find((one) => one.id === id)!;
+    Object.assign(found, { status: 'revoked', endedAt: '2026-11-15T18:06:00.000Z' });
+    return route.fulfill({ json: { link: found } });
+  });
+  await signInTo(page, team.owner);
+  await page.goto(`/sign-in/${team.address}/jobs/${job.id}/review`);
+  const panel = page.getByRole('main').getByRole('region', { name: 'Share the signed documents' });
+  await panel.getByRole('button', { name: "Make a link: Homeowner's documents" }).click();
+  await expect(panel.getByRole('textbox', { name: "Homeowner's documents link" })).toHaveValue(new RegExp(`/documents#${token}$`));
+  await expect(panel.getByText("Homeowner's documents: revoked.")).toBeVisible();
+  // The first read, sent before the replacement and listing the old link as working, answers only now.
+  const answered = page.waitForResponse((response) => response.url().endsWith('/document-links') && response.request().method() === 'GET');
+  release();
+  await answered;
+  await page.waitForTimeout(250);
+  await expect(panel.getByText("Homeowner's documents: revoked.")).toBeVisible();
+  // Revoke reaches the link whose token is shown, not the one it replaced.
+  await panel.getByRole('button', { name: "Revoke the homeowner's documents link" }).click();
+  await expect(panel.getByRole('textbox', { name: "Homeowner's documents link" })).toHaveCount(0);
+  expect(deleted).toEqual([links[0]!.id]);
+  expect(deleted).not.toContain(first.id);
+});

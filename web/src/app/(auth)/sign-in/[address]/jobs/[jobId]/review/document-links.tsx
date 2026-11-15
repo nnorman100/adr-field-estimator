@@ -23,6 +23,7 @@ export function DocumentLinks({ user, jobId, canSend, canRevoke, issued = [] }: 
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const pending = useRef<{ set: Set; id: string } | null>(null);
+  const generation = useRef(0);
   const path = `/api/jobs/${encodeURIComponent(jobId)}/document-links`;
 
   const listed = useCallback((answer: { status: number; body: unknown }) => {
@@ -32,22 +33,24 @@ export function DocumentLinks({ user, jobId, canSend, canRevoke, issued = [] }: 
     setMade((shown) => shown.filter((one) => !list.some((link) => link.id === one.id && link.status !== 'active')));
   }, []);
 
-  const reload = useCallback(() => callApi(user, path).then(listed), [user, path, listed]);
+  const reload = useCallback(async () => {
+    const at = ++generation.current;
+    const answer = await callApi(user, path);
+    if (at === generation.current) listed(answer);
+  }, [user, path, listed]);
 
   useEffect(() => {
-    let gone = false;
-    void callApi(user, path).then((answer) => {
-      if (!gone) listed(answer);
-    });
+    void reload();
     return () => {
-      gone = true;
+      generation.current += 1;
     };
-  }, [user, path, listed]);
+  }, [reload]);
 
   async function make(set: Set) {
     setBusy(true);
     setProblem(null);
     setMade((shown) => shown.filter((one) => one.set !== set));
+    generation.current += 1;
     if (pending.current?.set !== set) pending.current = { set, id: crypto.randomUUID() };
     const answer = await callApi(user, path, { method: 'POST', json: { id: pending.current.id, set } });
     setBusy(false);
@@ -66,6 +69,7 @@ export function DocumentLinks({ user, jobId, canSend, canRevoke, issued = [] }: 
     setBusy(true);
     setProblem(null);
     setMade((shown) => shown.filter((one) => one.id !== id));
+    generation.current += 1;
     const answer = await callApi(user, `${path}/${encodeURIComponent(id)}`, { method: 'DELETE' });
     setBusy(false);
     void reload();

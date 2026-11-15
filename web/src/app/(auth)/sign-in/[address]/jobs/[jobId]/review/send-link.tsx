@@ -29,15 +29,16 @@ export function SendLink({ user, jobId, estimate }: { user: User; jobId: string;
   const [problem, setProblem] = useState<string | null>(null);
   // The id of a create whose answer has not come back yet: a retry sends the same one.
   const pending = useRef<string | null>(null);
+  const generation = useRef(0);
   const path = `/api/jobs/${encodeURIComponent(jobId)}/signing-link`;
 
   useEffect(() => {
-    let gone = false;
+    const at = ++generation.current;
     void callApi(user, path).then((answer) => {
-      if (!gone && answer.status === 200) setLink(signingLinkOf(answer.body));
+      if (at === generation.current && answer.status === 200) setLink(signingLinkOf(answer.body));
     });
     return () => {
-      gone = true;
+      generation.current += 1;
     };
   }, [user, path]);
 
@@ -45,6 +46,7 @@ export function SendLink({ user, jobId, estimate }: { user: User; jobId: string;
     setBusy(true);
     setProblem(null);
     setShown(null);
+    generation.current += 1;
     pending.current ??= crypto.randomUUID();
     const answer = await callApi(user, path, { method: 'POST', json: { id: pending.current, estimateId: estimate.id, proposalSha256: estimate.proposalSha256 } });
     setBusy(false);
@@ -64,6 +66,7 @@ export function SendLink({ user, jobId, estimate }: { user: User; jobId: string;
     setBusy(true);
     setProblem(null);
     setShown(null);
+    generation.current += 1;
     const answer = await callApi(user, path, { method: 'DELETE' });
     setBusy(false);
     if (answer.status === 200) return setLink(signingLinkOf(answer.body));
