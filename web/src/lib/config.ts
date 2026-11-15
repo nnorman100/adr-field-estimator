@@ -42,6 +42,9 @@ function isLoopbackHost(value: string): boolean {
   }
 }
 
+// An empty value (a Terraform variable left blank) reads as unset.
+const emptyIsUnset = (value: unknown) => (value === '' ? undefined : value);
+
 const SQL_KEYS = ['SQL_CONNECTION_NAME', 'SQL_DATABASE_NAME', 'SQL_IAM_USER'] as const;
 
 // Typed against src/lib/settings-contract.ts: a setting missing here, or declared here and not
@@ -139,6 +142,35 @@ const shape = {
       message: 'FIREBASE_AUTH_DOMAIN must be a host name',
     })
     .optional(),
+  // App Check (docs/plans/TC.md, TC-5). The web app's Firebase app id and the score-based
+  // reCAPTCHA Enterprise site key App Check is registered with (TC-9): public values every visitor's
+  // browser receives. App Check runs in the browser only while both are set; with either missing or
+  // empty (an empty value counts as unset) the app behaves as it did before App Check.
+  FIREBASE_APP_ID: z.preprocess(
+    emptyIsUnset,
+    z
+      .string()
+      .regex(/^\d{1,3}:\d{1,20}:web:[0-9a-f]{1,64}$/, { message: 'FIREBASE_APP_ID must be a Firebase web app id' })
+      .optional(),
+  ),
+  APP_CHECK_SITE_KEY: z.preprocess(
+    emptyIsUnset,
+    z
+      .string()
+      .regex(/^[A-Za-z0-9_-]{20,100}$/, { message: 'APP_CHECK_SITE_KEY must be a reCAPTCHA site key' })
+      .optional(),
+  ),
+  // What the server does with the App Check token on each /api call: monitor (the default) checks
+  // it and logs the outcome, never refusing; off does nothing. enforce is refused at start-up until
+  // TC-13, so no setting can make App Check refuse a request yet.
+  APP_CHECK_MODE: z.preprocess(
+    emptyIsUnset,
+    z
+      .enum(['monitor', 'off'], {
+        error: 'APP_CHECK_MODE must be monitor or off (enforce is not available yet)',
+      })
+      .optional(),
+  ),
   // Local only: a JSON file that stands in for the companies, actors and memberships in Postgres,
   // so the sign-in screens run against the Auth emulator with no database (tests/e2e). Allowed only
   // beside the Auth emulator, for a demo- project, with no database configured.
@@ -269,6 +301,13 @@ export function parseTracingConfig(env: Record<string, string | undefined>): Tra
   return config;
 }
 
+export type AppCheckMode = 'monitor' | 'off';
+
+// What the route wrappers do with App Check tokens (src/lib/app-check.ts). Unset means monitor.
+export function parseAppCheckMode(env: Record<string, string | undefined>): AppCheckMode {
+  return checked(env).APP_CHECK_MODE ?? 'monitor';
+}
+
 export type IdentityConfig = {
   appEnv: AppConfig['appEnv'];
   projectId: string;
@@ -353,6 +392,10 @@ export type BrowserSignInConfig = {
   firestoreDatabaseId?: string;
   // The Firestore emulator's address, on a developer machine only; never set elsewhere.
   firestoreEmulatorUrl?: string;
+  // App Check (TC-5): the web app's id and the reCAPTCHA Enterprise site key. Both are left out
+  // while the server does not know them, and the browser starts App Check only when both are here.
+  appId?: string;
+  appCheckSiteKey?: string;
 };
 
 // The emulator accepts any API key; this one is never valid on a real project.
@@ -366,8 +409,11 @@ export function parseBrowserSignInConfig(
   const data = checked(env);
   const projectId = data.GOOGLE_CLOUD_PROJECT;
   if (!projectId) return null;
-  const firestore = {
+  const known = {
     ...(data.FIRESTORE_DATABASE_ID !== undefined ? { firestoreDatabaseId: data.FIRESTORE_DATABASE_ID } : {}),
+    ...(data.FIREBASE_APP_ID !== undefined && data.APP_CHECK_SITE_KEY !== undefined
+      ? { appId: data.FIREBASE_APP_ID, appCheckSiteKey: data.APP_CHECK_SITE_KEY }
+      : {}),
   };
   const emulator = data.FIREBASE_AUTH_EMULATOR_HOST;
   if (emulator !== undefined) {
@@ -376,7 +422,7 @@ export function parseBrowserSignInConfig(
       authDomain: data.FIREBASE_AUTH_DOMAIN ?? `${projectId}.firebaseapp.com`,
       projectId,
       authEmulatorUrl: `http://${emulator}`,
-      ...firestore,
+      ...known,
       ...(data.FIRESTORE_EMULATOR_HOST !== undefined
         ? { firestoreEmulatorUrl: `http://${data.FIRESTORE_EMULATOR_HOST}` }
         : {}),
@@ -388,7 +434,7 @@ export function parseBrowserSignInConfig(
     authDomain: data.FIREBASE_AUTH_DOMAIN,
     projectId,
     authEmulatorUrl: null,
-    ...firestore,
+    ...known,
   };
 }
 

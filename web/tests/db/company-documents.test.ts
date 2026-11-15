@@ -204,15 +204,18 @@ describe('the owner saves and reads the letterhead and document settings', () =>
     expect((await rowOf(h.seed.a)).profile_documents).toEqual({ ...NEUTRAL, proposal_layout: 'letter' });
   });
 
-  it('gives the documents’ one reader the profile and the photo log grouping, the letterhead still empty and the other settings neutral', async () => {
+  // Since S5a-9b the proposal prints the letterhead fields, the layout and the company's clauses;
+  // the photo log is grouped as the company chose (S5a-9c).
+  it('gives the documents’ one reader the profile, the letterhead, the layout, the clauses and the photo log grouping as saved', async () => {
     await put(owner(), h.seed.a, { ...PROFILE, ...LETTERHEAD, documents: DOCUMENTS });
     const read = await withCompany(h.handle.db, h.seed.a, (tx) => readCompanyDocuments(tx, h.seed.a));
-    expect(read?.letterhead).toEqual(EMPTY_LETTERHEAD);
+    expect(read?.letterhead).toEqual(LETTERHEAD);
     expect(read?.identity).toEqual({ companyId: h.seed.a, name: 'Company company-a', ...PROFILE });
-    expect(read?.settings).toEqual({ proposalLayout: 'itemized', companyClauses: [], photoLogGrouping: 'shot_tag' });
-    // Company B never saved a setting: its documents group by room.
+    expect(read?.settings).toEqual({ proposalLayout: 'letter', companyClauses: DOCUMENTS.company_clauses, photoLogGrouping: 'shot_tag' });
+    // Company B, with nothing set, reads its own empty letterhead and neutral settings (documents group by room).
     const other = await withCompany(h.handle.db, h.seed.b, (tx) => readCompanyDocuments(tx, h.seed.b));
-    expect(other?.settings.photoLogGrouping).toBe('room');
+    expect(other?.letterhead).toEqual(EMPTY_LETTERHEAD);
+    expect(other?.settings).toEqual({ proposalLayout: 'itemized', companyClauses: [], photoLogGrouping: 'room' });
   });
 
   it('answers 503 and uses nothing when the stored settings do not read through the schema', async () => {

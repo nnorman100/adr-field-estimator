@@ -256,6 +256,61 @@ describe('making the estimate', () => {
   });
 });
 
+// S5a-9b: each company's layout, clauses and letterhead come only from its own settings.
+describe('the proposal layout and the company’s own clauses', () => {
+  const CLAUSE = { title: 'Scheduling', text: '  We confirm the start date by phone.\nTwo days before.' };
+
+  // A submitted job of `company` whose rooms carry a findings note and a prep task (S5a-10).
+  async function jobWithRoomWords(claims: FakeClaims, company: string) {
+    const ready = await f.readyJob(claims, company);
+    const customer = { revision: (await f.job(ready.jobId)).revision, changeId: randomUUID(), name: 'Casey Customer', phone: '555-0101', email: 'casey@example.invalid', propertyAddress: '12 Synthetic Lane, Testville' };
+    expect((await customerRoute.PUT(request(claims, `/api/jobs/${ready.jobId}/customer`, { method: 'PUT', body: customer }), params({ jobId: ready.jobId }))).status).toBe(200);
+    const manifest = manifestOf(ready.photoId);
+    manifest.rooms = [
+      { id: 'kitchen', field: { name: 'Kitchen', category: 2, floorSf: 120, wetFloorSf: 80, prepTasks: ['Clear the cabinet under the sink.'] } },
+      { id: 'hall', field: { name: 'Hall', category: 2, findings: 'Musty odour; the materials read dry.' } },
+    ];
+    h.field.put(company, ready.draftId, manifest);
+    expect((await f.submitShown(claims, ready.jobId, ready.draftId, manifest)).answer.status).toBe(201);
+    return ready.jobId;
+  }
+
+  it('company A’s letter, clause and letterhead print on A’s proposal and never reach company B’s', async () => {
+    await h.admin`
+      UPDATE companies SET profile_tagline = 'Synthetic tagline A', profile_emergency_phone = '555-0911',
+        profile_documents = ${JSON.stringify({ proposal_layout: 'letter', company_clauses: [CLAUSE], authorization_text: 'Synthetic start-work authorization.', payment_terms_text: 'Synthetic payment terms.' })}::text::jsonb
+      WHERE id = ${h.seed.a}
+    `;
+    await publish(h.seed.a, '2.00');
+    await publish(h.seed.b, '2.00');
+    const jobA = await jobWithRoomWords(ESTIMATOR_A, h.seed.a);
+    const jobB = await jobWithRoomWords(OWNER_B, h.seed.b);
+
+    const a = (await make(ESTIMATOR_A, jobA)).body.estimate;
+    expect(a.proposal.letterhead).toEqual(['Company company-a', 'Synthetic tagline A', '1 Synthetic Way, Testville', '555-0100', 'Emergency: 555-0911', 'office@example.invalid', 'CSLB #000001']);
+    expect(a.proposal.company_clauses).toEqual([CLAUSE]);
+    expect(a.proposal.letter).toMatchObject({
+      area_inspected: ['Kitchen', 'Hall'],
+      room_findings: [{ room: 'Hall', text: 'Musty odour; the materials read dry.' }],
+      room_work: [{ room: 'Kitchen', prep_tasks: ['* Clear the cabinet under the sink.'], lines: [{ text: 'Extraction: up to 80 sf' }] }],
+    });
+    expect(a.proposal).not.toHaveProperty('findings');
+    expect(a.documents.signable).toBe(true);
+
+    const b = (await make(OWNER_B, jobB)).body.estimate;
+    expect(b.proposal.heading).toBe('Company company-b · Official proposal');
+    expect(b.proposal.letterhead).toEqual(['Company company-b']);
+    expect(b.proposal).not.toHaveProperty('letter');
+    expect(b.proposal).not.toHaveProperty('company_clauses');
+    expect(b.proposal.recommendations).toContain('Kitchen: Extraction');
+    const text = JSON.stringify(b);
+    for (const own of ['Synthetic tagline A', '555-0911', 'We confirm the start date', 'company-a']) expect(text).not.toContain(own);
+    // The stored bytes are what the answer shows.
+    const [row] = await estimates(jobB);
+    expect(JSON.parse(row!.proposal_bytes.toString('utf8'))).toEqual(b.proposal);
+  });
+});
+
 // A change to the customer or the claim while the job is submitted (J3), saved through the routes.
 async function saveCustomer(claims: FakeClaims, jobId: string, propertyAddress: string) {
   const body = { revision: (await f.job(jobId)).revision, changeId: randomUUID(), name: 'Casey Customer', phone: '555-0101', email: 'casey@example.invalid', propertyAddress };

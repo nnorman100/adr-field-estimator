@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { RecaptchaNotice } from '@/components/recaptcha-notice';
 import type { BrowserSignInConfig } from '@/lib/config';
 import {
   authenticatorCount,
@@ -646,6 +647,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
       >
         Set your own password
       </Button>
+      <RecaptchaNotice config={config} />
     </FocusedPanel>
   );
 }

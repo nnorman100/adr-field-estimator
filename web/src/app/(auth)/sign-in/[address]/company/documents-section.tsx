@@ -46,8 +46,8 @@ export function DocumentsSection({
             onChange={() => set({ proposal_layout: 'itemized' })}
           />
           <span>
-            Itemized: each room&apos;s work as a list of lines with quantities, for example
-            &ldquo;Kitchen: remove drywall, up to 40 sq ft&rdquo;.
+            Itemized: the findings, then the proposed work as a list, each line named as your
+            price list names it, for example &ldquo;Kitchen: Remove drywall&rdquo;.
           </span>
         </label>
         <label className={CHOICE}>
@@ -59,12 +59,14 @@ export function DocumentsSection({
             onChange={() => set({ proposal_layout: 'letter' })}
           />
           <span>
-            Letter: a plain letter naming the area inspected, what was found in each room and the
-            recommended work with &ldquo;up to&rdquo; quantities.
+            Letter: a plain letter naming every room inspected, what was found in each room, then
+            each room&apos;s prep tasks (marked *) and its work with &ldquo;up to&rdquo; quantities,
+            for example &ldquo;Remove drywall: up to 40 sf&rdquo;.
           </span>
         </label>
         <p className="text-sm">
-          Whether each line&apos;s price shows on the proposal is set on the Prices page.
+          Both layouts keep the required wording. Whether each line&apos;s price shows on the
+          proposal is set on the Prices page; with it off, the work is listed without prices.
         </p>
       </fieldset>
 

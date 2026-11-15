@@ -104,6 +104,19 @@ function photoLog(snapshot: Snapshot, grouping: CompanyDocuments['settings']['ph
   return rows.sort((a, b) => a.rank - b.rank).map((photo) => photo.row);
 }
 
+/**
+ * Each room's words for the letter (S5a-10), in the record's room order: its findings note and its
+ * prep tasks, exactly as submitted. They are words for the documents, never inputs to a price.
+ */
+function roomWords(snapshot: Snapshot): Json[] {
+  const draft = draftFieldSchema.parse(snapshot.field.draft ?? {});
+  const rooms = new Map(snapshot.field.rooms.map((room) => [room.id, roomFieldSchema.parse(room.field ?? {})]));
+  return (draft.roomOrder ?? []).map((id) => {
+    const room = rooms.get(id);
+    return { name: room?.name ?? '', findings: room?.findings ?? '', prep_tasks: room?.prepTasks ?? [] };
+  });
+}
+
 export type EstimateInput = {
   job: EstimateJob;
   // The written summary of findings (owner decision J1), as submitted; empty when none was written.
@@ -142,6 +155,12 @@ export function estimateInput(snapshot: Snapshot, company: CompanyDocuments): Es
         // The documents' summary is the technician's own (J1). AI suggestions arrive with S7.
         ai: { summary, suggestions: [], unpriced_work: [] },
         customer_name: snapshot.customer.name,
+        // The company's own layout and clauses (S5a-9b), exactly as the owner saved them.
+        settings: {
+          proposal_layout: company.settings.proposalLayout,
+          company_clauses: company.settings.companyClauses.map((clause) => ({ title: clause.title, text: clause.text })),
+        },
+        rooms: roomWords(snapshot),
       },
     },
   };

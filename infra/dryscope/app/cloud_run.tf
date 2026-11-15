@@ -19,17 +19,27 @@ locals {
     }
   }
 
-  common_env = {
-    APP_ENV               = var.environment
-    GOOGLE_CLOUD_PROJECT  = var.project_id
-    GOOGLE_CLOUD_LOCATION = var.region
-    FIRESTORE_DATABASE_ID = local.n.firestore_database_id
-    SQL_CONNECTION_NAME   = local.n.sql_connection_name
-    SQL_DATABASE_NAME     = local.n.sql_database_name
-    EVIDENCE_BUCKET       = local.n.evidence_bucket
-    # Origins whose browser requests and Live sockets the services accept.
-    ALLOWED_ORIGINS = join(",", var.allowed_origins)
-  }
+  common_env = merge(
+    {
+      APP_ENV               = var.environment
+      GOOGLE_CLOUD_PROJECT  = var.project_id
+      GOOGLE_CLOUD_LOCATION = var.region
+      FIRESTORE_DATABASE_ID = local.n.firestore_database_id
+      SQL_CONNECTION_NAME   = local.n.sql_connection_name
+      SQL_DATABASE_NAME     = local.n.sql_database_name
+      EVIDENCE_BUCKET       = local.n.evidence_bucket
+      # Origins whose browser requests and Live sockets the services accept.
+      ALLOWED_ORIGINS = join(",", var.allowed_origins)
+      # App Check (TC-5): the server checks and logs each call's token and never refuses one.
+      APP_CHECK_MODE = "monitor"
+    },
+    # The browser's App Check values, only when both are known; until then App Check stays off. A
+    # plain setting may not be empty (tests/app.tftest.hcl), so an unknown value is left out.
+    var.firebase_app_id != "" && var.app_check_site_key != "" ? {
+      FIREBASE_APP_ID    = var.firebase_app_id
+      APP_CHECK_SITE_KEY = var.app_check_site_key
+    } : {},
+  )
 
   # AI settings, per service (docs/plans/S7.md, S7-2). Text AI runs on the us multi-region endpoint
   # (V4: no current GA Gemini Flash model is served from us-central1); Live runs in us-central1.

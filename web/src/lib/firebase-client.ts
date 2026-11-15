@@ -16,6 +16,7 @@ import {
   type TotpSecret,
   type User,
 } from 'firebase/auth';
+import { appCheckHeaders, appCheckSettings, startAppCheck } from '@/lib/app-check-client';
 import type { BrowserSignInConfig } from '@/lib/config';
 import { authenticatorUri } from '@/lib/sign-in/second-step';
 import { errorCode, meOutcome, type MeOutcome } from '@/lib/sign-in/outcome';
@@ -29,17 +30,30 @@ import { errorCode, meOutcome, type MeOutcome } from '@/lib/sign-in/outcome';
 // signing out of one leaves the other alone. Methods at launch are email with password and Google
 // (D10).
 //
-// The ID token goes only into the Authorization header of this app's own /api calls. Nothing here
-// logs a token, an email or a password.
+// The ID token goes only into the Authorization header of this app's own /api calls, and the App
+// Check token only into their X-Firebase-AppCheck header. Nothing here logs a token, an email or a
+// password.
 
 export type CompanySignIn = { config: BrowserSignInConfig; tenantId: string };
 
-// The Auth instance for one company's tenant, created once per page load.
+// The Auth instance for one company's tenant, created once per page load. App Check starts on the
+// same app first (app-check-client.ts, TC-5), when it is set up, so Auth's own requests carry its
+// token too.
 export function companyAuth({ config, tenantId }: CompanySignIn): Auth {
   const name = `dryscope-${tenantId}`;
+  const appCheck = appCheckSettings(config);
   const app =
     getApps().find((existing) => existing.name === name) ??
-    initializeApp({ apiKey: config.apiKey, authDomain: config.authDomain, projectId: config.projectId }, name);
+    initializeApp(
+      {
+        apiKey: config.apiKey,
+        authDomain: config.authDomain,
+        projectId: config.projectId,
+        ...(appCheck ? { appId: appCheck.appId } : {}),
+      },
+      name,
+    );
+  startAppCheck(app, config);
   const auth = getAuth(app);
   // Every sign-in, email and token request goes to this company's tenant.
   if (auth.tenantId !== tenantId) auth.tenantId = tenantId;
@@ -186,7 +200,10 @@ export async function checkSignIn(
   try {
     if (fresh) await reloadUser();
     const token = await user.getIdToken(fresh);
-    response = await fetch('/api/me', { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
+    response = await fetch('/api/me', {
+      headers: { Authorization: `Bearer ${token}`, ...(await appCheckHeaders()) },
+      cache: 'no-store',
+    });
   } catch {
     return { outcome: { kind: 'unavailable' }, body: null };
   }
@@ -212,6 +229,7 @@ export async function callApi(user: User, path: string, init: { method?: string;
       method: init.method ?? 'GET',
       headers: {
         Authorization: `Bearer ${token}`,
+        ...(await appCheckHeaders()),
         ...(init.json !== undefined ? { 'Content-Type': 'application/json' } : {}),
       },
       body: init.json !== undefined ? JSON.stringify(init.json) : undefined,

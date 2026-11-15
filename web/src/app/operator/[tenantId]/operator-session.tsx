@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { RecaptchaNotice } from '@/components/recaptcha-notice';
 import type { BrowserSignInConfig } from '@/lib/config';
 import {
   belongsTo,
@@ -366,6 +367,7 @@ function ConfiguredSession({ tenantId, config, children }: { tenantId: string; c
       >
         Sign in with Google
       </Button>
+      <RecaptchaNotice config={config} />
     </FocusedPanel>
   );
 }

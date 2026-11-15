@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import type { Table } from '@/engine/table';
+import { appCheckHeaders } from '@/lib/app-check-client';
 import { callApi } from '@/lib/firebase-client';
 import { signInOf, type SignIn } from '@/lib/field/sign-out';
 import { changed } from '@/lib/prices/edit';
@@ -355,7 +356,10 @@ export function FileSection({ user, table, working, dirty, lock, onWorkingCopy }
     setMessage(null);
     try {
       const token = await user.getIdToken();
-      const response = await fetch('/api/prices/export', { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
+      const response = await fetch('/api/prices/export', {
+        headers: { Authorization: `Bearer ${token}`, ...(await appCheckHeaders()) },
+        cache: 'no-store',
+      });
       if (!response.ok) return setMessage(pricesMessage(response.status, await response.json().catch(() => null), table));
       const url = URL.createObjectURL(await response.blob());
       const link = document.createElement('a');

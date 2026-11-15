@@ -8,9 +8,11 @@ import { checkPublishable, contentHash, effectiveTable, parseTable, type Table }
 import { priceAndRange, type End, type Priced } from './totals';
 import { advisoryWarnings } from './warnings';
 import { makeDocuments } from './documents';
+import type { ProposalLetter } from './proposal-letter';
 import type { PriceLine } from './values';
 
 export type { Json };
+export type { LetterLine, ProposalLetter } from './proposal-letter';
 export { suggestEquipment } from './suggestions';
 export type { EquipmentSuggestion } from './suggestions';
 export { suggestedItems } from './table';
@@ -24,6 +26,10 @@ export type EstimateJob = {
     photos?: Json[];
     ai: Json;
     customer_name?: string;
+    /** The company's proposal layout and its own clauses (S5a-9b): `proposal_layout`, `company_clauses`. */
+    settings?: Json;
+    /** Each room's `name`, `findings` note and `prep_tasks`, in the inspection's room order (S5a-10). */
+    rooms?: Json[];
   };
 };
 
@@ -62,6 +68,10 @@ export type EstimateDocuments = {
     findings: string[];
     recommendations: string[];
     disclaimers: string[];
+    /** The company's own clauses, exactly as entered; only when it has any (S5a-9b). */
+    company_clauses?: Array<{ title: string; text: string }>;
+    /** The letter layout's sections; only when the company chose the letter (S5a-9b). */
+    letter?: ProposalLetter;
   };
   letter: string;
   compliance_notes: string[];
@@ -162,6 +172,10 @@ function strings(value: Json | undefined): string[] {
 function documentsOf(documents: JObj): EstimateDocuments {
   const proposal = isObj(documents.adr_estimate) ? documents.adr_estimate : {};
   const photos = documents.photo_audit_log ?? [];
+  // Built by ./proposal-letter.ts, so they have its shape; a key absent stays absent.
+  const layout: Pick<EstimateDocuments['proposal'], 'company_clauses' | 'letter'> = {};
+  if (Array.isArray(proposal.company_clauses)) layout.company_clauses = proposal.company_clauses as Array<{ title: string; text: string }>;
+  if (isObj(proposal.letter)) layout.letter = proposal.letter as unknown as ProposalLetter;
   return {
     proposal: {
       customer_name: typeof proposal.customer_name === 'string' ? proposal.customer_name : '',
@@ -171,6 +185,7 @@ function documentsOf(documents: JObj): EstimateDocuments {
       findings: strings(proposal.findings),
       recommendations: strings(proposal.recommendations),
       disclaimers: strings(proposal.disclaimers),
+      ...layout,
     },
     letter:
       typeof documents.iicrc_defense_letter === 'string' ? documents.iicrc_defense_letter : '',
@@ -260,6 +275,8 @@ export function priceEstimate(table: Json, job: EstimateJob): Estimate | Refusal
           customerName: input.customer_name ?? '',
           claim: input.claim ?? null,
           table: used,
+          settings: input.settings,
+          rooms: input.rooms,
         }),
       );
     } catch (error) {
