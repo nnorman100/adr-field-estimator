@@ -548,7 +548,7 @@ key is optional; clearing a value deletes its key.
 | --- | --- |
 | Draft | `yearBuilt`; `roomOrder` (room ids, at most 30, no repeats); `notes` (up to 40,000 characters) and `summary` (the written summary of findings, up to 6,000); `scopeConfirmed`; equipment counts `airMovers`, `dehumidifiers`, `airScrubbers`, `woodFloorSystems` with `dryingDays` and `woodFloorDays`; job charges `emergencyCalls`, `monitoringHours`, `haulLoads`, `hepaFilters`, `matterportScans`, `dumpTruckLoads`, `equipmentDecon`, `powerDistribution`, `laborHours`, `isAfterHours` |
 | Room | `name`; `roomTypeId` (a room type of the job's price version; absent is Other); `category` (1 to 3, or `mold`); `waterClass` (1 to 4) and `ceilingHeightFt` for a water room, `moldCondition` (1 to 3) and `affectedSf` for a mold room; `unfinishedSf`, `finishedSf`, `floorSf`, `wetFloorSf`, `wastePercent`; `items` (a map of price-list item id to typed quantity, at most 50); `prepTasks` (at most 10 texts of up to 300 characters: a company template's words, copied when picked, or the estimator's own); `findings` (the room's findings note, up to 2,000 characters) |
-| Photo reference | `roomId`, `shotTag` (overview, source, surface, meter, contents or equipment) |
+| Photo reference | `roomId`, `shotTag` (overview, source, surface, meter, contents or equipment), `capturedAt` (client-clock ISO 8601 datetime when taken, up to 40 characters) |
 
 `notes`, `summary`, a room's `prepTasks` and `findings` are free text and may hold personal details,
 so they are personal data. The rules cannot loop over a list, so they check each `roomOrder` entry
