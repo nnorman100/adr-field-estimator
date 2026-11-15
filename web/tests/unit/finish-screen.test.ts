@@ -45,6 +45,10 @@ describe('the Finish and review screen', () => {
     // A refusal that means the job changed elsewhere reads the job again, so the screen shows its state.
     for (const code of ['already_submitted', 'not_submitted', 'job_signed']) expect(outcomeOf(409, { error: code }).next).toBe('reload');
     expect(outcomeOf(404, { error: 'not_found' }).next).toBe('done');
+    // Too many photos is its own plain answer, not the room-naming one.
+    expect(outcomeOf(409, { error: 'too_many_photos' }).message).toBe(
+      'This job has more than 300 photos, the most a job can hold, so it cannot be finished. Ask the owner for help.',
+    );
     expect(outcomeOf(400, { error: 'something new' })).toEqual({ message: 'Something went wrong. Reload the job.', next: 'reload' });
   });
 });

@@ -15,8 +15,7 @@ rules_version = '2';
 //
 // The `field` maps follow field map v2 (`web/src/lib/field/schema.ts`): the rules check each
 // key's type and size and refuse a key the map does not name. Every key is optional; clearing a
-// value deletes its key. Rules cannot loop over a list, so `roomOrder` is checked for type, size
-// and repeats only, and the server checks its entries when it reads the draft; a room's items and
+// value deletes its key. `roomOrder` is checked for string ids, size and repeats; a room's items and
 // prep tasks, which have a fixed largest size, are checked entry by entry, one line per place.
 // Whether a room type or item id is in the job's price list is the server's check (at Submit and
 // when it prices). Lookups stay at the company, the access record and the draft (three documents
@@ -96,6 +95,16 @@ service cloud.firestore {
       return !(k in f) || (f[k] is list && f[k].size() <= max && f[k].toSet().size() == f[k].size());
     }
 
+    // As with items below, join/split checks every entry without a loop. Equality after splitting
+    // refuses non-strings (including numbers that join as valid ids) and ids hiding a comma.
+    function okRoomOrder(f) {
+      let ids = f.get('roomOrder', []);
+      let joined = ids.join(',');
+      return okList(f, 'roomOrder', 30)
+        && (ids.size() == 0 || (joined.matches('[A-Za-z0-9_-]{1,64}(,[A-Za-z0-9_-]{1,64})*')
+          && joined.split(',') == ids));
+    }
+
     function validDraftField(f) {
       return f is map
         && f.keys().hasOnly(['yearBuilt', 'roomOrder', 'notes', 'summary', 'scopeConfirmed',
@@ -104,7 +113,7 @@ service cloud.firestore {
           'matterportScans', 'dumpTruckLoads', 'equipmentDecon', 'powerDistribution',
           'laborHours', 'isAfterHours'])
         && okInt(f, 'yearBuilt', 1800, request.time.year())
-        && okList(f, 'roomOrder', 30)
+        && okRoomOrder(f)
         && okText(f, 'notes', 0, 40000)
         && okText(f, 'summary', 0, 6000)
         && okBool(f, 'scopeConfirmed')
@@ -219,8 +228,10 @@ service cloud.firestore {
       // deeper, is open to a client.
       match /rooms/{roomId} {
         allow read: if canRead(companyId, draft());
-        allow create: if nestedCreate(validRoomField(request.resource.data.field));
-        allow update: if nestedUpdate(validRoomField(request.resource.data.field));
+        allow create: if roomId.matches('[A-Za-z0-9_-]{1,64}')
+          && nestedCreate(validRoomField(request.resource.data.field));
+        allow update: if roomId.matches('[A-Za-z0-9_-]{1,64}')
+          && nestedUpdate(validRoomField(request.resource.data.field));
         // Removing a room (owner decision, 2026-11-13, S5a-6): only its field owner, while the draft
         // is editing. The phone removes the room from `roomOrder` in the same batch.
         allow delete: if canEdit(companyId, draft());
@@ -228,8 +239,10 @@ service cloud.firestore {
 
       match /photos/{photoId} {
         allow read: if canRead(companyId, draft());
-        allow create: if nestedCreate(validPhotoField(request.resource.data.field));
-        allow update: if nestedUpdate(validPhotoField(request.resource.data.field));
+        allow create: if photoId.matches('[A-Za-z0-9_-]{1,64}')
+          && nestedCreate(validPhotoField(request.resource.data.field));
+        allow update: if photoId.matches('[A-Za-z0-9_-]{1,64}')
+          && nestedUpdate(validPhotoField(request.resource.data.field));
       }
     }
   }

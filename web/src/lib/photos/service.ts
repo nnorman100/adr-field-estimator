@@ -2,6 +2,7 @@ import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 import { and, eq, inArray } from 'drizzle-orm';
 import { auditEvents, evidenceObjects } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
+import { MAX_PHOTO_REFS } from '@/lib/field/schema';
 import { currentEstimateRow } from '@/lib/estimates/service';
 import { jobAccess, type JobCaller, type JobRow } from '@/lib/jobs/access';
 import type { DraftStates } from './drafts';
@@ -86,21 +87,25 @@ async function registryRows(tx: CompanyTransaction, caller: JobCaller, jobId: st
 }
 
 export function photosService(db: Database, store: EvidenceStore, drafts: DraftStates): PhotosService {
-  // A new photo needs a job still on its draft, and a draft still being edited. The job's status is
-  // read under the job's row lock when the row is made; the draft's state is read here, before the
-  // bytes are stored. A fence that lands in between changes nothing: the submission's snapshot
+  // A new photo needs a job still on its draft, and a draft still being edited that holds fewer than
+  // MAX_PHOTO_REFS photo references (Submit refuses more, should two phones race past the count).
+  // The job's status is read under the job's row lock when the row is made; the draft's state and
+  // count are read here, before the bytes are stored. A fence that lands in between changes nothing: the submission's snapshot
   // lists its own photo ids and hashes (docs/plans/S5.md, section 4, step 4).
   async function requireEditing(caller: JobCaller, job: JobRow): Promise<void> {
     if (job.status !== 'draft') throw new PhotoError('draft_locked');
     let state: string | null;
+    let refs: number;
     try {
       state = await drafts.state(caller.companyId, job.currentDraftId);
+      refs = state === 'editing' ? await drafts.photoRefs(caller.companyId, job.currentDraftId) : 0;
     } catch (error) {
       console.error('photo draft state unavailable', error instanceof Error ? error.name : 'unknown');
       throw new PhotoError('photos_unavailable');
     }
     if (state === null) throw new PhotoError('photos_unavailable');
     if (state !== 'editing') throw new PhotoError('draft_locked');
+    if (refs >= MAX_PHOTO_REFS) throw new PhotoError('photo_limit');
   }
 
   // A signature needs a current unsigned estimate (docs/plans/S5.md, S5a-5 and S5a-11): the job is

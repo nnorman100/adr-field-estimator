@@ -20,6 +20,7 @@ vi.mock('@/lib/photos/services', () => ({ photosServices: () => live.harness!.ph
 const jobsRoute = await import('@/app/api/jobs/route');
 const photoRoute = await import('@/app/api/jobs/[jobId]/photos/[photoId]/route');
 const { MAX_PHOTO_BYTES } = await import('@/lib/photos/image');
+const { MAX_PHOTO_REFS } = await import('@/lib/field/schema');
 const { servedHeaders } = await import('../support/next-headers');
 const { everything, params, request, resetTeamDatabase, startTeamServer } = await import('./team-harness');
 
@@ -264,6 +265,24 @@ describe('a photo and the draft', () => {
     expect((await sendPhoto(ESTIMATOR_A, jobId, randomUUID(), image('locked'))).status).toBe(409);
     lockDraft(h.seed.a, draftId, 'editing');
     expect((await sendPhoto(ESTIMATOR_A, jobId, randomUUID(), image('open'))).status).toBe(201);
+  });
+
+  it('takes the photo that brings the draft to its cap, then refuses a new one and still settles a sent one', async () => {
+    const { jobId, draftId } = await newJob(ESTIMATOR_A);
+    const refs = (count: number) => h.draftStates.refs.set(`${h.seed.a}/${draftId}`, count);
+    const last = { id: randomUUID(), bytes: image('three hundredth') };
+    refs(MAX_PHOTO_REFS - 1);
+    const kept = await sendPhoto(ESTIMATOR_A, jobId, last.id, last.bytes);
+    expect(kept.status).toBe(201);
+    // The phone writes its reference: the draft now holds the most it may.
+    refs(MAX_PHOTO_REFS);
+    expect(await sendPhoto(ESTIMATOR_A, jobId, randomUUID(), image('one too many'))).toEqual({ status: 409, body: { error: 'photo_limit' } });
+    expect(h.evidence.objects.size).toBe(1);
+    expect(await rows()).toHaveLength(1);
+    // A lost answer for the photo already taken is settled by sending it again, at the cap too.
+    const again = await sendPhoto(ESTIMATOR_A, jobId, last.id, last.bytes);
+    expect(again).toEqual({ status: 200, body: kept.body });
+    expect(await auditCount('photo_received')).toBe(1);
   });
 
   it('refuses a new photo for a job that is no longer a draft, whatever the draft says', async () => {

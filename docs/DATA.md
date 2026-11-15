@@ -551,10 +551,13 @@ key is optional; clearing a value deletes its key.
 | Photo reference | `roomId`, `shotTag` (overview, source, surface, meter, contents or equipment) |
 
 `notes`, `summary`, a room's `prepTasks` and `findings` are free text and may hold personal details,
-so they are personal data. The rules cannot loop over a list: `roomOrder` is checked for type, size
-and repeats only, and a room's `items` and `prepTasks`, which have a fixed largest size, entry by
-entry. Whether a room type or item is in the job's price version is the server's check at Submit
-(and the estimate's again). The server checks `roomOrder` when it reads the draft
+so they are personal data. The rules cannot loop over a list, so they check each `roomOrder` entry
+by joining and splitting it (a string id of `[A-Za-z0-9_-]{1,64}`, at most 30, no repeats), and a
+room's `items` and `prepTasks`, which have a fixed largest size, entry by entry. Room and photo
+document ids must match the same shape. Collection counts cannot be capped in rules; Submit reads
+a bounded number of rooms and photo references (`docs/ACCESS.md`, "F5 draft safety bounds").
+Whether a room type or item is in the job's price version is the server's check at Submit
+(and the estimate's again). The server also checks `roomOrder` when it reads the draft
 (`toInspection` in `web/src/lib/field/inspection.ts` maps a draft and its rooms to the engine's
 inspection JSON). Each write reads the company header, the access record and, for a room or photo,
 the draft: three documents of the 10 a write may read. A batched write may read 20 in all; counted
