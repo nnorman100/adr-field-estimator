@@ -89,6 +89,9 @@ type Visit = {
   baseURL: string;
   // The screens.ts patterns and field views this visit opens.
   screens: string[];
+  // A longer test timeout, for a visit that opens many pages: with the reCAPTCHA stalled, each page
+  // load waits out the App Check token wait (3s) before its calls go out without a token.
+  timeoutMs?: number;
   run: (page: Page, seed: Seed, project: string) => Promise<void>;
 };
 
@@ -202,6 +205,8 @@ const VISITS: Visit[] = [
     name: 'field app: every view, a new job and a photo, then Finish and review',
     baseURL: APP_CHECK_JOBS_BASE_URL,
     screens: ['/field', ...Object.keys(FIELD_VIEW_SCREENS).map((view) => `field:${view}`), '/sign-in/[address]/jobs/[jobId]/finish', '/sign-in/[address]/jobs/[jobId]/review'],
+    // About ten page loads: it took 59s of the default 60s on master's CI before the offline wiring.
+    timeoutMs: 180_000,
     run: async (page) => {
       const company = await withPrices(await seedCompany('app-check', { estimator: 'estimator' }));
       const estimator = company.people.estimator!;
@@ -274,6 +279,7 @@ for (const visit of VISITS) {
     test.use({ baseURL: visit.baseURL });
 
     test(`${visit.name} works with App Check on and a reCAPTCHA that never answers`, async ({ page }, testInfo) => {
+      if (visit.timeoutMs) testInfo.setTimeout(visit.timeoutMs);
       const sent = await stallRecaptcha(page);
       await visit.run(page, readSeed(), testInfo.project.name);
       expect(sent.filter((call) => call.header).map((call) => call.path)).toEqual([]);
