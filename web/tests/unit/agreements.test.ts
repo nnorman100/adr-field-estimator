@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { priceEstimate, type EstimateJob, type Json } from '@/engine/estimate';
 import { readSignedRecord, SIGNED_FORMAT, signedRecordBytes, SignedRecordError, type SignedRecord } from '@/lib/agreements/record';
 import { signBody, signDigest } from '@/lib/agreements/schema';
-import { agreementAnswerOf, signedHow, signedWhen, signOutcomeOf } from '@/lib/agreements/screen';
+import { agreementAnswerOf, signedBy, signedHow, signedWhen, signOutcomeOf } from '@/lib/agreements/screen';
 import { hasSigningTexts, PROPOSAL_FORMAT, proposalBytes, proposalOf, type Proposal } from '@/lib/estimates/proposal';
 import { canonicalJson } from '@/lib/field/canonical';
 import { NEUTRAL_LETTERHEAD, NEUTRAL_SETTINGS, type CompanyDocuments } from '@/lib/profile/documents';
@@ -156,6 +156,14 @@ describe('the signed record', () => {
     const linked = { ...record(proposal), signed_with: { kind: 'link' as const, link_id: '33333333-3333-4333-8333-333333333333' } };
     expect(readSignedRecord(signedRecordBytes(linked)).signed_with).toEqual({ kind: 'link', link_id: '33333333-3333-4333-8333-333333333333' });
   });
+
+  it('holds the signer’s role when one was asked (S5a-11b), and reads records made without one', () => {
+    const withRole = { ...record(proposal), signer: { name: 'Casey Customer', role: 'adjuster' as const } };
+    expect(readSignedRecord(signedRecordBytes(withRole)).signer).toEqual({ name: 'Casey Customer', role: 'adjuster' });
+    expect(readSignedRecord(signedRecordBytes(record(proposal))).signer).toEqual({ name: record(proposal).signer.name });
+    const unknownRole = Buffer.from(canonicalJson({ ...record(proposal), signer: { name: 'Casey Customer', role: 'landlord' } }), 'utf8');
+    expect(() => readSignedRecord(unknownRole)).toThrow(SignedRecordError);
+  });
 });
 
 describe('the sign request', () => {
@@ -189,6 +197,8 @@ describe('the signing screen’s words', () => {
     expect(signedHow(made)).toBe("Signed on the technician's phone, presented by Robin Tech.");
     expect(signedHow({ ...made, signed_with: { kind: 'device', presented_by: { actor_id: 'x', name: '' } } })).toBe("Signed on the technician's phone.");
     expect(signedHow({ ...made, signed_with: { kind: 'link', link_id: 'link-1' } })).toBe('Signed through signing link link-1.');
+    expect(signedBy({ name: 'Casey Customer' })).toBe('Signed by Casey Customer');
+    expect(signedBy({ name: 'Casey Customer', role: 'other' })).toBe('Signed by Casey Customer, other');
     expect(signedWhen('2026-11-14T18:30:00.123Z', 'UTC')).toBe('November 14, 2026 at 6:30:00 PM UTC');
   });
 

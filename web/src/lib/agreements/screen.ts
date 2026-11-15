@@ -3,6 +3,11 @@ import type { SignedRecord } from './record';
 // The agreements table's limit on the signer's name (migration 0011), for the name field.
 export const SIGNER_NAME_LIMIT = 150;
 
+// Who signed, as the signer says on a signing link's page (docs/spec.md 2.5; agreements.signer_role, 0014).
+export const SIGNER_ROLES = ['homeowner', 'adjuster', 'other'] as const;
+export type SignerRole = (typeof SIGNER_ROLES)[number];
+export const SIGNER_ROLE_NAMES: Record<SignerRole, string> = { homeowner: 'Homeowner', adjuster: 'Adjuster', other: 'Other' };
+
 // What the signing part of Review before signing decides in the browser (S5a-11), as pure functions
 // so they are unit-tested. The signed page is shown from the agreement's stored bytes as the server
 // answers them; nothing here builds a document, and messages come from fixed codes only (never from
@@ -40,6 +45,11 @@ export function signedWhen(iso: string, timeZone?: string): string {
   return new Intl.DateTimeFormat('en-US', { dateStyle: 'long', timeStyle: 'long', ...(timeZone ? { timeZone } : {}) }).format(when);
 }
 
+/** Who signed, with the role they gave when one was asked. */
+export function signedBy(signer: { name: string; role?: SignerRole }): string {
+  return signer.role ? `Signed by ${signer.name}, ${SIGNER_ROLE_NAMES[signer.role].toLowerCase()}` : `Signed by ${signer.name}`;
+}
+
 /** How it was signed: on the technician's phone with who presented it, or through a signing link. */
 export function signedHow(record: SignedRecord): string {
   const how = record.signed_with;
@@ -72,6 +82,7 @@ const OUTCOMES: Record<string, { message: string; next: SignNext }> = {
   invalid_request: { message: 'Check the name, then sign again.', next: 'redraw' },
   unsupported_image: { message: 'The signature could not be read. Clear it, draw it again, then sign.', next: 'redraw' },
   not_allowed: { message: 'Only the owner or the estimator on this job can present it for signing.', next: 'done' },
+  link_active: { message: 'This set already has a working link. The owner or office can replace it.', next: 'done' },
   not_found: { message: 'This job could not be found.', next: 'done' },
   archived: { message: 'This job is archived.', next: 'done' },
 };

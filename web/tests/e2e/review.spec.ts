@@ -553,3 +553,303 @@ test('a company that chose the letter layout: the review and the signed page sho
   await expectNoAxeViolations(page);
   await expectNoSideways(page);
 });
+
+// S5a-11b: Send to the homeowner. The link routes are played at the network boundary
+// (tests/db/signing-links.test.ts holds the real ones); the page shows the token once, as the
+// address it sends, with copy, share and QR, and revokes it.
+test('the estimator makes a signing link, sees it once with copy and a QR code, and revokes it', async ({ page }) => {
+  const job = { id: randomUUID(), status: 'submitted', currentDraftId: randomUUID(), revision: 3 };
+  const made = estimateFor(team, job.id, job.currentDraftId, 'estimator');
+  await playApi(page, job, { estimate: made });
+  const token = 'L1nkTokenShownOnceInTheReviewPageTest_abcde'.slice(0, 43);
+  const calls: Array<{ method: string; body: unknown }> = [];
+  const link = { id: '', estimateId: made.id, status: 'pending', createdAt: '2026-11-15T18:00:00.000Z', expiresAt: '2026-11-22T18:00:00.000Z', usedAt: null, endedAt: null };
+  await page.route(`**/api/jobs/${job.id}/signing-link`, async (route: Route, request: Request) => {
+    expect(request.headers().authorization).toMatch(/^Bearer /);
+    const body = request.method() === 'POST' ? request.postDataJSON() : null;
+    calls.push({ method: request.method(), body });
+    if (request.method() === 'GET') return route.fulfill({ json: { link: null } });
+    if (request.method() === 'POST') {
+      link.id = (body as { id: string }).id;
+      return route.fulfill({ status: 201, json: { link, token } });
+    }
+    return route.fulfill({ json: { link: { ...link, status: 'revoked', endedAt: '2026-11-15T18:05:00.000Z' } } });
+  });
+  await signInTo(page, team.estimator);
+  await page.goto(`/sign-in/${team.address}/jobs/${job.id}/review`);
+  const main = page.getByRole('main');
+  const panel = main.getByRole('region', { name: 'Send to the homeowner' });
+  await expect(panel.getByText('No signing link has been made for this job.')).toBeVisible();
+  await panel.getByRole('button', { name: 'Make a signing link' }).click();
+
+  const address = panel.getByRole('textbox', { name: 'Signing link' });
+  await expect(address).toHaveValue(new RegExp(`/sign#${token}$`));
+  await expect(panel.getByRole('button', { name: 'Copy link' })).toBeVisible();
+  await expect(panel.getByRole('img', { name: 'QR code of the signing link' })).toBeVisible();
+  await expect(panel.getByText(/A signing link is out\. It works until November 22, 2026/)).toBeVisible();
+  expect(calls.filter((call) => call.method === 'POST')).toEqual([{ method: 'POST', body: { id: link.id, estimateId: made.id, proposalSha256: made.proposalSha256 } }]);
+  await expectNoAxeViolations(page);
+  await expectNoSideways(page);
+
+  await panel.getByRole('button', { name: 'Revoke the link' }).click();
+  await expect(panel.getByText('The signing link was revoked.')).toBeVisible();
+  await expect(panel.getByRole('textbox', { name: 'Signing link' })).toHaveCount(0);
+  expect(calls.map((call) => call.method)).toEqual(['GET', 'POST', 'DELETE']);
+});
+
+// S5a-11b: Share the signed documents. A token is offered only while its link works: once the owner
+// replaces or revokes it, Copy, Share and the QR code for it are gone.
+test('the owner replaces and revokes a document link, and its token is no longer offered', async ({ page }) => {
+  const job = { id: randomUUID(), status: 'signed', currentDraftId: randomUUID(), revision: 4 };
+  const made = estimateFor(team, job.id, job.currentDraftId, 'owner');
+  await playApi(page, job, { estimate: made, agreement: signedFor(made, randomUUID()) });
+  const token = 'D0cLinkTokenShownOnceInTheReviewPageTest_ab'.slice(0, 43);
+  type Link = { id: string; set: 'homeowner' | 'adjuster'; status: 'active' | 'revoked'; createdAt: string; expiresAt: string; endedAt: string | null };
+  const link = (id: string, set: Link['set']): Link => ({ id, set, status: 'active', createdAt: '2026-11-15T18:00:00.000Z', expiresAt: '2026-12-15T18:00:00.000Z', endedAt: null });
+  const links: Link[] = [link(randomUUID(), 'homeowner'), link(randomUUID(), 'adjuster')];
+  await page.route(`**/api/jobs/${job.id}/document-links**`, async (route: Route, request: Request) => {
+    const path = new URL(request.url()).pathname;
+    if (request.method() === 'GET') return route.fulfill({ json: { links } });
+    if (request.method() === 'POST') {
+      const body = request.postDataJSON() as { id: string; set: Link['set'] };
+      for (const old of links) if (old.set === body.set && old.status === 'active') Object.assign(old, { status: 'revoked', endedAt: '2026-11-15T18:05:00.000Z' });
+      const fresh = link(body.id, body.set);
+      links.unshift(fresh);
+      return route.fulfill({ status: 201, json: { link: fresh, token, links } });
+    }
+    const found = links.find((one) => path.endsWith(`/${one.id}`))!;
+    Object.assign(found, { status: 'revoked', endedAt: '2026-11-15T18:06:00.000Z' });
+    return route.fulfill({ json: { link: found, links } });
+  });
+  await signInTo(page, team.owner);
+  await page.goto(`/sign-in/${team.address}/jobs/${job.id}/review`);
+  const main = page.getByRole('main');
+  const panel = main.getByRole('region', { name: 'Share the signed documents' });
+  await panel.getByRole('button', { name: "Replace the link: Homeowner's documents" }).click();
+  const address = panel.getByRole('textbox', { name: "Homeowner's documents link" });
+  await expect(address).toHaveValue(new RegExp(`/documents#${token}$`));
+  await expect(panel.getByText("Homeowner's documents: revoked.")).toBeVisible();
+
+  await panel.getByRole('button', { name: "Revoke the homeowner's documents link" }).click();
+  await expect(panel.getByText("Homeowner's documents: revoked.")).toHaveCount(2);
+  await expect(panel.getByRole('textbox', { name: "Homeowner's documents link" })).toHaveCount(0);
+  await expect(panel.getByRole('button', { name: 'Copy link' })).toHaveCount(0);
+});
+
+test('a revoked document link’s token stays hidden when the revoke answer is lost and the list cannot be read', async ({ page }) => {
+  const job = { id: randomUUID(), status: 'signed', currentDraftId: randomUUID(), revision: 4 };
+  const made = estimateFor(team, job.id, job.currentDraftId, 'owner');
+  await playApi(page, job, { estimate: made, agreement: signedFor(made, randomUUID()) });
+  const token = 'D0cLinkTokenShownOnceInTheReviewPageTest_cd'.slice(0, 43);
+  const link = (id: string) => ({ id, set: 'homeowner', status: 'active', createdAt: '2026-11-15T18:00:00.000Z', expiresAt: '2026-12-15T18:00:00.000Z', endedAt: null as string | null });
+  const links = [link(randomUUID())];
+  let broken = false;
+  await page.route(`**/api/jobs/${job.id}/document-links**`, async (route: Route, request: Request) => {
+    if (broken) return request.method() === 'GET' ? route.fulfill({ status: 503, json: { error: 'links_unavailable' } }) : route.abort('connectionreset');
+    if (request.method() === 'GET') return route.fulfill({ json: { links } });
+    const fresh = link((request.postDataJSON() as { id: string }).id);
+    Object.assign(links[0]!, { status: 'revoked', endedAt: '2026-11-15T18:05:00.000Z' });
+    links.unshift(fresh);
+    return route.fulfill({ status: 201, json: { link: fresh, token, links } });
+  });
+  await signInTo(page, team.owner);
+  await page.goto(`/sign-in/${team.address}/jobs/${job.id}/review`);
+  const panel = page.getByRole('main').getByRole('region', { name: 'Share the signed documents' });
+  await panel.getByRole('button', { name: "Replace the link: Homeowner's documents" }).click();
+  await expect(panel.getByRole('textbox', { name: "Homeowner's documents link" })).toHaveValue(new RegExp(`/documents#${token}$`));
+  await expect(panel.getByText("Homeowner's documents: revoked.")).toBeVisible();
+  // The revoke's answer is lost and the list cannot be read: the token is not offered again.
+  broken = true;
+  await panel.getByRole('button', { name: "Revoke the homeowner's documents link" }).click();
+  await expect(panel.getByRole('alert')).toBeVisible();
+  await expect(panel.getByRole('textbox', { name: "Homeowner's documents link" })).toHaveCount(0);
+  await expect(panel.getByRole('button', { name: 'Copy link' })).toHaveCount(0);
+});
+
+test('the document links made at signing on the phone are offered even when their list cannot be read', async ({ page }) => {
+  const job = { id: randomUUID(), status: 'submitted', currentDraftId: randomUUID(), revision: 3 };
+  const made = estimateFor(team, job.id, job.currentDraftId, 'estimator');
+  const signing: Signing = { signatures: [], agreements: [] };
+  const issued = (set: 'homeowner' | 'adjuster', token: string) => ({
+    link: { id: randomUUID(), set, status: 'active', createdAt: '2026-11-15T18:00:00.000Z', expiresAt: '2026-12-15T18:00:00.000Z', endedAt: null },
+    token,
+  });
+  const homeowner = 'H0meownerTokenMadeAtSigningOnThePhone_abcde'.slice(0, 43);
+  const adjuster = 'Adjust3rTokenMadeAtSigningOnThePhone_abcdef'.slice(0, 43);
+  await playApi(
+    page,
+    job,
+    {
+      estimate: made,
+      signature: () => [201, { photoId: 'x', kind: 'signature', sha256: 'f'.repeat(64) }],
+      sign: () => {
+        const id = (signing.agreements[0] as { signatureId: string }).signatureId;
+        const both = [issued('homeowner', homeowner), issued('adjuster', adjuster)];
+        return [201, { job: { ...job, status: 'signed' }, agreement: signedFor(made, id), documentLinks: both, links: both.map((one) => one.link) }];
+      },
+    },
+    signing,
+  );
+  await page.route(`**/api/jobs/${job.id}/document-links**`, (route: Route) => route.fulfill({ status: 503, json: { error: 'links_unavailable' } }));
+  await signInTo(page, team.estimator);
+  await page.goto(`/sign-in/${team.address}/jobs/${job.id}/review`);
+  const main = page.getByRole('main');
+  await main.getByRole('checkbox', { name: /I reviewed the proposal/ }).check();
+  await main.getByLabel("Customer's full name").fill('Casey Customer');
+  await drawSignature(page);
+  await main.getByRole('button', { name: 'Sign', exact: true }).click();
+  await expect(main.getByRole('heading', { name: 'Signed', exact: true })).toBeVisible();
+  const panel = main.getByRole('region', { name: 'Share the signed documents' });
+  await expect(panel.getByRole('textbox', { name: "Homeowner's documents link" })).toHaveValue(new RegExp(`/documents#${homeowner}$`));
+  await expect(panel.getByRole('textbox', { name: "Adjuster's documents link" })).toHaveValue(new RegExp(`/documents#${adjuster}$`));
+  // With both shown, the estimator is not offered a new link that the server would refuse.
+  await expect(panel.getByRole('button', { name: /Make a link/ })).toHaveCount(0);
+});
+
+test('the signing link’s token is not offered again once its revoke starts, even when the answer is lost', async ({ page }) => {
+  const job = { id: randomUUID(), status: 'submitted', currentDraftId: randomUUID(), revision: 3 };
+  const made = estimateFor(team, job.id, job.currentDraftId, 'estimator');
+  await playApi(page, job, { estimate: made });
+  const token = 'L1nkTokenShownOnceInTheReviewPageTest_fghij'.slice(0, 43);
+  const link = { id: '', estimateId: made.id, status: 'pending', createdAt: '2026-11-15T18:00:00.000Z', expiresAt: '2026-11-22T18:00:00.000Z', usedAt: null, endedAt: null };
+  await page.route(`**/api/jobs/${job.id}/signing-link`, async (route: Route, request: Request) => {
+    if (request.method() === 'GET') return route.fulfill({ json: { link: null } });
+    if (request.method() === 'POST') {
+      link.id = (request.postDataJSON() as { id: string }).id;
+      return route.fulfill({ status: 201, json: { link, token } });
+    }
+    return route.abort('connectionreset');
+  });
+  await signInTo(page, team.estimator);
+  await page.goto(`/sign-in/${team.address}/jobs/${job.id}/review`);
+  const panel = page.getByRole('main').getByRole('region', { name: 'Send to the homeowner' });
+  await panel.getByRole('button', { name: 'Make a signing link' }).click();
+  await expect(panel.getByRole('textbox', { name: 'Signing link' })).toHaveValue(new RegExp(`/sign#${token}$`));
+  await panel.getByRole('button', { name: 'Revoke the link' }).click();
+  await expect(panel.getByRole('alert')).toBeVisible();
+  await expect(panel.getByRole('textbox', { name: 'Signing link' })).toHaveCount(0);
+});
+
+test('a slow first read of the signing link does not undo a link made meanwhile', async ({ page }) => {
+  const job = { id: randomUUID(), status: 'submitted', currentDraftId: randomUUID(), revision: 3 };
+  const made = estimateFor(team, job.id, job.currentDraftId, 'estimator');
+  await playApi(page, job, { estimate: made });
+  const token = 'L1nkTokenShownOnceInTheReviewPageTest_klmno'.slice(0, 43);
+  const link = { id: '', estimateId: made.id, status: 'pending', createdAt: '2026-11-15T18:00:00.000Z', expiresAt: '2026-11-22T18:00:00.000Z', usedAt: null, endedAt: null };
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route(`**/api/jobs/${job.id}/signing-link`, async (route: Route, request: Request) => {
+    if (request.method() === 'GET') {
+      await held;
+      return route.fulfill({ json: { link: null } });
+    }
+    link.id = (request.postDataJSON() as { id: string }).id;
+    return route.fulfill({ status: 201, json: { link, token } });
+  });
+  await signInTo(page, team.estimator);
+  await page.goto(`/sign-in/${team.address}/jobs/${job.id}/review`);
+  const panel = page.getByRole('main').getByRole('region', { name: 'Send to the homeowner' });
+  await panel.getByRole('button', { name: 'Make a signing link' }).click();
+  await expect(panel.getByRole('textbox', { name: 'Signing link' })).toHaveValue(new RegExp(`/sign#${token}$`));
+  // The first read, sent before the link was made, answers only now.
+  const answered = page.waitForResponse((response) => response.url().endsWith('/signing-link') && response.request().method() === 'GET');
+  release();
+  await answered;
+  await page.waitForTimeout(250);
+  await expect(panel.getByText(/A signing link is out\./)).toBeVisible();
+  await expect(panel.getByRole('button', { name: 'Revoke the link' })).toBeVisible();
+});
+
+test('a slow first read of the document links does not undo a replacement made meanwhile', async ({ page }) => {
+  const job = { id: randomUUID(), status: 'signed', currentDraftId: randomUUID(), revision: 4 };
+  const made = estimateFor(team, job.id, job.currentDraftId, 'owner');
+  await playApi(page, job, { estimate: made, agreement: signedFor(made, randomUUID()) });
+  const token = 'D0cLinkTokenShownOnceInTheReviewPageTest_ef'.slice(0, 43);
+  const link = (id: string) => ({ id, set: 'homeowner', status: 'active', createdAt: '2026-11-15T18:00:00.000Z', expiresAt: '2026-12-15T18:00:00.000Z', endedAt: null as string | null });
+  const first = link(randomUUID());
+  const links = [first];
+  const before = JSON.parse(JSON.stringify(links)) as typeof links;
+  let reads = 0;
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  const deleted: string[] = [];
+  await page.route(`**/api/jobs/${job.id}/document-links**`, async (route: Route, request: Request) => {
+    if (request.method() === 'GET') {
+      reads += 1;
+      if (reads === 1) {
+        await held;
+        return route.fulfill({ json: { links: before } });
+      }
+      return route.fulfill({ json: { links } });
+    }
+    if (request.method() === 'POST') {
+      const fresh = link((request.postDataJSON() as { id: string }).id);
+      Object.assign(first, { status: 'revoked', endedAt: '2026-11-15T18:05:00.000Z' });
+      links.unshift(fresh);
+      return route.fulfill({ status: 201, json: { link: fresh, token, links } });
+    }
+    const id = new URL(request.url()).pathname.split('/').pop()!;
+    deleted.push(id);
+    const found = links.find((one) => one.id === id)!;
+    Object.assign(found, { status: 'revoked', endedAt: '2026-11-15T18:06:00.000Z' });
+    return route.fulfill({ json: { link: found, links } });
+  });
+  await signInTo(page, team.owner);
+  await page.goto(`/sign-in/${team.address}/jobs/${job.id}/review`);
+  const panel = page.getByRole('main').getByRole('region', { name: 'Share the signed documents' });
+  await panel.getByRole('button', { name: "Make a link: Homeowner's documents" }).click();
+  await expect(panel.getByRole('textbox', { name: "Homeowner's documents link" })).toHaveValue(new RegExp(`/documents#${token}$`));
+  await expect(panel.getByText("Homeowner's documents: revoked.")).toBeVisible();
+  // The first read, sent before the replacement and listing the old link as working, answers only now.
+  const answered = page.waitForResponse((response) => response.url().endsWith('/document-links') && response.request().method() === 'GET');
+  release();
+  await answered;
+  await page.waitForTimeout(250);
+  await expect(panel.getByText("Homeowner's documents: revoked.")).toBeVisible();
+  // Revoke reaches the link whose token is shown, not the one it replaced.
+  await panel.getByRole('button', { name: "Revoke the homeowner's documents link" }).click();
+  await expect(panel.getByRole('textbox', { name: "Homeowner's documents link" })).toHaveCount(0);
+  expect(deleted).toEqual([links[0]!.id]);
+  expect(deleted).not.toContain(first.id);
+});
+
+test('after replacing a document link with the list unreadable, Revoke reaches the new link from the answer', async ({ page }) => {
+  const job = { id: randomUUID(), status: 'signed', currentDraftId: randomUUID(), revision: 4 };
+  const made = estimateFor(team, job.id, job.currentDraftId, 'owner');
+  await playApi(page, job, { estimate: made, agreement: signedFor(made, randomUUID()) });
+  const token = 'D0cLinkTokenShownOnceInTheReviewPageTest_gh'.slice(0, 43);
+  const link = (id: string) => ({ id, set: 'homeowner', status: 'active', createdAt: '2026-11-15T18:00:00.000Z', expiresAt: '2026-12-15T18:00:00.000Z', endedAt: null as string | null });
+  const first = link(randomUUID());
+  const links = [first];
+  let reads = 0;
+  const deleted: string[] = [];
+  await page.route(`**/api/jobs/${job.id}/document-links**`, async (route: Route, request: Request) => {
+    if (request.method() === 'GET') {
+      reads += 1;
+      // Only the first read works; every later one fails.
+      return reads === 1 ? route.fulfill({ json: { links } }) : route.fulfill({ status: 503, json: { error: 'links_unavailable' } });
+    }
+    if (request.method() === 'POST') {
+      const fresh = link((request.postDataJSON() as { id: string }).id);
+      Object.assign(first, { status: 'revoked', endedAt: '2026-11-15T18:05:00.000Z' });
+      links.unshift(fresh);
+      return route.fulfill({ status: 201, json: { link: fresh, token, links } });
+    }
+    const id = new URL(request.url()).pathname.split('/').pop()!;
+    deleted.push(id);
+    const found = links.find((one) => one.id === id)!;
+    Object.assign(found, { status: 'revoked', endedAt: '2026-11-15T18:06:00.000Z' });
+    return route.fulfill({ json: { link: found, links } });
+  });
+  await signInTo(page, team.owner);
+  await page.goto(`/sign-in/${team.address}/jobs/${job.id}/review`);
+  const panel = page.getByRole('main').getByRole('region', { name: 'Share the signed documents' });
+  await panel.getByRole('button', { name: "Replace the link: Homeowner's documents" }).click();
+  await expect(panel.getByRole('textbox', { name: "Homeowner's documents link" })).toHaveValue(new RegExp(`/documents#${token}$`));
+  await expect(panel.getByText("Homeowner's documents: revoked.")).toBeVisible();
+  await expect(panel.getByRole('button', { name: "Revoke the homeowner's documents link" })).toHaveCount(1);
+  await panel.getByRole('button', { name: "Revoke the homeowner's documents link" }).click();
+  await expect(panel.getByRole('textbox', { name: "Homeowner's documents link" })).toHaveCount(0);
+  await expect(panel.getByText("Homeowner's documents: revoked.")).toHaveCount(2);
+  expect(deleted).toEqual([links.find((one) => one.id !== first.id)!.id]);
+});

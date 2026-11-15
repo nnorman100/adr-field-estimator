@@ -12,12 +12,13 @@
 import { createServer as createHttpServer, request as httpRequest, type IncomingHttpHeaders, type Server as HttpServer } from 'node:http';
 import { createServer as createTcpServer, connect, type AddressInfo, type Server, type Socket } from 'node:net';
 import { AUTH_EMULATOR_HOST } from '../sign-in/emulator';
+import { E2E_EMU } from '../emu-ports';
 import { FIRESTORE_EMULATOR_HOST } from './emulators';
 
 export type Target = 'app' | 'auth' | 'firestore';
 export const TARGETS: readonly Target[] = ['app', 'auth', 'firestore'];
 const LOOPBACK = '127.0.0.1';
-export const APP_PORT = 3100;
+export const APP_PORT = E2E_EMU.ports.app;
 
 function split(host: string): { host: string; port: number } {
   const [name, port] = host.split(':');

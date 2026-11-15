@@ -48,6 +48,22 @@ export const memberApiPaths: readonly string[] = [
   '/api/jobs/:id/estimate',
   '/api/jobs/:id/agreements',
   '/api/jobs/:id/scope-lists',
+  '/api/jobs/:id/signing-link',
+  '/api/jobs/:id/document-links',
+  '/api/jobs/:id/document-links/:id',
+];
+
+// Link routes (S5a-11b) that check a link token themselves with linkRoute (src/lib/auth/route.ts):
+// a homeowner or adjuster with no sign-in reaches them, and gets only what the token's own link
+// opens. A missing or unknown token is refused there with the same answer.
+export const linkApiPaths: readonly string[] = [
+  '/api/sign',
+  '/api/sign/signature',
+  '/api/sign/signature/:id',
+  '/api/sign/photos/:id',
+  '/api/documents',
+  '/api/documents/signature',
+  '/api/documents/photos/:id',
 ];
 
 // Platform operator routes that check the operator sign-in themselves with operatorRoute
@@ -97,6 +113,10 @@ export function isPublicApiPath(pathname: string): boolean {
 
 export function isMemberApiPath(pathname: string): boolean {
   return memberApiPaths.some((pattern) => matches(pattern, pathname));
+}
+
+export function isLinkApiPath(pathname: string): boolean {
+  return linkApiPaths.some((pattern) => matches(pattern, pathname));
 }
 
 export function isOperatorApiPath(pathname: string): boolean {

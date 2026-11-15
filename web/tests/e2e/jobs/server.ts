@@ -18,7 +18,7 @@ import {
   quoteDiscardName,
   startOwnedServer,
 } from '../../db/postgres-harness';
-import { APP_CHECK_ENV, APP_CHECK_JOBS_PORT } from '../app-check/server';
+import { APP_CHECK_ENV, APP_CHECK_JOBS_BASE_URL, APP_CHECK_JOBS_PORT } from '../app-check/server';
 import { FIRESTORE_EMULATOR_HOST, FIELD_DATABASE } from '../offline/emulators';
 import { AUTH_EMULATOR_HOST, E2E_PROJECT } from '../sign-in/emulator';
 import { EVIDENCE_BUCKET, JOBS_BASE_URL, JOBS_PORT, JOBS_STATE, STORAGE_EMULATOR_HOST, type JobsState } from './backend';
@@ -77,6 +77,7 @@ async function main() {
       env: { ...env, ...APP_CHECK_ENV },
     });
     appCheckApp.on('exit', (code) => void stop(code ?? 1));
+    await untilAnswering(`${APP_CHECK_JOBS_BASE_URL}/api/health`);
   } catch (error) {
     console.error(error instanceof Error ? error.message : 'the jobs test server did not start');
     await stop(1);

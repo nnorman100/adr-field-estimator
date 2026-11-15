@@ -162,9 +162,12 @@ export async function finishAuthenticatorSetup(
 }
 
 // How many authenticator apps the person has, after asking Firebase; null when that cannot be read.
-export async function authenticatorCount(user: User): Promise<number | null> {
+export async function authenticatorCount(
+  user: User,
+  reloadUser: () => Promise<void> = () => user.reload(),
+): Promise<number | null> {
   try {
-    await user.reload();
+    await reloadUser();
   } catch {
     return null;
   }
@@ -191,10 +194,14 @@ export async function sendVerifyEmail(user: User, continueUrl: string): Promise<
 
 // Asks the server who this sign-in is (GET /api/me). `fresh` gets a new ID token first, so a just
 // verified email is in it.
-export async function checkSignIn(user: User, fresh = false): Promise<{ outcome: MeOutcome; body: unknown }> {
+export async function checkSignIn(
+  user: User,
+  fresh = false,
+  reloadUser: () => Promise<void> = () => user.reload(),
+): Promise<{ outcome: MeOutcome; body: unknown }> {
   let response: Response;
   try {
-    if (fresh) await user.reload();
+    if (fresh) await reloadUser();
     const token = await user.getIdToken(fresh);
     response = await fetch('/api/me', {
       headers: { Authorization: `Bearer ${token}`, ...(await appCheckHeaders()) },
