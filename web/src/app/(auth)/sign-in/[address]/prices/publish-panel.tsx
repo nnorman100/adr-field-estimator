@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import type { Table } from '@/engine/table';
 import { callApi } from '@/lib/firebase-client';
+import { signInOf, type SignIn } from '@/lib/field/sign-out';
 import { changed } from '@/lib/prices/edit';
 import { moneyText, needsFreshSignIn, pricesMessage, readableDetail, workingCopyOf, type WorkingCopy } from '@/lib/prices/screen';
 import { CheckField, Hint, RadioGroup, Section, useBusy } from './ui';
@@ -118,7 +119,7 @@ export function PublishSection({
   published,
   onPublished,
   onSignInAgain,
-}: Common & { published: boolean; onPublished: () => void; onSignInAgain: () => void }) {
+}: Common & { published: boolean; onPublished: () => void; onSignInAgain: (from: SignIn) => void }) {
   // The check of the saved working copy, with the revision it checked: a later save, restore or
   // file makes it out of date, and the owner checks again.
   const [checked, setChecked] = useState<{ revision: number; view: PreviewView } | null>(null);
@@ -129,7 +130,8 @@ export function PublishSection({
   const [attempt, setAttempt] = useState<{ key: string; sent: string } | null>(null);
   const [busy, setBusy] = useBusy(lock);
   const [message, setMessage] = useState<string | null>(null);
-  const [freshSignIn, setFreshSignIn] = useState(false);
+  // The sign-in a publication was refused for with "sign in again": what the button ends.
+  const [freshSignIn, setFreshSignIn] = useState<SignIn | null>(null);
   const names = new Map(table.items.map((item) => [item.item_id, item.name]));
 
   const check = checked?.revision === working.revision ? checked.view : null;
@@ -151,7 +153,7 @@ export function PublishSection({
     if (!published && range === null) return setMessage('Choose how estimates show the price.');
     setBusy(true);
     setMessage(null);
-    setFreshSignIn(false);
+    setFreshSignIn(null);
     const request = {
       expectedRevision: working.revision,
       reason: reason.trim(),
@@ -161,6 +163,7 @@ export function PublishSection({
     const sent = JSON.stringify(request);
     const publishKey = attempt?.sent === sent ? attempt.key : crypto.randomUUID();
     setAttempt({ key: publishKey, sent });
+    const from = signInOf(user);
     const answer = await callApi(user, '/api/prices/publish', { method: 'POST', json: { ...request, publishKey } });
     setBusy(false);
     if (answer.status === 200 || answer.status === 201) {
@@ -172,7 +175,7 @@ export function PublishSection({
       onPublished();
       return;
     }
-    if (needsFreshSignIn(answer.status, answer.body)) setFreshSignIn(true);
+    if (needsFreshSignIn(answer.status, answer.body)) setFreshSignIn(from);
     setMessage(pricesMessage(answer.status, answer.body, table));
   }
 
@@ -247,7 +250,7 @@ export function PublishSection({
         dirty ? (
           <Hint>Save your changes before you sign in again.</Hint>
         ) : (
-          <Button type="button" variant="outline" onClick={onSignInAgain}>
+          <Button type="button" variant="outline" onClick={() => onSignInAgain(freshSignIn)}>
             Sign in again
           </Button>
         )

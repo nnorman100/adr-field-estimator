@@ -234,16 +234,21 @@ export async function stopFieldClient(person: Pick<FieldPerson, 'tenantId' | 'ui
   if (auth?.currentUser) await signOut(auth).catch(() => undefined);
 }
 
-export type DiscardResult = 'discarded' | 'elsewhere' | 'failed';
+export type DiscardResult = 'discarded' | 'elsewhere' | 'failed' | 'kept';
 
 // Removes this person's cache and unsent work for this company from the phone: Discard at sign-out,
 // or the 30-day limit for locked work (O5). Only this (tenant, person)'s database: another
 // company's or another person's is a database of its own and stays. A field window open elsewhere
 // holds the database, so it answers 'elsewhere' and removes nothing; `lockHeld` is for the field
-// window itself, which holds that lock.
-export async function discardFieldWork(person: FieldPerson, { lockHeld = false } = {}): Promise<DiscardResult> {
+// window itself, which holds that lock. `stillWanted` is asked once the client has stopped, right
+// before anything is erased: when it says no, nothing is ('kept'; the client is stopped).
+export async function discardFieldWork(
+  person: FieldPerson,
+  { lockHeld = false, stillWanted }: { lockHeld?: boolean; stillWanted?: () => boolean } = {},
+): Promise<DiscardResult> {
   const work = async (): Promise<DiscardResult> => {
     await stopFieldClient(person);
+    if (stillWanted && !stillWanted()) return 'kept';
     const databaseId = person.config.firestoreDatabaseId;
     if (databaseId) {
       const app = fieldApp(person);
