@@ -166,12 +166,14 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
       let from = signInOf(user);
       const stillCurrent = () => stillSameSignIn(authRef.current, from);
       const { outcome, body } = await checkSignIn(user, fresh, async () => {
-        [, from] = await acrossUserReload(from, () => user.reload());
+        from = await acrossUserReload(from, () => user.reload());
       });
-      let authenticators: number | null = 0;
-      if (outcome.kind === 'second-step') {
-        [authenticators, from] = await acrossUserReload(from, () => authenticatorCount(user));
-      }
+      const authenticators =
+        outcome.kind === 'second-step'
+          ? await authenticatorCount(user, async () => {
+              from = await acrossUserReload(from, () => user.reload());
+            })
+          : 0;
       const current = authRef.current?.currentUser ?? null;
       if (current !== user) {
         if (!current) showSignedOut();

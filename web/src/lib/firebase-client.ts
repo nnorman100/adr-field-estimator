@@ -162,9 +162,12 @@ export async function finishAuthenticatorSetup(
 }
 
 // How many authenticator apps the person has, after asking Firebase; null when that cannot be read.
-export async function authenticatorCount(user: User): Promise<number | null> {
+export async function authenticatorCount(
+  user: User,
+  reloadUser: () => Promise<void> = () => user.reload(),
+): Promise<number | null> {
   try {
-    await user.reload();
+    await reloadUser();
   } catch {
     return null;
   }

@@ -87,8 +87,9 @@ export function InvitationScreen({
       }
       const code = (answer.body as { error?: unknown } | null)?.error;
       if (answer.status === 403 && code === 'second_step_required') {
-        let count: number | null;
-        [count, from] = await acrossUserReload(from, () => authenticatorCount(user));
+        const count = await authenticatorCount(user, async () => {
+          from = await acrossUserReload(from, () => user.reload());
+        });
         const next = acceptSecondStepNext(count);
         if (next === 'set-up') setState({ name: 'second-step', offer });
         else if (next === 'sign-in-with-code') onSignInAgain(ACCEPT_SIGN_IN_WITH_CODE_MESSAGE, 'sign-in-again', from);

@@ -386,11 +386,9 @@ describe('the sign-in a refusal ends', () => {
     const started = signInOf(user as unknown as User);
     // Firebase user.reload() reads a newer lastLoginAt from the server (e.g. another phone
     // signed in) and mutates user.metadata in place; this phone's session is unchanged.
-    const [count, nextFrom] = await acrossUserReload(started, async () => {
+    const nextFrom = await acrossUserReload(started, async () => {
       user.metadata = { lastSignInTime: 'Sat, 14 Nov 2026 09:00:00 GMT' };
-      return 1;
     });
-    expect(count).toBe(1);
     await signOutOnRefusal(auth as unknown as Auth, 't-a', config, 'sign-in-again', false, nextFrom);
     expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: NOW, lockedReason: 'sign-in-again' });
     expect(forgetMe).toHaveBeenCalledOnce();
@@ -403,7 +401,7 @@ describe('the sign-in a refusal ends', () => {
     const started = signInOf(user as unknown as User);
     // The check was left open past the ID token's expiry while she signed in on another phone:
     // reload refreshes the token (a new refresh token, the same auth_time) and reads the newer time.
-    const [, nextFrom] = await acrossUserReload(started, async () => {
+    const nextFrom = await acrossUserReload(started, async () => {
       user.refreshToken = 'r-2';
       user.metadata = { lastSignInTime: 'Sat, 14 Nov 2026 09:00:00 GMT' };
     });
@@ -418,24 +416,42 @@ describe('the sign-in a refusal ends', () => {
     const startedBefore = signInOf(beforeReloadUser as unknown as User);
     beforeReloadUser.metadata = { lastSignInTime: 'Sat, 14 Nov 2026 09:00:00 GMT' };
     beforeReloadUser.authTime = 'Sat, 14 Nov 2026 09:00:00 GMT';
-    const [, afterBefore] = await acrossUserReload(startedBefore, async () => {
+    const afterBefore = await acrossUserReload(startedBefore, async () => {
       beforeReloadUser.metadata = { lastSignInTime: 'Sun, 15 Nov 2026 09:00:00 GMT' };
-      return 1;
     });
     await signOutOnRefusal({ currentUser: beforeReloadUser } as unknown as Auth, 't-a', config, 'sign-in-again', false, afterBefore);
 
     const duringReloadUser = sessionOn('ana');
     const startedDuring = signInOf(duringReloadUser as unknown as User);
-    const [, afterDuring] = await acrossUserReload(startedDuring, async () => {
+    const afterDuring = await acrossUserReload(startedDuring, async () => {
       duringReloadUser.metadata = { lastSignInTime: 'Sat, 14 Nov 2026 09:00:00 GMT' };
       duringReloadUser.authTime = 'Sat, 14 Nov 2026 09:00:00 GMT';
-      return 1;
     });
     await signOutOnRefusal({ currentUser: duringReloadUser } as unknown as Auth, 't-a', config, 'sign-in-again', false, afterDuring);
 
     expect(forgetMe).not.toHaveBeenCalled();
     expect(signOutCompany).not.toHaveBeenCalled();
     expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: null });
+  });
+
+  it('does not reload, and keeps the sign-in it can still end, when the session time cannot be read', async () => {
+    const user = sessionOn('ana');
+    const auth = { currentUser: user };
+    const started = signInOf(user as unknown as User);
+    // Her token refresh fails for a moment; the reload that would read her other phone's newer time
+    // would have worked.
+    user.getIdTokenResult = async () => {
+      throw new Error('auth/network-request-failed');
+    };
+    const reload = vi.fn(async () => {
+      user.metadata = { lastSignInTime: 'Sat, 14 Nov 2026 09:00:00 GMT' };
+    });
+    await expect(acrossUserReload(started, reload)).rejects.toThrow('auth/network-request-failed');
+    expect(reload).not.toHaveBeenCalled();
+    await signOutOnRefusal(auth as unknown as Auth, 't-a', config, 'sign-in-again', false, started);
+    expect(readUnsent('t-a', 'ana')).toMatchObject({ lockedSince: NOW, lockedReason: 'sign-in-again' });
+    expect(forgetMe).toHaveBeenCalledOnce();
+    expect(signOutCompany).toHaveBeenCalledOnce();
   });
 });
 

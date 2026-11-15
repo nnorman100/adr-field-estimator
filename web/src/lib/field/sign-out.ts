@@ -77,11 +77,8 @@ export function stillSameSignIn(auth: Auth | null, from: SignIn): boolean {
   return auth !== null && auth.currentUser === from.user && stillSignedIn(auth, from);
 }
 
-function authTimeOf(user: User): Promise<string | null> {
-  return user.getIdTokenResult().then(
-    (result) => result.authTime,
-    () => null,
-  );
+async function authTimeOf(user: User): Promise<string> {
+  return (await user.getIdTokenResult()).authTime;
 }
 
 /**
@@ -91,16 +88,17 @@ function authTimeOf(user: User): Promise<string | null> {
  * `lastLoginAt` (which advances if another phone signs in), and may refresh the ID token, which
  * may rotate `refreshToken`. The ID token's `auth_time` stays the same through a refresh and
  * changes only when this phone's session is replaced by a new sign-in (another tab, `_assign`).
+ * Throws, without reloading, when `auth_time` cannot be read, so the caller retries the check.
  */
-export async function acrossUserReload<T>(from: SignIn, reload: () => Promise<T>): Promise<[T, SignIn]> {
+export async function acrossUserReload(from: SignIn, reload: () => Promise<void>): Promise<SignIn> {
   const { user } = from;
   const before = user ? await authTimeOf(user) : null;
-  if (!user || before === null || sessionKey(user) !== from.key) return [await reload(), from];
-  const result = await reload();
-  if (sessionKey(user) !== from.key && (await authTimeOf(user)) === before) {
-    return [result, signInOf(user)];
+  if (!user || sessionKey(user) !== from.key) {
+    await reload();
+    return from;
   }
-  return [result, from];
+  await reload();
+  return sessionKey(user) !== from.key && (await authTimeOf(user)) === before ? signInOf(user) : from;
 }
 
 // A lock (a refusal, or a saved sign-in past its limit) could not be saved on the phone: nothing was
