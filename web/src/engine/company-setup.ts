@@ -4,8 +4,8 @@
 //
 // Since S5a-4b the check also knows the two texts printed on the signed page, the start-work
 // authorization and the payment terms (the company's document settings). Given them, it lists an
-// empty one as missing before signing; the settings screen passes them, and signing (S5a-11) will.
-// The documents pass none, so what makes a document issuable is unchanged.
+// empty one as missing before signing. The settings screen passes them, and so do the estimate's
+// documents since S5a-11, so documents without them are not signable and signing is refused.
 
 export type SetupFields = { name: string; address: string; license: string; signoff: string };
 

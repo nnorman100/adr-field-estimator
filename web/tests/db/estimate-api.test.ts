@@ -58,10 +58,12 @@ beforeEach(async () => {
   live.harness = h;
   // Company A has price books on (company B too, so a refusal there is the job's, not the flag's).
   await h.admin`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${h.seed.a}, 'price_books', true), (${h.seed.b}, 'price_books', true)`;
-  // Company A's profile, as its owner saved it on Company settings.
+  // Company A's profile, as its owner saved it on Company settings, with the signed page's two texts
+  // (S5a-11: documents without them are not signable).
   await h.admin`
     UPDATE companies SET profile_address = '1 Synthetic Way, Testville', profile_phone = '555-0100', profile_email = 'office@example.invalid',
-      profile_license = '000001', profile_signoff = 'Pat Example'
+      profile_license = '000001', profile_signoff = 'Pat Example',
+      profile_documents = ${JSON.stringify({ authorization_text: 'Synthetic start-work authorization.', payment_terms_text: 'Synthetic payment terms.' })}::text::jsonb
     WHERE id = ${h.seed.a}
   `;
   const [actor] = await h.admin<{ id: string }[]>`
