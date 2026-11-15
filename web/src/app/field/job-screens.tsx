@@ -105,6 +105,23 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     [detail, locator, session, deny],
   );
 
+  // The locator first, then the draft it names; trying again repeats both.
+  const openDraft = useCallback(async () => {
+    try {
+      // The API populated this server-owned locator, including for jobs made before S6. Read
+      // the document itself to warm the person cache; never cache the API response.
+      const head = await loadJobProjection(session.db, session.companyId, jobId);
+      if (!head) throw new Error('Job locator unavailable');
+      setLocator(head);
+      setCachedError(null);
+      await reloadDraft(head.currentDraftId);
+    } catch (error) {
+      const refusal = fieldRefusal(error);
+      if (refusal) deny(refusal.message);
+      else setDraftError('The field work could not be opened. Try again when connected.');
+    }
+  }, [reloadDraft, jobId, session, deny]);
+
   const apply = useCallback(
     async (answer: Awaited<ReturnType<typeof readJob>>, sentAt: number): Promise<JobDetail | null> => {
       if (!pending.readAnswered(jobId, answer, sentAt)) return null;
@@ -115,22 +132,10 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
         return null;
       }
       setDetail(answer.value, sentAt);
-      try {
-        // The API populated this server-owned locator, including for jobs made before S6. Read
-        // the document itself to warm the person cache; never cache the API response.
-        const head = await loadJobProjection(session.db, session.companyId, jobId);
-        if (!head) throw new Error('Job locator unavailable');
-        setLocator(head);
-        setCachedError(null);
-        await reloadDraft(head.currentDraftId);
-      } catch (error) {
-        const refusal = fieldRefusal(error);
-        if (refusal) deny(refusal.message);
-        else setDraftError('The field work could not be opened. Try again when connected.');
-      }
+      await openDraft();
       return answer.value;
     },
-    [reloadDraft, setDetail, jobId, session, deny],
+    [openDraft, setDetail, jobId],
   );
 
   const reloadJob = useCallback(async () => {
@@ -168,10 +173,11 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.online]);
 
-  // An offline start needs only the locator and field maps already in this person's cache.
-  // The gate still owns all network access and retention. No SQL job/customer/claim is invented.
+  // An offline start needs only the locator and field maps already in this person's cache, also
+  // when a job read earlier on this page is still shown. The gate still owns all network access
+  // and retention. No SQL job/customer/claim is invented.
   useEffect(() => {
-    if (session.online || detail || denial) return;
+    if (session.online || draft || denial) return;
     let live = true;
     void (async () => {
       try {
@@ -190,7 +196,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       }
     })();
     return () => { live = false; };
-  }, [session.online, session.db, session.companyId, jobId, detail, denial]);
+  }, [session.online, session.db, session.companyId, jobId, draft, denial]);
 
   // A photo that settled after an earlier screen of this job closed changed the draft: read it again.
   useEffect(() => {
@@ -253,11 +259,12 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       {(view === 'scope' || view === 'photos') && draftError ? (
         <div className="flex flex-col gap-2">
           <p role="alert">{draftError}</p>
-          <Button variant="outline" onClick={() => void reloadDraft(draftId)}>
+          <Button variant="outline" onClick={() => void openDraft()}>
             Try again
           </Button>
         </div>
       ) : null}
+      {(view === 'scope' || view === 'photos') && !draft && !draftError && cachedError ? <p role="status">{cachedError}</p> : null}
       {/* The views of one job stay mounted and only the open one shows, so moving between them
           keeps what the person has typed and not saved. */}
       <div hidden={view !== 'scope'}>{draft ? <ScopeView key={draftAt} job={context} draft={draft} /> : null}</div>

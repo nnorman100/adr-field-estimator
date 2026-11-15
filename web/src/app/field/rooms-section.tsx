@@ -33,12 +33,15 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
   }
   useEffect(loadLists, [user, jobId, job.session.online]);
 
+  // Adding and removing rooms write the whole room order, so one waits for the other's local
+  // write and the draft read after it: each starts from the order the phone holds.
   async function remove(roomId: string, label: string) {
-    if (!window.confirm(`Remove ${label} from this job?`)) return;
+    if (busy || !window.confirm(`Remove ${label} from this job?`)) return;
     await saveEdit((db) => removeRoom(db, job.draftRef, roomId, draft.field.roomOrder ?? []), `${label} removed.`);
   }
 
   async function add() {
+    if (busy) return;
     const checked = roomName(name);
     if (!checked) return setError('Give the room a name.');
     const roomId = crypto.randomUUID();
@@ -67,6 +70,7 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
               stored={room.field}
               number={index + 1}
               lists={lists}
+              removing={busy}
               onRemove={() => remove(room.id, room.field.name ?? `Room ${index + 1}`)}
             />
           </li>

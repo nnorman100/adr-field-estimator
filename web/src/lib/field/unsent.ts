@@ -147,9 +147,14 @@ export function noteWrite(tenantId: string, uid: string, now = Date.now(), inMem
   return saved ? writes : null;
 }
 
+// The photos noted on this page: only this page holds their bytes (window-lock.ts lets one window
+// hold field work).
+const photosHere = new Set<string>();
+
 // A photo is unsent before its upload starts. Counts IDs, never bytes; repeated attempts retain
 // one mark. Settling a field write cannot hide photos still awaiting their server receipts.
 export function notePhoto(tenantId: string, uid: string, id: string): boolean {
+  photosHere.add(id);
   return change(tenantId, uid, (mark) => ({
     ...mark,
     unsentSince: mark.unsentSince ?? Date.now(),
@@ -161,9 +166,17 @@ export function notePhoto(tenantId: string, uid: string, id: string): boolean {
 // Only after both the byte receipt and the field-reference acknowledgement. The caller then
 // calls settle(client), so outstanding field writes still prevent clearing the unsent timestamp.
 export function photoSent(tenantId: string, uid: string, id: string): void {
-  change(tenantId, uid, (mark) => {
-    const { photosInMemory, ...rest } = mark;
-    const remaining = (photosInMemory ?? []).filter((photo) => photo !== id);
+  photosHere.delete(id);
+  keepPhotosHere(tenantId, uid);
+}
+
+// Drops the photos an earlier page noted: their bytes went with it, so they can never be sent.
+// The rest of the mark stays, and the next settle clears what those photos alone held unsent.
+export function keepPhotosHere(tenantId: string, uid: string): void {
+  const mark = readUnsent(tenantId, uid);
+  if (mark === 'unreadable' || !mark.photosInMemory?.some((id) => !photosHere.has(id))) return;
+  change(tenantId, uid, ({ photosInMemory, ...rest }) => {
+    const remaining = (photosInMemory ?? []).filter((photo) => photosHere.has(photo));
     return { ...rest, ...(remaining.length ? { photosInMemory: remaining } : {}) };
   });
 }

@@ -82,6 +82,21 @@ test('an open job saves scope and rooms offline, marks unsent work, and reconnec
   expect((await adminDb().doc(world.draftPath).get()).updateTime!.toMillis()).toBe(revision);
 });
 
+test('a job opened earlier on the same page reopens its field work offline', async ({ context, lane }) => {
+  const world = await seedCompany();
+  const phone = await signedIn(context, lane, world);
+  await openJob(phone.page, lane, world, randomUUID());
+  const page = phone.page;
+  lane.cut();
+  await page.evaluate(() => window.dispatchEvent(new Event('offline')));
+  await expect(page.getByText(/No signal/)).toBeVisible();
+  await page.getByRole('link', { name: 'Back to jobs' }).click();
+  await expect(page.getByLabel('Year built')).toHaveCount(0);
+  await page.goBack();
+  await expect(page.getByLabel('Year built')).toBeEditable();
+  await expectNothingSent(lane);
+});
+
 test('SQL customer and claim edits need a connection and are never queued offline', async ({ context, lane }) => {
   const world = await seedCompany();
   const phone = await signedIn(context, lane, world);

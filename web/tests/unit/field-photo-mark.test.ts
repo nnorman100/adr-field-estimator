@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { notePhoto, noteWrite, photoSent, readUnsent, settled, unsentWork } from '@/lib/field/unsent';
+import { keepPhotosHere, notePhoto, noteWrite, photoSent, readUnsent, settled, unsentWork } from '@/lib/field/unsent';
 
 beforeEach(() => {
   const items = new Map<string, string>();
@@ -36,4 +36,25 @@ it('retries count the same photo once, and one receipt leaves the other photo un
 it('refuses capture when its unsent mark cannot be saved', () => {
   window.localStorage.setItem = () => { throw new Error('full'); };
   expect(notePhoto('tenant-a', 'ana', 'photo-a')).toBe(false);
+});
+
+it('a new page drops photos an earlier page left behind, but not its unsent field writes', async () => {
+  const write = noteWrite('tenant-a', 'ana')!;
+  notePhoto('tenant-a', 'ana', 'photo-old');
+  vi.resetModules();
+  const page = await import('@/lib/field/unsent');
+  page.notePhoto('tenant-a', 'ana', 'photo-new');
+  page.keepPhotosHere('tenant-a', 'ana');
+  expect(page.readUnsent('tenant-a', 'ana')).toMatchObject({ photosInMemory: ['photo-new'], unsentSince: expect.any(Number) });
+  page.photoSent('tenant-a', 'ana', 'photo-new');
+  expect(page.readUnsent('tenant-a', 'ana')).not.toHaveProperty('photosInMemory');
+  expect(page.unsentWork('tenant-a', 'ana')).not.toBe('none');
+  page.settled('tenant-a', 'ana', write);
+  expect(page.unsentWork('tenant-a', 'ana')).toBe('none');
+});
+
+it('leaves a mark it cannot read as it is', () => {
+  window.localStorage.setItem('ds-sync/tenant-a/ana', 'not json');
+  keepPhotosHere('tenant-a', 'ana');
+  expect(readUnsent('tenant-a', 'ana')).toBe('unreadable');
 });

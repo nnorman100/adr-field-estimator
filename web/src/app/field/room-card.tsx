@@ -83,6 +83,7 @@ export function RoomCard({
   stored,
   number,
   lists,
+  removing = false,
   onRemove,
 }: {
   job: JobContext;
@@ -90,6 +91,8 @@ export function RoomCard({
   stored: RoomField;
   number: number;
   lists: ScopeLists | null;
+  // Another room is being added or removed.
+  removing?: boolean;
   onRemove?: () => Promise<void>;
 }) {
   // Only the boxes the person changed; the rest always show the room as last read.
@@ -219,7 +222,7 @@ export function RoomCard({
             {busy ? 'Saving…' : 'Save room'}
           </Button>
           {onRemove ? (
-            <Button type="button" variant="outline" disabled={busy} onClick={() => void onRemove()}>
+            <Button type="button" variant="outline" disabled={busy || removing} onClick={() => void onRemove()}>
               Remove room
             </Button>
           ) : null}
