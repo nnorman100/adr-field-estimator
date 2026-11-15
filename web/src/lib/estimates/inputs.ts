@@ -24,15 +24,7 @@ const snapshotSchema = z.strictObject({
   draftId: z.string().regex(UUID),
   fieldSha256: z.string().regex(SHA256),
   field: z.strictObject({ draft: z.unknown(), rooms: z.array(fieldDoc), photos: z.array(fieldDoc) }),
-  photos: z.array(
-    z.strictObject({
-      id: z.string().regex(UUID),
-      sha256: z.string().regex(SHA256),
-      sizeBytes: z.number().int(),
-      contentType: z.string(),
-      receivedAt: z.iso.datetime({ offset: true }).max(40).optional(),
-    }),
-  ),
+  photos: z.array(z.strictObject({ id: z.string().regex(UUID), sha256: z.string().regex(SHA256), sizeBytes: z.number().int(), contentType: z.string() })),
   job: z.strictObject({ propertyAddress: z.string() }),
   customer: z.strictObject({ name: z.string(), phone: z.string(), email: z.string() }),
   claim: z.record(z.string(), z.string().nullable()),

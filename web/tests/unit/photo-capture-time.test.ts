@@ -42,10 +42,7 @@ const TABLE = {
   },
 };
 
-function makeSnapshot(
-  photos: Array<[string, Record<string, unknown>]>,
-  options: { receivedAt?: string } = {},
-): Snapshot {
+function makeSnapshot(photos: Array<[string, Record<string, unknown>]>): Snapshot {
   const manifest: FieldManifest = {
     draft: { yearBuilt: 1995, roomOrder: ['kitchen', 'hall'], summary: 'Supply line failure.', scopeConfirmed: true },
     rooms: [
@@ -68,7 +65,6 @@ function makeSnapshot(
         sha256: hash(String((index % 9) + 1)),
         sizeBytes: 100 + index,
         contentType: 'image/jpeg',
-        ...(options.receivedAt ? { receivedAt: options.receivedAt } : {}),
       })),
     job: { propertyAddress: '1 Example Street, Testville' },
     customer: { name: 'Casey Customer', phone: '555-0101', email: 'casey@example.invalid' },
@@ -100,7 +96,7 @@ describe('photo capture time', () => {
     }
   });
 
-  it('includes capturedAt in the manifest digest and preserves optional receivedAt in snapshot parsing', async () => {
+  it('includes capturedAt in the manifest digest and carries it through snapshot parsing', async () => {
     const base: FieldManifest = {
       draft: { roomOrder: ['kitchen'] },
       rooms: [{ id: 'kitchen', field: { name: 'Kitchen' } }],
@@ -112,11 +108,9 @@ describe('photo capture time', () => {
     };
     expect(await manifestDigest(base)).not.toBe(await manifestDigest(later));
 
-    const snap = makeSnapshot([[P1, { roomId: 'kitchen', capturedAt: '2026-11-15T10:00:00.000Z' }]], {
-      receivedAt: '2026-11-15T10:05:00.000Z',
-    });
+    const snap = makeSnapshot([[P1, { roomId: 'kitchen', capturedAt: '2026-11-15T10:00:00.000Z' }]]);
     const parsed = readSnapshot(snapshotBytes(snap).bytes);
-    expect(parsed.photos[0]!.receivedAt).toBe('2026-11-15T10:05:00.000Z');
+    expect(photoFieldSchema.parse(parsed.field.photos[0]!.field).capturedAt).toBe('2026-11-15T10:00:00.000Z');
   });
 
   it('orders each album in shot_tag grouping by capture time, breaks ties by id, and leaves untimed photos last in id order', () => {
@@ -173,22 +167,20 @@ describe('photo capture time', () => {
     ]);
   });
 
-  it('produces byte-identical documents when no photo has a capture time, even if server receivedAt is present', () => {
-    const untimedPhotos: Array<[string, Record<string, unknown>]> = [
-      [P3, { roomId: 'hall', shotTag: 'overview' }],
+  it('keeps snapshot order and omits captured_at when no photo has a capture time', () => {
+    const snap = makeSnapshot([
+      [P3, { roomId: 'kitchen', shotTag: 'source' }],
       [P1, { roomId: 'kitchen', shotTag: 'source' }],
-      [P2, { shotTag: 'meter' }],
-    ];
-    const withoutReceived = makeSnapshot(untimedPhotos);
-    const withReceived = makeSnapshot(untimedPhotos, { receivedAt: '2026-11-15T10:05:00.000Z' });
+      [P2, { roomId: 'hall', shotTag: 'meter' }],
+    ]);
 
+    const expected = { room: [P1, P3, P2], shot_tag: [P1, P3, P2] } as const;
     for (const grouping of ['room', 'shot_tag'] as const) {
-      const a = priceEstimate(TABLE, estimateInput(withoutReceived, COMPANY(grouping)).job);
-      const b = priceEstimate(TABLE, estimateInput(withReceived, COMPANY(grouping)).job);
-      expect(a.ok && b.ok).toBe(true);
-      if (!a.ok || !b.ok) throw new Error('expected priced');
-      expect(JSON.stringify(b.documents)).toBe(JSON.stringify(a.documents));
-      expect((b.documents!.photo_log as Array<Record<string, unknown>>).every((row) => !('captured_at' in row))).toBe(true);
+      const priced = priceEstimate(TABLE, estimateInput(snap, COMPANY(grouping)).job);
+      if (!priced.ok) throw new Error('expected priced');
+      const rows = priced.documents!.photo_log as Array<Record<string, unknown>>;
+      expect(rows.map((row) => row.id)).toEqual(expected[grouping]);
+      expect(rows.every((row) => !('captured_at' in row))).toBe(true);
     }
   });
 });

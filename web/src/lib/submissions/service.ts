@@ -303,13 +303,7 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
         field: storedManifest(manifest),
         photos: manifest.photos
           .map((photo) => byId.get(photo.id)!)
-          .map((photo) => ({
-            id: photo.objectId,
-            sha256: photo.sha256,
-            sizeBytes: photo.sizeBytes,
-            contentType: photo.contentType,
-            receivedAt: photo.createdAt.toISOString(),
-          }))
+          .map((photo) => ({ id: photo.objectId, sha256: photo.sha256, sizeBytes: photo.sizeBytes, contentType: photo.contentType }))
           .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
         ...details,
       };
