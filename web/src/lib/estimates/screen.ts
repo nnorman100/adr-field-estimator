@@ -103,6 +103,27 @@ export function photoLine(photo: unknown, index: number): string {
     .join(' · ');
 }
 
+/** One album of the photo log: its heading (none for the by-room log) and its photos as lines. */
+export type PhotoAlbum = { heading: string | null; lines: string[] };
+
+/**
+ * The photo log as the Review screen lists it. A log in the company's by-shot-tag grouping carries
+ * an `album` heading on each photo, and each run of photos under one heading is one album; a log
+ * with none (the default, by room) is one list with no heading. Photos are numbered straight
+ * through the log, so the numbers match the findings that cite them.
+ */
+export function photoAlbums(photos: readonly unknown[]): PhotoAlbum[] {
+  const albums: PhotoAlbum[] = [];
+  photos.forEach((photo, index) => {
+    const album = field(photo, 'album');
+    const heading = typeof album === 'string' && album ? album : null;
+    const last = albums[albums.length - 1];
+    if (last && last.heading === heading) last.lines.push(photoLine(photo, index));
+    else albums.push({ heading, lines: [photoLine(photo, index)] });
+  });
+  return albums;
+}
+
 /** One quantity-override note, as the owner reads it. */
 export function quantityNoteLine(note: unknown): string {
   const label = String(field(note, 'label') ?? '');
@@ -137,6 +158,7 @@ const OUTCOMES: Record<string, { message: string; next: Next }> = {
   job_signed: { message: 'This job is signed. Its signed documents do not change.', next: 'reload' },
   record_unreadable: { message: 'This record cannot be priced as it is. Go back to editing, then finish again.', next: 'done' },
   prices_unreadable: { message: 'The prices this job is pinned to cannot be read. Ask the owner to check the Prices page.', next: 'done' },
+  settings_unreadable: { message: 'The company settings for the documents cannot be read. Ask the owner to check Company settings.', next: 'done' },
   not_allowed: { message: 'Only the owner or the estimator on this job can price it.', next: 'done' },
   not_found: { message: 'This job could not be found.', next: 'done' },
   archived: { message: 'This job is archived.', next: 'done' },

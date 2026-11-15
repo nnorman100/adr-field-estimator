@@ -19,6 +19,8 @@ export const ESTIMATE_ERRORS = {
   // The pinned price version cannot be read (its content, hash or engine version is not one this
   // server prices): nothing is stored, and the answer says only that.
   prices_unreadable: 503,
+  // The company's document settings do not read through their schema (S5a-4b); nothing is stored.
+  settings_unreadable: 503,
   // The database could not be reached; the same request again is safe.
   estimates_unavailable: 503,
 } as const;

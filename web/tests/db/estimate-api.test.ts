@@ -503,3 +503,39 @@ describe('the quantity-override note', () => {
     expect((await read(OWNER_A, jobId)).body.estimate.staffNotes.quantityNotes).toEqual([]);
   });
 });
+
+describe('the photo log grouping of the company', () => {
+  const setGrouping = (company: string, settings: string) => h.admin`UPDATE companies SET profile_documents = ${settings}::text::jsonb WHERE id = ${company}`;
+
+  it('follows the company’s own setting: by room until the owner chooses shot tags, the same photo and hash either way', async () => {
+    await publish(h.seed.a, '2.00');
+    const first = await submittedJob();
+    const byRoom = await make(ESTIMATOR_A, first.jobId);
+    expect(byRoom.body.estimate.documents.photoLog).toEqual([{ id: first.photoId, room: 'Kitchen', sha256: sha256(first.photoBytes), shot_tag: 'source' }]);
+
+    await setGrouping(h.seed.a, '{"photo_log_grouping": "shot_tag"}');
+    const second = await submittedJob();
+    const byTag = await make(ESTIMATOR_A, second.jobId);
+    expect(byTag.body.estimate.documents.photoLog).toEqual([{ id: second.photoId, room: 'Kitchen', sha256: sha256(second.photoBytes), shot_tag: 'source', album: 'Source of loss' }]);
+    expect(byTag.body.estimate.totals).toEqual(byRoom.body.estimate.totals);
+    // The first estimate is stored as it was made; the setting does not rewrite it.
+    expect((await read(ESTIMATOR_A, first.jobId)).body.estimate.documents.photoLog).toEqual(byRoom.body.estimate.documents.photoLog);
+  });
+
+  it('company A’s setting does not reach company B’s documents', async () => {
+    await setGrouping(h.seed.a, '{"photo_log_grouping": "shot_tag"}');
+    const [row] = await h.admin<{ documents: Body }[]>`SELECT profile_documents AS documents FROM companies WHERE id = ${h.seed.b}`;
+    expect(row?.documents).toEqual({});
+  });
+
+  it('settings the schema cannot read are refused, 503, and nothing is stored or pinned', async () => {
+    await publish(h.seed.a, '2.00');
+    const { jobId } = await submittedJob();
+    await setGrouping(h.seed.a, '{"photo_log_grouping": "by_colour"}');
+    const refused = await make(ESTIMATOR_A, jobId);
+    expect(refused.status).toBe(503);
+    expect(refused.body).toEqual({ error: 'settings_unreadable' });
+    expect(await estimates(jobId)).toEqual([]);
+    expect(await pins(jobId)).toEqual([]);
+  });
+});

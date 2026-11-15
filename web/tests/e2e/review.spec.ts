@@ -29,8 +29,10 @@ test.beforeEach(({}, testInfo) => {
 });
 
 const PHOTO = randomUUID();
+const PHOTO_TWO = randomUUID();
 
-function record(jobId: string, draftId: string): Snapshot {
+// With `more`, a second photo (the hall, shot tag overview) is in the record after the first.
+function record(jobId: string, draftId: string, more = false): Snapshot {
   return {
     format: SNAPSHOT_FORMAT,
     submissionId: randomUUID(),
@@ -43,9 +45,9 @@ function record(jobId: string, draftId: string): Snapshot {
         { id: 'hall', field: { name: 'Hall', category: 2, floorSf: 40, wetFloorSf: 40 } },
         { id: 'kitchen', field: { name: 'Kitchen', category: 2, floorSf: 120, wetFloorSf: 80 } },
       ],
-      photos: [{ id: PHOTO, field: { roomId: 'kitchen', shotTag: 'source' } }],
+      photos: [{ id: PHOTO, field: { roomId: 'kitchen', shotTag: 'source' } }, ...(more ? [{ id: PHOTO_TWO, field: { roomId: 'hall', shotTag: 'overview' } }] : [])],
     },
-    photos: [{ id: PHOTO, sha256: 'ab'.repeat(32), sizeBytes: 1000, contentType: 'image/jpeg' }],
+    photos: [{ id: PHOTO, sha256: 'ab'.repeat(32), sizeBytes: 1000, contentType: 'image/jpeg' }, ...(more ? [{ id: PHOTO_TWO, sha256: 'cd'.repeat(32), sizeBytes: 1000, contentType: 'image/jpeg' }] : [])],
     job: { propertyAddress: '12 Synthetic Lane, Testville' },
     customer: { name: 'Casey Customer', phone: '555-0101', email: 'casey@example.invalid' },
     claim: {},
@@ -53,15 +55,15 @@ function record(jobId: string, draftId: string): Snapshot {
 }
 
 // The server's answer for this record priced at $2.00 a square foot of wet floor, as `role` sees it.
-function estimateFor(team: TeamSeed, jobId: string, draftId: string, role: 'owner' | 'estimator' | 'office'): EstimateView {
+function estimateFor(team: TeamSeed, jobId: string, draftId: string, role: 'owner' | 'estimator' | 'office', photoLogGrouping: 'room' | 'shot_tag' | null = null): EstimateView {
   const company: CompanyDocuments = {
     identity: { companyId: team.companyId, name: team.companyName, address: '1 Synthetic Way, Testville', phone: '555-0100', email: 'office@example.invalid', license: '000001', signoff: 'Pat Example' },
     letterhead: NEUTRAL_LETTERHEAD,
-    settings: NEUTRAL_SETTINGS,
+    settings: photoLogGrouping ? { ...NEUTRAL_SETTINGS, photoLogGrouping } : NEUTRAL_SETTINGS,
     // The company's own wording for the signed page (S5a-11), synthetic text.
     signing: { authorizationText: 'Synthetic start-work authorization.', paymentTermsText: 'Synthetic payment terms.' },
   };
-  const snapshot = record(jobId, draftId);
+  const snapshot = record(jobId, draftId, photoLogGrouping !== null);
   const table = {
     items: [{ item_id: 'extraction', group: 'treatment', name: 'Extraction', unit: 'sf', quantity_source: 'room:wet_floor', unit_price: '2.00' }],
     policy: {
@@ -236,6 +238,29 @@ test('with prices switched off for the company, the review says so', async ({ pa
   await page.goto(`/sign-in/${team.address}/jobs/${job.id}/review`);
   await expect(page.getByRole('main').getByRole('heading', { name: 'Prices are not switched on' })).toBeVisible();
   await expectNoAxeViolations(page);
+});
+
+test('the photo audit log shows the company’s grouping: by room as one list, by shot tag in albums', async ({ page }) => {
+  const job = { id: randomUUID(), status: 'submitted', currentDraftId: randomUUID(), revision: 3 };
+  for (const grouping of ['room', 'shot_tag'] as const) {
+    await playApi(page, job, { estimate: estimateFor(team, job.id, job.currentDraftId, 'office', grouping) });
+    if (grouping === 'room') await signInTo(page, team.office);
+    await page.goto(`/sign-in/${team.address}/jobs/${job.id}/review`);
+    const main = page.getByRole('main');
+    await main.getByText('Photo audit log', { exact: true }).click();
+    const log = main.locator('details', { hasText: 'Photo audit log' });
+    const lines = log.getByRole('listitem');
+    if (grouping === 'room') {
+      // Room order of the record is kitchen, hall: today's list, no headings.
+      await expect(log.getByRole('heading')).toHaveCount(0);
+      await expect(lines).toHaveText([`Photo 1 · Kitchen · shot: source · SHA-256 ${'ab'.repeat(6)}…`, `Photo 2 · Hall · shot: overview · SHA-256 ${'cd'.repeat(6)}…`]);
+    } else {
+      await expect(log.getByRole('heading')).toHaveText(['Overview', 'Source of loss']);
+      await expect(lines).toHaveText([`Photo 1 · Hall · shot: overview · SHA-256 ${'cd'.repeat(6)}…`, `Photo 2 · Kitchen · shot: source · SHA-256 ${'ab'.repeat(6)}…`]);
+    }
+    await expectNoAxeViolations(page);
+    await expectNoSideways(page);
+  }
 });
 
 // A 1×1 white PNG: the stored signature image the signed page reads back.

@@ -6,8 +6,9 @@ import type { Harness } from './team-harness';
 // runtime role against Postgres (same setup as company-profile.test.ts): the owner saves and reads
 // each one; estimator, office and the platform operator are refused; an unknown key, an oversized
 // clause or list and a layout outside the list are refused and write nothing; company B never reads
-// or changes company A's; a save that leaves them out keeps them; the documents' reader still gets
-// the letterhead empty and the settings neutral until S5a-9b and S5a-9c print them.
+// or changes company A's; a save that leaves them out keeps them; the documents' reader
+// gets the letterhead empty and the layout and clauses neutral until S5a-9b prints them, and the
+// company's own photo log grouping since S5a-9c.
 const live = vi.hoisted(() => ({ harness: null as Harness | null }));
 vi.mock('@/lib/auth/services', () => ({
   identityServices: () => live.harness!.identity,
@@ -203,12 +204,15 @@ describe('the owner saves and reads the letterhead and document settings', () =>
     expect((await rowOf(h.seed.a)).profile_documents).toEqual({ ...NEUTRAL, proposal_layout: 'letter' });
   });
 
-  it('gives the documents’ one reader the profile, with the letterhead still empty and the settings neutral', async () => {
+  it('gives the documents’ one reader the profile and the photo log grouping, the letterhead still empty and the other settings neutral', async () => {
     await put(owner(), h.seed.a, { ...PROFILE, ...LETTERHEAD, documents: DOCUMENTS });
     const read = await withCompany(h.handle.db, h.seed.a, (tx) => readCompanyDocuments(tx, h.seed.a));
     expect(read?.letterhead).toEqual(EMPTY_LETTERHEAD);
     expect(read?.identity).toEqual({ companyId: h.seed.a, name: 'Company company-a', ...PROFILE });
-    expect(read?.settings).toEqual({ proposalLayout: 'itemized', companyClauses: [], photoLogGrouping: 'room' });
+    expect(read?.settings).toEqual({ proposalLayout: 'itemized', companyClauses: [], photoLogGrouping: 'shot_tag' });
+    // Company B never saved a setting: its documents group by room.
+    const other = await withCompany(h.handle.db, h.seed.b, (tx) => readCompanyDocuments(tx, h.seed.b));
+    expect(other?.settings.photoLogGrouping).toBe('room');
   });
 
   it('answers 503 and uses nothing when the stored settings do not read through the schema', async () => {

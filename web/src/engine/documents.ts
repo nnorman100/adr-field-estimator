@@ -192,6 +192,7 @@ const PHOTO = z
     location: LOCATION.nullish(),
     sha256: z.string().regex(/^[0-9a-f]{64}$/, 'must be 64 lowercase hex characters').optional(),
     shot_tag: text(1, 40).optional(),
+    album: text(1, 80).optional(),
   })
   .superRefine((photo, ctx) => {
     if (photo.ocr_status === 'verified' && !photo.ocr) {
@@ -212,6 +213,7 @@ function photoOf(raw: Json): PhotoRow {
   if (photo.location) row.location = photo.location;
   if (photo.sha256 !== undefined) row.sha256 = photo.sha256;
   if (photo.shot_tag !== undefined) row.shot_tag = photo.shot_tag;
+  if (photo.album !== undefined) row.album = photo.album;
   return { row, room: photo.room, status: photo.ocr_status ?? null, ocr: photo.ocr ?? null };
 }
 

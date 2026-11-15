@@ -1,6 +1,6 @@
 import type { EstimateEnd } from '@/engine/estimate';
 import type { EstimateView } from '@/lib/estimates/result';
-import { chargeRows, dollars, photoLine, priceLines, quantityNoteLine, warningText } from '@/lib/estimates/screen';
+import { chargeRows, dollars, photoAlbums, priceLines, quantityNoteLine, warningText } from '@/lib/estimates/screen';
 
 // The parts of Review before signing that show the stored estimate: the price, the four documents
 // and the staff-only notes. Every amount and sentence is the server's, shown as stored; the
@@ -144,7 +144,18 @@ export function ItemizedClaim({ rows, end, afterHoursLabel }: { rows: unknown[];
 
 /** The photo audit log as lines. */
 export function PhotoLog({ photos }: { photos: unknown[] }) {
-  return photos.length ? <List items={photos.map((photo, index) => photoLine(photo, index))} /> : <p className="pt-3">No photos.</p>;
+  if (!photos.length) return <p className="pt-3">No photos.</p>;
+  // By room the log is one list; by shot tag each album sits under its heading (S5a-9c).
+  return (
+    <>
+      {photoAlbums(photos).map((album) => (
+        <div key={album.heading ?? 'photos'}>
+          {album.heading ? <h3 className="pt-3 font-semibold">{album.heading}</h3> : null}
+          <List items={album.lines} />
+        </div>
+      ))}
+    </>
+  );
 }
 
 export function EstimateDocuments({ estimate }: { estimate: EstimateView }) {

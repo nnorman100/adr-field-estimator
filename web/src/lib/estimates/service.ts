@@ -162,6 +162,19 @@ async function audit(tx: CompanyTransaction, caller: JobCaller, action: string, 
   await tx.insert(auditEvents).values({ companyId: caller.companyId, actorId: caller.actorId, action, target: jobId, details });
 }
 
+// The company's document inputs; settings that do not read through their schema are never used.
+async function companyDocuments(tx: CompanyTransaction, companyId: string): Promise<CompanyDocuments> {
+  let company: CompanyDocuments | null;
+  try {
+    company = await readCompanyDocuments(tx, companyId);
+  } catch (error) {
+    if (error instanceof ZodError) throw new EstimateError('settings_unreadable');
+    throw error;
+  }
+  if (!company) throw new JobError('not_found');
+  return company;
+}
+
 // The engine's input for a record and the company's document inputs.
 function inputOf(snapshot: Snapshot, company: CompanyDocuments): EstimateInput {
   try {
@@ -231,8 +244,7 @@ async function present(tx: CompanyTransaction, caller: JobCaller, job: JobRow, r
   if (missing.length) return estimateView(row, caller.capabilities, { missing });
   const version = await versionById(tx, caller.companyId, row.versionId);
   if (!version) throw new EstimateError('prices_unreadable');
-  const company = await readCompanyDocuments(tx, caller.companyId);
-  if (!company) throw new JobError('not_found');
+  const company = await companyDocuments(tx, caller.companyId);
   const { estimate, table } = priceInput(inputOf({ ...readSnapshot(submission.snapshotBytes), ...details }, company), version);
   const proposal = proposalFor(estimate, company, table, submission, version);
   return estimateView(row, caller.capabilities, { documents: estimate.documents!, proposal, proposalSha256: proposalBytes(proposal).sha256 });
@@ -263,8 +275,7 @@ export function estimatesService(db: Database): EstimatesService {
         }
         const version = pin ? await versionById(tx, caller.companyId, pin.versionId) : await latestVersion(tx, caller.companyId);
         if (!version) throw new EstimateError('prices_not_set');
-        const company = await readCompanyDocuments(tx, caller.companyId);
-        if (!company) throw new JobError('not_found');
+        const company = await companyDocuments(tx, caller.companyId);
         const input = inputOf(snapshot, company);
         if (!input.scopeConfirmed) throw new EstimateError('scope_not_confirmed');
         if (!input.summary.trim()) throw new EstimateError('summary_missing');
