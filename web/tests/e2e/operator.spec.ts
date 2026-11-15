@@ -1,5 +1,6 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
+import { E2E_EMU } from './emu-ports';
 import { FakePlatform } from './operator/fake-platform';
 import { APP_CODE, fakeSecondStep } from './second-step/fake-totp';
 import { PASSWORD, readSeed, type ProjectSeed, type Seed } from './sign-in/seed';
@@ -241,7 +242,7 @@ test('invites the first owner, replaces the owner, and gives the link to copy', 
   await page.getByLabel('New owner’s email').fill('first@example.com');
   await page.getByRole('button', { name: 'Invite owner' }).click();
   await expect(page.getByLabel('Invitation link')).toHaveValue(/\/sign-in\/company-a\/invitations\/[0-9a-f-]{36}$/);
-  await expect(page.getByLabel('Invitation link')).toHaveValue(/^http:\/\/localhost:3100\//);
+  await expect(page.getByLabel('Invitation link')).toHaveValue(new RegExp(`^http://localhost:${E2E_EMU.ports.app}/`));
   await expect(page.getByText('No email is sent yet. Send this link to first@example.com yourself')).toBeVisible();
   expect(fake.made('POST', /owner$/).at(-1)?.body).toEqual({ email: 'first@example.com', replace: false });
 

@@ -11,11 +11,13 @@ import {
   EMU_PORT_DEFAULT,
   EMU_PORT_ENV,
   claimEmuPorts,
+  claimPorts,
   emuPort,
   isPortFree,
   writeEmulatorConfig,
   type EmuPort,
 } from '../emu/ports';
+import { E2E_SERVER_PORT_DEFAULT, E2E_SERVER_PORT_ENV, claimE2ePorts } from '../e2e/emu-ports';
 
 const webDir = fileURLToPath(new URL('../..', import.meta.url));
 const ALL = Object.keys(EMU_PORT_DEFAULT) as EmuPort[];
@@ -353,6 +355,93 @@ describe('npm run test:emu with its own ports', () => {
       expect(existsSync(record)).toBe(false);
     } finally {
       await closeServer(server);
+    }
+  });
+});
+
+describe('claimPorts and claimE2ePorts', () => {
+  let lockDir: string;
+
+  beforeEach(async () => {
+    lockDir = await mkdtemp(join(tmpdir(), 'e2e-ports-'));
+  });
+
+  afterEach(async () => {
+    await rm(lockDir, { recursive: true, force: true });
+  });
+
+  it('claims arbitrary named ports with the shared lock mechanism', () => {
+    const defaults = { alpha: 4100, beta: 4101 } as const;
+    const envNames = { alpha: 'TEST_ALPHA_PORT', beta: 'TEST_BETA_PORT' } as const;
+    const env: Record<string, string | undefined> = { EMU_PORTS: 'auto' };
+    const claim = claimPorts(['alpha', 'beta'], defaults, envNames, {
+      env,
+      lockDir,
+      releaseOnExit: false,
+      candidate: sequence([25_001, 25_001, 25_002]),
+      isFree: () => true,
+    });
+    try {
+      expect(claim.custom).toBe(true);
+      expect(claim.ports).toEqual({ alpha: 25_001, beta: 25_002 });
+      expect(env.TEST_ALPHA_PORT).toBe('25001');
+      expect(env.TEST_BETA_PORT).toBe('25002');
+      expect(env.EMU_PORTS_CLAIMED).toBe('1');
+    } finally {
+      claim.release();
+    }
+  });
+
+  it('claims distinct ports for all 8 emulators and all 4 E2E app servers across concurrent runs', () => {
+    expect(E2E_SERVER_PORT_DEFAULT).toEqual({
+      app: 3100,
+      jobs: 3101,
+      appCheck: 3103,
+      appCheckJobs: 3104,
+    });
+    expect(E2E_SERVER_PORT_ENV).toEqual({
+      app: 'E2E_APP_PORT',
+      jobs: 'E2E_JOBS_PORT',
+      appCheck: 'E2E_APP_CHECK_PORT',
+      appCheckJobs: 'E2E_APP_CHECK_JOBS_PORT',
+    });
+
+    const envA: Record<string, string | undefined> = { EMU_PORTS: 'auto' };
+    const envB: Record<string, string | undefined> = { EMU_PORTS: 'auto' };
+    const claimA = claimE2ePorts({ env: envA, lockDir, releaseOnExit: false, isFree: () => true });
+    const claimB = claimE2ePorts({ env: envB, lockDir, releaseOnExit: false, isFree: () => true });
+    try {
+      const portsA = Object.values(claimA.ports);
+      const portsB = Object.values(claimB.ports);
+      expect(portsA).toHaveLength(12);
+      expect(portsB).toHaveLength(12);
+      expect(new Set([...portsA, ...portsB]).size).toBe(24);
+      expect(envA.E2E_APP_CHECK_PORT).toBe(String(claimA.ports.appCheck));
+      expect(envA.E2E_APP_CHECK_JOBS_PORT).toBe(String(claimA.ports.appCheckJobs));
+      expect(envA.E2E_APP_PORT).toBe(String(claimA.ports.app));
+      expect(envA.E2E_JOBS_PORT).toBe(String(claimA.ports.jobs));
+    } finally {
+      claimA.release();
+      claimB.release();
+    }
+  });
+
+  it('honors explicit E2E server port env vars without modifying them', async () => {
+    const appCheckPort = await freeNearby(30_000);
+    const appCheckJobsPort = await freeNearby(appCheckPort);
+    const env: Record<string, string | undefined> = {
+      E2E_APP_CHECK_PORT: String(appCheckPort),
+      E2E_APP_CHECK_JOBS_PORT: String(appCheckJobsPort),
+    };
+    const claim = claimE2ePorts({ env, lockDir, releaseOnExit: false, isFree: () => true });
+    try {
+      expect(claim.custom).toBe(true);
+      expect(claim.ports.appCheck).toBe(appCheckPort);
+      expect(claim.ports.appCheckJobs).toBe(appCheckJobsPort);
+      expect(claim.ports.app).toBe(3100);
+      expect(claim.ports.jobs).toBe(3101);
+    } finally {
+      claim.release();
     }
   });
 });
