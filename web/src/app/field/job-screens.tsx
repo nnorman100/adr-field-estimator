@@ -73,11 +73,16 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   const mark = usePending(() => pending.mark(jobId));
   const denial = usePending(() => pending.denial(jobId));
   const detail = newerDetail(read?.mark === mark ? read.detail : null, posted);
+  // This person owned the job's field work in an answer this screen took: what they type here stays
+  // on screen, read only, should the job later be refused to them (owner decision J5).
+  const [heldHere, setHeldHere] = useState(false);
   const setDetail = useCallback(
     (next: JobDetail, sentAt: number) => {
-      if (pending.publishDetail(jobId, next, sentAt)) setRead({ detail: next, mark: sentAt });
+      if (!pending.publishDetail(jobId, next, sentAt)) return;
+      setRead({ detail: next, mark: sentAt });
+      if (next.job.fieldOwnerActorId === session.actorId) setHeldHere(true);
     },
-    [jobId],
+    [jobId, session.actorId],
   );
   const draftChanges = usePending(() => pending.draftChanges(jobId));
   const [draft, setDraft] = useState<FieldDraft | null>(null);
@@ -95,9 +100,12 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     },
     [jobId],
   );
-  // A refusal to show the job after a read: the field work stays on screen only while the draft as
-  // last read names this person as its field owner.
-  const dropUnlessMine = useCallback(() => setDraft((current) => (current?.fieldOwnerUid === session.user.uid ? current : null)), [session.user.uid]);
+  // A refusal to show the job after a read: the field work stays on screen only when it was this
+  // person's here, or the draft as last read names them as its field owner.
+  const dropUnlessMine = useCallback(
+    () => setDraft((current) => (heldHere || current?.fieldOwnerUid === session.user.uid ? current : null)),
+    [heldHere, session.user.uid],
+  );
 
   const reloadDraft = useCallback(
     async (current?: JobDetail) => {
@@ -198,7 +206,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   }, [draftChanges]);
 
   // Refused to this person while their field work was on screen: the job as last read stays, read only.
-  const kept = !detail && denial !== null && draft !== null && draft.fieldOwnerUid === session.user.uid ? (read?.detail ?? null) : null;
+  const kept = !detail && denial !== null && (heldHere || draft?.fieldOwnerUid === session.user.uid) ? (read?.detail ?? null) : null;
   if ((error || denial) && !detail && !kept) {
     return (
       <div className="flex flex-col gap-2">

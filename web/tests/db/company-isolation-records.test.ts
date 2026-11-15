@@ -60,6 +60,8 @@ const customerRoute = await import('@/app/api/jobs/[jobId]/customer/route');
 const estimateRoute = await import('@/app/api/jobs/[jobId]/estimate/route');
 const agreementsRoute = await import('@/app/api/jobs/[jobId]/agreements/route');
 const signingLinkRoute = await import('@/app/api/jobs/[jobId]/signing-link/route');
+const assignmentsRoute = await import('@/app/api/jobs/[jobId]/assignments/route');
+const coordinationRoute = await import('@/app/api/jobs/[jobId]/coordination/route');
 const signRoute = await import('@/app/api/sign/route');
 const signatureRoute = await import('@/app/api/sign/signature/[signatureId]/route');
 const signedSignatureRoute = await import('@/app/api/sign/signature/route');
@@ -124,8 +126,16 @@ type Side = {
   companyId: string;
   people: { owner: FakeClaims; estimator: FakeClaims; office: FakeClaims };
   // The job signed through a link, and the job with a pending signing link.
-  signed: { jobId: string; photoId: string; signatureId: string; homeowner: { id: string; token: string }; adjuster: { id: string; token: string }; usedToken: string };
-  pending: { jobId: string; photoId: string; token: string };
+  signed: {
+    jobId: string;
+    photoId: string;
+    signatureId: string;
+    assignmentId: string;
+    homeowner: { id: string; token: string };
+    adjuster: { id: string; token: string };
+    usedToken: string;
+  };
+  pending: { jobId: string; photoId: string; assignmentId: string; token: string };
   // Every id, hash and name of the company's rows that the other company's rows do not share, its
   // live tokens and its customers' names: what would show the company in an answer or a row.
   markers: string[];
@@ -170,10 +180,47 @@ async function signedSide(name: 'A' | 'B', companyId: string, estimator: FakeCla
   await h.admin`INSERT INTO job_claims (company_id, job_id, carrier, claim_number) VALUES (${companyId}, ${linked.jobId}, ${`Carrier Line ${name}`}, ${`Claim Line ${name}`})`;
   // A second job whose signing link is still pending.
   const pending = await l.linkedJob(estimator, companyId, { name: `Second Customer ${name}`, address: `${name} Second Lane, Testville` });
+  // S5b-1: office assigns the company's estimator to both jobs and keeps office notes on each.
+  const office: FakeClaims = { tenant: estimator.tenant, uid: `office-${name.toLowerCase()}` };
+  const estimatorActorId = name === 'A' ? h.seed.estimatorA.actor : h.seed.estimatorB.actor;
+  const coordinate = async (jobId: string, notes: string) => {
+    const id = randomUUID();
+    const assigned = await assignmentsRoute.POST(
+      request(office, `/api/jobs/${jobId}/assignments`, { method: 'POST', body: { id, estimatorActorId } }),
+      params({ jobId }),
+    );
+    expect(assigned.status).toBe(201);
+    const saved = await coordinationRoute.PUT(
+      request(office, `/api/jobs/${jobId}/coordination`, { method: 'PUT', body: { revision: 0, changeId: randomUUID(), notes } }),
+      params({ jobId }),
+    );
+    expect(saved.status).toBe(200);
+    return id;
+  };
+  const signedAssignment = await coordinate(linked.jobId, `Office Notes Line ${name}`);
+  const pendingAssignment = await coordinate(pending.jobId, `Office Notes Second ${name}`);
   return {
-    signed: { jobId: linked.jobId, photoId: linked.photoId, signatureId: signed.signatureId, homeowner: issued.homeowner, adjuster: issued.adjuster, usedToken: linked.token },
-    pending: { jobId: pending.jobId, photoId: pending.photoId, token: pending.token },
-    names: [customer.name, customer.address, `Second Customer ${name}`, `Signer Line ${name}`, `Carrier Line ${name}`, `Claim Line ${name}`, `Terms Line ${name}`],
+    signed: {
+      jobId: linked.jobId,
+      photoId: linked.photoId,
+      signatureId: signed.signatureId,
+      assignmentId: signedAssignment,
+      homeowner: issued.homeowner,
+      adjuster: issued.adjuster,
+      usedToken: linked.token,
+    },
+    pending: { jobId: pending.jobId, photoId: pending.photoId, assignmentId: pendingAssignment, token: pending.token },
+    names: [
+      customer.name,
+      customer.address,
+      `Second Customer ${name}`,
+      `Signer Line ${name}`,
+      `Carrier Line ${name}`,
+      `Claim Line ${name}`,
+      `Terms Line ${name}`,
+      `Office Notes Line ${name}`,
+      `Office Notes Second ${name}`,
+    ],
     tokens: [linked.token, pending.token, issued.homeowner.token, issued.adjuster.token],
   };
 }
@@ -268,6 +315,7 @@ const idsOf = (victim: Side, job: 'signed' | 'pending', company: Side = victim):
   photoId: victim[job].photoId,
   linkId: victim.signed.homeowner.id,
   signatureId: victim.signed.signatureId,
+  assignmentId: victim[job].assignmentId,
 });
 
 const directions = (): [Side, Side][] => [
@@ -316,8 +364,10 @@ describe('the S5a routes', () => {
   // Reads and deletes: a photo stored under the caller's own job is the caller's own, whatever its id.
   it('refuse the caller’s own job with the other company’s link, photo or signature ids', async () => {
     const before = await everything(h.admin);
-    const rows = s5aRows().filter((row) => row.kind === 'company' && row.own === 'cross' && row.method !== 'PUT' && /\[(linkId|photoId|signatureId)\]/.test(row.route));
-    expect(rows.map(matrixKey)).toEqual(expect.arrayContaining(['DELETE api/jobs/[jobId]/document-links/[linkId]', 'GET api/jobs/[jobId]/photos/[photoId]']));
+    const rows = s5aRows().filter((row) => row.kind === 'company' && row.own === 'cross' && row.method !== 'PUT' && /\[(linkId|photoId|signatureId|assignmentId)\]/.test(row.route));
+    expect(rows.map(matrixKey)).toEqual(
+      expect.arrayContaining(['DELETE api/jobs/[jobId]/document-links/[linkId]', 'GET api/jobs/[jobId]/photos/[photoId]', 'DELETE api/jobs/[jobId]/assignments/[assignmentId]']),
+    );
     for (const [attacker, victim] of directions()) {
       for (const [role, claims] of Object.entries(attacker.people)) {
         for (const row of rows) {
@@ -332,7 +382,7 @@ describe('the S5a routes', () => {
   });
 
   it('answer each company’s own people with its own records and lists, and never the other’s', async () => {
-    const reads = s5aRows().filter((row) => row.kind === 'company' && row.method === 'GET' && !/\[(linkId|photoId|signatureId)\]/.test(row.route));
+    const reads = s5aRows().filter((row) => row.kind === 'company' && row.method === 'GET' && !/\[(linkId|photoId|signatureId|assignmentId)\]/.test(row.route));
     for (const [self, other] of directions()) {
       for (const [role, claims] of Object.entries(self.people)) {
         for (const job of ['signed', 'pending'] as const) {
@@ -345,7 +395,7 @@ describe('the S5a routes', () => {
         }
       }
       // The owner's answers do show the company's own records, so the clean answers are not empty ones.
-      for (const route of ['api/jobs', 'api/jobs/[jobId]/estimate', 'api/jobs/[jobId]/agreements', 'api/jobs/[jobId]/document-links']) {
+      for (const route of ['api/jobs', 'api/jobs/[jobId]/estimate', 'api/jobs/[jobId]/agreements', 'api/jobs/[jobId]/document-links', 'api/jobs/[jobId]/coordination']) {
         const answer = await call({ route, method: 'GET' }, 'owner', self.people.owner, idsOf(self, 'signed'));
         expect({ route, as: self.name, status: answer.status, own: leaks(answer.text, self).length > 0 }).toEqual({ route, as: self.name, status: 200, own: true });
       }
@@ -424,6 +474,7 @@ async function outcomeOf(companyId: string, statement: string, values: unknown[]
 // Company tables the S5a flow does not fill, each with where its own two-company check is. A new
 // company table fails the suite until it is filled above or named here with its reason.
 const NOT_FILLED: Record<string, string> = {
+  agreement_corrections: 'S5b-1 table for S5b-4: office-tables.test.ts checks it; S5b-4 adds its routes',
   access_projection_outbox: 'S3 identity: company-isolation.test.ts seeds and attacks it',
   ai_ledger: 'S7 AI: ai-tables.test.ts and row-level-security.test.ts',
   ai_results: 'S7 AI: ai-tables.test.ts and row-level-security.test.ts',

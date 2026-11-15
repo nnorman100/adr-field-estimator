@@ -277,6 +277,48 @@ test('the phone that held the field work keeps what was typed when its estimator
   expect(row?.name ?? '').not.toBe('Robin Typed');
 });
 
+test('customer and claim changes typed before the draft could be read stay on the phone when the job is refused to it', async ({ page, request }) => {
+  test.setTimeout(120_000);
+  const company = await seedCompany('keep-no-draft', { owner: 'owner', office: 'office', first: 'estimator', second: 'estimator' });
+  const office = { Authorization: `Bearer ${withSecondFactor(await idTokenFor(company.tenantId, company.people.office!.email, PASSWORD))}` };
+  const jobId = randomUUID();
+  expect((await request.post(`${JOBS_BASE_URL}/api/jobs`, { headers: office, data: { id: jobId, draftId: randomUUID(), propertyAddress: '84 Unread Court' } })).status()).toBe(201);
+  const actors = await adminSql()<{ uid: string; id: string }[]>`SELECT uid, id::text FROM actors WHERE company_id = ${company.id}`;
+  const actorOf = (person: Person) => actors.find((one) => one.uid === person.uid)!.id;
+  const firstAssignment = randomUUID();
+  for (const [who, id] of [
+    [company.people.first!, firstAssignment],
+    [company.people.second!, randomUUID()],
+  ] as const) {
+    const assigned = await request.post(`${JOBS_BASE_URL}/api/jobs/${jobId}/assignments`, { headers: office, data: { id, estimatorActorId: actorOf(who) } });
+    expect(assigned.status()).toBe(201);
+  }
+  // The first estimator owns the field work in the database, but the draft does not name them yet,
+  // so this phone never reads the draft.
+  await adminSql()`UPDATE jobs SET field_owner_actor_id = ${actorOf(company.people.first!)}::uuid WHERE id = ${jobId}::uuid`;
+
+  await signIn(page, company, company.people.first!);
+  await openJob(page, '84 Unread Court');
+  await expect(page.getByRole('button', { name: 'Start field work' })).toBeVisible();
+  await main(page).getByRole('link', { name: 'Customer and claim' }).click();
+  await page.getByLabel('Customer name').fill('Jordan Typed');
+  await page.getByLabel('Insurance carrier').fill('Typed Mutual');
+  const owner = { Authorization: `Bearer ${withSecondFactor(await idTokenFor(company.tenantId, company.people.owner!.email, PASSWORD))}` };
+  const moved = await request.post(`${JOBS_BASE_URL}/api/jobs/${jobId}/field-owner/transfer`, {
+    headers: owner,
+    data: { revision: 0, changeId: randomUUID(), toActorId: actorOf(company.people.second!) },
+  });
+  expect(moved.status()).toBe(200);
+  expect((await request.delete(`${JOBS_BASE_URL}/api/jobs/${jobId}/assignments/${firstAssignment}`, { headers: office })).status()).toBe(200);
+
+  await page.getByRole('button', { name: 'Save customer' }).click();
+  await expect(page.getByText('This job is not in your list. What you changed and did not save stays on this phone', { exact: false })).toBeVisible();
+  await expect(page.getByLabel('Customer name')).toHaveValue('Jordan Typed');
+  await expect(page.getByLabel('Customer name')).not.toBeEditable();
+  await expect(page.getByLabel('Insurance carrier')).toHaveValue('Typed Mutual');
+  await expect(page.getByLabel('Insurance carrier')).not.toBeEditable();
+});
+
 test('an estimator whose field work the draft does not name yet starts it again and edits it', async ({ page, request }) => {
   test.setTimeout(120_000);
   const company = await seedCompany('owner-unset', { office: 'office', first: 'estimator' });
