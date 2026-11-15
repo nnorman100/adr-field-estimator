@@ -81,6 +81,7 @@ const linkColumns = {
   companyId: signingLinks.companyId,
   jobId: signingLinks.jobId,
   estimateId: signingLinks.estimateId,
+  tokenSha256: signingLinks.tokenSha256,
   status: signingLinks.status,
   requestDigest: signingLinks.requestDigest,
   createdByActorId: signingLinks.createdByActorId,
@@ -100,6 +101,7 @@ type LinkRow = {
   companyId: string;
   jobId: string;
   estimateId: string;
+  tokenSha256: string;
   status: 'pending' | 'used' | 'revoked' | 'voided';
   requestDigest: string;
   createdByActorId: string;
@@ -431,7 +433,7 @@ export function signingLinksService(db: Database, photos: PhotosService): Signin
             linkId: row.id,
             async check(inner, estimateId) {
               const locked = await linkById(inner, row.companyId, row.id, true);
-              if (!locked || locked.status === 'revoked' || locked.expired) throw new LinkError('link_unavailable');
+              if (!locked || locked.tokenSha256 !== tokenSha256 || locked.status === 'revoked' || locked.expired) throw new LinkError('link_unavailable');
               if (locked.status === 'used') throw new LinkError('already_signed');
               if (locked.status === 'voided' || locked.estimateId !== estimateId) throw new AgreementError('estimate_superseded');
             },

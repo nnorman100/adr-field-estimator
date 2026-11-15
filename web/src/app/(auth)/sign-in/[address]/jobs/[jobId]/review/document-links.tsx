@@ -6,7 +6,7 @@ import { ShareLink } from '@/components/links/share-link';
 import { Button } from '@/components/ui/button';
 import { signOutcomeOf } from '@/lib/agreements/screen';
 import { callApi } from '@/lib/firebase-client';
-import { documentLinkLine, documentLinksOf, linkAddress, SET_NAMES, type DocumentLinkView } from '@/lib/links/screen';
+import { documentLinkLine, documentLinksOf, issuedLinkOf, linkAddress, SET_NAMES, type DocumentLinkView } from '@/lib/links/screen';
 
 // Share the signed documents (S5a-11b): a read-only link to the homeowner's set (the signed proposal
 // and the photos) or the adjuster's (the itemized claim, the scope defense letter and the claim), for
@@ -15,7 +15,7 @@ import { documentLinkLine, documentLinksOf, linkAddress, SET_NAMES, type Documen
 // whoever may sign may make one again only once the set has no working link.
 
 type Set = keyof typeof SET_NAMES;
-type Made = { set: Set; token: string };
+type Made = { id: string; set: Set; token: string };
 
 export function DocumentLinks({ user, jobId, canSend, canRevoke, issued = [] }: { user: User; jobId: string; canSend: boolean; canRevoke: boolean; issued?: Made[] }) {
   const [links, setLinks] = useState<DocumentLinkView[]>([]);
@@ -49,12 +49,12 @@ export function DocumentLinks({ user, jobId, canSend, canRevoke, issued = [] }: 
     if (pending.current?.set !== set) pending.current = { set, id: crypto.randomUUID() };
     const answer = await callApi(user, path, { method: 'POST', json: { id: pending.current.id, set } });
     setBusy(false);
-    const body = answer.body as { token?: unknown } | null;
-    if ((answer.status === 200 || answer.status === 201) && typeof body?.token === 'string') {
+    void reload();
+    const one = answer.status === 200 || answer.status === 201 ? issuedLinkOf(answer.body) : null;
+    if (one) {
       pending.current = null;
-      const token = body.token;
-      setMade((before) => [...before.filter((shown) => shown.set !== set), { set, token }]);
-      return void reload();
+      setMade((before) => [...before.filter((shown) => shown.id !== one.id), one]);
+      return;
     }
     if (answer.status !== 0 && answer.status < 500) pending.current = null;
     setProblem(signOutcomeOf(answer.status, answer.body).message);
@@ -65,9 +65,13 @@ export function DocumentLinks({ user, jobId, canSend, canRevoke, issued = [] }: 
     setProblem(null);
     const answer = await callApi(user, `${path}/${encodeURIComponent(id)}`, { method: 'DELETE' });
     setBusy(false);
-    if (answer.status !== 200) return setProblem(signOutcomeOf(answer.status, answer.body).message);
     void reload();
+    if (answer.status !== 200) setProblem(signOutcomeOf(answer.status, answer.body).message);
   }
+
+  // A token is offered only while its link is listed as working: once revoked, replaced or expired,
+  // it is not shown again.
+  const shareable = made.filter((shown) => links.some((link) => link.id === shown.id && link.status === 'active'));
 
   // Making a link for a set with a working one would revoke it: only for someone who may revoke.
   const canMake = (set: Set) => canRevoke || (canSend && !links.some((link) => link.set === set && link.status === 'active'));
@@ -91,9 +95,9 @@ export function DocumentLinks({ user, jobId, canSend, canRevoke, issued = [] }: 
           {problem}
         </p>
       ) : null}
-      {made.map((shown) => (
+      {shareable.map((shown) => (
         <ShareLink
-          key={shown.set}
+          key={shown.id}
           address={linkAddress(window.location.origin, 'documents', shown.token)}
           label={`${SET_NAMES[shown.set]} link`}
           shareTitle="Your signed estimate documents"

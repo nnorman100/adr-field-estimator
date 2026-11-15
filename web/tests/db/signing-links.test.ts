@@ -348,6 +348,51 @@ describe('signing through a link', () => {
     expect(await l.agreementRows(jobId)).toHaveLength(1);
   });
 
+  it('a token replaced while its signing request waits signs nothing; the new token signs', async () => {
+    const { jobId, token, body } = await l.linkedJob();
+    const signatureId = randomUUID();
+    expect((await l.sendSignature(token, signatureId, image('raced'))).status).toBe(201);
+    // The sign request runs on a connection of its own, as on another server instance, and waits at
+    // the start of its signing transaction (its fifth: two lookups, two counters, then signing).
+    const { openDatabase } = await import('@/db/client');
+    const instance = openDatabase({ APP_ENV: 'test', DATABASE_URL: h.apiUrl });
+    try {
+      let begun!: () => void;
+      let release!: () => void;
+      const started = new Promise<void>((resolve) => (begun = resolve));
+      const held = new Promise<void>((resolve) => (release = resolve));
+      let calls = 0;
+      live.linksDb = new Proxy(instance.db, {
+        get(target, key, receiver) {
+          if (key !== 'transaction') return Reflect.get(target, key, receiver);
+          return (run: (tx: unknown) => Promise<unknown>, ...rest: unknown[]) => {
+            calls += 1;
+            if (calls !== 5) return (target.transaction as (...args: unknown[]) => Promise<unknown>)(run, ...rest);
+            return target.transaction(async (tx) => {
+              await tx.execute(sql`SELECT 1`);
+              begun();
+              await held;
+              return run(tx);
+            });
+          };
+        },
+      });
+      const waiting = l.signWith(token, l.signBody(signatureId));
+      await started;
+      live.linksDb = null;
+      // The technician's create sent again: the token is replaced.
+      const again = await l.makeLink(ESTIMATOR_A, jobId, body);
+      expect(again.status).toBe(200);
+      release();
+      expect(await waiting).toMatchObject({ status: 404, body: { error: 'link_unavailable' } });
+      expect(await l.agreementRows(jobId)).toEqual([]);
+      expect((await l.signWith(again.body.token, l.signBody(signatureId))).status).toBe(201);
+    } finally {
+      live.linksDb = null;
+      await instance.close();
+    }
+  });
+
   it('two simultaneous homeowner signatures give one agreement', async () => {
     const { jobId, token } = await l.linkedJob();
     const first = { id: randomUUID(), bytes: image('first') };

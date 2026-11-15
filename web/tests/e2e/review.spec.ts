@@ -549,3 +549,42 @@ test('the estimator makes a signing link, sees it once with copy and a QR code, 
   await expect(panel.getByRole('textbox', { name: 'Signing link' })).toHaveCount(0);
   expect(calls.map((call) => call.method)).toEqual(['GET', 'POST', 'DELETE']);
 });
+
+// S5a-11b: Share the signed documents. A token is offered only while its link works: once the owner
+// replaces or revokes it, Copy, Share and the QR code for it are gone.
+test('the owner replaces and revokes a document link, and its token is no longer offered', async ({ page }) => {
+  const job = { id: randomUUID(), status: 'signed', currentDraftId: randomUUID(), revision: 4 };
+  const made = estimateFor(team, job.id, job.currentDraftId, 'owner');
+  await playApi(page, job, { estimate: made, agreement: signedFor(made, randomUUID()) });
+  const token = 'D0cLinkTokenShownOnceInTheReviewPageTest_ab'.slice(0, 43);
+  type Link = { id: string; set: 'homeowner' | 'adjuster'; status: 'active' | 'revoked'; createdAt: string; expiresAt: string; endedAt: string | null };
+  const link = (id: string, set: Link['set']): Link => ({ id, set, status: 'active', createdAt: '2026-11-15T18:00:00.000Z', expiresAt: '2026-12-15T18:00:00.000Z', endedAt: null });
+  const links: Link[] = [link(randomUUID(), 'homeowner'), link(randomUUID(), 'adjuster')];
+  await page.route(`**/api/jobs/${job.id}/document-links**`, async (route: Route, request: Request) => {
+    const path = new URL(request.url()).pathname;
+    if (request.method() === 'GET') return route.fulfill({ json: { links } });
+    if (request.method() === 'POST') {
+      const body = request.postDataJSON() as { id: string; set: Link['set'] };
+      for (const old of links) if (old.set === body.set && old.status === 'active') Object.assign(old, { status: 'revoked', endedAt: '2026-11-15T18:05:00.000Z' });
+      const fresh = link(body.id, body.set);
+      links.unshift(fresh);
+      return route.fulfill({ status: 201, json: { link: fresh, token } });
+    }
+    const found = links.find((one) => path.endsWith(`/${one.id}`))!;
+    Object.assign(found, { status: 'revoked', endedAt: '2026-11-15T18:06:00.000Z' });
+    return route.fulfill({ json: { link: found } });
+  });
+  await signInTo(page, team.owner);
+  await page.goto(`/sign-in/${team.address}/jobs/${job.id}/review`);
+  const main = page.getByRole('main');
+  const panel = main.getByRole('region', { name: 'Share the signed documents' });
+  await panel.getByRole('button', { name: "Replace the link: Homeowner's documents" }).click();
+  const address = panel.getByRole('textbox', { name: "Homeowner's documents link" });
+  await expect(address).toHaveValue(new RegExp(`/documents#${token}$`));
+  await expect(panel.getByText("Homeowner's documents: revoked.")).toBeVisible();
+
+  await panel.getByRole('button', { name: "Revoke the homeowner's documents link" }).click();
+  await expect(panel.getByText("Homeowner's documents: revoked.")).toHaveCount(2);
+  await expect(panel.getByRole('textbox', { name: "Homeowner's documents link" })).toHaveCount(0);
+  await expect(panel.getByRole('button', { name: 'Copy link' })).toHaveCount(0);
+});

@@ -50,14 +50,21 @@ export function signingLinkOf(body: unknown): SigningLinkView | null {
 }
 
 /** The document links answered with a signature (made at signing), each with its token, shown once. */
-export function issuedLinksOf(body: unknown): { set: DocumentLinkView['set']; token: string }[] {
+export function issuedLinksOf(body: unknown): { id: string; set: DocumentLinkView['set']; token: string }[] {
   const issued = field(body, 'documentLinks');
   if (!Array.isArray(issued)) return [];
   return issued.flatMap((entry) => {
-    const set = field(field(entry, 'link'), 'set');
-    const token = field(entry, 'token');
-    return (set === 'homeowner' || set === 'adjuster') && typeof token === 'string' && TOKEN.test(token) ? [{ set, token }] : [];
+    const one = issuedLinkOf(entry);
+    return one ? [one] : [];
   });
+}
+
+/** One document link with its token, as a create or a signature answers it. */
+export function issuedLinkOf(entry: unknown): { id: string; set: DocumentLinkView['set']; token: string } | null {
+  const id = field(field(entry, 'link'), 'id');
+  const set = field(field(entry, 'link'), 'set');
+  const token = field(entry, 'token');
+  return typeof id === 'string' && (set === 'homeowner' || set === 'adjuster') && typeof token === 'string' && TOKEN.test(token) ? { id, set, token } : null;
 }
 
 export function documentLinksOf(body: unknown): DocumentLinkView[] | null {
