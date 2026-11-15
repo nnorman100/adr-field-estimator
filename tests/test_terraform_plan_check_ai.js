@@ -98,6 +98,10 @@ describe.each(['test', 'live'])('data root, %s: Model Armor', (environment) => {
       (a) => (a.template_metadata[0].ignore_partial_invocation_failures = true),
     ],
     [
+      'it sets ignore_partial_invocation_failures to false on create',
+      (a) => (a.template_metadata[0].ignore_partial_invocation_failures = false),
+    ],
+    [
       'a Responsible AI filter is dropped',
       (a) => a.filter_config[0].rai_settings[0].rai_filters.pop(),
     ],
@@ -124,6 +128,77 @@ describe.each(['test', 'live'])('data root, %s: Model Armor', (environment) => {
     ['it is in another project', (a) => (a.project = 'alert-disaster-field-2026')],
   ])('a text template where %s is refused', (_, fn) => {
     expect(edit(TEMPLATE, fn)).not.toEqual([]);
+  });
+
+  test('an unchanged no-op text template with ignore_partial_invocation_failures false passes', () => {
+    const changed = plan().map((rc) => {
+      const after = structuredClone(rc.change.after);
+      if (rc.address === TEMPLATE) {
+        after.template_metadata[0].ignore_partial_invocation_failures = false;
+      }
+      return {
+        ...rc,
+        change: { actions: ['no-op'], before: structuredClone(after), after },
+      };
+    });
+    expect(check(changed, 'data', environment)).toEqual([]);
+  });
+
+  test.each([
+    [
+      'before is null while after is false (before != after)',
+      (rc) => {
+        rc.change.before.template_metadata[0].ignore_partial_invocation_failures = null;
+        rc.change.after.template_metadata[0].ignore_partial_invocation_failures = false;
+      },
+    ],
+    [
+      'before is missing while after is false',
+      (rc) => {
+        delete rc.change.before;
+        rc.change.after.template_metadata[0].ignore_partial_invocation_failures = false;
+      },
+    ],
+    [
+      'another field differs between before and after',
+      (rc) => {
+        rc.change.before.labels = { ...rc.change.before.labels, extra: 'drift' };
+        rc.change.after.template_metadata[0].ignore_partial_invocation_failures = false;
+      },
+    ],
+    [
+      'both before and after set ignore_partial_invocation_failures to true',
+      (rc) => {
+        rc.change.before.template_metadata[0].ignore_partial_invocation_failures = true;
+        rc.change.after.template_metadata[0].ignore_partial_invocation_failures = true;
+      },
+    ],
+    [
+      'an update sets ignore_partial_invocation_failures to false',
+      (rc) => {
+        rc.change.actions = ['update'];
+        rc.change.after.template_metadata[0].ignore_partial_invocation_failures = false;
+      },
+    ],
+    [
+      'an update sets ignore_partial_invocation_failures to true',
+      (rc) => {
+        rc.change.actions = ['update'];
+        rc.change.after.template_metadata[0].ignore_partial_invocation_failures = true;
+      },
+    ],
+  ])('a text template where %s is refused', (_, mutate) => {
+    const changed = plan().map((rc) => ({
+      ...rc,
+      change: {
+        actions: ['no-op'],
+        before: structuredClone(rc.change.after),
+        after: structuredClone(rc.change.after),
+      },
+    }));
+    mutate(find(changed, TEMPLATE));
+    const problems = check(changed, 'data', environment);
+    expect(problems.some((p) => p.includes('ignore_partial_invocation_failures'))).toBe(true);
   });
 
   test('sanitize access is roles/modelarmor.user for the web app and the relay, one account each, no condition', () => {
@@ -190,6 +265,10 @@ describe('data root, test: the floor setting and the evaluation account', () => 
     ['Cloud Logging is unset', (a) => (a.ai_platform_floor_setting[0].enable_cloud_logging = null)],
     ['it does not block', (a) => (a.ai_platform_floor_setting[0].inspect_and_block = false)],
     ['it inspects only', (a) => (a.ai_platform_floor_setting[0].inspect_only = true)],
+    [
+      'a create sets inspect_only to false',
+      (a) => (a.ai_platform_floor_setting[0].inspect_only = false),
+    ],
     ['enforcement is off', (a) => (a.enable_floor_setting_enforcement = false)],
     ['Agent Platform is not integrated', (a) => (a.integrated_services = [])],
     [
@@ -206,6 +285,80 @@ describe('data root, test: the floor setting and the evaluation account', () => 
     ],
   ])('a floor setting where %s is refused', (_, fn) => {
     expect(edit(FLOOR, fn)).not.toEqual([]);
+  });
+
+  test('an unchanged no-op re-apply with both provider-populated false fields passes', () => {
+    const changed = plan().map((rc) => {
+      const after = structuredClone(rc.change.after);
+      if (rc.address === TEMPLATE) {
+        after.template_metadata[0].ignore_partial_invocation_failures = false;
+      }
+      if (rc.address === FLOOR) {
+        after.ai_platform_floor_setting[0].inspect_only = false;
+      }
+      return {
+        ...rc,
+        change: { actions: ['no-op'], before: structuredClone(after), after },
+      };
+    });
+    expect(check(changed, 'data', environment)).toEqual([]);
+  });
+
+  test.each([
+    [
+      'before is null while after is false (before != after)',
+      (rc) => {
+        rc.change.before.ai_platform_floor_setting[0].inspect_only = null;
+        rc.change.after.ai_platform_floor_setting[0].inspect_only = false;
+      },
+    ],
+    [
+      'before is missing while after is false',
+      (rc) => {
+        delete rc.change.before;
+        rc.change.after.ai_platform_floor_setting[0].inspect_only = false;
+      },
+    ],
+    [
+      'another field differs between before and after',
+      (rc) => {
+        rc.change.before.integrated_services = [];
+        rc.change.after.ai_platform_floor_setting[0].inspect_only = false;
+      },
+    ],
+    [
+      'both before and after set inspect_only to true',
+      (rc) => {
+        rc.change.before.ai_platform_floor_setting[0].inspect_only = true;
+        rc.change.after.ai_platform_floor_setting[0].inspect_only = true;
+      },
+    ],
+    [
+      'an update sets inspect_only to false',
+      (rc) => {
+        rc.change.actions = ['update'];
+        rc.change.after.ai_platform_floor_setting[0].inspect_only = false;
+      },
+    ],
+    [
+      'an update sets inspect_only to true',
+      (rc) => {
+        rc.change.actions = ['update'];
+        rc.change.after.ai_platform_floor_setting[0].inspect_only = true;
+      },
+    ],
+  ])('a floor setting where %s is refused', (_, mutate) => {
+    const changed = plan().map((rc) => ({
+      ...rc,
+      change: {
+        actions: ['no-op'],
+        before: structuredClone(rc.change.after),
+        after: structuredClone(rc.change.after),
+      },
+    }));
+    mutate(find(changed, FLOOR));
+    const problems = check(changed, 'data', environment);
+    expect(problems.some((p) => p.includes('inspect_only'))).toBe(true);
   });
 
   test('the evaluation account can predict and screen and nothing else', () => {

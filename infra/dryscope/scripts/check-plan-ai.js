@@ -54,7 +54,17 @@ const LIVE_CONCURRENCY = { test: 20, live: 10 };
  * check-plan.js's expectedPlan. `wif` is the address of the deploy account's keyless binding, whose
  * member rule the evaluation account's binding shares.
  */
-function addAiData(env, { sa, others, grants, attrs, absent, optional, wif }) {
+function addAiData(
+  env,
+  { sa, others, grants, attrs, absent, optional, wif, empty, unchangedNoOp },
+) {
+  // The provider populates ignore_partial_invocation_failures and inspect_only with `false` once
+  // the resource exists; accept `false` on an unchanged no-op resource while still refusing any
+  // create or update that sets them.
+  const absentOrNoopFalse = Object.assign(
+    (got, rc) => empty(got) || (got === false && unchangedNoOp(rc)),
+    { toString: () => 'empty (or false on an unchanged no-op)' },
+  );
   // Model Armor: this environment's text template, and sanitize access for the two services.
   // Project-wide with no condition: IAM Conditions cannot scope Model Armor by resource name.
   const template = 'google_model_armor_template.text';
@@ -68,13 +78,13 @@ function addAiData(env, { sa, others, grants, attrs, absent, optional, wif }) {
     'template_metadata.0.log_template_operations': false,
     'template_metadata.0.filter_version_selector.0.version': MODEL_ARMOR_FILTER_VERSION,
     'template_metadata.0.multi_language_detection.0.enable_multi_language_detection': true,
+    // Ignoring a failed detector would turn a failed screen into an allow.
+    'template_metadata.0.ignore_partial_invocation_failures': absentOrNoopFalse,
     ...MODEL_ARMOR_FILTERS,
   };
   absent[template] = [
     // A version alias would let the filters change under a running feature.
     'template_metadata.0.filter_version_selector.0.alias',
-    // Ignoring a failed detector would turn a failed screen into an allow.
-    'template_metadata.0.ignore_partial_invocation_failures',
     'filter_config.0.sdp_settings.0.advanced_config',
   ];
   for (const k of SERVICES) {
@@ -96,12 +106,12 @@ function addAiData(env, { sa, others, grants, attrs, absent, optional, wif }) {
       enable_floor_setting_enforcement: true,
       integrated_services: ['AI_PLATFORM'],
       'ai_platform_floor_setting.0.inspect_and_block': true,
+      'ai_platform_floor_setting.0.inspect_only': absentOrNoopFalse,
       'ai_platform_floor_setting.0.enable_cloud_logging': false,
       'floor_setting_metadata.0.multi_language_detection.0.enable_multi_language_detection': true,
       ...MODEL_ARMOR_FILTERS,
     };
     absent[floor] = [
-      'ai_platform_floor_setting.0.inspect_only',
       'google_mcp_server_floor_setting',
       'filter_config.0.sdp_settings.0.advanced_config',
     ];
