@@ -132,6 +132,7 @@ function RecordForm({
   }
 
   async function save() {
+    if (!job.session.online) return setError('Needs a connection');
     const held = pending.record(jobId);
     if (held && (held.kind !== kind || held.sending)) return;
     takeRefusal();
@@ -190,10 +191,11 @@ function RecordForm({
           />
         ))}
         {readOnly ? null : (
-          <Button type="submit" disabled={busy || waiting}>
+          <Button type="submit" disabled={busy || waiting || !job.session.online}>
             {busy ? 'Saving…' : mine ? 'Try again' : `Save ${title.toLowerCase()}`}
           </Button>
         )}
+        {!readOnly && !job.session.online ? <p role="status">Needs a connection</p> : null}
         {waiting ? (
           <p className="text-sm">The {unsettled.kind} save has not been answered yet. Try it again first.</p>
         ) : null}

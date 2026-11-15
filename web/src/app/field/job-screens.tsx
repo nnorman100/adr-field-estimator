@@ -28,7 +28,7 @@ export type JobContext = {
   // The field draft as the field database holds it; null when it could not be read.
   draft: FieldDraft | null;
   draftRef: DraftRef;
-  reloadDraft: () => Promise<void>;
+  reloadDraft: (source?: 'cache') => Promise<void>;
   // Takes a refusal of the photo route or the field database (null for none): 401 or 403 drops the
   // job from the screen; a 404 may be a missing photo, so the job is read again and that decides.
   checkAccess: (refusal: Refusal | null) => void;
@@ -74,11 +74,11 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   );
 
   const reloadDraft = useCallback(
-    async (current?: JobDetail) => {
+    async (current?: JobDetail, source?: 'cache') => {
       const job = current ?? detail;
       if (!job || !session.db) return;
       try {
-        const found = await loadDraft(session.db, { companyId: session.companyId, draftId: job.job.currentDraftId });
+        const found = await loadDraft(session.db, { companyId: session.companyId, draftId: job.job.currentDraftId }, source);
         setDraft(found);
         setDraftError(found ? null : 'The field work of this job is not there yet. Try again in a moment.');
       } catch (error) {
@@ -116,6 +116,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   );
 
   const reloadJob = useCallback(async () => {
+    if (!session.online) return null;
     const sentAt = pending.mark(jobId);
     return apply(await readJob(session.user, jobId), sentAt);
   }, [apply, session, jobId]);
@@ -135,6 +136,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
 
   // The first read; each job is its own component (keyed by the parent).
   useEffect(() => {
+    if (!session.online) return;
     let live = true;
     const sentAt = pending.mark(jobId);
     void readJob(session.user, jobId).then((answer) => {
@@ -146,7 +148,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [session.online]);
 
   // A photo that settled after an earlier screen of this job closed changed the draft: read it again.
   useEffect(() => {
@@ -166,7 +168,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       </div>
     );
   }
-  if (!detail) return <p role="status">Opening the job…</p>;
+  if (!detail) return <p role="status">{session.online ? 'Opening the job…' : 'Needs a connection'}</p>;
 
   const context: JobContext = {
     session,
@@ -175,9 +177,9 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     reloadJob,
     draft,
     draftRef: { companyId: session.companyId, draftId: detail.job.currentDraftId },
-    reloadDraft: () => reloadDraft(detail),
+    reloadDraft: (source) => reloadDraft(detail, source),
     checkAccess,
-    editable: draft !== null && canEditDraft(draft, session.user.uid, session.capabilities),
+    editable: draft !== null && canEditDraft(draft, session.user.uid, session.capabilities) && (session.online || session.offlineCapture),
     stale: draft !== null && draftError !== null,
   };
 

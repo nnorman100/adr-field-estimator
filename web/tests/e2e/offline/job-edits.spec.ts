@@ -1,0 +1,160 @@
+// The actual job screens behind the network lane, including WebKit's worker-controlled page.
+// Only the SQL reads are stand-ins; field writes and their receipts use the real emulator/rules.
+import { randomUUID } from 'node:crypto';
+import { HIDDEN_TEXT } from '../../../src/app/field/field-store-text';
+import { keepKey } from '../../../src/lib/field/keep-consent';
+import { unsentKey } from '../../../src/lib/field/unsent';
+import { expect, expectNothingSent, SEND_MS, test } from './fixture';
+import { FieldPhone, inDays } from './field-phone';
+import { adminDb, readDraft, seedCompany, type World } from './world';
+import type { Page } from '@playwright/test';
+import type { NetworkLane } from './lane';
+
+test.use({ serviceWorkers: 'allow', viewport: { width: 390, height: 844 } });
+
+async function openJob(page: Page, lane: NetworkLane, world: World, jobId: string) {
+  lane.serve('/api/me', { type: 'application/json', body: JSON.stringify({
+    company: { id: world.companyId, name: 'Field Test' }, role: 'estimator',
+    capabilities: ['scope', 'jobs_create', 'photos'], fieldAccessExpiresAt: inDays(7).toISOString(),
+  }) });
+  lane.serve(`/api/jobs/${jobId}`, { type: 'application/json', body: JSON.stringify({
+    job: { id: jobId, status: 'draft', currentDraftId: world.draftId, fieldOwnerActorId: 'actor',
+      propertyAddress: 'Offline test job', revision: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+    customer: { name: '', phone: '', email: '' },
+    claim: { carrier: '', claimNumber: '', policyNumber: '', dateOfLoss: null, lossCause: '',
+      adjusterName: '', adjusterEmail: '', adjusterPhone: '', deductible: '' },
+  }) });
+  lane.serve(`/api/jobs/${jobId}/scope-lists`, { type: 'application/json', body: JSON.stringify({
+    version: null, roomTypes: [], items: [], prepTasks: ['Protect contents'],
+  }) });
+  await page.goto(`${lane.appUrl}/field?job=${jobId}`);
+  await page.getByRole('button', { name: 'Keep jobs on this phone' }).click();
+  await expect(page.getByLabel('Year built')).toBeEditable();
+}
+
+async function mark(page: Page, world: World) {
+  return page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? 'null'), unsentKey(world.tenantId, world.owner.uid));
+}
+
+async function signedIn(context: Parameters<typeof FieldPhone.open>[0], lane: NetworkLane, world: World) {
+  const phone = await FieldPhone.open(context, lane);
+  const person = await phone.signIn(world, world.owner);
+  await phone.call('saveMe', person, { companyId: world.companyId, role: 'estimator', capabilities: ['scope', 'jobs_create', 'photos'], authTime: Date.now() });
+  return phone;
+}
+
+test('an open job saves scope and rooms offline, marks unsent work, and reconnects once', async ({ context, lane }) => {
+  const world = await seedCompany();
+  const phone = await signedIn(context, lane, world);
+  await openJob(phone.page, lane, world, randomUUID());
+  const page = phone.page;
+  lane.cut();
+  await page.evaluate(() => window.dispatchEvent(new Event('offline')));
+  await expect(page.getByText(/No signal/)).toBeVisible();
+  await page.getByLabel('Year built').fill('1962');
+  await page.getByRole('button', { name: 'Save scope', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Save scope', exact: true })).toBeEnabled();
+  await expect(page.getByRole('form', { name: 'Job scope' }).getByRole('status')).toContainText('Saved on this phone');
+  await expect.poll(() => mark(page, world)).toMatchObject({ unsentSince: expect.any(Number) });
+  await page.getByLabel('New room name').fill('Kitchen');
+  await page.getByRole('button', { name: 'Add room', exact: true }).click();
+  const room = page.getByRole('form', { name: 'Kitchen', exact: true });
+  await expect(room).toBeVisible();
+  await room.getByLabel('Floor area (sq ft)', { exact: true }).fill('120');
+  await room.getByLabel('Water category or mold').selectOption('2');
+  await room.getByLabel('Findings in this room').fill('Wet baseboard');
+  await room.getByLabel('Your own prep task').fill('Protect contents');
+  await room.getByRole('button', { name: 'Add own task', exact: true }).click();
+  await room.getByRole('button', { name: 'Save room', exact: true }).click();
+  await expect(room.getByRole('button', { name: 'Save room', exact: true })).toBeEnabled();
+  await expectNothingSent(lane);
+  expect((await readDraft(world)).field).not.toHaveProperty('yearBuilt');
+  lane.restore();
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await expect.poll(async () => (await readDraft(world)).field, { timeout: SEND_MS }).toMatchObject({ yearBuilt: 1962, roomOrder: [expect.any(String)] });
+  await expect.poll(() => mark(page, world), { timeout: SEND_MS }).toMatchObject({ unsentSince: null });
+  const stored = await adminDb().collection(`${world.draftPath}/rooms`).get();
+  expect(stored.docs.map((item) => item.data().field)).toEqual([{ name: 'Kitchen', category: 2, floorSf: 120, findings: 'Wet baseboard', prepTasks: ['Protect contents'] }]);
+  const revision = (await adminDb().doc(world.draftPath).get()).updateTime!.toMillis();
+  await page.waitForTimeout(3000);
+  expect((await adminDb().doc(world.draftPath).get()).updateTime!.toMillis()).toBe(revision);
+});
+
+test('SQL customer and claim edits need a connection and are never queued offline', async ({ context, lane }) => {
+  const world = await seedCompany();
+  const phone = await signedIn(context, lane, world);
+  await openJob(phone.page, lane, world, randomUUID());
+  const page = phone.page;
+  await page.getByRole('link', { name: 'Customer and claim' }).click();
+  lane.cut();
+  await page.evaluate(() => window.dispatchEvent(new Event('offline')));
+  await expect(page.getByRole('button', { name: 'Save customer', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Save claim', exact: true })).toBeDisabled();
+  await expect(page.getByText('Needs a connection', { exact: true }).first()).toBeVisible();
+});
+
+test('a person locked out past 30 days sees no job inputs offline, and no local work is deleted', async ({ context, lane }) => {
+  const world = await seedCompany();
+  const phone = await signedIn(context, lane, world);
+  await phone.call('setMark', phone.person(world, world.owner), {
+    writes: 1, unsentSince: Date.now(), lockedSince: Date.now() - 31 * 86_400_000, lockedReason: 'member-disabled',
+  });
+  await phone.page.evaluate((key) => localStorage.setItem(key, 'keep'), keepKey(world.tenantId));
+  lane.drop('/api/me');
+  await phone.page.goto(`${lane.appUrl}/field?job=${randomUUID()}`);
+  await phone.page.evaluate(() => navigator.serviceWorker.ready);
+  lane.cut();
+  await phone.page.reload();
+  await expect(phone.page.getByText(HIDDEN_TEXT)).toBeVisible();
+  await expect(phone.page.getByLabel('Year built')).toHaveCount(0);
+  await expect(phone.page.getByLabel('Customer name')).toHaveCount(0);
+  expect(await mark(phone.page, world)).toMatchObject({ unsentSince: expect.any(Number), lockedReason: 'member-disabled' });
+});
+
+// This proves persistence of the screen's edit, independent of the pending design for displaying
+// the entire job while offline after reload: it must be intact when the job next opens online.
+test('a scope edit made by the screen survives an offline reload and syncs after reconnect', async ({ context, lane }) => {
+  const world = await seedCompany();
+  const phone = await signedIn(context, lane, world);
+  await openJob(phone.page, lane, world, randomUUID());
+  const page = phone.page;
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  await page.reload();
+  await expect(page.getByLabel('Year built')).toBeEditable();
+  expect(await page.evaluate(() => navigator.serviceWorker.controller !== null)).toBe(true);
+  lane.cut();
+  await page.evaluate(() => window.dispatchEvent(new Event('offline')));
+  await expect(page.getByText(/No signal/)).toBeVisible();
+  await page.getByLabel('Year built').fill('1962');
+  await page.getByRole('button', { name: 'Save scope', exact: true }).click();
+  await expect(page.getByRole('form', { name: 'Job scope' }).getByRole('status')).toContainText('Saved on this phone');
+  const unsentBefore = await mark(page, world);
+  await page.reload();
+  await expect.poll(() => mark(page, world)).toMatchObject({ unsentSince: unsentBefore.unsentSince });
+  expect((await readDraft(world)).field).not.toHaveProperty('yearBuilt');
+  await expectNothingSent(lane);
+  lane.restore();
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await expect.poll(async () => (await readDraft(world)).field.yearBuilt, { timeout: SEND_MS }).toBe(1962);
+  await expect(page.getByLabel('Year built')).toHaveValue('1962');
+  await expect.poll(() => mark(page, world)).toMatchObject({ unsentSince: null });
+});
+
+test('a phone that cannot save its unsent mark makes no field edit and keeps the typed value', async ({ context, lane }) => {
+  const world = await seedCompany();
+  const phone = await signedIn(context, lane, world);
+  await openJob(phone.page, lane, world, randomUUID());
+  const page = phone.page;
+  await page.evaluate((key) => {
+    const real = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (name, value) {
+      if (name === key) throw new DOMException('Full', 'QuotaExceededError');
+      return real.call(this, name, value);
+    };
+  }, unsentKey(world.tenantId, world.owner.uid));
+  await page.getByLabel('Year built').fill('1962');
+  await page.getByRole('button', { name: 'Save scope', exact: true }).click();
+  await expect(page.getByRole('form', { name: 'Job scope' }).getByRole('alert')).toContainText('phone could not record');
+  await expect(page.getByLabel('Year built')).toHaveValue('1962');
+  expect((await readDraft(world)).field).not.toHaveProperty('yearBuilt');
+});

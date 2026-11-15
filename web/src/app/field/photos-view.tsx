@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { notePhoto, photoSent } from '@/lib/field/unsent';
+import { fieldWrite, settle } from '@/lib/field-db';
 import { Button } from '@/components/ui/button';
 import { photoAddress, sendPhoto, SHOT_NAMES } from '@/lib/field/api';
 import { pending as unsent, usePending, type PendingPhoto } from '@/lib/field/pending';
@@ -38,7 +40,7 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
     };
   }, []);
   const [error, setError] = useState<string | null>(null);
-  const canTake = job.editable && job.session.capabilities.includes('photos');
+  const canTake = job.editable && job.session.capabilities.includes('photos') && job.session.online;
   const roomOptions = [{ value: '', label: 'No room' }, ...draft.rooms.map((room) => ({ value: room.id, label: room.field.name ?? 'Room' }))];
   const roomName = (id: string | undefined) => draft.rooms.find((room) => room.id === id)?.field.name ?? null;
 
@@ -46,7 +48,7 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
 
   async function finish(item: PendingPhoto) {
     const db = job.session.db;
-    if (!db) return;
+    if (!db || !job.session.online) return;
     update(item.id, { step: 'sending', message: undefined });
     const sent = await sendPhoto(job.session.user, jobId, item.id, item.bytes);
     if (!sent.ok) {
@@ -55,11 +57,13 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
     }
     update(item.id, { step: 'saving' });
     try {
-      await savePhotoRef(db, job.draftRef, item.id, item.field);
+      await fieldWrite(job.session.client, (fieldDb) => savePhotoRef(fieldDb, job.draftRef, item.id, item.field));
       // The screen that sent it may have closed since: then the open one is told to read the draft.
       if (live.current) await job.reloadDraft();
       else unsent.draftChanged(jobId);
       unsent.removePhoto(jobId, item.id);
+      photoSent(job.session.client.person.tenantId, job.session.user.uid, item.id);
+      void settle(job.session.client).catch(() => undefined);
     } catch (error) {
       update(item.id, { step: 'save-failed', message: 'The photo is stored but its room and tag were not saved. Save again.' });
       job.checkAccess(fieldRefusal(error));
@@ -72,6 +76,9 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
     const bytes = await preparePhoto(file);
     if (!bytes) return setError('This picture could not be read. Take the photo with the camera.');
     const item: PendingPhoto = { id: crypto.randomUUID(), bytes, field: fieldOf(roomId, shotTag), step: 'sending' };
+    if (!notePhoto(job.session.client.person.tenantId, job.session.user.uid, item.id)) {
+      return setError('This phone could not record the photo as unsent. Try again.');
+    }
     unsent.addPhoto(jobId, item);
     await finish(item);
   }
@@ -79,6 +86,7 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
   return (
     <div className="flex flex-col gap-4">
       <h3 className="sr-only">Photos</h3>
+      {!job.session.online ? <p role="status">Needs a connection to send photos. Keep this window open until every photo is sent.</p> : null}
       {canTake ? (
         <Section title="Take a photo">
           <Choice id="photo-room" label="Room" value={roomId} options={roomOptions} onChange={setRoomId} />
@@ -112,7 +120,7 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
                 <p role="status">{item.step === 'sending' ? 'Sending the photo…' : item.step === 'saving' ? 'Saving its room and tag…' : 'Not sent yet.'}</p>
                 {item.message ? <p role="alert">{item.message}</p> : null}
                 {item.step === 'send-failed' || item.step === 'save-failed' ? (
-                  <Button variant="outline" onClick={() => void finish(item)}>
+                  <Button variant="outline" disabled={!job.session.online} onClick={() => void finish(item)}>
                     Send again
                   </Button>
                 ) : null}

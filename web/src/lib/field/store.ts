@@ -1,19 +1,19 @@
 // The phone's reads and writes of one job's field draft in the field database (S5a-6), through the
-// Firebase web SDK. Online only for now (S6 adds the phone's own store): every write waits for the
-// field database to accept it, so "Saved" on screen means saved. The rules (web/firestore.rules)
+// Firebase web SDK. Screens enqueue writes through fieldWrite on the shell's person client;
+// local receipts and server acknowledgements are separate (./local-edit.ts). The rules (web/firestore.rules)
 // let only the draft's field owner, while it is `editing`, change only the `field` maps; each write
 // here changes nothing else, and its values come from ./forms.ts, checked by the same schema.
 //
 // Paths (docs/plans/S5.md, section 3): companies/{c}/drafts/{d} holds the job-level facts,
 // drafts/{d}/rooms/{roomId} one room, drafts/{d}/photos/{photoId} one photo reference.
 import {
-  arrayRemove,
-  arrayUnion,
   collection,
   deleteField,
   doc,
-  getDocFromServer,
-  getDocsFromServer,
+  getDoc,
+  getDocs,
+  getDocFromCache,
+  getDocsFromCache,
   setDoc,
   updateDoc,
   writeBatch,
@@ -61,15 +61,17 @@ function mapOf<T>(schema: { safeParse: (value: unknown) => { success: boolean; d
   return parsed.data as T;
 }
 
-// The draft, its rooms and its photo references, read from the field database itself (never a
-// cache), or null when there is no such draft. Throws InvalidFieldData when a stored map does not
+// The draft, rooms and photo references through the sync-gated client, or explicitly from the
+// cache after a local edit. Returns null when there is no such draft. Throws InvalidFieldData when a stored map does not
 // follow the field map.
-export async function loadDraft(db: Firestore, ref: DraftRef): Promise<FieldDraft | null> {
+export async function loadDraft(db: Firestore, ref: DraftRef, source?: 'cache'): Promise<FieldDraft | null> {
   const path = draftPath(ref);
+  const readDoc = source === 'cache' ? getDocFromCache : getDoc;
+  const readDocs = source === 'cache' ? getDocsFromCache : getDocs;
   const [draft, rooms, photos] = await Promise.all([
-    getDocFromServer(doc(db, path)),
-    getDocsFromServer(collection(db, path, 'rooms')),
-    getDocsFromServer(collection(db, path, 'photos')),
+    readDoc(doc(db, path)),
+    readDocs(collection(db, path, 'rooms')),
+    readDocs(collection(db, path, 'photos')),
   ]);
   if (!draft.exists()) return null;
   const data = draft.data();
@@ -99,21 +101,21 @@ export async function saveDraftField(db: Firestore, ref: DraftRef, changes: Fiel
 
 // A new room: its document and its place at the end of the room order, in one batch, so a room is
 // never listed without its document or the other way round.
-export async function addRoom(db: Firestore, ref: DraftRef, roomId: string, name: string): Promise<void> {
+export async function addRoom(db: Firestore, ref: DraftRef, roomId: string, name: string, order: readonly string[]): Promise<void> {
   const path = draftPath(ref);
   const batch = writeBatch(db);
   batch.set(doc(db, path, 'rooms', roomId), { field: { name } });
-  batch.update(doc(db, path), { 'field.roomOrder': arrayUnion(roomId) });
+  batch.update(doc(db, path), { 'field.roomOrder': [...order.filter((id) => id !== roomId), roomId] });
   await batch.commit();
 }
 
 // Removes a room: its document and its place in the room order, in one batch (the rules let only
 // the field owner delete a room, while the draft is editing). A photo tagged to it shows untagged.
-export async function removeRoom(db: Firestore, ref: DraftRef, roomId: string): Promise<void> {
+export async function removeRoom(db: Firestore, ref: DraftRef, roomId: string, order: readonly string[]): Promise<void> {
   const path = draftPath(ref);
   const batch = writeBatch(db);
   batch.delete(doc(db, path, 'rooms', roomId));
-  batch.update(doc(db, path), { 'field.roomOrder': arrayRemove(roomId) });
+  batch.update(doc(db, path), { 'field.roomOrder': order.filter((id) => id !== roomId) });
   await batch.commit();
 }
 

@@ -66,6 +66,8 @@ export type UnsentMark = {
   // Every unsent write was made in a memory cache (Online only, an iPhone browser tab, the
   // fallback): nothing of it is kept once that window closes.
   memoryOnly?: true;
+  // IDs only: the current photo path keeps bytes in page memory until S6-5 adds its queue.
+  photosInMemory?: string[];
 };
 
 const EMPTY: UnsentMark = { writes: 0, unsentSince: null, lockedSince: null };
@@ -82,6 +84,9 @@ function parse(raw: string | null): UnsentMark | null {
     const lockedSince = time(value.lockedSince);
     const unsentSince = time(value.unsentSince);
     const mark: UnsentMark = { writes: value.writes, unsentSince, lockedSince };
+    if (Array.isArray(value.photosInMemory) && value.photosInMemory.every((id) => typeof id === 'string')) {
+      mark.photosInMemory = value.photosInMemory;
+    }
     if (unsentSince !== null && value.memoryOnly === true) mark.memoryOnly = true;
     if (lockedSince !== null) {
       const reason = value.lockedReason;
@@ -142,6 +147,27 @@ export function noteWrite(tenantId: string, uid: string, now = Date.now(), inMem
   return saved ? writes : null;
 }
 
+// A photo is unsent before its upload starts. Counts IDs, never bytes; repeated attempts retain
+// one mark. Settling a field write cannot hide photos still awaiting their server receipts.
+export function notePhoto(tenantId: string, uid: string, id: string): boolean {
+  return change(tenantId, uid, (mark) => ({
+    ...mark,
+    unsentSince: mark.unsentSince ?? Date.now(),
+    ...(mark.unsentSince === null ? { memoryOnly: true as const } : {}),
+    photosInMemory: [...new Set([...(mark.photosInMemory ?? []), id])],
+  }));
+}
+
+// Only after both the byte receipt and the field-reference acknowledgement. The caller then
+// calls settle(client), so outstanding field writes still prevent clearing the unsent timestamp.
+export function photoSent(tenantId: string, uid: string, id: string): void {
+  change(tenantId, uid, (mark) => {
+    const { photosInMemory, ...rest } = mark;
+    const remaining = (photosInMemory ?? []).filter((photo) => photo !== id);
+    return { ...rest, ...(remaining.length ? { photosInMemory: remaining } : {}) };
+  });
+}
+
 // The write count now, for a clearing that starts now.
 export function writesNow(tenantId: string, uid: string): number | null {
   const mark = readUnsent(tenantId, uid);
@@ -152,7 +178,9 @@ export function writesNow(tenantId: string, uid: string): number | null {
 // been made since (it may still be waiting).
 export function settled(tenantId: string, uid: string, writes: number): void {
   change(tenantId, uid, ({ memoryOnly, ...mark }) =>
-    mark.writes === writes ? { ...mark, unsentSince: null } : { ...mark, ...(memoryOnly ? { memoryOnly } : {}) },
+    mark.writes === writes
+      ? mark.photosInMemory?.length ? { ...mark, memoryOnly: true } : { ...mark, unsentSince: null }
+      : { ...mark, ...(memoryOnly ? { memoryOnly } : {}) },
   );
 }
 

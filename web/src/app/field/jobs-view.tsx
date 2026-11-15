@@ -40,11 +40,13 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
   }
 
   async function load(from: string | null) {
+    if (!session.online) return;
     apply(await listJobs(session.user, shown, from), from);
   }
 
   // Each list is its own component (keyed by the parent), so it starts empty and loads once.
   useEffect(() => {
+    if (!session.online) return;
     let live = true;
     void listJobs(session.user, shown, null).then((answer) => {
       if (live) apply(answer, null);
@@ -53,7 +55,7 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [session.online]);
 
   const more = (from: string | null) => {
     setBusy(true);
@@ -80,7 +82,8 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
           </FieldLink>
         </nav>
       ) : null}
-      {jobs === null && !error ? <p role="status">Loading jobs…</p> : null}
+      {!session.online ? <p role="status">Needs a connection</p> : null}
+      {session.online && jobs === null && !error ? <p role="status">Loading jobs…</p> : null}
       {jobs !== null && jobs.length === 0 ? <p>No jobs yet.</p> : null}
       {jobs !== null && jobs.length > 0 ? (
         <ul className="flex flex-col gap-2" aria-label={shown === 'company' ? 'Company jobs' : 'My jobs'}>
@@ -101,12 +104,12 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
         {error ?? ''}
       </p>
       {error ? (
-        <Button variant="outline" onClick={() => more(jobs === null ? null : cursor)} disabled={busy}>
+        <Button variant="outline" onClick={() => more(jobs === null ? null : cursor)} disabled={busy || !session.online}>
           Try again
         </Button>
       ) : null}
       {cursor && !error ? (
-        <Button variant="outline" onClick={() => more(cursor)} disabled={busy}>
+        <Button variant="outline" onClick={() => more(cursor)} disabled={busy || !session.online}>
           Show more jobs
         </Button>
       ) : null}

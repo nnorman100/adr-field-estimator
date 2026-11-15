@@ -34,6 +34,7 @@ export function NewJobView({ session }: { session: FieldSession }) {
   }
 
   async function start() {
+    if (!session.online) return setError('Needs a connection');
     const held = pending.job();
     if (held?.sending) return;
     setError(null);
@@ -80,9 +81,10 @@ export function NewJobView({ session }: { session: FieldSession }) {
         autoComplete="street-address"
         hint="Optional now; you can add it with the customer."
       />
-      <Button type="submit" disabled={busy}>
+      <Button type="submit" disabled={busy || !session.online}>
         {unsent && !busy ? 'Try again' : 'Start job'}
       </Button>
+      {!session.online ? <p role="status">Needs a connection</p> : null}
       {unsent && !busy && !error ? <p role="status">This job was sent but no answer came back. Try again to finish it.</p> : null}
       <Outcome error={error ?? refusal?.message ?? null} notice={busy ? 'Starting the job…' : null} />
       <FieldLink to={{ view: 'jobs', list: null }}>Back to jobs</FieldLink>
