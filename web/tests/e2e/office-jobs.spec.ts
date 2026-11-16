@@ -301,8 +301,76 @@ test('the company owner keeps an unsaved room change on screen after moving the 
   await page.getByRole('button', { name: 'Save notes' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Notes saved.' })).toBeVisible();
   await main(page).getByRole('link', { name: 'Check Scope' }).click();
-  // The draft read that follows the save brings the estimator's draft: read only, not the owner's.
-  await expect(page.getByText(/^Read only\./)).toBeVisible();
+  // The draft read that follows the save brings the estimator's draft: the owner's screen is read only.
+  await expect(page.getByText(MOVED)).toBeVisible();
   await expect(den.getByLabel('Floor area (sq ft)', { exact: true })).not.toBeEditable();
   await expect(den.getByLabel('Floor area (sq ft)', { exact: true })).toHaveValue('120');
+});
+
+test('a move with no answer is kept with its ids, blocks other coordination writes, survives leaving the job, and is sent again as it was', async ({ page, request }) => {
+  test.setTimeout(120_000);
+  const company = await seedCompany('keep-move', { owner: 'owner', first: 'estimator', second: 'estimator' });
+  const { jobId, actorOf } = await seedJob(request, company, company.people.owner!, '17 Held Move Way', [company.people.first!, company.people.second!]);
+
+  await signIn(page, company, company.people.owner!);
+  await openJob(page, '17 Held Move Way');
+  await main(page).getByRole('link', { name: 'Job coordination' }).click();
+  await expect(page.getByText('owner owns the field work.')).toBeVisible();
+
+  // The server commits the move, and its answer is lost on the way to the phone.
+  const sent: string[] = [];
+  let lost = true;
+  await page.route('**/api/jobs/*/field-owner/transfer', async (route) => {
+    if (!lost) return route.fallback();
+    sent.push(route.request().postData() ?? '');
+    await route.fetch();
+    await route.abort();
+  });
+  await page.getByLabel('Move it to').selectOption({ label: 'first' });
+  await page.getByRole('button', { name: 'Move field work' }).click();
+  await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible();
+  // Nothing else is sent while it is unanswered.
+  await expect(page.getByRole('button', { name: 'Save notes' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Unassign second' })).toBeDisabled();
+
+  // Leaving the job and opening it again keeps it.
+  await main(page).getByRole('link', { name: 'Back to jobs' }).click();
+  await openJob(page, '17 Held Move Way');
+  await main(page).getByRole('link', { name: 'Job coordination' }).click();
+  await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save notes' })).toBeDisabled();
+  lost = false;
+  await page.getByRole('button', { name: 'Try again' }).click();
+  await expect(page.getByText('first owns the field work.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save notes' })).toBeEnabled();
+  expect(sent).toHaveLength(1);
+  const [row] = await adminSql()<{ owner: string }[]>`SELECT field_owner_actor_id::text AS owner FROM jobs WHERE id = ${jobId}::uuid`;
+  expect(row?.owner).toBe(actorOf(company.people.first!));
+});
+
+test('the company owner who moves the field work keeps customer changes typed before, read only, with the notice', async ({ page, request }) => {
+  test.setTimeout(120_000);
+  const company = await seedCompany('owner-keeps-customer', { owner: 'owner', first: 'estimator' });
+  await seedJob(request, company, company.people.owner!, '29 Owner Customer Row', [company.people.first!]);
+
+  await signIn(page, company, company.people.owner!);
+  await openJob(page, '29 Owner Customer Row');
+  await main(page).getByRole('link', { name: 'Customer and claim' }).click();
+  await page.getByLabel('Customer name').fill('Owner Typed');
+  await page.getByLabel('Insurance carrier').fill('Typed Mutual');
+  await main(page).getByRole('link', { name: 'Job coordination' }).click();
+  await page.getByLabel('Move it to').selectOption({ label: 'first' });
+  await page.getByRole('button', { name: 'Move field work' }).click();
+  await expect(page.getByText('first owns the field work.')).toBeVisible();
+
+  // The draft read after the move names the new owner, and the owner's old edits stay read only.
+  await main(page).getByRole('link', { name: 'Customer and claim' }).click();
+  await expect(page.getByText(MOVED)).toBeVisible();
+  await expect(page.getByLabel('Customer name')).toHaveValue('Owner Typed');
+  await expect(page.getByLabel('Customer name')).not.toBeEditable();
+  await expect(page.getByLabel('Insurance carrier')).toHaveValue('Typed Mutual');
+  await expect(page.getByLabel('Insurance carrier')).not.toBeEditable();
+  await expect(page.getByRole('button', { name: 'Save customer' })).toHaveCount(0);
+  await main(page).getByRole('link', { name: 'Check Scope' }).click();
+  await expect(page.getByLabel('Year built')).not.toBeEditable();
 });

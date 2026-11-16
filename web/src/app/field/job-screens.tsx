@@ -86,9 +86,13 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   const detail = newerDetail(read?.mark === mark ? read.detail : null, posted);
   const setDetail = useCallback(
     (next: JobDetail, sentAt: number) => {
-      if (pending.publishDetail(jobId, next, sentAt)) setRead({ detail: next, mark: sentAt });
+      if (!pending.publishDetail(jobId, next, sentAt)) return;
+      // The job now names someone else while this person held its field work: recorded now, before any
+      // newer draft replaces the one on screen, so it holds whoever that draft names (J5).
+      if (pending.held(jobId) && next.job.fieldOwnerActorId !== null && next.job.fieldOwnerActorId !== session.actorId) pending.moveAway(jobId);
+      setRead({ detail: next, mark: sentAt });
     },
-    [jobId],
+    [jobId, session.actorId],
   );
   const draftChanges = usePending(() => pending.draftChanges(jobId));
   const [locator, setLocator] = useState<JobProjection | null>(null);
@@ -128,7 +132,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   // Whether the screens may read this job's draft: not the rules' refusal for an estimator whose job
   // is someone else's, and nothing more once the field work moved away.
   const mayReadDraft = useCallback(
-    (job: JobDetail | null) => !pending.moved(jobId) && (job === null || draftReadable(session, job)),
+    (job: JobDetail | null) => !pending.moved(jobId)?.revoked && (job === null || draftReadable(session, job)),
     [jobId, session],
   );
 
@@ -141,7 +145,10 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
         if (found === SUPERSEDED) return;
         setDraftAt(draftId);
         setDraft(found);
-        setOwnerUnset(false);
+        // The job names this person but the draft read (an owner reads every draft) names someone else:
+        // the server's draft step did not get through, and Start field work finishes it.
+        const named = job ?? detail;
+        setOwnerUnset(found !== null && named !== null && fieldWorkOf(session, named) === 'mine' && found.fieldOwnerUid !== session.user.uid);
         setDraftError(found ? null : 'The field work of this job is not there yet. Try again in a moment.');
       } catch (error) {
         const refusal = fieldRefusal(error);
@@ -207,7 +214,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
 
   const reloadJob = useCallback(async () => {
     // Server access of a moved job stays revoked: nothing more is asked of it.
-    if (!session.online || pending.moved(jobId)) return null;
+    if (!session.online || pending.moved(jobId)?.revoked) return null;
     const sentAt = pending.mark(jobId);
     return apply(await readJob(session.user, jobId), sentAt);
   }, [apply, session, jobId]);
@@ -306,9 +313,9 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   const currentDraftId = locator?.currentDraftId ?? detail!.job.currentDraftId;
   const fieldWork = detail ? fieldWorkOf(session, detail) : null;
   const reader = readsEveryDraft(session);
-  // The field work moved away from this person: the server refused them, or the job now names
-  // someone else while the draft on screen still names them (J5).
-  const moved = movedState !== null || (fieldWork === 'other' && draft?.fieldOwnerUid === session.user.uid);
+  // The field work moved away from this person (J5): the server refused them, or the job named someone
+  // else while they held it; recorded in src/lib/field/pending.ts, whoever the draft now names.
+  const moved = movedState !== null;
   const startable =
     session.capabilities.includes('scope') &&
     !moved &&

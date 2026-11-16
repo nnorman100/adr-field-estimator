@@ -168,7 +168,7 @@ describe('field work that moved away', () => {
     expect(pending.detail('job-held')?.job.propertyAddress).toBe('held');
     // The draft as last read goes with it, for a screen of the job opened again on this page.
     pending.keepDraft('job-held', draft, 'd1');
-    expect(pending.moved('job-held')).toEqual({ draft, draftId: 'd1' });
+    expect(pending.moved('job-held')).toEqual({ draft, draftId: 'd1', revoked: true });
   });
 
   it('drops the job as before when the person did not hold the field work, and on a refused sign-in', () => {
@@ -193,6 +193,35 @@ describe('field work that moved away', () => {
     expect(pending.refused('job-c', 'no', 404)).toBe(false);
     pending.openFor('company-a/user-other-again');
     expect(pending.moved('job-c')).toBeNull();
+  });
+});
+
+describe('coordination writes kept until answered (S5b-1)', () => {
+  const write = (key: string) => ({ key, at: 'move', done: 'The field work was moved.', request: { kind: 'move' as const, revision: 1, changeId: 'c1', toActorId: 'a1' }, sending: true });
+
+  it('keeps a write with its ids after no answer, and settles only the request that holds the slot', () => {
+    pending.openFor('company-a/user-coord');
+    pending.setCoordWrite('job-x', write('move:a1'));
+    expect(pending.settleCoordWrite('job-x', 'assign:a2', 'answered')).toBe(false);
+    expect(pending.settleCoordWrite('job-x', 'move:a1', 'unanswered')).toBe(true);
+    expect(pending.coordWrite('job-x')).toMatchObject({ sending: false, request: { changeId: 'c1' } });
+    expect(pending.settleCoordWrite('job-x', 'move:a1', 'answered')).toBe(true);
+    expect(pending.coordWrite('job-x')).toBeNull();
+  });
+
+  it('starts empty for another sign-in', () => {
+    pending.openFor('company-a/user-coord');
+    pending.setCoordWrite('job-x', write('move:a1'));
+    pending.openFor('company-a/user-coord-2');
+    expect(pending.coordWrite('job-x')).toBeNull();
+  });
+
+  it('records a move away before any newer draft, and keeps reading until the server refuses', () => {
+    pending.openFor('company-a/user-away');
+    pending.moveAway('job-y');
+    expect(pending.moved('job-y')).toMatchObject({ revoked: false });
+    expect(pending.refused('job-y', 'This job is not in your list.', 404)).toBe(true);
+    expect(pending.moved('job-y')).toMatchObject({ revoked: true });
   });
 });
 

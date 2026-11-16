@@ -47,6 +47,14 @@ export type RecordRefusal = { edits: Record<string, string>; message: string };
 export type JobRefusal = { propertyAddress: string; message: string };
 // What came back for a send: nothing (keep it to send again), an answer, or a refusal.
 export type Settlement = 'unanswered' | 'answered' | { refused: string };
+// A coordination write (S5b-1) kept with its ids until the server answers it, so a retry after no
+// answer is the same request and nothing else is sent meanwhile.
+export type CoordRequest =
+  | { kind: 'move'; revision: number; changeId: string; toActorId: string }
+  | { kind: 'assign'; id: string; estimatorActorId: string }
+  | { kind: 'unassign'; assignmentId: string }
+  | { kind: 'notes'; revision: number; changeId: string; notes: string };
+export type PendingCoord = { key: string; at: string; done: string; request: CoordRequest; sending: boolean };
 export type PendingPhoto = {
   id: string;
   bytes: Blob;
@@ -73,7 +81,10 @@ type State = {
   // By job: the field work is on this phone as this person's (or its job says it is theirs).
   held: Record<string, true>;
   // By job: the field work moved away from this person; the draft as last read stays on screen.
-  moved: Record<string, { draft: FieldDraft | null; draftId: string | null }>;
+  // `revoked`: the server refused the job to this person (nothing more is asked of it); otherwise the
+  // job is still readable (the owner, office) but the field work is another person's.
+  moved: Record<string, { draft: FieldDraft | null; draftId: string | null; revoked: boolean }>;
+  coord: Record<string, PendingCoord>;
 };
 
 const EMPTY = {
@@ -88,6 +99,7 @@ const EMPTY = {
   denials: {},
   held: {},
   moved: {},
+  coord: {},
 };
 let state: State = { owner: null, ...EMPTY };
 const listeners = new Set<() => void>();
@@ -201,17 +213,24 @@ export const pending = {
   // every copy goes (answers false). A 401 is a sign-in refused, never a move.
   refused(jobId: string, message: string, status: number): boolean {
     if (status !== 401 && (state.held[jobId] || state.moved[jobId])) {
-      if (!state.moved[jobId]) change({ moved: { ...state.moved, [jobId]: { draft: null, draftId: null } } });
+      const known = state.moved[jobId];
+      if (!known?.revoked) change({ moved: { ...state.moved, [jobId]: { draft: known?.draft ?? null, draftId: known?.draftId ?? null, revoked: true } } });
       return true;
     }
     pending.denyDetail(jobId, message);
     return false;
   },
-  moved: (jobId: string): { draft: FieldDraft | null; draftId: string | null } | null => state.moved[jobId] ?? null,
+  moved: (jobId: string): { draft: FieldDraft | null; draftId: string | null; revoked: boolean } | null => state.moved[jobId] ?? null,
+  // The job now names someone else as its field owner while this person held it: recorded before any
+  // newer draft replaces the one on screen, whoever the draft then names.
+  moveAway(jobId: string) {
+    if (!state.moved[jobId]) change({ moved: { ...state.moved, [jobId]: { draft: null, draftId: null, revoked: false } } });
+  },
+  held: (jobId: string): boolean => Boolean(state.held[jobId]),
   // The draft as last read, kept with a moved job for a screen of it opened again on this page.
   keepDraft(jobId: string, draft: FieldDraft, draftId: string) {
     const moved = state.moved[jobId];
-    if (moved && moved.draft !== draft) change({ moved: { ...state.moved, [jobId]: { draft, draftId } } });
+    if (moved && moved.draft !== draft) change({ moved: { ...state.moved, [jobId]: { ...moved, draft, draftId } } });
   },
   // The job is this person's field work again, as the server now says: it opens as usual.
   returned(jobId: string) {
@@ -226,6 +245,20 @@ export const pending = {
   readAnswered(jobId: string, answer: Answer<unknown>, mark: number): boolean {
     if (mark !== pending.mark(jobId)) return false;
     if (!answer.ok && answer.denied) pending.refused(jobId, answer.message, answer.status);
+    return true;
+  },
+  coordWrite: (jobId: string): PendingCoord | null => state.coord[jobId] ?? null,
+  setCoordWrite(jobId: string, write: PendingCoord) {
+    change({ coord: { ...state.coord, [jobId]: write } });
+  },
+  // Ends the send of `key` if it still holds the job's slot: no answer keeps it to send again.
+  settleCoordWrite(jobId: string, key: string, settlement: 'unanswered' | 'answered'): boolean {
+    const current = state.coord[jobId];
+    if (current?.key !== key) return false;
+    const coord = { ...state.coord };
+    if (settlement === 'unanswered') coord[jobId] = { ...current, sending: false };
+    else delete coord[jobId];
+    change({ coord });
     return true;
   },
   draftChanges: (jobId: string): number => state.draftChanges[jobId] ?? 0,
