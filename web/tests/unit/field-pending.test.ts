@@ -148,3 +148,51 @@ describe('what a late send posts for the open screen of its job', () => {
     expect(pending.detail('job-late')).toBeNull();
   });
 });
+
+// Owner decision J5 (S5b-1): the field work moving to another person must never take what this person
+// typed off their screen.
+describe('field work that moved away', () => {
+  const refusal = { ok: false as const, status: 404, message: 'This job is not in your list.', denied: true as const };
+  const draft = { state: 'editing', fieldOwnerUid: 'u1', field: {}, rooms: [], photos: [] };
+  const at = (revision: number, address: string): JobDetail =>
+    ({ job: { id: 'job-held', revision, propertyAddress: address }, customer: { name: '', phone: '', email: '' } }) as unknown as JobDetail;
+
+  it('keeps the job on screen when a refusal comes while the person held its field work', () => {
+    pending.openFor('company-a/user-held');
+    const sentAt = pending.mark('job-held');
+    pending.publishDetail('job-held', at(1, 'held'), sentAt);
+    pending.hold('job-held', true);
+    expect(pending.readAnswered('job-held', refusal, sentAt)).toBe(true);
+    expect(pending.moved('job-held')).not.toBeNull();
+    expect(pending.denial('job-held')).toBeNull();
+    expect(pending.detail('job-held')?.job.propertyAddress).toBe('held');
+    // The draft as last read goes with it, for a screen of the job opened again on this page.
+    pending.keepDraft('job-held', draft, 'd1');
+    expect(pending.moved('job-held')).toEqual({ draft, draftId: 'd1' });
+  });
+
+  it('drops the job as before when the person did not hold the field work, and on a refused sign-in', () => {
+    pending.openFor('company-a/user-notheld');
+    expect(pending.refused('job-a', 'This job is not in your list.', 404)).toBe(false);
+    expect(pending.moved('job-a')).toBeNull();
+    expect(pending.denial('job-a')).toBe('This job is not in your list.');
+    pending.hold('job-b', true);
+    expect(pending.refused('job-b', 'Sign in again to continue.', 401)).toBe(false);
+    expect(pending.moved('job-b')).toBeNull();
+    expect(pending.denial('job-b')).toBe('Sign in again to continue.');
+  });
+
+  it('stays moved through later refusals, and opens as usual once the job is theirs again', () => {
+    pending.openFor('company-a/user-again');
+    pending.hold('job-c', true);
+    expect(pending.refused('job-c', 'no', 403)).toBe(true);
+    pending.hold('job-c', false);
+    expect(pending.refused('job-c', 'no', 404)).toBe(true);
+    pending.returned('job-c');
+    expect(pending.moved('job-c')).toBeNull();
+    expect(pending.refused('job-c', 'no', 404)).toBe(false);
+    pending.openFor('company-a/user-other-again');
+    expect(pending.moved('job-c')).toBeNull();
+  });
+});
+

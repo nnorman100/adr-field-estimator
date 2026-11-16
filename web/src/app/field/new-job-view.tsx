@@ -22,6 +22,8 @@ export function NewJobView({ session }: { session: FieldSession }) {
   const refusal = usePending(pending.jobRefusal);
   const [error, setError] = useState<string | null>(null);
   const typed = refusal?.propertyAddress ?? address;
+  // A person without `scope` (office) starts the job empty: an assigned estimator does the field work.
+  const fieldStaff = session.capabilities.includes('scope');
 
   if (!session.capabilities.includes('jobs_create')) {
     return (
@@ -50,7 +52,8 @@ export function NewJobView({ session }: { session: FieldSession }) {
     const settlement = answer.ok ? 'answered' : refused ? { refused: answer.message } : 'unanswered';
     if (!pending.settleJob(request.id, settlement)) return;
     if (answer.ok) {
-      go({ view: 'scope', jobId: answer.value.job.id });
+      // Office has no field work of its own: it goes on to the job's coordination, to assign an estimator.
+      go({ view: fieldStaff ? 'scope' : 'coordination', jobId: answer.value.job.id });
       return;
     }
     if (!refused) setError(answer.message);
@@ -65,7 +68,11 @@ export function NewJobView({ session }: { session: FieldSession }) {
       }}
     >
       <h2 className="text-xl font-semibold">New job</h2>
-      <p className="text-base">Water or mold loss. You can add the customer and claim after.</p>
+      <p className="text-base">
+        {fieldStaff
+          ? 'Water or mold loss. You can add the customer and claim after.'
+          : 'Water or mold loss. The job starts empty: you assign an estimator next, and the assigned estimator does the field work. You can add the customer and claim after.'}
+      </p>
       <Box
         id="new-job-address"
         label="Property address"

@@ -463,6 +463,8 @@ test('every field view passes axe', async ({ page }) => {
     scope: (p) => p.getByLabel('Year built'),
     customer: (p) => p.getByLabel('Customer name'),
     photos: (p) => p.getByRole('heading', { name: /^Job photos/ }),
+    // An estimator is told the office and the owner keep it; office and owner see it in office-jobs.spec.ts.
+    coordination: (p) => p.getByText('Job coordination is kept by the office and the company owner.'),
   };
   for (const [view, ready] of Object.entries(views) as [FieldView, (page: Page) => Locator][]) {
     const place = view === 'jobs' ? { view, list: null } : view === 'new-job' ? { view } : { view, jobId };

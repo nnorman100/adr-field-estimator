@@ -25,7 +25,7 @@ const PICTURE = {
 
 function serveMe(lane: NetworkLane, world: World) {
   lane.serve('/api/me', { type: 'application/json', body: JSON.stringify({
-    company: { id: world.companyId, name: 'Field Test' }, role: 'estimator',
+    company: { id: world.companyId, name: 'Field Test' }, actor: { id: 'actor', displayName: null }, role: 'estimator',
     capabilities: ['scope', 'jobs_create', 'photos'], fieldAccessExpiresAt: inDays(7).toISOString(),
   }) });
 }
@@ -55,7 +55,7 @@ async function mark(page: Page, world: World) {
 async function signedIn(context: Parameters<typeof FieldPhone.open>[0], lane: NetworkLane, world: World) {
   const phone = await FieldPhone.open(context, lane);
   const person = await phone.signIn(world, world.owner);
-  await phone.call('saveMe', person, { companyId: world.companyId, role: 'estimator', capabilities: ['scope', 'jobs_create', 'photos'], authTime: Date.now() });
+  await phone.call('saveMe', person, { companyId: world.companyId, actorId: 'actor', role: 'estimator', capabilities: ['scope', 'jobs_create', 'photos'], authTime: Date.now() });
   return phone;
 }
 

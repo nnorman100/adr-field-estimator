@@ -21,10 +21,10 @@ export function FieldApp({ me }: { me: DsMe }) {
   const [lost, setLost] = useState(false);
   const user = field ? fieldUser(field.client.person) : null;
   const session = useMemo<FieldSession | null>(() => {
-    if (!field || !user || !field.me.companyId || !field.me.role) return null;
+    if (!field || !user || !field.me.companyId || !field.me.role || !field.me.actorId) return null;
     return {
       user, db: field.client.db, client: field.client,
-      companyId: field.me.companyId, role: field.me.role, capabilities: field.me.capabilities,
+      companyId: field.me.companyId, actorId: field.me.actorId, role: field.me.role, capabilities: field.me.capabilities,
       online: field.online, offlineCapture: field.offlineCapture,
     };
   }, [field, user]);
@@ -39,6 +39,10 @@ export function FieldApp({ me }: { me: DsMe }) {
   }, [me, companyId, uid]);
 
   if (!field) return <p role="status">The field database is not set up for this company yet.</p>;
+  // A sign-in saved before the person's actor id was kept needs one online check to learn it.
+  if (!session && !lost && field.me.companyId && field.me.role && !field.me.actorId) {
+    return <p role="status">Open this app once with a signal to finish setting it up.</p>;
+  }
   if (!session || lost) {
     return (
       <div className="flex flex-col gap-2">

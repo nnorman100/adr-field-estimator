@@ -32,7 +32,8 @@ export type MeAnswer = { status: number; body: unknown };
 export type AppCheckSeam = { mode: 'monitor' | 'enforce'; token(): Promise<unknown> };
 
 // What the server said about the person, kept in ds-me for the offline start.
-export type MeFacts = { companyId: string; companyName: string; role: string; capabilities: string[]; expiresAt: number };
+// `actorId`: the person's id in the company, from the same answer (field-sync.ts adds it).
+export type MeFacts = { companyId: string; companyName: string; role: string; capabilities: string[]; actorId?: string; expiresAt: number };
 
 export type GateState =
   | { kind: 'starting' }

@@ -11,6 +11,9 @@ export type FieldSession = {
   db: Firestore;
   client: FieldClient;
   companyId: string;
+  // The signed-in person's id in this company (GET /api/me, `actor.id`): tells their own jobs and
+  // field work from other people's. Required, never guessed (review decision D).
+  actorId: string;
   role: string;
   capabilities: string[];
   online: boolean;

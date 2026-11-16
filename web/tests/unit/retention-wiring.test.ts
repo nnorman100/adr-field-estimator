@@ -591,3 +591,19 @@ describe('a forced sign-out when someone else signs in meanwhile (another tab)',
     expect(signOutCompany).not.toHaveBeenCalled();
   });
 });
+
+describe('who the open gate says the person is (S5b-1)', () => {
+  it('hands the job screens the actor id of the server\'s answer, and saves it for the next offline start', async () => {
+    const { updateMe } = await import('@/lib/field/ds-me');
+    vi.mocked(updateMe).mockClear();
+    server = letIn();
+    const opened: unknown[] = [];
+    const gate = runFieldSync({ db: {}, cache: 'persistent', person } as unknown as FieldClient, savedRow(0), (event) => {
+      if ('state' in event && event.state.kind === 'open') opened.push(event.state.facts);
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(opened.at(-1)).toMatchObject({ companyId: 'c', role: 'estimator', actorId: 'a' });
+    expect(updateMe).toHaveBeenCalledWith(expect.objectContaining({ actorId: 'a', companyId: 'c' }));
+    gate.stop();
+  });
+});

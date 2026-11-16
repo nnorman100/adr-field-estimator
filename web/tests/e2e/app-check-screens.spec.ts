@@ -244,6 +244,7 @@ const VISITS: Visit[] = [
         scope: () => expect(page.getByLabel('Year built')).toBeVisible(),
         customer: () => expect(page.getByLabel('Customer name')).toBeVisible(),
         photos: () => expect(page.getByRole('heading', { name: /^Job photos/ })).toBeVisible(),
+        coordination: () => expect(page.getByText('Job coordination is kept by the office and the company owner.')).toBeVisible(),
       };
       for (const [view, ready] of Object.entries(views) as [FieldView, () => Promise<void>][]) {
         const place = view === 'jobs' ? { view, list: null } : view === 'new-job' ? { view } : { view, jobId };

@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { readScopeLists, type ScopeLists } from '@/lib/field/api';
 import { roomName } from '@/lib/field/forms';
-import { MAX_ROOMS } from '@/lib/field/schema';
+import { MAX_ROOMS, type RoomField } from '@/lib/field/schema';
 import { addRoom, removeRoom, type FieldDraft } from '@/lib/field/store';
 import type { JobContext } from './job-screens';
 import { RoomCard } from './room-card';
@@ -18,6 +18,31 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
   const [lists, setLists] = useState<ScopeLists | null>(null);
   const [listsError, setListsError] = useState<string | null>(null);
   const [name, setName] = useState('');
+  // Rooms with changes typed and not saved, and rooms the draft no longer lists that had some when
+  // the field work moved to someone else: they stay on screen, read only, as last read (J5).
+  const [dirty, setDirty] = useState<Record<string, true>>({});
+  const [last, setLast] = useState(draft.rooms);
+  const [kept, setKept] = useState<{ id: string; field: RoomField; number: number }[]>([]);
+  const onDirty = useCallback((roomId: string, isDirty: boolean) => {
+    setDirty((current) => {
+      if (Boolean(current[roomId]) === isDirty) return current;
+      const next = { ...current };
+      if (isDirty) next[roomId] = true;
+      else delete next[roomId];
+      return next;
+    });
+  }, []);
+  if (last !== draft.rooms) {
+    setLast(draft.rooms);
+    const listed = new Set(draft.rooms.map((room) => room.id));
+    const still = kept.filter((room) => !listed.has(room.id));
+    const gone = job.editable
+      ? []
+      : last
+          .map((room, index) => ({ id: room.id, field: room.field, number: index + 1 }))
+          .filter((room) => !listed.has(room.id) && dirty[room.id] && !still.some((one) => one.id === room.id));
+    setKept([...still, ...gone]);
+  }
   const { busy, error, notice, setError, save: saveEdit } = useFieldEdit(job);
   const readOnly = !job.editable;
   const full = draft.rooms.length >= MAX_ROOMS;
@@ -62,16 +87,21 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
       ) : null}
       {draft.rooms.length === 0 ? <p>No rooms yet.</p> : null}
       <ul className="flex flex-col gap-3" aria-label="Rooms">
-        {draft.rooms.map((room, index) => (
+        {/* One list, so a room that leaves the draft keeps its card, and what was typed in it. */}
+        {[
+          ...draft.rooms.map((room, index) => ({ id: room.id, field: room.field, number: index + 1, listed: true })),
+          ...kept.filter((room) => !draft.rooms.some((listed) => listed.id === room.id)).map((room) => ({ ...room, listed: false })),
+        ].map((room) => (
           <li key={room.id}>
             <RoomCard
               job={job}
               roomId={room.id}
               stored={room.field}
-              number={index + 1}
+              number={room.number}
               lists={lists}
               removing={busy}
-              onRemove={() => remove(room.id, room.field.name ?? `Room ${index + 1}`)}
+              onRemove={room.listed ? () => remove(room.id, room.field.name ?? `Room ${room.number}`) : undefined}
+              onDirty={onDirty}
             />
           </li>
         ))}

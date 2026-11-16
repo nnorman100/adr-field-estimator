@@ -10,7 +10,7 @@ import { savedLock, savedReason } from './unsent';
 // Runs the sync gate for one person's started field client (S6-3), and does what each of its
 // answers asks of the phone:
 // - open: the unsent mark is cleared once the queue has been sent, and the ds-me row gets the
-//   company id, role, capabilities and sign-in time for the next offline start;
+//   company id, role, capabilities, actor id and sign-in time for the next offline start;
 // - a refusal: the work stays, locked, so a start with no answer is locked too.
 // Whether the work is locked, and whether it may still be sent at all, is not decided here: every
 // decision of the gate is told to the phone's one retention routine (retention.ts, S6-3b), which
@@ -49,6 +49,9 @@ export function runFieldSync(
     tell({ kind: 'refused', person, reason, fromServer });
   // The answers GET /api/me gave; not the one ask() makes up when there is no sign-in to ask with.
   const fromServer = new WeakSet<MeAnswer>();
+  // The person's id in the company (`actor.id`) from the last answer the server gave: the job screens
+  // tell their own jobs from other people's by it, so it goes out with the facts of an open gate.
+  let actorId: string | undefined;
   // The saved sign-in is judged first: one that counts again lifts a lock only its age had made.
   tell({ kind: 'entry', person, saved });
   // A refusal this page holds and could not save yet locks as a saved one does.
@@ -71,6 +74,8 @@ export function runFieldSync(
       if (!user) return { status: 401, body: { error: 'missing_token' } };
       const answer = await callApi(user, '/api/me');
       fromServer.add(answer);
+      const id = (answer.body as { actor?: { id?: unknown } } | null)?.actor?.id;
+      if (answer.status === 200 && typeof id === 'string' && id) actorId = id;
       return answer;
     },
     enableNetwork: () => enableNetwork(client.db),
@@ -98,10 +103,11 @@ export function runFieldSync(
   });
 
   function apply(state: GateState): void {
-    onEvent({ state });
-    if (state.kind === 'open') {
+    const shown: GateState = state.kind === 'open' && actorId ? { ...state, facts: { ...state.facts, actorId } } : state;
+    onEvent({ state: shown });
+    if (shown.kind === 'open') {
       void settle(client).catch(() => undefined);
-      void remember(row, state.facts);
+      void remember(row, shown.facts);
     }
   }
 
@@ -123,6 +129,7 @@ export function runFieldSync(
       companyId: facts.companyId,
       role: facts.role,
       capabilities: facts.capabilities,
+      ...(facts.actorId ? { actorId: facts.actorId } : {}),
       ...(Number.isFinite(authTime) ? { authTime } : {}),
     };
     if (await updateMe(next)) {

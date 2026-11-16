@@ -18,12 +18,19 @@
 // job as the server answered it, and a mark that the field draft changed and must be read again.
 // A refusal to show a job to this person (`denyDetail`) drops every copy of it and moves its access
 // mark on: a job answered to a request made before then is not kept, until a read made after it.
+// A refusal is not always the end of a person's work on a job (owner decision J5): while this person
+// held the field work, the owner may move it to someone else, or office may unassign them, and the
+// server then refuses them the job. What they typed and did not send stays on screen, read only, so
+// the refusal is kept as `moved` instead of dropping the job (`refused`), together with the draft as
+// last read, for the screen of that job opened again on this page. Server access stays revoked: the
+// screens ask nothing more about a moved job. Save as new draft is S6.
 // All of it belongs to one signed-in person of one company (`openFor`): another sign-in on the same
 // page starts empty.
 import { useSyncExternalStore } from 'react';
 import type { JobDetail } from '@/lib/jobs/service';
 import type { Answer } from './api';
 import type { PhotoField } from './schema';
+import type { FieldDraft } from './store';
 
 export type PendingJob = { id: string; draftId: string; propertyAddress: string; sending: boolean };
 export type RecordKind = 'customer' | 'claim';
@@ -63,6 +70,10 @@ type State = {
   // By job: its access mark, and the server's reason while it refuses to show the job.
   marks: Record<string, number>;
   denials: Record<string, string>;
+  // By job: the field work is on this phone as this person's (or its job says it is theirs).
+  held: Record<string, true>;
+  // By job: the field work moved away from this person; the draft as last read stays on screen.
+  moved: Record<string, { draft: FieldDraft | null; draftId: string | null }>;
 };
 
 const EMPTY = {
@@ -75,6 +86,8 @@ const EMPTY = {
   draftChanges: {},
   marks: {},
   denials: {},
+  held: {},
+  moved: {},
 };
 let state: State = { owner: null, ...EMPTY };
 const listeners = new Set<() => void>();
@@ -175,12 +188,44 @@ export const pending = {
     });
   },
   denial: (jobId: string): string | null => state.denials[jobId] ?? null,
+  // Whether this person's field work of the job is on this phone (the screen says so as it reads).
+  hold(jobId: string, holding: boolean) {
+    if (Boolean(state.held[jobId]) === holding) return;
+    const held = { ...state.held };
+    if (holding) held[jobId] = true;
+    else delete held[jobId];
+    change({ held });
+  },
+  // A refusal of the job to this person. While their field work is on the phone, the job and the
+  // field work stay (kept as moved; answers true), otherwise it is a refusal to show the job and
+  // every copy goes (answers false). A 401 is a sign-in refused, never a move.
+  refused(jobId: string, message: string, status: number): boolean {
+    if (status !== 401 && (state.held[jobId] || state.moved[jobId])) {
+      if (!state.moved[jobId]) change({ moved: { ...state.moved, [jobId]: { draft: null, draftId: null } } });
+      return true;
+    }
+    pending.denyDetail(jobId, message);
+    return false;
+  },
+  moved: (jobId: string): { draft: FieldDraft | null; draftId: string | null } | null => state.moved[jobId] ?? null,
+  // The draft as last read, kept with a moved job for a screen of it opened again on this page.
+  keepDraft(jobId: string, draft: FieldDraft, draftId: string) {
+    const moved = state.moved[jobId];
+    if (moved && moved.draft !== draft) change({ moved: { ...state.moved, [jobId]: { draft, draftId } } });
+  },
+  // The job is this person's field work again, as the server now says: it opens as usual.
+  returned(jobId: string) {
+    if (!state.moved[jobId]) return;
+    const moved = { ...state.moved };
+    delete moved[jobId];
+    change({ moved });
+  },
   // A read of the job sent under `mark` came back, whether or not a screen of the job is still
   // open: a refusal drops every copy of the job. Answers false when the job was refused since, so
   // the answer no longer counts.
   readAnswered(jobId: string, answer: Answer<unknown>, mark: number): boolean {
     if (mark !== pending.mark(jobId)) return false;
-    if (!answer.ok && answer.denied) pending.denyDetail(jobId, answer.message);
+    if (!answer.ok && answer.denied) pending.refused(jobId, answer.message, answer.status);
     return true;
   },
   draftChanges: (jobId: string): number => state.draftChanges[jobId] ?? 0,
