@@ -244,10 +244,9 @@ one title (`page-title`, weight 600); sections use `section-title`; cards use `c
 
 ## Layout
 
-One column and 16 px page gutters. Sign-in and settings panels
-are 384 px wide at most and centred; forms stay under 448 px; wider content (a price list, a signed
-record) stops at 672 px. Spacing is Tailwind's 4 px unit: 4, 8, 12, 16 and 24 px cover the gaps and
-padding the screens use.
+One column and 16 px page gutters. Sign-in and settings panels are 384 px wide at most and centred;
+forms stay under 448 px; wider content (a price list, a signed record) stops at 672 px. Spacing is
+Tailwind's 4 px unit: 4, 8, 12, 16 and 24 px cover the gaps and padding the screens use.
 
 - **Tap targets are at least 44 px** (`tap-target`): buttons, text fields and inline links in the
   field shell. A primary action that ends a step may be 48 px (`tap-target-large`).
@@ -266,9 +265,9 @@ above a 40% black `scrim`; they are not lifted with shadow. Nothing uses blur, g
 ## Shapes
 
 Corners are small and uniform. Buttons, fields, cards and the signature pad use `rounded.md` (6 px);
-a dialog or bottom sheet uses `rounded.sheet` (16 px). `rounded.sm` (the default small corner) and `rounded.lg` are the smaller and larger steps the app
-uses in a few places. Do not mix
-sharp and rounded corners on one screen.
+a dialog or bottom sheet uses `rounded.sheet` (16 px). `rounded.sm` (the default small corner) and
+`rounded.lg` are the smaller and larger steps the app uses in a few places. Do not mix sharp and
+rounded corners on one screen.
 
 ## Components
 
