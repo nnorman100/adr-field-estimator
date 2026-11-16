@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { notePhoto, photoSent } from '@/lib/field/unsent';
+import { fieldWrite, settle } from '@/lib/field-db';
 import { Button } from '@/components/ui/button';
 import { photoAddress, sendPhoto, SHOT_NAMES } from '@/lib/field/api';
 import { pending as unsent, usePending, type PendingPhoto } from '@/lib/field/pending';
@@ -28,7 +30,7 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
   const [shotTag, setShotTag] = useState('');
   // Photos sent and not yet settled, kept for the life of the page (src/lib/field/pending.ts), so
   // leaving this screen never drops one: its id and bytes stay for "Send again".
-  const jobId = job.detail.job.id;
+  const jobId = job.jobId;
   const pending = usePending(() => unsent.photos(jobId));
   // Whether this screen is still open when a send settles.
   const live = useRef(true);
@@ -39,7 +41,19 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
     };
   }, []);
   const [error, setError] = useState<string | null>(null);
-  const canTake = job.editable && job.session.capabilities.includes('photos');
+  const canTake = job.editable && job.session.capabilities.includes('photos') && job.session.online;
+  // A capture already opened keeps its input: the camera app hides this page, which takes the
+  // connection away until it is shown again, and the picture must still reach this page.
+  const [capturing, setCapturing] = useState(false);
+  const camera = useRef<HTMLInputElement>(null);
+  const cameraShown = canTake || capturing;
+  useEffect(() => {
+    const input = camera.current;
+    if (!input) return;
+    const cancel = () => setCapturing(false);
+    input.addEventListener('cancel', cancel);
+    return () => input.removeEventListener('cancel', cancel);
+  }, [cameraShown]);
   // Photos on the draft and those of this page not yet on it: the server refuses past the cap.
   const held = draft.photos.length + pending.filter((item) => !draft.photos.some((photo) => photo.id === item.id)).length;
   const full = held >= MAX_PHOTO_REFS;
@@ -50,7 +64,7 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
 
   async function finish(item: PendingPhoto) {
     const db = job.session.db;
-    if (!db) return;
+    if (!db || !job.session.online) return update(item.id, { step: 'send-failed', message: 'Needs a connection. Send it again when connected.' });
     update(item.id, { step: 'sending', message: undefined });
     const sent = await sendPhoto(job.session.user, jobId, item.id, item.bytes);
     if (!sent.ok) {
@@ -59,11 +73,13 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
     }
     update(item.id, { step: 'saving' });
     try {
-      await savePhotoRef(db, job.draftRef, item.id, item.field);
+      await fieldWrite(job.session.client, (fieldDb) => savePhotoRef(fieldDb, job.draftRef, item.id, item.field));
       // The screen that sent it may have closed since: then the open one is told to read the draft.
       if (live.current) await job.reloadDraft();
       else unsent.draftChanged(jobId);
       unsent.removePhoto(jobId, item.id);
+      photoSent(job.session.client.person.tenantId, job.session.user.uid, item.id);
+      void settle(job.session.client).catch(() => undefined);
     } catch (error) {
       update(item.id, { step: 'save-failed', message: 'The photo is stored but its room and tag were not saved. Save again.' });
       job.checkAccess(fieldRefusal(error));
@@ -77,6 +93,9 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
     const bytes = await preparePhoto(file);
     if (!bytes) return setError('This picture could not be read. Take the photo with the camera.');
     const item: PendingPhoto = { id: crypto.randomUUID(), bytes, field: fieldOf(roomId, shotTag, capturedAt), step: 'sending' };
+    if (!notePhoto(job.session.client.person.tenantId, job.session.user.uid, item.id)) {
+      return setError('This phone could not record the photo as unsent. Try again.');
+    }
     unsent.addPhoto(jobId, item);
     await finish(item);
   }
@@ -84,7 +103,8 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
   return (
     <div className="flex flex-col gap-4">
       <h3 className="sr-only">Photos</h3>
-      {canTake ? (
+      {!job.session.online ? <p role="status">Needs a connection to send photos. Keep this window open until every photo is sent.</p> : null}
+      {cameraShown ? (
         <Section title="Take a photo">
           <Choice id="photo-room" label="Room" value={roomId} options={roomOptions} onChange={setRoomId} />
           <Choice id="photo-shot" label="Shot" value={shotTag} options={SHOT_OPTIONS} onChange={setShotTag} />
@@ -99,9 +119,12 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
               accept="image/*"
               capture="environment"
               className="sr-only"
+              ref={camera}
+              onClick={() => setCapturing(true)}
               disabled={full}
               aria-describedby={full ? 'photo-limit' : undefined}
               onChange={(event) => {
+                setCapturing(false);
                 const file = event.target.files?.[0];
                 event.target.value = '';
                 void take(file);
@@ -113,9 +136,9 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
               This job has the most photos it can hold ({MAX_PHOTO_REFS}).
             </p>
           ) : null}
-          <Outcome error={error} notice={null} />
         </Section>
       ) : null}
+      <Outcome error={error} notice={null} />
       {pending.length > 0 ? (
         <Section title="Sending">
           <ul className="flex flex-col gap-2" aria-label="Photos being sent">
@@ -124,7 +147,7 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
                 <p role="status">{item.step === 'sending' ? 'Sending the photo…' : item.step === 'saving' ? 'Saving its room and tag…' : 'Not sent yet.'}</p>
                 {item.message ? <p role="alert">{item.message}</p> : null}
                 {item.step === 'send-failed' || item.step === 'save-failed' ? (
-                  <Button variant="outline" onClick={() => void finish(item)}>
+                  <Button variant="outline" disabled={!job.session.online} onClick={() => void finish(item)}>
                     Send again
                   </Button>
                 ) : null}
@@ -165,7 +188,7 @@ function Thumbnail({ job, load, photoId, label }: { job: JobContext; load: boole
   useEffect(() => {
     if (!fetching) return;
     let live = true;
-    void photoAddress(job.session.user, job.detail.job.id, photoId).then((found) => {
+    void photoAddress(job.session.user, job.jobId, photoId).then((found) => {
       if (typeof found === 'string') {
         if (live) setAddress(found);
         else URL.revokeObjectURL(found);
@@ -177,7 +200,7 @@ function Thumbnail({ job, load, photoId, label }: { job: JobContext; load: boole
     return () => {
       live = false;
     };
-  }, [fetching, job.session.user, job.detail.job.id, photoId, checkAccess]);
+  }, [fetching, job.session.user, job.jobId, photoId, checkAccess]);
   useEffect(
     () => () => {
       if (address !== null && address !== 'missing') URL.revokeObjectURL(address);

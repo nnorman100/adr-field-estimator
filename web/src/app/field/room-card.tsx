@@ -5,10 +5,11 @@ import { Button } from '@/components/ui/button';
 import type { ScopeLists } from '@/lib/field/api';
 import { editsAfterSave, roomChanges, roomTypeChoice, ROOM_FIELDS, withEdits, type FormValues, type RoomLists } from '@/lib/field/forms';
 import { MAX_FINDINGS, type RoomField } from '@/lib/field/schema';
-import { fieldRefusal, saveRoomField } from '@/lib/field/store';
+import { saveRoomField } from '@/lib/field/store';
 import type { JobContext } from './job-screens';
 import { RoomItems, RoomPrepTasks } from './room-lists';
 import { Box, Choice, Outcome, READ_AGAIN } from './ui';
+import { useFieldEdit } from './use-field-edit';
 
 export const CATEGORY_OPTIONS = [
   { value: '', label: 'Not set' },
@@ -82,6 +83,7 @@ export function RoomCard({
   stored,
   number,
   lists,
+  removing = false,
   onRemove,
 }: {
   job: JobContext;
@@ -89,6 +91,8 @@ export function RoomCard({
   stored: RoomField;
   number: number;
   lists: ScopeLists | null;
+  // Another room is being added or removed.
+  removing?: boolean;
   onRemove?: () => Promise<void>;
 }) {
   // Only the boxes the person changed; the rest always show the room as last read.
@@ -96,9 +100,7 @@ export function RoomCard({
   const [listEdits, setListEdits] = useState<RoomLists>({});
   const values = withEdits(ROOM_FIELDS, stored, edits);
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const { busy, error, notice, setError, setNotice, save: saveEdit } = useFieldEdit(job);
   const readOnly = !job.editable;
   const set = (key: string) => (value: string) => {
     setEdits((current) => ({ ...current, [key]: value }));
@@ -112,32 +114,23 @@ export function RoomCard({
   const mold = values.category === 'mold';
 
   async function save() {
-    const db = job.session.db;
-    if (!db || job.stale) return;
+    if (job.stale) return;
     const { changes, errors: found } = roomChanges(values, stored, listEdits);
     setErrors(found);
     setNotice(null);
     if (Object.keys(found).length > 0) return setError('Check the boxes marked in this room.');
     setError(null);
-    setBusy(true);
     const sent = edits;
     const sentLists = listEdits;
-    try {
-      await saveRoomField(db, job.draftRef, roomId, changes);
+    if (Object.keys(changes).length === 0) return setNotice('Nothing to save.');
+    await saveEdit((db) => saveRoomField(db, job.draftRef, roomId, changes), 'Room saved.', () => {
       setEdits((current) => editsAfterSave(current, sent));
       // A list changed again while saving stays as edited; one saved as sent shows the stored list.
       setListEdits((current) => ({
         ...(current.items !== sentLists.items ? { items: current.items } : {}),
         ...(current.prepTasks !== sentLists.prepTasks ? { prepTasks: current.prepTasks } : {}),
       }));
-      await job.reloadDraft();
-      setNotice(Object.keys(changes).length === 0 ? 'Nothing to save.' : 'Room saved.');
-    } catch (error) {
-      setError('The room was not saved. Check the signal and save again.');
-      job.checkAccess(fieldRefusal(error));
-    } finally {
-      setBusy(false);
-    }
+    });
   }
 
   const id = (key: string) => `room-${roomId}-${key}`;
@@ -229,7 +222,7 @@ export function RoomCard({
             {busy ? 'Saving…' : 'Save room'}
           </Button>
           {onRemove ? (
-            <Button type="button" variant="outline" disabled={busy} onClick={() => void onRemove()}>
+            <Button type="button" variant="outline" disabled={busy || removing} onClick={() => void onRemove()}>
               Remove room
             </Button>
           ) : null}

@@ -362,7 +362,7 @@ test('a sign-in taken offline before the field shell opens can stand in offline'
   await expect(page.getByRole('heading', { name: A })).toBeVisible();
   // The first time on this phone the shell asks whether to keep jobs here; the person says yes.
   await page.getByRole('button', { name: KEEP_YES }).click();
-  await expect(page.getByText('Your jobs will show here.')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'My jobs', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Sign in to continue' })).toHaveCount(0);
   await context.setOffline(false);
 });

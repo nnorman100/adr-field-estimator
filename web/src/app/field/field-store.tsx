@@ -9,9 +9,9 @@ import { meKey, type DsMe } from '@/lib/field/ds-me';
 import { runFieldSync } from '@/lib/field/field-sync';
 import { contentHidden, evaluate, onWorkRemoved, takeRemoved } from '@/lib/field/retention';
 import { askToPersist, keepAnswer, saveKeepAnswer, type KeepAnswer } from '@/lib/field/keep-consent';
-import type { FieldSurface } from '@/lib/field/platform';
+import { offlineCaptureAllowed, type FieldSurface } from '@/lib/field/platform';
 import { sessionValid, type GateState, type SyncGate } from '@/lib/field/sync-gate';
-import { unsentWork } from '@/lib/field/unsent';
+import { readUnsent, unsentWork } from '@/lib/field/unsent';
 import { holdWindow } from '@/lib/field/window-lock';
 import * as text from './field-store-text';
 
@@ -26,7 +26,7 @@ import * as text from './field-store-text';
 export type FieldStorage = 'kept' | 'online-only' | 'not-saved';
 
 export type FieldMe = { companyId: string | null; role: string | null; capabilities: string[] };
-export type FieldContextValue = { client: FieldClient; me: FieldMe; gate: GateState };
+export type FieldContextValue = { client: FieldClient; me: FieldMe; gate: GateState; online: boolean; offlineCapture: boolean };
 const FieldContext = createContext<FieldContextValue | null>(null);
 
 // The started client and who the person is (from the server when online, from ds-me offline).
@@ -251,9 +251,10 @@ export function FieldStore({
   // Edits in a memory cache are gone when the window closes: leaving with any unsent asks first.
   const inMemory = phase.kind === 'ready' && phase.client.cache === 'memory';
   useEffect(() => {
-    if (!inMemory) return;
     const warn = (event: BeforeUnloadEvent) => {
-      if (unsentWork(me.tenantId, me.uid) === 'none') return;
+      const mark = readUnsent(me.tenantId, me.uid);
+      const photos = mark !== 'unreadable' && Boolean(mark.photosInMemory?.length);
+      if (!photos && (!inMemory || unsentWork(me.tenantId, me.uid) === 'none')) return;
       event.preventDefault();
       event.returnValue = true;
     };
@@ -328,7 +329,7 @@ export function FieldStore({
       ? { companyId: gate.facts.companyId, role: gate.facts.role, capabilities: gate.facts.capabilities }
       : { companyId: known.companyId ?? null, role: known.role ?? null, capabilities: known.capabilities ?? [] };
   return (
-    <FieldContext.Provider value={{ client: phase.client, me: fieldMe, gate }}>
+    <FieldContext.Provider value={{ client: phase.client, me: fieldMe, gate, online: reachable && gate.kind === 'open', offlineCapture: offlineCaptureAllowed(surface) }}>
       <div role="status" className="flex flex-col gap-2">
         {gateLine(gate, me.address, kept)}
       </div>

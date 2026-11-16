@@ -455,6 +455,9 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
           submissionId: made.source.id,
         }),
       );
+      await field(() => store.projectJob(caller.companyId, jobId, {
+        currentDraftId: made.job.currentDraftId, revision: made.job.revision,
+      }));
       return { created: made.changed, job: jobState(made.job) };
     },
   };
