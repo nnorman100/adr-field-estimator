@@ -184,7 +184,12 @@ function EnrolAttempt({
         </>
       ) : (
         <>
-          <p role={error ? 'alert' : 'status'} className={error ? 'text-sm font-medium text-red-800' : undefined}>
+          {/* One live status at a time: while the reset notice above is the status, the loading line
+              is plain text, so a screen reader hears one message, not two. */}
+          <p
+            role={error ? 'alert' : wasReset ? undefined : 'status'}
+            className={error ? 'text-sm font-medium text-red-800' : undefined}
+          >
             {error ?? 'Getting your setup key…'}
           </p>
         </>

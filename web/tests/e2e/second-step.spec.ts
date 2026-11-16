@@ -550,3 +550,34 @@ test('setting up needs a newer sign-in when Firebase says the sign-in is too old
   );
   expect(await savedSignIns(page)).toEqual([]);
 });
+
+test('after a reset, the setup screen shows one status while the setup key is still loading', async ({
+  page,
+}) => {
+  const fake = await fakeSecondStep(page, { factors: ['Authenticator app'] });
+  await page.goto('/sign-in/company-a');
+  await signIn(page, mine.ownerA.email);
+  await page.getByLabel('6-digit code').fill(APP_CODE);
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await expect(signedIn(page)).toBeVisible();
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  fake.reset();
+
+  // Hold the setup-key request so the loading line and the reset notice are on screen together.
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route(/mfaEnrollment:start/, async (route) => {
+    await held;
+    await route.fallback();
+  });
+  await signIn(page, mine.ownerA.email);
+  const main = page.getByRole('main');
+  await expect(main.getByText('Getting your setup key…')).toBeVisible();
+  await expect(main.getByRole('status')).toHaveCount(1);
+  await expect(main.getByRole('status')).toContainText('Your second sign-in step was reset.');
+
+  release();
+  await expect(setupHeading(page)).toBeVisible();
+  await expect(page.getByTestId('setup-key')).toBeVisible();
+  await expect(main.getByRole('status')).toHaveCount(1);
+});
