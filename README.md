@@ -144,6 +144,8 @@ No code, test, style or Markdown file may have more than 1,000 lines (`.py`, `.j
 
 `npm run lint` also runs the protected-tests check (`docs/runbook/ci.md`) and the required-docs check (`scripts/check_required_docs.js`, tested by `tests/test_required_docs.js`), which fails when any of `README.md`, `CLAUDE.md`, `AGENTS.md`, `HANDOFF.md`, `docs/spec.md`, `docs/ARCHITECTURE.md`, `docs/DECISIONS.md`, `docs/DATA.md`, `docs/RUNBOOK.md` or `docs/AI.md` is missing or empty. `HANDOFF.md` records what is live and the open items; `docs/spec.md` (the owner-approved baseline for the rebuild) lists every role and screen with acceptance checks; `docs/DATA.md` and `docs/AI.md` cover personal data and AI features.
 
+`npm run lint` also runs `scripts/check-design-tokens.mts` (tested by `tests/test_design_tokens.ts`), which fails when a colour in the front matter of `docs/DESIGN.md` differs from its `:root` custom property in `web/src/app/globals.css`. The stylesheet is the source of truth; update `docs/DESIGN.md` to match.
+
 Direct Python dependencies live in `backend/requirements.in` (runtime) and `backend/requirements-dev.in` (tests and lint). The hash-locked `requirements.txt` and `requirements-dev.txt` beside them are generated for Python 3.11 and used by Docker, CI and local installs. After editing an `.in` file, regenerate both locks from `backend/` with [uv](https://docs.astral.sh/uv/):
 
 ```powershell
