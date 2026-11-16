@@ -140,6 +140,7 @@ describe('creating a job', () => {
     expect(await jobCount()).toBe(1);
     expect(await auditCount('job_created')).toBe(1);
     expect([...h.drafts.made]).toEqual([[`${h.seed.a}/${ids.draftId}`, { fieldOwnerUid: 'estimator-a' }]]);
+    expect(h.drafts.projected.get(`${h.seed.a}/${ids.id}`)).toEqual({ currentDraftId: ids.draftId, revision: 1 });
   });
 
   it('reads an omitted address as the empty one', async () => {
@@ -543,5 +544,19 @@ describe('another company’s owner', () => {
       expect(listed.body.jobs).toEqual([]);
     }
     expect(await everything(h.admin)).toBe(before);
+  });
+});
+
+
+describe('job locator repair', () => {
+  it('populates an existing job on an authorized read and never projects a refused read', async () => {
+    const ids = await seedJob();
+    h.drafts.projected.clear();
+    expect((await read(ESTIMATOR_A2, ids.id)).status).toBe(404);
+    expect((await read(OWNER_B, ids.id)).status).toBe(404);
+    expect(h.drafts.projected.size).toBe(0);
+    const answer = await read(ESTIMATOR_A, ids.id);
+    expect(answer.status).toBe(200);
+    expect(h.drafts.projected.get(`${h.seed.a}/${ids.id}`)).toEqual({ currentDraftId: ids.draftId, revision: answer.body.job.revision });
   });
 });

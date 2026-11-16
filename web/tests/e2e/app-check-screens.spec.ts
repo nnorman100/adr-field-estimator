@@ -208,6 +208,7 @@ const VISITS: Visit[] = [
       await signIn(page, company.address, estimator.email, company.name);
       await page.getByRole('link', { name: 'Open the field app' }).click();
       await expect(page.getByRole('heading', { name: company.name, level: 1 })).toBeVisible();
+      await page.getByRole('button', { name: 'Online only', exact: true }).click();
       await expect(page.getByRole('heading', { name: 'My jobs' })).toBeVisible();
 
       const main = page.getByRole('main');

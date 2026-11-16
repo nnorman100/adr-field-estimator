@@ -3,9 +3,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { readJob, type JobDetail, type Refusal } from '@/lib/field/api';
+import { loadJobProjection, type JobProjection } from '@/lib/field/job-projection';
 import { newerDetail, pending, usePending } from '@/lib/field/pending';
 import type { FieldSession } from '@/lib/field/session';
-import { canEditDraft, fieldRefusal, InvalidFieldData, loadDraft, type DraftRef, type FieldDraft } from '@/lib/field/store';
+import { canEditDraft, draftReads, fieldRefusal, IncompleteFieldData, InvalidFieldData, SUPERSEDED, type DraftRef, type FieldDraft } from '@/lib/field/store';
 import type { JobView } from '@/lib/field/views';
 import { CustomerView } from './customer-view';
 import { PhotosView } from './photos-view';
@@ -20,7 +21,8 @@ const TABS: { view: JobView; label: string }[] = [
 
 export type JobContext = {
   session: FieldSession;
-  detail: JobDetail;
+  detail: JobDetail | null;
+  jobId: string;
   // Keeps a job answered to a request made under `mark` (src/lib/field/pending.ts).
   setDetail: (detail: JobDetail, mark: number) => void;
   // Reads the job again and answers it (null when it could not be read).
@@ -28,7 +30,7 @@ export type JobContext = {
   // The field draft as the field database holds it; null when it could not be read.
   draft: FieldDraft | null;
   draftRef: DraftRef;
-  reloadDraft: () => Promise<void>;
+  reloadDraft: (source?: 'cache') => Promise<void>;
   // Takes a refusal of the photo route or the field database (null for none): 401 or 403 drops the
   // job from the screen; a 404 may be a missing photo, so the job is read again and that decides.
   checkAccess: (refusal: Refusal | null) => void;
@@ -60,9 +62,13 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     [jobId],
   );
   const draftChanges = usePending(() => pending.draftChanges(jobId));
+  const [locator, setLocator] = useState<JobProjection | null>(null);
+  const [cachedError, setCachedError] = useState<string | null>(null);
   const [draft, setDraft] = useState<FieldDraft | null>(null);
+  const [draftAt, setDraftAt] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [draftError, setDraftError] = useState<string | null>(null);
+  const [readDraft] = useState(draftReads);
 
   // The server refused the job to this person: every copy of it goes (src/lib/field/pending.ts).
   const deny = useCallback(
@@ -74,11 +80,13 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   );
 
   const reloadDraft = useCallback(
-    async (current?: JobDetail) => {
-      const job = current ?? detail;
-      if (!job || !session.db) return;
+    async (currentDraftId?: string, source?: 'cache') => {
+      const draftId = currentDraftId ?? locator?.currentDraftId ?? detail?.job.currentDraftId;
+      if (!draftId || !session.db) return;
       try {
-        const found = await loadDraft(session.db, { companyId: session.companyId, draftId: job.job.currentDraftId });
+        const found = await readDraft(session.db, { companyId: session.companyId, draftId }, source);
+        if (found === SUPERSEDED) return;
+        setDraftAt(draftId);
         setDraft(found);
         setDraftError(found ? null : 'The field work of this job is not there yet. Try again in a moment.');
       } catch (error) {
@@ -96,8 +104,25 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
         );
       }
     },
-    [detail, session, deny],
+    [detail, locator, session, deny, readDraft],
   );
+
+  // The locator first, then the draft it names; trying again repeats both.
+  const openDraft = useCallback(async () => {
+    try {
+      // The API populated this server-owned locator, including for jobs made before S6. Read
+      // the document itself to warm the person cache; never cache the API response.
+      const head = await loadJobProjection(session.db, session.companyId, jobId);
+      if (!head) throw new Error('Job locator unavailable');
+      setLocator(head);
+      setCachedError(null);
+      await reloadDraft(head.currentDraftId);
+    } catch (error) {
+      const refusal = fieldRefusal(error);
+      if (refusal) deny(refusal.message);
+      else setDraftError('The field work could not be opened. Try again when connected.');
+    }
+  }, [reloadDraft, jobId, session, deny]);
 
   const apply = useCallback(
     async (answer: Awaited<ReturnType<typeof readJob>>, sentAt: number): Promise<JobDetail | null> => {
@@ -109,13 +134,14 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
         return null;
       }
       setDetail(answer.value, sentAt);
-      await reloadDraft(answer.value);
+      await openDraft();
       return answer.value;
     },
-    [reloadDraft, setDetail, jobId],
+    [openDraft, setDetail, jobId],
   );
 
   const reloadJob = useCallback(async () => {
+    if (!session.online) return null;
     const sentAt = pending.mark(jobId);
     return apply(await readJob(session.user, jobId), sentAt);
   }, [apply, session, jobId]);
@@ -135,6 +161,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
 
   // The first read; each job is its own component (keyed by the parent).
   useEffect(() => {
+    if (!session.online) return;
     let live = true;
     const sentAt = pending.mark(jobId);
     void readJob(session.user, jobId).then((answer) => {
@@ -146,7 +173,38 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [session.online]);
+
+  // An offline start needs only the locator and field maps already in this person's cache, also
+  // when a job read earlier on this page is still shown. The gate still owns all network access
+  // and retention. No SQL job/customer/claim is invented.
+  useEffect(() => {
+    if (session.online || draft || denial) return;
+    let live = true;
+    void (async () => {
+      try {
+        const head = await loadJobProjection(session.db, session.companyId, jobId, 'cache');
+        if (!head) throw new Error('Job not kept on this phone');
+        const found = await readDraft(session.db, { companyId: session.companyId, draftId: head.currentDraftId }, 'cache');
+        if (found === SUPERSEDED) return;
+        if (!found) throw new Error('Draft not kept on this phone');
+        if (!live) return;
+        setLocator(head);
+        setDraftAt(head.currentDraftId);
+        setDraft(found);
+        setDraftError(null);
+        setCachedError(null);
+      } catch (error) {
+        if (!live) return;
+        setCachedError(
+          error instanceof IncompleteFieldData
+            ? 'Only part of this job’s field work is kept on this phone. Open it once online to keep all of it.'
+            : 'Open this job once online to keep its field work on this phone.',
+        );
+      }
+    })();
+    return () => { live = false; };
+  }, [session.online, session.db, session.companyId, jobId, draft, denial, readDraft]);
 
   // A photo that settled after an earlier screen of this job closed changed the draft: read it again.
   useEffect(() => {
@@ -155,7 +213,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftChanges]);
 
-  if ((error || denial) && !detail) {
+  if (!detail && (denial || (error && (!locator || !draft)))) {
     return (
       <div className="flex flex-col gap-2">
         <p role="alert">{error ?? denial}</p>
@@ -166,25 +224,31 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       </div>
     );
   }
-  if (!detail) return <p role="status">Opening the job…</p>;
+  if (!detail && (!locator || !draft)) {
+    return <p role="status">{session.online ? 'Opening the job…' : cachedError ?? 'Opening saved field work…'}</p>;
+  }
+  const draftId = locator?.currentDraftId ?? detail!.job.currentDraftId;
 
   const context: JobContext = {
     session,
     detail,
+    jobId,
     setDetail,
     reloadJob,
     draft,
-    draftRef: { companyId: session.companyId, draftId: detail.job.currentDraftId },
-    reloadDraft: () => reloadDraft(detail),
+    // Until a newer locator's draft finishes loading, the old form remains bound to its own
+    // document and read-only. Typed values from it must never be written onto a different draft.
+    draftRef: { companyId: session.companyId, draftId: draftAt ?? draftId },
+    reloadDraft: (source) => reloadDraft(draftAt ?? draftId, source),
     checkAccess,
-    editable: draft !== null && canEditDraft(draft, session.user.uid, session.capabilities),
+    editable: draftAt === draftId && draft !== null && canEditDraft(draft, session.user.uid, session.capabilities) && (session.online || session.offlineCapture),
     stale: draft !== null && draftError !== null,
   };
 
   return (
     <div className="flex flex-col gap-4">
       <FieldLink to={{ view: 'jobs', list: null }}>Back to jobs</FieldLink>
-      <h2 className="text-xl font-semibold break-words">{detail.job.propertyAddress || 'No address yet'}</h2>
+      <h2 className="text-xl font-semibold break-words">{detail ? detail.job.propertyAddress || 'No address yet' : 'Saved field work'}</h2>
       <nav aria-label="Job" className="flex flex-wrap gap-x-4">
         {TABS.map((tab) => (
           <FieldLink key={tab.view} to={{ view: tab.view, jobId }} current={tab.view === view} className={tab.view === view ? 'font-semibold' : undefined}>
@@ -203,17 +267,29 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       {(view === 'scope' || view === 'photos') && draftError ? (
         <div className="flex flex-col gap-2">
           <p role="alert">{draftError}</p>
-          <Button variant="outline" onClick={() => void reloadDraft(detail)}>
+          <Button variant="outline" onClick={() => void openDraft()}>
             Try again
           </Button>
         </div>
       ) : null}
+      {(view === 'scope' || view === 'photos') && !draft && !draftError && cachedError ? <p role="status">{cachedError}</p> : null}
       {/* The views of one job stay mounted and only the open one shows, so moving between them
           keeps what the person has typed and not saved. */}
-      <div hidden={view !== 'scope'}>{draft ? <ScopeView job={context} draft={draft} /> : null}</div>
-      <div hidden={view !== 'photos'}>{draft ? <PhotosView job={context} draft={draft} open={view === 'photos'} /> : null}</div>
+      <div hidden={view !== 'scope'}>{draft ? <ScopeView key={draftAt} job={context} draft={draft} /> : null}</div>
+      <div hidden={view !== 'photos'}>{draft ? <PhotosView key={draftAt} job={context} draft={draft} open={view === 'photos'} /> : null}</div>
       <div hidden={view !== 'customer'}>
-        <CustomerView job={context} />
+        {detail ? (
+          <CustomerView job={{ ...context, detail }} />
+        ) : (
+          <div className="flex flex-col gap-2">
+            <p role="status">{error ?? 'Needs a connection'}</p>
+            {error && session.online ? (
+              <Button variant="outline" onClick={() => void reloadJob()}>
+                Try again
+              </Button>
+            ) : null}
+          </div>
+        )}
       </div>
     </div>
   );

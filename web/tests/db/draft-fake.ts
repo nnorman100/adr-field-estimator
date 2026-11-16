@@ -1,3 +1,4 @@
+import type { JobProjection } from '@/lib/field/job-projection';
 import type { DraftStore } from '@/lib/jobs/drafts';
 
 // A stand-in for the field database's drafts: what the jobs service writes, kept in memory, with a
@@ -5,6 +6,7 @@ import type { DraftStore } from '@/lib/jobs/drafts';
 // writer (src/lib/jobs/drafts.ts) against the emulator and the field rules.
 export type FakeDrafts = DraftStore & {
   // The drafts made, by "company/draft", with the field owner's uid (null while nobody owns it).
+  projected: Map<string, JobProjection>;
   made: Map<string, { fieldOwnerUid: string | null }>;
   // Every call to ensure, in order, including the ones that found the draft there.
   calls: { companyId: string; draftId: string; fieldOwnerUid: string | null }[];
@@ -16,6 +18,11 @@ export type FakeDrafts = DraftStore & {
 export function fakeDrafts(): FakeDrafts {
   const store: FakeDrafts = {
     made: new Map(),
+    projected: new Map(),
+    async projectJob(companyId, jobId, projection) {
+      const key = `${companyId}/${jobId}`;
+      if ((store.projected.get(key)?.revision ?? -1) < projection.revision) store.projected.set(key, { ...projection });
+    },
     calls: [],
     failNext: { on: false, afterWrite: false },
     async ensure(companyId, draftId, fieldOwnerUid) {

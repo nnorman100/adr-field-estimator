@@ -1,52 +1,45 @@
 'use client';
 
 import { useSearchParams } from 'next/navigation';
-import { useCallback, useEffect, useState } from 'react';
-import { Button } from '@/components/ui/button';
+import { useEffect, useMemo, useState } from 'react';
+import { fieldUser } from '@/lib/field-db';
 import type { DsMe } from '@/lib/field/ds-me';
 import { pending } from '@/lib/field/pending';
-import { openSession, watchSignIn, type SessionOutcome } from '@/lib/field/session';
+import { watchSignIn, type FieldSession } from '@/lib/field/session';
 import { placeOf } from '@/lib/field/views';
 import { JobScreens } from './job-screens';
 import { JobsView } from './jobs-view';
 import { NewJobView } from './new-job-view';
+import { useFieldClient } from './field-store';
 
-// The job screens inside the field shell (S5a-6). The shell starts from the saved sign-in; this
-// asks the server who the person is (role, capabilities, company) and then shows the view the
-// address names (src/lib/field/views.ts). Nothing here is rendered on the server.
+// Identity and cache come from FieldStore's gate, including its saved offline facts.
 export function FieldApp({ me }: { me: DsMe }) {
   const params = useSearchParams();
   const place = placeOf(new URLSearchParams(params.toString()));
-  const [outcome, setOutcome] = useState<SessionOutcome | null>(null);
-
-  const start = useCallback(() => {
-    let live = true;
-    openSession(me).then(
-      (next) => {
-        if (!live) return;
-        if (next.kind === 'ready') pending.openFor(`${next.session.companyId}/${next.session.user.uid}`);
-        setOutcome(next);
-      },
-      () => {
-        if (live) setOutcome({ kind: 'unavailable' });
-      },
-    );
-    return () => {
-      live = false;
+  const field = useFieldClient();
+  const [opened, setOpened] = useState<string | null>(null);
+  const [lost, setLost] = useState(false);
+  const user = field ? fieldUser(field.client.person) : null;
+  const session = useMemo<FieldSession | null>(() => {
+    if (!field || !user || !field.me.companyId || !field.me.role) return null;
+    return {
+      user, db: field.client.db, client: field.client,
+      companyId: field.me.companyId, role: field.me.role, capabilities: field.me.capabilities,
+      online: field.online, offlineCapture: field.offlineCapture,
     };
-  }, [me]);
-
-  useEffect(() => start(), [start]);
-
-  // Nothing of this person's stays on screen once the phone's sign-in is someone else's or no one's.
-  const signedIn = outcome?.kind === 'ready' ? outcome.session.user.uid : null;
+  }, [field, user]);
+  const companyId = session?.companyId;
+  const uid = session?.user.uid;
   useEffect(() => {
-    if (signedIn === null) return;
-    return watchSignIn(me, signedIn, () => setOutcome({ kind: 'sign-in-again' }));
-  }, [me, signedIn]);
+    if (!companyId || !uid) return;
+    return watchSignIn(me, uid, () => setLost(true), () => {
+      pending.openFor(`${companyId}/${uid}`);
+      setOpened(`${companyId}/${uid}`);
+    });
+  }, [me, companyId, uid]);
 
-  if (outcome === null) return <p role="status">Opening your jobs…</p>;
-  if (outcome.kind === 'sign-in-again') {
+  if (!field) return <p role="status">The field database is not set up for this company yet.</p>;
+  if (!session || lost) {
     return (
       <div className="flex flex-col gap-2">
         <p className="text-base">Sign in again to see your jobs.</p>
@@ -56,26 +49,7 @@ export function FieldApp({ me }: { me: DsMe }) {
       </div>
     );
   }
-  if (outcome.kind === 'unavailable') {
-    return (
-      <div className="flex flex-col gap-2">
-        <p role="alert" className="text-base">
-          Your jobs could not be opened just now.
-        </p>
-        <Button
-          variant="outline"
-          onClick={() => {
-            setOutcome(null);
-            start();
-          }}
-        >
-          Try again
-        </Button>
-      </div>
-    );
-  }
-
-  const { session } = outcome;
+  if (opened !== `${session.companyId}/${session.user.uid}`) return <p role="status">Opening your jobs…</p>;
   if (place.view === 'jobs') return <JobsView key={place.list ?? 'default'} session={session} list={place.list} />;
   if (place.view === 'new-job') return <NewJobView session={session} />;
   return <JobScreens key={place.jobId} session={session} jobId={place.jobId} view={place.view} />;
