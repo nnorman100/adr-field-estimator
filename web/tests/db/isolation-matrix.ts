@@ -78,6 +78,12 @@ const JOB_SIGN = {
   documentsConfirmed: true,
 };
 
+// Office jobs (S5b-1): notes, an assignment and a field-owner move, with the suite's own ids; the
+// path carries the other company's job (and assignment).
+const JOB_COORDINATION = { revision: 1, changeId: '0c6e2a84-5d17-4b39-9e60-7f2a1c8d4b53', notes: 'Planted Note' };
+const JOB_ASSIGN = { id: '9e4b2d76-1a3c-4f58-8b07-6d2e5a1c9f34', estimatorActorId: '3b7d1f95-8c2e-4a60-9d14-2f6b8e0a5c71' };
+const JOB_TRANSFER = { revision: 1, changeId: '6a2c8e40-7b91-4d35-a2f6-1e9c3b5d7a08', toActorId: '3b7d1f95-8c2e-4a60-9d14-2f6b8e0a5c71' };
+
 // Link bodies (S5a-11b), with the suite's own ids.
 const JOB_LINK = { id: '7a1c3e59-2b84-4d60-9f17-5c3e8a0b2d49', estimateId: '5b8e1c47-3f2a-4d96-8e01-4c7a9b2d6f15', proposalSha256: '0'.repeat(64) };
 const JOB_DOCUMENT_LINK = { id: '1e5b9d27-6a40-4c83-b2f9-8d0e3a7c6b15', set: 'homeowner' };
@@ -153,6 +159,14 @@ export const MATRIX: readonly MatrixRow[] = [
   row('api/jobs/[jobId]/document-links', 'POST', 'company', { body: JOB_DOCUMENT_LINK, own: 'cross' }),
   row('api/jobs/[jobId]/document-links', 'GET', 'company', { own: 'cross' }),
   row('api/jobs/[jobId]/document-links/[linkId]', 'DELETE', 'company', { own: 'cross' }),
+  // S5b-1: coordination, assignment and the field owner of another company's job are 404 to every
+  // role, and nothing is changed.
+  row('api/jobs/[jobId]/coordination', 'GET', 'company', { own: 'cross' }),
+  row('api/jobs/[jobId]/coordination', 'PUT', 'company', { body: JOB_COORDINATION, own: 'cross' }),
+  row('api/jobs/[jobId]/assignments', 'POST', 'company', { body: JOB_ASSIGN, own: 'cross' }),
+  row('api/jobs/[jobId]/assignments/[assignmentId]', 'DELETE', 'company', { own: 'cross' }),
+  row('api/jobs/[jobId]/field-owner', 'POST', 'company', { own: 'cross' }),
+  row('api/jobs/[jobId]/field-owner/transfer', 'POST', 'company', { body: JOB_TRANSFER, own: 'cross' }),
 
   row('api/invitations/[invitationId]', 'GET', 'invitation'),
   row('api/invitations/[invitationId]/accept', 'POST', 'invitation'),

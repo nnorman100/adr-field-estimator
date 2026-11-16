@@ -294,7 +294,12 @@ review on Nov 6, 2026.
 An office-created job starts with no field owner. The first authorized estimator to capture field
 work on it becomes its field owner; office keeps customer details and assignment.
 
-Target acceptance checks (**not built**):
+Acceptance checks (built in the rebuilt app, S5b-1: `web/tests/db/office-jobs-api.test.ts`, "field and
+office ownership", and `web/tests/emu/field-owner.test.ts`). Under owner decision J3 (`docs/plans/S5.md`,
+section 8) the customer details and the property address may be set by the field owner, the owner and
+office while the job is unsigned; office keeps the assignment and the office notes (the job coordination),
+which the field owner cannot change; after signing only office and the owner correct the customer details
+(S5b-4). "Office-owned customer details" in the checks below are therefore the office notes:
 
 - On an office-created empty job, the first authorized estimator's first capture makes them field
   owner, and a second estimator's later field write is refused.
@@ -303,9 +308,12 @@ Target acceptance checks (**not built**):
 - A field owner cannot change assignment or office-owned customer details.
 - Becoming field owner grants no price approval.
 
-Still **[open]**: an explicit field-owner transfer (the plan's alternative, preserving pending work
-and an audit), and how today's rule that a company owner or assignee can edit scope maps onto
-field ownership.
+The explicit field-owner transfer was decided by owner decision J5 (`docs/plans/S5.md`, section 8)
+and its server side is built in S5b-1: the owner moves the field work to themself or an assigned estimator,
+audited, and the field rules refuse the phone that held it from then on; keeping that phone's unsent changes
+on screen, read only, comes with the S5b-1 screens pull request (S6 offers Save as new draft). In the rebuilt app an
+assigned estimator changes the field work only once they own it (the first capture, or a move to
+them); until then they see the job's customer view only.
 
 ### 6.3 Live voice walkthrough as the default
 

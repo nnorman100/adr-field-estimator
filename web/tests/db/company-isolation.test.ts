@@ -98,7 +98,7 @@ let b: Side;
 type Side = {
   name: 'A' | 'B';
   companyId: string;
-  ids: { membershipId: string; invitationId: string; address: string; versionId: string; jobId: string; draftId: string; photoId: string };
+  ids: { membershipId: string; invitationId: string; address: string; versionId: string; jobId: string; draftId: string; photoId: string; assignmentId: string };
   people: { owner: FakeClaims; estimator: FakeClaims; office: FakeClaims };
   markers: string[];
 };
@@ -149,14 +149,21 @@ async function seedSides(): Promise<void> {
   const versionB = await prices(h.seed.b, h.seed.ownerB.actor, 'b');
   // One job with a customer and a claim in each company, so a clean answer to the other company is
   // not an empty one. Its strings are markers, like the ids.
-  const job = async (company: string, by: string, suffix: string) => {
-    const ids = { jobId: randomUUID(), draftId: randomUUID(), photoId: randomUUID() };
+  const job = async (company: string, by: string, suffix: string, estimator: string) => {
+    const ids = { jobId: randomUUID(), draftId: randomUUID(), photoId: randomUUID(), assignmentId: randomUUID() };
     await h.admin`
       INSERT INTO jobs (id, company_id, created_by_actor_id, field_owner_actor_id, current_draft_id, property_address, request_digest)
       VALUES (${ids.jobId}, ${company}, ${by}, ${by}, ${ids.draftId}, ${`Property Line ${suffix}`}, ${'0'.repeat(64)})
     `;
     await h.admin`INSERT INTO job_customers (company_id, job_id, name, phone, email) VALUES (${company}, ${ids.jobId}, ${`Customer ${suffix}`}, ${`555-01${suffix === 'a' ? '11' : '22'}`}, ${`customer-${suffix}@example.test`})`;
     await h.admin`INSERT INTO job_claims (company_id, job_id, carrier, claim_number) VALUES (${company}, ${ids.jobId}, ${`Carrier ${suffix}`}, ${`Claim ${suffix}`})`;
+    // S5b-1: the job's estimator assignment and office notes, so a refusal of the coordination and
+    // assignment routes is not a refusal of empty tables.
+    await h.admin`
+      INSERT INTO job_assignments (id, company_id, job_id, estimator_actor_id, request_digest, assigned_by_actor_id)
+      VALUES (${ids.assignmentId}, ${company}, ${ids.jobId}, ${estimator}, ${'0'.repeat(64)}, ${by})
+    `;
+    await h.admin`INSERT INTO job_coordination (company_id, job_id, office_notes) VALUES (${company}, ${ids.jobId}, ${`Office Note ${suffix}`})`;
     // A photo and its full-size original, in the registry and in the (fake) bucket, so a refusal to
     // the other company is not a refusal of an empty store.
     for (const kind of ['photo', 'original'] as const) {
@@ -179,8 +186,8 @@ async function seedSides(): Promise<void> {
     const documents = { company_clauses: [{ title: `Clause Line ${suffix}`, text: `Clause Text ${suffix}` }], authorization_text: `Terms Line ${suffix}` };
     await h.admin`UPDATE companies SET profile_tagline = ${`Tagline Line ${suffix}`}, profile_documents = ${h.admin.json(documents)} WHERE id = ${company}`;
   }
-  const jobA = await job(h.seed.a, h.seed.ownerA.actor, 'a');
-  const jobB = await job(h.seed.b, h.seed.ownerB.actor, 'b');
+  const jobA = await job(h.seed.a, h.seed.ownerA.actor, 'a', h.seed.estimatorA.actor);
+  const jobB = await job(h.seed.b, h.seed.ownerB.actor, 'b', h.seed.estimatorB.actor);
   const side = (
     name: 'A' | 'B',
     companyId: string,
@@ -190,7 +197,7 @@ async function seedSides(): Promise<void> {
     versionId: string,
     ids: string[],
     extra: string[],
-    job: { jobId: string; draftId: string; photoId: string },
+    job: { jobId: string; draftId: string; photoId: string; assignmentId: string },
   ): Side => {
     const tenant = `tenant-${suffix}`;
     const person = (uid: string): FakeClaims => ({ tenant, uid });
@@ -199,7 +206,7 @@ async function seedSides(): Promise<void> {
       companyId,
       ids: { membershipId, invitationId, address: `company-${suffix}`, versionId, ...job },
       people: { owner: person(`owner-${suffix}`), estimator: person(`estimator-${suffix}`), office: person(`office-${suffix}`) },
-      markers: [companyId, membershipId, invitationId, versionId, `zz-price-marker-${suffix}`, `zz-reason-${suffix}`, tenant, `company-${suffix}`, `-${suffix}@example.test`, ...ids, ...extra, job.jobId, job.draftId, job.photoId, `Property Line ${suffix}`, `Customer ${suffix}`, `Carrier ${suffix}`, `Claim ${suffix}`, `Profile Line ${suffix}`, `Signoff ${suffix}`, `Licence ${suffix}`, `Tagline Line ${suffix}`, `Clause Line ${suffix}`, `Clause Text ${suffix}`, `Terms Line ${suffix}`].map((value) =>
+      markers: [companyId, membershipId, invitationId, versionId, `zz-price-marker-${suffix}`, `zz-reason-${suffix}`, tenant, `company-${suffix}`, `-${suffix}@example.test`, ...ids, ...extra, job.jobId, job.draftId, job.photoId, job.assignmentId, `Office Note ${suffix}`, `Property Line ${suffix}`, `Customer ${suffix}`, `Carrier ${suffix}`, `Claim ${suffix}`, `Profile Line ${suffix}`, `Signoff ${suffix}`, `Licence ${suffix}`, `Tagline Line ${suffix}`, `Clause Line ${suffix}`, `Clause Text ${suffix}`, `Terms Line ${suffix}`].map((value) =>
         value.toLowerCase(),
       ),
     };
@@ -271,6 +278,7 @@ const idsOf = (victim: Side, company: Side = victim): Record<string, string> => 
   // stands in, and signing-links.test.ts uses real links across companies.
   linkId: victim.ids.photoId,
   signatureId: victim.ids.photoId,
+  assignmentId: victim.ids.assignmentId,
 });
 
 const rowsOfKind = (...kinds: MatrixRow['kind'][]) => MATRIX.filter((row) => kinds.includes(row.kind));

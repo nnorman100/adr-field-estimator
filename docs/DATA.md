@@ -13,7 +13,7 @@ The sections of this document, one file per area (each keeps its original headin
 - [Rebuilt app Postgres: backups, ledger and identity tables](data/postgres-ledger-and-identity.md): Rebuilt app Postgres (not deployed): Cloud SQL backups, the migration ledger, `0001` and `0002_identity`.
 - [Rebuilt app Postgres: runtime role, row-level security, lookups and the platform operator](data/postgres-rls-and-operator.md): `0003_runtime_role` to `0008_feature_flag_writes`.
 - [Rebuilt app Postgres: price tables](data/postgres-prices.md): `0009_price_tables`.
-- [Rebuilt app Postgres: core job tables](data/postgres-jobs.md): `0010_core_job_tables`.
+- [Rebuilt app Postgres: core job tables](data/postgres-jobs.md): `0010_core_job_tables`, and `0015_office_jobs` (assignments, office notes, corrections after signing).
 - [Rebuilt app Postgres: submissions, estimates and agreements](data/postgres-submissions.md): `0011_submissions_agreements`.
 - [Rebuilt app Postgres: AI and Live tables](data/postgres-ai-live.md): `0012_ai_live_tables`.
 - [Rebuilt app Postgres: company documents, signing links and document links](data/postgres-documents-and-links.md): `0013_company_documents` and `0014_signing_links`.

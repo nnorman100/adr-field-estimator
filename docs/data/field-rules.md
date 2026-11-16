@@ -15,7 +15,7 @@ The rules deny every path they do not name. They read three server-written recor
 | `companies/{companyId}` (company header) | `authTenantId`, the company's sign-in tenant | server only |
 | `companies/{companyId}/jobs/{jobId}` (job locator) | `currentDraftId` (one document ID, 1..64 characters) and `revision` (nonnegative SQL job revision); no SQL customer/claim/header data | server only; create and authorized job reads populate it, Back to editing advances it; delayed older revisions cannot replace a newer locator |
 | `companies/{companyId}/access/{uid}` (access record) | `role` (owner, estimator or office) and `expiresAt` (a timestamp; the record stops working then) | server only |
-| `companies/{companyId}/drafts/{draftId}`, its `rooms/{roomId}` and its `photos/{photoId}` | draft: `fieldOwnerUid` and `state` (editing, submitting or submitted); client data sits in one `field` map in each document | the draft's field owner changes only `field`, while the draft is `editing`; the server creates and removes drafts. `POST /api/jobs` (S5a-3) makes a job's first draft after its Postgres row, as `{ fieldOwnerUid, state: 'editing', field: {} }` (no `fieldOwnerUid` key while nobody owns the field work), and a retry makes it only if it is missing |
+| `companies/{companyId}/drafts/{draftId}`, its `rooms/{roomId}` and its `photos/{photoId}` | draft: `fieldOwnerUid` and `state` (editing, submitting or submitted); client data sits in one `field` map in each document. `fieldOwnerRevision` (S5b-1) is a server key the rules do not read | the draft's field owner changes only `field`, while the draft is `editing`; the server creates and removes drafts. `POST /api/jobs` (S5a-3) makes a job's first draft after its Postgres row, as `{ fieldOwnerUid, state: 'editing', field: {} }` (no `fieldOwnerUid` key while nobody owns the field work), and a retry makes it only if it is missing |
 
 Every read or write needs a token whose `firebase.tenant` is the company's `authTenantId` and an
 unexpired access record for that uid in that company. With both, owner and office read every draft
@@ -25,6 +25,17 @@ under it (created holding only `field`; no other collection and nothing deeper).
 may also delete a room document of an editing draft (owner decision, 2026-11-13, S5a-6: the phone
 removes the room from `roomOrder` in the same batch); a photo reference is never deleted by a
 client. A draft that is `submitting` or `submitted` refuses every client write.
+
+The draft's `fieldOwnerUid` is the server's copy of `jobs.field_owner_actor_id` in Postgres (S5b-1). An
+office user's job starts with none, so nobody but the owner and office reads its draft and nobody writes
+it. The first person who does field work and may see the job starts it (`POST /api/jobs/{id}/field-owner`):
+Postgres records them once, then the server sets `fieldOwnerUid` in a Firestore transaction. When the
+owner moves the field work (owner decision J5) the server sets it again, so the phone that held it is
+refused from then on; keeping its unsent changes on that phone's screen comes with the S5b-1 screens pull
+request (S6 offers Save as new draft). Each set also
+writes `fieldOwnerRevision`, the job's coordination revision (`job_coordination.revision`) it was made at, and a set carrying an older revision changes
+nothing, so a slow request never puts back an earlier owner. A client can change neither key: the rules
+let it change only `field`.
 
 Each `field` map follows field map v2 (S5a-1, room inputs S5a-10, `web/src/lib/field/schema.ts`), and the rules refuse
 a key it does not name, a value of the wrong type, and a text, number or list outside its size. Every

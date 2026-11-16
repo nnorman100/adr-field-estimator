@@ -144,7 +144,8 @@ describe('Submit', () => {
 
     it('two phones with different ids at once: one record and one 409', async () => {
       const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
-      const answers = await Promise.all([f.submitShown(ESTIMATOR_A, jobId, draftId, manifest), f.submitShown(OWNER_A, jobId, draftId, manifest)]);
+      // The field owner's two phones (only the field owner submits, docs/spec.md 6.2).
+      const answers = await Promise.all([f.submitShown(ESTIMATOR_A, jobId, draftId, manifest), f.submitShown(ESTIMATOR_A, jobId, draftId, manifest)]);
       const statuses = answers.map((a) => a.answer.status).sort();
       expect(statuses).toEqual([201, 409]);
       const refused = answers.find((a) => a.answer.status === 409)!.answer.body.error;
@@ -159,7 +160,7 @@ describe('Submit', () => {
       h.field.gate.read = () => hold.wait;
       const first = f.submitShown(ESTIMATOR_A, jobId, draftId, manifest);
       await until(() => h.field.draft(h.seed.a, draftId)?.state === 'submitting', 'the first fence');
-      const second = await f.submitShown(OWNER_A, jobId, draftId, manifest);
+      const second = await f.submitShown(ESTIMATOR_A, jobId, draftId, manifest);
       expect(second.answer).toMatchObject({ status: 409, body: { error: 'submission_in_progress' } });
       hold.open();
       expect((await first).answer.status).toBe(201);
@@ -280,7 +281,7 @@ describe('Submit', () => {
         status: 409,
         body: { error: 'draft_locked' },
       });
-      expect((await f.submitShown(OWNER_A, jobId, draftId, manifest)).answer).toMatchObject({ status: 409, body: { error: 'already_submitted' } });
+      expect((await f.submitShown(ESTIMATOR_A, jobId, draftId, manifest)).answer).toMatchObject({ status: 409, body: { error: 'already_submitted' } });
       expect((await f.submit(ESTIMATOR_A, jobId, body)).status).toBe(200);
       expect(await f.submissions(jobId)).toEqual([record]);
     });
@@ -337,11 +338,13 @@ describe('Submit', () => {
     }
   });
 
-  it('only the owner and the estimator whose job it is submit; another company never reaches the job', async () => {
+  it('only the estimator who owns the field work submits, not the owner who does not; another company never reaches the job', async () => {
     const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
     const before = await everything(h.admin);
     const fieldBefore = JSON.stringify(h.field.data());
     expect((await f.submitShown(OFFICE_A, jobId, draftId, manifest)).answer).toMatchObject({ status: 403, body: { error: 'not_allowed' } });
+    // The company owner submits only field work that is theirs (docs/spec.md 6.2; a move to themself, J5).
+    expect((await f.submitShown(OWNER_A, jobId, draftId, manifest)).answer).toMatchObject({ status: 403, body: { error: 'not_field_owner' } });
     expect((await f.submitShown(ESTIMATOR_A2, jobId, draftId, manifest)).answer).toMatchObject({ status: 404, body: { error: 'not_found' } });
     for (const claims of [OWNER_B, ESTIMATOR_B]) {
       expect((await f.submitShown(claims, jobId, draftId, manifest)).answer).toMatchObject({ status: 404, body: { error: 'not_found' } });
@@ -350,8 +353,7 @@ describe('Submit', () => {
     expect((await f.submit(null, jobId, {})).status).toBe(401);
     expect(await everything(h.admin)).toBe(before);
     expect(JSON.stringify(h.field.data())).toBe(fieldBefore);
-    // The owner may submit an estimator's job.
-    expect((await f.submitShown(OWNER_A, jobId, draftId, manifest)).answer.status).toBe(201);
+    expect((await f.submitShown(ESTIMATOR_A, jobId, draftId, manifest)).answer.status).toBe(201);
   });
 
   it('leaves the attempt pending when the field database cannot be reached, and the same request then records', async () => {
@@ -372,9 +374,9 @@ describe('Submit', () => {
     void f.submitShown(ESTIMATOR_A, jobId, draftId, manifest);
     await until(() => h.field.draft(h.seed.a, draftId)?.state === 'submitting', 'the first fence');
     const stale = h.field.draft(h.seed.a, draftId)!.fence!.epoch;
-    expect((await f.submitShown(OWNER_A, jobId, draftId, manifest)).answer.body.error).toBe('submission_in_progress');
+    expect((await f.submitShown(ESTIMATOR_A, jobId, draftId, manifest)).answer.body.error).toBe('submission_in_progress');
     await expire();
-    const next = await f.submitShown(OWNER_A, jobId, draftId, manifest);
+    const next = await f.submitShown(ESTIMATOR_A, jobId, draftId, manifest);
     expect(next.answer.status).toBe(201);
     const rows = await f.submissions(jobId);
     expect(rows.map((row) => row.status)).toEqual(['aborted', 'committed']);

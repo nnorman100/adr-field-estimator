@@ -51,6 +51,11 @@ export const memberApiPaths: readonly string[] = [
   '/api/jobs/:id/signing-link',
   '/api/jobs/:id/document-links',
   '/api/jobs/:id/document-links/:id',
+  '/api/jobs/:id/coordination',
+  '/api/jobs/:id/assignments',
+  '/api/jobs/:id/assignments/:id',
+  '/api/jobs/:id/field-owner',
+  '/api/jobs/:id/field-owner/transfer',
 ];
 
 // Link routes (S5a-11b) that check a link token themselves with linkRoute (src/lib/auth/route.ts):

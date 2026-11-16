@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, ne, or, sql, type SQL } from 'drizzle-orm';
-import { actors, auditEvents, jobClaims, jobCustomers, jobs } from '@/db/schema';
+import { actors, auditEvents, jobAssignments, jobClaims, jobCustomers, jobs } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
 import { canSeeJob, hasAny, isOwnJob, jobAccess, JobError, seesEveryJob, type JobCaller, type JobRow } from './access';
@@ -49,7 +49,7 @@ export type JobDetail = { job: JobView; customer: CustomerView; claim: ClaimView
 
 export type JobListItem = Pick<JobView, 'id' | 'status' | 'propertyAddress' | 'revision' | 'createdAt' | 'updatedAt'> & {
   customerName: string;
-  // The caller made the job or owns its field work.
+  // The caller made the job, owns its field work or is assigned to it.
   mine: boolean;
 };
 
@@ -89,19 +89,19 @@ function jobView(row: JobRow): JobView {
   };
 }
 
-function errorCode(error: unknown): unknown {
+export function errorCode(error: unknown): unknown {
   const found = error as { code?: unknown; cause?: { code?: unknown } } | null;
   return found?.code ?? found?.cause?.code;
 }
 
 // A value the Zod schema let through that a CHECK constraint refuses is a bad request, not a fault.
-const CHECK_VIOLATION = '23514';
+export const CHECK_VIOLATION = '23514';
 
 function need(caller: JobCaller, keys: readonly Capability[]): void {
   if (!hasAny(caller, keys)) throw new JobError('not_allowed');
 }
 
-async function audit(
+export async function audit(
   tx: CompanyTransaction,
   caller: JobCaller,
   action: string,
@@ -137,7 +137,7 @@ async function readClaim(tx: CompanyTransaction, companyId: string, jobId: strin
   return row ?? EMPTY_CLAIM;
 }
 
-async function detailOf(tx: CompanyTransaction, row: JobRow): Promise<JobDetail> {
+export async function detailOf(tx: CompanyTransaction, row: JobRow): Promise<JobDetail> {
   return {
     job: jobView(row),
     customer: await readCustomer(tx, row.companyId, row.id),
@@ -146,7 +146,7 @@ async function detailOf(tx: CompanyTransaction, row: JobRow): Promise<JobDetail>
 }
 
 // Moves the job to its next revision under the row lock the caller holds, recording the change id.
-async function advance(tx: CompanyTransaction, row: JobRow, changeId: string, address?: string): Promise<JobRow> {
+export async function advance(tx: CompanyTransaction, row: JobRow, changeId: string, address?: string): Promise<JobRow> {
   const [next] = await tx
     .update(jobs)
     .set({
@@ -257,8 +257,14 @@ export function jobsService(db: Database, drafts: DraftStore): JobsService {
       const company = query.scope === 'company' || (query.scope === null && everyone);
       const after = query.cursor === null ? null : decodeCursor(query.cursor);
       return inCompany(caller.companyId, async (tx) => {
+        // The caller is actively assigned to the job (S5b-1): an estimator's own list holds it.
+        const assigned = sql<boolean>`EXISTS (
+          SELECT 1 FROM ${jobAssignments}
+          WHERE ${jobAssignments.companyId} = ${jobs.companyId} AND ${jobAssignments.jobId} = ${jobs.id}
+            AND ${jobAssignments.estimatorActorId} = ${caller.actorId} AND ${jobAssignments.endedAt} IS NULL
+        )`;
         const where: SQL[] = [eq(jobs.companyId, caller.companyId), ne(jobs.status, 'archived')];
-        if (!company) where.push(or(eq(jobs.createdByActorId, caller.actorId), eq(jobs.fieldOwnerActorId, caller.actorId))!);
+        if (!company) where.push(or(eq(jobs.createdByActorId, caller.actorId), eq(jobs.fieldOwnerActorId, caller.actorId), assigned)!);
         if (after) {
           where.push(
             or(
@@ -290,7 +296,9 @@ export function jobsService(db: Database, drafts: DraftStore): JobsService {
             createdAt: job.createdAt.toISOString(),
             updatedAt: job.updatedAt.toISOString(),
             customerName: customerName ?? '',
-            mine: isOwnJob(caller, job),
+            // Every row of a caller's own list is theirs (made, owned in the field or assigned); in the
+            // company list only an estimator is ever assigned, and they never get that list.
+            mine: !company || isOwnJob(caller, job),
           })),
           nextCursor: rows.length > query.limit && last ? encodeCursor(last.createdKey, last.job.id) : null,
         };
@@ -315,7 +323,7 @@ export function jobsService(db: Database, drafts: DraftStore): JobsService {
     async saveCustomer(caller, jobId, input) {
       need(caller, EDIT_CUSTOMER);
       return inCompany(caller.companyId, async (tx) => {
-        const row = await jobAccess(tx, caller, jobId, EDIT_CUSTOMER, { lock: true });
+        const row = await jobAccess(tx, caller, jobId, EDIT_CUSTOMER, { lock: true, customer: true });
         const stored = await readCustomer(tx, row.companyId, row.id);
         // The same change again (its response was lost): nothing more to do, and no conflict, as
         // long as it says what was saved.
@@ -341,7 +349,7 @@ export function jobsService(db: Database, drafts: DraftStore): JobsService {
     async saveClaim(caller, jobId, input) {
       need(caller, EDIT_CLAIM);
       return inCompany(caller.companyId, async (tx) => {
-        const row = await jobAccess(tx, caller, jobId, EDIT_CLAIM, { lock: true });
+        const row = await jobAccess(tx, caller, jobId, EDIT_CLAIM, { lock: true, customer: true });
         const stored = await readClaim(tx, row.companyId, row.id);
         if (row.lastChangeId === input.changeId) {
           if (!sameValues(stored, input)) throw new JobError('conflict');

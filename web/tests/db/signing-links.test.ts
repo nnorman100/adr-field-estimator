@@ -42,6 +42,8 @@ const customerRoute = await import('@/app/api/jobs/[jobId]/customer/route');
 const estimateRoute = await import('@/app/api/jobs/[jobId]/estimate/route');
 const agreementsRoute = await import('@/app/api/jobs/[jobId]/agreements/route');
 const signingLinkRoute = await import('@/app/api/jobs/[jobId]/signing-link/route');
+const coordinationRoute = await import('@/app/api/jobs/[jobId]/coordination/route');
+const transferRoute = await import('@/app/api/jobs/[jobId]/field-owner/transfer/route');
 const signRoute = await import('@/app/api/sign/route');
 const signatureRoute = await import('@/app/api/sign/signature/[signatureId]/route');
 const signedSignatureRoute = await import('@/app/api/sign/signature/route');
@@ -442,6 +444,34 @@ describe('signing through a link', () => {
 });
 
 describe('voiding', () => {
+  it('office notes and a move of the field work void neither the reviewed estimate nor its link (S5b-1)', async () => {
+    const { jobId, token, linkId } = await l.linkedJob();
+    const before = await l.f.job(jobId);
+    const notes = await json(
+      coordinationRoute.PUT(
+        request(OFFICE_A, `/api/jobs/${jobId}/coordination`, { method: 'PUT', body: { revision: 0, changeId: randomUUID(), notes: 'Gate code 1234' } }),
+        params({ jobId }),
+      ),
+    );
+    expect(notes.status).toBe(200);
+    const moved = await json(
+      transferRoute.POST(
+        request(OWNER_A, `/api/jobs/${jobId}/field-owner/transfer`, {
+          method: 'POST',
+          body: { revision: 1, changeId: randomUUID(), toActorId: h.seed.ownerA.actor },
+        }),
+        params({ jobId }),
+      ),
+    );
+    expect(moved.status).toBe(200);
+    expect((await l.f.job(jobId)).revision).toBe(before.revision);
+    expect((await l.view(token)).status).toBe(200);
+    expect((await l.linkRows(jobId))[0]).toMatchObject({ id: linkId, status: 'pending' });
+    // Still reviewed: the homeowner signs through the same link.
+    expect((await l.homeownerSigns(token)).answer.status).toBe(201);
+    expect(await l.agreementRows(jobId)).toHaveLength(1);
+  });
+
   it('a new submission voids the link: the page says the estimate changed and nothing can be signed', async () => {
     const { jobId, draftId, token, linkId } = await l.linkedJob();
     const signatureId = randomUUID();

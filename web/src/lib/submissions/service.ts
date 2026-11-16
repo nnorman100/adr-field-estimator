@@ -36,7 +36,7 @@ import { manifestProblem, SNAPSHOT_FORMAT, snapshotBytes, snapshotManifest, stor
 //    that stayed pending past their expiry.
 //
 // No Postgres transaction is held across a Firestore call, except the fence, which is closed under
-// its row's lock (closeFence). A failure talking to Firestore leaves the row pending: never an
+// the job's lock and its row's lock (closeFence). A failure talking to Firestore leaves the row pending: never an
 // abort, so a retry racing a failing attempt can still commit, and never a release, so nothing is
 // unlocked while its row could still commit.
 
@@ -203,7 +203,8 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
   // Step 1.
   async function intent(caller: JobCaller, jobId: string, input: SubmitInput, digest: string): Promise<SubmissionRow> {
     return inCompany(caller.companyId, async (tx) => {
-      const job = await jobAccess(tx, caller, jobId, SUBMIT, { lock: true });
+      // Submit closes the field work: only its field owner submits, whatever their role.
+      const job = await jobAccess(tx, caller, jobId, SUBMIT, { lock: true, fieldWork: true });
       const existing = await submissionRow(tx, caller.companyId, input.id);
       if (existing) {
         if (existing.jobId !== jobId || existing.requestDigest !== digest) throw new SubmissionError('conflict');
@@ -257,13 +258,24 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
     id: string,
     manifest: FieldManifest | null,
     problem: SubmissionErrorCode | null,
-  ): Promise<{ row: SubmissionRow; job: JobRow; decidedHere: boolean; problem: SubmissionErrorCode | null }> {
+  ): Promise<{ row: SubmissionRow; job: JobRow; decidedHere: boolean; problem: SubmissionErrorCode | null; refused: JobError | null }> {
     return inCompany(caller.companyId, async (tx) => {
-      const job = await jobAccess(tx, caller, jobId, SUBMIT, { lock: true });
+      // The caller lost the job or its field work after this attempt started (the field work moved,
+      // or they were unassigned): the attempt is still decided, as an abort, and its fence released.
+      let refused = null as JobError | null;
+      const job = await jobAccess(tx, caller, jobId, SUBMIT, { lock: true, fieldWork: true }).catch(async (error: unknown) => {
+        if (!(error instanceof JobError)) throw error;
+        refused = error;
+        const [locked] = await tx
+          .select()
+          .from(jobs)
+          .where(and(eq(jobs.companyId, caller.companyId), eq(jobs.id, jobId)));
+        return locked!;
+      });
       const row = (await submissionRow(tx, caller.companyId, id, true))!;
-      if (row.status !== 'pending') return { row, job, decidedHere: false, problem: null };
+      if (row.status !== 'pending') return { row, job, decidedHere: false, problem: null, refused };
 
-      let failure = problem;
+      let failure = problem ?? (refused ? 'submission_aborted' : null);
       if (!failure && (job.status !== 'draft' || job.currentDraftId !== row.draftId)) failure = 'not_current_draft';
       let photos: (typeof evidenceObjects.$inferSelect)[] = [];
       if (!failure && manifest) {
@@ -289,7 +301,7 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
       if (failure || !manifest) {
         await abortPending(tx, caller.companyId, id);
         await audit(tx, caller.companyId, caller.actorId, 'submission_aborted', jobId, { reason: failure ?? 'submission_aborted' });
-        return { row: (await submissionRow(tx, caller.companyId, id))!, job, decidedHere: true, problem: failure ?? 'submission_aborted' };
+        return { row: (await submissionRow(tx, caller.companyId, id))!, job, decidedHere: true, problem: failure ?? 'submission_aborted', refused };
       }
 
       const details = await readJobDetails(tx, caller.companyId, job);
@@ -323,17 +335,26 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
         rooms: manifest.rooms.length,
         photos: manifest.photos.length,
       });
-      return { row: committed!, job: next!, decidedHere: true, problem: null };
+      return { row: committed!, job: next!, decidedHere: true, problem: null, refused };
     });
   }
 
-  // Step 2: the fence, closed under the row's own lock and only while the row is still pending, so
-  // no abort lands between the check and the fence, and the release of an aborted row always comes
+  // Step 2: the fence, closed under the job's lock and the row's own lock, and only while the caller
+  // still owns the job's field work and the row is still pending, so no move of the field work and no
+  // abort lands between the check and the fence, and the release of an aborted row always comes
   // after any fence of its epoch. It replaces a fence whose own row is known to be aborted (its
   // attempt fenced and never released it). Anything else is not this attempt's to take.
   async function closeFence(caller: JobCaller, row: SubmissionRow): Promise<SubmissionErrorCode | null> {
     const fence = { submissionId: row.id, epoch: row.epoch, expiresAt: row.expiresAt };
     return inCompany(caller.companyId, async (tx) => {
+      const allowed = await jobAccess(tx, caller, row.jobId, SUBMIT, { lock: true, fieldWork: true }).then(
+        () => true,
+        (error: unknown) => {
+          if (error instanceof JobError) return false;
+          throw error;
+        },
+      );
+      if (!allowed) return 'submission_aborted';
       if ((await submissionRow(tx, caller.companyId, row.id, true))?.status !== 'pending') return 'submission_aborted';
       let result = await field(() => store.fence(caller.companyId, row.draftId, fence));
       if (result.outcome === 'held') {
@@ -391,6 +412,7 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
       // Steps 4 and 5.
       const decided = await decide(caller, jobId, row.id, manifest, problem);
       await writeMarker(db, store, caller.companyId, decided.row);
+      if (decided.refused) throw decided.refused;
       if (decided.row.status === 'aborted') throw new SubmissionError(decided.decidedHere ? decided.problem! : 'submission_aborted');
       return { created: decided.decidedHere, submission: submissionView(decided.row), job: jobState(decided.job) };
     },
@@ -398,7 +420,8 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
     async backToEditing(caller, jobId, input) {
       if (!hasAny(caller, SUBMIT)) throw new JobError('not_allowed');
       const made = await inCompany(caller.companyId, async (tx) => {
-        const job = await jobAccess(tx, caller, jobId, SUBMIT, { lock: true });
+        // A new draft version of the field work: the field owner's to make.
+        const job = await jobAccess(tx, caller, jobId, SUBMIT, { lock: true, fieldWork: true });
         // The job's latest record: a new draft is made only from it.
         const [latest] = await tx
           .select()

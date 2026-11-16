@@ -78,6 +78,46 @@ export const claimBody = z.strictObject({
   deductible: line(40),
 });
 
+// Office notes (S5b-1, job_coordination in 0015): several lines (tab, line feed and carriage return
+// allowed, no other control character), at most 4,000 characters, kept as typed.
+const NOTES = /^[^\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]*$/;
+
+// The coordination revision (S5b-1, job_coordination in 0015): 0 until the first note or field owner
+// change, then up by one with each.
+const coordinationRevision = z.int().min(0).max(2_147_483_647);
+
+// PUT /api/jobs/{id}/coordination: the office notes, with the coordination revision the screen last
+// saw and this change's own id, as the customer save.
+export const coordinationBody = z.strictObject({
+  revision: coordinationRevision,
+  changeId: uuid,
+  notes: z.string().max(4000).regex(NOTES),
+});
+
+// POST /api/jobs/{id}/assignments: the assignment's id is made on the phone, so a retry is the same
+// assignment.
+export const assignBody = z.strictObject({
+  id: uuid,
+  estimatorActorId: uuid,
+});
+
+// POST /api/jobs/{id}/field-owner/transfer (owner decision J5): who gets the field work, with the
+// coordination revision the screen last saw and this change's own id.
+export const transferBody = z.strictObject({
+  revision: coordinationRevision,
+  changeId: uuid,
+  toActorId: uuid,
+});
+
+export type CoordinationInput = z.infer<typeof coordinationBody>;
+export type AssignInput = z.infer<typeof assignBody>;
+export type TransferInput = z.infer<typeof transferBody>;
+
+// SHA-256 of an assign request in a fixed key order.
+export function assignDigest(input: AssignInput): string {
+  return createHash('sha256').update(JSON.stringify({ id: input.id, estimatorActorId: input.estimatorActorId })).digest('hex');
+}
+
 export type CreateJobInput = z.infer<typeof createBody>;
 export type CustomerInput = z.infer<typeof customerBody>;
 export type ClaimInput = z.infer<typeof claimBody>;

@@ -12,7 +12,7 @@ The sections of this document, one file per area (each keeps its original headin
 - [Company profile API](access/company-profile.md): Company profile API (rebuilt app, S5a-4 and S5a-4b).
 - [AI usage and ceilings](access/ai-usage.md): AI usage and ceilings (rebuilt app, S7-4).
 - [Non-role access](access/non-role-access.md): Non-role access (anonymous, links, server-only).
-- [Jobs routes](access/jobs.md): Jobs routes (rebuilt app, S5a-3); Field database job locators (S6 follow-up).
+- [Jobs routes](access/jobs.md): Jobs routes (rebuilt app, S5a-3); Office jobs routes (rebuilt app, S5b-1): coordination, assignment, the field owner and its move; Field database job locators (S6 follow-up).
 - [Photo routes](access/photos.md): Photo routes (rebuilt app, S5a-5).
 - [Submit and Back to editing](access/submit.md): Submit and Back to editing (rebuilt app, S5a-8).
 - [Estimate and review](access/estimate.md): Estimate and review (rebuilt app, S5a-9).
