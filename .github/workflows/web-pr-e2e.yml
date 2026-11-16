@@ -1,0 +1,84 @@
+name: Web PR e2e
+
+# Risky pull requests still run the suite that covers them: screen changes get the browser tests
+# (test:e2e, two shards) before merge. The Web app workflow runs this suite only after merge
+# (docs/runbook/ci.md, "Fast pull requests, full suite after merge"). The job is a copy of the Web
+# app `e2e` job; tests/test_web_pr_checks.ts keeps them identical. Not a required check.
+on:
+  pull_request:
+    paths:
+      - 'web/src/app/**'
+      - 'web/src/components/**'
+      - 'web/sw/**'
+      - 'web/public/**'
+      - 'web/tests/e2e/**'
+      - 'web/playwright.config.ts'
+      - '.github/workflows/web-pr-e2e.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web-pr-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: web
+
+jobs:
+  pr-e2e:
+    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
+    # Picks free emulator ports for each run (web/tests/emu/ports.ts), so jobs on runners that share a
+    # machine never collide on 9399 or 8399. Only here: `npm test` in `check` must see the default ports.
+    env:
+      EMU_PORTS: auto
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The job-screen tests (tests/e2e/jobs.spec.ts) start a throwaway PostgreSQL 16 as test:db does:
+      # the postgres:16 image when a Docker daemon answers (GitHub's Ubuntu image), otherwise
+      # initdb/pg_ctl from /usr/lib/postgresql/16/bin. The self-hosted runner's container has neither, so only there
+      # this installs the Ubuntu postgresql-16 package, without creating or starting a cluster.
+      - name: Install PostgreSQL 16 when there is no Docker daemon
+        run: |
+          if ! docker version --format '{{.Server.Version}}' > /dev/null 2>&1 &&
+            [ ! -x /usr/lib/postgresql/16/bin/initdb ]; then
+            sudo mkdir -p /etc/postgresql-common
+            echo 'create_main_cluster = false' | sudo tee /etc/postgresql-common/createcluster.conf > /dev/null
+            sudo apt-get update -q
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
+              -o Dpkg::Options::=--force-confold postgresql-16
+          fi
+      # The offline tests (tests/e2e/offline) start the Firestore emulator, which needs Java 21 or later.
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium webkit
+      - run: npm run test:e2e
+        env:
+          E2E_SHARD: ${{ matrix.shard }}/2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: web-e2e-results-${{ matrix.shard }}
+          path: |
+            web/test-results
+            web/playwright-report
+          retention-days: 7
+
+  # The production image the release workflow (web-release.yml) ships, assembled without Docker by
+  # web/scripts/build-image.sh: check its configuration, run its /app tree the way the image does and
+  # run the release smoke check against it, so a broken build or start fails here, not at release.
+  # After merge only; a failure blocks the release.

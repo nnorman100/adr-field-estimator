@@ -1,0 +1,37 @@
+name: Master red
+
+# A red master is never silent: after each CI or Web app run on a push to master, a failure opens
+# (or comments on) the issue "master is red: <workflow>" and the next green run closes it. Fix
+# forward (docs/runbook/ci.md, "Fast pull requests, full suite after merge"). The script is
+# scripts/report-master-red.mjs; workflow_run always uses master's copy of this file.
+on:
+  workflow_run:
+    workflows: [CI, Web app]
+    types: [completed]
+    branches: [master]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  report:
+    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: lts/*
+      - name: Open, update or close the master-red issue
+        run: node scripts/report-master-red.mjs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_EVENT: ${{ github.event.workflow_run.event }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}

@@ -17,9 +17,12 @@ on:
 permissions:
   contents: read
 
+# Pull requests cancel a superseded run. On master a new merge waits behind the running full suite
+# (and replaces any run already waiting), so fast merges cannot cancel every run and leave no green
+# commit to release.
 concurrency:
   group: web-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 defaults:
   run:

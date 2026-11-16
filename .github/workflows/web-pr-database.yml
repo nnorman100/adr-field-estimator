@@ -1,0 +1,58 @@
+name: Web PR database
+
+# Risky pull requests still run the suite that covers them: database and migration changes get the
+# database tests (test:db) before merge. The Web app workflow runs this suite only after merge
+# (docs/runbook/ci.md, "Fast pull requests, full suite after merge"). The job is a copy of the Web
+# app `database` job; tests/test_web_pr_checks.ts keeps them identical. Not a required check.
+on:
+  pull_request:
+    paths:
+      - 'web/src/db/**'
+      - 'web/migrations/**'
+      - 'web/tests/db/**'
+      - 'web/vitest.db.config.ts'
+      - '.github/workflows/web-pr-database.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web-pr-database-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: web
+
+jobs:
+  pr-database:
+    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
+    timeout-minutes: 25
+    env:
+      APP_ENV: test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # npm run test:db starts its own throwaway PostgreSQL 16: the postgres:16 image when a Docker
+      # daemon answers (GitHub's Ubuntu image), otherwise initdb/pg_ctl from
+      # /usr/lib/postgresql/16/bin. The self-hosted runner's container has neither, so only there
+      # this installs the Ubuntu postgresql-16 package, without creating or starting a cluster.
+      - name: Install PostgreSQL 16 when there is no Docker daemon
+        run: |
+          if ! docker version --format '{{.Server.Version}}' > /dev/null 2>&1 &&
+            [ ! -x /usr/lib/postgresql/16/bin/initdb ]; then
+            sudo mkdir -p /etc/postgresql-common
+            echo 'create_main_cluster = false' | sudo tee /etc/postgresql-common/createcluster.conf > /dev/null
+            sudo apt-get update -q
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
+              -o Dpkg::Options::=--force-confold postgresql-16
+          fi
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run test:db
+
+  # Firebase Auth and Firestore emulators under a demo- project id only (tests/emu/run.ts
+  # refuses any other id). After merge only; a failure blocks the release.
