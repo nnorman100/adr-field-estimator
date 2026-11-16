@@ -25,6 +25,7 @@ export default defineConfig({
       'tests/test_master_red.ts',
       'tests/test_web_pr_checks.ts',
       'tests/test_ci_budget.ts',
+      'tests/test_stop_checks.ts',
     ],
   },
 });

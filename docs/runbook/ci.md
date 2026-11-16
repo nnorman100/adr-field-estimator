@@ -36,6 +36,10 @@ As of 2026-11-14, the Python dependency audit and CodeQL Python leg are removed.
 
 The Python tests that guard the rebuild or repo-wide rules were ported to TypeScript and run in the `node` job's vitest suite: `tests/test_ci_workflows.ts` (every job on the switchable runner without Docker services or containers, no legacy CI jobs, the `node` job's checks on every pull request, the remaining CodeQL leg and manual-only legacy deploy), `tests/test_web_release_workflow.ts` and `tests/test_web_images.ts` (the test release path and its images), and `tests/test_file_length_limit.ts` (the 1,000-line limit). The Python originals (`tests/test_ci_config.py`, `tests/test_ci_legacy_scope.py`, `tests/test_web_release_workflow.py`, `tests/test_file_length*.py`) stay until S8 and run only by hand; change a guarded file and its TypeScript test together.
 
+## Agent stop checks
+
+`.claude/settings.json` runs `scripts/stop-checks.mjs` as a Claude Code Stop hook: before an agent may finish, it runs the fast checks for the files changed since the branch left `master` (plus uncommitted and new files). Root files get Prettier, root ESLint and the root vitest tests related to them; `web/` code gets `npm run typecheck`, ESLint on the changed files and the unit tests related to them (`vitest run --changed`). The slow suites (`test:db`, `test:emu`, `test:e2e`, the image build) stay in CI. A failure blocks the stop and hands the output back to the agent; after three failed attempts in a row the agent may stop, with a warning to the person. A `web/` change takes about a minute (mostly the type check); docs-only changes run nothing. It needs `npm ci` at the root and in `web/` and skips with a notice otherwise; `DRYSCOPE_SKIP_STOP_CHECKS=1` turns it off. `tests/test_stop_checks.ts` covers which checks run.
+
 ## Fast pull requests, full suite after merge
 
 The self-hosted pool has two job places, so a pull request that started every job waited mostly in the queue (Test guard, a one-minute job, averaged about 45 minutes from start to finish in mid-November 2026). The checks are split by what they prove:
