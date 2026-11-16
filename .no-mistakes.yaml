@@ -18,6 +18,12 @@ protected_paths:
   # guards automatic commits, not commits a person or worker authored.
   - "tests/**"
   - "web/tests/**"
+  - "infra/dryscope/app/tests/**"
+  - "infra/dryscope/data/tests/**"
+  - "**/tests/**"
+  - "**/*.test.*"
+  - "**/*.spec.*"
+  - "**/*.tftest.hcl"
   - "infra/dryscope/fixtures/**"
   - "infra/dryscope/**/guards/**"
   - "playwright.config.js"
@@ -27,6 +33,8 @@ protected_paths:
   - "web/vitest.config.ts"
   - "web/vitest.db.config.ts"
   - "web/vitest.emu.config.ts"
+  - "package.json"
+  - "web/package.json"
 
 # Review findings get up to two automatic fix rounds (the built-in default is 0,
 # which parks every finding for a person). Matches the global setting.
