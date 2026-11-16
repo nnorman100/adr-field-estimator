@@ -375,7 +375,7 @@ test('the company owner who moves the field work keeps customer changes typed be
   await expect(page.getByLabel('Year built')).not.toBeEditable();
 });
 
-test('an unassign with no answer can be sent again or forgotten after the assignment is gone from the list', async ({ page, request }) => {
+test('an unassign with no answer can be sent again after the assignment is gone from the list', async ({ page, request }) => {
   test.setTimeout(120_000);
   const company = await seedCompany('held-unassign', { owner: 'owner', first: 'estimator', second: 'estimator' });
   await seedJob(request, company, company.people.owner!, '18 Held Unassign Way', [company.people.first!, company.people.second!]);
@@ -404,7 +404,8 @@ test('an unassign with no answer can be sent again or forgotten after the assign
   await expect(page.getByRole('button', { name: 'Send the unanswered change again' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Save notes' })).toBeDisabled();
   lost = false;
-  await page.getByRole('button', { name: 'Forget the unanswered change' }).click();
+  // Sent again as it was: the server answers that the assignment is gone, which settles it.
+  await page.getByRole('button', { name: 'Send the unanswered change again' }).click();
   await expect(page.getByRole('button', { name: 'Send the unanswered change again' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Save notes' })).toBeEnabled();
 });

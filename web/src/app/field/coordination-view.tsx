@@ -47,6 +47,14 @@ export function CoordinationView({ job, open }: { job: JobContext & { detail: Jo
   // Asked for when the view is first opened, and again for each "Try again" or stale answer.
   const [asked, setAsked] = useState(0);
   const [answered, setAnswered] = useState(0);
+  // A write answered after this screen was opened again (it settled in the page's unsent work) changes
+  // what this screen read: read again.
+  const settled = usePending(() => pending.coordSettled(job.jobId));
+  const [seen, setSeen] = useState(settled);
+  if (seen !== settled) {
+    setSeen(settled);
+    setAsked((count) => count + 1);
+  }
   const wanted = open && mayView && job.session.online && asked >= answered;
 
   useEffect(() => {
@@ -172,13 +180,10 @@ function Coordination({ job, view, setView, reread }: { job: JobContext & { deta
         <Section title="Change not answered yet">
           <p>
             {{ move: 'A move of the field work', assign: 'Assigning an estimator', unassign: 'Unassigning an estimator', notes: 'Saving the notes' }[held.request.kind]} was
-            sent and no answer came back. It is sent again exactly as it was, and nothing else is sent until it is answered or forgotten.
+            sent and no answer came back. It is sent again exactly as it was, and nothing else is sent until it is answered.
           </p>
           <Button type="button" disabled={waiting || !session.online} onClick={() => void retry()}>
             {waiting ? 'Sending…' : 'Send the unanswered change again'}
-          </Button>
-          <Button type="button" variant="outline" disabled={waiting} onClick={() => pending.settleCoordWrite(jobId, held.key, 'answered')}>
-            Forget the unanswered change
           </Button>
           <Outcome error={errorAt(held.at)} notice={null} />
         </Section>

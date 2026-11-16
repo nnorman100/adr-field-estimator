@@ -85,6 +85,8 @@ type State = {
   // job is still readable (the owner, office) but the field work is another person's.
   moved: Record<string, { draft: FieldDraft | null; draftId: string | null; revoked: boolean }>;
   coord: Record<string, PendingCoord>;
+  // By job: how many coordination writes were answered, so a screen that read before knows to read again.
+  coordSettled: Record<string, number>;
 };
 
 const EMPTY = {
@@ -100,6 +102,7 @@ const EMPTY = {
   held: {},
   moved: {},
   coord: {},
+  coordSettled: {},
 };
 let state: State = { owner: null, ...EMPTY };
 const listeners = new Set<() => void>();
@@ -247,6 +250,7 @@ export const pending = {
     if (!answer.ok && answer.denied) pending.refused(jobId, answer.message, answer.status);
     return true;
   },
+  coordSettled: (jobId: string): number => state.coordSettled[jobId] ?? 0,
   coordWrite: (jobId: string): PendingCoord | null => state.coord[jobId] ?? null,
   setCoordWrite(jobId: string, write: PendingCoord) {
     change({ coord: { ...state.coord, [jobId]: write } });
@@ -258,7 +262,7 @@ export const pending = {
     const coord = { ...state.coord };
     if (settlement === 'unanswered') coord[jobId] = { ...current, sending: false };
     else delete coord[jobId];
-    change({ coord });
+    change(settlement === 'answered' ? { coord, coordSettled: { ...state.coordSettled, [jobId]: pending.coordSettled(jobId) + 1 } } : { coord });
     return true;
   },
   draftChanges: (jobId: string): number => state.draftChanges[jobId] ?? 0,
