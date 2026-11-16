@@ -17,6 +17,7 @@ test('job creation, Firestore scope editing, customer and photo screens produce 
   await page.getByLabel('Password').fill(PASSWORD);
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await page.getByRole('link', { name: 'Open the field app' }).click();
+  await page.getByRole('button', { name: 'Online only', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'My jobs' })).toBeVisible();
   await expectReportOnly(page);
   await page.getByRole('main').getByRole('link', { name: 'New job' }).click();

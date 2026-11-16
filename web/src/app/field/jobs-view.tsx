@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { listJobs, type JobListItem } from '@/lib/field/api';
 import type { FieldSession } from '@/lib/field/session';
@@ -21,13 +21,16 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
   const seesCompany = session.role === 'owner' || session.role === 'office';
   const [jobs, setJobs] = useState<JobListItem[] | null>(null);
   const [cursor, setCursor] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ message: string; from: string | null } | null>(null);
   const [busy, setBusy] = useState(false);
+  // Only the newest request answers: a page asked for before the list was read again from its first
+  // page is not added to it, and no page is asked for until that first page is back.
+  const latest = useRef(0);
 
   function apply(answer: Awaited<ReturnType<typeof listJobs>>, from: string | null) {
     setBusy(false);
-    setError(answer.ok ? null : answer.message);
     if (!answer.ok) {
+      setError({ message: answer.message, from: answer.denied ? null : from });
       // A refusal to list jobs drops the ones already shown.
       if (answer.denied) {
         setJobs(null);
@@ -35,25 +38,29 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
       }
       return;
     }
+    setError(null);
     setJobs((current) => (from === null ? answer.value.jobs : [...(current ?? []), ...answer.value.jobs]));
     setCursor(answer.value.nextCursor);
   }
 
   async function load(from: string | null) {
-    apply(await listJobs(session.user, shown, from), from);
+    if (!session.online) return;
+    const mine = ++latest.current;
+    const answer = await listJobs(session.user, shown, from);
+    if (mine === latest.current) apply(answer, from);
   }
 
-  // Each list is its own component (keyed by the parent), so it starts empty and loads once.
+  // Each list is its own component (keyed by the parent), so it starts empty and loads once, and
+  // again from its first page each time the connection comes back.
   useEffect(() => {
-    let live = true;
-    void listJobs(session.user, shown, null).then((answer) => {
-      if (live) apply(answer, null);
-    });
+    if (!session.online) return;
+    void load(null);
     return () => {
-      live = false;
+      latest.current += 1;
+      setBusy(true);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [session.online]);
 
   const more = (from: string | null) => {
     setBusy(true);
@@ -80,7 +87,8 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
           </FieldLink>
         </nav>
       ) : null}
-      {jobs === null && !error ? <p role="status">Loading jobs…</p> : null}
+      {!session.online ? <p role="status">Needs a connection</p> : null}
+      {session.online && jobs === null && !error ? <p role="status">Loading jobs…</p> : null}
       {jobs !== null && jobs.length === 0 ? <p>No jobs yet.</p> : null}
       {jobs !== null && jobs.length > 0 ? (
         <ul className="flex flex-col gap-2" aria-label={shown === 'company' ? 'Company jobs' : 'My jobs'}>
@@ -98,15 +106,15 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
         </ul>
       ) : null}
       <p role="alert" className="text-sm font-medium text-red-800 empty:hidden">
-        {error ?? ''}
+        {error?.message ?? ''}
       </p>
       {error ? (
-        <Button variant="outline" onClick={() => more(jobs === null ? null : cursor)} disabled={busy}>
+        <Button variant="outline" onClick={() => more(error.from)} disabled={busy || !session.online}>
           Try again
         </Button>
       ) : null}
       {cursor && !error ? (
-        <Button variant="outline" onClick={() => more(cursor)} disabled={busy}>
+        <Button variant="outline" onClick={() => more(cursor)} disabled={busy || !session.online}>
           Show more jobs
         </Button>
       ) : null}

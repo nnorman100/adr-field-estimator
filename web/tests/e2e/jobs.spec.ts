@@ -54,6 +54,8 @@ async function signIn(page: Page, company: Company, person: Person) {
   await expect(page.getByRole('heading', { name: `Signed in to ${company.name}` })).toBeVisible();
   await page.getByRole('link', { name: 'Open the field app' }).click();
   await expect(page.getByRole('heading', { name: company.name, level: 1 })).toBeVisible();
+  const keep = page.getByRole('button', { name: 'Keep jobs on this phone', exact: true });
+  if (await keep.isVisible()) await keep.click();
 }
 
 async function newPage(browser: Browser): Promise<Page> {
@@ -108,6 +110,8 @@ async function addRoom(page: Page, name: string) {
   await page.getByLabel('New room name').fill(name);
   await page.getByRole('button', { name: 'Add room' }).click();
   await expect(page.getByRole('form', { name })).toBeVisible();
+  // Shown on this phone first; the field database has it once the server acknowledges it.
+  await expect(page.getByRole('form', { name: 'Add a room' }).getByRole('status')).toHaveText(`${name} added.`);
 }
 
 async function takePhoto(page: Page, room: string, shot: string) {

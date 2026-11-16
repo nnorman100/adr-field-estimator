@@ -17,8 +17,7 @@ import { HomeScreenSheet, useFieldSurface } from './home-screen-sheet';
 // Screen icon opens it with no signal. It starts from `ds-me` (the settings and company saved at
 // the last online sign-in), never from the server, and all views under it are client state. The
 // phone's Firestore cache and sync gate (S6-3, ./field-store.tsx) start below it, and the job
-// screens (S5a-6, ./field-app.tsx) mount beside them; the job screens still use their own client
-// until they are moved onto src/lib/field-db.ts (a follow-up named in docs/plans/S6.md).
+// screens (S5a-6, ./field-app.tsx) mount inside that store and use its person-scoped client.
 type Boot =
   | { kind: 'starting' }
   | { kind: 'ready'; me: DsMe }
@@ -112,17 +111,16 @@ export function FieldShell() {
               reachable={reachable}
               onStorage={setStorage}
             >
-              <p className="text-base">Your jobs will show here.</p>
+              {/* The view is read from the address, which only the browser knows. Another sign-in
+                  starts the screens afresh, so nothing of the last person's stays on them. */}
+              <UnlessHidden me={boot.me}>
+                <ShownOnce>
+                  <Suspense fallback={<p role="status">Opening your jobs…</p>}>
+                    <FieldApp key={meKey(boot.me.tenantId, boot.me.uid)} me={boot.me} />
+                  </Suspense>
+                </ShownOnce>
+              </UnlessHidden>
             </FieldStore>
-            {/* The view is read from the address, which only the browser knows. Another sign-in
-                starts the screens afresh, so nothing of the last person's stays on them. */}
-            <UnlessHidden me={boot.me}>
-              <ShownOnce>
-                <Suspense fallback={<p role="status">Opening your jobs…</p>}>
-                  <FieldApp key={meKey(boot.me.tenantId, boot.me.uid)} me={boot.me} />
-                </Suspense>
-              </ShownOnce>
-            </UnlessHidden>
           </>
         ) : null}
         {boot.kind === 'signed-out' || boot.kind === 'no-storage' ? (

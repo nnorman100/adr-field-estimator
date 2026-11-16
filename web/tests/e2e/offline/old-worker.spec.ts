@@ -149,15 +149,12 @@ test('the new worker replaces the old one at /sw.js only when every old window i
       }),
   );
   expect(drafts).toEqual([{ id: 'draft-1', note: 'unsent' }]);
-  // Beside the old app's database, exactly the new app's own: ds-me, and the Firebase SDK's two
-  // saved-sign-in databases, which the job screens (S5a-6) create when they open the saved sign-in
-  // (the sign-in page creates the same ones on a real phone; this test seeds ds-me without signing
-  // in). Firstmate decision, 2026-11-13; any other database still fails here.
+  // Beside the old app's database, exactly the new app's own: ds-me. The job screens now run through
+  // FieldStore, which starts no Firebase Auth without a field database, so the Firebase SDK's saved
+  // sign-in databases are not created here (owner decision, 2026-11-15); any other database still fails here.
   expect(await page.evaluate(async () => (await indexedDB.databases()).map((db) => db.name).sort())).toEqual([
     'adr-private-drafts-v2',
     'ds-me',
-    'firebase-heartbeat-database',
-    'firebaseLocalStorageDb',
   ]);
 });
 
