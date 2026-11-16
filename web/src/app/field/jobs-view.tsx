@@ -21,7 +21,7 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
   const seesCompany = session.role === 'owner' || session.role === 'office';
   const [jobs, setJobs] = useState<JobListItem[] | null>(null);
   const [cursor, setCursor] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ message: string; from: string | null } | null>(null);
   const [busy, setBusy] = useState(false);
   // Only the newest request answers: a page asked for before the list was read again from its first
   // page is not added to it, and no page is asked for until that first page is back.
@@ -29,8 +29,8 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
 
   function apply(answer: Awaited<ReturnType<typeof listJobs>>, from: string | null) {
     setBusy(false);
-    setError(answer.ok ? null : answer.message);
     if (!answer.ok) {
+      setError({ message: answer.message, from: answer.denied ? null : from });
       // A refusal to list jobs drops the ones already shown.
       if (answer.denied) {
         setJobs(null);
@@ -38,6 +38,7 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
       }
       return;
     }
+    setError(null);
     setJobs((current) => (from === null ? answer.value.jobs : [...(current ?? []), ...answer.value.jobs]));
     setCursor(answer.value.nextCursor);
   }
@@ -105,10 +106,10 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
         </ul>
       ) : null}
       <p role="alert" className="text-sm font-medium text-red-800 empty:hidden">
-        {error ?? ''}
+        {error?.message ?? ''}
       </p>
       {error ? (
-        <Button variant="outline" onClick={() => more(jobs === null ? null : cursor)} disabled={busy || !session.online}>
+        <Button variant="outline" onClick={() => more(error.from)} disabled={busy || !session.online}>
           Try again
         </Button>
       ) : null}

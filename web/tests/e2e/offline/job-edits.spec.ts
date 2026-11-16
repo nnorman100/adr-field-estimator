@@ -230,6 +230,47 @@ test('a page of jobs asked for before the list is read again on resume is not ad
   await expect(jobs.getByText('Job 3', { exact: true })).toHaveCount(0);
 });
 
+test('a failed first-page refresh on resume is tried again from the first page, not the next', async ({ context, lane }) => {
+  const world = await seedCompany();
+  const phone = await signedIn(context, lane, world);
+  const page = phone.page;
+  serveMe(lane, world);
+  const now = new Date().toISOString();
+  const pageOf = (name: string, nextCursor: string | null) => ({ type: 'application/json', body: JSON.stringify({
+    jobs: [{ id: randomUUID(), status: 'draft', propertyAddress: name, revision: 1, createdAt: now, updatedAt: now, customerName: '', mine: true }],
+    nextCursor,
+  }) });
+  let firstPages = 0;
+  lane.serve('/api/jobs', async (_headers, url) => {
+    if (new URL(url, 'http://lane').searchParams.get('cursor') === 'two') return pageOf('Older job', null);
+    firstPages += 1;
+    if (firstPages === 1) return pageOf('First job', 'two');
+    if (firstPages === 2) return { type: 'application/json', status: 500, body: JSON.stringify({ error: 'unavailable' }) };
+    return pageOf('Newer job', 'two');
+  });
+  await page.goto(`${lane.appUrl}/field`);
+  await page.getByRole('button', { name: 'Keep jobs on this phone' }).click();
+  const jobs = page.getByRole('list', { name: 'My jobs' });
+  await expect(jobs.getByText('First job', { exact: true })).toBeVisible();
+  await page.evaluate(() => {
+    const shown = { value: false };
+    Object.defineProperty(document, 'visibilityState', { get: () => (shown.value ? 'visible' : 'hidden'), configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+    (window as unknown as { shown: typeof shown }).shown = shown;
+  });
+  await expect(page.getByText('Needs a connection', { exact: true })).toBeVisible();
+  await page.evaluate(() => {
+    (window as unknown as { shown: { value: boolean } }).shown.value = true;
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await expect(page.getByRole('button', { name: 'Try again', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Try again', exact: true }).click();
+  await expect(jobs.getByText('Newer job', { exact: true })).toBeVisible();
+  await expect(jobs.getByText('First job', { exact: true })).toHaveCount(0);
+  await expect(jobs.getByText('Older job', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Show more jobs' })).toBeVisible();
+});
+
 test('SQL customer and claim edits need a connection and are never queued offline', async ({ context, lane }) => {
   const world = await seedCompany();
   const phone = await signedIn(context, lane, world);
