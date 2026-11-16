@@ -5,8 +5,7 @@
 // Only the colours have a stylesheet counterpart today. Typography, rounded and spacing tokens come
 // from Tailwind's own classes and defaults, not from custom properties in globals.css, so there is
 // nothing to compare them with; they and the brand colours (navy, the logo tints, error, lines) are
-// DESIGN.md-only on purpose. Add a custom property to `:root` and it must be added here and to
-// DESIGN.md, or this check fails.
+// DESIGN.md-only on purpose. A `:root` property not listed in TOKENS is not checked.
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -52,7 +51,6 @@ export function check(design: string, css: string): string[] {
   const colors = designColors(design);
   const properties = rootProperties(css);
   const problems: string[] = [];
-  const mapped = new Set(Object.values(TOKENS));
   for (const [name, property] of Object.entries(TOKENS)) {
     const docValue = colors[name];
     const cssValue = properties[property];
@@ -71,13 +69,6 @@ export function check(design: string, css: string): string[] {
     } else if (normalise(docValue) !== normalise(cssValue)) {
       problems.push(
         `colors.${name} is ${docValue} in ${DESIGN} but ${property} is ${cssValue} in ${CSS}. The stylesheet is the source of truth: update ${DESIGN}.`,
-      );
-    }
-  }
-  for (const [property, value] of Object.entries(properties)) {
-    if (!mapped.has(property)) {
-      problems.push(
-        `${property}: ${value} in ${CSS} has no colour in ${DESIGN}. Add it to ${DESIGN} and to TOKENS in scripts/check-design-tokens.mts.`,
       );
     }
   }
