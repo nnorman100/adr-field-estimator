@@ -2,7 +2,8 @@ import { test as base, expect as baseExpect, type Browser, type Page } from '@pl
 import { randomUUID } from 'node:crypto';
 import { expectNoAxeViolations } from './a11y';
 import { JOBS_BASE_URL } from './jobs/backend';
-import { adminSql, seedCompany, type Company, type Person } from './jobs/seed';
+import { adminSql, currentDraftOf, seedCompany, type Company, type Person } from './jobs/seed';
+import { adminDb } from './offline/world';
 import { APP_CODE, fakeSecondStep, withSecondFactor } from './second-step/fake-totp';
 import { idTokenFor } from './sign-in/emulator';
 import { PASSWORD } from './sign-in/seed';
@@ -317,6 +318,45 @@ test('customer and claim changes typed before the draft could be read stay on th
   await expect(page.getByLabel('Customer name')).not.toBeEditable();
   await expect(page.getByLabel('Insurance carrier')).toHaveValue('Typed Mutual');
   await expect(page.getByLabel('Insurance carrier')).not.toBeEditable();
+});
+
+test('the company owner keeps an unsaved room change on screen after moving the field work, whatever happens to the room', async ({ page, request }) => {
+  test.setTimeout(120_000);
+  const company = await seedCompany('owner-keeps-room', { owner: 'owner', first: 'estimator' });
+  const owner = { Authorization: `Bearer ${withSecondFactor(await idTokenFor(company.tenantId, company.people.owner!.email, PASSWORD))}` };
+  const jobId = randomUUID();
+  // The owner starts the job, so they own its field work.
+  expect((await request.post(`${JOBS_BASE_URL}/api/jobs`, { headers: owner, data: { id: jobId, draftId: randomUUID(), propertyAddress: '95 Owner Row' } })).status()).toBe(201);
+  const [first] = await adminSql()<{ id: string }[]>`SELECT id::text FROM actors WHERE company_id = ${company.id} AND uid = ${company.people.first!.uid}`;
+  const assigned = await request.post(`${JOBS_BASE_URL}/api/jobs/${jobId}/assignments`, { headers: owner, data: { id: randomUUID(), estimatorActorId: first!.id } });
+  expect(assigned.status()).toBe(201);
+
+  await signIn(page, company, company.people.owner!);
+  await openJob(page, '95 Owner Row');
+  await page.getByLabel('New room name').fill('Den');
+  await page.getByRole('button', { name: 'Add room' }).click();
+  const den = page.getByRole('form', { name: 'Den' });
+  await expect(den).toBeVisible();
+  await den.getByLabel('Floor area (sq ft)', { exact: true }).fill('120');
+  // The owner moves the field work to the estimator, who then takes the room out.
+  const moved = await request.post(`${JOBS_BASE_URL}/api/jobs/${jobId}/field-owner/transfer`, {
+    headers: owner,
+    data: { revision: 0, changeId: randomUUID(), toActorId: first!.id },
+  });
+  expect(moved.status()).toBe(200);
+  await adminDb().doc(`companies/${company.id}/drafts/${await currentDraftOf(company.id, jobId)}`).update({ 'field.roomOrder': [] });
+
+  // Saving office notes reads the job again: the owner's room and what they typed stay, read only.
+  await main(page).getByRole('link', { name: 'Job coordination' }).click();
+  await page.getByRole('textbox', { name: 'Office notes' }).fill('Den checked');
+  await page.getByRole('button', { name: 'Save notes' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Notes saved.' })).toBeVisible();
+  await main(page).getByRole('link', { name: 'Check Scope' }).click();
+  // The job is read again after the save: the room goes read only, and the draft read that follows
+  // (which would bring the estimator's change) has time to come back before the room is checked.
+  await expect(den.getByLabel('Floor area (sq ft)', { exact: true })).not.toBeEditable();
+  await page.waitForTimeout(2000);
+  await expect(den.getByLabel('Floor area (sq ft)', { exact: true })).toHaveValue('120');
 });
 
 test('an estimator whose field work the draft does not name yet starts it again and edits it', async ({ page, request }) => {

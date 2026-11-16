@@ -112,8 +112,10 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       const job = current ?? detail;
       if (!job || !session.db) return;
       // Field work that is no longer this person's stays on screen as last read, read only, with
-      // whatever they changed and did not save (owner decision J5; S6 offers Save as new draft).
-      if (!draftReadable(session, job)) {
+      // whatever they changed and did not save (owner decision J5; S6 offers Save as new draft),
+      // whatever their role.
+      const movedAway = heldHere && draft !== null && fieldWorkOf(session, job) !== 'mine';
+      if (!draftReadable(session, job) || movedAway) {
         setDraftError(null);
         setOwnerUnset(false);
         return;
@@ -143,7 +145,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
         );
       }
     },
-    [detail, session, deny],
+    [detail, session, deny, heldHere, draft],
   );
 
   const apply = useCallback(
