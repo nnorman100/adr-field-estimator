@@ -20,7 +20,7 @@ The app is `web/`: TypeScript, Next.js, Zod at every route boundary; Cloud SQL P
 7. Water and mold losses only; web app only. Each company's identity (name, licence number, sign-off) comes only from its company profile and prints exactly as entered; the California pre-1978 and estimate clauses are exact: keep them as in `docs/ARCHITECTURE.md`.
 
 ## Every change
-One small PR with a test that fails without it; the eight checks in `docs/roadmap.md`; no edits to `docs/status/` in feature PRs (updated in a batch after merges). Report what changed, what you were unsure of, and what the owner must check on a phone. Search functions by name; write the failing test first.
+One small PR with a test that fails without it; the eight checks in `docs/roadmap.md`; no edits to `docs/status/` in feature PRs (updated in a batch after merges). A screen change gets a QA pass in the running app from a fresh session (`/qa-screen`, `docs/runbook/qa.md`), reported under **QA** in the PR, before the owner's phone check. Get an independent review with `/review-slice` in a fresh session. Report what changed, what you were unsure of, and what the owner must check on a phone (only what QA could not reach). Search functions by name; write the failing test first.
 
 ## Technology Standard 2.10 (build and agent rules)
 Profile and exceptions: `docs/ARCHITECTURE.md`, `docs/DECISIONS.md` (D-013 to D-016); stage plans: `docs/plans/`.
