@@ -51,6 +51,23 @@ const WEB_PREFIX = 'web/';
 const WEB_CONFIG_FILES = ['web/env.example'];
 const EXCLUDED_PREFIXES = [
   'public/vendor/',
+  // Stitch skills copied unchanged from google-labs-code/stitch-skills (see .claude/skills/STITCH-SKILLS-SOURCE.md)
+  '.claude/skills/react-components/',
+  '.claude/skills/react-native/',
+  '.claude/skills/react-vite-dashboard/',
+  '.claude/skills/remotion/',
+  '.claude/skills/shadcn-ui/',
+  '.claude/skills/code-to-design/',
+  '.claude/skills/extract-design-md/',
+  '.claude/skills/extract-static-html/',
+  '.claude/skills/generate-design/',
+  '.claude/skills/manage-design-system/',
+  '.claude/skills/upload-to-stitch/',
+  '.claude/skills/design-md/',
+  '.claude/skills/enhance-prompt/',
+  '.claude/skills/site-md/',
+  '.claude/skills/stitch-loop/',
+  '.claude/skills/taste-design/',
   'node_modules/',
   'web/node_modules/',
   'web/.next/',
