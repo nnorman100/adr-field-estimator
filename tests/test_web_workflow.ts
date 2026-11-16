@@ -155,7 +155,7 @@ describe('the e2e job', () => {
 
   it('gives each shard its own slice of a total that is the matrix length', () => {
     const step = testStep();
-    expect(argv(step)).toEqual(['npm', 'run', 'test:e2e']);
+    expect(argv(step)).toEqual(['npm', 'run', 'test:e2e', '--', '--workers=2']);
     const total = job().strategy.matrix.shard.length;
     expect(step.env.E2E_SHARD).toBe(`\${{ matrix.shard }}/${total}`);
   });
