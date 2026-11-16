@@ -435,3 +435,37 @@ test('text typed in a room and not added stays on screen, read only, after the f
   await expect(page.getByLabel('New room name')).toHaveValue('Attic');
   await expect(page.getByLabel('New room name')).not.toBeEditable();
 });
+
+test('after the field work moves, the old phone shows its unsent photo read only and neither takes nor resends photos', async ({ page, request }) => {
+  test.setTimeout(120_000);
+  const company = await seedCompany('keep-photo', { owner: 'owner', office: 'office', first: 'estimator', second: 'estimator' });
+  const { jobId, actorOf } = await seedJob(request, company, company.people.office!, '58 Photo Lane', [company.people.first!, company.people.second!]);
+  await claim(request, company, company.people.first!, jobId);
+
+  await signIn(page, company, company.people.first!);
+  await openJob(page, '58 Photo Lane');
+  // The photo's upload fails, so it stays on the phone, unsent.
+  await page.route('**/api/jobs/*/photos/*', (route) => route.abort());
+  await main(page).getByRole('link', { name: 'Photos' }).click();
+  await page.getByLabel('Shot').selectOption({ label: 'Overview' });
+  await page.getByLabel('Take photo').setInputFiles({
+    name: 'photo.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAZ0lEQVR4nBWMQQ0AQAyDqmRKqgQlU1IlU1JFl+NJCBIaZARaFHSoSGKGMQOzTJhjykh4sDF4cfDhYokfm89C4KAgscP6y1027LFlJTLEP82SkCMlEjec/+CWC3dcOYkO9d92aejR0gf/sEsBLaIzfQAAAABJRU5ErkJggg==',
+      'base64',
+    ),
+  });
+  await expect(page.getByRole('button', { name: 'Send again' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Send again' })).toBeEnabled();
+
+  // The owner moves the field work; the old phone's next change is refused and it goes read only.
+  await transfer(request, company, jobId, actorOf(company.people.second!));
+  await main(page).getByRole('link', { name: 'Check Scope' }).click();
+  await page.getByLabel('Year built').fill('1971');
+  await page.getByRole('button', { name: 'Save scope' }).click();
+  await expect(page.getByText(MOVED)).toBeVisible();
+  await main(page).getByRole('link', { name: 'Photos' }).click();
+  await expect(page.getByRole('button', { name: 'Send again' })).toBeDisabled();
+  await expect(page.getByLabel('Take photo')).toHaveCount(0);
+});

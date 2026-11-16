@@ -137,6 +137,9 @@ function Coordination({ job, view, setView, reread }: { job: JobContext & { deta
     const unanswered = !answer.ok && (answer.status === 0 || answer.status === 503);
     if (!pending.settleCoordWrite(jobId, attempt.key, unanswered ? 'unanswered' : 'answered')) return false;
     if (answer.ok) {
+      // Every path of a retry ends the same way: what was typed for this request is the view's now.
+      const sentNotes = attempt.request.kind === 'notes' ? attempt.request.notes : null;
+      if (sentNotes !== null) setNotes((current) => (current === sentNotes ? null : current));
       setView(answer.value);
       setNotice({ at: attempt.at, message: attempt.done });
       // The job's field owner may have moved with it: the other views read the job again.
