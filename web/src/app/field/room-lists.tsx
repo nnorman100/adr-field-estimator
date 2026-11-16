@@ -197,6 +197,8 @@ export function RoomPrepTasks({
           </li>
         ))}
       </ol>
+      {/* Typed and not added when the field work moved away: shown, read only (owner decision J5). */}
+      {readOnly && own ? <Box id={`${id}-own`} label="Your own prep task" value={own} onChange={() => undefined} readOnly /> : null}
       {readOnly || full ? null : (
         <>
           {offered.length > 0 ? (

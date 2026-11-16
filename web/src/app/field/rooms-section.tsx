@@ -106,6 +106,8 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
           </li>
         ))}
       </ul>
+      {/* A name typed and not added when the field work moved away: shown, read only (owner decision J5). */}
+      {readOnly && name ? <Box id="new-room-name" label="New room name" value={name} onChange={() => undefined} readOnly /> : null}
       {readOnly ? null : (
         <form
           className="flex flex-col gap-2"

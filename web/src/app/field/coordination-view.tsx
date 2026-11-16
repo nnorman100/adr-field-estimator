@@ -168,6 +168,21 @@ function Coordination({ job, view, setView, reread }: { job: JobContext & { deta
   return (
     <div className="flex flex-col gap-4">
       <h3 className="text-lg font-semibold">Job coordination</h3>
+      {held ? (
+        <Section title="Change not answered yet">
+          <p>
+            {{ move: 'A move of the field work', assign: 'Assigning an estimator', unassign: 'Unassigning an estimator', notes: 'Saving the notes' }[held.request.kind]} was
+            sent and no answer came back. It is sent again exactly as it was, and nothing else is sent until it is answered or forgotten.
+          </p>
+          <Button type="button" disabled={waiting || !session.online} onClick={() => void retry()}>
+            {waiting ? 'Sending…' : 'Send the unanswered change again'}
+          </Button>
+          <Button type="button" variant="outline" disabled={waiting} onClick={() => pending.settleCoordWrite(jobId, held.key, 'answered')}>
+            Forget the unanswered change
+          </Button>
+          <Outcome error={errorAt(held.at)} notice={null} />
+        </Section>
+      ) : null}
       <Section title="Field work">
         <p>{view.fieldOwner ? `${nameOf(view.fieldOwner)} owns the field work.` : 'Nobody has started the field work yet. The first assigned estimator to start it owns it.'}</p>
         {mayMove ? (
@@ -180,7 +195,7 @@ function Coordination({ job, view, setView, reread }: { job: JobContext & { deta
               const to = moveChoice!;
               const request = { kind: 'move' as const, revision: view.revision, changeId: crypto.randomUUID(), toActorId: to };
               void act('move', `move:${to}`, request, 'The field work was moved.').then((ok) => {
-                if (ok) setMoveTo('');
+                if (ok) setMoveTo((current) => (current === to ? '' : current));
               });
             }}
           >
@@ -241,7 +256,7 @@ function Coordination({ job, view, setView, reread }: { job: JobContext & { deta
                 const estimator = pickChoice!;
                 const request = { kind: 'assign' as const, id: crypto.randomUUID(), estimatorActorId: estimator };
                 void act('assign', `assign:${estimator}`, request, 'The estimator was assigned.').then((ok) => {
-                  if (ok) setPick('');
+                  if (ok) setPick((current) => (current === estimator ? '' : current));
                 });
               }}
             >
@@ -274,7 +289,7 @@ function Coordination({ job, view, setView, reread }: { job: JobContext & { deta
             if (heldKind === 'notes') return void retry();
             const request = { kind: 'notes' as const, revision: view.revision, changeId: crypto.randomUUID(), notes: typedNotes };
             void act('notes', `notes:${typedNotes}`, request, 'Notes saved.').then((ok) => {
-              if (ok) setNotes(null);
+              if (ok) setNotes((current) => (current === request.notes ? null : current));
             });
           }}
         >

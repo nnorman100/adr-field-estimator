@@ -374,3 +374,63 @@ test('the company owner who moves the field work keeps customer changes typed be
   await main(page).getByRole('link', { name: 'Check Scope' }).click();
   await expect(page.getByLabel('Year built')).not.toBeEditable();
 });
+
+test('an unassign with no answer can be sent again or forgotten after the assignment is gone from the list', async ({ page, request }) => {
+  test.setTimeout(120_000);
+  const company = await seedCompany('held-unassign', { owner: 'owner', first: 'estimator', second: 'estimator' });
+  await seedJob(request, company, company.people.owner!, '18 Held Unassign Way', [company.people.first!, company.people.second!]);
+
+  await signIn(page, company, company.people.owner!);
+  await openJob(page, '18 Held Unassign Way');
+  await main(page).getByRole('link', { name: 'Job coordination' }).click();
+  await expect(page.getByRole('list', { name: 'Assigned estimators' }).getByText('second', { exact: true })).toBeVisible();
+
+  // The server unassigns, and its answer is lost on the way to the phone.
+  let lost = true;
+  await page.route('**/api/jobs/*/assignments/*', async (route) => {
+    if (!lost || route.request().method() !== 'DELETE') return route.fallback();
+    await route.fetch();
+    await route.abort();
+  });
+  await page.getByRole('button', { name: 'Unassign second' }).click();
+  await expect(page.getByRole('button', { name: 'Send the unanswered change again' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save notes' })).toBeDisabled();
+
+  // Opened again, the list no longer has the assignment, but its recovery is still there.
+  await main(page).getByRole('link', { name: 'Back to jobs' }).click();
+  await openJob(page, '18 Held Unassign Way');
+  await main(page).getByRole('link', { name: 'Job coordination' }).click();
+  await expect(page.getByRole('list', { name: 'Assigned estimators' }).getByText('second', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Send the unanswered change again' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save notes' })).toBeDisabled();
+  lost = false;
+  await page.getByRole('button', { name: 'Forget the unanswered change' }).click();
+  await expect(page.getByRole('button', { name: 'Send the unanswered change again' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Save notes' })).toBeEnabled();
+});
+
+test('text typed in a room and not added stays on screen, read only, after the field work moves', async ({ page, request }) => {
+  test.setTimeout(120_000);
+  const company = await seedCompany('owner-keeps-typed', { owner: 'owner', first: 'estimator' });
+  const { jobId, actorOf } = await seedJob(request, company, company.people.owner!, '96 Typed Row', [company.people.first!]);
+
+  await signIn(page, company, company.people.owner!);
+  await openJob(page, '96 Typed Row');
+  await page.getByLabel('New room name').fill('Den');
+  await page.getByRole('button', { name: 'Add room' }).click();
+  const den = page.getByRole('form', { name: 'Den' });
+  await expect(den).toBeVisible();
+  await den.getByLabel('Your own prep task').fill('Tape the vent');
+  await page.getByLabel('New room name').fill('Attic');
+  await transfer(request, company, jobId, actorOf(company.people.first!));
+  await main(page).getByRole('link', { name: 'Job coordination' }).click();
+  await page.getByRole('textbox', { name: 'Office notes' }).fill('Checked');
+  await page.getByRole('button', { name: 'Save notes' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Notes saved.' })).toBeVisible();
+  await main(page).getByRole('link', { name: 'Check Scope' }).click();
+  await expect(page.getByText(MOVED)).toBeVisible();
+  await expect(den.getByLabel('Your own prep task')).toHaveValue('Tape the vent');
+  await expect(den.getByLabel('Your own prep task')).not.toBeEditable();
+  await expect(page.getByLabel('New room name')).toHaveValue('Attic');
+  await expect(page.getByLabel('New room name')).not.toBeEditable();
+});
