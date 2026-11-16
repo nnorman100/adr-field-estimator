@@ -49,3 +49,12 @@ jobs:
           count=$(jq '[.runs[].results[]?] | length' codeql-results/*.sarif)
           echo "CodeQL findings: $count" >> "$GITHUB_STEP_SUMMARY"
           jq -r '.runs[].results[]? | "- \(.ruleId): \(.locations[0].physicalLocation.artifactLocation.uri):\(.locations[0].physicalLocation.region.startLine)"' codeql-results/*.sarif >> "$GITHUB_STEP_SUMMARY"
+      # Code scanning is not on for this private repository, so nothing else reports findings: a finding
+      # fails the run and master-red.yml opens "master is red: CodeQL" (docs/runbook/ci.md).
+      - name: Fail on findings
+        run: |
+          count=$(jq -s '[.[].runs[].results[]?] | length' codeql-results/*.sarif)
+          if [ "$count" -gt 0 ]; then
+            echo "::error::CodeQL found $count finding(s); see the run summary."
+            exit 1
+          fi

@@ -18,6 +18,10 @@ describe('what a finished run does to the master-red issue', () => {
     expect(decide(master('skipped'))).toBe('skip');
   });
 
+  it('reports the weekly CodeQL scan on master too', () => {
+    expect(decide({ conclusion: 'failure', event: 'schedule', branch: 'master' })).toBe('open');
+  });
+
   it('ignores pull requests and other branches', () => {
     expect(decide({ conclusion: 'failure', event: 'pull_request', branch: 'master' })).toBe('skip');
     expect(decide({ conclusion: 'failure', event: 'push', branch: 'feature' })).toBe('skip');
@@ -30,15 +34,28 @@ describe('what a finished run does to the master-red issue', () => {
     expect(failureText(run)).toContain('a'.repeat(12));
     expect(failureText(run)).toContain('Fix forward');
     expect(failureText(run)).toContain('Fixes #');
+    expect(failureText(run)).toContain('Nothing is released');
+  });
+
+  it('says what a CodeQL failure means: findings to fix, not a blocked release', () => {
+    const text = failureText({
+      workflow: 'CodeQL',
+      url: 'https://example.test/r',
+      sha: 'b'.repeat(40),
+    });
+    expect(text).toContain('security finding');
+    expect(text).toContain('summary');
+    expect(text).toContain('owner');
+    expect(text).not.toContain('Nothing is released');
   });
 });
 
 describe('master-red.yml', () => {
   const wf = (): Data => load(path.join(WORKFLOWS, 'master-red.yml'));
 
-  it('runs after CI and Web app finish on master', () => {
+  it('runs after CI, Web app and CodeQL finish on master', () => {
     expect(wf().on.workflow_run).toEqual({
-      workflows: ['CI', 'Web app'],
+      workflows: ['CI', 'Web app', 'CodeQL'],
       types: ['completed'],
       branches: ['master'],
     });

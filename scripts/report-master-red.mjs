@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Run by .github/workflows/master-red.yml when a CI or Web app run on a push to master fails. It
+// Run by .github/workflows/master-red.yml when a CI, Web app or CodeQL run on master fails. It
 // opens the issue "master is red: <workflow>" (or comments on the one already open), so a red master
 // is never silent; the pull request that fixes it closes it ("Fixes #N"). Fix forward
 // (docs/runbook/ci.md, "Fast pull requests, full suite after merge"). Green runs start no job.
@@ -9,13 +9,23 @@ export const TITLE_PREFIX = 'master is red: ';
 
 /** What to do with a finished run: open (or update) the issue, or nothing. */
 export function decide({ conclusion, event, branch }) {
-  if (event !== 'push' || branch !== 'master') return 'skip';
+  // Pushes, and the weekly CodeQL scan (a schedule runs on master).
+  if (!['push', 'schedule'].includes(event) || branch !== 'master') return 'skip';
   return conclusion === 'failure' || conclusion === 'timed_out' ? 'open' : 'skip';
 }
 
 export const issueTitle = (workflow) => `${TITLE_PREFIX}${workflow}`;
 
 export function failureText({ workflow, url, sha }) {
+  if (workflow === 'CodeQL') {
+    return [
+      `CodeQL found at least one security finding on master at ${sha.slice(0, 12)}: ${url}`,
+      '',
+      "The findings are listed in that run's summary. Fix them with a new pull request and close",
+      'this issue from it ("Fixes #<this issue>"). Releases are not blocked. A finding that is a',
+      "false positive is excluded only with the owner's approval, like any check (AGENTS.md rule 1).",
+    ].join('\n');
+  }
   return [
     `The ${workflow} run on master failed at ${sha.slice(0, 12)}: ${url}`,
     '',

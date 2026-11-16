@@ -143,6 +143,23 @@ describe('codeql.yml', () => {
     expect(uses.some((u) => u.startsWith('github/codeql-action/init@'))).toBe(true);
     expect(uses.some((u) => u.startsWith('github/codeql-action/analyze@'))).toBe(true);
   });
+
+  it('fails when it finds anything, after writing the summary, so master-red raises an issue', () => {
+    const steps = analyze().steps as Data[];
+    const summary = steps.findIndex((s) => s.name === 'Summarize findings');
+    const fail = steps.findIndex((s) => s.name === 'Fail on findings');
+    expect(summary).toBeGreaterThanOrEqual(0);
+    expect(fail).toBe(summary + 1);
+    expect(String(steps[fail].run).trim()).toBe(
+      [
+        "count=$(jq -s '[.[].runs[].results[]?] | length' codeql-results/*.sarif)",
+        'if [ "$count" -gt 0 ]; then',
+        '  echo "::error::CodeQL found $count finding(s); see the run summary."',
+        '  exit 1',
+        'fi',
+      ].join('\n'),
+    );
+  });
 });
 
 describe('the step-condition evaluator', () => {
