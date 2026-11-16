@@ -5,6 +5,7 @@ export default defineConfig({
     include: [
       'tests/test_required_docs.js',
       'tests/test_protected_tests.ts',
+      'tests/test_design_tokens.ts',
       'tests/test_ai_inventory.js',
       'tests/test_terraform_plan_check.js',
       'tests/test_terraform_plan_check_identity.js',

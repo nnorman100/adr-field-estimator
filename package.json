@@ -6,7 +6,7 @@
     "test:browser": "playwright test",
     "format": "prettier --write \"**/*.{js,css,ts,mts}\"",
     "format:check": "prettier --check \"**/*.{js,css,ts,mts}\"",
-    "lint": "eslint . && node scripts/check-file-length.mts && node scripts/check_required_docs.js"
+    "lint": "eslint . && node scripts/check-file-length.mts && node scripts/check_required_docs.js && node scripts/check-design-tokens.mts"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
