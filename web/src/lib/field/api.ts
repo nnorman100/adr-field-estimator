@@ -62,14 +62,6 @@ const MESSAGES: Record<string, string> = {
   unsupported_image: 'This picture type cannot be used. Take the photo with the camera.',
   too_large: 'This picture is too large.',
   invalid_request: 'Something here is not valid. Check it and save again.',
-  // S5b-1: the field owner and assignment.
-  field_owner_taken: 'Another person already owns this job’s field work.',
-  not_field_owner: 'Only the person who owns this job’s field work can add to it.',
-  already_assigned: 'This estimator is already assigned to this job.',
-  not_assignable: 'Only an active estimator assigned to this job (or you, the owner) can be given it.',
-  assignment_not_found: 'This estimator is no longer assigned. The list is read again.',
-  assigned_field_owner: 'This estimator owns the job’s field work. The company owner moves the field work first.',
-  draft_unavailable: 'Saved, but the field work could not be updated just now. Try again.',
 };
 
 export function answerMessage(status: number, body: unknown): string {
@@ -130,58 +122,6 @@ export async function saveCustomer(user: User, jobId: string, input: CustomerSav
 export async function saveClaim(user: User, jobId: string, input: ClaimSave): Promise<Answer<JobDetail>> {
   const { status, body } = await callApi(user, `/api/jobs/${jobId}/claim`, { method: 'PUT', json: input });
   return answerOf(status, body, jobDetail) as Answer<JobDetail>;
-}
-
-const person = z.object({ actorId: z.string(), displayName: z.string().nullable(), email: z.string() });
-const coordinationView = z.object({
-  jobId: z.string(),
-  status: z.enum(['draft', 'submitted', 'signed', 'archived']),
-  revision: z.number(),
-  notes: z.string(),
-  fieldOwner: person.nullable(),
-  assignments: z.array(person.extend({ id: z.string(), assignedAt: z.string() })),
-  estimators: z.array(person),
-});
-export type Person = z.infer<typeof person>;
-export type CoordinationView = z.infer<typeof coordinationView>;
-
-// Job coordination (S5b-1): office notes, the assigned estimators and the field owner. Owner and
-// office only; an estimator is refused.
-export async function readCoordination(user: User, jobId: string): Promise<Answer<CoordinationView>> {
-  const { status, body } = await callApi(user, `/api/jobs/${jobId}/coordination`);
-  return answerOf(status, body, coordinationView);
-}
-
-export type NotesSave = { revision: number; changeId: string; notes: string };
-
-export async function saveCoordination(user: User, jobId: string, input: NotesSave): Promise<Answer<CoordinationView>> {
-  const { status, body } = await callApi(user, `/api/jobs/${jobId}/coordination`, { method: 'PUT', json: input });
-  return answerOf(status, body, coordinationView);
-}
-
-// 201 for a new assignment, 200 for the same id again.
-export async function assignEstimator(user: User, jobId: string, input: { id: string; estimatorActorId: string }): Promise<Answer<CoordinationView>> {
-  const { status, body } = await callApi(user, `/api/jobs/${jobId}/assignments`, { method: 'POST', json: input });
-  return answerOf(status, body, coordinationView, [200, 201]);
-}
-
-export async function unassignEstimator(user: User, jobId: string, assignmentId: string): Promise<Answer<CoordinationView>> {
-  const { status, body } = await callApi(user, `/api/jobs/${jobId}/assignments/${assignmentId}`, { method: 'DELETE' });
-  return answerOf(status, body, coordinationView);
-}
-
-// "First capture makes me field owner": 201 when the caller became it now, 200 when they already were.
-export async function claimFieldOwner(user: User, jobId: string): Promise<Answer<JobDetail>> {
-  const { status, body } = await callApi(user, `/api/jobs/${jobId}/field-owner`, { method: 'POST' });
-  return answerOf(status, body, jobDetail, [200, 201]) as Answer<JobDetail>;
-}
-
-export type TransferSave = { revision: number; changeId: string; toActorId: string };
-
-// Owner decision J5: the owner moves the field work to themself or an assigned estimator.
-export async function transferFieldOwner(user: User, jobId: string, input: TransferSave): Promise<Answer<CoordinationView>> {
-  const { status, body } = await callApi(user, `/api/jobs/${jobId}/field-owner/transfer`, { method: 'POST', json: input });
-  return answerOf(status, body, coordinationView);
 }
 
 async function authorized(user: User, path: string, init: RequestInit = {}): Promise<Response | null> {

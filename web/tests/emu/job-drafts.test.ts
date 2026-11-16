@@ -5,7 +5,7 @@ import { parseProjectionConfig } from '@/lib/config';
 import { firestoreDraftStore, type DraftStore } from '@/lib/jobs/drafts';
 import { firestoreAccessStore, firestoreFor } from '@/lib/projection/firestore';
 import { createTenant, projectId, signIn, signUp, withSecondFactor } from './auth-emulator';
-import { createDoc, getDoc, updateDoc } from './rules/firestore-rest';
+import { createDoc, deleteDoc, getDoc, listDocs, updateDoc } from './rules/firestore-rest';
 
 // The first field draft a new job gets (S5a-3), written by the real firebase-admin writer against
 // the Firestore emulator, then used the way the phone will: under web/firestore.rules, with real
@@ -95,5 +95,53 @@ describe('the first draft of a job', () => {
     const draft = randomUUID();
     await drafts.ensure(company, draft, 'uid-1');
     expect((await db.doc(path(other, draft)).get()).exists).toBe(false);
+  });
+});
+
+describe('the server-owned job to current draft projection', () => {
+  it('is readable only with access to the projected draft and cannot be written by a client', async () => {
+    const tenant = await createTenant('job-map');
+    const company = randomUUID();
+    const draft = randomUUID();
+    const job = randomUUID();
+    const owner = await member(tenant, company, 'estimator');
+    const other = await member(tenant, company, 'estimator');
+    const office = await member(tenant, company, 'office');
+    await drafts.ensure(company, draft, owner.uid);
+    await drafts.projectJob(company, job, { currentDraftId: draft, revision: 1 });
+    const at = `companies/${company}/jobs/${job}`;
+    expect((await db.doc(at).get()).data()).toEqual({ currentDraftId: draft, revision: 1 });
+    expect(await getDoc(owner.caller, at)).toBe(200);
+    expect(await getDoc(office.caller, at)).toBe(200);
+    expect(await getDoc(other.caller, at)).toBe(403);
+    expect(await getDoc(null, at)).toBe(403);
+    expect(await listDocs(owner.caller, `companies/${company}/jobs`)).toBe(403);
+    expect(await listDocs(null, `companies/${company}/jobs`)).toBe(403);
+    expect(await deleteDoc(owner.caller, at)).toBe(403);
+    expect(await updateDoc(owner.caller, at, { currentDraftId: randomUUID(), revision: 2 })).toBe(403);
+    expect(await createDoc(owner.caller, `companies/${company}/jobs/${randomUUID()}`, { currentDraftId: draft, revision: 1 })).toBe(403);
+    const foreign = randomUUID();
+    await drafts.projectJob(foreign, job, { currentDraftId: draft, revision: 1 });
+    expect(await getDoc(owner.caller, `companies/${foreign}/jobs/${job}`)).toBe(403);
+    // Ownership follows the current draft, not a grant embedded in the locator.
+    await db.doc(path(company, draft)).update({ fieldOwnerUid: other.uid });
+    expect(await getDoc(owner.caller, at)).toBe(403);
+    expect(await getDoc(other.caller, at)).toBe(200);
+    await db.doc(`companies/${company}/access/${other.uid}`).update({ expiresAt: new Date(Date.now() - 1000) });
+    expect(await getDoc(other.caller, at)).toBe(403);
+  });
+
+  it('a delayed older write cannot replace the current draft, and an identical retry does not rewrite it', async () => {
+    const company = randomUUID();
+    const job = randomUUID();
+    const before = { currentDraftId: randomUUID(), revision: 1 };
+    const current = { currentDraftId: randomUUID(), revision: 3 };
+    await drafts.projectJob(company, job, current);
+    const doc = db.doc(`companies/${company}/jobs/${job}`);
+    const written = (await doc.get()).updateTime!.toMillis();
+    await drafts.projectJob(company, job, before);
+    await drafts.projectJob(company, job, current);
+    expect((await doc.get()).data()).toEqual(current);
+    expect((await doc.get()).updateTime!.toMillis()).toBe(written);
   });
 });

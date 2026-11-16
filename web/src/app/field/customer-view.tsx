@@ -7,6 +7,8 @@ import { pending, usePending, type RecordKind } from '@/lib/field/pending';
 import type { JobContext } from './job-screens';
 import { Box, Outcome, Section } from './ui';
 
+type CustomerJob = JobContext & { detail: JobDetail };
+
 type Values = Record<string, string>;
 type BoxSpec = { key: string; label: string; type?: 'email' | 'tel' | 'date'; autoComplete?: string; inputMode?: 'decimal' };
 
@@ -35,10 +37,8 @@ const claimOf = (detail: JobDetail): Values => ({ ...detail.claim, dateOfLoss: d
 // Customer and claim (S5a-6), saved to the jobs API (S5a-3), which keeps them in the database. Who
 // may save follows owner decision J3: the estimator who owns the field work, the owner and office,
 // while the job is unsigned; the server decides, and its refusal is shown.
-export function CustomerView({ job }: { job: JobContext }) {
-  const caps = job.session.capabilities;
-  const ownsFieldWork = job.detail.job.fieldOwnerActorId === job.session.actorId;
-  const canSave = !job.gone && (caps.includes('coordination') || (caps.includes('scope') && ownsFieldWork));
+export function CustomerView({ job }: { job: CustomerJob }) {
+  const canSave = job.session.capabilities.some((key) => key === 'scope' || key === 'coordination');
   return (
     <div className="flex flex-col gap-4">
       <h3 className="sr-only">Customer and claim</h3>
@@ -102,7 +102,7 @@ function RecordForm({
   send,
   reread,
 }: {
-  job: JobContext;
+  job: CustomerJob;
   title: string;
   kind: RecordKind;
   boxes: BoxSpec[];
@@ -134,6 +134,7 @@ function RecordForm({
   }
 
   async function save() {
+    if (!job.session.online) return setError('Needs a connection');
     const held = pending.record(jobId);
     if (held && (held.kind !== kind || held.sending)) return;
     takeRefusal();
@@ -157,10 +158,9 @@ function RecordForm({
       setNotice(`${title} saved.`);
       return;
     }
-    // Refused (src/app/field/job-screens.tsx, checkAccess): signed out drops the job; not this
-    // person's to change any more (the field work moved) reads it again, the edits kept; not theirs to
-    // see any more drops it. Changed elsewhere: read the job again; the edits stay on top.
-    if (answer.denied) job.checkAccess(answer);
+    // Not this person's to see any more: every copy of the job goes. Changed elsewhere: read the job
+    // again; the person's edits stay on top of the new values.
+    if (answer.denied) pending.denyDetail(jobId, answer.message);
     if (answer.stale) await job.reloadJob();
     if (!refused) setError(answer.message);
   }
@@ -193,10 +193,11 @@ function RecordForm({
           />
         ))}
         {readOnly ? null : (
-          <Button type="submit" disabled={busy || waiting}>
+          <Button type="submit" disabled={busy || waiting || !job.session.online}>
             {busy ? 'Saving…' : mine ? 'Try again' : `Save ${title.toLowerCase()}`}
           </Button>
         )}
+        {!readOnly && !job.session.online ? <p role="status">Needs a connection</p> : null}
         {waiting ? (
           <p className="text-sm">The {unsettled.kind} save has not been answered yet. Try it again first.</p>
         ) : null}

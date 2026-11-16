@@ -15,6 +15,7 @@ module.exports = [
       'playwright-report/**',
       'review-artifacts/**',
       'web/**', // the TypeScript app has its own ESLint config and CI job
+      '.claude/skills/**', // third-party skills copied unchanged; not our code
     ],
   },
   js.configs.recommended,

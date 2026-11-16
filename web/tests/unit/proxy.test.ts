@@ -7,8 +7,8 @@ const call = (path: string, method = 'GET') =>
   proxy(new NextRequest(new URL(path, 'http://localhost'), { method }));
 
 describe('API sign-in gate', () => {
-  it('runs on every API path', () => {
-    expect(config.matcher).toBe('/api/:path*');
+  it('runs on every API path and on pages for report-only CSP headers', () => {
+    expect(config.matcher).toBe('/:path*');
   });
 
   it('keeps the public list to the four routes that hold nothing private', () => {

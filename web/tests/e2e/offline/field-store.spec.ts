@@ -32,6 +32,8 @@ async function saveRow(page: Page, lane: NetworkLane, world: World, who: Person,
     config: browserConfig(lane),
     savedAt: Date.now(),
     role: 'estimator',
+    companyId: world.companyId,
+    capabilities: ['scope'],
     authTime: Date.now() - ageDays * DAY,
   };
   await page.evaluate(
@@ -134,7 +136,7 @@ test.describe('the field shell\'s phone storage (S6-3)', () => {
     });
     await page.reload();
     await expect(page.getByRole('heading', { name: text.REOPEN_TITLE })).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText('Your jobs will show here.')).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'My jobs', exact: true })).toHaveCount(0);
     await expect(page.getByText(NOT_SAVED_TEXT)).toHaveCount(0);
     await expectNoAxeViolations(page);
   });
@@ -179,7 +181,7 @@ test.describe('the field shell\'s phone storage (S6-3)', () => {
     });
     await page.reload();
     await expect(page.getByRole('heading', { name: text.REOPEN_TITLE })).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText('Your jobs will show here.')).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'My jobs', exact: true })).toHaveCount(0);
   });
 
   test('with Online only chosen, no signal does not say the work is saved on this phone', async ({ context, page, lane }) => {
@@ -204,12 +206,12 @@ test.describe('the field shell\'s phone storage (S6-3)', () => {
     lane.drop('/api/me');
     await page.clock.install();
     await openShell(page, lane, world, world.owner, 29);
-    await expect(page.getByText('Your jobs will show here.')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'My jobs', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: text.ONLINE_ONCE_TITLE })).toHaveCount(0);
     // Two days later, the same window still open with no signal: an estimator's 30 days are up.
     await page.clock.fastForward('48:00:00');
     await expect(page.getByRole('heading', { name: text.ONLINE_ONCE_TITLE })).toBeVisible();
-    await expect(page.getByText('Your jobs will show here.')).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'My jobs', exact: true })).toHaveCount(0);
   });
 
   test('an open shell stops at the role\'s limit when /api/me stops answering but the app is still reachable (day 29 to day 31)', async ({ context, page, lane }) => {
@@ -221,7 +223,7 @@ test.describe('the field shell\'s phone storage (S6-3)', () => {
     serveMe(lane, { expiresAt: inDays(29 + 7) });
     await page.clock.install({ time: inDays(29) });
     await openShell(page, lane, world, world.owner);
-    await expect(page.getByText('Your jobs will show here.')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'My jobs', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: text.ONLINE_ONCE_TITLE })).toHaveCount(0);
 
     // /api/me stops answering while the app itself stays reachable; two days on, the window is
@@ -229,7 +231,7 @@ test.describe('the field shell\'s phone storage (S6-3)', () => {
     serveMe(lane, { status: 503, error: 'unavailable' });
     await page.clock.fastForward('48:00:00');
     await expect(page.getByRole('heading', { name: text.ONLINE_ONCE_TITLE })).toBeVisible();
-    await expect(page.getByText('Your jobs will show here.')).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'My jobs', exact: true })).toHaveCount(0);
     await expect(page.getByRole('link', { name: 'Go to sign in' })).toBeVisible();
   });
 
@@ -280,7 +282,7 @@ test.describe('the field shell\'s phone storage (S6-3)', () => {
     await openShell(page, lane, world, world.owner);
     await expect(page.getByRole('heading', { name: text.NO_LOCK_TITLE })).toBeVisible();
     await expect(page.getByText(NOT_SAVED_TEXT)).toBeVisible();
-    await expect(page.getByText('Your jobs will show here.')).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'My jobs', exact: true })).toHaveCount(0);
     await expect(page.getByText(text.LOCKED_SIGN_IN_TEXT)).toHaveCount(0);
   });
 
@@ -322,13 +324,13 @@ test.describe('the field shell\'s phone storage (S6-3)', () => {
     lane.drop('/api/me');
     await openShell(page, lane, world, world.owner, 31);
     await expect(page.getByRole('heading', { name: text.ONLINE_ONCE_TITLE })).toBeVisible();
-    await expect(page.getByText('Your jobs will show here.')).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'My jobs', exact: true })).toHaveCount(0);
     await expectNoAxeViolations(page);
 
     // The same with a sign-in from yesterday: the phone works offline.
     await saveRow(page, lane, world, world.owner, 'Field Store Test', 1);
     await page.reload();
-    await expect(page.getByText('Your jobs will show here.')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'My jobs', exact: true })).toBeVisible();
 
     serveMe(lane, { expiresAt: inDays(-1) });
     await page.reload();
@@ -337,12 +339,12 @@ test.describe('the field shell\'s phone storage (S6-3)', () => {
     serveMe(lane, { status: 403, error: 'member_disabled' });
     await page.reload();
     await expect(page.getByText(text.LOCKED_DISABLED_TEXT)).toBeVisible();
-    await expect(page.getByText('Your jobs will show here.')).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'My jobs', exact: true })).toHaveCount(0);
     await expectNoAxeViolations(page);
 
     serveMe(lane, { expiresAt: inDays(7) });
     await page.reload();
-    await expect(page.getByText('Your jobs will show here.')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'My jobs', exact: true })).toBeVisible();
     await expect(page.getByText(text.RENEWING_TEXT)).toHaveCount(0);
   });
 });
@@ -413,9 +415,9 @@ test.describe('the field shell hides outlived locked work when it is shown again
     await controlVisibility(page);
     await page.clock.install();
     await openShell(page, lane, world, world.owner);
-    await expect(page.getByText('Your jobs will show here.')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'My jobs', exact: true })).toBeVisible();
     await hideFromDay29ToDay31(page, world, ben);
-    await expect(page.getByText('Your jobs will show here.')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'My jobs', exact: true })).toBeVisible();
   });
 
   test('open for the person whose work it is: the shell hides it, and says it was removed once the server refuses her', async ({ context, page, lane }) => {

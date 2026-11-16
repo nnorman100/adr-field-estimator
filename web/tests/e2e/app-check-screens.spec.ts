@@ -208,6 +208,7 @@ const VISITS: Visit[] = [
       await signIn(page, company.address, estimator.email, company.name);
       await page.getByRole('link', { name: 'Open the field app' }).click();
       await expect(page.getByRole('heading', { name: company.name, level: 1 })).toBeVisible();
+      await page.getByRole('button', { name: 'Online only', exact: true }).click();
       await expect(page.getByRole('heading', { name: 'My jobs' })).toBeVisible();
 
       const main = page.getByRole('main');
@@ -243,8 +244,6 @@ const VISITS: Visit[] = [
         scope: () => expect(page.getByLabel('Year built')).toBeVisible(),
         customer: () => expect(page.getByLabel('Customer name')).toBeVisible(),
         photos: () => expect(page.getByRole('heading', { name: /^Job photos/ })).toBeVisible(),
-        // An estimator is told it is the office's (S5b-1); tests/e2e/office-jobs.spec.ts drives it as office.
-        coordination: () => expect(page.getByRole('heading', { name: 'Job coordination' })).toBeVisible(),
       };
       for (const [view, ready] of Object.entries(views) as [FieldView, () => Promise<void>][]) {
         const place = view === 'jobs' ? { view, list: null } : view === 'new-job' ? { view } : { view, jobId };

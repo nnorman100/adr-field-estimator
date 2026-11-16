@@ -25,7 +25,7 @@ import {
 import { appCheckSettings, startAppCheck } from '@/lib/app-check-client';
 import type { BrowserSignInConfig } from '@/lib/config';
 import { companyAuth } from '@/lib/firebase-client';
-import { forgetUnsent, mayHaveUnsent, noteWrite, settled, writesNow } from '@/lib/field/unsent';
+import { forgetUnsent, keepPhotosHere, mayHaveUnsent, noteWrite, settled, writesNow } from '@/lib/field/unsent';
 import type { AppCheckSeam } from '@/lib/field/sync-gate';
 import { whileNoFieldWindow } from '@/lib/field/window-lock';
 
@@ -171,6 +171,7 @@ export async function startFieldClient(
   const app = fieldApp(person);
   const found = clients.get(app.name);
   if (found) return { kind: 'ready', client: found, fellBack: wanted === 'persistent' && found.cache === 'memory' };
+  keepPhotosHere(person.tenantId, person.uid);
   fieldAuth(app, person);
   const db = makeClient(app, person, databaseId, wanted);
   if (wanted === 'memory') {

@@ -1,9 +1,12 @@
+import type { JobProjection } from '@/lib/field/job-projection';
 import type { DraftStore } from '@/lib/jobs/drafts';
 
 // A stand-in for the field database's drafts: what the jobs service writes, kept in memory, with a
 // switch to make the next write fail as if Firestore were unreachable. tests/emu/ checks the real
 // writer (src/lib/jobs/drafts.ts) against the emulator and the field rules.
 export type FakeDrafts = DraftStore & {
+  // The jobs projected (#407), by "company/job".
+  projected: Map<string, JobProjection>;
   // The drafts made, by "company/draft", with the field owner's uid (null while nobody owns it) and
   // the job revision at which the server last set it (absent for a draft made with its job).
   made: Map<string, { fieldOwnerUid: string | null; fieldOwnerRevision?: number }>;
@@ -19,6 +22,11 @@ export type FakeDrafts = DraftStore & {
 export function fakeDrafts(): FakeDrafts {
   const store: FakeDrafts = {
     made: new Map(),
+    projected: new Map(),
+    async projectJob(companyId, jobId, projection) {
+      const key = `${companyId}/${jobId}`;
+      if ((store.projected.get(key)?.revision ?? -1) < projection.revision) store.projected.set(key, { ...projection });
+    },
     calls: [],
     ownerCalls: [],
     failNext: { on: false, afterWrite: false },

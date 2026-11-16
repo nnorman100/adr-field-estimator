@@ -5,10 +5,11 @@ import { Button } from '@/components/ui/button';
 import { readScopeLists, type ScopeLists } from '@/lib/field/api';
 import { roomName } from '@/lib/field/forms';
 import { MAX_ROOMS } from '@/lib/field/schema';
-import { addRoom, fieldRefusal, removeRoom, type FieldDraft } from '@/lib/field/store';
+import { addRoom, removeRoom, type FieldDraft } from '@/lib/field/store';
 import type { JobContext } from './job-screens';
 import { RoomCard } from './room-card';
 import { Box, Outcome, Section } from './ui';
+import { useFieldEdit } from './use-field-edit';
 
 // The rooms of Check Scope (S5a-6): each room is its own document in the field draft, listed in
 // the draft's room order. Adding or removing a room changes both in one batch (src/lib/field/store.ts).
@@ -17,56 +18,36 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
   const [lists, setLists] = useState<ScopeLists | null>(null);
   const [listsError, setListsError] = useState<string | null>(null);
   const [name, setName] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const { busy, error, notice, setError, save: saveEdit } = useFieldEdit(job);
   const readOnly = !job.editable;
   const full = draft.rooms.length >= MAX_ROOMS;
   const { user } = job.session;
-  const jobId = job.detail.job.id;
+  const jobId = job.jobId;
 
   function loadLists() {
+    if (!job.session.online) return;
     void readScopeLists(user, jobId).then((answer) => {
       setLists(answer.ok ? answer.value : null);
       setListsError(answer.ok ? null : 'The room types, items and prep tasks could not be read. ' + answer.message);
     });
   }
-  useEffect(loadLists, [user, jobId]);
+  useEffect(loadLists, [user, jobId, job.session.online]);
 
+  // Adding and removing rooms write the whole room order, so one waits for the other's local
+  // write and the draft read after it: each starts from the order the phone holds.
   async function remove(roomId: string, label: string) {
-    const db = job.session.db;
-    if (!db || !window.confirm(`Remove ${label} from this job?`)) return;
-    setError(null);
-    setNotice(null);
-    try {
-      await removeRoom(db, job.draftRef, roomId);
-      await job.reloadDraft();
-      setNotice(`${label} removed.`);
-    } catch (error) {
-      setError('The room was not removed. Check the signal and try again.');
-      job.checkAccess(fieldRefusal(error));
-    }
+    if (busy || !window.confirm(`Remove ${label} from this job?`)) return;
+    await saveEdit((db) => removeRoom(db, job.draftRef, roomId, draft.field.roomOrder ?? []), `${label} removed.`);
   }
 
   async function add() {
-    const db = job.session.db;
+    if (busy) return;
     const checked = roomName(name);
-    if (!db) return;
     if (!checked) return setError('Give the room a name.');
-    setError(null);
-    setNotice(null);
-    setBusy(true);
-    try {
-      await addRoom(db, job.draftRef, crypto.randomUUID(), checked);
-      await job.reloadDraft();
-      setName((current) => (current === name ? '' : current));
-      setNotice(`${checked} added.`);
-    } catch (error) {
-      setError('The room was not added. Check the signal and add it again.');
-      job.checkAccess(fieldRefusal(error));
-    } finally {
-      setBusy(false);
-    }
+    const roomId = crypto.randomUUID();
+    await saveEdit((db) => addRoom(db, job.draftRef, roomId, checked, draft.field.roomOrder ?? []), `${checked} added.`, () => {
+      setName((current) => current === name ? '' : current);
+    });
   }
 
   return (
@@ -89,6 +70,7 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
               stored={room.field}
               number={index + 1}
               lists={lists}
+              removing={busy}
               onRemove={() => remove(room.id, room.field.name ?? `Room ${index + 1}`)}
             />
           </li>
@@ -104,7 +86,7 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
           }}
         >
           <Box id="new-room-name" label="New room name" value={name} onChange={setName} readOnly={full} />
-          <Button type="submit" variant="outline" disabled={busy || full}>
+          <Button type="submit" variant="outline" disabled={busy || full || job.stale}>
             {busy ? 'Adding…' : 'Add room'}
           </Button>
           {full ? <p className="text-sm">A job holds at most {MAX_ROOMS} rooms.</p> : null}

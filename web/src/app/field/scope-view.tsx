@@ -16,10 +16,11 @@ import {
   type FormValues,
 } from '@/lib/field/forms';
 import { MAX_NOTES } from '@/lib/field/schema';
-import { fieldRefusal, saveDraftField, type FieldDraft } from '@/lib/field/store';
+import { saveDraftField, type FieldDraft } from '@/lib/field/store';
 import { EquipmentSuggestion } from './equipment-suggestion';
 import type { JobContext } from './job-screens';
 import { RoomsSection } from './rooms-section';
+import { useFieldEdit } from './use-field-edit';
 import { Box, Outcome, READ_AGAIN, Section, Tick } from './ui';
 
 // Check Scope (S5a-6, room inputs S5a-10): year built, the rooms, equipment counts (with the counts
@@ -33,9 +34,7 @@ export function ScopeView({ job, draft }: { job: JobContext; draft: FieldDraft }
   const [edits, setEdits] = useState<FormValues>({});
   const values = withEdits(FACT_FIELDS, draft.field, edits);
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const { busy, error, notice, setError, setNotice, save: saveEdit } = useFieldEdit(job);
   const readOnly = !job.editable;
   const set = (key: string) => (value: string | boolean) => {
     setEdits((current) => ({ ...current, [key]: value }));
@@ -43,26 +42,17 @@ export function ScopeView({ job, draft }: { job: JobContext; draft: FieldDraft }
   };
 
   async function save() {
-    const db = job.session.db;
-    if (!db || job.stale) return;
+    if (job.stale) return;
     const { changes, errors: found } = factChanges(values, draft.field);
     setErrors(found);
     setNotice(null);
     if (Object.keys(found).length > 0) return setError('Check the boxes marked below.');
     setError(null);
-    setBusy(true);
     const sent = edits;
-    try {
-      await saveDraftField(db, job.draftRef, changes);
+    if (Object.keys(changes).length === 0) return setNotice('Nothing to save.');
+    await saveEdit((db) => saveDraftField(db, job.draftRef, changes), 'Scope saved.', () => {
       setEdits((current) => editsAfterSave(current, sent));
-      await job.reloadDraft();
-      setNotice(Object.keys(changes).length === 0 ? 'Nothing to save.' : 'Scope saved.');
-    } catch (error) {
-      setError('The scope was not saved. Check the signal and save again.');
-      job.checkAccess(fieldRefusal(error));
-    } finally {
-      setBusy(false);
-    }
+    });
   }
 
   const box = (field: FormField<string>) =>

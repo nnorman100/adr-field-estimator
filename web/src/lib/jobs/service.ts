@@ -238,6 +238,9 @@ export function jobsService(db: Database, drafts: DraftStore): JobsService {
       });
       try {
         await drafts.ensure(caller.companyId, input.draftId, made.ownerUid);
+        await drafts.projectJob(caller.companyId, made.detail.job.id, {
+          currentDraftId: made.detail.job.currentDraftId, revision: made.detail.job.revision,
+        });
       } catch (error) {
         // Fixed text only: the SDK's message may quote a path.
         console.error('job draft unavailable', error instanceof Error ? error.name : 'unknown');
@@ -304,7 +307,17 @@ export function jobsService(db: Database, drafts: DraftStore): JobsService {
 
     async read(caller, jobId) {
       need(caller, READ);
-      return inCompany(caller.companyId, async (tx) => detailOf(tx, await jobAccess(tx, caller, jobId, READ)));
+      const detail = await inCompany(caller.companyId, async (tx) => detailOf(tx, await jobAccess(tx, caller, jobId, READ)));
+      // Lazy population repairs existing jobs on an authorized online open; no bulk backfill.
+      try {
+        await drafts.projectJob(caller.companyId, jobId, {
+          currentDraftId: detail.job.currentDraftId, revision: detail.job.revision,
+        });
+      } catch (error) {
+        console.error('job projection unavailable', error instanceof Error ? error.name : 'unknown');
+        throw new JobError('draft_unavailable');
+      }
+      return detail;
     },
 
     async saveCustomer(caller, jobId, input) {

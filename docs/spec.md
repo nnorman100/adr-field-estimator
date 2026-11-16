@@ -309,8 +309,9 @@ which the field owner cannot change; after signing only office and the owner cor
 - Becoming field owner grants no price approval.
 
 The explicit field-owner transfer was decided by owner decision J5 (`docs/plans/S5.md`, section 8)
-and is built in S5b-1: the owner moves the field work to themself or an assigned estimator, audited;
-the phone that held it keeps its unsent changes (S6 offers Save as new draft). In the rebuilt app an
+and its server side is built in S5b-1: the owner moves the field work to themself or an assigned estimator,
+audited, and the field rules refuse the phone that held it from then on; keeping that phone's unsent changes
+on screen, read only, comes with the S5b-1 screens pull request (S6 offers Save as new draft). In the rebuilt app an
 assigned estimator changes the field work only once they own it (the first capture, or a move to
 them); until then they see the job's customer view only.
 
