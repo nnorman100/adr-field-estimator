@@ -24,6 +24,7 @@ export default defineConfig({
       'tests/test_ai_evals_workflow.ts',
       'tests/test_master_red.ts',
       'tests/test_web_pr_checks.ts',
+      'tests/test_ci_budget.ts',
     ],
   },
 });

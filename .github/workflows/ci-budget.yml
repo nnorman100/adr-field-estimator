@@ -1,0 +1,32 @@
+name: CI budget
+
+# Pull-request jobs have time budgets (scripts/report-ci-budget.mjs). Once a day it reads the last
+# day's pull-request runs; a job that ran over its budget opens the issue "CI budget exceeded: <job>"
+# (or comments on the open one) for an agent to make it fast again. Queue time is not counted. Daily,
+# not after each run, so it costs the two-place pool one short job a day (docs/runbook/ci.md, "Fast
+# pull requests, full suite after merge").
+on:
+  schedule:
+    - cron: '17 14 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+jobs:
+  report:
+    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: lts/*
+      - name: Open or update budget issues
+        run: node scripts/report-ci-budget.mjs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

@@ -5,8 +5,8 @@ name: Web app
 # back under.
 #
 # Fast pull requests, full suite after merge (docs/runbook/ci.md): every pull request, with no path
-# filter, runs `company-isolation` and `check` (type check, lint, unit tests, build), the required
-# checks. The full suite (database, emulators, e2e, image) runs on pushes to master, which keep the
+# filter, runs `company-isolation` and `check` (type check, lint, the unit tests related to the
+# change, build) side by side, the required checks. The full suite (database, emulators, e2e, image) runs on pushes to master, which keep the
 # path filter; web-release.yml ships a commit only when this whole workflow passed on it.
 on:
   push:
@@ -121,15 +121,16 @@ jobs:
       - run: npm ci
       - run: npm run test:isolation
 
+  # Starts beside company-isolation, not after it: both are required checks of their own.
   check:
-    needs: [company-isolation]
-    if: always() && !cancelled()
     runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
     timeout-minutes: 15
     steps:
+      # Depth 2: a pull request's merge commit plus its first parent, the base branch, so the unit
+      # tests can be picked by what changed.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Require the company-isolation job
-        run: test "${{ needs.company-isolation.result }}" = "success"
+        with:
+          fetch-depth: 2
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: lts/*
@@ -138,7 +139,15 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run lint
-      - run: npm test
+      # A pull request runs the unit tests related to its changes (vitest reruns all of them when its
+      # config or package files change); after merge every unit test runs.
+      - name: Unit tests
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            npx vitest run --changed HEAD^1 --passWithNoTests
+          else
+            npm test
+          fi
       - run: npm run build
         env:
           APP_ENV: test

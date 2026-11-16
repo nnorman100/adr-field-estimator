@@ -1,9 +1,10 @@
 name: Master red
 
-# A red master is never silent: after each CI or Web app run on a push to master, a failure opens
-# (or comments on) the issue "master is red: <workflow>" and the next green run closes it. Fix
+# A red master is never silent: when a CI or Web app run on a push to master fails, this opens (or
+# comments on) the issue "master is red: <workflow>"; the pull request that fixes it closes it. Fix
 # forward (docs/runbook/ci.md, "Fast pull requests, full suite after merge"). The script is
-# scripts/report-master-red.mjs; workflow_run always uses master's copy of this file.
+# scripts/report-master-red.mjs; workflow_run always uses master's copy of this file. Any other
+# outcome skips the job, so green runs take no place in the two-place pool.
 on:
   workflow_run:
     workflows: [CI, Web app]
@@ -16,6 +17,9 @@ permissions:
 
 jobs:
   report:
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' ||
+      github.event.workflow_run.conclusion == 'timed_out'
     runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
     timeout-minutes: 5
     steps:

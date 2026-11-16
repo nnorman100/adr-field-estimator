@@ -1,18 +1,16 @@
 #!/usr/bin/env node
-// Run by .github/workflows/master-red.yml after a CI or Web app run on a push to master. A failed
-// run opens an issue "master is red: <workflow>" (or comments on the one already open), so a red
-// master is never silent; the next green run closes it. Fix forward (docs/runbook/ci.md, "Fast pull
-// requests, full suite after merge"). Cancelled and skipped runs change nothing.
+// Run by .github/workflows/master-red.yml when a CI or Web app run on a push to master fails. It
+// opens the issue "master is red: <workflow>" (or comments on the one already open), so a red master
+// is never silent; the pull request that fixes it closes it ("Fixes #N"). Fix forward
+// (docs/runbook/ci.md, "Fast pull requests, full suite after merge"). Green runs start no job.
 import { pathToFileURL } from 'node:url';
 
 export const TITLE_PREFIX = 'master is red: ';
 
-/** What to do with a finished run: open (or update) the issue, close it, or nothing. */
+/** What to do with a finished run: open (or update) the issue, or nothing. */
 export function decide({ conclusion, event, branch }) {
   if (event !== 'push' || branch !== 'master') return 'skip';
-  if (conclusion === 'failure' || conclusion === 'timed_out') return 'open';
-  if (conclusion === 'success') return 'close';
-  return 'skip';
+  return conclusion === 'failure' || conclusion === 'timed_out' ? 'open' : 'skip';
 }
 
 export const issueTitle = (workflow) => `${TITLE_PREFIX}${workflow}`;
@@ -22,13 +20,10 @@ export function failureText({ workflow, url, sha }) {
     `The ${workflow} run on master failed at ${sha.slice(0, 12)}: ${url}`,
     '',
     'Nothing is released until master is green again. Fix forward with a new pull request',
-    '(docs/runbook/ci.md, "Fast pull requests, full suite after merge"); this issue closes',
-    `itself when the next ${workflow} run on master passes.`,
+    '(docs/runbook/ci.md, "Fast pull requests, full suite after merge") and close this issue',
+    'from that pull request ("Fixes #<this issue>").',
   ].join('\n');
 }
-
-export const greenText = ({ workflow, url, sha }) =>
-  `${workflow} passed on master again at ${sha.slice(0, 12)}: ${url}`;
 
 async function api(method, route, body) {
   const res = await fetch(`https://api.github.com/repos/${process.env.GITHUB_REPOSITORY}${route}`, {

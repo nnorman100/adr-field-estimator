@@ -12,11 +12,8 @@ describe('what a finished run does to the master-red issue', () => {
     expect(decide(master('timed_out'))).toBe('open');
   });
 
-  it('closes it when a master run passes', () => {
-    expect(decide(master('success'))).toBe('close');
-  });
-
-  it('ignores cancelled and skipped runs, which say nothing about the code', () => {
+  it('ignores passed, cancelled and skipped runs; the fixing pull request closes the issue', () => {
+    expect(decide(master('success'))).toBe('skip');
     expect(decide(master('cancelled'))).toBe('skip');
     expect(decide(master('skipped'))).toBe('skip');
   });
@@ -32,7 +29,7 @@ describe('what a finished run does to the master-red issue', () => {
     expect(failureText(run)).toContain(run.url);
     expect(failureText(run)).toContain('a'.repeat(12));
     expect(failureText(run)).toContain('Fix forward');
-    expect(greenText(run)).toContain(run.url);
+    expect(failureText(run)).toContain('Fixes #');
   });
 });
 
@@ -45,6 +42,12 @@ describe('master-red.yml', () => {
       types: ['completed'],
       branches: ['master'],
     });
+  });
+
+  it('starts a job only for a failed or timed-out run, so green runs take no runner place', () => {
+    expect(wf().jobs.report.if.replace(/\s+/g, ' ')).toBe(
+      "github.event.workflow_run.conclusion == 'failure' || github.event.workflow_run.conclusion == 'timed_out'",
+    );
   });
 
   it('can write issues and nothing else', () => {

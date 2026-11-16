@@ -4,77 +4,15 @@
 // succeed. After merge (pushes to master): those two plus the full suite (database, emulators, e2e,
 // image), and the release workflow ships a commit only when every job passed. Run by vitest in the
 // node CI job.
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
-import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import { commands, evaluateStep, load, Shell, shlex, WEB, type Data } from './workflow_support.ts';
+import { describe, expect, it } from 'vitest';
+import { commands, load, shlex, WEB, type Data } from './workflow_support.ts';
 
 const WEB_PATHS = ['web/**', 'live-relay-placeholder/**', '.github/workflows/web.yml'];
-const REQUIRED = ['company-isolation'];
 // The full suite: skipped on pull requests, run on every push to master before any release.
 const POST_MERGE = ['database', 'e2e', 'emulators', 'image'];
 const POST_MERGE_IF = "github.event_name != 'pull_request'";
 
 const web = (): Data => load(WEB);
-
-type Needs = Record<string, { result: string }>;
-
-const shells: Shell[] = [];
-afterEach(() => {
-  for (const sh of shells.splice(0)) rmSync(sh.tmp, { recursive: true, force: true });
-});
-
-/** A run step's working directory: its own, else the job's default, else the workflow's. */
-function workDir(job: Data, step: Data): string {
-  return (
-    step['working-directory'] ??
-    job.defaults?.run?.['working-directory'] ??
-    web().defaults?.run?.['working-directory'] ??
-    '.'
-  );
-}
-
-/** `${{ needs.<job>.result }}`, as Actions fills it in. */
-function expand(run: string, needs: Needs): string {
-  return run.replace(/\$\{\{\s*([^}]*?)\s*\}\}/g, (_, expr: string) => {
-    const match = /^needs\.([\w-]+)\.result$/.exec(expr);
-    if (!match) throw new Error(`unexpected expression ${expr}`);
-    return needs[match[1]]?.result ?? '';
-  });
-}
-
-/**
- * Runs the check job's steps as Actions would on a fresh runner: the workspace starts empty and
- * holds the repository only after actions/checkout, and a run step fails when its working
- * directory is missing. The `Require` steps really run; the rest are listed.
- */
-function runCheck(needs: Needs): { passed: boolean; ran: string[] } {
-  const job = web().jobs.check;
-  expect(evaluateStep(job.if, {}, true)).toBe(true);
-  const sh = new Shell();
-  shells.push(sh);
-  const workspace = path.join(sh.tmp, 'workspace');
-  mkdirSync(workspace);
-  let failed = false;
-  const ran: string[] = [];
-  for (const s of job.steps as Data[]) {
-    const runs = s.if === undefined ? !failed : evaluateStep(s.if, {}, failed);
-    if (!runs) continue;
-    ran.push(s.name ?? s.run ?? s.uses);
-    if (s.uses?.startsWith('actions/checkout@')) mkdirSync(path.join(workspace, 'web'));
-    if (s.run === undefined) continue;
-    const cwd = path.join(workspace, workDir(job, s));
-    if (!existsSync(cwd)) failed = true;
-    else if (/^Require /.test(s.name ?? '')) {
-      const result = sh.run(expand(s.run, needs), {}, cwd);
-      if (result.status !== 0) failed = true;
-    }
-  }
-  return { passed: !failed, ran };
-}
-
-const all = (result: string): Needs =>
-  Object.fromEntries(REQUIRED.map((name) => [name, { result }]));
 
 describe('web.yml triggers', () => {
   it('runs on every pull request, and on master pushes only when web files change', () => {
@@ -111,7 +49,7 @@ describe('web.yml triggers', () => {
       Object.keys(jobs)
         .filter((name) => jobs[name].if !== undefined)
         .sort(),
-    ).toEqual([...POST_MERGE, 'check'].sort());
+    ).toEqual([...POST_MERGE].sort());
   });
 
   it('gives every job a time limit, the budget an agent brings it back under', () => {
@@ -121,38 +59,41 @@ describe('web.yml triggers', () => {
   });
 });
 
+// On a pull request: only the unit tests related to the change (vitest reruns everything when its
+// config or package files change). After merge: every unit test.
+const UNIT_RUN = [
+  'if [ "$GITHUB_EVENT_NAME" = pull_request ]; then',
+  '  npx vitest run --changed HEAD^1 --passWithNoTests',
+  'else',
+  '  npm test',
+  'fi',
+].join('\n');
+
 describe('the check job', () => {
-  it('needs company-isolation and reports even when it fails', () => {
-    const job = web().jobs.check;
-    expect(job.needs).toEqual(REQUIRED);
-    expect(evaluateStep(job.if, {}, true)).toBe(true);
+  const job = (): Data => web().jobs.check;
+  const runs = (): string[] => (job().steps as Data[]).map((s) => String(s.run ?? '').trim());
+
+  it('starts on every pull request beside company-isolation, not after it', () => {
+    expect(job()).not.toHaveProperty('needs');
+    expect(job()).not.toHaveProperty('if');
+    for (const step of job().steps as Data[]) expect(step).not.toHaveProperty('if');
   });
 
-  it('passes when company-isolation succeeds and runs every one of its own steps', () => {
-    const { passed, ran } = runCheck(all('success'));
-    expect(passed).toBe(true);
-    for (const command of [
-      'Require the company-isolation job',
-      'npm ci',
-      'npm run typecheck',
-      'npm run lint',
-      'npm test',
-      'npm run build',
-    ]) {
-      expect(ran).toContain(command);
+  it('runs the full type check, lint and build', () => {
+    for (const command of ['npm ci', 'npm run typecheck', 'npm run lint', 'npm run build']) {
+      expect(runs()).toContain(command);
     }
   });
 
-  it.each(REQUIRED.flatMap((name) => ['failure', 'cancelled', 'skipped'].map((r) => [name, r])))(
-    'fails when %s is %s',
-    (name, result) => {
-      const needs = all('success');
-      needs[name] = { result };
-      const { passed, ran } = runCheck(needs);
-      expect(passed).toBe(false);
-      expect(ran).not.toContain('npm run build');
-    },
-  );
+  it('runs the unit tests related to the change on a pull request, and all of them after merge', () => {
+    const unit = (job().steps as Data[]).filter((s) => s.name === 'Unit tests');
+    expect(unit).toHaveLength(1);
+    expect(String(unit[0].run).trim()).toBe(UNIT_RUN);
+    // The pull request merge commit's first parent is the base branch, so HEAD^1 must be fetched.
+    const checkout = (job().steps as Data[])[0];
+    expect(String(checkout.uses).startsWith('actions/checkout@')).toBe(true);
+    expect(checkout.with['fetch-depth']).toBe(2);
+  });
 });
 
 describe('the e2e job', () => {
