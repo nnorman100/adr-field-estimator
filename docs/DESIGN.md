@@ -154,6 +154,9 @@ components:
 This file follows the [DESIGN.md format](https://github.com/google-labs-code/design.md): the front
 matter above holds the tokens, and this text says why. Check it with
 `npx @google/design.md lint docs/DESIGN.md` (a dev-only tool; it is not a dependency of the repo).
+`npm run lint` also checks that the colours mapped in `scripts/check-design-tokens.mts` match the
+`:root` properties in `web/src/app/globals.css`, which is the source of truth; change the stylesheet
+first, then this file.
 
 Every token is read from the app in `web/` (`web/src/app/globals.css`, the components under
 `web/src/components/ui/` and `web/src/app/`, the Tailwind v4 defaults those classes resolve to, and
