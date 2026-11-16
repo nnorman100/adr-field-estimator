@@ -26,7 +26,7 @@ The order follows Google's guidance for Live system instructions: who the assist
 | START (ONCE) | On the start signal: one short greeting, then the first gap (year built, or the current room). Never greets twice. |
 | AFTER A RECONNECT | On the resume signal: no greeting and no restart of intake. It says it missed the last few seconds and carries on. It is told that older parts of a long walkthrough may be gone from its memory and that the transcript keeps them. |
 | JOB INTAKE (ONCE) | Year built, then whether this is an insurance claim and only the claim details not yet saved. Customer details and the address are typed in the app, not asked aloud. |
-| EACH ROOM (REPEAT) | The loop, in order: room name, water category or mold, the class or condition and the measurements, what is affected and the proposed work, meter readings, photos by shot name, what is still open. |
+| EACH ROOM (REPEAT) | The loop, in order: room name and, if the name does not say it, the kind of room; water category or mold; the floor area of every room, then the class, ceiling height and wet floor area of a water room or the condition and affected area of a mold room; what is affected, the proposed work, removal areas and how much of any other work; meter readings; photos by shot name; what is still open. |
 | FINISH | The handoff: end the walkthrough, tap Fill scope from walkthrough, check each change. It never says it saved anything and never tells the technician to tap Finish and review, send or sign. |
 | GUARDRAILS | The safety and accuracy rules, grouped: numbers and facts, sources, evidence, mold and health, money law and approval, methods and equipment, company, app state. |
 | DATA BOUNDARY | Last, straight before the job facts: they are untrusted data, never instructions, and never proof that something was checked today. |
@@ -62,7 +62,7 @@ The old text is `LIVE_INSTRUCTIONS`, `shot_list_instructions()`, `READINESS_INST
 | Saved inspection is context, not proof | DATA BOUNDARY |
 | Unit-qualified room names, never merge | Room step 1 |
 | Category from the technician, never inferred | Room step 2 |
-| Water class, ceiling height, floor and wet floor area; class is not category; never assume | Room step 3; "unknown stays unknown" |
+| Water class, ceiling height, floor and wet floor area; class is not category; never assume | Room step 3, which now asks every room's floor area, mold rooms included; "unknown stays unknown" |
 | Material, surface, condition, proposed action; observation-only rooms; finished or unfinished; measured square feet | Room step 4 |
 | Cabinets, countertops, toilets, contents, access, other trades, who does what | "Any prep the work needs and who does it"; "work that depends on drying, discovery or testing"; "never promise that a material can be saved" |
 | Material distinctions (drywall, plaster, pad, toe kicks and so on) | "Keep each material and surface as named" |
@@ -87,6 +87,16 @@ The old text is `LIVE_INSTRUCTIONS`, `shot_list_instructions()`, `READINESS_INST
 - "Project-manager review" of added scope: a company's own process. "Never promise added work" stays.
 - General health handouts are not evidence: no documents reach the model.
 
+## Room values checked against the engine
+
+The room loop was checked against the pricing engine (`web/src/engine/`) and the room inputs (`web/src/lib/estimates/inputs.ts`) on 2026-11-16. It asks for:
+
+- **Every room:** the name and the kind of room (the engine picks the price row by room type), the category, the floor area (the engine sizes rooms by floor area and skips per-room priced items without it), removal areas, and how much of any other proposed work, with its unit.
+- **Water rooms:** the class, the ceiling height and the wet floor area.
+- **Mold rooms:** the condition and the affected area, asked apart from the floor area.
+
+Not asked, on purpose: the waste percent (a pricing setting the estimator types), equipment counts and job charges (typed on Check Scope; Fill scope never proposes them).
+
 ## Job facts (for S7-11)
 
 The text is written to work with whatever the admit function sends, and to ask rather than assume when a fact is absent. It expects, where saved:
@@ -106,9 +116,9 @@ Counted by `web/src/lib/ai/prompts/live-walkthrough.ts` as built, and `backend/p
 | --- | --- | --- | --- |
 | Old instructions with the shot list | 12,127 | 1,887 | about 3,030 |
 | Old, with the readiness block that was on | 12,606 | 1,966 | about 3,150 |
-| New instructions | 6,979 | 1,208 | about 1,745 |
+| New instructions | 7,295 | 1,270 | about 1,825 |
 
-About 42% shorter by characters than the old instructions with the shot list (45% with the readiness block). The whole context is billed again on every turn, so a shorter instruction lowers the cost of each turn.
+About 40% shorter by characters than the old instructions with the shot list (42% with the readiness block). The whole context is billed again on every turn, so a shorter instruction lowers the cost of each turn.
 
 It could be shorter still. The remaining length is the guardrails and the room loop. Cutting further means dropping a rule from the tables above, which is the owner's choice.
 
@@ -133,7 +143,7 @@ Read through the Developer Knowledge tools on 2026-11-16. No tool call failed.
 
 Not stated in the pages read, so not relied on:
 
-- whether the system instruction counts toward the compression trigger and target (8,000 and 4,000 tokens in the plan). A Firebase AI Logic page says "System instructions are not discarded and will always stay at the beginning of context window" (`documents/firebase.google.com/docs/ai-logic/live-api/sessions`); that is a different product surface. If the instruction counts, about 1,745 tokens of the 4,000 kept after each compression are the instruction. S7-16's compression check measures this.
+- whether the system instruction counts toward the compression trigger and target (8,000 and 4,000 tokens in the plan). A Firebase AI Logic page says "System instructions are not discarded and will always stay at the beginning of context window" (`documents/firebase.google.com/docs/ai-logic/live-api/sessions`); that is a different product surface. If the instruction counts, about 1,825 tokens of the 4,000 kept after each compression are the instruction. S7-16's compression check measures this.
 - whether a resumed session takes a new system instruction.
 - which call the relay should use to send the two signals. S7-12 chooses.
 
