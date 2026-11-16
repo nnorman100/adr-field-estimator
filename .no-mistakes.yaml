@@ -12,6 +12,21 @@ protected_paths:
   - "CLAUDE.md"
   - "AGENTS.md"
   - "scripts/test-guard.mjs"
+  # Tests, eval fixtures and the configs that set test timeouts or retries. The
+  # project rule is that tests are never weakened and a test change needs the
+  # owner; a pipeline auto-fix must park here instead of editing them. This only
+  # guards automatic commits, not commits a person or worker authored.
+  - "tests/**"
+  - "web/tests/**"
+  - "infra/dryscope/fixtures/**"
+  - "infra/dryscope/**/guards/**"
+  - "playwright.config.js"
+  - "playwright.isolated.config.js"
+  - "vitest.config.mjs"
+  - "web/playwright.config.ts"
+  - "web/vitest.config.ts"
+  - "web/vitest.db.config.ts"
+  - "web/vitest.emu.config.ts"
 
 # Review findings get up to two automatic fix rounds (the built-in default is 0,
 # which parks every finding for a person). Matches the global setting.
