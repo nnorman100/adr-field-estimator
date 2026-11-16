@@ -11,14 +11,16 @@ import {
   scrubMessage,
 } from './client-error-report';
 import { emit, log } from './log';
+import { cspReports } from './csp-report';
 
 // POST /api/client-errors (TC-2, docs/plans/TC.md): the way a browser or phone error reaches Error
 // Reporting. Public, because the sign-in pages fail before anyone is signed in; so it is write-only
 // and reads nothing: no database, no Firestore, no identity (tests/unit/client-errors-route.test.ts
 // calls it with both trapped). What it accepts is bounded three ways, and what it writes is built
 // from fixed fields only:
-//   - the body: JSON, at most 8 KB (counted in bytes while it is read, never trusted from the
-//     header), at most 20 reports, every field bounded by the schema below;
+//   - the body: JSON, at most 8 KB (64 KB for a browser's batched application/reports+json CSP
+//     reports, which repeat the whole policy in every report), counted in bytes while it is read
+//     and never trusted from the header; at most 20 reports, every field bounded by the schema below;
 //   - the rate: each caller (its connecting address) may have at most 20 reports a minute written, so one caller cannot use up the instance's allowance; and each
 //     instance writes at most 60 reports a minute in all. The rest are answered 202 (the sender
 //     can do nothing about them) and only counted. The instance cap logs nothing; a caller hitting
@@ -27,12 +29,15 @@ import { emit, log } from './log';
 //   - the content: every report is scrubbed again with the browser's own rules before it is
 //     written, and a frame that is not the app's own script is dropped. Nothing else in the body is
 //     read, so a field a caller invents is not written.
+// Native CSP reports use this same intake and all its caps (csp-report.ts). Only fixed categories
+// and a page route pattern survive; no URL, script sample or original policy is written.
 // The event is Error Reporting's ReportedErrorEvent shape in a JSON log line
 // (docs.cloud.google.com/error-reporting/docs/formatting-error-messages), service
 // "dryscope-web-client", so browser errors group apart from the server's "dryscope-api".
 
 export const CLIENT_SERVICE = 'dryscope-web-client';
 export const MAX_BODY_BYTES = 8192;
+export const MAX_CSP_BATCH_BYTES = 65536;
 export const MAX_REPORTS = 20;
 export const REPORTS_PER_MINUTE = 60;
 export const REPORTS_PER_CALLER_PER_MINUTE = 20;
@@ -132,9 +137,9 @@ function takeCaller(key: string, count: number, now: number): number {
 
 // The body as text, or null when it is over the limit. The limit is enforced on the bytes as they
 // arrive, so a sender cannot make the server buffer more by understating its length.
-async function readLimited(request: Request): Promise<string | null> {
+async function readLimited(request: Request, limit: number): Promise<string | null> {
   const declared = Number(request.headers.get('content-length'));
-  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) return null;
+  if (Number.isFinite(declared) && declared > limit) return null;
   const reader = request.body?.getReader();
   if (!reader) return '';
   const chunks: Uint8Array[] = [];
@@ -143,7 +148,7 @@ async function readLimited(request: Request): Promise<string | null> {
     const { done, value } = await reader.read();
     if (done) break;
     total += value.byteLength;
-    if (total > MAX_BODY_BYTES) {
+    if (total > limit) {
       await reader.cancel().catch(() => {});
       return null;
     }
@@ -174,8 +179,13 @@ function eventFor(report: Report, version: string): Record<string, unknown> {
 }
 
 export async function handleClientErrors(request: Request): Promise<Response> {
-  if (!/^application\/json\b/i.test(request.headers.get('content-type') ?? '')) return refuse('unsupported_media_type', 415);
-  const text = await readLimited(request);
+  const type = (request.headers.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase();
+  if (!['application/json', 'application/csp-report', 'application/reports+json'].includes(type))
+    return refuse('unsupported_media_type', 415);
+  const text = await readLimited(
+    request,
+    type === 'application/reports+json' ? MAX_CSP_BATCH_BYTES : MAX_BODY_BYTES,
+  );
   if (text === null) return refuse('payload_too_large', 413);
   let body: unknown;
   try {
@@ -183,15 +193,24 @@ export async function handleClientErrors(request: Request): Promise<Response> {
   } catch {
     return refuse('invalid_request', 400);
   }
-  const parsed = bodySchema.safeParse(body);
+  const native = type !== 'application/json';
+  const csp = native ? cspReports(body, type, request.headers.get('user-agent') ?? '') : null;
+  if (native && csp === null) return refuse('invalid_request', 400);
+  const parsed = bodySchema.safeParse(native ? { reports: csp } : body);
   if (!parsed.success) return refuse('invalid_request', 400);
 
   const now = Date.now();
   const key = callerKey(request.headers);
-  const mine = key === null ? parsed.data.reports.length : takeCaller(key, parsed.data.reports.length, now);
+  const mine =
+    key === null ? parsed.data.reports.length : takeCaller(key, parsed.data.reports.length, now);
   if (mine < parsed.data.reports.length && now - capLoggedAt >= 60_000) {
     capLoggedAt = now;
-    log('WARNING', 'client error reports capped for one caller', { component: 'client-errors', event: 'caller_cap' }, request.headers);
+    log(
+      'WARNING',
+      'client error reports capped for one caller',
+      { component: 'client-errors', event: 'caller_cap' },
+      request.headers,
+    );
   }
   // Only what the caller's share allows counts against the instance's allowance.
   const reports = parsed.data.reports.slice(0, take(mine, now));

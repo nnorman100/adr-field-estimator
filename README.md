@@ -69,6 +69,9 @@ Routing: `firebase.json` rewrites exactly `/app` to `public/app.html`, redirects
 
 ## Code and verification
 
+The rebuilt `web/` app observes a full browser Content Security Policy in report-only mode.
+See [CSP sources, private reporting and the phone check before enforcement](docs/security-csp.md).
+
 | Location | Responsibility |
 | --- | --- |
 | `public/app.js`, `core.js`, `audio-worklet.js` | Lifecycle, safe DOM, offline recovery, camera and audio |
