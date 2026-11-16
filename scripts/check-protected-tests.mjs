@@ -5,11 +5,14 @@
 // directory prefixes ending in /**, the only forms the no-mistakes matcher honors.
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { parse } from 'yaml';
 
+const ROOT = path.resolve(import.meta.dirname, '..');
 const TEST_FILE = /(\.(test|spec)\.[^/]+|\.tftest\.hcl)$/;
 
-const entries = parse(readFileSync('.no-mistakes.yaml', 'utf8')).protected_paths ?? [];
+const entries =
+  parse(readFileSync(path.join(ROOT, '.no-mistakes.yaml'), 'utf8')).protected_paths ?? [];
 const problems = [];
 const prefixes = [];
 const exact = new Set();
@@ -22,6 +25,7 @@ for (const entry of entries) {
 }
 
 const files = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard'], {
+  cwd: ROOT,
   encoding: 'utf8',
 })
   .split('\n')

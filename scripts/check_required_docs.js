@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 'use strict';
 // Required-docs check: every listed Markdown file must exist and hold text. Run by
-// `npm run lint`, which is a required check on every pull request.
+// `npm run lint`, which is a required check on every pull request. It also runs
+// check-protected-tests.mjs so lint fails when a test file is outside protected_paths.
+const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -39,7 +41,12 @@ function main() {
   const problems = checkRequiredDocs();
   for (const message of problems) console.error(`::error title=Required docs::${message}`);
   console.log(`required docs: ${problems.length} problem(s) in ${REQUIRED_DOCS.length} files`);
-  return problems.length ? 1 : 0;
+  const protectedTests = spawnSync(
+    process.execPath,
+    [path.join(__dirname, 'check-protected-tests.mjs')],
+    { stdio: 'inherit' },
+  );
+  return problems.length || protectedTests.status !== 0 ? 1 : 0;
 }
 
 if (require.main === module) process.exit(main());
