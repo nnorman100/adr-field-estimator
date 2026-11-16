@@ -1,4 +1,17 @@
 {
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/scripts/stop-checks.mjs\"",
+            "timeout": 600
+          }
+        ]
+      }
+    ]
+  },
   "permissions": {
     "deny": [
       "Read(./.env)",
