@@ -1,10 +1,13 @@
 name: Web app
 
 # Separate from ci.yml so the existing jobs behave exactly as before. Covers only web/ (the
-# TypeScript rebuild skeleton); every job has a time limit.
+# TypeScript rebuild skeleton); every job has a time limit, the budget an agent brings a slow job
+# back under.
 #
-# Every pull request runs every job, with no path filter, so `company-isolation` and `check` report
-# on each one and can be required checks. Pushes to master keep the path filter.
+# Fast pull requests, full suite after merge (docs/runbook/ci.md): every pull request, with no path
+# filter, runs `company-isolation` and `check` (type check, lint, unit tests, build), the required
+# checks. The full suite (database, emulators, e2e, image) runs on pushes to master, which keep the
+# path filter; web-release.yml ships a commit only when this whole workflow passed on it.
 on:
   push:
     branches: [master]
@@ -23,9 +26,9 @@ defaults:
     working-directory: web
 
 jobs:
-  # Throwaway Postgres, then migrations from empty. `check` below fails when this job does,
-  # so the existing web check cannot pass without it.
+  # Throwaway Postgres, then migrations from empty. After merge only; a failure blocks the release.
   database:
+    if: github.event_name != 'pull_request'
     runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
     timeout-minutes: 25
     env:
@@ -55,8 +58,9 @@ jobs:
       - run: npm run test:db
 
   # Firebase Auth and Firestore emulators under a demo- project id only (tests/emu/run.ts
-  # refuses any other id). `check` below fails when this job does.
+  # refuses any other id). After merge only; a failure blocks the release.
   emulators:
+    if: github.event_name != 'pull_request'
     runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
     # Picks free emulator ports for each run (web/tests/emu/ports.ts), so jobs on runners that share a
     # machine never collide on 9399 or 8399. Only here: `npm test` in `check` must see the default ports.
@@ -115,16 +119,12 @@ jobs:
       - run: npm run test:isolation
 
   check:
-    needs: [database, emulators, company-isolation]
+    needs: [company-isolation]
     if: always() && !cancelled()
     runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Require the database job
-        run: test "${{ needs.database.result }}" = "success"
-      - name: Require the emulator job
-        run: test "${{ needs.emulators.result }}" = "success"
       - name: Require the company-isolation job
         run: test "${{ needs.company-isolation.result }}" = "success"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -141,8 +141,9 @@ jobs:
           APP_ENV: test
 
   # The browser tests (Chromium and WebKit) run as two Playwright shards in parallel: as one job they
-  # took 19 to 20 minutes under load and were cancelled at the limit with no verdict.
+  # took 19 to 20 minutes under load and were cancelled at the limit with no verdict. After merge only.
   e2e:
+    if: github.event_name != 'pull_request'
     runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
     # Picks free emulator ports for each run (web/tests/emu/ports.ts), so jobs on runners that share a
     # machine never collide on 9399 or 8399. Only here: `npm test` in `check` must see the default ports.
@@ -196,7 +197,9 @@ jobs:
   # The production image the release workflow (web-release.yml) ships, assembled without Docker by
   # web/scripts/build-image.sh: check its configuration, run its /app tree the way the image does and
   # run the release smoke check against it, so a broken build or start fails here, not at release.
+  # After merge only; a failure blocks the release.
   image:
+    if: github.event_name != 'pull_request'
     runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
     timeout-minutes: 20
     env:

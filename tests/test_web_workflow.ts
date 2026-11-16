@@ -1,14 +1,19 @@
-// The Web app workflow (.github/workflows/web.yml) runs every job on every pull request, with no
-// path filter, so `company-isolation` and `check` report on each one and can be required checks.
-// `check` still requires database, emulators and company-isolation to succeed. Run by vitest in
-// the node CI job.
+// The Web app workflow (.github/workflows/web.yml) splits its jobs in two (docs/runbook/ci.md,
+// "Fast pull requests, full suite after merge"). On every pull request, with no path filter:
+// `company-isolation` and `check`, the required checks; `check` requires company-isolation to
+// succeed. After merge (pushes to master): those two plus the full suite (database, emulators, e2e,
+// image), and the release workflow ships a commit only when every job passed. Run by vitest in the
+// node CI job.
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { commands, evaluateStep, load, Shell, shlex, WEB, type Data } from './workflow_support.ts';
 
 const WEB_PATHS = ['web/**', 'live-relay-placeholder/**', '.github/workflows/web.yml'];
-const REQUIRED = ['database', 'emulators', 'company-isolation'];
+const REQUIRED = ['company-isolation'];
+// The full suite: skipped on pull requests, run on every push to master before any release.
+const POST_MERGE = ['database', 'e2e', 'emulators', 'image'];
+const POST_MERGE_IF = "github.event_name != 'pull_request'";
 
 const web = (): Data => load(WEB);
 
@@ -89,28 +94,44 @@ describe('web.yml triggers', () => {
     ]);
   });
 
-  it('starts every job other than check on every pull request', () => {
+  it('starts company-isolation on every pull request', () => {
+    const job = web().jobs['company-isolation'];
+    expect(job).not.toHaveProperty('if');
+    expect(job).not.toHaveProperty('needs');
+  });
+
+  it('runs the full suite only after merge, never skipped on a push to master', () => {
+    const jobs = web().jobs as Record<string, Data>;
+    for (const name of POST_MERGE) {
+      expect(jobs[name].if, name).toBe(POST_MERGE_IF);
+      expect(jobs[name], name).not.toHaveProperty('needs');
+    }
+    // Every job is either a pull-request job or a post-merge job; nothing else is skipped.
+    expect(
+      Object.keys(jobs)
+        .filter((name) => jobs[name].if !== undefined)
+        .sort(),
+    ).toEqual([...POST_MERGE, 'check'].sort());
+  });
+
+  it('gives every job a time limit, the budget an agent brings it back under', () => {
     for (const [name, job] of Object.entries(web().jobs as Record<string, Data>)) {
-      if (name === 'check') continue;
-      expect(job, name).not.toHaveProperty('if');
-      expect(job, name).not.toHaveProperty('needs');
+      expect(job['timeout-minutes'], name).toBeGreaterThan(0);
     }
   });
 });
 
 describe('the check job', () => {
-  it('needs the three required jobs and reports even when they fail', () => {
+  it('needs company-isolation and reports even when it fails', () => {
     const job = web().jobs.check;
     expect(job.needs).toEqual(REQUIRED);
     expect(evaluateStep(job.if, {}, true)).toBe(true);
   });
 
-  it('passes when the three jobs succeed and runs every one of its own steps', () => {
+  it('passes when company-isolation succeeds and runs every one of its own steps', () => {
     const { passed, ran } = runCheck(all('success'));
     expect(passed).toBe(true);
     for (const command of [
-      'Require the database job',
-      'Require the emulator job',
       'Require the company-isolation job',
       'npm ci',
       'npm run typecheck',
