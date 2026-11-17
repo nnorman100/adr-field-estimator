@@ -90,7 +90,6 @@ export type SummaryProposal = {
   callId: string;
   jobId: string;
   draftId: string;
-  status: 'proposed' | 'accepted' | 'rejected';
   proposal: SummaryDraftOutput;
 };
 
@@ -110,7 +109,7 @@ type ResultRow = {
   draft_id: string;
   actor_id: string;
   feature: string;
-  status: SummaryProposal['status'];
+  status: 'proposed' | 'accepted' | 'rejected';
   model: string;
   prompt_version: string;
   created_at: string;
@@ -119,14 +118,13 @@ type ResultRow = {
 
 const rows = <T>(result: unknown) => result as unknown as T[];
 
-// What the phone gets: the proposal and the ids it needs to accept it. The model, prompt version and
-// time stay in ai_results only.
+// What the phone gets: the ids and the proposal only (docs/plans/S7.md, S7-6 corrections). The status,
+// model, prompt version and time stay in ai_results.
 const view = (row: ResultRow): SummaryProposal => ({
   id: row.id,
   callId: row.call_id,
   jobId: row.job_id,
   draftId: row.draft_id,
-  status: row.status,
   proposal: row.output,
 });
 

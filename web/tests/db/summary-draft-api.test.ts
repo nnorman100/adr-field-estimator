@@ -163,14 +163,13 @@ describe('POST /api/jobs/{jobId}/ai/summary-draft', () => {
     const callId = randomUUID();
     const { status, body } = await draftSummary(ESTIMATOR_A, job.jobId, callId);
     expect(status).toBe(201);
-    // The phone gets the proposal and the ids it needs to accept it; the model, prompt version and
-    // time stay in storage (checked below).
+    // The phone gets the ids and the proposal only; the status, model, prompt version and time stay
+    // in storage (checked below).
     expect(body.result).toEqual({
       id: expect.stringMatching(/^[0-9a-f-]{36}$/),
       callId,
       jobId: job.jobId,
       draftId: job.draftId,
-      status: 'proposed',
       proposal: ANSWER,
     });
     expect(await results()).toEqual([
