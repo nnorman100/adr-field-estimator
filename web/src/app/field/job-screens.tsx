@@ -59,7 +59,7 @@ export type JobContext = {
   // Takes a refusal of the photo route or the field database (null for none): 401, or 403 while this
   // person's field work is not on this phone, drops the job from the screen; a 403 while it is may be
   // a move (J5) or an archive made elsewhere, a 404 a missing photo, and a 410 an archive (S5b-2), so
-  // the job is read again, nothing is saved meanwhile, and the read decides.
+  // the job is read again, nothing is saved until a read answers, and the read decides.
   checkAccess: (refusal: Refusal | null) => void;
   // Takes the server's refusal of the job to this person (null for none). While their field work is
   // on this phone it stays, read only (owner decision J5); otherwise the job goes from the screen.
@@ -118,10 +118,9 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   const [archivalsSeen] = useState(archivalsDone);
   const [draftError, setDraftError] = useState<string | null>(null);
   const [readDraft] = useState(draftReads);
-  // Reads of the job asked for, and answered, that decide what a refusal meant: nothing is saved
-  // until the last one asked for is answered.
-  const [checks, setChecks] = useState(0);
-  const [checked, setChecked] = useState(0);
+  // A refusal waits for a read of the job to say what it meant (src/lib/field/pending.ts): nothing
+  // is saved meanwhile.
+  const verifying = usePending(() => pending.verifying(jobId));
 
   // The server refused the job to this person: every copy of it goes, unless their field work is on
   // this phone (owner decision J5, src/lib/field/pending.ts), when it stays, read only.
@@ -239,7 +238,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       if (refusal.status === 401 || (refusal.status === 403 && !pending.held(jobId))) return refuse(refusal);
       if (refusal.status !== 403 && refusal.status !== 404 && refusal.status !== 410) return;
       if (refusal.status === 410) pending.archivedSeen(jobId);
-      setChecks((count) => count + 1);
+      pending.verify(jobId);
     },
     [refuse, jobId],
   );
@@ -297,11 +296,11 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [archivalsDone]);
 
-  // A refusal to check: read the job again.
+  // A refusal waits for a read of the job: read it again.
   useEffect(() => {
-    if (checks > 0) void Promise.resolve().then(() => reloadJob()).finally(() => setChecked((done) => Math.max(done, checks)));
+    if (verifying !== null) void Promise.resolve().then(() => reloadJob());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [checks]);
+  }, [verifying]);
 
   // A photo that settled after an earlier screen of this job closed changed the draft: read it again.
   useEffect(() => {
@@ -375,7 +374,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     refuse,
     moved,
     editable:
-      !moved && !archived && checked === checks && !ownerUnset && draftAt === currentDraftId && draft !== null && canEditDraft(draft, session.user.uid, session.capabilities) && (session.online || session.offlineCapture),
+      !moved && !archived && verifying === null && !ownerUnset && draftAt === currentDraftId && draft !== null && canEditDraft(draft, session.user.uid, session.capabilities) && (session.online || session.offlineCapture),
     archived,
     stale: draft !== null && draftError !== null,
   };
