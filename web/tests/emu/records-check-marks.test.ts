@@ -27,7 +27,7 @@ beforeAll(() => {
 const draft = (company: string, id: string) => db.doc(`companies/${company}/drafts/${id}`);
 
 describe('the draft marks reader', () => {
-  it("reads each named draft's state and the submission its fence names, and leaves out a draft that is not there", async () => {
+  it("reads each named draft's state and the submission and epoch its fence names, and leaves out a draft that is not there", async () => {
     const company = randomUUID();
     const [submitted, editing, archived, absent] = [
       randomUUID(),
@@ -36,21 +36,22 @@ describe('the draft marks reader', () => {
       randomUUID(),
     ];
     const submission = randomUUID();
+    const [epoch, archivedEpoch] = [randomUUID(), randomUUID()];
     await draft(company, submitted).set({
       state: 'submitted',
-      fence: { submissionId: submission, epoch: randomUUID() },
+      fence: { submissionId: submission, epoch },
       field: { notes: 'kept out' },
     });
     await draft(company, editing).set({ state: 'editing', field: {} });
     await draft(company, archived).set({
       state: 'archived',
-      fence: { submissionId: submission, epoch: randomUUID() },
+      fence: { submissionId: submission, epoch: archivedEpoch },
     });
     const found = await marks.marksOf(company, [submitted, editing, archived, absent]);
     expect(Object.fromEntries(found)).toEqual({
-      [submitted]: { state: 'submitted', submissionId: submission },
-      [editing]: { state: 'editing', submissionId: null },
-      [archived]: { state: 'archived', submissionId: submission },
+      [submitted]: { state: 'submitted', submissionId: submission, epoch },
+      [editing]: { state: 'editing', submissionId: null, epoch: null },
+      [archived]: { state: 'archived', submissionId: submission, epoch: archivedEpoch },
     });
     expect((await marks.marksOf(company, [])).size).toBe(0);
   });
@@ -63,11 +64,13 @@ describe('the draft marks reader', () => {
     await draft(other, randomUUID()).set({ state: 'submitted' });
     const first = await marks.page(company, null, 2);
     expect(first).toEqual({
-      drafts: ids.slice(0, 2).map((id) => ({ id, state: 'editing', submissionId: null })),
+      drafts: ids
+        .slice(0, 2)
+        .map((id) => ({ id, state: 'editing', submissionId: null, epoch: null })),
       more: true,
     });
     expect(await marks.page(company, ids[1]!, 2)).toEqual({
-      drafts: [{ id: ids[2], state: 'editing', submissionId: null }],
+      drafts: [{ id: ids[2], state: 'editing', submissionId: null, epoch: null }],
       more: false,
     });
     expect(await marks.page(company, ids[2]!, 2)).toEqual({ drafts: [], more: false });

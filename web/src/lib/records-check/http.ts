@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { OperatorContextError } from '@/db/tenant';
 import type { Operator } from '@/lib/auth';
-import { MAX_SKIP, PARTS, RecordsCheckError, type Cursor } from './service';
+import { MAX_SKIP, PARTS, RecordsCheckError, type Cursor, type RecordsCheckInput } from './service';
 import { recordsCheckServices } from './services';
 
 // POST /api/platform/companies/{companyId}/records-check (S8-3), wrapped in operatorRoute with a
@@ -56,7 +56,7 @@ export async function recordsCheck(
     }
     const parsed = checkBody.safeParse(raw);
     if (!parsed.success) return json({ error: 'invalid_request' }, 400);
-    const input =
+    const input: RecordsCheckInput =
       'runId' in parsed.data ? { runId: parsed.data.runId, next: parsed.data.next as Cursor } : {};
     return json(
       await recordsCheckServices().check(operator.operatorId, companyId.toLowerCase(), input),

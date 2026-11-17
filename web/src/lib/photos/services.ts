@@ -14,16 +14,22 @@ function storageApp(projectId: string): App {
   return getApps().find((app) => app.name === name) ?? initializeApp({ projectId }, name);
 }
 
+// The evidence bucket from the checked server configuration. The photo routes write it; the records
+// check (S8-3) reads it.
+export function evidenceBucket() {
+  const evidence = parseEvidenceConfig(process.env);
+  return getStorage(storageApp(evidence.projectId)).bucket(evidence.bucket);
+}
+
 // Built on the first photo request from the checked server configuration (the field database the
 // access records use, and the evidence bucket), then reused. A missing setting throws and that
 // request fails closed.
 export function photosServices(): PhotosService {
   if (!service) {
-    const evidence = parseEvidenceConfig(process.env);
     const field = parseProjectionConfig(process.env);
     service = photosService(
       serverDatabase(),
-      bucketEvidenceStore(getStorage(storageApp(evidence.projectId)).bucket(evidence.bucket)),
+      bucketEvidenceStore(evidenceBucket()),
       firestoreDraftStates(firestoreFor(field)),
     );
   }

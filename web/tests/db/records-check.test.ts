@@ -44,14 +44,15 @@ type FakeClaims = import('./team-harness').FakeClaims;
 // `fail` makes every store call throw an error that quotes a path, as an SDK error may.
 type Stores = {
   drafts: Map<string, DraftMark>;
-  objects: Map<string, ObjectStat>;
+  // Each object name's generations, live and kept; a name with any generation is listed.
+  objects: Map<string, Map<bigint, ObjectStat>>;
   fail: boolean;
   marks: DraftMarks;
   bucket: EvidenceObjects;
 };
 
-// The field drafts by "company/draft" and the bucket's live objects by name, ordered as Firestore and
-// Cloud Storage order them (by id, by name).
+// The field drafts by "company/draft" and the bucket's objects by name and generation, ordered as
+// Firestore and Cloud Storage order them (by id, by name).
 function fakeStores(): Stores {
   const stores = { drafts: new Map(), objects: new Map(), fail: false } as unknown as Stores;
   stores.marks = {
@@ -82,9 +83,9 @@ function fakeStores(): Stores {
     },
   };
   stores.bucket = {
-    async stat(name) {
+    async stat(name, generation) {
       if (stores.fail) throw new Error(`bucket unreachable at ${name}`);
-      return stores.objects.get(name) ?? null;
+      return stores.objects.get(name)?.get(generation) ?? null;
     },
     async list(prefix, startOffset, count) {
       const names = [...stores.objects.keys()]
@@ -94,6 +95,13 @@ function fakeStores(): Stores {
     },
   };
   return stores;
+}
+
+// Puts one generation of an object in the bucket.
+function putObject(name: string, generation: bigint, stat: ObjectStat): void {
+  const versions = stores.objects.get(name) ?? new Map<bigint, ObjectStat>();
+  versions.set(generation, stat);
+  stores.objects.set(name, versions);
 }
 
 let base: Awaited<ReturnType<typeof startTeamServer>>;
@@ -125,6 +133,8 @@ afterAll(async () => {
   await base?.server.stop();
 });
 
+// The generation the job harness registers evidence at (seedEvidence, seedSignature).
+const REGISTERED = 1731400000000000n;
 const ADDRESS = '12 Wet Street, Sacramento';
 
 const call = (company: string, body: unknown = {}, claims: FakeClaims | null = operatorClaims()) =>
@@ -177,8 +187,7 @@ async function mirrorBucket(company: string): Promise<void> {
     SELECT object_name, generation::text, sha256, size_bytes::text FROM evidence_objects WHERE company_id = ${company}
   `;
   for (const row of rows) {
-    stores.objects.set(row.object_name, {
-      generation: BigInt(row.generation),
+    putObject(row.object_name, BigInt(row.generation), {
       sizeBytes: Number(row.size_bytes),
       sha256: row.sha256,
     });
@@ -211,8 +220,13 @@ async function cleanCompany(company: string, actor: string): Promise<Clean> {
   stores.drafts.set(`${company}/${chain.submission.draft}`, {
     state: 'submitted',
     submissionId: chain.submission.id,
+    epoch: chain.submission.epoch,
   });
-  stores.drafts.set(`${company}/${chain.job.draft}`, { state: 'editing', submissionId: null });
+  stores.drafts.set(`${company}/${chain.job.draft}`, {
+    state: 'editing',
+    submissionId: null,
+    epoch: null,
+  });
   const photo = newEvidence(company, chain.job.id, actor);
   await seedEvidence(h.admin, photo);
   const second = await seedJob(h.admin, newJob(company, actor));
@@ -223,11 +237,13 @@ async function cleanCompany(company: string, actor: string): Promise<Clean> {
   stores.drafts.set(`${company}/${second.draft}`, {
     state: 'submitting',
     submissionId: pending.id,
+    epoch: pending.epoch,
   });
   const archived = await seedCommitted(h.admin, newSubmission(company, chain.job.id, actor));
   stores.drafts.set(`${company}/${archived.draft}`, {
     state: 'archived',
     submissionId: archived.id,
+    epoch: archived.epoch,
   });
   await mirrorBucket(company);
   const [photoRow] = await h.admin<
@@ -252,20 +268,30 @@ async function plantDifferences(company: string, clean: Clean): Promise<Planted>
   // A mark with no record, as after Postgres is restored to an earlier time; also an archived draft
   // that kept the fence of a submission Postgres no longer has.
   const markOnly = randomUUID();
-  stores.drafts.set(`${company}/${markOnly}`, { state: 'submitted', submissionId: randomUUID() });
+  stores.drafts.set(`${company}/${markOnly}`, {
+    state: 'submitted',
+    submissionId: randomUUID(),
+    epoch: randomUUID(),
+  });
   const archivedMark = randomUUID();
   stores.drafts.set(`${company}/${archivedMark}`, {
     state: 'archived',
     submissionId: randomUUID(),
+    epoch: randomUUID(),
   });
   // An archived draft with no fence was never submitted: not a mark.
-  stores.drafts.set(`${company}/${randomUUID()}`, { state: 'archived', submissionId: null });
+  stores.drafts.set(`${company}/${randomUUID()}`, {
+    state: 'archived',
+    submissionId: null,
+    epoch: null,
+  });
   // A record with no mark: its draft is gone, or still fenced as `submitting`.
   const noDraft = await seedCommitted(h.admin, newSubmission(company, job, actor));
   const stillFenced = await seedCommitted(h.admin, newSubmission(company, job, actor));
   stores.drafts.set(`${company}/${stillFenced.draft}`, {
     state: 'submitting',
     submissionId: stillFenced.id,
+    epoch: stillFenced.epoch,
   });
   // A record whose draft carries the mark of another submission: both a record with no mark and a
   // mark with no record behind it.
@@ -273,6 +299,15 @@ async function plantDifferences(company: string, clean: Clean): Promise<Planted>
   stores.drafts.set(`${company}/${otherMark.draft}`, {
     state: 'submitted',
     submissionId: randomUUID(),
+    epoch: otherMark.epoch,
+  });
+  // A record whose draft carries the mark of the same submission from another attempt (another
+  // epoch), as after SQL and the draft are restored and Submit is replayed: both kinds again.
+  const otherEpoch = await seedCommitted(h.admin, newSubmission(company, job, actor));
+  stores.drafts.set(`${company}/${otherEpoch.draft}`, {
+    state: 'submitted',
+    submissionId: otherEpoch.id,
+    epoch: randomUUID(),
   });
   // A pending submission past its expiry; one aborted after its expiry is not pending.
   const expired = await seedSubmission(
@@ -284,37 +319,31 @@ async function plantDifferences(company: string, clean: Clean): Promise<Planted>
     newSubmission(company, job, actor, { madeAgo: 3600, expiresIn: -60 }),
   );
   await h.admin`UPDATE job_submissions SET status = 'aborted' WHERE id = ${abortedLate.id}`;
-  // Registry rows whose object is missing, has another checksum, size or generation.
-  const registry = async (change: (stat: ObjectStat) => ObjectStat | null): Promise<string> => {
+  // Registry rows whose registered generation is missing, or has another checksum or size; and one
+  // whose registered generation is gone while a later generation is live under its name (as after
+  // a file restore that made a new generation and kept no copy of the old one).
+  const registry = async (
+    change: (stat: ObjectStat) => ObjectStat | null,
+    generation = REGISTERED,
+  ): Promise<string> => {
     const photo = newEvidence(company, job, actor);
     await seedEvidence(h.admin, photo);
     const [row] = await h.admin<
       { id: string; object_name: string }[]
     >`SELECT id::text, object_name FROM evidence_objects WHERE object_id = ${photo.objectId}`;
-    const stat = change({
-      generation: 1731400000000000n,
-      sizeBytes: 2048,
-      sha256: digestOf(photo.objectId),
-    });
-    if (stat) stores.objects.set(row!.object_name, stat);
+    const stat = change({ sizeBytes: 2048, sha256: digestOf(photo.objectId) });
+    if (stat) putObject(row!.object_name, generation, stat);
     return row!.id;
   };
   const missing = await registry(() => null);
   const checksum = await registry((stat) => ({ ...stat, sha256: digestOf('other bytes') }));
   const size = await registry((stat) => ({ ...stat, sizeBytes: 999 }));
-  const generation = await registry((stat) => ({ ...stat, generation: stat.generation + 7n }));
-  // An object with no row, and one whose name is not the app's shape.
+  const generationGone = await registry((stat) => stat, REGISTERED + 7n);
+  // Two objects with no row: one named by the app's shape (reported by its ids) and one whose name
+  // gives no safe id (counted only).
   const orphan = randomUUID();
-  stores.objects.set(photoName(company, job, orphan, 'originals'), {
-    generation: 1n,
-    sizeBytes: 10,
-    sha256: null,
-  });
-  stores.objects.set(`companies/${company}/exports/${ADDRESS}.pdf`, {
-    generation: 1n,
-    sizeBytes: 10,
-    sha256: null,
-  });
+  putObject(photoName(company, job, orphan, 'originals'), 1n, { sizeBytes: 10, sha256: null });
+  putObject(`companies/${company}/exports/${ADDRESS}.pdf`, 1n, { sizeBytes: 10, sha256: null });
   // A signed agreement whose signature object is gone (its registry row is then missing an object too).
   const signatureRow = (
     await h.admin<
@@ -323,25 +352,24 @@ async function plantDifferences(company: string, clean: Clean): Promise<Planted>
   )[0]!;
   stores.objects.delete(signatureRow.object_name);
   return {
-    committedWithoutMark: [noDraft.id, stillFenced.id, otherMark.id].sort(),
-    markWithoutCommitted: [markOnly, archivedMark, otherMark.draft].sort(),
+    committedWithoutMark: [noDraft.id, stillFenced.id, otherMark.id, otherEpoch.id].sort(),
+    markWithoutCommitted: [markOnly, archivedMark, otherMark.draft, otherEpoch.draft].sort(),
     pendingPastExpiry: [expired.id],
-    rowWithoutObject: [missing, clean.signature].sort(),
-    generationDiffers: [generation],
+    rowWithoutObject: [missing, generationGone, clean.signature].sort(),
     sizeDiffers: [size],
     checksumDiffers: [checksum],
     objectWithoutRow: [`${job}/original/${orphan}`],
-    unrecognisedObjects: [],
     agreementWithoutSignature: [clean.agreement],
   };
 }
 
-const expectFound = (pages: CheckPage[], planted: Planted, unrecognised: number) => {
+// `unnamed`: objects with no row whose names give no id, counted beside the ids.
+const expectFound = (pages: CheckPage[], planted: Planted, unnamed: number) => {
   const expected = Object.fromEntries(
     FINDINGS.map((kind) => [
       kind,
       {
-        count: kind === 'unrecognisedObjects' ? unrecognised : planted[kind].length,
+        count: planted[kind].length + (kind === 'objectWithoutRow' ? unnamed : 0),
         ids: planted[kind],
       },
     ]),
@@ -441,6 +469,40 @@ describe('a run', () => {
     useSizes({ rows: 1, stats: 1, objects: 1 });
     expectFound(await run(h.seed.a), planted, 1);
     expect(await runRows()).toHaveLength(2);
+  });
+
+  it('checks the generation each row registered: a copy restored as a new live generation is clean while the registered one is kept', async () => {
+    const clean = await cleanCompany(h.seed.a, h.seed.ownerA.actor);
+    // The restore drill: the registered generation G1 of the photo and of the signature is copied
+    // back under its name as a new live generation G2, and G1 stays readable.
+    const rows = await h.admin<{ object_name: string; sha256: string; size_bytes: string }[]>`
+      SELECT object_name, sha256, size_bytes::text FROM evidence_objects WHERE id IN (${clean.photo}, ${clean.signature})
+    `;
+    for (const row of rows) {
+      putObject(row.object_name, REGISTERED + 1000n, { sizeBytes: Number(row.size_bytes), sha256: row.sha256 });
+    }
+    expect(totals(await run(h.seed.a))).toEqual(zeros());
+    // Once G1 is no longer kept, the app cannot read what it registered: the rows are missing their
+    // objects and the agreement its signature, though G2 is live under the same names.
+    for (const row of rows) stores.objects.get(row.object_name)!.delete(REGISTERED);
+    const found = totals(await run(h.seed.a));
+    expect(found.rowWithoutObject).toEqual({ count: 2, ids: [clean.photo, clean.signature].sort() });
+    expect(found.agreementWithoutSignature).toEqual({ count: 1, ids: [clean.agreement] });
+    expect(found.objectWithoutRow).toEqual({ count: 0, ids: [] });
+  });
+
+  it("writes the run's audit row before comparing anything, so a run whose first page fails is still audited", async () => {
+    await cleanCompany(h.seed.a, h.seed.ownerA.actor);
+    stores.fail = true;
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const response = await call(h.seed.a);
+    expect({ status: response.status, body: await response.json() }).toEqual({
+      status: 503,
+      body: { error: 'records_check_unavailable' },
+    });
+    const audited = await runRows();
+    expect(audited).toHaveLength(1);
+    expect(audited[0]).toMatchObject({ company_id: h.seed.a, operator_actor_id: h.seed.operator, actor_id: null });
   });
 
   it("never answers one company's run with another company's records", async () => {

@@ -6,20 +6,18 @@ import { bucketEvidenceObjects, type ListingBucket } from '@/lib/records-check/s
 
 type Query = Parameters<ListingBucket['getFiles']>[0];
 
+// Objects by "name#generation"; a listing lists each name once.
 function bucketOf(
-  objects: Record<
-    string,
-    { generation?: string; size?: string; metadata?: Record<string, unknown> }
-  >,
+  objects: Record<string, { size?: string; metadata?: Record<string, unknown> }>,
   pageSize: number,
 ) {
   const queries: Query[] = [];
-  const names = Object.keys(objects).sort();
+  const names = [...new Set(Object.keys(objects).map((key) => key.split('#')[0]!))].sort();
   const bucket: ListingBucket = {
-    file(name) {
+    file(name, options) {
       return {
         async getMetadata() {
-          const found = objects[name];
+          const found = objects[`${name}#${options.generation}`];
           if (!found) throw Object.assign(new Error('No such object'), { code: 404 });
           return [found];
         },
@@ -48,23 +46,21 @@ function bucketOf(
 }
 
 describe('the bucket reader', () => {
-  it('stats an object with its generation, size and stored SHA-256, and a missing one as null', async () => {
+  it('stats the asked generation with its size and stored SHA-256, and a generation not held as null', async () => {
     const sha = 'a'.repeat(64);
     const { bucket } = bucketOf(
       {
-        one: { generation: '1731400000000001', size: '2048', metadata: { sha256: sha } },
-        two: { generation: '5', size: '7' },
+        'one#1731400000000001': { size: '2048', metadata: { sha256: sha } },
+        'one#1731400000000002': { size: '9', metadata: { sha256: 'b'.repeat(64) } },
+        'two#5': { size: '7' },
       },
       10,
     );
     const store = bucketEvidenceObjects(bucket);
-    expect(await store.stat('one')).toEqual({
-      generation: 1731400000000001n,
-      sizeBytes: 2048,
-      sha256: sha,
-    });
-    expect(await store.stat('two')).toEqual({ generation: 5n, sizeBytes: 7, sha256: null });
-    expect(await store.stat('three')).toBeNull();
+    expect(await store.stat('one', 1731400000000001n)).toEqual({ sizeBytes: 2048, sha256: sha });
+    expect(await store.stat('two', 5n)).toEqual({ sizeBytes: 7, sha256: null });
+    expect(await store.stat('two', 6n)).toBeNull();
+    expect(await store.stat('three', 5n)).toBeNull();
   });
 
   it('passes on any other bucket error', async () => {
@@ -75,12 +71,12 @@ describe('the bucket reader', () => {
         },
       }),
     } as unknown as ListingBucket;
-    await expect(bucketEvidenceObjects(bucket).stat('one')).rejects.toThrow('denied');
+    await expect(bucketEvidenceObjects(bucket).stat('one', 1n)).rejects.toThrow('denied');
   });
 
   it('follows the page token inside one call until it has the names asked for, and says whether more follow', async () => {
     const objects = Object.fromEntries(
-      ['p/a', 'p/b', 'p/c', 'p/d', 'p/e'].map((name) => [name, {}]),
+      ['p/a', 'p/b', 'p/c', 'p/d', 'p/e'].map((name) => [`${name}#1`, {}]),
     );
     const { bucket, queries } = bucketOf(objects, 2);
     const store = bucketEvidenceObjects(bucket);

@@ -6,8 +6,8 @@ import { firestoreSpan } from '@/lib/telemetry/spans';
 // here only reads. Nothing here is logged.
 
 // A draft's server keys that say whether Submit marked it (src/lib/submissions/fence.ts): its
-// `state` and the submission its fence names.
-export type DraftMark = { state: string | null; submissionId: string | null };
+// `state` and the submission and epoch its fence names.
+export type DraftMark = { state: string | null; submissionId: string | null; epoch: string | null };
 
 export type DraftMarks = {
   // The mark of each named draft; a draft that is not there is absent from the map.
@@ -21,13 +21,15 @@ export type DraftMarks = {
   ): Promise<{ drafts: (DraftMark & { id: string })[]; more: boolean }>;
 };
 
-// One object as the bucket holds it now: its generation, its size and the SHA-256 kept in its own
-// metadata when it was made (null when there is none).
-export type ObjectStat = { generation: bigint; sizeBytes: number; sha256: string | null };
+// One generation of an object: its size and the SHA-256 kept in its own metadata when it was made
+// (null when there is none).
+export type ObjectStat = { sizeBytes: number; sha256: string | null };
 
 export type EvidenceObjects = {
-  // The live object of that name, or null when there is none.
-  stat(name: string): Promise<ObjectStat | null>;
+  // That generation of the named object, live or not, or null when the bucket no longer holds it.
+  // It is the generation the registry row recorded and the photo routes read (photos/store.ts), so
+  // a restore that copied it back under a new live generation still finds it while it is kept.
+  stat(name: string, generation: bigint): Promise<ObjectStat | null>;
   // Names under `prefix` from `startOffset` (inclusive) in name order, at most `count` of them, and
   // whether more follow. The bucket's own page tokens stay inside this call.
   list(
@@ -42,6 +44,7 @@ function markOf(data: Record<string, unknown> | undefined): DraftMark {
   return {
     state: typeof data?.state === 'string' ? data.state : null,
     submissionId: typeof fence?.submissionId === 'string' ? fence.submissionId : null,
+    epoch: typeof fence?.epoch === 'string' ? fence.epoch : null,
   };
 }
 
@@ -79,11 +82,13 @@ export function firestoreDraftMarks(db: Firestore): DraftMarks {
 
 // The part of a Cloud Storage bucket this uses (@google-cloud/storage, through firebase-admin).
 export type ListingBucket = {
-  file(name: string): {
+  file(
+    name: string,
+    options: { generation: string },
+  ): {
     getMetadata(): Promise<
       [
         {
-          generation?: string | number;
           size?: string | number;
           metadata?: Record<string, unknown>;
         },
@@ -104,17 +109,16 @@ const NOT_FOUND = 404;
 
 export function bucketEvidenceObjects(bucket: ListingBucket): EvidenceObjects {
   return {
-    async stat(name) {
+    async stat(name, generation) {
       let metadata;
       try {
-        [metadata] = await bucket.file(name).getMetadata();
+        [metadata] = await bucket.file(name, { generation: generation.toString() }).getMetadata();
       } catch (error) {
         if ((error as { code?: unknown } | null)?.code === NOT_FOUND) return null;
         throw error;
       }
       const hash = metadata.metadata?.sha256;
       return {
-        generation: BigInt(metadata.generation ?? 0),
         sizeBytes: Number(metadata.size ?? 0),
         sha256: typeof hash === 'string' ? hash : null,
       };
