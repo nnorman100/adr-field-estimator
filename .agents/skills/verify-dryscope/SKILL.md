@@ -14,8 +14,7 @@ All commands use absolute paths or a `( cd ... && ... )` subshell. Set once:
 ```bash
 ROOT=$(git rev-parse --show-toplevel)          # your worktree
 WEB=$ROOT/web
-EVIDENCE=/tmp/verify-dryscope-$(git -C "$ROOT" rev-parse --short HEAD)   # outside the repo; use your task's data dir if you have one
-mkdir -p "$EVIDENCE"
+EVIDENCE=$(mktemp -d "/tmp/verify-dryscope-$(git -C "$ROOT" rev-parse --short HEAD)-XXXXXX")   # new for each verification, outside the repo; or mktemp -d under your task's data dir
 ```
 
 ## Launch
@@ -114,7 +113,7 @@ test('verify: estimator opens My jobs', async ({ page }) => {
 });
 ```
 
-Run it like A, with `EVIDENCE="$EVIDENCE"` in the environment and `-g "verify:"`.
+Run it like A, with `-g "verify:"` and `EVIDENCE="$RUN"` in the environment (`$RUN` is that run's evidence folder, see Evidence).
 
 Handles that exist in the app (prefer them over coordinates):
 
@@ -126,13 +125,14 @@ Handles that exist in the app (prefer them over coordinates):
 
 ## Evidence
 
-A proof contains: (1) the exact command, (2) its output (pass/fail line and counts, not a paraphrase), (3) the head SHA it ran on (`git rev-parse HEAD`), (4) for any UI change, a screenshot or trace of the real screen at phone width. Save them in `$EVIDENCE`:
+A proof contains: (1) the exact command, (2) its output (pass/fail line and counts, not a paraphrase), (3) the head SHA it ran on (`git rev-parse HEAD`), (4) for any UI change, a screenshot or trace of the real screen at phone width. Give every browser run its own folder under `$EVIDENCE`, made before the run starts:
 
 ```bash
-git -C "$ROOT" rev-parse HEAD > "$EVIDENCE/sha.txt"
-# pipe the run through tee so the output is kept:  ... 2>&1 | tee "$EVIDENCE/run.log"
-cp -r "$WEB/test-results" "$EVIDENCE/test-results"   # traces (trace.zip), failure screenshots; copy BEFORE the next run, it empties this folder
-( cd "$WEB" && npx playwright show-trace "$EVIDENCE/test-results/<test-dir>/trace.zip" )   # open one by hand if needed
+RUN=$(mktemp -d "$EVIDENCE/run-XXXXXX")
+git -C "$ROOT" rev-parse HEAD > "$RUN/sha.txt"
+( cd "$WEB" && EVIDENCE="$RUN" EMU_PORTS=auto "$SLOT" npx playwright test ... ) 2>&1 | tee "$RUN/run.log"
+cp -r "$WEB/test-results" "$RUN/test-results"   # traces (trace.zip), failure screenshots; copy BEFORE the next run, it empties this folder
+( cd "$WEB" && npx playwright show-trace "$RUN/test-results/<test-dir>/trace.zip" )   # open one by hand if needed
 ```
 
 Standards:
@@ -177,13 +177,18 @@ rm -f "$WEB/tests/e2e/zz-verify-scratch.spec.ts"      # if you made one; git sta
 git -C "$ROOT" status --short
 ```
 
-After a killed or timed-out run, look for what is still listening on the ports your run used and stop only those processes:
+After a killed or timed-out run, list what is still listening from your worktree. `EMU_PORTS=auto` picks ports in 20000-30000, so match on the owning process, not on port numbers:
 
 ```bash
-ss -ltnp | grep -E ':(3100|3101|3103|3104|8399|9399|9499)\b'   # default ports; with EMU_PORTS=auto the ports are in 20000-30000
+for pid in $(ss -ltnpH | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u); do
+  cmd=$(tr '\0' ' ' < /proc/$pid/cmdline 2>/dev/null)
+  if [ "$(readlink /proc/$pid/cwd 2>/dev/null)" = "$WEB" ] || [[ $cmd == *"$WEB"* ]]; then
+    echo "$pid $(ss -ltnpH | grep "pid=$pid," | awk '{print $4}' | tr '\n' ' ') ${cmd:0:120}"
+  fi
+done
 ```
 
-Stop a process only if its working directory or command line is your `$WEB` (`ls -l /proc/<pid>/cwd`). Never kill by name (`pkill java`, `pkill node`): other lanes' runs use the same binaries. Stale emulator lock files release themselves when their holder is gone. Evidence in `$EVIDENCE` stays.
+Stop only the PIDs it prints, and only after reading their command line. Never kill by name (`pkill java`, `pkill node`): other lanes' runs use the same binaries. Stale emulator lock files release themselves when their holder is gone. Evidence in `$EVIDENCE` stays.
 
 ## Gotchas
 
