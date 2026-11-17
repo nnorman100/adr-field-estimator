@@ -8,7 +8,7 @@ allowed_origins = ["https://dryscope-api-live-570228742694.us-central1.run.app"]
 
 api_scaling = {
   min_instances = 1
-  max_instances = 10
+  max_instances = 7 # the database connection budget (web/src/db/client.ts) fits 100 connections
   cpu           = "1"
   memory        = "1Gi"
   concurrency   = 40

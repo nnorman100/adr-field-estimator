@@ -13,8 +13,9 @@ let services: ProjectionServices | null = null;
 let reader: AccessReader | null = null;
 
 // A projection holds its connection until its Firestore write answers, so one slow write must not
-// leave other members' renewals waiting for the only connection.
-export const PROJECTION_CONNECTIONS = 4;
+// leave other members' renewals waiting for the only connection. Part of each instance's connection
+// budget (MAIN_POOL_CONNECTIONS in db/client.ts).
+export const PROJECTION_CONNECTIONS = 2;
 
 // Built from the checked server configuration the first time a record is written, then reused.
 export function projectionServices(): ProjectionServices {
