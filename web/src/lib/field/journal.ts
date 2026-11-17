@@ -15,10 +15,11 @@
 // read, change and removal here names its (tenant, person) and touches only their rows.
 //
 // Opened only through ./idb.ts. A phone whose storage does not answer within WRITE_WITHIN_MS gets
-// JournalNotSaved for a new entry, and the edit is not made. While any entry is here the person's
+// JournalNotSaved for a new entry (ReopenTheApp when its connection was lost twice), and the edit
+// is not made. While any entry is here the person's
 // unsent mark (./unsent.ts) stays set, so the sign-in pages ask before anything is discarded.
 import { canonicalJson } from './canonical';
-import { transact, withDatabase, type DbSpec } from './idb';
+import { ReopenTheApp, transact, withDatabase, type DbSpec } from './idb';
 
 export const JOURNAL_DB = 'ds-journal';
 export const JOURNAL_STORE = 'entries';
@@ -44,8 +45,12 @@ export type DocWrite =
   | { path: string; op: 'delete' };
 
 // Why the rules refused: the draft is no longer being edited (finished, archived: "locked"),
-// another person now holds its field work, this person cannot read it at all, or none of these.
-export type RejectReason = 'locked' | 'owner-changed' | 'no-access' | 'refused';
+// another person now holds its field work, the person's role no longer edits field work (it can
+// still read the draft: office), this person cannot read it at all, or none of these.
+export type RejectReason = 'locked' | 'owner-changed' | 'role-changed' | 'no-access' | 'refused';
+
+// The roles whose people edit field work (web/firestore.rules canEdit).
+const EDIT_ROLES: ReadonlySet<string> = new Set(['owner', 'estimator']);
 export type JournalState = 'pending' | 'rejected' | 'changed';
 
 export type JournalEntry = {
@@ -95,7 +100,11 @@ export async function appendEntry(owner: Owner, draftPath: string, writes: DocWr
       return () => ({ ...row, seq: request.result as number });
     });
   });
-  const answer = await within(added, WRITE_WITHIN_MS).catch(() => 'failed' as const);
+  let lost = false;
+  const answer = await within(added, WRITE_WITHIN_MS).catch((error: unknown) => {
+    lost = error instanceof ReopenTheApp;
+    return 'failed' as const;
+  });
   if (answer === 'timeout' || answer === 'failed') {
     abandoned = true;
     try {
@@ -105,7 +114,8 @@ export async function appendEntry(owner: Owner, draftPath: string, writes: DocWr
     }
     // An entry for an edit that was not made must never be sent later.
     void added.then((entry) => removeEntry(entry), () => undefined);
-    throw new JournalNotSaved();
+    // A connection lost twice is said as it is: "Reopen the app."
+    throw lost ? new ReopenTheApp() : new JournalNotSaved();
   }
   return answer;
 }
@@ -211,10 +221,16 @@ function holds(doc: ServerDoc, key: string, expected: unknown): boolean {
 }
 
 // Whether the rules refuse this person's edits to the draft now, from the server's copy of it.
-export function draftRefusal(draft: ServerDoc, uid: string): RejectReason | null {
-  if (!('data' in draft)) return 'no-access';
+// `role` is the person's role at the last online check (GET /api/me), which let them in: the
+// company's access is current, so the role decides what the rules let them read and edit. An
+// estimator may read only drafts whose field work is theirs (web/firestore.rules canRead), so a
+// draft an estimator with current access cannot read is one whose field work moved to someone else.
+// Without a role (no online check yet on this page) a refused read is no-access.
+export function draftRefusal(draft: ServerDoc, uid: string, role: string | null = null): RejectReason | null {
+  if (!('data' in draft)) return 'denied' in draft && role === 'estimator' ? 'owner-changed' : 'no-access';
   if (draft.data.state !== 'editing') return 'locked';
   if (draft.data.fieldOwnerUid !== uid) return 'owner-changed';
+  if (role !== null && !EDIT_ROLES.has(role)) return 'role-changed';
   return null;
 }
 
@@ -234,6 +250,7 @@ export function judge(
   docs: ReadonlyMap<string, ServerDoc>,
   drafts: ReadonlyMap<string, ServerDoc>,
   uid: string,
+  role: string | null = null,
 ): Map<number, Outcome> {
   // The newest entry and value per (document, key), across everything that is not yet saved.
   const newest = new Map<string, { seq: number; path: string; key: string; expected: unknown; live: boolean }>();
@@ -260,7 +277,7 @@ export function judge(
     }
     if (held) outcomes.set(entry.seq, { kind: 'acked' });
     else {
-      const reason = draftRefusal(draft, uid);
+      const reason = draftRefusal(draft, uid, role);
       outcomes.set(entry.seq, reason ? { kind: 'rejected', reason } : { kind: 'changed' });
     }
   }

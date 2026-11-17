@@ -1,5 +1,5 @@
 import type { BrowserSignInConfig } from '@/lib/config';
-import { openDatabase, type DbSpec } from './idb';
+import { connectionLost, ReopenTheApp, transact, withDatabase, type DbSpec } from './idb';
 
 // `ds-me`: what the field shell needs to start with no signal (S6-2; docs/plans/S6.md section 3).
 // The sign-in page writes one row at every online sign-in, and the shell reads the newest row
@@ -51,15 +51,26 @@ const ME_SPEC: DbSpec = {
   },
 };
 
-function openDb(): Promise<IDBDatabase> {
-  return openDatabase(ME_SPEC);
+// A storage request that failed for a reason other than a lost connection.
+class MeWorkFailed extends Error {}
+
+// One transaction on ds-me through the wrapper: a lost connection is tried once more, a second
+// loss is ReopenTheApp. A failed open rejects with the open's own error, a failed transaction with
+// MeWorkFailed, so each caller below keeps its own answer for each.
+function onMe<T>(mode: IDBTransactionMode, use: (store: IDBObjectStore, transaction: IDBTransaction) => () => T, opened?: () => boolean): Promise<T> {
+  return withDatabase(ME_SPEC, (db) => {
+    if (opened && !opened()) return Promise.reject(new MeWorkFailed());
+    return transact(db, ME_STORE, mode, (transaction) => use(transaction.objectStore(ME_STORE), transaction)).catch((error: unknown) => {
+      throw connectionLost(error) ? error : new MeWorkFailed();
+    });
+  });
 }
 
-function done<T>(request: IDBRequest<T>): Promise<T> {
-  return new Promise((resolve, reject) => {
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error ?? new Error('ds-me request failed'));
-  });
+// What a call answers when its storage did not: the open failed, the work failed, or the
+// connection was lost twice.
+function failure(error: unknown): 'open' | 'work' | 'reopen' {
+  if (error instanceof ReopenTheApp) return 'reopen';
+  return error instanceof MeWorkFailed ? 'work' : 'open';
 }
 
 function isString(value: unknown): value is string {
@@ -94,24 +105,20 @@ export function parseMe(value: unknown): DsMe | null {
   return row as unknown as DsMe;
 }
 
-// The newest row, null when there is none (or none readable), and 'unavailable' when the phone's
-// storage cannot be opened at all.
-export async function readLatestMe(): Promise<DsMe | null | 'unavailable'> {
-  let db: IDBDatabase;
+// The newest row, null when there is none (or none readable), 'unavailable' when the phone's
+// storage cannot be opened at all, and 'reopen' when its connection was lost twice (the shell says
+// "Reopen the app").
+export async function readLatestMe(): Promise<DsMe | null | 'unavailable' | 'reopen'> {
   try {
-    db = await openDb();
-  } catch {
-    return 'unavailable';
-  }
-  try {
-    const rows = (await done(db.transaction(ME_STORE, 'readonly').objectStore(ME_STORE).getAll())) as unknown[];
+    const rows = await onMe('readonly', (store) => {
+      const request = store.getAll();
+      return () => request.result as unknown[];
+    });
     const mine = rows.map(parseMe).filter((row): row is DsMe => row !== null);
     mine.sort((a, b) => b.savedAt - a.savedAt);
     return mine[0] ?? null;
-  } catch {
-    return 'unavailable';
-  } finally {
-    db.close();
+  } catch (error) {
+    return failure(error) === 'reopen' ? 'reopen' : 'unavailable';
   }
 }
 
@@ -119,54 +126,28 @@ export async function readLatestMe(): Promise<DsMe | null | 'unavailable'> {
 // shell cannot start from it either); false when it cannot be read or does not answer within
 // WRITE_WITHIN_MS, so the row may be there.
 export function readMe(tenantId: string, uid: string): Promise<DsMe | null | false> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(false), WRITE_WITHIN_MS);
-    const answer = (row: DsMe | null | false) => {
-      clearTimeout(timer);
-      resolve(row);
-    };
-    openDb().then(
-      (db) => {
-        try {
-          const request = db.transaction(ME_STORE, 'readonly').objectStore(ME_STORE).get(meKey(tenantId, uid));
-          request.onsuccess = () => answer(parseMe(request.result));
-          request.onerror = () => answer(false);
-        } catch {
-          answer(false);
-        } finally {
-          db.close();
-        }
-      },
-      () => answer(null),
-    );
-  });
+  const read = onMe('readonly', (store) => {
+    const request = store.get(meKey(tenantId, uid));
+    return () => parseMe(request.result);
+  }).catch((error: unknown) => (failure(error) === 'open' ? null : false));
+  return within(read, false);
 }
 
 // Every readable row, for judging each saved sign-in's age (retention.ts). None when the phone's
 // storage cannot be read or does not answer within WRITE_WITHIN_MS: a row that cannot be read is
 // never judged.
 export function readAllMe(): Promise<DsMe[]> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve([]), WRITE_WITHIN_MS);
-    const answer = (rows: DsMe[]) => {
-      clearTimeout(timer);
-      resolve(rows);
-    };
-    openDb().then(
-      (db) => {
-        try {
-          const request = db.transaction(ME_STORE, 'readonly').objectStore(ME_STORE).getAll();
-          request.onsuccess = () => answer((request.result as unknown[]).map(parseMe).filter((row): row is DsMe => row !== null));
-          request.onerror = () => answer([]);
-        } catch {
-          answer([]);
-        } finally {
-          db.close();
-        }
-      },
-      () => answer([]),
-    );
-  });
+  const read = onMe('readonly', (store) => {
+    const request = store.getAll();
+    return () => (request.result as unknown[]).map(parseMe).filter((row): row is DsMe => row !== null);
+  }).catch(() => [] as DsMe[]);
+  return within(read, [] as DsMe[]);
+}
+
+// `promise`, or `otherwise` when the storage does not answer within WRITE_WITHIN_MS.
+function within<T>(promise: Promise<T>, otherwise: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([promise, new Promise<T>((resolve) => (timer = setTimeout(() => resolve(otherwise), WRITE_WITHIN_MS)))]).finally(() => clearTimeout(timer));
 }
 
 // A change to the rows, settled when the transaction has committed (not when its request was
@@ -193,26 +174,16 @@ function write(change: (store: IDBObjectStore) => void): Promise<boolean> {
       }
       finish(false);
     }, WRITE_WITHIN_MS);
-    openDb().then(
-      (db) => {
-        if (settled) {
-          db.close();
-          return;
-        }
-        try {
-          transaction = db.transaction(ME_STORE, 'readwrite');
-          transaction.oncomplete = () => finish(true);
-          transaction.onerror = () => finish(false);
-          transaction.onabort = () => finish(false);
-          change(transaction.objectStore(ME_STORE));
-        } catch {
-          finish(false);
-        } finally {
-          db.close();
-        }
+    // An open that answers after the time ran out starts no change.
+    onMe(
+      'readwrite',
+      (store, started) => {
+        transaction = started;
+        change(store);
+        return () => true;
       },
-      () => finish(false),
-    );
+      () => !settled,
+    ).then(finish, () => finish(false));
   });
 }
 
@@ -220,27 +191,11 @@ function write(change: (store: IDBObjectStore) => void): Promise<boolean> {
 // storage does not answer within WRITE_WITHIN_MS; false when it is not, or when the storage cannot
 // be opened at all (the shell then cannot start from it either).
 function mayHold(key: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(true), WRITE_WITHIN_MS);
-    const answer = (held: boolean) => {
-      clearTimeout(timer);
-      resolve(held);
-    };
-    openDb().then(
-      (db) => {
-        try {
-          const request = db.transaction(ME_STORE, 'readonly').objectStore(ME_STORE).count(key);
-          request.onsuccess = () => answer(request.result > 0);
-          request.onerror = () => answer(true);
-        } catch {
-          answer(true);
-        } finally {
-          db.close();
-        }
-      },
-      () => answer(false),
-    );
-  });
+  const counted = onMe('readonly', (store) => {
+    const request = store.count(key);
+    return () => request.result > 0;
+  }).catch((error: unknown) => failure(error) !== 'open');
+  return within(counted, true);
 }
 
 // Writes this sign-in's row over the same (tenant, person)'s earlier one, in one transaction:

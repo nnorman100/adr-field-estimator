@@ -5,7 +5,7 @@ import type { BrowserContext } from '@playwright/test';
 import { expect, expectNothingSent, test, SEND_MS } from './fixture';
 import { FieldPhone, inDays, serveMe } from './field-phone';
 import type { Person as FieldPerson } from './harness/field';
-import { fenceDraft, readDraft, seedCompany, type World } from './world';
+import { adminDb, fenceDraft, readDraft, seedCompany, type World } from './world';
 
 // Offline and worker tests need the service worker, which the suite blocks by default.
 test.use({ serviceWorkers: 'allow' });
@@ -128,6 +128,24 @@ test.describe('the recovery journal (S6-4)', () => {
     });
   }
 
+  test('a write refused because the field work moved to another person is rejected as owner-changed, not no-access', async ({ browser, lane }) => {
+    const context = await browser.newContext();
+    const world = await seedCompany({ people: ['ana', 'ben'] });
+    const phone = await FieldPhone.open(context, lane);
+    const person = await online(phone, world);
+    lane.cut(['auth', 'firestore']);
+    await phone.call('journalWrite', person, world.draftPath, notes);
+    await expect.poll(async () => (await phone.call('journal', person))[0]?.reached).toBe(true);
+    await expectNothingSent(lane);
+    // The owner moves the field work to Ben while Ana's phone has no signal: Ana may no longer
+    // even read the draft.
+    await adminDb().doc(world.draftPath).update({ fieldOwnerUid: world.people.ben!.uid });
+    lane.restore(['auth', 'firestore']);
+    await expect.poll(() => phone.call('journal', person), { timeout: SEND_MS }).toEqual([entryFor('rejected', { reason: 'owner-changed' })]);
+    expect((await readDraft(world)).field).not.toHaveProperty('notes');
+    await context.close();
+  });
+
   test('rows are kept per company and person: one person\'s are never read or removed for another', async ({ browser, lane }) => {
     const context = await browser.newContext();
     const [one, two] = [await seedCompany({ people: ['ana', 'ben'] }), await seedCompany()];
@@ -147,6 +165,77 @@ test.describe('the recovery journal (S6-4)', () => {
   });
 });
 
+test.describe('a lost IndexedDB connection reaches the person as "Reopen the app" (S6-4)', () => {
+  test('ds-me: one loss is opened again; two make its start answer reopen', async ({ browser, lane }) => {
+    const context = await browser.newContext();
+    const world = await seedCompany();
+    const phone = await FieldPhone.open(context, lane);
+    const person = phone.person(world, world.owner);
+    expect(await phone.call('saveMe', person)).toBe(true);
+    await phone.call('loseConnection', 1, 'ds-me');
+    expect(await phone.call('latestMeAnswer')).toBe(`${world.tenantId}/${world.owner.uid}`);
+    await phone.call('loseConnection', 2, 'ds-me');
+    expect(await phone.call('latestMeAnswer')).toBe('reopen');
+    await context.close();
+  });
+
+  // Every ds-me transaction loses its connection, so whichever of the shell's reads comes first
+  // (its start, or the retention routine) the start sees two losses.
+  test('the field shell shows "Reopen the app" when ds-me keeps losing its connection', async ({ page, lane }) => {
+    await page.addInitScript(() => {
+      const real = IDBDatabase.prototype.transaction;
+      IDBDatabase.prototype.transaction = function (this: IDBDatabase, ...args: Parameters<IDBDatabase['transaction']>) {
+        if (this.name === 'ds-me') {
+          throw new DOMException('Connection to Indexed Database server lost. Refresh the page to try again', 'UnknownError');
+        }
+        return real.apply(this, args);
+      } as IDBDatabase['transaction'];
+    });
+    await page.goto(`${lane.appUrl}/field`);
+    await expect(page.getByRole('heading', { name: 'Reopen the app' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Sign in to continue' })).toHaveCount(0);
+  });
+
+  test('a journal append: one loss is opened again; two refuse the edit with "Reopen the app." and journal nothing', async ({ browser, lane }) => {
+    const context = await browser.newContext();
+    const world = await seedCompany();
+    const phone = await FieldPhone.open(context, lane);
+    const person = await online(phone, world);
+    lane.cut(['auth', 'firestore']);
+    await phone.call('loseConnection', 1, 'ds-journal');
+    const kept = await phone.call('journalWrite', person, world.draftPath, notes);
+    expect(await phone.call('op', kept)).toEqual({ state: 'pending' });
+    expect(await phone.call('journal', person)).toHaveLength(1);
+    // The first entry's own bookkeeping is finished before the next losses start.
+    await expect.poll(async () => (await phone.call('journal', person))[0]?.reached).toBe(true);
+    await phone.call('loseConnection', 2, 'ds-journal');
+    const refused = await phone.call('journalWrite', person, world.draftPath, { 'field.notes': 'never made' });
+    expect(await phone.call('op', refused)).toEqual({ state: 'rejected', code: expect.stringContaining('Reopen the app.') });
+    expect(await phone.call('journal', person)).toHaveLength(1);
+    expect(await phone.call('readCache', person, world.draftPath)).toMatchObject({ data: { field: { notes: notes['field.notes'] } } });
+    await context.close();
+  });
+
+  test('recovery at the next start: two losses stop the gate and ask for the app to be reopened', async ({ browser, lane }) => {
+    const context = await browser.newContext();
+    const world = await seedCompany();
+    let phone = await FieldPhone.open(context, lane);
+    const person = await online(phone, world);
+    lane.cut(['auth', 'firestore']);
+    await phone.call('journalOnly', person, world.draftPath, notes);
+    await phone.page.close({ runBeforeUnload: false });
+
+    phone = await FieldPhone.open(context, lane);
+    expect(await phone.call('start', person, 'persistent')).toBe('persistent');
+    await phone.call('loseConnection', 2, 'ds-journal');
+    await phone.call('sync', person);
+    await expect.poll(() => phone.call('gate', person)).toBe('reopen');
+    // Nothing was lost: the entry is still there for the next start.
+    expect(await phone.call('journal', person)).toEqual([entryFor('pending', { reached: false })]);
+    await context.close();
+  });
+});
+
 test.describe('the one IndexedDB wrapper (S6-4)', () => {
   test('a connection it opened closes on a version change, so an old window never blocks an upgrade', async ({ page, lane }) => {
     const phone = await FieldPhone.open(page.context(), lane);
@@ -157,9 +246,9 @@ test.describe('the one IndexedDB wrapper (S6-4)', () => {
   test('a lost connection is opened once more; a second loss says to reopen the app', async ({ page, lane }) => {
     const phone = await FieldPhone.open(page.context(), lane);
     expect(await phone.call('tryRead', 'ds-wrapper-lost')).toBe('ok');
-    await phone.call('loseConnection', 1);
+    await phone.call('loseConnection', 1, 'ds-wrapper-lost');
     expect(await phone.call('tryRead', 'ds-wrapper-lost')).toBe('ok');
-    await phone.call('loseConnection', 2);
+    await phone.call('loseConnection', 2, 'ds-wrapper-lost');
     expect(await phone.call('tryRead', 'ds-wrapper-lost')).toBe('Reopen the app.');
   });
 });

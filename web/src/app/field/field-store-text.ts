@@ -19,6 +19,8 @@ export const NO_LOCK_TEXT =
   'DryScope needs an up-to-date browser to keep jobs on this phone safely. Update Safari or Chrome, or open DryScope from the icon on your Home Screen.';
 
 export const REOPEN_TITLE = 'Reopen the app';
+// The phone's storage lost its connection twice while the shell read the saved sign-in (S6-4).
+export const REOPEN_STORAGE_TEXT = 'This phone’s storage stopped answering. Close DryScope completely and open it again.';
 export const REOPEN_TEXT =
   'This phone’s storage did not answer, and it holds changes that have not been sent yet. Close DryScope completely and open it again. Nothing has been lost.';
 

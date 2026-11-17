@@ -5,7 +5,7 @@ import { appCheckSeam, fieldUser, settle, type FieldClient } from '@/lib/field-d
 import { meKey, readMe, updateMe, type DsMe } from './ds-me';
 import { meActor, sessionValid, SyncGate, type GateState, type MeAnswer, type MeFacts } from './sync-gate';
 import { evaluate, onWorkRemoved, pendingReason, type RetentionEvent } from './retention';
-import { reconcileJournal, reissueJournal } from './journal-sync';
+import { onJournalLost, reconcileJournal, reissueJournal } from './journal-sync';
 import { savedLock, savedReason } from './unsent';
 
 // Runs the sync gate for one person's started field client (S6-3), and does what each of its
@@ -64,6 +64,12 @@ export function runFieldSync(
     gate.stop();
     onEvent(removed ? { removed: true } : { reopen: true });
   });
+  // The recovery journal's storage lost its connection twice (S6-4): the shell asks for the app to be
+  // opened again, as for a cache that could not be cleared.
+  const stopLost = onJournalLost(client, () => {
+    gate.stop();
+    onEvent({ reopen: true });
+  });
   const gate: SyncGate = new SyncGate({
     async ask() {
       const newer = await readMe(person.tenantId, person.uid);
@@ -97,7 +103,10 @@ export function runFieldSync(
       if (tell({ kind: 'let-in', person }) !== 'unsaved') return true;
       return { kind: 'locked', reason: savedLock(person.tenantId, person.uid) ?? 'sign-in-again' };
     },
-    onStopped: stopWatching,
+    onStopped: () => {
+      stopWatching();
+      stopLost();
+    },
     startSuspended: typeof document !== 'undefined' && document.visibilityState === 'hidden',
     onState: apply,
   });
@@ -108,7 +117,7 @@ export function runFieldSync(
     if (shown.kind === 'open') {
       void settle(client).catch(() => undefined);
       // What became of the edits an earlier page left in the recovery journal (S6-4).
-      void reconcileJournal(client);
+      void reconcileJournal(client, shown.facts.role);
       void remember(row, shown.facts);
     }
   }

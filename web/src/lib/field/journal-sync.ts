@@ -27,6 +27,7 @@ import {
   type Owner,
   type ServerDoc,
 } from './journal';
+import { ReopenTheApp } from './idb';
 import { queueFieldEdit } from './local-edit';
 import { applyWrites, draftPath, type DraftRef } from './store';
 import { noteWrite } from './unsent';
@@ -46,6 +47,24 @@ const judgedHere = new Set<string>();
 // Per person, until judgedHere: every entry this page sent that the server has not refused, kept
 // after it is pruned, so a key this page wrote is never held against an earlier page's entry.
 const sentHere = new Map<string, JournalEntry[]>();
+// Per person, their role at the last online check that let them in (GET /api/me), which tells why
+// the rules refuse an edit (journal.ts draftRefusal).
+const roles = new Map<string, string>();
+// Per person, who to tell when the journal's storage lost its connection twice in work nobody
+// awaits (recovery, an answer being recorded): the field shell then says "Reopen the app".
+const lostHandlers = new Map<string, () => void>();
+
+export function onJournalLost(client: FieldClient, handler: () => void): () => void {
+  const key = personKey(ownerOf(client));
+  lostHandlers.set(key, handler);
+  return () => {
+    if (lostHandlers.get(key) === handler) lostHandlers.delete(key);
+  };
+}
+
+function lose(person: string, error: unknown): void {
+  if (error instanceof ReopenTheApp) lostHandlers.get(person)?.();
+}
 
 // The server's copy of a document; null when it did not answer (asked again on a later try).
 async function readServer(db: Firestore, path: string): Promise<ServerDoc | null> {
@@ -76,10 +95,10 @@ function follow(client: FieldClient, entry: JournalEntry, acknowledged: Promise<
         const kept = sentHere.get(person);
         if (kept) sentHere.set(person, kept.filter((sent) => sent !== entry));
         const draft = await readServer(client.db, entry.draftPath);
-        await rejectEntry(entry, (draft && draftRefusal(draft, entry.uid)) ?? 'refused');
+        await rejectEntry(entry, (draft && draftRefusal(draft, entry.uid, roles.get(person) ?? null)) ?? 'refused');
       },
     )
-    .catch(() => undefined)
+    .catch((error: unknown) => lose(person, error))
     .finally(() => followed.delete(key));
 }
 
@@ -90,7 +109,7 @@ async function send(client: FieldClient, ref: DraftRef, entry: JournalEntry): Pr
   const sent: { made?: Promise<void> } = {};
   try {
     const receipt = await queueFieldEdit(client, ref, (db) => (sent.made = applyWrites(db, entry.writes)));
-    void markReached(entry).catch(() => undefined);
+    void markReached(entry).catch((error: unknown) => lose(personKey(entry), error));
     follow(client, entry, receipt.acknowledged);
     return receipt;
   } catch (error) {
@@ -134,8 +153,9 @@ export function reissueJournal(client: FieldClient): Promise<void> {
         return;
       }
     }
-  })().catch(() => {
+  })().catch((error: unknown) => {
     reissues.delete(key);
+    lose(key, error);
   });
   reissues.set(key, run);
   return run;
@@ -147,10 +167,12 @@ const judging = new Map<string, Promise<void>>();
 // left pending. Waits for Firestore to send its queue, then reads each entry's documents and draft
 // from the server, and compares them with everything this page has sent up to then. An entry that
 // never reached Firestore is not judged (it is made again first), and one whose documents did not
-// all answer stays pending; the next opening of the gate on this page tries again.
-export function reconcileJournal(client: FieldClient): Promise<void> {
+// all answer stays pending; the next opening of the gate on this page tries again. `role` is the
+// person's role from the check that opened the gate.
+export function reconcileJournal(client: FieldClient, role: string | null = null): Promise<void> {
   const owner = ownerOf(client);
   const key = personKey(owner);
+  if (role) roles.set(key, role);
   if (client.cache !== 'persistent' || judgedHere.has(key)) return Promise.resolve();
   const found = judging.get(key);
   if (found) return found;
@@ -175,7 +197,7 @@ export function reconcileJournal(client: FieldClient): Promise<void> {
         if (answer) read.set(path, answer);
       }),
     );
-    const outcomes = judge(judged, sentHere.get(key) ?? [], read, read, owner.uid);
+    const outcomes = judge(judged, sentHere.get(key) ?? [], read, read, owner.uid, roles.get(key) ?? null);
     await Promise.all(
       judged.map((entry) => {
         const outcome = outcomes.get(entry.seq);
@@ -188,7 +210,7 @@ export function reconcileJournal(client: FieldClient): Promise<void> {
     if (outcomes.size === judged.length && judged.length === left.length) done();
     void settle(client).catch(() => undefined);
   })()
-    .catch(() => undefined)
+    .catch((error: unknown) => lose(key, error))
     .finally(() => judging.delete(key));
   judging.set(key, run);
   return run;

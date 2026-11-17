@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { judge, type DocWrite, type JournalEntry, type ServerDoc } from '@/lib/field/journal';
+import { draftRefusal, judge, type DocWrite, type JournalEntry, type ServerDoc } from '@/lib/field/journal';
 
 // What the recovery journal decides after a restart (S6-4; docs/plans/S6.md section 4, step 2):
 // only the newest entry per document and key is compared with the server.
@@ -12,9 +12,9 @@ function entry(writes: DocWrite[]): JournalEntry {
 }
 const notes = (value: string | null): DocWrite => ({ path: DRAFT, op: 'update', fields: { 'field.notes': value } });
 const editing = (field: Record<string, unknown>, more: Record<string, unknown> = {}): ServerDoc => ({ data: { state: 'editing', fieldOwnerUid: 'ana', field, ...more } });
-const run = (judged: JournalEntry[], docs: Record<string, ServerDoc>, newer: JournalEntry[] = []) => {
+const run = (judged: JournalEntry[], docs: Record<string, ServerDoc>, newer: JournalEntry[] = [], role: string | null = null) => {
   const map = new Map(Object.entries(docs));
-  return Object.fromEntries([...judge(judged, newer, map, map, 'ana')].map(([key, value]) => [key, value]));
+  return Object.fromEntries([...judge(judged, newer, map, map, 'ana', role)].map(([key, value]) => [key, value]));
 };
 
 describe('the journal after a restart', () => {
@@ -79,5 +79,30 @@ describe('the journal after a restart', () => {
   it('leaves out an entry whose documents did not all answer', () => {
     const one = entry([{ path: ROOM, op: 'update', fields: { 'field.name': 'Hall' } }]);
     expect(run([one], { [DRAFT]: editing({}) })).toEqual({});
+  });
+});
+
+// Why the rules refused, from the server's copy of the draft and the person's role at the last
+// online check that let them in (GET /api/me).
+describe('the refusal reason', () => {
+  it('is owner-changed when the field work moved: an estimator with current access can no longer read the draft', () => {
+    expect(draftRefusal({ denied: true }, 'ana', 'estimator')).toBe('owner-changed');
+    const one = entry([notes('mine')]);
+    expect(run([one], { [DRAFT]: { denied: true } }, [], 'estimator')).toEqual({ [one.seq]: { kind: 'rejected', reason: 'owner-changed' } });
+  });
+
+  it('stays no-access when no online check says the person still has access', () => {
+    expect(draftRefusal({ denied: true }, 'ana')).toBe('no-access');
+    // Owner and office read every draft of their company, so a refused read is not a move.
+    expect(draftRefusal({ denied: true }, 'ana', 'office')).toBe('no-access');
+  });
+
+  it('is role-changed when the role can still read the draft but no longer edit it, never changed', () => {
+    const draft = editing({ notes: 'before' });
+    expect(draftRefusal(draft, 'ana', 'office')).toBe('role-changed');
+    expect(draftRefusal(draft, 'ana', 'estimator')).toBeNull();
+    expect(draftRefusal(draft, 'ana', 'owner')).toBeNull();
+    const one = entry([notes('typed as an estimator')]);
+    expect(run([one], { [DRAFT]: draft }, [], 'office')).toEqual({ [one.seq]: { kind: 'rejected', reason: 'role-changed' } });
   });
 });

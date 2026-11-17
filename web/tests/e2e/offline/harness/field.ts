@@ -22,14 +22,15 @@ import { readUnsent, unsentKey, type LockReason } from '../../../../src/lib/fiel
 setLogLevel('silent');
 
 export type Person = { tenantId: string; uid: string; config: BrowserSignInConfig };
-type Running = { client: FieldClient; gate: SyncGate | null; states: GateState[]; removed: boolean };
+type Running = { client: FieldClient; gate: SyncGate | null; states: GateState[]; removed: boolean; reopen?: boolean };
 
 const running = new Map<string, Running>();
 const held: IDBDatabase[] = [];
 let lost = 0;
+let lostIn = '';
 const realTransaction = IDBDatabase.prototype.transaction;
 IDBDatabase.prototype.transaction = function (this: IDBDatabase, ...args: Parameters<IDBDatabase['transaction']>) {
-  if (lost > 0) {
+  if (lost > 0 && this.name === lostIn) {
     lost -= 1;
     throw new DOMException('Connection to Indexed Database server lost. Refresh the page to try again', 'UnknownError');
   }
@@ -122,10 +123,12 @@ const f = {
     entry.gate = runFieldSync(entry.client, savedRow(person, signedInDaysAgo), (event) => {
       if ('state' in event) entry.states.push(event.state);
       if ('removed' in event) entry.removed = true;
+      if ('reopen' in event) entry.reopen = true;
     });
   },
   gate(person: Pick<Person, 'tenantId' | 'uid'>): string {
     if (get(person).removed) return 'removed';
+    if (get(person).reopen) return 'reopen';
     const states = get(person).states;
     return states.at(-1)?.kind === 'locked' ? `locked: ${(states.at(-1) as { reason: string }).reason}` : (states.at(-1)?.kind ?? 'starting');
   },
@@ -203,9 +206,16 @@ const f = {
       };
     });
   },
-  // Safari's "Connection to Indexed Database server lost" from the next `times` transactions.
-  loseConnection(times: number): void {
+  // Safari's "Connection to Indexed Database server lost" from the next `times` transactions on
+  // the database `name` (only that one: Firestore's own databases are never touched).
+  loseConnection(times: number, name: string): void {
     lost = times;
+    lostIn = name;
+  },
+  // What the shell's start reads from ds-me: the newest row's (tenant/person), or its failure.
+  async latestMeAnswer(): Promise<string | null> {
+    const me = await readLatestMe();
+    return me === null || typeof me === 'string' ? me : `${me.tenantId}/${me.uid}`;
   },
   // One read through the wrapper: 'ok', or the error's message.
   async tryRead(name: string): Promise<string> {
@@ -252,11 +262,11 @@ const f = {
   },
   async latestMe(): Promise<string | null> {
     const me = await readLatestMe();
-    return me === null || me === 'unavailable' ? null : `${me.tenantId}/${me.uid}`;
+    return me === null || me === 'unavailable' || me === 'reopen' ? null : `${me.tenantId}/${me.uid}`;
   },
   async latestFacts(): Promise<Pick<DsMe, 'role' | 'companyId' | 'capabilities' | 'authTime'> | null> {
     const me = await readLatestMe();
-    if (me === null || me === 'unavailable') return null;
+    if (me === null || me === 'unavailable' || me === 'reopen') return null;
     return { role: me.role, companyId: me.companyId, capabilities: me.capabilities, authTime: me.authTime };
   },
 

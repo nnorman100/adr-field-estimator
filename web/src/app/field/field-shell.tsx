@@ -10,6 +10,7 @@ import { NotSavedBanner, OfflineBanner } from './banners';
 import { FieldApp } from './field-app';
 import { useReachable } from './connection';
 import { FieldStore, UnlessHidden, type FieldStorage } from './field-store';
+import { REOPEN_STORAGE_TEXT, REOPEN_TITLE } from './field-store-text';
 import { HomeScreenSheet, useFieldSurface } from './home-screen-sheet';
 
 // The field shell (S6-2): the one page every field screen lives in. The server renders nothing of
@@ -24,7 +25,9 @@ type Boot =
   // Nothing saved on this phone yet: the first visit needs a connection and a sign-in.
   | { kind: 'signed-out'; address: string | null }
   // The phone's storage cannot be opened at all.
-  | { kind: 'no-storage'; address: string | null };
+  | { kind: 'no-storage'; address: string | null }
+  // The phone's storage lost its connection twice (src/lib/field/idb.ts).
+  | { kind: 'reopen' };
 
 // The job screens ask the server who the person is as soon as they mount. A shell opened in a
 // page that is not shown (a background tab, a phone that restored it hidden) must ask nothing until
@@ -58,7 +61,8 @@ export function FieldShell() {
       void readLatestMe().then((me) => {
         if (!live) return;
         const address = rememberedSignInAddress();
-        if (me === 'unavailable') setBoot({ kind: 'no-storage', address });
+        if (me === 'reopen') setBoot({ kind: 'reopen' });
+        else if (me === 'unavailable') setBoot({ kind: 'no-storage', address });
         else if (me === null) setBoot({ kind: 'signed-out', address });
         else setBoot({ kind: 'ready', me });
       });
@@ -135,6 +139,12 @@ export function FieldShell() {
                 Go to sign in
               </a>
             ) : null}
+          </>
+        ) : null}
+        {boot.kind === 'reopen' ? (
+          <>
+            <h1 className="text-2xl font-semibold">{REOPEN_TITLE}</h1>
+            <p className="text-base">{REOPEN_STORAGE_TEXT}</p>
           </>
         ) : null}
         {boot.kind === 'ready' ? null : homeScreen}
