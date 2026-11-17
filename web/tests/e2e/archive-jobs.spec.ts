@@ -253,13 +253,17 @@ test('a job archived on another phone shows archived on the save that meets it, 
   await page.getByRole('link', { name: 'Customer and claim' }).click();
   await expect(page.getByLabel('Customer name')).toBeEditable();
   await page.getByLabel('Customer name').fill('Pat Typed');
-  // The owner archives it from another phone before the save is sent.
-  const archivedOne = await request.post(`${JOBS_BASE_URL}/api/jobs/${jobId}/archive`, {
-    headers: await bearer(company, company.people.owner!),
-    data: { revision: 1, changeId: randomUUID() },
+  // The owner archives it from another phone just as the save goes out, so the save is the request
+  // that meets the 410 (archived any earlier, another job call of this screen could meet it first).
+  const ownerHeaders = await bearer(company, company.people.owner!);
+  let archiveStatus = 0;
+  await page.route(`**/api/jobs/${jobId}/customer`, async (route) => {
+    const archivedOne = await request.post(`${JOBS_BASE_URL}/api/jobs/${jobId}/archive`, { headers: ownerHeaders, data: { revision: 1, changeId: randomUUID() } });
+    archiveStatus = archivedOne.status();
+    await route.continue();
   });
-  expect(archivedOne.status()).toBe(200);
   await page.getByRole('button', { name: 'Save customer' }).click();
+  await expect.poll(() => archiveStatus).toBe(200);
 
   await expect(page.getByRole('heading', { name: 'This job is archived' })).toBeVisible();
   await expect(page.getByLabel('Customer name')).toHaveValue('Pat Typed');
