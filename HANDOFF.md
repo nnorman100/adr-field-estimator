@@ -92,6 +92,7 @@ sweep off.
 - Never weaken a test, eval fixture, threshold or workflow; the Test guard blocks it.
 - Keep `index.html` and `public/index.html` identical.
 - Required docs (`README.md`, `CLAUDE.md`, `AGENTS.md`, this file, `docs/spec.md`,
-  `docs/ARCHITECTURE.md`, `docs/DECISIONS.md`, `docs/DATA.md`, `docs/RUNBOOK.md`, `docs/AI.md`)
+  `docs/ARCHITECTURE.md`, `docs/DECISIONS.md`, `docs/DATA.md`, `docs/RUNBOOK.md`, `docs/AI.md`,
+  `docs/plans/S8/lawyer-checklist.md`)
   must exist and hold text; `npm run lint` runs `scripts/check_required_docs.js` and fails
   otherwise.
