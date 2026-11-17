@@ -66,6 +66,13 @@ export function meFacts(body: unknown): { companyId: string; capabilities: strin
   return { companyId, capabilities: capabilities as string[] };
 }
 
+// The person's id in the company (`actor.id`) of a 200 from GET /api/me, as the field row keeps it;
+// nothing when the answer has none.
+export function meActor(body: unknown): { actorId: string } | Record<string, never> {
+  const actorId = field(field(body, 'actor'), 'id');
+  return typeof actorId === 'string' && actorId ? { actorId } : {};
+}
+
 // One answer of GET /api/me, judged. `now` is milliseconds since 1970.
 export function judgeMe(answer: MeAnswer, now: number): Verdict {
   if (answer.status === 0) return { kind: 'offline' };

@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { fieldUser } from '@/lib/field-db';
 import type { DsMe } from '@/lib/field/ds-me';
 import { pending } from '@/lib/field/pending';
-import { watchSignIn, type FieldSession } from '@/lib/field/session';
+import { sessionIdentity, watchSignIn, type FieldSession } from '@/lib/field/session';
 import { placeOf } from '@/lib/field/views';
 import { JobScreens } from './job-screens';
 import { JobsView } from './jobs-view';
@@ -21,10 +21,11 @@ export function FieldApp({ me }: { me: DsMe }) {
   const [lost, setLost] = useState(false);
   const user = field ? fieldUser(field.client.person) : null;
   const session = useMemo<FieldSession | null>(() => {
-    if (!field || !user || !field.me.companyId || !field.me.role || !field.me.actorId) return null;
+    const identity = field ? sessionIdentity(field.me) : null;
+    if (!field || !user || identity === null || identity === 'needs-check') return null;
     return {
       user, db: field.client.db, client: field.client,
-      companyId: field.me.companyId, actorId: field.me.actorId, role: field.me.role, capabilities: field.me.capabilities,
+      companyId: identity.companyId, actorId: identity.actorId, role: identity.role, capabilities: field.me.capabilities,
       online: field.online, offlineCapture: field.offlineCapture,
     };
   }, [field, user]);
@@ -40,7 +41,7 @@ export function FieldApp({ me }: { me: DsMe }) {
 
   if (!field) return <p role="status">The field database is not set up for this company yet.</p>;
   // A sign-in saved before the person's actor id was kept needs one online check to learn it.
-  if (!session && !lost && field.me.companyId && field.me.role && !field.me.actorId) {
+  if (!session && !lost && sessionIdentity(field.me) === 'needs-check') {
     return <p role="status">Open this app once with a signal to finish setting it up.</p>;
   }
   if (!session || lost) {

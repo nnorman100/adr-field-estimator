@@ -29,3 +29,14 @@ export function watchSignIn(saved: DsMe, uid: string, lost: () => void, ready?: 
     else ready?.();
   });
 }
+
+// What the job screens need of the person to start: company, role and actor id. A saved sign-in
+// written before the actor id was kept has the first two and not the third; it waits for one online
+// check ('needs-check'); anything less is not a sign-in the screens can use (null).
+export function sessionIdentity(me: { companyId: string | null; role: string | null; actorId: string | null }):
+  | { companyId: string; role: string; actorId: string }
+  | 'needs-check'
+  | null {
+  if (!me.companyId || !me.role) return null;
+  return me.actorId ? { companyId: me.companyId, role: me.role, actorId: me.actorId } : 'needs-check';
+}

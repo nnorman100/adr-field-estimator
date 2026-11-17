@@ -3,7 +3,7 @@ import { getIdTokenResult } from 'firebase/auth';
 import { callApi } from '@/lib/firebase-client';
 import { appCheckSeam, fieldUser, settle, type FieldClient } from '@/lib/field-db';
 import { meKey, readMe, updateMe, type DsMe } from './ds-me';
-import { sessionValid, SyncGate, type GateState, type MeAnswer, type MeFacts } from './sync-gate';
+import { meActor, sessionValid, SyncGate, type GateState, type MeAnswer, type MeFacts } from './sync-gate';
 import { evaluate, onWorkRemoved, pendingReason, type RetentionEvent } from './retention';
 import { savedLock, savedReason } from './unsent';
 
@@ -74,8 +74,7 @@ export function runFieldSync(
       if (!user) return { status: 401, body: { error: 'missing_token' } };
       const answer = await callApi(user, '/api/me');
       fromServer.add(answer);
-      const id = (answer.body as { actor?: { id?: unknown } } | null)?.actor?.id;
-      if (answer.status === 200 && typeof id === 'string' && id) actorId = id;
+      if (answer.status === 200) actorId = meActor(answer.body).actorId ?? actorId;
       return answer;
     },
     enableNetwork: () => enableNetwork(client.db),
