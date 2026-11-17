@@ -12,7 +12,7 @@ import { CustomerView } from './customer-view';
 import { PhotosView } from './photos-view';
 import { ScopeView } from './scope-view';
 import { CoordinationView } from './coordination-view';
-import { ArchivedNotice, JobActions } from './job-actions';
+import { archivalDone, ArchivedNotice, JobActions, type ArchivalAnswered } from './job-actions';
 import { StartFieldWork } from './start-field-work';
 import { FieldLink } from './ui';
 
@@ -236,6 +236,19 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     [refuse, jobId, session.user],
   );
 
+  // An archive or restore of this job was answered (S5b-2): the screens follow what it made of it.
+  const archivalAnswered: ArchivalAnswered = useCallback(
+    (kind, answer) => {
+      if (kind === 'archive') {
+        if (archivalDone(kind, answer)) setArchived(true);
+        return;
+      }
+      if (archivalDone(kind, answer)) setArchived(false);
+      void reloadJob();
+    },
+    [reloadJob],
+  );
+
   // The first read; each job is its own component (keyed by the parent).
   useEffect(() => {
     if (!session.online) return;
@@ -300,9 +313,17 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     if (movedState && draft && (draftAt ?? draftId)) pending.keepDraft(jobId, draft, (draftAt ?? draftId)!);
   }, [movedState, draft, draftAt, draftId, jobId]);
 
-  // An archived job (an old link, or archived here) shows only that it is archived: every job route
-  // answers it 410, and the field rules refuse every write to its draft.
-  if (archived) return <ArchivedNotice session={session} address={detail ? detail.job.propertyAddress || null : null} />;
+  // An archived job (an old link, or archived here) shows that it is archived: every job route answers
+  // it 410, and the field rules refuse every write to its draft. Screens of the job as read here stay,
+  // read only, with whatever the person changed and did not save.
+  if (archived && !detail) {
+    return (
+      <div className="flex flex-col gap-3">
+        <FieldLink to={{ view: 'jobs', list: null }}>Back to jobs</FieldLink>
+        <ArchivedNotice session={session} jobId={jobId} onAnswered={archivalAnswered} />
+      </div>
+    );
+  }
   if (!detail && (denial || (error && (!locator || !draft)))) {
     return (
       <div className="flex flex-col gap-2">
@@ -326,6 +347,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   const startable =
     session.capabilities.includes('scope') &&
     !moved &&
+    !archived &&
     detail !== null &&
     ((fieldWork === 'nobody' && detail.job.status === 'draft') || (ownerUnset && fieldWork === 'mine'));
 
@@ -344,7 +366,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     refuse,
     moved,
     editable:
-      !moved && !ownerUnset && draftAt === currentDraftId && draft !== null && canEditDraft(draft, session.user.uid, session.capabilities) && (session.online || session.offlineCapture),
+      !moved && !archived && !ownerUnset && draftAt === currentDraftId && draft !== null && canEditDraft(draft, session.user.uid, session.capabilities) && (session.online || session.offlineCapture),
     stale: draft !== null && draftError !== null,
   };
   const onDraftViews = view === 'scope' || view === 'photos';
@@ -360,6 +382,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
           </FieldLink>
         ))}
       </nav>
+      {archived ? <ArchivedNotice session={session} jobId={jobId} onAnswered={archivalAnswered} /> : null}
       {moved ? (
         <p role="alert" className="rounded-md bg-foreground/5 p-3 text-sm">
           {MOVED_TEXT}
@@ -367,7 +390,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       ) : null}
       {onDraftViews && startable && detail ? <StartFieldWork context={{ ...context, detail }} resume={ownerUnset && fieldWork === 'mine'} /> : null}
       {onDraftViews && !moved && !reader && fieldWork === 'other' ? <p className="rounded-md bg-foreground/5 p-3 text-sm">{OTHER_OWNS_TEXT}</p> : null}
-      {onDraftViews && draft !== null && !moved && !context.editable && !(fieldWork === 'other' && !reader) ? (
+      {onDraftViews && draft !== null && !moved && !archived && !context.editable && !(fieldWork === 'other' && !reader) ? (
         <p className="rounded-md bg-foreground/5 p-3 text-sm">
           Read only. Only the estimator who owns this job&rsquo;s field work changes it, while the job is being edited.
         </p>
@@ -401,7 +424,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
         )}
       </div>
       <div hidden={view !== 'coordination'}>{detail ? <CoordinationView job={{ ...context, detail }} open={view === 'coordination'} /> : null}</div>
-      {detail && !moved ? <JobActions job={{ ...context, detail }} onArchived={() => setArchived(true)} /> : null}
+      {detail && !moved && !archived ? <JobActions job={{ ...context, detail }} onAnswered={archivalAnswered} /> : null}
     </div>
   );
 }

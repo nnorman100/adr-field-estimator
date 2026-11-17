@@ -221,3 +221,75 @@ test('an estimator has no Archive, sees an archived job’s old link as archived
   expect(copies).toEqual([sent[0]!.id]);
   expect(await statusOf(signed)).toBe('signed');
 });
+
+test('archiving keeps what the owner typed and did not save on screen, read only', async ({ page, request }) => {
+  test.setTimeout(150_000);
+  const company = await seedCompany('archive-edits', { owner: 'owner' });
+  const owner = company.people.owner!;
+  await seedJob(request, company, owner, '9 Unsaved Way');
+
+  await signIn(page, company, owner);
+  await openJob(page, '9 Unsaved Way');
+  await expect(page.getByLabel('Year built')).toBeEditable();
+  await page.getByLabel('Year built').fill('1971');
+  await page.getByRole('button', { name: 'Archive job' }).click();
+  await page.getByRole('dialog', { name: 'Archive this job?' }).getByRole('button', { name: 'Archive job' }).click();
+
+  await expect(page.getByRole('heading', { name: 'This job is archived' })).toBeVisible();
+  await expect(page.getByLabel('Year built')).toHaveValue('1971');
+  await expect(page.getByLabel('Year built')).not.toBeEditable();
+  await expect(page.getByRole('button', { name: 'Archive job' })).toHaveCount(0);
+  await expectNoAxeViolations(page);
+});
+
+test('a restore whose field step did not get through is sent again from the jobs list once the job has left Archived drafts', async ({ page, request }) => {
+  test.setTimeout(150_000);
+  const company = await seedCompany('restore-retry', { owner: 'owner' });
+  const owner = company.people.owner!;
+  const jobId = await seedJob(request, company, owner, '17 Half Restored Road');
+  const archivedOne = await request.post(`${JOBS_BASE_URL}/api/jobs/${jobId}/archive`, {
+    headers: await bearer(company, owner),
+    data: { revision: 1, changeId: randomUUID() },
+  });
+  expect(archivedOne.status()).toBe(200);
+
+  // The first restore commits on the server, but its field step does not get through: the draft
+  // stays archived and the answer is 503 draft_unavailable.
+  const sent: { revision: number; changeId: string }[] = [];
+  let failing = true;
+  await page.route(`**/api/jobs/${jobId}/restore`, async (route) => {
+    sent.push(JSON.parse(route.request().postData() ?? '{}') as { revision: number; changeId: string });
+    if (!failing) return route.continue();
+    const draft = adminDb().doc(`companies/${company.id}/drafts/${await currentDraftOf(company.id, jobId)}`);
+    const before = (await draft.get()).data()!;
+    await route.fetch();
+    await draft.update({ state: before.state, archiveRevision: before.archiveRevision });
+    return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'draft_unavailable' }) });
+  });
+
+  await signIn(page, company, owner);
+  await main(page).getByRole('link', { name: 'Archived drafts' }).click();
+  const archived = page.getByRole('list', { name: 'Archived drafts' });
+  await archived.getByRole('listitem').filter({ hasText: '17 Half Restored Road' }).getByRole('button', { name: 'Restore' }).click();
+  await expect(archived.getByRole('button', { name: 'Try restoring again' })).toBeVisible();
+  expect(await statusOf(jobId)).toBe('draft');
+  expect(await draftStateOf(company, jobId)).toBe('archived');
+
+  // The job is back in the company list and no longer in Archived drafts: its restore is still there.
+  await main(page).getByRole('link', { name: 'Company jobs' }).click();
+  await expect(main(page).getByRole('link', { name: '17 Half Restored Road' })).toBeVisible();
+  await main(page).getByRole('link', { name: 'Archived drafts' }).click();
+  await expect(page.getByText('No archived drafts.')).toBeVisible();
+  const unfinished = page.getByRole('list', { name: 'Not finished' });
+  await expect(unfinished.getByText('17 Half Restored Road')).toBeVisible();
+  await expectNoSideways(page);
+  await expectNoAxeViolations(page);
+
+  failing = false;
+  await unfinished.getByRole('button', { name: 'Try restoring again' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Restored' })).toBeVisible();
+  await expect(unfinished).toHaveCount(0);
+  await expect.poll(() => draftStateOf(company, jobId)).toBe('editing');
+  expect(sent).toHaveLength(2);
+  expect(sent[1]).toEqual(sent[0]);
+});

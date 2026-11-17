@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { listJobs, type JobListItem } from '@/lib/field/api';
 import type { FieldSession } from '@/lib/field/session';
 import { defaultList, type JobsList } from '@/lib/field/views';
-import { ArchivedRow } from './job-actions';
+import { archivalDone, ArchivedRow, UnfinishedArchivals } from './job-actions';
 import { FieldLink } from './ui';
 
 const STATUS_NAMES: Record<string, string> = {
@@ -19,7 +19,8 @@ const TITLES: Record<JobsList, string> = { company: 'Company jobs', mine: 'My jo
 
 // Jobs (S5a-6): the company's jobs or the person's own, newest first, a page at a time (S5a-3's
 // GET /api/jobs). An estimator sees only their own jobs either way, so they get one list. The owner
-// also has Archived drafts (S5b-2), the only list that holds archived jobs, each with Restore.
+// also has Archived drafts (S5b-2), the only list that holds archived jobs, each with Restore, and on
+// every list the archives and restores of this page that did not finish, wherever their jobs now are.
 export function JobsView({ session, list }: { session: FieldSession; list: JobsList | null }) {
   const shown = list ?? defaultList(session.role);
   const seesCompany = session.role === 'owner' || session.role === 'office';
@@ -27,6 +28,8 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
   const archivedList = shown === 'archived';
   // The job restored last from Archived drafts, to open from here.
   const [restored, setRestored] = useState<{ id: string; address: string } | null>(null);
+  // Why an unfinished archive or restore sent again from here was refused.
+  const [refused, setRefused] = useState<string | null>(null);
   const [jobs, setJobs] = useState<JobListItem[] | null>(null);
   const [cursor, setCursor] = useState<string | null>(null);
   const [error, setError] = useState<{ message: string; from: string | null } | null>(null);
@@ -106,6 +109,22 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
         <p role="status" className="text-sm">
           Restored: it is back in the job lists.{' '}
           <FieldLink to={{ view: 'scope', jobId: restored.id }}>Open {restored.address}</FieldLink>
+        </p>
+      ) : null}
+      {seesArchived ? (
+        <UnfinishedArchivals
+          session={session}
+          shown={(jobId, kind) => archivedList && kind === 'restore' && (jobs ?? []).some((job) => job.id === jobId)}
+          onAnswered={(kind, answer) => {
+            setRefused(archivalDone(kind, answer) || answer.ok ? null : answer.message);
+            if (kind === 'restore' && answer.ok) setRestored({ id: answer.value.job.id, address: answer.value.job.propertyAddress || 'No address yet' });
+            more(null);
+          }}
+        />
+      ) : null}
+      {refused ? (
+        <p role="alert" className="text-sm font-medium text-red-800">
+          {refused}
         </p>
       ) : null}
       {jobs !== null && jobs.length === 0 ? <p>{archivedList ? 'No archived drafts.' : 'No jobs yet.'}</p> : null}

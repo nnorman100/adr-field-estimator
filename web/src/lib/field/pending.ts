@@ -10,6 +10,9 @@
 // - Photos: per job, each with its id and the very bytes sent.
 // - Copy a signed job (S5b-2): per signed job, the new job's and draft's ids, so a lost answer is
 //   sent again with the same ids and makes one draft.
+// - Archive and restore (S5b-2): per job, the change and its id while it has no answer or its field
+//   step did not get through (5xx), to send again from wherever the job is shown next, also once it
+//   has left the list it was sent from.
 //
 // A send in flight is marked here, not in the screen, so a screen opened again while it is on its
 // way cannot send it a second time; an answer settles only the request that still holds its slot.
@@ -58,6 +61,8 @@ export type CoordRequest =
   | { kind: 'notes'; revision: number; changeId: string; notes: string };
 export type PendingCoord = { key: string; at: string; done: string; request: CoordRequest; sending: boolean };
 export type PendingCopy = { id: string; draftId: string; sending: boolean };
+export type ArchivalKind = 'archive' | 'restore';
+export type PendingArchival = { kind: ArchivalKind; address: string; revision: number; changeId: string; sending: boolean };
 export type PendingPhoto = {
   id: string;
   bytes: Blob;
@@ -90,6 +95,8 @@ type State = {
   coord: Record<string, PendingCoord>;
   // By signed job: its copy sent and not answered yet.
   copies: Record<string, PendingCopy>;
+  // By job: its archive or restore not settled yet.
+  archivals: Record<string, PendingArchival>;
   // By job: how many coordination writes were answered, so a screen that read before knows to read again.
   coordSettled: Record<string, number>;
 };
@@ -108,6 +115,7 @@ const EMPTY = {
   moved: {},
   coord: {},
   copies: {},
+  archivals: {},
   coordSettled: {},
 };
 let state: State = { owner: null, ...EMPTY };
@@ -284,6 +292,22 @@ export const pending = {
     if (settlement === 'unanswered') copies[jobId] = { ...current, sending: false };
     else delete copies[jobId];
     change({ copies });
+    return true;
+  },
+  archivals: (): Record<string, PendingArchival> => state.archivals,
+  archival: (jobId: string): PendingArchival | null => state.archivals[jobId] ?? null,
+  setArchival(jobId: string, archival: PendingArchival) {
+    change({ archivals: { ...state.archivals, [jobId]: archival } });
+  },
+  // Ends the archive or restore `changeId` of a job if it still holds the slot: no answer keeps it to
+  // send again; an answer or a refusal frees it.
+  settleArchival(jobId: string, changeId: string, settlement: 'unanswered' | 'answered'): boolean {
+    const current = state.archivals[jobId];
+    if (current?.changeId !== changeId) return false;
+    const archivals = { ...state.archivals };
+    if (settlement === 'unanswered') archivals[jobId] = { ...current, sending: false };
+    else delete archivals[jobId];
+    change({ archivals });
     return true;
   },
   draftChanges: (jobId: string): number => state.draftChanges[jobId] ?? 0,
