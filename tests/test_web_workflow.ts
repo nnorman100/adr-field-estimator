@@ -145,9 +145,9 @@ describe('the e2e job', () => {
     return found[0];
   };
 
-  it('runs as a matrix of two shards, with the runner and 20-minute limit it had', () => {
+  it('runs as a matrix of four shards, with the runner and 20-minute limit it had', () => {
     const e2e = job();
-    expect(e2e.strategy.matrix.shard).toEqual([1, 2]);
+    expect(e2e.strategy.matrix.shard).toEqual([1, 2, 3, 4]);
     expect(e2e.strategy['fail-fast']).toBe(false);
     expect(e2e['timeout-minutes']).toBe(20);
     expect(e2e['runs-on']).toBe("${{ vars.CI_RUNNER || 'dryscope-linux' }}");
@@ -155,7 +155,7 @@ describe('the e2e job', () => {
 
   it('gives each shard its own slice of a total that is the matrix length', () => {
     const step = testStep();
-    expect(argv(step)).toEqual(['npm', 'run', 'test:e2e']);
+    expect(argv(step)).toEqual(['npm', 'run', 'test:e2e', '--', '--workers=2']);
     const total = job().strategy.matrix.shard.length;
     expect(step.env.E2E_SHARD).toBe(`\${{ matrix.shard }}/${total}`);
   });
