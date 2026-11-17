@@ -38,7 +38,8 @@ const claimOf = (detail: JobDetail): Values => ({ ...detail.claim, dateOfLoss: d
 // may save follows owner decision J3: the estimator who owns the field work, the owner and office,
 // while the job is unsigned; the server decides, and its refusal is shown.
 export function CustomerView({ job }: { job: CustomerJob }) {
-  const canSave = job.session.capabilities.some((key) => key === 'scope' || key === 'coordination');
+  // Read only once the field work moved away from this person: what they typed stays, unsaved (J5).
+  const canSave = job.session.capabilities.some((key) => key === 'scope' || key === 'coordination') && !job.moved;
   return (
     <div className="flex flex-col gap-4">
       <h3 className="sr-only">Customer and claim</h3>
@@ -158,9 +159,10 @@ function RecordForm({
       setNotice(`${title} saved.`);
       return;
     }
-    // Not this person's to see any more: every copy of the job goes. Changed elsewhere: read the job
-    // again; the person's edits stay on top of the new values.
-    if (answer.denied) pending.denyDetail(jobId, answer.message);
+    // Not this person's to see any more: every copy of the job goes, unless their field work is on
+    // this phone (J5), when it stays, read only. Changed elsewhere: read the job again; the person's
+    // edits stay on top of the new values.
+    if (answer.denied) job.refuse({ status: answer.status, message: answer.message });
     if (answer.stale) await job.reloadJob();
     if (!refused) setError(answer.message);
   }

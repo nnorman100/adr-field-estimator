@@ -167,7 +167,7 @@ const f = {
 
   // The saved sign-in rows (ds-me): the sign-in page's save, the field check's update, and which
   // (tenant/person) row the shell would start from.
-  saveMe: (person: Person, facts: Pick<DsMe, 'role' | 'companyId' | 'capabilities' | 'authTime'> = {}) => saveMe({ ...bareRow(person), ...facts }),
+  saveMe: (person: Person, facts: Pick<DsMe, 'role' | 'companyId' | 'capabilities' | 'actorId' | 'authTime'> = {}) => saveMe({ ...bareRow(person), ...facts }),
   updateMe: (person: Person) => updateMe(bareRow(person)),
   // Sets this phone's unsent-work mark for a person, as a past session would have left it.
   setMark(person: Pick<Person, 'tenantId' | 'uid'>, mark: Record<string, unknown>): void {

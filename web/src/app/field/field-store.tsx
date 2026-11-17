@@ -25,7 +25,9 @@ import * as text from './field-store-text';
 // nothing because the phone's storage failed (the memory fallback).
 export type FieldStorage = 'kept' | 'online-only' | 'not-saved';
 
-export type FieldMe = { companyId: string | null; role: string | null; capabilities: string[] };
+// `actorId` is null only for a saved sign-in written before it was kept; the job screens then wait for
+// one online check (field-app.tsx).
+export type FieldMe = { companyId: string | null; role: string | null; capabilities: string[]; actorId: string | null };
 export type FieldContextValue = { client: FieldClient; me: FieldMe; gate: GateState; online: boolean; offlineCapture: boolean };
 const FieldContext = createContext<FieldContextValue | null>(null);
 
@@ -326,8 +328,8 @@ export function FieldStore({
   }
   const fieldMe: FieldMe =
     gate.kind === 'open'
-      ? { companyId: gate.facts.companyId, role: gate.facts.role, capabilities: gate.facts.capabilities }
-      : { companyId: known.companyId ?? null, role: known.role ?? null, capabilities: known.capabilities ?? [] };
+      ? { companyId: gate.facts.companyId, role: gate.facts.role, capabilities: gate.facts.capabilities, actorId: gate.facts.actorId ?? known.actorId ?? null }
+      : { companyId: known.companyId ?? null, role: known.role ?? null, capabilities: known.capabilities ?? [], actorId: known.actorId ?? null };
   return (
     <FieldContext.Provider value={{ client: phase.client, me: fieldMe, gate, online: reachable && gate.kind === 'open', offlineCapture: offlineCaptureAllowed(surface) }}>
       <div role="status" className="flex flex-col gap-2">

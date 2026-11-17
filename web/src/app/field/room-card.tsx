@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import type { ScopeLists } from '@/lib/field/api';
 import { editsAfterSave, roomChanges, roomTypeChoice, ROOM_FIELDS, withEdits, type FormValues, type RoomLists } from '@/lib/field/forms';
@@ -85,6 +85,7 @@ export function RoomCard({
   lists,
   removing = false,
   onRemove,
+  onDirty,
 }: {
   job: JobContext;
   roomId: string;
@@ -94,11 +95,18 @@ export function RoomCard({
   // Another room is being added or removed.
   removing?: boolean;
   onRemove?: () => Promise<void>;
+  // Told whether the room has changes typed and not saved, so a room taken out of the job meanwhile
+  // is not taken off the screen with them (S5b-1, owner decision J5).
+  onDirty?: (roomId: string, dirty: boolean) => void;
 }) {
   // Only the boxes the person changed; the rest always show the room as last read.
   const [edits, setEdits] = useState<FormValues>({});
   const [listEdits, setListEdits] = useState<RoomLists>({});
   const values = withEdits(ROOM_FIELDS, stored, edits);
+  const dirty = Object.keys(edits).length > 0 || Object.keys(listEdits).length > 0;
+  useEffect(() => {
+    onDirty?.(roomId, dirty);
+  }, [onDirty, roomId, dirty]);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const { busy, error, notice, setError, setNotice, save: saveEdit } = useFieldEdit(job);
   const readOnly = !job.editable;

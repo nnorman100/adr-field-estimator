@@ -12,7 +12,7 @@ vi.mock('firebase/auth', () => ({
 }));
 vi.mock('@/lib/firebase-client', () => ({ companyAuth: () => ({}), callApi: vi.fn() }));
 
-const { watchSignIn } = await import('@/lib/field/session');
+const { sessionIdentity, watchSignIn } = await import('@/lib/field/session');
 
 describe('watching the sign-in', () => {
   it('calls lost when the person signs out or someone else signs in, and not for the same person', () => {
@@ -26,3 +26,19 @@ describe('watching the sign-in', () => {
     expect(lost).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('who the job screens start as (S5b-1)', () => {
+  it('starts with company, role and actor id, and never guesses an actor id', () => {
+    expect(sessionIdentity({ companyId: 'c', role: 'owner', actorId: 'a' })).toEqual({ companyId: 'c', role: 'owner', actorId: 'a' });
+  });
+
+  it('keeps a sign-in saved before the actor id was kept waiting for one online check', () => {
+    expect(sessionIdentity({ companyId: 'c', role: 'owner', actorId: null })).toBe('needs-check');
+  });
+
+  it('has nothing to start from without a company or role', () => {
+    expect(sessionIdentity({ companyId: null, role: 'owner', actorId: 'a' })).toBeNull();
+    expect(sessionIdentity({ companyId: 'c', role: null, actorId: 'a' })).toBeNull();
+  });
+});
+
