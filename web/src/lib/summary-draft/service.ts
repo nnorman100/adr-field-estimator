@@ -25,11 +25,14 @@ import {
 //      (a retry after a lost answer); one the ledger holds with no proposal, or for another job,
 //      person or feature, is refused, so a used id never runs a second model call (the boundary's
 //      fresh reservation closes the same gap for two requests sent at once);
-//   4. the job's current draft from the field database, which must be editing;
+//   4. the job's current draft from the field database, which must be editing, read with the
+//      walkthrough and voice notes under the job's lock, so a field owner transfer (made under the
+//      same lock) cannot let a former owner's request read the new owner's field work;
 //   5. the AI boundary (web/src/lib/ai/call.ts): quota, budget, Model Armor, model, Zod, price
 //      sentences stripped, then the summary's rules (./request.ts);
-//   6. the job and field ownership checked again under the job's lock, then the proposal stored in
-//      ai_results as `proposed`, under the boundary's call id.
+//   6. the job, field ownership and the draft checked again under the job's lock (Submit starts and
+//      fences under it), then the proposal stored in ai_results as `proposed`, under the boundary's
+//      call id.
 // The route never writes the draft: only the technician's accept does, through the field rules
 // (a later S7-6 slice). A refusal stores nothing.
 
@@ -190,6 +193,19 @@ async function spoken(
   };
 }
 
+// Submit has started on the draft or committed it: the draft is being submitted or is submitted.
+// Submit makes its row under the job's lock before it closes its fence on the draft.
+async function submitStarted(tx: CompanyTransaction, companyId: string, draftId: string): Promise<boolean> {
+  const found = rows(
+    await tx.execute(sql`
+      SELECT 1 FROM job_submissions
+      WHERE company_id = ${companyId}::uuid AND draft_id = ${draftId}::uuid AND status IN ('pending', 'committed')
+      LIMIT 1
+    `),
+  );
+  return found.length > 0;
+}
+
 // The job's saved customer name and property address: read only so the shared prompt builder can
 // remove them wherever a technician typed them (web/src/lib/ai/prompt-facts.ts), never sent.
 async function identityOf(tx: CompanyTransaction, companyId: string, job: JobRow): Promise<JobIdentity> {
@@ -206,31 +222,38 @@ export function summaryDraftService(db: Database, reader: SummaryDraftReader, bo
       const companyId = caller.companyId;
       type Before =
         | { replayed: SummaryProposal }
-        | { replayed: null; job: JobRow; identity: JobIdentity; said: Pick<SummaryFacts, 'walkthrough' | 'voiceNotes'> };
+        | {
+            replayed: null;
+            job: JobRow;
+            identity: JobIdentity;
+            said: Pick<SummaryFacts, 'walkthrough' | 'voiceNotes'>;
+            manifest: FieldManifest;
+          };
       const before = await withCompany(db, companyId, async (tx): Promise<Before> => {
-        const job = await jobAccess(tx, caller, jobId, ['audit'], { fieldWork: true });
+        const job = await jobAccess(tx, caller, jobId, ['audit'], { fieldWork: true, lock: true });
         if (caller.flags?.ai_summary !== true) throw new SummaryDraftRefused(aiRefusal('feature_off'));
         const prior = await priorCall(tx, companyId, callId);
         if (prior.ledger) return { replayed: replay(prior.result, caller, jobId) };
+        const read = await reader.read(companyId, job.currentDraftId);
+        if (read === null) throw new JobError('draft_unavailable');
+        if (read === 'too_many_rooms' || read === 'too_many_photos') throw new SummaryDraftError('draft_invalid');
+        if (read.state !== 'editing') throw new SummaryDraftError('draft_not_editing');
         return {
           replayed: null,
           job,
           identity: await identityOf(tx, companyId, job),
           said: await spoken(tx, companyId, job.id, job.currentDraftId),
+          manifest: read.manifest,
         };
       });
       if (before.replayed) return { created: false, result: before.replayed };
-      const { job, identity, said } = before;
+      const { job, identity, said, manifest } = before;
       const draftId = job.currentDraftId;
 
-      const read = await reader.read(companyId, draftId);
-      if (read === null) throw new JobError('draft_unavailable');
-      if (read === 'too_many_rooms' || read === 'too_many_photos') throw new SummaryDraftError('draft_invalid');
-      if (read.state !== 'editing') throw new SummaryDraftError('draft_not_editing');
       let facts: SummaryFacts;
       try {
         // Accepted meter readings arrive with field map v3 (S7-8); the draft holds none yet.
-        facts = summaryFacts(read.manifest, { ...said, meterReadings: [] });
+        facts = summaryFacts(manifest, { ...said, meterReadings: [] });
       } catch (error) {
         if (error instanceof SummaryFactsError) throw new SummaryDraftError('draft_invalid');
         throw error;
@@ -249,10 +272,12 @@ export function summaryDraftService(db: Database, reader: SummaryDraftReader, bo
       if (outcome.ok && outcome.promptVersion === null) throw new Error('summary draft prompt has no version');
 
       return withCompany(db, companyId, async (tx) => {
-        // The job and its field work are checked again under the job's lock: a transfer or archive
-        // while the model ran leaves the answer unstored and unsent.
+        // The job, its field work and its draft are checked again under the job's lock: a transfer,
+        // archive or Submit while the model ran leaves the answer unstored and unsent.
         const current = await jobAccess(tx, caller, jobId, ['audit'], { fieldWork: true, lock: true });
-        if (current.currentDraftId !== draftId) throw new SummaryDraftError('draft_not_editing');
+        if (current.currentDraftId !== draftId || (await submitStarted(tx, companyId, draftId))) {
+          throw new SummaryDraftError('draft_not_editing');
+        }
         if (!outcome.ok) {
           // The same id sent twice at once: the ledger let only the first reach the model; this one
           // answers its proposal once stored.

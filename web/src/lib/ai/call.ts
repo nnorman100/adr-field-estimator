@@ -341,9 +341,12 @@ export function createAiBoundary(deps: BoundaryDeps) {
           throw new Refused('not_ready');
         const parts = inputParts(entry, request);
         const at = now();
-        // 3. Per-user quota.
+        // 3. Per-user quota. A named call id skips this early count: its reservation settles a reused
+        // id first, then counts the quota in the same transaction, so a duplicate of a call that took
+        // the last one is answered as reused, not as over quota.
         const day = utcDay(at);
         if (
+          clientCallId === undefined &&
           !(await deps.quota.take({
             companyId: context.companyId,
             actorId: context.actorId,

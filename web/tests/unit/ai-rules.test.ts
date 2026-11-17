@@ -42,6 +42,23 @@ describe('price sentences', () => {
     );
   });
 
+  it('drops a bare amount after an abbreviation with the price words before it', () => {
+    expect(stripPriceSentences('Drying budget: approx.\n900.')).toBe('');
+    expect(stripPriceSentences('Drying budget is approx. 900. The hall is dry.')).toBe('The hall is dry.');
+  });
+
+  it('keeps a finding on the line before a price that has no end mark', () => {
+    expect(stripPriceSentences('Category 2 water in the kitchen\nDrying cost: $500.\nThe hall is dry.')).toBe(
+      'Category 2 water in the kitchen\nThe hall is dry.',
+    );
+    expect(stripPriceSentences('- Kitchen wet\n- Total 900\n- Hall dry')).toBe('- Kitchen wet\n- Hall dry');
+  });
+
+  it('treats an estimate with an amount as a price', () => {
+    expect(statesPrice('The drying estimate is 900.')).toBe(true);
+    expect(stripPriceSentences('The drying estimate is 900. Fans run three days.')).toBe('Fans run three days.');
+  });
+
   it('strips every string inside a structured output, keeping its shape', () => {
     const output = {
       summary: 'Category 2 water in the kitchen. The repair costs $4,000.',

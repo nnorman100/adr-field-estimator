@@ -5,6 +5,7 @@ import { createAiBoundary, type AiModelRequest } from '@/lib/ai/call';
 import summaryDraftText from '@/lib/ai/prompts/summary-draft';
 import { AI_REGISTRY } from '@/lib/ai/registry';
 import { parseAiConfig } from '@/lib/config';
+import type { JobIdentity } from '@/lib/ai/prompt-facts';
 import type { FieldManifest } from '@/lib/field/canonical';
 import {
   summaryDraftRequest,
@@ -204,10 +205,11 @@ describe('summary draft server rules, through the AI boundary', () => {
     expect(await advice(undefined)).toEqual([]);
   });
 
-  it('drops lead or asbestos testing advice from every field for a home built in 1978 or later', async () => {
+  it('drops lead or asbestos testing advice from every field unless the home is known to be built before 1978', async () => {
     const said = answer({
-      summary: 'Water affected the kitchen. Test for asbestos before removing the drywall. The hall is dry.',
-      suggestions: ['Take lead paint samples in the hall.', 'Move the contents first.', 'Wet drywall leads to mold.'],
+      summary:
+        'Water affected the kitchen. Test for asbestos before removing the drywall. A prior asbestos test was negative. The hall is dry.',
+      suggestions: ['Take lead paint samples in the hall.', 'Have the drywall checked for asbestos.', 'Move the contents first.', 'Wet drywall leads to mold.'],
       unpriced_work: ['Asbestos testing of the ceiling is requested but not in the scope.', 'Kitchen: toe kick removal.'],
     });
     const draft = async (yearBuilt: number | undefined) => {
@@ -215,17 +217,17 @@ describe('summary draft server rules, through the AI boundary', () => {
       if (!outcome.ok) throw new Error(outcome.refusal.code);
       return outcome.output;
     };
-    for (const year of [1978, 2004]) {
+    // 1978 or later, and a year not recorded: advice goes from all four fields; a finding stays.
+    for (const year of [1978, 2004, undefined]) {
       expect(await draft(year)).toEqual({
-        summary: 'Water affected the kitchen. The hall is dry.',
+        summary: 'Water affected the kitchen. A prior asbestos test was negative. The hall is dry.',
         suggestions: ['Move the contents first.', 'Wet drywall leads to mold.'],
         unpriced_work: ['Kitchen: toe kick removal.'],
         testing_advice: [],
       });
     }
-    // Before 1978 the advice stands wherever it is; with no year, only the testing advice field goes.
-    expect(await draft(1977)).toMatchObject({ summary: said.summary, suggestions: said.suggestions, unpriced_work: said.unpriced_work });
-    expect(await draft(undefined)).toEqual({ ...said, testing_advice: [] });
+    // Before 1978 the advice stands wherever it is.
+    expect(await draft(1977)).toEqual(said);
   });
 
   it('refuses an answer whose whole summary states prices, or that is not the summary shape', async () => {
@@ -241,37 +243,43 @@ describe('summary draft server rules, through the AI boundary', () => {
 });
 
 describe('the shared prompt builder', () => {
-  const identity = { customerName: 'Casey Planted', propertyAddress: '12 Synthetic Lane, Testville, CA 94000' };
+  const identity = { customerName: 'Casey Planted', propertyAddress: '12 Synthetic Lane, Unit 4, Testville, CA 94000' };
+  const sent = (notes: string, who: JobIdentity = identity) => summaryDraftRequest(summaryFacts(manifest({ notes }), NO_EXTRA), { identity: who }).facts!;
 
-  it('removes the saved customer name, each address part and coordinates from every string sent', () => {
+  it('removes the saved name, every spelling of the saved address, emails, phones and coordinates from every string sent', () => {
     const facts = summaryFacts(
       {
-        ...manifest({
-          notes: 'Casey said the main shutoff is at 12 synthetic  lane; pin 37.774929, -122.419416. Planted roses in Testville.',
-        }),
+        ...manifest({ notes: 'Mrs. Planted asked us to start at 12 synthetic  ln., #4; pin 37.774929, -122.419416.' }),
         rooms: [
-          { id: 'hall', field: { name: 'Hall', findings: 'Meter at 37°46\'29"N by the door.' } },
-          { id: 'kitchen', field: { name: 'Kitchen (Casey)', prepTasks: ['Call Casey Planted at CA 94000 office'] } },
+          { id: 'hall', field: { name: 'Hall', findings: 'Meter at 37°46\'29"N by the door; lat 37.77 lon -122.42.' } },
+          { id: 'kitchen', field: { name: "Casey Planted's kitchen", prepTasks: ['Call 555-0101 or casey@example.invalid at CA 94000 office'] } },
         ],
       },
-      { walkthrough: [{ speaker: 'technician', text: 'Gate code for Testville is at -122.4194' }], voiceNotes: ['Casey Planted owns it.'], meterReadings: [] },
+      { walkthrough: [{ speaker: 'technician', text: 'Gate code for Testville is at -122.4194' }], voiceNotes: ['Planted, Casey owns it.'], meterReadings: [] },
     );
     const text = summaryDraftRequest(facts, { identity }).facts!;
-    for (const planted of ['Casey', 'Planted', 'Synthetic', 'synthetic', 'Testville', '94000', '37.774929', '-122.419416', '-122.4194', '37°46']) {
+    for (const planted of ['Casey', 'Planted', 'ynthetic', 'Testville', '94000', '#4', '555-0101', 'example.invalid', '37.77', '122.4', '37°46']) {
       expect(text).not.toContain(planted);
     }
-    expect(text).toContain('[removed]');
-    // Measurements and words that merely contain a planted word are kept.
-    expect(text).toContain('main shutoff');
-    expect(text).toContain('roses');
     expect(text).toContain('"name":"Hall"');
-    expect(text).toContain('"name":"Kitchen ([removed])"');
+    expect(text).toContain('"name":"[removed] kitchen"');
   });
 
-  it('leaves words that only contain a planted part, and short numbers, alone', () => {
-    const facts = summaryFacts(manifest({ notes: 'Cascade dryer at 12.5% moisture; Canada geese outside.' }), NO_EXTRA);
-    const text = summaryDraftRequest(facts, { identity }).facts!;
-    expect(text).toContain('Cascade dryer at 12.5% moisture; Canada geese outside.');
+  it('catches the common spellings of the saved address', () => {
+    for (const variant of ['12 Synthetic Lane', '12 SYNTHETIC LN', '12 synthetic ln.', '#12 Synthetic Lane', 'Synthetic Ln', 'Unit 4', 'Apt. 4', 'Suite 4', '#4', 'testville', 'CA 94000', '94000']) {
+      expect({ variant, sent: sent(`Start at ${variant} today.`) }).toEqual({ variant, sent: expect.stringContaining('Start at [removed] today.') });
+    }
+  });
+
+  it('removes the full name, the surname with a title and possessives, never a name word standing alone', () => {
+    const hall = { customerName: 'Mary Hall', propertyAddress: '' };
+    const text = sent("Wet carpet in the hall. Mary Hall's dog was out; Mrs Hall and Hall, Mary agreed. Mary is the tenant.", hall);
+    expect(text).toContain('Wet carpet in the hall. [removed] dog was out; [removed] and [removed] agreed. Mary is the tenant.');
+  });
+
+  it('leaves measurements, temperatures and words that only contain a planted part alone', () => {
+    const text = sent('Cascade dryer at 12.5% moisture; readings 12.5, 13.2; room at 70°F; 3 air movers for 4 days; Canada geese.');
+    expect(text).toContain('Cascade dryer at 12.5% moisture; readings 12.5, 13.2; room at 70°F; 3 air movers for 4 days; Canada geese.');
   });
 });
 

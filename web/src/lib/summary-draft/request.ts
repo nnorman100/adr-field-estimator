@@ -105,24 +105,30 @@ export function summaryFactsText(facts: SummaryFacts, identity: JobIdentity = NO
   return `${rule}\nInspection evidence (JSON):\n${json}`;
 }
 
-// A sentence of lead or asbestos testing advice: it names asbestos or lead and a test, sample or
-// survey ("lead" as a word, so "leads to" or "mislead" do not count).
+// A sentence of lead or asbestos testing advice: it names asbestos or lead ("lead" as a word, so
+// "leads to" or "mislead" do not count) and a test, check, inspection, sample, survey or abatement
+// ("have the drywall checked for asbestos" is advice), and it is not a finding about a test already
+// done ("a prior asbestos test was negative", "no asbestos was found").
 const HAZARD = /\b(?:asbestos|lead)\b/i;
-const TESTING = /\b(?:test(?:s|ed|ing)?|sampl(?:e|es|ed|ing)|survey(?:s|ed)?|abatement)\b/i;
+const TESTING =
+  /\b(?:test(?:s|ed|ing)?|check(?:s|ed|ing)?|inspect(?:s|ed|ing|ion|ions)?|sampl(?:e|es|ed|ing)|survey(?:s|ed|ing)?|abatement)\b/i;
+const FINDING =
+  /\b(?:was|were|came back|tested|showed|found|returned|is|are)\s+(?:\w+\s+){0,3}?(?:negative|positive|clear|non-?detect(?:ed)?)\b|\b(?:prior|previous|earlier|existing|past)\s+(?:\w+\s+){0,2}?(?:tests?|testing|reports?|surveys?|results?|inspections?)\b|\bno\s+(?:asbestos|lead)\b(?:\s+\w+){0,4}?\s+(?:found|detected)\b/i;
 export function advisesTesting(sentence: string): boolean {
-  return HAZARD.test(sentence) && TESTING.test(sentence);
+  return HAZARD.test(sentence) && TESTING.test(sentence) && !FINDING.test(sentence);
 }
 
 const kept = (lines: readonly string[]) => lines.map((line) => line.trim()).filter((line) => line.length > 0);
 
-// The summary's own server rules, after the boundary's price rule: testing advice is kept only for a
-// home built before 1978 (none when the year is not recorded); for a home built in 1978 or later every
-// sentence of lead or asbestos testing advice is also dropped from the summary, suggestions and
-// unpriced work; and an item a rule emptied is dropped.
+// The summary's own server rules, after the boundary's price rule (S7-6: testing advice kept only
+// when the year built is before 1978; owner decisions of 2026-11-17). Lead and asbestos testing advice
+// stays only when the year built is known and before 1978. Otherwise (1978 or later, or not recorded)
+// the testing advice field is emptied and every advising sentence is dropped from the summary,
+// suggestions and unpriced work; a finding about a test already done stays. An item a rule emptied is
+// dropped.
 export function summaryRules(yearBuilt: number | undefined) {
   const before = yearBuilt !== undefined && yearBuilt < TESTING_YEAR;
-  const after = yearBuilt !== undefined && yearBuilt >= TESTING_YEAR;
-  const clean = (text: string) => (after ? stripSentences(text, advisesTesting) : text);
+  const clean = (text: string) => (before ? text : stripSentences(text, advisesTesting));
   return (output: SummaryDraftOutput): SummaryDraftOutput => ({
     summary: clean(output.summary).trim(),
     suggestions: kept(output.suggestions.map(clean)),

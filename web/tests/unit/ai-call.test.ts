@@ -256,6 +256,21 @@ describe('refusals', () => {
     expect(h.events).toEqual(['quota', 'log']);
   });
 
+  it('answers a named call id the ledger already holds as reused, even when the quota is used up', async () => {
+    const callId = '00000000-0000-4000-8000-0000000000c1';
+    const reused = harness({ quota: false, budget: { ok: false, reason: 'reused' } });
+    expect(await reused.boundary.call(context(), { ...summaryRequest, callId })).toMatchObject({
+      refusal: { code: 'call_reused' },
+    });
+    expect(reused.events).toEqual(['reserve', 'log']);
+    // A new named call over the quota is refused by the reservation's own count.
+    const over = harness({ quota: false, budget: { ok: false, reason: 'quota', retryAfterSeconds: 60 } });
+    expect(await over.boundary.call(context(), { ...summaryRequest, callId })).toMatchObject({
+      refusal: { code: 'quota', retryAfterSeconds: 60 },
+    });
+    expect(over.events).toEqual(['reserve', 'log']);
+  });
+
   it('refuses when the budget refuses, before Model Armor or the model', async () => {
     const h = harness({ budget: { ok: false, reason: 'daily' } });
     expect(await h.boundary.call(context(), summaryRequest)).toMatchObject({ refusal: { code: 'budget' } });

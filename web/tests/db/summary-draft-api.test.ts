@@ -22,6 +22,8 @@ const live = vi.hoisted(() => ({
   during: null as null | (() => Promise<void>),
   // Runs as the request reads the field draft, after its call id lookup and before the AI boundary.
   reading: null as null | (() => Promise<void>),
+  // Runs as the AI boundary reserves the call in the ledger, after the request's call id lookup.
+  reserving: null as null | (() => Promise<void>),
 }));
 vi.mock('@/lib/auth/services', () => ({
   identityServices: () => live.harness!.identity,
@@ -57,7 +59,13 @@ vi.mock('@/lib/summary-draft/services', async () => {
           },
         },
         quota: ledger,
-        budget: ledger,
+        budget: {
+          ...ledger,
+          reserve: async (request) => {
+            await live.reserving?.();
+            return ledger.reserve(request);
+          },
+        },
         log: (line) => live.logs.push(line),
       });
       const reader = fieldSummaryReader(live.harness!.field);
@@ -115,6 +123,7 @@ beforeEach(async () => {
   live.screened = [];
   live.during = null;
   live.reading = null;
+  live.reserving = null;
   // The switch on for both companies, so a refusal of B's owner is the job's, not the switch's.
   await h.admin`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${h.seed.a}, 'ai_summary', true), (${h.seed.b}, 'ai_summary', true)`;
 });
@@ -209,8 +218,8 @@ describe('POST /api/jobs/{jobId}/ai/summary-draft', () => {
     let second!: ReturnType<typeof draftSummary>;
     let resume!: () => void;
     const reserve = new Promise<void>((resolve) => (resume = resolve));
-    live.reading = async () => {
-      live.reading = null;
+    live.reserving = async () => {
+      live.reserving = null;
       live.during = async () => {
         live.during = null;
         resume();
@@ -240,6 +249,41 @@ describe('POST /api/jobs/{jobId}/ai/summary-draft', () => {
     expect(await results()).toEqual([]);
     live.during = null;
     expect(await draftSummary(ESTIMATOR_A, job.jobId, callId)).toMatchObject({ status: 403, body: { error: 'not_field_owner' } });
+  });
+
+  it('reads the field draft under the job lock, so a transfer waits and the new owner’s edit never reaches the model', async () => {
+    const job = await editingJob();
+    const edit = 'Ceiling stain found by the new field owner.';
+    let moved!: Promise<unknown>;
+    live.reading = async () => {
+      live.reading = null;
+      moved = h.admin`UPDATE jobs SET field_owner_actor_id = ${h.seed.ownerA.actor}, revision = revision + 1 WHERE id = ${job.jobId}`.then(() =>
+        h.field.put(h.seed.a, job.draftId, { rooms: [{ id: 'kitchen', field: { name: 'Kitchen', category: 2, floorSf: 120, findings: edit } }] }),
+      );
+      // The transfer waits for the request's lock; it is given a moment to go through if it can.
+      await Promise.race([moved, new Promise((resolve) => setTimeout(resolve, 250))]);
+    };
+    live.during = async () => {
+      await moved;
+    };
+    expect(await draftSummary(ESTIMATOR_A, job.jobId)).toMatchObject({ status: 403, body: { error: 'not_field_owner' } });
+    expect(live.requests).toHaveLength(1);
+    expect(JSON.stringify(live.requests)).not.toContain(edit);
+    expect(live.screened.join('\n')).not.toContain(edit);
+    expect(await results()).toEqual([]);
+  });
+
+  it('stores and answers nothing when Submit starts on the draft while the model runs', async () => {
+    const job = await editingJob();
+    live.during = async () => {
+      await h.admin`
+        INSERT INTO job_submissions (id, company_id, job_id, draft_id, epoch, kind, request_digest, expires_at, created_by_actor_id)
+        VALUES (${randomUUID()}, ${h.seed.a}, ${job.jobId}, ${job.draftId}, ${randomUUID()}, 'original', ${'a'.repeat(64)}, now() + interval '5 minutes', ${h.seed.estimatorA.actor})
+      `;
+    };
+    expect(await draftSummary(ESTIMATOR_A, job.jobId)).toMatchObject({ status: 409, body: { error: 'draft_not_editing' } });
+    expect(live.requests).toHaveLength(1);
+    expect(await results()).toEqual([]);
   });
 
   it('refuses a body over its limit without reading past it', async () => {
@@ -311,6 +355,45 @@ describe('POST /api/jobs/{jobId}/ai/summary-draft', () => {
     expect(live.requests).toEqual([]);
     expect(await ledger()).toEqual([]);
     expect(await results()).toEqual([]);
+  });
+
+  it('sends no spelling of the saved address or name, no email, phone or coordinates to Model Armor or the model', async () => {
+    const job = await editingJob();
+    // Each variant typed into the job notes, one request each; the saved address is "12 Synthetic
+    // Lane, Testville" and the customer "Casey Planted".
+    const variants = [
+      '12 Synthetic Lane',
+      '12 SYNTHETIC LN.',
+      '#12 synthetic ln',
+      'Synthetic Ln',
+      'testville',
+      'Casey Planted',
+      "Mr. Planted's",
+      'Planted, Casey',
+      'casey.p@example.invalid',
+      '(559) 555-0101',
+      '559.555.0101',
+      '+1 559 555 0101',
+      '555-0101',
+      'lat 37.77 lon -122.42',
+      'latitude: 37.774929',
+      '37.77, -122.42',
+      '37.7749 -122.4194',
+      '37°46\'29"N 122°25\'10"W',
+      '36.7N, 119.8W',
+    ];
+    for (const variant of variants) {
+      h.field.put(h.seed.a, job.draftId, { draft: { ...(job.manifest.draft as Record<string, unknown>), notes: `Owner note: ${variant} - start in the kitchen.` } });
+      const before = live.screened.length;
+      const { status } = await draftSummary(ESTIMATOR_A, job.jobId);
+      expect({ variant, status }).toEqual({ variant, status: 201 });
+      // The model request and the input Model Armor screened; then everything screened for this call.
+      const inputs = [JSON.stringify(live.requests.at(-1)), live.screened[before]!];
+      for (const payload of [...inputs, ...live.screened.slice(before)]) {
+        expect({ variant, leaked: payload.includes(variant) }).toEqual({ variant, leaked: false });
+      }
+      for (const input of inputs) expect(input).toMatch(/Owner note: \[removed\](?: \[removed\])* - start in the kitchen\./);
+    }
   });
 
   it('never lets a typed note carrying the saved address, customer name or coordinates reach the screen or the model', async () => {
