@@ -63,3 +63,7 @@ test:
     is the official gate. A scenario whose evidence is one of those CI suites is
     recorded as covered by that suite, not as inconclusive: do not escalate it or
     ask for a decision, and name the covering suite in the result.
+    Field, job and office screen scenarios are covered by the browser specs in
+    web/tests/e2e that CI's e2e jobs run: for each such scenario, name the spec
+    file and the test in it that exercises the scenario and record it as covered
+    by CI e2e; a scenario with no matching spec is reported as untested.
