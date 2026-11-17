@@ -172,6 +172,33 @@ describe('Back to editing', () => {
     expect(h.field.draft(h.seed.a, foreign)).toEqual(stored);
   });
 
+  // Security audit F1, across a release: the migration runs while the previous version still serves,
+  // and that version puts jobs on drafts and submits them without claiming them or writing their job
+  // id on the draft. Such a submitted draft is still no other job's, nor its own job's next draft.
+  it('refuses a submitted draft the previous version left unclaimed, to another job and to its own job', async () => {
+    const { jobId, draftId, manifest } = await submittedJob();
+    const second = randomUUID();
+    expect((await f.nextDraft(ESTIMATOR_A, jobId, { draftId: second, fromDraftId: draftId })).status).toBe(201);
+    await h.admin`DELETE FROM job_drafts WHERE job_id = ${jobId}`;
+    const key = `${h.seed.a}/${draftId}`;
+    h.drafts.jobOf.delete(key);
+    const stored = structuredClone(h.drafts.made.get(key));
+
+    const other = randomUUID();
+    const made = await json(jobsRoute.POST(request(ESTIMATOR_A2, '/api/jobs', { method: 'POST', body: { id: other, draftId } }), params({})));
+    expect(made).toMatchObject({ status: 409, body: { error: 'conflict' } });
+    expect(await h.admin`SELECT id FROM jobs WHERE id = ${other}`).toEqual([]);
+    expect(await h.admin`SELECT job_id FROM job_drafts WHERE draft_id = ${draftId}`).toEqual([]);
+    expect(h.drafts.made.get(key)).toEqual(stored);
+    expect(h.drafts.jobOf.has(key)).toBe(false);
+
+    h.field.put(h.seed.a, second, manifest);
+    expect((await f.submitShown(ESTIMATOR_A, jobId, second, manifest)).answer.status).toBe(201);
+    const before = await f.job(jobId);
+    expect(await f.nextDraft(ESTIMATOR_A, jobId, { draftId, fromDraftId: second })).toMatchObject({ status: 409, body: { error: 'conflict' } });
+    expect(await f.job(jobId)).toEqual(before);
+  });
+
   it('gives a new draft id to one of two jobs that claim it at once, and refuses the other (security audit F1)', async () => {
     const { jobId, draftId } = await submittedJob();
     const contested = randomUUID();

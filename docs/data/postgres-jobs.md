@@ -74,14 +74,20 @@ the read-only operator policy (an operator reads through `withOperator`; every w
 `0016_job_drafts` adds one table; nothing earlier changes. `job_drafts` claims each Firestore field draft id
 once per company for one job: `company_id`, `draft_id` (made on the phone), `job_id`, `created_at`, with the
 key on company and draft id. The server claims a draft id in the same transaction that puts a job on it (a
-new job, a copy, Back to editing), and a draft id already claimed, by another job or by an earlier draft of
-the same job, is 409 `conflict`. So no job takes another job's draft, even one that job submitted and moved
-on from. The first capture and the owner's move name the field owner only on the drafts the table gives the
-job (a current draft no job has claimed is claimed for the job then; one another job claimed is 409). The
+new job, a copy, Back to editing), after the job row, and a draft id already claimed, by another job or by
+an earlier draft of the same job, or named by any submission, is 409 `conflict`. So no job takes another
+job's draft, even one that job submitted and moved on from, including one the previous version (still
+serving while a release migrates) put a job on without claiming it. The first capture and the owner's move
+name the field owner only on the drafts the table gives the job and the drafts of its own submissions (a
+current draft no job has claimed is claimed for the job then; one another job claimed is 409). The
 runtime has `SELECT` and `INSERT` only, under forced row-level security with company policies and the
 read-only operator policy, so a claim never moves or goes away.
 
 The file fills the table from each job's current draft and the draft of each of its submissions, reading the
 jobs and submissions as their owner with row-level security unforced for that one transaction and forced again
-before it ends. A draft id that two jobs already name stops the file with an error and changes nothing: which
-job keeps it is the owner's decision, made before the file runs again. The table holds ids and times only.
+before it ends. Before the fill it checks the existing data (security audit F1, step 5) and stops, changing
+nothing, with an error naming each job by company and job id, when a draft id is named by more than one job,
+or when a job in status `draft` is on a draft that was already submitted (a committed submission of its
+current draft; Submit writes the Firestore draft's `submitted` state from that record, so the check reads
+the record in Postgres rather than Firestore). Which job keeps a draft, and how a stuck job moves on, are the
+owner's decisions, made before the file runs again. The table holds ids and times only.

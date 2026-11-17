@@ -446,7 +446,6 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
           // Only from the job's current draft: a second call with another new id is 409.
           if (job.currentDraftId !== input.fromDraftId) throw new SubmissionError('conflict');
           if (job.status !== 'submitted' || !source) throw new SubmissionError('not_submitted');
-          if (!(await claimDraft(tx, caller.companyId, jobId, input.draftId))) throw new SubmissionError('conflict');
           [next] = await tx
             .update(jobs)
             .set({
@@ -458,6 +457,7 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
             })
             .where(and(eq(jobs.companyId, caller.companyId), eq(jobs.id, jobId)))
             .returning();
+          if (!(await claimDraft(tx, caller.companyId, jobId, input.draftId))) throw new SubmissionError('conflict');
           await audit(tx, caller.companyId, caller.actorId, 'job_back_to_editing', jobId, { revision: next!.revision });
           changed = true;
         }

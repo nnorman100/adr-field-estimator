@@ -160,7 +160,19 @@ describe('migration 0016: the fill of existing jobs', () => {
       }
       return id;
     };
-    return { company: company!.id, job };
+    // Commits the job's submission of `draft`, as Submit does: pending first, then committed.
+    const commit = async (jobId: string, draft: string) => {
+      const id = randomUUID();
+      await admin`
+        INSERT INTO job_submissions (id, company_id, job_id, draft_id, epoch, kind, request_digest, expires_at, created_by_actor_id)
+        VALUES (${id}, ${company!.id}, ${jobId}, ${draft}, ${randomUUID()}, 'original', ${'c'.repeat(64)}, now() + interval '1 hour', ${actor!.id})
+      `;
+      await admin`
+        UPDATE job_submissions SET status = 'committed', snapshot_bytes = '\x7b7d'::bytea, snapshot_sha256 = encode(sha256('\x7b7d'::bytea), 'hex')
+        WHERE id = ${id}
+      `;
+    };
+    return { company: company!.id, job, commit };
   }
 
   it('claims every current and submitted draft of each job for that job, and keeps row-level security forced', async () => {
@@ -195,15 +207,52 @@ describe('migration 0016: the fill of existing jobs', () => {
   it('stops, changing nothing, when two jobs already name one draft id, so the owner decides which keeps it', async () => {
     const { admin, migratorUrl } = await upTo0015();
     try {
-      const { job } = await seedCompany(admin);
+      const { company, job } = await seedCompany(admin);
       const shared = randomUUID();
       // A job that moved on from `shared`, and a job put on it before the refusal of such an id.
-      await job(randomUUID(), [shared]);
-      await job(shared);
-      await expect(applyMigrations(migratorUrl, migrationsDirectory)).rejects.toThrow(/named by more than one job/);
+      const movedOn = await job(randomUUID(), [shared]);
+      const putOn = await job(shared);
+      const failed = await applyMigrations(migratorUrl, migrationsDirectory).then(
+        () => null,
+        (error: unknown) => String(error),
+      );
+      expect(failed).toMatch(/named by more than one job/);
+      // Both jobs are named, by company and job id, and no stuck job is.
+      for (const id of [movedOn, putOn]) expect(failed).toContain(`${company}/${id}`);
+      expect(failed).toMatch(/on a submitted draft: none/);
       expect(await admin`SELECT to_regclass('public.job_drafts')::text AS table`).toEqual([{ table: null }]);
       expect(await admin`SELECT count(*)::int AS n FROM migration_ledger WHERE id = '0016_job_drafts'`).toEqual([{ n: 0 }]);
       expect(await admin`SELECT relforcerowsecurity AS forced FROM pg_class WHERE relname = 'jobs'`).toEqual([{ forced: true }]);
+    } finally {
+      await admin.end({ timeout: 5 });
+    }
+  });
+
+  // Security audit F1, step 5: a job in status draft whose current draft was already submitted cannot
+  // be finished through the API; the owner settles it before the fill.
+  it('stops, changing nothing, when a job in status draft is on a draft already submitted, and names that job', async () => {
+    const { admin, migratorUrl } = await upTo0015();
+    try {
+      const { company, job, commit } = await seedCompany(admin);
+      const draft = randomUUID();
+      const stuck = await job(draft);
+      await commit(stuck, draft);
+      // A job that submitted its draft and moved on, and one still editing, are not stuck.
+      const earlier = randomUUID();
+      const fine = await job(randomUUID(), [earlier]);
+      await commit(fine, earlier);
+      const editing = await job(randomUUID());
+      expect(await admin`SELECT status FROM jobs WHERE id = ${stuck}`).toEqual([{ status: 'draft' }]);
+
+      const failed = await applyMigrations(migratorUrl, migrationsDirectory).then(
+        () => null,
+        (error: unknown) => String(error),
+      );
+      expect(failed).toMatch(new RegExp(`on a submitted draft: ${company}/${stuck}\\.`));
+      expect(failed).toMatch(/named by more than one job: none/);
+      for (const id of [fine, editing]) expect(failed).not.toContain(id);
+      expect(await admin`SELECT to_regclass('public.job_drafts')::text AS table`).toEqual([{ table: null }]);
+      expect(await admin`SELECT count(*)::int AS n FROM migration_ledger WHERE id = '0016_job_drafts'`).toEqual([{ n: 0 }]);
     } finally {
       await admin.end({ timeout: 5 });
     }

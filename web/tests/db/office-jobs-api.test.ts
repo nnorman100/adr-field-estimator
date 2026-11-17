@@ -556,6 +556,23 @@ describe('moving the field work (owner decision J5)', () => {
     expect(draftOf(draftId)).toEqual({ fieldOwnerUid: 'estimator-a2', fieldOwnerRevision: revision + 1 });
   });
 
+  // Security audit F1, across a release: drafts the previous version put the job on and submitted
+  // were never claimed; they are still the job's, and the new owner is named on them too.
+  it('names the new owner on an earlier draft the previous version left unclaimed', async () => {
+    const { id, draftId } = await claimedJob();
+    h.field.put(h.seed.a, draftId, MANIFEST);
+    expect((await submitDraft(ESTIMATOR_A, id, { id: randomUUID(), draftId, digest: await manifestDigest(MANIFEST) })).status).toBe(201);
+    const later = randomUUID();
+    expect((await nextDraft(ESTIMATOR_A, id, { draftId: later, fromDraftId: draftId })).status).toBe(201);
+    await h.admin`DELETE FROM job_drafts WHERE job_id = ${id}`;
+    h.drafts.jobOf.delete(`${h.seed.a}/${draftId}`);
+    const { revision } = (await coordination(OWNER_A, id)).body;
+    expect((await transfer(OWNER_A, id, { revision, changeId: randomUUID(), toActorId: estimatorA2 })).status).toBe(200);
+    expect(draftOf(later)).toEqual({ fieldOwnerUid: 'estimator-a2', fieldOwnerRevision: revision + 1 });
+    expect(draftOf(draftId)).toEqual({ fieldOwnerUid: 'estimator-a2', fieldOwnerRevision: revision + 1 });
+    expect(h.drafts.jobOf.get(`${h.seed.a}/${draftId}`)).toBe(id);
+  });
+
   it('stops a Submit whose field work moved to another person while it ran, and frees the draft for the new owner', async () => {
     const { id, draftId } = await claimedJob();
     h.field.put(h.seed.a, draftId, MANIFEST);

@@ -1,8 +1,8 @@
 import { and, asc, eq, isNull, sql } from 'drizzle-orm';
-import { actors, jobAssignments, jobCoordination, jobDrafts, jobs, memberships } from '@/db/schema';
+import { actors, jobAssignments, jobCoordination, jobDrafts, jobs, jobSubmissions, memberships } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
-import { claimDraft, hasAny, jobAccess, JobError, type JobCaller, type JobRow } from './access';
+import { hasAny, jobAccess, JobError, recordDraft, type JobCaller, type JobRow } from './access';
 import type { DraftStore } from './drafts';
 import { assignDigest, type AssignInput, type CoordinationInput, type TransferInput } from './schema';
 import { audit, CHECK_VIOLATION, detailOf, errorCode, type JobDetail } from './service';
@@ -163,7 +163,9 @@ async function uidOf(tx: CompanyTransaction, companyId: string, actorId: string)
 }
 
 // The job's drafts: each draft it has been on, then its current draft last, as job_drafts (0016)
-// claims them for the job, so a draft another job claimed is never among them (security audit F1).
+// claims them for the job, so a draft another job claimed is never among them (security audit F1),
+// with each draft one of its submissions was made from (the previous version, still serving while a
+// release migrates, submits drafts without claiming them; claimDraft refuses those to every job).
 // Every one of them names the job's field owner, so a person who no longer owns the field work
 // reads none of them (web/firestore.rules). The current draft is set last, so while any draft does
 // not name the owner yet, the current one does not either, and the job screens offer Start field
@@ -177,8 +179,14 @@ async function draftIdsOf(tx: CompanyTransaction, row: JobRow): Promise<string[]
     .from(jobDrafts)
     .where(and(eq(jobDrafts.companyId, row.companyId), eq(jobDrafts.jobId, row.id)))
     .orderBy(asc(jobDrafts.createdAt), asc(jobDrafts.draftId));
-  const ids = claimed.map((one) => one.draftId);
-  if (!ids.includes(row.currentDraftId) && !(await claimDraft(tx, row.companyId, row.id, row.currentDraftId))) throw new JobError('conflict');
+  const submitted = await tx
+    .selectDistinct({ draftId: jobSubmissions.draftId })
+    .from(jobSubmissions)
+    .where(and(eq(jobSubmissions.companyId, row.companyId), eq(jobSubmissions.jobId, row.id)));
+  const ids = [...new Set([...claimed, ...submitted].map((one) => one.draftId))];
+  if (!claimed.some((one) => one.draftId === row.currentDraftId) && !(await recordDraft(tx, row.companyId, row.id, row.currentDraftId))) {
+    throw new JobError('conflict');
+  }
   return [...ids.filter((id) => id !== row.currentDraftId), row.currentDraftId];
 }
 
