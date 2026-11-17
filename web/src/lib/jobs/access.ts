@@ -132,3 +132,18 @@ export async function jobAccess(
   if (options.customer && !seesEveryJob(caller) && !ownsFieldWork(caller, row)) throw new JobError('not_field_owner');
   return row;
 }
+
+// The job's row, locked, for a step that changes its field draft's state or makes one of its drafts
+// (S5b-2). Archive and restore set the draft's state under this lock from the row as it is then, and
+// Submit closes its fence under it, so each sees the others' field steps whole. `live` refuses an
+// archived job: a draft made after its job was archived would be open to the phone.
+export async function lockedJob(tx: CompanyTransaction, companyId: string, jobId: string, options: { live?: boolean } = {}): Promise<JobRow> {
+  const [row] = await tx
+    .select()
+    .from(jobs)
+    .where(and(eq(jobs.companyId, companyId), eq(jobs.id, jobId)))
+    .for('update');
+  if (!row) throw new JobError('not_found');
+  if (options.live && row.status === 'archived') throw new JobError('archived');
+  return row;
+}

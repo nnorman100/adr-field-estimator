@@ -2,7 +2,7 @@ import { and, asc, desc, eq, ne, or, sql, type SQL } from 'drizzle-orm';
 import { actors, auditEvents, jobAssignments, jobClaims, jobCustomers, jobs } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
-import { canSeeJob, hasAny, isOwnJob, jobAccess, JobError, seesEveryJob, type JobCaller, type JobRow } from './access';
+import { canSeeJob, hasAny, isOwnJob, jobAccess, JobError, lockedJob, seesEveryJob, type JobCaller, type JobRow } from './access';
 import type { DraftStore } from './drafts';
 import { createDigest, type ClaimInput, type CreateJobInput, type CustomerInput, type ListQuery } from './schema';
 
@@ -238,11 +238,15 @@ export function jobsService(db: Database, drafts: DraftStore): JobsService {
         return { created: inserted !== undefined, ownerUid, detail: await detailOf(tx, row) };
       });
       try {
-        await drafts.ensure(caller.companyId, input.draftId, made.ownerUid);
+        await inCompany(caller.companyId, async (tx) => {
+          await lockedJob(tx, caller.companyId, made.detail.job.id, { live: true });
+          await drafts.ensure(caller.companyId, input.draftId, made.ownerUid);
+        });
         await drafts.projectJob(caller.companyId, made.detail.job.id, {
           currentDraftId: made.detail.job.currentDraftId, revision: made.detail.job.revision,
         });
       } catch (error) {
+        if (error instanceof JobError) throw error;
         // Fixed text only: the SDK's message may quote a path.
         console.error('job draft unavailable', error instanceof Error ? error.name : 'unknown');
         throw new JobError('draft_unavailable');

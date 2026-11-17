@@ -4,7 +4,7 @@ import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant
 import type { Capability } from '@/lib/access';
 import type { FieldDoc } from '@/lib/field/canonical';
 import { snapshotManifest } from '@/lib/submissions/snapshot';
-import { canSeeJob, hasAny, jobAccess, JobError, type JobCaller, type JobRow } from './access';
+import { canSeeJob, hasAny, jobAccess, JobError, lockedJob, type JobCaller, type JobRow } from './access';
 import type { ArchiveStore } from './archive-store';
 import { copyDigest, type ArchiveInput, type CopyInput } from './schema';
 import { audit, CHECK_VIOLATION, detailOf, errorCode, type JobDetail, type JobView } from './service';
@@ -13,8 +13,10 @@ import { audit, CHECK_VIOLATION, detailOf, errorCode, type JobDetail, type JobVi
 // test or a duplicate): the job leaves every list but the owner's archived list, and every job route
 // answers it with 410; nothing of it is deleted. Restore puts it back as it was. Copy starts a new
 // draft from a signed job's scope. Each write is one Postgres transaction with one audit row (ids
-// and revisions only); the field draft follows, and the same request again repairs a field step
-// that did not get through (503 `draft_unavailable` until then).
+// and revisions only); the field draft follows, under the job's row lock, as the job is then (an
+// archive or restore that lands late never undoes a newer one). Any archive or restore the owner
+// sends again repairs a field step that did not get through (503 `draft_unavailable` until then),
+// even after the job changed since, when it is answered `archived` or `not_archived`.
 
 // The owner archives and restores (docs/access/roles.md); every role copies a signed job.
 const ARCHIVE: readonly Capability[] = ['jobs_archive'];
@@ -68,6 +70,10 @@ async function restoredStatus(tx: CompanyTransaction, row: JobRow): Promise<'dra
 
 const draftState = (status: JobRow['status']): 'editing' | 'submitted' => (status === 'draft' ? 'editing' : 'submitted');
 
+// The answers after which the job's field draft is still brought to its state: the job is already
+// as asked, by this request or another.
+const SETTLED = new Set(['archived', 'not_archived']);
+
 function jobView(detail: JobDetail): { job: JobView } {
   return { job: detail.job };
 }
@@ -110,10 +116,36 @@ export function archiveService(db: Database, store: ArchiveStore): ArchiveServic
     return actor?.uid ?? null;
   }
 
+  // The job's current draft brought to the job's state as Postgres holds it now, under the job's
+  // lock: `archived` while the job is, else out of `archived` to its status's state (a draft in any
+  // other state keeps it, restoreDraft). A draft not made yet has nothing to change: it is made only
+  // while its job is not archived (lockedJob).
+  async function settle(companyId: string, jobId: string): Promise<void> {
+    await inCompany(companyId, async (tx) => {
+      const row = await lockedJob(tx, companyId, jobId);
+      await field(() =>
+        row.status === 'archived'
+          ? store.archiveDraft(companyId, row.currentDraftId, row.revision)
+          : store.restoreDraft(companyId, row.currentDraftId, draftState(row.status), row.revision),
+      );
+    });
+  }
+
+  // The answer of an archive or restore, once the field draft is settled after it.
+  async function settled(companyId: string, jobId: string, decided: Promise<JobDetail>): Promise<{ job: JobView }> {
+    const outcome = await decided.catch((error: unknown) => {
+      if (error instanceof JobError && SETTLED.has(error.code)) return error;
+      throw error;
+    });
+    await settle(companyId, jobId);
+    if (outcome instanceof JobError) throw outcome;
+    return jobView(outcome);
+  }
+
   return {
     async archive(caller, jobId, input) {
       need(caller, ARCHIVE);
-      const detail = await inCompany(caller.companyId, async (tx) => {
+      const decided = inCompany(caller.companyId, async (tx) => {
         const row = await jobAccess(tx, caller, jobId, ARCHIVE, { lock: true, archived: true });
         if (row.status === 'archived') {
           // The same archive again (its answer was lost): the same answer, and its field step again.
@@ -139,18 +171,17 @@ export function archiveService(db: Database, store: ArchiveStore): ArchiveServic
         await audit(tx, caller, 'job_archived', row.id, { revision: next!.revision });
         return detailOf(tx, next!);
       });
-      // While a job is archived nothing changes its row, so its revision is the archive's.
-      await field(() => store.archiveDraft(caller.companyId, detail.job.currentDraftId, detail.job.revision));
-      return jobView(detail);
+      return settled(caller.companyId, jobId, decided);
     },
 
     async restore(caller, jobId, input) {
       need(caller, ARCHIVE);
-      const detail = await inCompany(caller.companyId, async (tx) => {
+      const decided = inCompany(caller.companyId, async (tx) => {
         const row = await jobAccess(tx, caller, jobId, ARCHIVE, { lock: true, archived: true });
         if (row.status !== 'archived') {
           // The same restore again: the same answer, and its field step again. Any later change to
-          // the job carries another change id (or none), so this is only ever the restore's retry.
+          // the job carries another change id (or none), so this is only ever the restore's retry;
+          // after one, it is answered `not_archived`, its field step still settled.
           if (row.lastChangeId === input.changeId) return detailOf(tx, row);
           throw new JobError('not_archived');
         }
@@ -170,12 +201,7 @@ export function archiveService(db: Database, store: ArchiveStore): ArchiveServic
         await audit(tx, caller, 'job_restored', row.id, { revision: next!.revision });
         return detailOf(tx, next!);
       });
-      // On a retry the job may have moved on since; a draft that is no longer archived keeps its
-      // state whatever revision this carries (restoreDraft), so a later Submit's fence is untouched.
-      await field(() =>
-        store.restoreDraft(caller.companyId, detail.job.currentDraftId, draftState(detail.job.status), detail.job.revision),
-      );
-      return jobView(detail);
+      return settled(caller.companyId, jobId, decided);
     },
 
     async copy(caller, sourceJobId, input) {
@@ -227,7 +253,10 @@ export function archiveService(db: Database, store: ArchiveStore): ArchiveServic
         }
         return { created: inserted !== undefined, ownerUid: await ownerUid(tx, row), field: copiedField(signed.bytes), detail: await detailOf(tx, row) };
       });
-      await field(() => store.createCopy(caller.companyId, input.draftId, made.ownerUid, made.field));
+      await inCompany(caller.companyId, async (tx) => {
+        await lockedJob(tx, caller.companyId, input.id, { live: true });
+        await field(() => store.createCopy(caller.companyId, input.draftId, made.ownerUid, made.field));
+      });
       await field(() =>
         store.projectJob(caller.companyId, made.detail.job.id, { currentDraftId: made.detail.job.currentDraftId, revision: made.detail.job.revision }),
       );

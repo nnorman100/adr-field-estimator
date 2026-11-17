@@ -22,7 +22,9 @@ export type ArchiveResult =
   // is changed.
   | 'same'
   | 'newer'
-  // No such draft (its job's create never reached the field database): nothing to change.
+  // No such draft (its job's create never reached the field database): nothing to change. A draft is
+  // made only under its job's lock while the job is not archived (lockedJob), so none is made open
+  // to the phone after its job's archive.
   | 'missing';
 
 export type ArchiveStore = JobProjectionStore & {

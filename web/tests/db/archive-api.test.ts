@@ -8,6 +8,7 @@ import { APP_DIR, MATRIX, routeModules, type RouteModule } from './isolation-mat
 import { newJob } from './job-harness';
 import { agreementOf, insertAgreement, newSubmission, seedEstimate, seedPin, seedSignature, seedSubmission, seedVersion } from './submission-harness';
 import { flow, json } from './submission-flow';
+import type { FakeField } from '../submissions/field-fake';
 import type { FakeClaims, Harness } from './team-harness';
 
 // S5b-2, archive, restore and copy, through the real route files as the runtime role against a real
@@ -46,6 +47,7 @@ const jobRoute = await import('@/app/api/jobs/[jobId]/route');
 const archiveRoute = await import('@/app/api/jobs/[jobId]/archive/route');
 const restoreRoute = await import('@/app/api/jobs/[jobId]/restore/route');
 const copyRoute = await import('@/app/api/jobs/[jobId]/copy/route');
+const customerRoute = await import('@/app/api/jobs/[jobId]/customer/route');
 const photoRoute = await import('@/app/api/jobs/[jobId]/photos/[photoId]/route');
 const submissionsRoute = await import('@/app/api/jobs/[jobId]/submissions/route');
 const draftsRoute = await import('@/app/api/jobs/[jobId]/drafts/route');
@@ -285,6 +287,91 @@ describe('copy', () => {
     expect(await copy(ESTIMATOR_A, unsigned, { id: randomUUID(), draftId: randomUUID() })).toEqual({ status: 409, body: { error: 'not_signed' } });
     // Office starts the copy with no field owner, as an office job.
     expect((await read(OFFICE_A, ids.id)).body).toMatchObject({ job: { fieldOwnerActorId: null } });
+  });
+});
+
+// Holds the next call of a field method at its start until `open`, which may come before the call.
+function hold(method: keyof FakeField['gate']): { arrived: Promise<void>; open: () => void } {
+  let open!: () => void;
+  const opened = new Promise<void>((resolve) => (open = resolve));
+  let arrive!: () => void;
+  const arrived = new Promise<void>((resolve) => (arrive = resolve));
+  h.field.gate[method] = async () => {
+    arrive();
+    await opened;
+  };
+  return { arrived, open };
+}
+
+// Waits for a step that may instead be waiting on a lock another held request has.
+const briefly = (step: Promise<unknown>) => Promise.race([step, new Promise((resolve) => setTimeout(resolve, 1000))]);
+
+describe('overlapping requests', () => {
+  it('leaves a copy archived when the owner archives it before its field draft is made', async () => {
+    const { jobId: source } = await signedJob();
+    const ids = { id: randomUUID(), draftId: randomUUID() };
+    const made = hold('createCopy');
+    const copying = copy(ESTIMATOR_A, source, ids);
+    await made.arrived;
+    const archiving = archive(OWNER_A, ids.id, change(1));
+    await briefly(archiving);
+    made.open();
+    expect((await copying).status).toBe(201);
+    expect((await archiving).status).toBe(200);
+    expect(h.field.draft(h.seed.a, ids.draftId)?.state).toBe('archived');
+  });
+
+  it('leaves the next draft version archived when the owner archives it before Back to editing makes it', async () => {
+    const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
+    expect((await f.submitShown(ESTIMATOR_A, jobId, draftId, manifest)).answer.status).toBe(201);
+    const next = randomUUID();
+    const made = hold('createFrom');
+    const editing = f.nextDraft(ESTIMATOR_A, jobId, { draftId: next, fromDraftId: draftId });
+    await made.arrived;
+    const archiving = archive(OWNER_A, jobId, change((await f.job(jobId)).revision));
+    await briefly(archiving);
+    made.open();
+    expect((await editing).status).toBe(201);
+    expect((await archiving).status).toBe(200);
+    expect(h.field.draft(h.seed.a, next)?.state).toBe('archived');
+  });
+
+  it('never leaves a submitted job’s draft open when an archive and a restore land after a Submit', async () => {
+    const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
+    const revision = (await f.job(jobId)).revision;
+    const archived = hold('archiveDraft');
+    const restored = hold('restoreDraft');
+    const marked = hold('markSubmitted');
+    const archiving = archive(OWNER_A, jobId, change(revision));
+    await archived.arrived;
+    const restoring = restore(OWNER_A, jobId, change(revision + 1));
+    await briefly(restored.arrived);
+    const submitting = f.submitShown(ESTIMATOR_A, jobId, draftId, manifest);
+    await briefly(marked.arrived);
+    archived.open();
+    expect((await archiving).status).toBe(200);
+    restored.open();
+    expect((await restoring).status).toBe(200);
+    marked.open();
+    await submitting;
+    // Whichever way the requests met, the draft holds the job's state and no marker is left unwritten.
+    const { status } = await f.job(jobId);
+    expect(h.field.draft(h.seed.a, draftId)?.state).toBe(status === 'submitted' ? 'submitted' : 'editing');
+    expect((await f.submissions(jobId)).filter((row) => row.marker_state === 'pending')).toEqual([]);
+  });
+
+  it('opens the field draft on the restore sent again after the job was saved meanwhile', async () => {
+    const { jobId, draftId } = await draftJob();
+    await archive(OWNER_A, jobId, change(1));
+    h.field.failNext.restoreDraft = true;
+    const once = change(2);
+    expect(await restore(OWNER_A, jobId, once)).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
+    expect(h.field.draft(h.seed.a, draftId)?.state).toBe('archived');
+    const customer = { ...change(3), name: 'Dana Field', phone: '555-0101', email: 'dana@example.test', propertyAddress: '2 Main St' };
+    const saved = await json(customerRoute.PUT(request(OWNER_A, `/api/jobs/${jobId}/customer`, { method: 'PUT', body: customer }), job(jobId)));
+    expect(saved.status).toBe(200);
+    expect(await restore(OWNER_A, jobId, once)).toEqual({ status: 409, body: { error: 'not_archived' } });
+    expect(h.field.draft(h.seed.a, draftId)).toMatchObject({ state: 'editing', archiveRevision: 4 });
   });
 });
 
