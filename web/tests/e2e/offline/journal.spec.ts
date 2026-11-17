@@ -209,6 +209,35 @@ test.describe('the recovery journal (S6-4)', () => {
     await context.close();
   });
 
+  test('another phone\'s save that lands after the next start read the server, before it makes an entry again, is never overwritten', async ({ browser, lane }) => {
+    const context = await browser.newContext();
+    const world = await seedCompany();
+    let phone = await FieldPhone.open(context, lane);
+    const person = await online(phone, world);
+    lane.cut(['auth', 'firestore']);
+    await phone.call('journalOnly', person, world.draftPath, { 'field.notes': 'A, typed on this phone' });
+    await phone.page.close({ runBeforeUnload: false });
+    lane.restore(['auth', 'firestore']);
+    // The gate's check answers at once; the next one (the start's check of the person's role, made
+    // after it read the draft from the server) answers only once the other phone has saved.
+    const me = { company: { id: 'company-field', name: 'Field Test' }, actor: { id: 'actor-field', displayName: null }, role: 'estimator', capabilities: ['scope'] };
+    let asked = 0;
+    lane.serve('/api/me', async () => {
+      asked += 1;
+      if (asked === 2) await adminDb().doc(world.draftPath).update({ 'field.notes': 'B, from the other phone' });
+      return { type: 'application/json', status: 200, body: JSON.stringify({ ...me, fieldAccessExpiresAt: inDays(7).toISOString() }) };
+    });
+
+    phone = await reopen(context, phone, person);
+    await expect.poll(() => phone.call('journal', person), { timeout: SEND_MS }).toEqual([
+      expect.objectContaining({ state: 'changed', writes: [expect.objectContaining({ fields: { 'field.notes': 'A, typed on this phone' } })] }),
+    ]);
+    expect(asked).toBeGreaterThanOrEqual(2);
+    await phone.page.waitForTimeout(3000);
+    expect((await readDraft(world)).field.notes).toBe('B, from the other phone');
+    await context.close();
+  });
+
   // Firstmate ruling R3 (2026-11-17): a write refused after the fence stays rejected: locked, even
   // when the server's value happens to match it.
   test('1 then 0 saved offline, the page killed and the job finished elsewhere: both are rejected as locked though the server still holds 0', async ({ browser, browserName, lane }) => {

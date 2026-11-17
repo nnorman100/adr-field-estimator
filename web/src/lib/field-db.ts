@@ -26,7 +26,7 @@ import { appCheckSettings, startAppCheck } from '@/lib/app-check-client';
 import type { BrowserSignInConfig } from '@/lib/config';
 import { companyAuth } from '@/lib/firebase-client';
 import { forgetUnsent, keepPhotosHere, mayHaveUnsent, noteWrite, settled, writesNow } from '@/lib/field/unsent';
-import { forgetJournal, readJournal } from '@/lib/field/journal';
+import { addingEntries, forgetJournal, readJournal } from '@/lib/field/journal';
 import type { AppCheckSeam } from '@/lib/field/sync-gate';
 import { whileNoFieldWindow } from '@/lib/field/window-lock';
 
@@ -203,13 +203,14 @@ export async function startFieldClient(
 
 // Clears the unsent mark once every write made so far has been acknowledged and the recovery
 // journal holds nothing of this person's (an entry waiting, refused or changed is work the server
-// does not have). Waits for as long as the network is off; harmless to call again.
+// does not have) and no entry is being added. Waits for as long as the network is off; harmless to
+// call again.
 export async function settle(client: FieldClient): Promise<void> {
   const { tenantId, uid } = client.person;
   const writes = writesNow(tenantId, uid);
   if (writes === null) return;
   await waitForPendingWrites(client.db);
-  if (client.cache === 'persistent' && typeof indexedDB !== 'undefined' && (await readJournal({ tenantId, uid })).length > 0) return;
+  if (client.cache === 'persistent' && typeof indexedDB !== 'undefined' && (addingEntries({ tenantId, uid }) || (await readJournal({ tenantId, uid })).length > 0)) return;
   settled(tenantId, uid, writes);
 }
 

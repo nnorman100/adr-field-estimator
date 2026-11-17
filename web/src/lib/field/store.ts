@@ -15,7 +15,10 @@ import {
   getDocFromCache,
   getDocsFromCache,
   writeBatch,
+  type DocumentData,
+  type DocumentReference,
   type Firestore,
+  type UpdateData,
 } from 'firebase/firestore';
 import { answerMessage, type Refusal } from './api';
 import type { FieldChanges } from './forms';
@@ -174,17 +177,28 @@ export function photoRefWrites(ref: DraftRef, photoId: string, field: PhotoField
   return [{ path: `${draftPath(ref)}/photos/${photoId}`, op: 'set', data: { field } }];
 }
 
-// Makes the writes, absolute values only, in one batch: all of them land or none. A null in an
-// update removes that key.
+type Writer = {
+  set(ref: DocumentReference, data: DocumentData): unknown;
+  update(ref: DocumentReference, data: UpdateData<DocumentData>): unknown;
+  delete(ref: DocumentReference): unknown;
+};
+
+// Adds the writes, absolute values only, to a batch or a transaction. A null in an update removes
+// that key.
+export function stageWrites(db: Firestore, writer: Writer, writes: readonly DocWrite[]): void {
+  for (const write of writes) {
+    const target = doc(db, write.path);
+    if (write.op === 'delete') writer.delete(target);
+    else if (write.op === 'set') writer.set(target, write.data);
+    else writer.update(target, Object.fromEntries(Object.entries(write.fields).map(([key, value]) => [key, value === null ? deleteField() : value])));
+  }
+}
+
+// Makes the writes in one batch: all of them land or none.
 export async function applyWrites(db: Firestore, writes: readonly DocWrite[]): Promise<void> {
   if (writes.length === 0) return;
   const batch = writeBatch(db);
-  for (const write of writes) {
-    const target = doc(db, write.path);
-    if (write.op === 'delete') batch.delete(target);
-    else if (write.op === 'set') batch.set(target, write.data);
-    else batch.update(target, Object.fromEntries(Object.entries(write.fields).map(([key, value]) => [key, value === null ? deleteField() : value])));
-  }
+  stageWrites(db, batch, writes);
   await batch.commit();
 }
 

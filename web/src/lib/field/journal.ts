@@ -88,6 +88,26 @@ function within<T>(promise: Promise<T>, ms: number): Promise<T | 'timeout'> {
 
 const ownerRange = (owner: Owner) => IDBKeyRange.only([owner.tenantId, owner.uid]);
 
+// Per (tenant, person), the edits between their unsent mark and their entry's commit: the journal
+// read now may not hold their entries yet, so field-db.ts settle() leaves the mark while any is.
+const adding = new Map<string, number>();
+const ownerKey = (owner: Owner) => `${owner.tenantId}/${owner.uid}`;
+
+export const addingEntries = (owner: Owner): boolean => (adding.get(ownerKey(owner)) ?? 0) > 0;
+
+// Runs `work` (the unsent mark, then appendEntry) as one edit being added for `owner`.
+export async function whileAdding<T>(owner: Owner, work: () => Promise<T>): Promise<T> {
+  const key = ownerKey(owner);
+  adding.set(key, (adding.get(key) ?? 0) + 1);
+  try {
+    return await work();
+  } finally {
+    const left = (adding.get(key) ?? 1) - 1;
+    if (left > 0) adding.set(key, left);
+    else adding.delete(key);
+  }
+}
+
 // Adds an entry, state pending, and answers it once the transaction has committed. Throws
 // JournalNotSaved when it could not be saved in time: the transaction is aborted, and an open that
 // answers later starts none. Only a commit already under way when the time ran out is removed again.
@@ -198,6 +218,15 @@ function changedSince(doc: ServerDoc, base: number | null | undefined): boolean 
   return base === null || doc.updateTime > base;
 }
 
+// Whether the server has changed none of the entry's documents since it was made, given its copies
+// of them (by path). False when one was not read or that cannot be told.
+export function untouchedSince(entry: JournalEntry, docs: ReadonlyMap<string, ServerDoc>): boolean {
+  return [...new Set(entry.writes.map((write) => write.path))].every((path) => {
+    const doc = docs.get(path);
+    return doc !== undefined && changedSince(doc, entry.bases?.[path]) === false;
+  });
+}
+
 // What one write expects the server to hold, by key: '' is whether the document exists; a dotted
 // key is one value (undefined: no such key).
 function expectations(write: DocWrite): [string, unknown][] {
@@ -303,12 +332,10 @@ export function judge(
         if (!holds(docs.get(latest.path)!, latest.key, latest.expected)) held = false;
       }
     }
-    const paths = [...new Set(entry.writes.map((write) => write.path))];
-    const since = (path: string) => changedSince(docs.get(path)!, entry.bases?.[path]);
     const reason = draftRefusal(draft, uid, role);
     if (reason) outcomes.set(entry.seq, { kind: 'rejected', reason });
     else if (held) outcomes.set(entry.seq, { kind: 'acked' });
-    else outcomes.set(entry.seq, !overtaken && paths.every((path) => since(path) === false) ? { kind: 'reissue' } : { kind: 'changed' });
+    else outcomes.set(entry.seq, !overtaken && untouchedSince(entry, docs) ? { kind: 'reissue' } : { kind: 'changed' });
   }
   return outcomes;
 }
