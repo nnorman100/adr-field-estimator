@@ -146,6 +146,30 @@ describe('app root, test: in-place changes in a re-apply', () => {
     expect(check(plan, 'app', environment)).toEqual([`${SERVICE}: ${REFUSED}`]);
   });
 
+  // S8-2: the web app's maximum instances move to what the database connection budget fits.
+  test('the web app may move its maximum instances in place to the budget value, 3 to 1', () => {
+    const plan = applied('app', environment);
+    const rc = find(plan, SERVICE);
+    rc.change.before.template[0].scaling[0].max_instance_count = 3;
+    rc.change.actions = ['update'];
+    expect(check(plan, 'app', environment)).toEqual([]);
+  });
+
+  test('a move of the web app to any other maximum is refused', () => {
+    const plan = applied('app', environment);
+    const rc = find(plan, SERVICE);
+    rc.change.before.template[0].scaling[0].max_instance_count = 3;
+    update(rc, (after) => (after.template[0].scaling[0].max_instance_count = 2));
+    expect(check(plan, 'app', environment)).toEqual([`${SERVICE}: ${REFUSED}`]);
+  });
+
+  test("the relay's maximum instances may not change in place", () => {
+    const plan = applied('app', environment);
+    const relay = 'google_cloud_run_v2_service.svc["live"]';
+    update(find(plan, relay), (after) => (after.template[0].scaling[0].max_instance_count = 1));
+    expect(check(plan, 'app', environment)).toEqual([`${relay}: ${REFUSED}`]);
+  });
+
   test('clearing the release revision name, so Cloud Run makes a fresh revision, passes', () => {
     const plan = applied('app', environment);
     const rc = find(plan, SERVICE);

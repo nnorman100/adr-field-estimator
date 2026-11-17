@@ -253,8 +253,8 @@ jobs:
     needs: [build, migrate]
     if: needs.build.outputs.service_ready == 'true'
     runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
-    # Up to 15 minutes of that is the drain wait before staging.
-    timeout-minutes: 30
+    # Up to 30 minutes of that is the drain wait before staging (two waits at most).
+    timeout-minutes: 45
     environment: test
     permissions:
       contents: read
@@ -305,18 +305,27 @@ jobs:
       # last changed, by its own updateTime (Cloud Run Admin API v2, run.services.get): the last
       # traffic move, by a release, a rollback or by hand. web/scripts/release-drain.ts. Reading
       # the actual instance counts needs a monitoring read the deploy account lacks (a later owner
-      # choice). The token goes to curl on stdin, never in a setting or an argument.
+      # choice). It reads again after each wait: a rollback or a move by hand during the wait starts
+      # the 15 minutes again. Two waits at most, then it stops. The token goes to curl on stdin,
+      # never in a setting or an argument.
       - id: drain
         name: Wait for revisions without traffic to drain
         run: |
-          if ! service=$(gcloud auth print-access-token | sed 's/^/Authorization: Bearer /' \
-            | curl -fsS --retry 3 -H @- "https://run.googleapis.com/v2/projects/$PROJECT/locations/$REGION/services/$SERVICE") \
-            || ! wait=$(node web/scripts/release-drain.ts <<<"$service"); then
-            echo "::error::Could not read when $SERVICE last changed, so the drain wait cannot be timed; traffic did not move."
-            exit 1
-          fi
-          echo "Drain wait before staging: ${wait}s" >> "$GITHUB_STEP_SUMMARY"
-          sleep "$wait"
+          for attempt in 1 2 3; do
+            if ! service=$(gcloud auth print-access-token | sed 's/^/Authorization: Bearer /' \
+              | curl -fsS --retry 3 -H @- "https://run.googleapis.com/v2/projects/$PROJECT/locations/$REGION/services/$SERVICE") \
+              || ! wait=$(node web/scripts/release-drain.ts <<<"$service"); then
+              echo "::error::Could not read when $SERVICE last changed, so the drain wait cannot be timed; traffic did not move."
+              exit 1
+            fi
+            if [ "$wait" -eq 0 ]; then break; fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::$SERVICE changed again during each drain wait; traffic did not move. Release again once it has been left alone for 15 minutes."
+              exit 1
+            fi
+            echo "Drain wait before staging: ${wait}s" >> "$GITHUB_STEP_SUMMARY"
+            sleep "$wait"
+          done
       # Remember who serves now, so a failure after the traffic move can put it back exactly.
       - id: before
         run: |
