@@ -90,6 +90,46 @@ it('subtracts', () => {
 });
 `;
 
+const TF_TEST = `run "plans_one_bucket" {
+  command = plan
+
+  assert {
+    condition     = length(google_storage_bucket.b) == 1
+    error_message = "one bucket"
+  }
+}
+
+run "keeps_versions" {
+  command = plan
+
+  assert {
+    condition     = google_storage_bucket.b[0].versioning[0].enabled
+    error_message = "versioning on"
+  }
+}
+`;
+
+const WEB_PACKAGE = `${JSON.stringify(
+  {
+    name: 'web',
+    scripts: {
+      build: 'next build',
+      test: 'vitest run',
+      'test:db': 'vitest run --config vitest.db.config.ts',
+      'test:e2e': 'playwright test',
+    },
+    devDependencies: { vitest: '4.0.0' },
+  },
+  null,
+  2,
+)}\n`;
+
+const ROOT_PACKAGE = `${JSON.stringify(
+  { scripts: { test: 'node --test tests/test_a.js && vitest run' } },
+  null,
+  2,
+)}\n`;
+
 const BASE_FILES: Record<string, string> = {
   '.github/test-guard.json': CONFIG,
   '.github/workflows/ci.yml': CI,
@@ -107,6 +147,17 @@ const BASE_FILES: Record<string, string> = {
   'tests/test_slow.py': `def test_fast():\n    assert True\n\n\n${PY_SKIP}\ndef test_slow():\n    assert False\n`,
   'tests/fixtures/answer.json': '{"total": "100.00"}\n',
   'tests/golden/proposal.txt': 'Total: 100.00\n',
+  'package.json': ROOT_PACKAGE,
+  'web/package.json': WEB_PACKAGE,
+  'web/vitest.config.ts': "export default { test: { include: ['tests/unit/**'] } };\n",
+  'web/vitest.db.config.ts': "export default { test: { include: ['tests/db/**'] } };\n",
+  'web/playwright.config.ts': 'export default { retries: 0 };\n',
+  'web/tests/unit/x.test.ts': JS_TEST,
+  'web/tests/e2e/jobs.spec.ts': JS_TEST,
+  'web/tests/ai-evals/stored/summary.jsonl': '{"id":"job-1","summary":"Kitchen dried."}\n',
+  'web/tests/ai-evals/data/summary-jobs.jsonl': '{"id":"job-1","rooms":["Kitchen"]}\n',
+  'infra/dryscope/app/tests/app.tftest.hcl': TF_TEST,
+  'infra/dryscope/app/guards/guards.tftest.hcl': TF_TEST,
   'docs/README.md': '# Docs\n',
   'src/app.js': 'export const x = 1;\n',
 };
@@ -409,6 +460,108 @@ const NEEDS_LABEL: [string, Change, string][] = [
     ci('permissions:\n  contents: read', 'permissions: &p\n  contents: read'),
     "could not read the workflow's structure",
   ],
+  // The rebuilt app's tests (web/), runner configs and test scripts, and Terraform tests.
+  [
+    'deleting a web unit test file',
+    (r) => r.remove('web/tests/unit/x.test.ts'),
+    'Test file deleted',
+  ],
+  [
+    'moving a web test file out of the test folders',
+    (r) => r.move('web/tests/e2e/jobs.spec.ts', 'web/old/jobs.spec.ts'),
+    'moved out of the test folders',
+  ],
+  [
+    'removing a test from a web browser spec',
+    (r) =>
+      r.edit(
+        'web/tests/e2e/jobs.spec.ts',
+        "it('adds', () => {\n  expect(1 + 1).toBe(2);\n});\n",
+        '',
+      ),
+    'Fewer tests than before: 1 test definitions removed, 0 added (test adds)',
+  ],
+  [
+    'skipping a web test',
+    (r) => r.edit('web/tests/unit/x.test.ts', "it('adds'", `it${SKIP}('adds'`),
+    'Skip or only marker added',
+  ],
+  [
+    'removing an assertion from a web test',
+    (r) => r.edit('web/tests/unit/x.test.ts', '  expect(1 + 1).toBe(2);\n', ''),
+    'Fewer assertions than before',
+  ],
+  [
+    'changing the web Vitest config',
+    (r) => r.edit('web/vitest.config.ts', 'tests/unit/**', 'tests/unit/a*'),
+    'Protected file changed (M): web/vitest.config.ts',
+  ],
+  [
+    'changing the web database Vitest config',
+    (r) => r.edit('web/vitest.db.config.ts', 'tests/db/**', 'tests/db/a*'),
+    'Protected file changed (M): web/vitest.db.config.ts',
+  ],
+  [
+    'changing the web Playwright config',
+    (r) => r.edit('web/playwright.config.ts', 'retries: 0', 'retries: 3'),
+    'Protected file changed (M): web/playwright.config.ts',
+  ],
+  [
+    'changing a stored AI eval answer',
+    (r) => r.edit('web/tests/ai-evals/stored/summary.jsonl', 'Kitchen dried.', 'Done.'),
+    'Stored answer changed (M): web/tests/ai-evals/stored/summary.jsonl',
+  ],
+  [
+    'changing an AI eval dataset',
+    (r) => r.edit('web/tests/ai-evals/data/summary-jobs.jsonl', '"Kitchen"', '"Hall"'),
+    'Stored answer changed (M): web/tests/ai-evals/data/summary-jobs.jsonl',
+  ],
+  [
+    'removing a Terraform test run',
+    (r) => r.edit('infra/dryscope/app/tests/app.tftest.hcl', TF_TEST, TF_TEST.split('\n\nrun ')[0]),
+    'Fewer tests than before: 1 test definitions removed, 0 added (run keeps_versions)',
+  ],
+  [
+    'removing a Terraform assertion',
+    (r) =>
+      r.edit(
+        'infra/dryscope/app/tests/app.tftest.hcl',
+        '  assert {\n    condition     = length(google_storage_bucket.b) == 1\n    error_message = "one bucket"\n  }\n',
+        '',
+      ),
+    'Fewer assertions than before',
+  ],
+  [
+    'deleting a Terraform guard test file',
+    (r) => r.remove('infra/dryscope/app/guards/guards.tftest.hcl'),
+    'Test file deleted: infra/dryscope/app/guards/guards.tftest.hcl',
+  ],
+  [
+    'removing a web test script',
+    (r) => r.edit('web/package.json', ',\n    "test:e2e": "playwright test"', ''),
+    'web/package.json: test script removed: test:e2e',
+  ],
+  [
+    'pointing a web test script at another config',
+    (r) => r.edit('web/package.json', 'vitest.db.config.ts', 'vitest.config.ts'),
+    'test script test:db no longer has: vitest.db.config.ts',
+  ],
+  [
+    'dropping a file from the root test script',
+    (r) => r.edit('package.json', 'node --test tests/test_a.js && ', ''),
+    'package.json: test script test no longer has: node --test tests/test_a.js &&',
+  ],
+  [
+    'letting a web test script pass with no tests',
+    (r) =>
+      r.edit('web/package.json', '"test": "vitest run"', '"test": "vitest run --passWithNoTests"'),
+    'test script test now ignores failures',
+  ],
+  [
+    'deleting web/package.json',
+    (r) => r.remove('web/package.json'),
+    'File with test scripts removed or moved (D): web/package.json',
+  ],
 ];
 
 // Changes that add tests or make ordinary edits: these pass without the label.
@@ -540,6 +693,63 @@ const PASSES: [string, Change][] = [
   [
     'renaming a workflow file',
     (r) => r.move('.github/workflows/ci.yml', '.github/workflows/checks.yml'),
+  ],
+  [
+    'adding a web test file',
+    (r) =>
+      r.write('web/tests/unit/new.test.ts', "it('works', () => {\n  expect(1).toBe(1);\n});\n"),
+  ],
+  [
+    'adding a test to a web browser spec',
+    (r) =>
+      r.write(
+        'web/tests/e2e/jobs.spec.ts',
+        `${JS_TEST}\nit('multiplies', () => {\n  expect(2 * 2).toBe(4);\n});\n`,
+      ),
+  ],
+  [
+    'changing a web test helper',
+    (r) => r.write('web/tests/e2e/server.ts', 'export const port = 1;\n'),
+  ],
+  [
+    'adding a stored AI eval answer file',
+    (r) => r.write('web/tests/ai-evals/stored/new.jsonl', '{"id":"job-2"}\n'),
+  ],
+  [
+    'adding a Terraform test run',
+    (r) =>
+      r.write(
+        'infra/dryscope/app/tests/app.tftest.hcl',
+        `${TF_TEST}\nrun "names_the_bucket" {\n  command = plan\n\n  assert {\n    condition     = true\n    error_message = "named"\n  }\n}\n`,
+      ),
+  ],
+  [
+    'adding a web test script',
+    (r) =>
+      r.edit(
+        'web/package.json',
+        '"test:e2e": "playwright test"',
+        '"test:e2e": "playwright test",\n    "test:emu": "tsx tests/emu/run.ts"',
+      ),
+  ],
+  [
+    'adding a file to the root test script',
+    (r) =>
+      r.edit(
+        'package.json',
+        'tests/test_a.js &&',
+        'tests/test_a.js && node --test tests/test_b.js &&',
+      ),
+  ],
+  [
+    'adding a flag to a web test script',
+    (r) =>
+      r.edit('web/package.json', '"test": "vitest run"', '"test": "vitest run --reporter=verbose"'),
+  ],
+  ['bumping a web dependency', (r) => r.edit('web/package.json', '4.0.0', '4.1.0')],
+  [
+    'changing a web script that is not a test script',
+    (r) => r.edit('web/package.json', 'next build', 'next build --debug'),
   ],
 ];
 
