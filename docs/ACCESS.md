@@ -7,7 +7,7 @@ The sections of this document, one file per area (each keeps its original headin
 - [Principles](access/principles.md): Principles.
 - [Company roles](access/roles.md): Company roles: the capability table `web/tests/unit/access.test.ts` reads.
 - [Checks by role and feature switches](access/role-checks-and-switches.md): Checks by role (no capability key); Feature switches that gate routes.
-- [Superadmin](access/superadmin.md): Superadmin and the platform operator.
+- [Superadmin](access/superadmin.md): Superadmin and the platform operator; Operator-only actions (rebuilt app), the records check (S8-3).
 - [Prices API](access/prices.md): Prices API (rebuilt app, S4-6).
 - [Company profile API](access/company-profile.md): Company profile API (rebuilt app, S5a-4 and S5a-4b).
 - [AI usage and ceilings](access/ai-usage.md): AI usage and ceilings (rebuilt app, S7-4).
