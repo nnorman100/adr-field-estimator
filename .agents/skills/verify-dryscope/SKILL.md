@@ -62,7 +62,7 @@ ls -d "$ROOT/node_modules" "$WEB/node_modules"       # npm ci was run in both
 git -C "$ROOT" rev-parse HEAD; git -C "$ROOT" status --short
 uptime                                               # load; see Isolation
 ss -ltn | grep -E ':(3100|3101|3103|3104|8399|9399|9499)\b' || echo "default ports free"
-( cd "$WEB" && npx playwright test --list | tail -1 )   # "Total: N tests in M files" (538 in 35 on 2026-11-17): config loads, specs compile
+( set -o pipefail; cd "$WEB" && npx playwright test --list | tail -1 )   # non-zero exit = config or specs broken; "Total: N tests in M files" (538 in 35 on 2026-11-17): config loads, specs compile
 ```
 
 Worth driving only if: versions are met, both `node_modules` exist, the worktree is the commit you mean to prove, and load is not high. A held default port is another run's: use `EMU_PORTS=auto`, do not kill it.
@@ -130,8 +130,9 @@ A proof contains: (1) the exact command, (2) its output (pass/fail line and coun
 ```bash
 RUN=$(mktemp -d "$EVIDENCE/run-XXXXXX")
 git -C "$ROOT" rev-parse HEAD > "$RUN/sha.txt"
-( cd "$WEB" && EVIDENCE="$RUN" EMU_PORTS=auto "$SLOT" npx playwright test ... ) 2>&1 | tee "$RUN/run.log"
+( set -o pipefail; cd "$WEB" && EVIDENCE="$RUN" EMU_PORTS=auto "$SLOT" npx playwright test ... 2>&1 | tee "$RUN/run.log" ); STATUS=$?
 cp -r "$WEB/test-results" "$RUN/test-results"   # traces (trace.zip), failure screenshots; copy BEFORE the next run, it empties this folder
+echo "$STATUS" > "$RUN/exit.txt"; [ "$STATUS" -eq 0 ]   # Playwright's own exit code; non-zero is a failed run, report it as one
 ( cd "$WEB" && npx playwright show-trace "$RUN/test-results/<test-dir>/trace.zip" )   # open one by hand if needed
 ```
 
@@ -188,7 +189,19 @@ for pid in $(ss -ltnpH | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u); do
 done
 ```
 
-Stop only the PIDs it prints, and only after reading their command line. Never kill by name (`pkill java`, `pkill node`): other lanes' runs use the same binaries. Stale emulator lock files release themselves when their holder is gone. Evidence in `$EVIDENCE` stays.
+Stop only the PIDs it prints, and only after reading their command line.
+
+The throwaway PostgreSQL is not in that list: its process (local `pg_ctl`) or container (Docker) does not run from `$WEB`. Your run's database is the one on the port in `web/test-results/jobs-state/database.json`, which the jobs server writes once the database is ready; read it before any new run empties `test-results/`:
+
+```bash
+pgrep -af 'tests/e2e/jobs/server\.ts'   # a jobs server still alive with cwd $WEB (check /proc/<pid>/cwd)? kill -TERM <pid>: it removes its own database, then stop here
+PGPORT=$(node -p 'new URL(require(process.argv[1]).adminUrl).port' "$WEB/test-results/jobs-state/database.json")   # prints only the port
+docker ps --filter name=dryscope-pg- --format '{{.Names}} {{.Ports}}' | grep -F ":$PGPORT->"   # Docker: docker rm -f <that name>
+ss -ltnpH "sport = :$PGPORT"   # local: the postgres PID; tr '\0' ' ' < /proc/<pid>/cmdline shows -D /tmp/dryscope-pg-...
+# local stop: runuser -u postgres -- /usr/lib/postgresql/16/bin/pg_ctl -D <that dir> -m immediate stop && rm -rf <that dir>   (drop runuser when not root)
+```
+
+No `database.json` means the run died before its database was ready; leave any `dryscope-pg-` database you cannot tie to your port, it is another lane's. Never kill by name (`pkill java`, `pkill node`): other lanes' runs use the same binaries. Stale emulator lock files release themselves when their holder is gone. Evidence in `$EVIDENCE` stays.
 
 ## Gotchas
 
