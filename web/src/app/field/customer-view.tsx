@@ -162,8 +162,10 @@ function RecordForm({
     }
     // Not this person's to see any more: every copy of the job goes, unless their field work is on
     // this phone (J5), when it stays, read only. Changed elsewhere: read the job again; the person's
-    // edits stay on top of the new values.
+    // edits stay on top of the new values. Archived elsewhere (410): the job is read again, and its
+    // screens stay, read only, with these edits.
     if (answer.denied) job.refuse({ status: answer.status, message: answer.message });
+    if (answer.status === 410) job.checkAccess(answer);
     if (answer.stale) await job.reloadJob();
     if (!refused) setError(answer.message);
   }

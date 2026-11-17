@@ -57,7 +57,8 @@ export type JobContext = {
   draftRef: DraftRef;
   reloadDraft: (source?: 'cache') => Promise<void>;
   // Takes a refusal of the photo route or the field database (null for none): 401 or 403 drops the
-  // job from the screen; a 404 may be a missing photo, so the job is read again and that decides.
+  // job from the screen; a 404 may be a missing photo, and a 410 an archive (S5b-2) made elsewhere,
+  // so the job is read again and that decides.
   checkAccess: (refusal: Refusal | null) => void;
   // Takes the server's refusal of the job to this person (null for none). While their field work is
   // on this phone it stays, read only (owner decision J5); otherwise the job goes from the screen.
@@ -205,7 +206,6 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     async (answer: Awaited<ReturnType<typeof readJob>>, sentAt: number): Promise<JobDetail | null> => {
       if (!pending.readAnswered(jobId, answer, sentAt)) return null;
       setError(answer.ok ? null : answer.message);
-      if (!answer.ok && answer.code === 'archived') pending.readArchived(jobId, true);
       if (!answer.ok) {
         // A refusal to show the job drops every copy of it (unless the field work is this person's on
         // this phone, J5); no answer keeps the one on screen.
@@ -214,7 +214,6 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       }
       // The job is this person's field work again: it opens as usual.
       if (answer.value.job.fieldOwnerActorId === session.actorId) pending.returned(jobId);
-      pending.readArchived(jobId, false);
       setDetail(answer.value, sentAt);
       await openDraft(answer.value);
       return answer.value;
@@ -233,7 +232,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     (refusal: Refusal | null) => {
       if (!refusal) return;
       if (refusal.status === 401 || refusal.status === 403) return refuse(refusal);
-      if (refusal.status !== 404) return;
+      if (refusal.status !== 404 && refusal.status !== 410) return;
       const sentAt = pending.mark(jobId);
       void readJob(session.user, jobId).then((answer) => {
         if (pending.readAnswered(jobId, answer, sentAt) && !answer.ok && answer.denied && pending.denial(jobId)) setDraft(null);

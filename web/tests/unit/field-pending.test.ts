@@ -234,7 +234,7 @@ describe('archive and restore done on this page (S5b-2)', () => {
   it('posts the archive for whichever screen of the job is open, and no read sent before it counts', () => {
     pending.openFor('company-a/user-archive');
     const before = pending.mark('job-a');
-    pending.readArchived('job-a', false);
+    expect(pending.readAnswered('job-a', read, before)).toBe(true);
     pending.archivalDone('job-a', true);
     expect(pending.archived('job-a')).toBe(true);
     expect(pending.archivalsDone('job-a')).toBe(1);
@@ -245,10 +245,10 @@ describe('archive and restore done on this page (S5b-2)', () => {
 
   it('follows a read of the job either way, and a restore done here', () => {
     pending.openFor('company-a/user-restore');
-    pending.readArchived('job-r', true);
+    expect(pending.readAnswered('job-r', gone, pending.mark('job-r'))).toBe(true);
     expect(pending.archived('job-r')).toBe(true);
     // Restored elsewhere, then read again here.
-    pending.readArchived('job-r', false);
+    expect(pending.readAnswered('job-r', read, pending.mark('job-r'))).toBe(true);
     expect(pending.archived('job-r')).toBe(false);
     pending.archivalDone('job-r', true);
     pending.archivalDone('job-r', false);
@@ -257,6 +257,20 @@ describe('archive and restore done on this page (S5b-2)', () => {
     expect(pending.archived('job-s')).toBe(true);
     expect(pending.archivalsDone('job-r')).toBe(2);
     expect(pending.archivalsDone()).toBe(3);
+  });
+
+  it('keeps an archive answered elsewhere over a read sent before it and answered after it', () => {
+    pending.openFor('company-a/user-archived-elsewhere');
+    // Two reads of the job are on their way; the job is archived on another phone between them.
+    const older = pending.mark('job-o');
+    const newer = pending.mark('job-o');
+    expect(pending.readAnswered('job-o', gone, newer)).toBe(true);
+    expect(pending.archived('job-o')).toBe(true);
+    expect(pending.readAnswered('job-o', read, older)).toBe(false);
+    expect(pending.archived('job-o')).toBe(true);
+    // A read sent after the archived answer still says how the job is now.
+    expect(pending.readAnswered('job-o', read, pending.mark('job-o'))).toBe(true);
+    expect(pending.archived('job-o')).toBe(false);
   });
 
   it('starts empty for another sign-in', () => {

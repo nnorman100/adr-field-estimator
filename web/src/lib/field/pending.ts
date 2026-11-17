@@ -264,10 +264,14 @@ export const pending = {
     change({ moved });
   },
   // A read of the job sent under `mark` came back, whether or not a screen of the job is still
-  // open: a refusal drops every copy of the job. Answers false when the job was refused since, so
-  // the answer no longer counts.
+  // open: a refusal drops every copy of the job; the job (archived or not, S5b-2) says whether it is
+  // archived, and an archived answer is newer than any request made before it. Answers false when
+  // the job was refused or archived since, so the answer no longer counts.
   readAnswered(jobId: string, answer: Answer<unknown>, mark: number): boolean {
     if (mark !== pending.mark(jobId)) return false;
+    if (!answer.ok && answer.code === 'archived') {
+      change({ archived: flagged(state.archived, jobId, true), marks: { ...state.marks, [jobId]: mark + 1 } });
+    } else if (answer.ok && pending.archived(jobId)) change({ archived: flagged(state.archived, jobId, false) });
     if (!answer.ok && answer.denied) pending.refused(jobId, answer.message, answer.status);
     return true;
   },
@@ -318,10 +322,6 @@ export const pending = {
     return true;
   },
   archived: (jobId: string): boolean => Boolean(state.archived[jobId]),
-  // A read of the job answered whether it is archived.
-  readArchived(jobId: string, archived: boolean) {
-    if (pending.archived(jobId) !== archived) change({ archived: flagged(state.archived, jobId, archived) });
-  },
   // An archive or restore of the job is done: no answer to a request made before now counts, and the
   // open screens and lists of it read again.
   archivalDone(jobId: string, archived: boolean) {

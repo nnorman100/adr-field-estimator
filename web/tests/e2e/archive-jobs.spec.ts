@@ -242,6 +242,32 @@ test('archiving keeps what the owner typed and did not save on screen, read only
   await expectNoAxeViolations(page);
 });
 
+test('a job archived on another phone shows archived on the save that meets it, with what was typed kept, read only', async ({ page, request }) => {
+  test.setTimeout(150_000);
+  const company = await seedCompany('archived-elsewhere', { owner: 'owner', estimator: 'estimator' });
+  const estimator = company.people.estimator!;
+  const jobId = await seedJob(request, company, estimator, '31 Elsewhere Lane');
+
+  await signIn(page, company, estimator);
+  await openJob(page, '31 Elsewhere Lane');
+  await page.getByRole('link', { name: 'Customer and claim' }).click();
+  await expect(page.getByLabel('Customer name')).toBeEditable();
+  await page.getByLabel('Customer name').fill('Pat Typed');
+  // The owner archives it from another phone before the save is sent.
+  const archivedOne = await request.post(`${JOBS_BASE_URL}/api/jobs/${jobId}/archive`, {
+    headers: await bearer(company, company.people.owner!),
+    data: { revision: 1, changeId: randomUUID() },
+  });
+  expect(archivedOne.status()).toBe(200);
+  await page.getByRole('button', { name: 'Save customer' }).click();
+
+  await expect(page.getByRole('heading', { name: 'This job is archived' })).toBeVisible();
+  await expect(page.getByLabel('Customer name')).toHaveValue('Pat Typed');
+  await expect(page.getByLabel('Customer name')).not.toBeEditable();
+  await expect(page.getByRole('button', { name: 'Save customer' })).toHaveCount(0);
+  await expectNoAxeViolations(page);
+});
+
 test('a restore whose field step did not get through is sent again from the jobs list once the job has left Archived drafts', async ({ page, request }) => {
   test.setTimeout(150_000);
   const company = await seedCompany('restore-retry', { owner: 'owner' });

@@ -241,14 +241,15 @@ export async function sendPhoto(user: User, jobId: string, photoId: string, byte
   return answerOf(response.status, body, receipt, [200, 201]);
 }
 
-// A photo's bytes as a local address for an <img>; the server's refusal (401, 403, 404); or null
-// when they cannot be read now. The caller revokes the address when the photo leaves the screen.
+// A photo's bytes as a local address for an <img>; the server's refusal (401, 403, 404, or 410 for
+// an archived job); or null when they cannot be read now. The caller revokes the address when the
+// photo leaves the screen.
 export async function photoAddress(user: User, jobId: string, photoId: string): Promise<string | Refusal | null> {
   const response = await authorized(user, `/api/jobs/${jobId}/photos/${photoId}?kind=photo`);
   if (!response) return null;
   if (!response.ok) {
     const answer = answerOf(response.status, await response.json().catch(() => null), z.never());
-    return !answer.ok && answer.denied ? { status: answer.status, message: answer.message } : null;
+    return !answer.ok && (answer.denied || answer.status === 410) ? { status: answer.status, message: answer.message } : null;
   }
   const bytes = await response.blob().catch(() => null);
   return bytes ? URL.createObjectURL(bytes) : null;

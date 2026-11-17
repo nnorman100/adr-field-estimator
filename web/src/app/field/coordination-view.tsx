@@ -42,6 +42,7 @@ export function CoordinationView({ job, open }: { job: JobContext & { detail: Jo
   const caps = job.session.capabilities;
   const mayView = caps.includes('coordination') || caps.includes('assignment');
   const { user } = job.session;
+  const { checkAccess } = job;
   const [view, setView] = useState<View | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   // Asked for when the view is first opened, and again for each "Try again" or stale answer.
@@ -68,12 +69,13 @@ export function CoordinationView({ job, open }: { job: JobContext & { detail: Jo
         setLoadError(null);
       } else {
         setLoadError(answer.message);
+        if (answer.status === 410) checkAccess(answer);
       }
     });
     return () => {
       live = false;
     };
-  }, [wanted, asked, user, job.jobId]);
+  }, [wanted, asked, user, job.jobId, checkAccess]);
 
   if (!mayView) {
     return (
@@ -147,6 +149,7 @@ function Coordination({ job, view, setView, reread }: { job: JobContext & { deta
       return true;
     }
     setError({ at: attempt.at, message: answer.message });
+    if (answer.status === 410) job.checkAccess(answer);
     if (answer.stale || answer.status === 404 || answer.code === 'assignment_not_found') reread();
     return false;
   }
