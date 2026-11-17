@@ -173,7 +173,9 @@ function Coordination({ job, view, setView, reread }: { job: JobContext & { deta
   const typedNotes = held?.request.kind === 'notes' ? held.request.notes : (notes ?? view.notes);
   const errorAt = (at: string) => (error?.at === at ? error.message : null);
   const noticeAt = (at: string) => (notice?.at === at ? notice.message : null);
-  const mayMove = caps.includes('field_owner_transfer') && view.status !== 'signed' && view.status !== 'archived' && (targets.length > 0 || heldMove !== null);
+  // Nothing is sent once the job is archived (S5b-2): what was typed stays, read only.
+  const archived = job.archived;
+  const mayMove = caps.includes('field_owner_transfer') && view.status !== 'signed' && view.status !== 'archived' && !archived && (targets.length > 0 || heldMove !== null);
   const notesHeld = held?.request.kind === 'notes';
 
   return (
@@ -185,7 +187,7 @@ function Coordination({ job, view, setView, reread }: { job: JobContext & { deta
             {{ move: 'A move of the field work', assign: 'Assigning an estimator', unassign: 'Unassigning an estimator', notes: 'Saving the notes' }[held.request.kind]} was
             sent and no answer came back. It is sent again exactly as it was, and nothing else is sent until it is answered.
           </p>
-          <Button type="button" disabled={waiting || !session.online} onClick={() => void retry()}>
+          <Button type="button" disabled={waiting || archived || !session.online} onClick={() => void retry()}>
             {waiting ? 'Sending…' : 'Send the unanswered change again'}
           </Button>
           <Outcome error={errorAt(held.at)} notice={null} />
@@ -238,7 +240,7 @@ function Coordination({ job, view, setView, reread }: { job: JobContext & { deta
                   <Button
                     type="button"
                     variant="outline"
-                    disabled={waiting || (held !== null && held.key !== `unassign:${one.id}`) || !session.online}
+                    disabled={waiting || archived || (held !== null && held.key !== `unassign:${one.id}`) || !session.online}
                     aria-label={`Unassign ${nameOf(one)}`}
                     onClick={() =>
                       void act('assign', `unassign:${one.id}`, { kind: 'unassign', assignmentId: one.id }, `${nameOf(one)} was unassigned.`)
@@ -279,7 +281,7 @@ function Coordination({ job, view, setView, reread }: { job: JobContext & { deta
                 onChange={setPick}
                 readOnly={heldAssign !== null}
               />
-              <Button type="submit" disabled={waiting || other('assign') || !session.online}>
+              <Button type="submit" disabled={waiting || archived || other('assign') || !session.online}>
                 {waiting && heldKind === 'assign' ? 'Assigning…' : heldKind === 'assign' ? 'Try again' : 'Assign estimator'}
               </Button>
             </form>
@@ -312,7 +314,7 @@ function Coordination({ job, view, setView, reread }: { job: JobContext & { deta
             name="notes"
             rows={5}
             maxLength={MAX_NOTES}
-            readOnly={!caps.includes('coordination') || notesHeld}
+            readOnly={!caps.includes('coordination') || notesHeld || archived}
             aria-describedby="office-notes-hint"
             value={typedNotes}
             onChange={(event) => {
@@ -322,7 +324,7 @@ function Coordination({ job, view, setView, reread }: { job: JobContext & { deta
             className="w-full rounded-md border border-foreground/40 bg-background p-3 text-base read-only:bg-foreground/5"
           />
           {caps.includes('coordination') ? (
-            <Button type="submit" disabled={waiting || other('notes') || !session.online}>
+            <Button type="submit" disabled={waiting || archived || other('notes') || !session.online}>
               {waiting && notesHeld ? 'Saving…' : notesHeld ? 'Try again' : 'Save notes'}
             </Button>
           ) : null}

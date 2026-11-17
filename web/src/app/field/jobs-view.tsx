@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { pending, usePending } from '@/lib/field/pending';
 import { Button } from '@/components/ui/button';
 import { listJobs, type JobListItem } from '@/lib/field/api';
 import type { FieldSession } from '@/lib/field/session';
@@ -78,6 +79,15 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
     void load(from);
   };
 
+  // An archive or restore done on this page, from this list or any screen, moves its job between the
+  // lists: read this one again from its first page.
+  const archivalsDone = usePending(() => pending.archivalsDone());
+  const [archivalsSeen] = useState(archivalsDone);
+  useEffect(() => {
+    if (archivalsDone !== archivalsSeen) void Promise.resolve().then(() => more(null));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [archivalsDone]);
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -118,7 +128,7 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
           onAnswered={(kind, answer) => {
             setRefused(archivalDone(kind, answer) || answer.ok ? null : answer.message);
             if (kind === 'restore' && answer.ok) setRestored({ id: answer.value.job.id, address: answer.value.job.propertyAddress || 'No address yet' });
-            more(null);
+            if (!archivalDone(kind, answer)) more(null);
           }}
         />
       ) : null}

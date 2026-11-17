@@ -38,8 +38,9 @@ const claimOf = (detail: JobDetail): Values => ({ ...detail.claim, dateOfLoss: d
 // may save follows owner decision J3: the estimator who owns the field work, the owner and office,
 // while the job is unsigned; the server decides, and its refusal is shown.
 export function CustomerView({ job }: { job: CustomerJob }) {
-  // Read only once the field work moved away from this person: what they typed stays, unsaved (J5).
-  const canSave = job.session.capabilities.some((key) => key === 'scope' || key === 'coordination') && !job.moved;
+  // Read only once the field work moved away from this person (J5), or the job is archived (S5b-2):
+  // what they typed stays, unsaved.
+  const canSave = job.session.capabilities.some((key) => key === 'scope' || key === 'coordination') && !job.moved && !job.archived;
   return (
     <div className="flex flex-col gap-4">
       <h3 className="sr-only">Customer and claim</h3>

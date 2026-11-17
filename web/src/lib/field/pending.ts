@@ -12,7 +12,9 @@
 //   sent again with the same ids and makes one draft.
 // - Archive and restore (S5b-2): per job, the change and its id while it has no answer or its field
 //   step did not get through (5xx), to send again from wherever the job is shown next, also once it
-//   has left the list it was sent from.
+//   has left the list it was sent from. Once one is done, whether the job is archived is posted per
+//   job, as its reads also post it, for whichever screen or list is open now: answers to requests
+//   made before it no longer count, and they read again.
 //
 // A send in flight is marked here, not in the screen, so a screen opened again while it is on its
 // way cannot send it a second time; an answer settles only the request that still holds its slot.
@@ -97,6 +99,9 @@ type State = {
   copies: Record<string, PendingCopy>;
   // By job: its archive or restore not settled yet.
   archivals: Record<string, PendingArchival>;
+  // By job: archived, as the newest answer about it said; and how many archives or restores were done.
+  archived: Record<string, true>;
+  archivalsDone: Record<string, number>;
   // By job: how many coordination writes were answered, so a screen that read before knows to read again.
   coordSettled: Record<string, number>;
 };
@@ -116,6 +121,8 @@ const EMPTY = {
   coord: {},
   copies: {},
   archivals: {},
+  archived: {},
+  archivalsDone: {},
   coordSettled: {},
 };
 let state: State = { owner: null, ...EMPTY };
@@ -310,12 +317,36 @@ export const pending = {
     change({ archivals });
     return true;
   },
+  archived: (jobId: string): boolean => Boolean(state.archived[jobId]),
+  // A read of the job answered whether it is archived.
+  readArchived(jobId: string, archived: boolean) {
+    if (pending.archived(jobId) !== archived) change({ archived: flagged(state.archived, jobId, archived) });
+  },
+  // An archive or restore of the job is done: no answer to a request made before now counts, and the
+  // open screens and lists of it read again.
+  archivalDone(jobId: string, archived: boolean) {
+    change({
+      archived: flagged(state.archived, jobId, archived),
+      marks: { ...state.marks, [jobId]: pending.mark(jobId) + 1 },
+      archivalsDone: { ...state.archivalsDone, [jobId]: pending.archivalsDone(jobId) + 1 },
+    });
+  },
+  // Of one job, or of every job.
+  archivalsDone: (jobId?: string): number =>
+    jobId === undefined ? Object.values(state.archivalsDone).reduce((sum, count) => sum + count, 0) : (state.archivalsDone[jobId] ?? 0),
   draftChanges: (jobId: string): number => state.draftChanges[jobId] ?? 0,
   // A send changed the job's field draft after its screen closed: the open screen reads it again.
   draftChanged(jobId: string) {
     change({ draftChanges: { ...state.draftChanges, [jobId]: pending.draftChanges(jobId) + 1 } });
   },
 };
+
+function flagged(flags: Record<string, true>, jobId: string, on: boolean): Record<string, true> {
+  const next = { ...flags };
+  if (on) next[jobId] = true;
+  else delete next[jobId];
+  return next;
+}
 
 // The newer of two copies of a job, by revision; either may be missing.
 export function newerDetail(a: JobDetail | null, b: JobDetail | null): JobDetail | null {

@@ -12,7 +12,7 @@ import { CustomerView } from './customer-view';
 import { PhotosView } from './photos-view';
 import { ScopeView } from './scope-view';
 import { CoordinationView } from './coordination-view';
-import { archivalDone, ArchivedNotice, JobActions, type ArchivalAnswered } from './job-actions';
+import { ArchivedNotice, JobActions } from './job-actions';
 import { StartFieldWork } from './start-field-work';
 import { FieldLink } from './ui';
 
@@ -66,6 +66,8 @@ export type JobContext = {
   moved: boolean;
   // Whether this person may change the field work now (the rules' own test).
   editable: boolean;
+  // The job is archived (S5b-2): nothing of it is sent, and what is on screen stays, read only.
+  archived: boolean;
   // The last read of the draft did not get through, so the draft on screen may be older than what is
   // stored: boxes stay open, but nothing is saved over it until it is read again.
   stale: boolean;
@@ -107,8 +109,11 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   // did not get through): Start field work, sent again, sets it.
   const [ownerUnset, setOwnerUnset] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // The job is archived (S5b-2): the server answered it 410, or it was archived on this screen.
-  const [archived, setArchived] = useState(false);
+  // The job is archived (S5b-2), as the newest answer about it said: a read of it (410, or the job),
+  // or an archive or restore done on this page (src/lib/field/pending.ts).
+  const archived = usePending(() => pending.archived(jobId));
+  const archivalsDone = usePending(() => pending.archivalsDone(jobId));
+  const [archivalsSeen] = useState(archivalsDone);
   const [draftError, setDraftError] = useState<string | null>(null);
   const [readDraft] = useState(draftReads);
 
@@ -200,7 +205,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     async (answer: Awaited<ReturnType<typeof readJob>>, sentAt: number): Promise<JobDetail | null> => {
       if (!pending.readAnswered(jobId, answer, sentAt)) return null;
       setError(answer.ok ? null : answer.message);
-      if (!answer.ok && answer.code === 'archived') setArchived(true);
+      if (!answer.ok && answer.code === 'archived') pending.readArchived(jobId, true);
       if (!answer.ok) {
         // A refusal to show the job drops every copy of it (unless the field work is this person's on
         // this phone, J5); no answer keeps the one on screen.
@@ -209,6 +214,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       }
       // The job is this person's field work again: it opens as usual.
       if (answer.value.job.fieldOwnerActorId === session.actorId) pending.returned(jobId);
+      pending.readArchived(jobId, false);
       setDetail(answer.value, sentAt);
       await openDraft(answer.value);
       return answer.value;
@@ -234,19 +240,6 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       });
     },
     [refuse, jobId, session.user],
-  );
-
-  // An archive or restore of this job was answered (S5b-2): the screens follow what it made of it.
-  const archivalAnswered: ArchivalAnswered = useCallback(
-    (kind, answer) => {
-      if (kind === 'archive') {
-        if (archivalDone(kind, answer)) setArchived(true);
-        return;
-      }
-      if (archivalDone(kind, answer)) setArchived(false);
-      void reloadJob();
-    },
-    [reloadJob],
   );
 
   // The first read; each job is its own component (keyed by the parent).
@@ -296,6 +289,12 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     return () => { live = false; };
   }, [session.online, session.db, session.companyId, jobId, draft, denial, readDraft]);
 
+  // An archive or restore of this job was done on this page, from this screen or any other: read it again.
+  useEffect(() => {
+    if (archivalsDone !== archivalsSeen) void Promise.resolve().then(() => reloadJob());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [archivalsDone]);
+
   // A photo that settled after an earlier screen of this job closed changed the draft: read it again.
   useEffect(() => {
     // Read after this render, as an answer to the change the store posted.
@@ -320,7 +319,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     return (
       <div className="flex flex-col gap-3">
         <FieldLink to={{ view: 'jobs', list: null }}>Back to jobs</FieldLink>
-        <ArchivedNotice session={session} jobId={jobId} onAnswered={archivalAnswered} />
+        <ArchivedNotice session={session} jobId={jobId} />
       </div>
     );
   }
@@ -367,6 +366,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     moved,
     editable:
       !moved && !archived && !ownerUnset && draftAt === currentDraftId && draft !== null && canEditDraft(draft, session.user.uid, session.capabilities) && (session.online || session.offlineCapture),
+    archived,
     stale: draft !== null && draftError !== null,
   };
   const onDraftViews = view === 'scope' || view === 'photos';
@@ -382,7 +382,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
           </FieldLink>
         ))}
       </nav>
-      {archived ? <ArchivedNotice session={session} jobId={jobId} onAnswered={archivalAnswered} /> : null}
+      {archived ? <ArchivedNotice session={session} jobId={jobId} /> : null}
       {moved ? (
         <p role="alert" className="rounded-md bg-foreground/5 p-3 text-sm">
           {MOVED_TEXT}
@@ -426,7 +426,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       <div hidden={view !== 'coordination'}>{detail ? <CoordinationView job={{ ...context, detail }} open={view === 'coordination'} /> : null}</div>
       {/* Archive and Copy follow the person's keys and the job's state; the moved, read-only state
           limits only field editing. */}
-      {detail && !archived ? <JobActions job={{ ...context, detail }} onAnswered={archivalAnswered} /> : null}
+      {detail && !archived ? <JobActions job={{ ...context, detail }} /> : null}
     </div>
   );
 }

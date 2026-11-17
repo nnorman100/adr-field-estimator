@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { newerDetail, pending, type PendingRecord } from '@/lib/field/pending';
 import type { JobDetail } from '@/lib/jobs/service';
+import type { Answer } from '@/lib/field/api';
 
 // Unsent work of the job screens (S5a-6): it belongs to one signed-in person of one company, a
 // send in flight is marked so it cannot go twice, and an answer settles only its own request.
@@ -225,3 +226,44 @@ describe('coordination writes kept until answered (S5b-1)', () => {
   });
 });
 
+
+describe('archive and restore done on this page (S5b-2)', () => {
+  const gone: Answer<unknown> = { ok: false, status: 410, code: 'archived', message: 'This job is archived.' };
+  const read: Answer<unknown> = { ok: true, value: {} };
+
+  it('posts the archive for whichever screen of the job is open, and no read sent before it counts', () => {
+    pending.openFor('company-a/user-archive');
+    const before = pending.mark('job-a');
+    pending.readArchived('job-a', false);
+    pending.archivalDone('job-a', true);
+    expect(pending.archived('job-a')).toBe(true);
+    expect(pending.archivalsDone('job-a')).toBe(1);
+    // A read of the draft sent before the archive and answered after it.
+    expect(pending.readAnswered('job-a', read, before)).toBe(false);
+    expect(pending.readAnswered('job-a', gone, pending.mark('job-a'))).toBe(true);
+  });
+
+  it('follows a read of the job either way, and a restore done here', () => {
+    pending.openFor('company-a/user-restore');
+    pending.readArchived('job-r', true);
+    expect(pending.archived('job-r')).toBe(true);
+    // Restored elsewhere, then read again here.
+    pending.readArchived('job-r', false);
+    expect(pending.archived('job-r')).toBe(false);
+    pending.archivalDone('job-r', true);
+    pending.archivalDone('job-r', false);
+    pending.archivalDone('job-s', true);
+    expect(pending.archived('job-r')).toBe(false);
+    expect(pending.archived('job-s')).toBe(true);
+    expect(pending.archivalsDone('job-r')).toBe(2);
+    expect(pending.archivalsDone()).toBe(3);
+  });
+
+  it('starts empty for another sign-in', () => {
+    pending.openFor('company-a/user-archive-1');
+    pending.archivalDone('job-a', true);
+    pending.openFor('company-a/user-archive-2');
+    expect(pending.archived('job-a')).toBe(false);
+    expect(pending.archivalsDone()).toBe(0);
+  });
+});

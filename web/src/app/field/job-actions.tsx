@@ -29,7 +29,8 @@ export const archivalDone = (kind: ArchivalKind, answer: Answer<ArchivedJob>) =>
 export type ArchivalAnswered = (kind: ArchivalKind, answer: Answer<ArchivedJob>) => void;
 
 // Sends the job's archive or restore kept on this page, or else `next` with a new change id; one at a
-// time. Answers null when it was already on its way, or another request took its place.
+// time. Once it is done, the job's state is posted for whichever screen or list of it is open now.
+// Answers null when it was already on its way, or another request took its place.
 async function sendArchival(
   session: FieldSession,
   jobId: string,
@@ -44,6 +45,7 @@ async function sendArchival(
   const send = request.kind === 'archive' ? archiveJob : restoreJob;
   const answer = await send(session.user, jobId, { revision: request.revision, changeId: request.changeId });
   if (!pending.settleArchival(jobId, request.changeId, !answer.ok && sendAgain(answer) ? 'unanswered' : 'answered')) return null;
+  if (archivalDone(request.kind, answer)) pending.archivalDone(jobId, request.kind === 'archive');
   return answer;
 }
 
@@ -57,7 +59,7 @@ export function UnfinishedArchival({
   session: FieldSession;
   jobId: string;
   kind?: ArchivalKind;
-  onAnswered: ArchivalAnswered;
+  onAnswered?: ArchivalAnswered;
 }) {
   const found = usePending(() => pending.archival(jobId));
   const held = found && (!kind || found.kind === kind) ? found : null;
@@ -71,7 +73,7 @@ export function UnfinishedArchival({
     if (!answer) return;
     if (!answer.ok && !archivalDone(archival.kind, answer)) setError(answer.message);
     if (!answer.ok && sendAgain(answer)) return;
-    onAnswered(archival.kind, answer);
+    onAnswered?.(archival.kind, answer);
   }
 
   return (
@@ -118,7 +120,7 @@ export function UnfinishedArchivals({
 }
 
 // What an archived job's screens show: the 410 of an old link, or the archive just made here.
-export function ArchivedNotice({ session, jobId, onAnswered }: { session: FieldSession; jobId: string; onAnswered: ArchivalAnswered }) {
+export function ArchivedNotice({ session, jobId }: { session: FieldSession; jobId: string }) {
   return (
     <section aria-labelledby="archived-title" className="flex flex-col gap-3 rounded-md bg-foreground/5 p-3">
       <h2 id="archived-title" className="text-xl font-semibold">
@@ -128,7 +130,7 @@ export function ArchivedNotice({ session, jobId, onAnswered }: { session: FieldS
         It was filed away, not deleted. It is not in the job lists, and nobody can change it. The company owner can restore it from Archived drafts.
       </p>
       {session.capabilities.includes('jobs_archive') ? <FieldLink to={{ view: 'jobs', list: 'archived' }}>Archived drafts</FieldLink> : null}
-      <UnfinishedArchival session={session} jobId={jobId} onAnswered={onAnswered} />
+      <UnfinishedArchival session={session} jobId={jobId} />
     </section>
   );
 }
@@ -137,7 +139,7 @@ export function ArchivedNotice({ session, jobId, onAnswered }: { session: FieldS
 // signed job has no archive: the action is not offered, and the server refuses it (409 job_signed).
 // A native modal dialog (modern-web-guidance "dialog"): Keep has the focus, being the safe choice;
 // Esc and the back gesture close it without archiving.
-function ArchiveAction({ job, onAnswered }: { job: JobContext & { detail: JobDetail }; onAnswered: ArchivalAnswered }) {
+function ArchiveAction({ job }: { job: JobContext & { detail: JobDetail } }) {
   const { session, detail } = job;
   const dialog = useRef<HTMLDialogElement>(null);
   // The archive sent and not settled yet (src/lib/field/pending.ts): sent again with the same change id.
@@ -151,8 +153,8 @@ function ArchiveAction({ job, onAnswered }: { job: JobContext & { detail: JobDet
     setError(null);
     const answer = await sendArchival(session, detail.job.id, { kind: 'archive', address: detail.job.propertyAddress, revision: detail.job.revision });
     if (!answer) return;
-    // Archived, by this request or an earlier one.
-    if (answer.ok || answer.code === 'archived') return onAnswered('archive', answer);
+    // Archived, by this request or an earlier one: the screens follow it.
+    if (answer.ok || answer.code === 'archived') return;
     if (sendAgain(answer)) return setError(answer.message);
     if (answer.denied) return job.refuse({ status: answer.status, message: answer.message });
     if (answer.stale) {
@@ -247,7 +249,7 @@ function CopyAction({ job }: { job: JobContext & { detail: JobDetail } }) {
 
 // The job's own actions, under its screens: Archive (the owner, an unsigned draft) or Copy (a signed
 // job). A restore of the job not settled yet is finished first.
-export function JobActions({ job, onAnswered }: { job: JobContext & { detail: JobDetail }; onAnswered: ArchivalAnswered }) {
+export function JobActions({ job }: { job: JobContext & { detail: JobDetail } }) {
   const { status } = job.detail.job;
   const capabilities = job.session.capabilities;
   const restoring = usePending(() => pending.archival(job.jobId)?.kind === 'restore');
@@ -255,8 +257,8 @@ export function JobActions({ job, onAnswered }: { job: JobContext & { detail: Jo
   const copyable = capabilities.includes('jobs_copy') && status === 'signed';
   return (
     <section aria-label="Job actions" className="flex flex-col gap-3 border-t border-foreground/20 pt-4 empty:hidden">
-      <UnfinishedArchival session={job.session} jobId={job.jobId} kind="restore" onAnswered={onAnswered} />
-      {archivable && !restoring ? <ArchiveAction job={job} onAnswered={onAnswered} /> : null}
+      <UnfinishedArchival session={job.session} jobId={job.jobId} kind="restore" />
+      {archivable && !restoring ? <ArchiveAction job={job} /> : null}
       {copyable ? <CopyAction job={job} /> : null}
     </section>
   );
