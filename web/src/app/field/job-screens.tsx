@@ -12,6 +12,7 @@ import { CustomerView } from './customer-view';
 import { PhotosView } from './photos-view';
 import { ScopeView } from './scope-view';
 import { CoordinationView } from './coordination-view';
+import { ArchivedNotice, JobActions } from './job-actions';
 import { StartFieldWork } from './start-field-work';
 import { FieldLink } from './ui';
 
@@ -106,6 +107,8 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   // did not get through): Start field work, sent again, sets it.
   const [ownerUnset, setOwnerUnset] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The job is archived (S5b-2): the server answered it 410, or it was archived on this screen.
+  const [archived, setArchived] = useState(false);
   const [draftError, setDraftError] = useState<string | null>(null);
   const [readDraft] = useState(draftReads);
 
@@ -197,6 +200,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     async (answer: Awaited<ReturnType<typeof readJob>>, sentAt: number): Promise<JobDetail | null> => {
       if (!pending.readAnswered(jobId, answer, sentAt)) return null;
       setError(answer.ok ? null : answer.message);
+      if (!answer.ok && answer.code === 'archived') setArchived(true);
       if (!answer.ok) {
         // A refusal to show the job drops every copy of it (unless the field work is this person's on
         // this phone, J5); no answer keeps the one on screen.
@@ -296,6 +300,9 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     if (movedState && draft && (draftAt ?? draftId)) pending.keepDraft(jobId, draft, (draftAt ?? draftId)!);
   }, [movedState, draft, draftAt, draftId, jobId]);
 
+  // An archived job (an old link, or archived here) shows only that it is archived: every job route
+  // answers it 410, and the field rules refuse every write to its draft.
+  if (archived) return <ArchivedNotice session={session} address={detail ? detail.job.propertyAddress || null : null} />;
   if (!detail && (denial || (error && (!locator || !draft)))) {
     return (
       <div className="flex flex-col gap-2">
@@ -394,6 +401,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
         )}
       </div>
       <div hidden={view !== 'coordination'}>{detail ? <CoordinationView job={{ ...context, detail }} open={view === 'coordination'} /> : null}</div>
+      {detail && !moved ? <JobActions job={{ ...context, detail }} onArchived={() => setArchived(true)} /> : null}
     </div>
   );
 }

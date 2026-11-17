@@ -8,6 +8,8 @@
 //   is unanswered the other waits (a second save would move the revision on, and the first one's
 //   resend would then meet a conflict instead of its own answer).
 // - Photos: per job, each with its id and the very bytes sent.
+// - Copy a signed job (S5b-2): per signed job, the new job's and draft's ids, so a lost answer is
+//   sent again with the same ids and makes one draft.
 //
 // A send in flight is marked here, not in the screen, so a screen opened again while it is on its
 // way cannot send it a second time; an answer settles only the request that still holds its slot.
@@ -55,6 +57,7 @@ export type CoordRequest =
   | { kind: 'unassign'; assignmentId: string }
   | { kind: 'notes'; revision: number; changeId: string; notes: string };
 export type PendingCoord = { key: string; at: string; done: string; request: CoordRequest; sending: boolean };
+export type PendingCopy = { id: string; draftId: string; sending: boolean };
 export type PendingPhoto = {
   id: string;
   bytes: Blob;
@@ -85,6 +88,8 @@ type State = {
   // job is still readable (the owner, office) but the field work is another person's.
   moved: Record<string, { draft: FieldDraft | null; draftId: string | null; revoked: boolean }>;
   coord: Record<string, PendingCoord>;
+  // By signed job: its copy sent and not answered yet.
+  copies: Record<string, PendingCopy>;
   // By job: how many coordination writes were answered, so a screen that read before knows to read again.
   coordSettled: Record<string, number>;
 };
@@ -102,6 +107,7 @@ const EMPTY = {
   held: {},
   moved: {},
   coord: {},
+  copies: {},
   coordSettled: {},
 };
 let state: State = { owner: null, ...EMPTY };
@@ -263,6 +269,21 @@ export const pending = {
     if (settlement === 'unanswered') coord[jobId] = { ...current, sending: false };
     else delete coord[jobId];
     change(settlement === 'answered' ? { coord, coordSettled: { ...state.coordSettled, [jobId]: pending.coordSettled(jobId) + 1 } } : { coord });
+    return true;
+  },
+  copy: (jobId: string): PendingCopy | null => state.copies[jobId] ?? null,
+  setCopy(jobId: string, copy: PendingCopy) {
+    change({ copies: { ...state.copies, [jobId]: copy } });
+  },
+  // Ends the copy `id` of a signed job if it still holds the slot: no answer keeps its ids to send
+  // again; an answer or a refusal frees them.
+  settleCopy(jobId: string, id: string, settlement: 'unanswered' | 'answered'): boolean {
+    const current = state.copies[jobId];
+    if (current?.id !== id) return false;
+    const copies = { ...state.copies };
+    if (settlement === 'unanswered') copies[jobId] = { ...current, sending: false };
+    else delete copies[jobId];
+    change({ copies });
     return true;
   },
   draftChanges: (jobId: string): number => state.draftChanges[jobId] ?? 0,

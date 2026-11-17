@@ -71,6 +71,10 @@ const MESSAGES: Record<string, string> = {
   assignment_not_found: 'This estimator is no longer assigned. The list is read again.',
   assigned_field_owner: 'This estimator owns the job’s field work. The company owner moves the field work first.',
   draft_unavailable: 'Saved, but the field work could not be updated just now. Try again.',
+  // S5b-2: archive, restore and copy.
+  submission_in_progress: 'A Submit of this job is still finishing. Try again in a moment.',
+  not_archived: 'This job is not archived any more.',
+  not_signed: 'Only a signed job can be copied.',
 };
 
 export function answerMessage(status: number, body: unknown): string {
@@ -186,6 +190,30 @@ export type TransferSave = { revision: number; changeId: string; toActorId: stri
 export async function transferFieldOwner(user: User, jobId: string, input: TransferSave): Promise<Answer<CoordinationView>> {
   const { status, body } = await callApi(user, `/api/jobs/${jobId}/field-owner/transfer`, { method: 'POST', json: input });
   return answerOf(status, body, coordinationView);
+}
+
+export type ArchiveSave = { revision: number; changeId: string };
+const archivedJob = z.object({ job: jobView });
+export type ArchivedJob = z.infer<typeof archivedJob>;
+
+// S5b-2, the owner: files away an unsigned draft (a draft or a submitted job). The same change id
+// again is the same answer, so a lost answer is sent again as it was.
+export async function archiveJob(user: User, jobId: string, input: ArchiveSave): Promise<Answer<ArchivedJob>> {
+  const { status, body } = await callApi(user, `/api/jobs/${jobId}/archive`, { method: 'POST', json: input });
+  return answerOf(status, body, archivedJob);
+}
+
+// S5b-2, the owner: puts an archived job back as it was.
+export async function restoreJob(user: User, jobId: string, input: ArchiveSave): Promise<Answer<ArchivedJob>> {
+  const { status, body } = await callApi(user, `/api/jobs/${jobId}/restore`, { method: 'POST', json: input });
+  return answerOf(status, body, archivedJob);
+}
+
+// S5b-2: a new draft job from a signed job, with the new job's and draft's ids made on the phone.
+// 201 for the new job, 200 for the same ids again.
+export async function copyJob(user: User, jobId: string, input: { id: string; draftId: string }): Promise<Answer<JobDetail>> {
+  const { status, body } = await callApi(user, `/api/jobs/${jobId}/copy`, { method: 'POST', json: input });
+  return answerOf(status, body, jobDetail, [200, 201]) as Answer<JobDetail>;
 }
 
 async function authorized(user: User, path: string, init: RequestInit = {}): Promise<Response | null> {
