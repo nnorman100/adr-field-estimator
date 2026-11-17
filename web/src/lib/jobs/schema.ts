@@ -19,12 +19,16 @@ export const uuid = z
 
 const line = (max: number) => z.string().trim().max(max).regex(ONE_LINE);
 
+// Zod still runs the refinement after max(254) has failed, and EMAIL takes time that grows with the
+// square of the length for a crafted value (security audit F2), so the length is checked again
+// first: the pattern only ever sees at most 254 characters.
+const MAX_EMAIL = 254;
 const email = z
   .string()
   .trim()
   .toLowerCase()
-  .max(254)
-  .refine((value) => value === '' || EMAIL.test(value));
+  .max(MAX_EMAIL)
+  .refine((value) => value === '' || (value.length <= MAX_EMAIL && EMAIL.test(value)));
 
 // A real calendar date, from 1900 to today (UTC, which is never earlier than a date in the US);
 // null when the date is not known.

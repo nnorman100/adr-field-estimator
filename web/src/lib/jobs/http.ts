@@ -11,6 +11,10 @@ type RouteContext = { params: Promise<Record<string, string | string[] | undefin
 
 const NO_STORE = { 'Cache-Control': 'no-store' };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// The largest valid jobs body is the 4,000-character office note, about 24,100 characters even with
+// every character written as a \u escape. A body over this is refused before it is parsed (security
+// audit F2). Counted in UTF-16 code units, never more than the UTF-8 bytes of the same text.
+const MAX_BODY_LENGTH = 32_768;
 
 class BadRequest extends Error {}
 
@@ -43,9 +47,18 @@ async function pathId(context: RouteContext, name: 'jobId' | 'assignmentId'): Pr
 const jobId = (context: RouteContext) => pathId(context, 'jobId');
 
 async function body<T>(request: Request, schema: z.ZodType<T>): Promise<T> {
+  const declared = Number(request.headers.get('content-length') ?? '0');
+  if (Number.isFinite(declared) && declared > MAX_BODY_LENGTH) throw new BadRequest();
+  let text: string;
+  try {
+    text = await request.text();
+  } catch {
+    throw new BadRequest();
+  }
+  if (text.length > MAX_BODY_LENGTH) throw new BadRequest();
   let raw: unknown;
   try {
-    raw = await request.json();
+    raw = JSON.parse(text);
   } catch {
     throw new BadRequest();
   }
