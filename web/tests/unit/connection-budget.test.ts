@@ -17,13 +17,25 @@ const REVISIONS = 2;
 const MIGRATOR = 1;
 const RESERVE = 10;
 
-// The web app's maximum instances, from the api_scaling block of an environment's tfvars.
+// The web app's maximum instances, from Terraform's own evaluated plan of infra/dryscope/app with
+// envs/<env>.tfvars: infra/dryscope/fixtures/app-<env>.plan.json (scripts/check-plan.js export).
+// infra/dryscope/scripts/check.sh fails when a fresh export differs from the committed fixture, so
+// this is what the tfvars set.
+type ResourceChange = {
+  address: string;
+  change: { after: { template?: { scaling?: { max_instance_count?: number }[] }[] } | null };
+};
+
 function webAppMaxInstances(environment: keyof typeof DATABASE_CONNECTION_LIMIT): number {
-  const file = new URL(`../../../infra/dryscope/app/envs/${environment}.tfvars`, import.meta.url);
-  const block = /^api_scaling\s*=\s*\{([^}]*)\}/m.exec(readFileSync(file, 'utf8'))?.[1];
-  const value = block && /^\s*max_instances\s*=\s*(\d+)/m.exec(block)?.[1];
-  if (!value) throw new Error(`${environment}.tfvars has no api_scaling.max_instances`);
-  return Number(value);
+  const file = new URL(`../../../infra/dryscope/fixtures/app-${environment}.plan.json`, import.meta.url);
+  const plan = JSON.parse(readFileSync(file, 'utf8')) as { resource_changes: ResourceChange[] };
+  const api = plan.resource_changes.filter((rc) => rc.address === 'google_cloud_run_v2_service.svc["api"]');
+  expect(api, `app-${environment}.plan.json plans the web app once`).toHaveLength(1);
+  const value = api[0]!.change.after?.template?.[0]?.scaling?.[0]?.max_instance_count;
+  if (!Number.isInteger(value) || value! < 1) {
+    throw new Error(`app-${environment}.plan.json has no web app max_instance_count`);
+  }
+  return value!;
 }
 
 describe('the database connection budget', () => {
