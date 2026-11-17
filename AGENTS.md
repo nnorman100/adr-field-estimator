@@ -21,6 +21,7 @@ The app is `web/`: TypeScript, Next.js, Zod at every route boundary; Cloud SQL P
 
 ## Every change
 One small PR with a test that fails without it; the eight checks in `docs/roadmap.md`; no edits to `docs/status/` in feature PRs (updated in a batch after merges). Report what changed, what you were unsure of, and what the owner must check on a phone. Search functions by name; write the failing test first.
+Before coding or answering a review finding, load the `dryscope-gotchas` skill.
 
 ## Technology Standard 2.10 (build and agent rules)
 Profile and exceptions: `docs/ARCHITECTURE.md`, `docs/DECISIONS.md` (D-013 to D-016); stage plans: `docs/plans/`.
