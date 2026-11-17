@@ -19,6 +19,17 @@ updates:
     ignore:
       - dependency-name: typescript
         update-types: ['version-update:semver-major']
+      # Held 2026-11-17: these OpenTelemetry versions need @opentelemetry/api
+      # 1.10, but @opentelemetry/sdk-trace-node 2.12.0 (the latest release)
+      # only accepts api below 1.10, so npm ci fails (Dependabot PRs 416, 418).
+      # Revisit when sdk-trace-node publishes a 3.x release; then remove these
+      # entries and bump api, exporter, resources and sdk-trace-node together.
+      - dependency-name: '@opentelemetry/api'
+        versions: ['>= 1.10.0']
+      - dependency-name: '@opentelemetry/exporter-trace-otlp-proto'
+        versions: ['>= 0.300.0']
+      - dependency-name: '@opentelemetry/resources'
+        versions: ['>= 3.0.0']
 
   # Monthly (Dependabot runs monthly updates on the 1st): Terraform providers and
   # modules for each stack. All updates for a stack share one pull request,
