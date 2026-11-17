@@ -24,7 +24,9 @@ import { fieldUser, settle, UnsentMarkNotSaved, type FieldClient } from '@/lib/f
 import { callApi } from '@/lib/firebase-client';
 import {
   appendEntry,
-  draftRefusal,
+  markRefused,
+  NO_ANSWER,
+  refusalReason,
   judge,
   markChanged,
   readJournal,
@@ -35,12 +37,13 @@ import {
   type DocWrite,
   type JournalEntry,
   type Owner,
+  type RoleNow,
   type ServerDoc,
 } from './journal';
 import { ReopenTheApp } from './idb';
 import { queueFieldEdit } from './local-edit';
 import { applyWrites, draftPath, stageWrites, type DraftRef } from './store';
-import { judgeMe } from './sync-gate';
+import { ASK_WITHIN_MS, judgeMe } from './sync-gate';
 import { noteWrite } from './unsent';
 
 const ownerOf = (client: FieldClient): Owner => ({ tenantId: client.person.tenantId, uid: client.person.uid });
@@ -55,7 +58,7 @@ const judgedHere = new Set<string>();
 // after it is pruned, so a key this page wrote is never held against an earlier page's entry.
 const sentHere = new Map<string, JournalEntry[]>();
 // Per person, the check of their access now (GET /api/me) that is under way.
-const asking = new Map<string, Promise<string | null>>();
+const asking = new Map<string, Promise<RoleNow>>();
 // Per person, who to tell when the journal's storage lost its connection twice in work nobody
 // awaits (recovery, an answer being recorded): the field shell then says "Reopen the app".
 const lostHandlers = new Map<string, () => void>();
@@ -73,19 +76,27 @@ function lose(person: string, error: unknown): void {
 }
 
 // The person's role now (GET /api/me), which tells why the rules refuse an edit (journal.ts
-// draftRefusal); null when the server did not let them in or did not answer.
-function roleNow(client: FieldClient): Promise<string | null> {
+// draftRefusal): null when the server did not let them in, NO_ANSWER when there was no answer
+// within ASK_WITHIN_MS (or no sign-in to ask with), so nothing is classified on a guess.
+function roleNow(client: FieldClient): Promise<RoleNow> {
   const key = personKey(ownerOf(client));
   const found = asking.get(key);
   if (found) return found;
-  const ask = (async () => {
-    const user = fieldUser(client.person);
-    if (!user) return null;
-    const verdict = judgeMe(await callApi(user, '/api/me'), Date.now());
-    return verdict.kind === 'open' ? verdict.facts.role : null;
-  })()
-    .catch(() => null)
-    .finally(() => asking.delete(key));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const ask = Promise.race([
+    (async () => {
+      const user = fieldUser(client.person);
+      if (!user) return NO_ANSWER;
+      const verdict = judgeMe(await callApi(user, '/api/me'), Date.now());
+      return verdict.kind === 'open' ? verdict.facts.role : null;
+    })(),
+    new Promise<typeof NO_ANSWER>((done) => (timer = setTimeout(() => done(NO_ANSWER), ASK_WITHIN_MS))),
+  ])
+    .catch((): RoleNow => NO_ANSWER)
+    .finally(() => {
+      clearTimeout(timer);
+      asking.delete(key);
+    });
   asking.set(key, ask);
   return ask;
 }
@@ -137,11 +148,15 @@ async function readServer(db: Firestore, path: string): Promise<ServerDoc | null
 const REFUSALS = new Set(['permission-denied', 'not-found']);
 const refused = (error: unknown) => REFUSALS.has(String((error as { code?: unknown } | null)?.code));
 
-// Rejects an entry the server refused, with the reason the server's copy of its draft and the
-// person's access now give.
-async function refuse(client: FieldClient, entry: JournalEntry): Promise<void> {
+// Records an entry the server refused: rejected with the reason the server's copy of its draft and
+// the person's role now give, or kept refused, its reason not known yet, when those could not be
+// read (Firstmate ruling R1, 2026-11-17). Either way it is never sent again. True when the reason is
+// known.
+async function refuse(client: FieldClient, entry: JournalEntry): Promise<boolean> {
   const [draft, role] = await Promise.all([readServer(client.db, entry.draftPath), roleNow(client)]);
-  await rejectEntry(entry, (draft && draftRefusal(draft, entry.uid, role)) ?? 'refused');
+  const reason = refusalReason(draft, entry.uid, role);
+  await (reason ? rejectEntry(entry, reason) : markRefused(entry));
+  return reason !== null;
 }
 
 function follow(client: FieldClient, entry: JournalEntry, acknowledged: Promise<void>): void {
@@ -221,7 +236,7 @@ async function remake(client: FieldClient, entries: JournalEntry[]): Promise<boo
       });
     } catch (error) {
       if (!refused(error)) complete = false;
-      else for (const entry of group) await refuse(client, entry);
+      else for (const entry of group) if (!(await refuse(client, entry))) complete = false;
       continue;
     }
     for (const entry of group) await (made.includes(entry) ? removeEntry(entry) : markChanged(entry));
@@ -234,8 +249,10 @@ const judging = new Map<string, Promise<void>>();
 // Once per page and person, when the sync gate opens: what became of the entries an earlier page
 // left pending. Waits for Firestore to send its queue, then reads each entry's documents and draft
 // from the server, asks the server for the person's role, and judges them against everything this
-// page has sent up to then. Entries that never landed are made again here (remake). An entry whose
-// documents did not all answer stays pending; the next opening of the gate on this page tries again.
+// page has sent up to then. Entries that never landed are made again here (remake). Entries the
+// server refused before their reason could be read are classified now from the same reads, and
+// never sent. An entry whose documents (or role) did not all answer stays as it is; the next opening
+// of the gate on this page tries again.
 export function reconcileJournal(client: FieldClient): Promise<void> {
   const owner = ownerOf(client);
   const key = personKey(owner);
@@ -249,10 +266,14 @@ export function reconcileJournal(client: FieldClient): Promise<void> {
   };
   const earlier = (entry: JournalEntry) => entry.state === 'pending' && !madeHere.get(key)?.has(entry.seq);
   const run = (async () => {
-    let judged = (await readJournal(owner)).filter(earlier);
-    if (judged.length === 0) return done();
+    const entries = await readJournal(owner);
+    let judged = entries.filter(earlier);
+    const unresolved = entries.filter((entry) => entry.state === 'refused');
+    if (judged.length === 0 && unresolved.length === 0) return done();
     await waitForPendingWrites(client.db);
-    const paths = [...new Set(judged.flatMap((entry) => [entry.draftPath, ...entry.writes.map((write) => write.path)]))];
+    const paths = [
+      ...new Set([...judged.flatMap((entry) => [entry.draftPath, ...entry.writes.map((write) => write.path)]), ...unresolved.map((entry) => entry.draftPath)]),
+    ];
     const read = new Map<string, ServerDoc>();
     await Promise.all(
       paths.map(async (path) => {
@@ -264,6 +285,11 @@ export function reconcileJournal(client: FieldClient): Promise<void> {
     judged = judged.filter(earlier);
     const outcomes = judge(judged, sentHere.get(key) ?? [], read, read, owner.uid, role);
     let complete = true;
+    for (const entry of unresolved) {
+      const reason = refusalReason(read.get(entry.draftPath) ?? null, owner.uid, role);
+      if (reason) await rejectEntry(entry, reason);
+      else complete = false;
+    }
     const reissued: JournalEntry[] = [];
     for (const entry of judged) {
       const outcome = outcomes.get(entry.seq);

@@ -238,6 +238,81 @@ test.describe('the recovery journal (S6-4)', () => {
     await context.close();
   });
 
+  // Firstmate ruling R1 (2026-11-17): a refusal whose reason cannot be read yet stays refused, is
+  // never sent again, and is classified at the next online recovery; never a generic reason.
+  test('a refused write whose reason cannot be read yet stays refused, unsent, and is classified at the next online recovery', async ({ browser, lane }) => {
+    const context = await browser.newContext();
+    const world = await seedCompany({ people: ['ana', 'ben'] });
+    let phone = await FieldPhone.open(context, lane);
+    const person = await online(phone, world);
+    lane.cut(['auth', 'firestore']);
+    await phone.call('journalWrite', person, world.draftPath, notes);
+    await expect.poll(async () => (await phone.call('readCache', person, world.draftPath)).pending).toBe(true);
+    await expectNothingSent(lane);
+    // The field work moves to Ben (Ana can no longer read the draft), and the check of Ana's role
+    // does not answer while the refusal is recorded.
+    await adminDb().doc(world.draftPath).update({ fieldOwnerUid: world.people.ben!.uid });
+    let release!: () => void;
+    const stalled = new Promise<void>((done) => (release = done));
+    lane.serve('/api/me', async () => {
+      await stalled;
+      return { type: 'application/json', status: 503, body: '{}' };
+    });
+    try {
+      lane.restore(['auth', 'firestore']);
+      await expect.poll(() => phone.call('journal', person), { timeout: 45_000 }).toEqual([entryFor('refused')]);
+      expect((await phone.call('journal', person))[0]).not.toHaveProperty('reason', expect.anything());
+    } finally {
+      release();
+    }
+    // The next start, online with the check answering: classified, still never sent.
+    serveMe(lane, { expiresAt: inDays(7) });
+    await phone.page.close({ runBeforeUnload: false });
+    phone = await reopen(context, phone, person);
+    await expect.poll(() => phone.call('journal', person), { timeout: SEND_MS }).toEqual([entryFor('rejected', { reason: 'owner-changed' })]);
+    expect((await readDraft(world)).field).not.toHaveProperty('notes');
+    await context.close();
+  });
+
+  test('a role check that never answers leaves the earlier entry pending and unsent, and the next online recovery makes it', async ({ browser, lane }) => {
+    const context = await browser.newContext();
+    const world = await seedCompany();
+    let phone = await FieldPhone.open(context, lane);
+    const person = await online(phone, world);
+    lane.cut(['auth', 'firestore']);
+    await phone.call('journalOnly', person, world.draftPath, notes);
+    await phone.page.close({ runBeforeUnload: false });
+    lane.restore(['auth', 'firestore']);
+    // The gate's check answers at once; the recovery's check of the person's role (the second
+    // call) never answers until the end of the test.
+    const me = { company: { id: 'company-field', name: 'Field Test' }, actor: { id: 'actor-field', displayName: null }, role: 'estimator', capabilities: ['scope'] };
+    let asked = 0;
+    let release!: () => void;
+    const stalled = new Promise<void>((done) => (release = done));
+    lane.serve('/api/me', async () => {
+      asked += 1;
+      if (asked === 2) await stalled;
+      return { type: 'application/json', status: 200, body: JSON.stringify({ ...me, fieldAccessExpiresAt: inDays(7).toISOString() }) };
+    });
+    try {
+      phone = await reopen(context, phone, person);
+      await expect.poll(() => asked, { timeout: SEND_MS }).toBeGreaterThanOrEqual(2);
+      // The check gives up (15 seconds): nothing is sent and the entry stays pending.
+      await phone.page.waitForTimeout(20_000);
+      expect(await phone.call('journal', person)).toEqual([entryFor('pending')]);
+      expect((await readDraft(world)).field).not.toHaveProperty('notes');
+      // The gate opens again (the page hidden and shown): recovery was not held up, and with the
+      // check answering it makes the entry.
+      await phone.call('suspend', person);
+      phone.call('resume', person);
+      await expect.poll(async () => (await readDraft(world)).field.notes, { timeout: SEND_MS }).toBe(notes['field.notes']);
+      await expect.poll(() => phone.call('journal', person), { timeout: SEND_MS }).toEqual([]);
+    } finally {
+      release();
+    }
+    await context.close();
+  });
+
   // Firstmate ruling R3 (2026-11-17): a write refused after the fence stays rejected: locked, even
   // when the server's value happens to match it.
   test('1 then 0 saved offline, the page killed and the job finished elsewhere: both are rejected as locked though the server still holds 0', async ({ browser, browserName, lane }) => {

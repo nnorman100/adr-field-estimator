@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { draftRefusal, judge, type DocWrite, type JournalEntry, type ServerDoc } from '@/lib/field/journal';
+import { draftRefusal, judge, NO_ANSWER, refusalReason, type DocWrite, type JournalEntry, type RoleNow, type ServerDoc } from '@/lib/field/journal';
 
 // What the recovery journal decides after a restart (S6-4; docs/plans/S6.md section 4, step 2):
 // only the newest entry per document and key is compared with the server.
@@ -12,7 +12,7 @@ function entry(writes: DocWrite[], bases?: Record<string, number | null>): Journ
 }
 const notes = (value: string | null): DocWrite => ({ path: DRAFT, op: 'update', fields: { 'field.notes': value } });
 const editing = (field: Record<string, unknown>, more: Record<string, unknown> = {}): ServerDoc => ({ data: { state: 'editing', fieldOwnerUid: 'ana', field, ...more } });
-const run = (judged: JournalEntry[], docs: Record<string, ServerDoc>, newer: JournalEntry[] = [], role: string | null = null) => {
+const run = (judged: JournalEntry[], docs: Record<string, ServerDoc>, newer: JournalEntry[] = [], role: RoleNow = null) => {
   const map = new Map(Object.entries(docs));
   return Object.fromEntries([...judge(judged, newer, map, map, 'ana', role)].map(([key, value]) => [key, value]));
 };
@@ -196,6 +196,32 @@ describe('the journal after a restart, for an edit that may never have reached F
     const older = entry([{ path: DRAFT, op: 'update', fields: { 'field.notes': 'A', 'field.airMovers': 2 } }], { [DRAFT]: 10 });
     const later = entry([notes('typed later')], { [DRAFT]: 10 });
     expect(run([older, later], { [DRAFT]: { ...editing({}), updateTime: 10 } })).toEqual({ [older.seq]: { kind: 'changed' }, [later.seq]: { kind: 'reissue' } });
+  });
+});
+
+// Firstmate ruling R1 (2026-11-17): a reason that cannot be read yet is never recorded as a guess.
+describe('a refusal whose reason cannot be read yet', () => {
+  it('stays unresolved when the draft did not answer, or the role check did not and the role decides', () => {
+    expect(refusalReason(null, 'ana', 'estimator')).toBeNull();
+    expect(refusalReason({ denied: true }, 'ana', NO_ANSWER)).toBeNull();
+    expect(refusalReason(editing({}), 'ana', NO_ANSWER)).toBeNull();
+    // Nothing on the server refuses the draft: no reason to record either.
+    expect(refusalReason(editing({}), 'ana', 'estimator')).toBeNull();
+  });
+
+  it('is classified as soon as what decides it is known', () => {
+    expect(refusalReason({ data: { state: 'submitted', fieldOwnerUid: 'ana', field: {} } }, 'ana', NO_ANSWER)).toBe('locked');
+    expect(refusalReason({ denied: true }, 'ana', 'estimator')).toBe('owner-changed');
+    expect(refusalReason(editing({}), 'ana', 'office')).toBe('role-changed');
+  });
+
+  it('leaves an earlier entry out of the judging while the role decides it and the check did not answer', () => {
+    const moved = entry([notes('A')], { [DRAFT]: 10 });
+    expect(run([moved], { [DRAFT]: { denied: true } }, [], NO_ANSWER)).toEqual({});
+    const office = entry([notes('A')], { [DRAFT]: 10 });
+    expect(run([office], { [DRAFT]: { ...editing({}), updateTime: 10 } }, [], NO_ANSWER)).toEqual({});
+    const fenced = entry([notes('A')], { [DRAFT]: 10 });
+    expect(run([fenced], { [DRAFT]: { ...editing({}, { state: 'submitted' }), updateTime: 30 } }, [], NO_ANSWER)).toEqual({ [fenced.seq]: { kind: 'rejected', reason: 'locked' } });
   });
 });
 

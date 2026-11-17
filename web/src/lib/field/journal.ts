@@ -9,6 +9,8 @@
 // held it, and its state:
 // - pending: waiting for the server's answer;
 // - rejected: the rules refused it (`reason`); never sent again (step 6);
+// - refused: the server refused it but why is not known yet (the draft or the person's role could
+//   not be read): never sent again, and its reason is read at the next online recovery;
 // - changed: the server holds other values and nothing refused it (the same person's other phone
 //   wrote later); kept, never sent again.
 // An entry the server accepted is removed at once (pruned), so the journal holds only what is not
@@ -47,12 +49,19 @@ export type DocWrite =
 
 // Why the rules refused: the draft is no longer being edited (finished, archived: "locked"),
 // another person now holds its field work, the person's role no longer edits field work (it can
-// still read the draft: office), this person cannot read it at all, or none of these.
-export type RejectReason = 'locked' | 'owner-changed' | 'role-changed' | 'no-access' | 'refused';
+// still read the draft: office), or this person cannot read it at all. A refusal whose reason is not
+// known yet is the `refused` state, never a reason recorded from what could not be read (Firstmate
+// ruling R1, 2026-11-17).
+export type RejectReason = 'locked' | 'owner-changed' | 'role-changed' | 'no-access';
+
+// The person's role check (GET /api/me) did not answer: where the role decides a refusal, it stays
+// unknown.
+export const NO_ANSWER: unique symbol = Symbol('no answer');
+export type RoleNow = string | null | typeof NO_ANSWER;
 
 // The roles whose people edit field work (web/firestore.rules canEdit).
 const EDIT_ROLES: ReadonlySet<string> = new Set(['owner', 'estimator']);
-export type JournalState = 'pending' | 'rejected' | 'changed';
+export type JournalState = 'pending' | 'rejected' | 'refused' | 'changed';
 
 export type JournalEntry = {
   seq: number;
@@ -180,6 +189,9 @@ function changeEntry(entry: Pick<JournalEntry, 'seq' | 'tenantId' | 'uid'>, chan
 // The server accepted it: pruned.
 export const removeEntry = (entry: Pick<JournalEntry, 'seq' | 'tenantId' | 'uid'>): Promise<void> => changeEntry(entry, () => null);
 
+// Refused by the server, why not known yet: kept, never sent again, classified at the next recovery.
+export const markRefused = (entry: JournalEntry): Promise<void> => changeEntry(entry, (row) => ({ ...row, state: 'refused' }));
+
 export const rejectEntry = (entry: JournalEntry, reason: RejectReason): Promise<void> =>
   changeEntry(entry, (row) => ({ ...row, state: 'rejected', reason }));
 
@@ -267,17 +279,30 @@ function holds(doc: ServerDoc, key: string, expected: unknown): boolean {
 }
 
 // Whether the rules refuse this person's edits to the draft now, from the server's copy of it.
-// `role` is the person's role at the last online check (GET /api/me), which let them in: the
-// company's access is current, so the role decides what the rules let them read and edit. An
-// estimator may read only drafts whose field work is theirs (web/firestore.rules canRead), so a
-// draft an estimator with current access cannot read is one whose field work moved to someone else.
-// Without a role (no online check yet on this page) a refused read is no-access.
-export function draftRefusal(draft: ServerDoc, uid: string, role: string | null = null): RejectReason | null {
-  if (!('data' in draft)) return 'denied' in draft && role === 'estimator' ? 'owner-changed' : 'no-access';
+// `role` is the person's role from an online check (GET /api/me) made as the refusal is judged,
+// which let them in: the company's access is current, so the role decides what the rules let them
+// read and edit. An estimator may read only drafts whose field work is theirs (web/firestore.rules
+// canRead), so a draft an estimator with current access cannot read is one whose field work moved
+// to someone else. null: the check named no role (it did not let them in), and a refused read is
+// no-access. NO_ANSWER: the check did not answer, so where the role decides, the answer is
+// 'unknown' (judged again at the next online recovery).
+export function draftRefusal(draft: ServerDoc, uid: string, role: RoleNow = null): RejectReason | null | 'unknown' {
+  if ('missing' in draft) return 'no-access';
+  if ('denied' in draft) return role === NO_ANSWER ? 'unknown' : role === 'estimator' ? 'owner-changed' : 'no-access';
   if (draft.data.state !== 'editing') return 'locked';
   if (draft.data.fieldOwnerUid !== uid) return 'owner-changed';
+  if (role === NO_ANSWER) return 'unknown';
   if (role !== null && !EDIT_ROLES.has(role)) return 'role-changed';
   return null;
+}
+
+// Why the server refused an edit, from its copy of the draft (null: it did not answer) and the
+// person's role now; null while that cannot be told from what was read (the entry stays refused,
+// and is classified again at the next online recovery). Never a generic reason.
+export function refusalReason(draft: ServerDoc | null, uid: string, role: RoleNow): RejectReason | null {
+  if (!draft) return null;
+  const reason = draftRefusal(draft, uid, role);
+  return reason === 'unknown' ? null : reason;
 }
 
 // `reissue`: the edit never reached the server and nothing changed its documents since it was made,
@@ -297,14 +322,15 @@ export type Outcome = { kind: 'acked' } | { kind: 'rejected'; reason: RejectReas
 // - Otherwise an entry whose newest values the server holds is acked. One whose documents the server
 //   has not changed since its base never landed and is made again (reissue); one whose documents
 //   changed since (another phone wrote later), or whose base is unknown, is changed and kept.
-// An entry whose documents were not all read is left out (judged on a later try).
+// An entry whose documents were not all read, or whose outcome depends on a role the check did not
+// answer (`role` NO_ANSWER), is left out (judged on a later try).
 export function judge(
   judged: JournalEntry[],
   newer: JournalEntry[],
   docs: ReadonlyMap<string, ServerDoc>,
   drafts: ReadonlyMap<string, ServerDoc>,
   uid: string,
-  role: string | null = null,
+  role: RoleNow = null,
 ): Map<number, Outcome> {
   // The newest entry and value per (document, key), across everything that is not yet saved.
   const newest = new Map<string, { seq: number; path: string; key: string; expected: unknown; live: boolean }>();
@@ -333,6 +359,7 @@ export function judge(
       }
     }
     const reason = draftRefusal(draft, uid, role);
+    if (reason === 'unknown') continue;
     if (reason) outcomes.set(entry.seq, { kind: 'rejected', reason });
     else if (held) outcomes.set(entry.seq, { kind: 'acked' });
     else outcomes.set(entry.seq, !overtaken && untouchedSince(entry, docs) ? { kind: 'reissue' } : { kind: 'changed' });
