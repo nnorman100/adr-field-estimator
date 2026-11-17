@@ -35,6 +35,13 @@ describe('price sentences', () => {
     expect(stripPriceSentences(text)).toBe('Water reached the hallway. Check the subfloor.\nDry for three days.');
   });
 
+  it('drops a price sentence wrapped across a line break, keeping the lines around it', () => {
+    expect(stripPriceSentences('Cabinet removal total:\n1,200.00')).toBe('');
+    expect(stripPriceSentences('Water reached the hallway.\nThe total for drying\ncomes to\n900.\nDry for three days.')).toBe(
+      'Water reached the hallway.\nDry for three days.',
+    );
+  });
+
   it('strips every string inside a structured output, keeping its shape', () => {
     const output = {
       summary: 'Category 2 water in the kitchen. The repair costs $4,000.',

@@ -131,6 +131,10 @@ describe('API sign-in gate', () => {
     expect(call(`/api/jobs/${id}/photos/${id}`, 'PUT').headers.get('x-middleware-next')).toBe('1');
     expect(call(`/api/jobs/${id}/submissions`, 'POST').headers.get('x-middleware-next')).toBe('1');
     expect(call(`/api/jobs/${id}/drafts`, 'POST').headers.get('x-middleware-next')).toBe('1');
+    expect(call(`/api/jobs/${id}/ai/summary-draft`, 'POST').headers.get('x-middleware-next')).toBe('1');
+    for (const path of [`/api/jobs/${id}/ai/summary-draft/`, `/api/jobs/${id}/ai/summary`, `/api/jobs/${id}/ai`, '/api/jobs/x/ai/summary-draft']) {
+      expect({ path, status: call(path, 'POST').status }).toEqual({ path, status: 401 });
+    }
     for (const path of [
       '/api/companies/current/team',
       `/api/companies/${id}/team/extra`,

@@ -2,13 +2,13 @@ import { createHash } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import { aiRefusal, type AiCallerContext, type AiOutcome, type AiRefusal, type AiRequest } from '@/lib/ai/call';
+import type { JobIdentity } from '@/lib/ai/prompt-facts';
 import type { Identity } from '@/lib/auth';
 import type { FieldManifest } from '@/lib/field/canonical';
 import { jobAccess, JobError, type JobRow } from '@/lib/jobs/access';
 import {
   summaryDraftRequest,
   summaryFacts,
-  summaryFactsText,
   SummaryFactsError,
   type SummaryDraftOutput,
   type SummaryFacts,
@@ -23,11 +23,13 @@ import {
 //      nothing is read or spent;
 //   3. the phone's call id: one this person already used for this job answers the stored proposal
 //      (a retry after a lost answer); one the ledger holds with no proposal, or for another job,
-//      person or feature, is refused, so a used id never runs a second model call;
+//      person or feature, is refused, so a used id never runs a second model call (the boundary's
+//      fresh reservation closes the same gap for two requests sent at once);
 //   4. the job's current draft from the field database, which must be editing;
 //   5. the AI boundary (web/src/lib/ai/call.ts): quota, budget, Model Armor, model, Zod, price
 //      sentences stripped, then the summary's rules (./request.ts);
-//   6. the proposal stored in ai_results as `proposed`, under the boundary's call id.
+//   6. the job and field ownership checked again under the job's lock, then the proposal stored in
+//      ai_results as `proposed`, under the boundary's call id.
 // The route never writes the draft: only the technician's accept does, through the field rules
 // (a later S7-6 slice). A refusal stores nothing.
 
@@ -188,12 +190,23 @@ async function spoken(
   };
 }
 
+// The job's saved customer name and property address: read only so the shared prompt builder can
+// remove them wherever a technician typed them (web/src/lib/ai/prompt-facts.ts), never sent.
+async function identityOf(tx: CompanyTransaction, companyId: string, job: JobRow): Promise<JobIdentity> {
+  const [customer] = rows<{ name: string }>(
+    await tx.execute(sql`SELECT name FROM job_customers WHERE company_id = ${companyId}::uuid AND job_id = ${job.id}::uuid`),
+  );
+  return { customerName: customer?.name ?? '', propertyAddress: job.propertyAddress };
+}
+
 export function summaryDraftService(db: Database, reader: SummaryDraftReader, boundary: () => SummaryDraftBoundary): SummaryDraftService {
   return {
     async draft(caller, jobId, callIdInput) {
       const callId = callIdInput.toLowerCase();
       const companyId = caller.companyId;
-      type Before = { replayed: SummaryProposal } | { replayed: null; job: JobRow; said: Pick<SummaryFacts, 'walkthrough' | 'voiceNotes'> };
+      type Before =
+        | { replayed: SummaryProposal }
+        | { replayed: null; job: JobRow; identity: JobIdentity; said: Pick<SummaryFacts, 'walkthrough' | 'voiceNotes'> };
       const before = await withCompany(db, companyId, async (tx): Promise<Before> => {
         const job = await jobAccess(tx, caller, jobId, ['audit'], { fieldWork: true });
         if (caller.flags?.ai_summary !== true) throw new SummaryDraftRefused(aiRefusal('feature_off'));
@@ -202,11 +215,12 @@ export function summaryDraftService(db: Database, reader: SummaryDraftReader, bo
         return {
           replayed: null,
           job,
+          identity: await identityOf(tx, companyId, job),
           said: await spoken(tx, companyId, job.id, job.currentDraftId),
         };
       });
       if (before.replayed) return { created: false, result: before.replayed };
-      const { job, said } = before;
+      const { job, identity, said } = before;
       const draftId = job.currentDraftId;
 
       const read = await reader.read(companyId, draftId);
@@ -222,7 +236,7 @@ export function summaryDraftService(db: Database, reader: SummaryDraftReader, bo
         throw error;
       }
 
-      const request = summaryDraftRequest(facts, callId);
+      const request = summaryDraftRequest(facts, { callId, identity });
       const context: AiCallerContext = {
         companyId,
         actorId: caller.actorId,
@@ -231,25 +245,32 @@ export function summaryDraftService(db: Database, reader: SummaryDraftReader, bo
         flags: caller.flags,
       };
       const outcome = await boundary().call(context, request);
-      if (!outcome.ok) throw new SummaryDraftRefused(outcome.refusal);
-      if (outcome.promptVersion === null) throw new Error('summary draft prompt has no version');
-      const inputDigest = createHash('sha256').update(summaryFactsText(facts), 'utf8').digest('hex');
+      if (!outcome.ok && outcome.refusal.code !== 'call_reused') throw new SummaryDraftRefused(outcome.refusal);
+      if (outcome.ok && outcome.promptVersion === null) throw new Error('summary draft prompt has no version');
 
       return withCompany(db, companyId, async (tx) => {
+        // The job and its field work are checked again under the job's lock: a transfer or archive
+        // while the model ran leaves the answer unstored and unsent.
+        const current = await jobAccess(tx, caller, jobId, ['audit'], { fieldWork: true, lock: true });
+        if (current.currentDraftId !== draftId) throw new SummaryDraftError('draft_not_editing');
+        if (!outcome.ok) {
+          // The same id sent twice at once: the ledger let only the first reach the model; this one
+          // answers its proposal once stored.
+          const prior = await priorCall(tx, companyId, callId);
+          return { created: false, result: replay(prior.result, caller, jobId) };
+        }
+        // The digest of exactly the text sent (after the shared prompt builder cleaned it).
+        const inputDigest = createHash('sha256').update(request.facts ?? '', 'utf8').digest('hex');
         // Model Armor passed the output (a blocked one is a refusal above), so its verdict is `passed`.
-        const inserted = rows<ResultRow>(
+        const [inserted] = rows<ResultRow>(
           await tx.execute(sql`
             INSERT INTO ai_results AS r (company_id, call_id, job_id, draft_id, actor_id, feature, input_digest, prompt_version, model, output, verdict_category)
             VALUES (${companyId}::uuid, ${outcome.callId}::uuid, ${job.id}::uuid, ${draftId}::uuid, ${caller.actorId}::uuid, ${SUMMARY_DRAFT_FEATURE},
                     ${inputDigest}, ${outcome.promptVersion}, ${outcome.model}, ${JSON.stringify(outcome.output)}::text::jsonb, 'passed')
-            ON CONFLICT (company_id, call_id) DO NOTHING
             RETURNING ${RESULT_COLUMNS}
           `),
         );
-        if (inserted[0]) return { created: true, result: view(inserted[0]) };
-        // The same id sent twice at once: both ran, the first stored; the second answers it.
-        const prior = await priorCall(tx, companyId, outcome.callId);
-        return { created: false, result: replay(prior.result, caller, jobId) };
+        return { created: true, result: view(inserted!) };
       });
     },
   };

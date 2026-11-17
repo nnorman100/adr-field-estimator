@@ -253,6 +253,17 @@ export function templateEndpoint(template: string): string {
   return `modelarmor.${match[1]}.rep.googleapis.com`;
 }
 
+// Model Armor for a text-only feature: one client, on the text template's endpoint, and no image
+// template. An image is refused as unsupported (fails closed) without any call.
+export function createTextArmor(template: string, timeoutMs: number): Pick<Armor, 'screenPrompt' | 'screenResponse'> {
+  const textClient = new v1.ModelArmorClient({ apiEndpoint: templateEndpoint(template) }) as unknown as SanitizeClient;
+  const armor = createArmor({ textClient, imageClient: textClient, templates: { text: template, image: template }, timeoutMs });
+  return {
+    screenPrompt: (input) => ('image' in input ? Promise.resolve(refuse('unsupported')) : armor.screenPrompt(input)),
+    screenResponse: (input) => armor.screenResponse(input),
+  };
+}
+
 // The real clients, one per template endpoint. Credentials come from ADC on Cloud Run.
 export function createArmorClients(templates: ArmorTemplates): {
   textClient: SanitizeClient;

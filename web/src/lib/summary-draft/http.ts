@@ -5,6 +5,7 @@ import type { AiRefusalCode } from '@/lib/ai/codes';
 import { IdentityRefusal, type Identity } from '@/lib/auth';
 import { JobError } from '@/lib/jobs/access';
 import { uuid } from '@/lib/jobs/schema';
+import { readBody } from '@/lib/photos/image';
 import { SummaryDraftError, SummaryDraftRefused } from './service';
 import { summaryDraftServices } from './services';
 
@@ -33,6 +34,7 @@ const REFUSAL_STATUS: Readonly<Record<AiRefusalCode, number>> = {
   not_ready: 503,
   quota: 429,
   budget: 429,
+  call_reused: 409,
   unsupported_input: 422,
   input_blocked: 422,
   output_blocked: 422,
@@ -81,9 +83,7 @@ async function jobId(context: RouteContext): Promise<string> {
 async function body(request: Request): Promise<z.infer<typeof summaryDraftBody>> {
   let raw: unknown;
   try {
-    const text = await request.text();
-    if (text.length > MAX_BODY_BYTES) throw new Error('too long');
-    raw = JSON.parse(text);
+    raw = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(await readBody(request, MAX_BODY_BYTES)));
   } catch {
     throw new SummaryDraftError('invalid_request');
   }

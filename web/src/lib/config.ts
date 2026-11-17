@@ -125,16 +125,12 @@ const shape = {
     .string()
     .regex(BUCKET_NAME, { message: 'EVIDENCE_BUCKET must be a Cloud Storage bucket name' })
     .optional(),
-  // The Model Armor templates the AI boundary screens text and images with (infra/dryscope/modules/
-  // naming: dryscope-text-<env> in us-central1, dryscope-image-<env> in us, V3). Cloud Run gets them
-  // from Terraform; only an AI request reads them (parseAiConfig).
+  // The Model Armor template the AI boundary screens text with (infra/dryscope/modules/naming:
+  // dryscope-text-<env> in us-central1, V3). Cloud Run gets it from Terraform; only an AI request
+  // reads it (parseAiConfig). The image template is read when an image feature (S7-8) needs it.
   MODEL_ARMOR_TEXT_TEMPLATE: z
     .string()
     .regex(ARMOR_TEMPLATE, { message: 'MODEL_ARMOR_TEXT_TEMPLATE must be a Model Armor template name' })
-    .optional(),
-  MODEL_ARMOR_IMAGE_TEMPLATE: z
-    .string()
-    .regex(ARMOR_TEMPLATE, { message: 'MODEL_ARMOR_IMAGE_TEMPLATE must be a Model Armor template name' })
     .optional(),
   // firebase-admin reads this one itself too and then writes to the emulator with no credentials;
   // the same limits as the Auth emulator apply.
@@ -459,22 +455,19 @@ export function parseLocalSignInFixture(env: Record<string, string | undefined>)
   return checked(env).LOCAL_SIGN_IN_FIXTURE ?? null;
 }
 
-export type AiConfig = { projectId: string; armorTemplates: { text: string; image: string } };
+export type AiConfig = { projectId: string; armorTextTemplate: string };
 
-// What a REST AI call needs: the project the text model runs in and the Model Armor templates.
+// What a REST text AI call needs: the project the text model runs in and the Model Armor text template.
 // Called on the first AI request whose company switch is on, so the shell boots without these; that
 // request then fails closed.
 export function parseAiConfig(env: Record<string, string | undefined>): AiConfig {
   const data = checked(env);
   const problems: string[] = [];
-  for (const name of ['GOOGLE_CLOUD_PROJECT', 'MODEL_ARMOR_TEXT_TEMPLATE', 'MODEL_ARMOR_IMAGE_TEMPLATE'] as const) {
+  for (const name of ['GOOGLE_CLOUD_PROJECT', 'MODEL_ARMOR_TEXT_TEMPLATE'] as const) {
     if (!data[name]) problems.push(`${name}: ${name} is required for AI requests`);
   }
-  if (problems.length > 0 || !data.GOOGLE_CLOUD_PROJECT || !data.MODEL_ARMOR_TEXT_TEMPLATE || !data.MODEL_ARMOR_IMAGE_TEMPLATE) {
+  if (problems.length > 0 || !data.GOOGLE_CLOUD_PROJECT || !data.MODEL_ARMOR_TEXT_TEMPLATE) {
     throw new ConfigError(problems);
   }
-  return {
-    projectId: data.GOOGLE_CLOUD_PROJECT,
-    armorTemplates: { text: data.MODEL_ARMOR_TEXT_TEMPLATE, image: data.MODEL_ARMOR_IMAGE_TEMPLATE },
-  };
+  return { projectId: data.GOOGLE_CLOUD_PROJECT, armorTextTemplate: data.MODEL_ARMOR_TEXT_TEMPLATE };
 }

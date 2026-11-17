@@ -1,5 +1,5 @@
 import { memberRoute } from '@/lib/auth';
-import { draftSummary } from '@/lib/summary-draft';
+import { draftSummary } from '@/lib/summary-draft/http';
 
 export const dynamic = 'force-dynamic';
 

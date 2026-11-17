@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ArmorVerdict } from '@/lib/ai/armor';
 import type { AiModelRequest } from '@/lib/ai/call';
@@ -16,6 +16,12 @@ const live = vi.hoisted(() => ({
   answer: null as unknown,
   requests: [] as AiModelRequest[],
   logs: [] as AiLogLine[],
+  // Every text Model Armor was asked to screen, prompt and response.
+  screened: [] as string[],
+  // Runs inside the model call, while the request is between its checks and its store.
+  during: null as null | (() => Promise<void>),
+  // Runs as the request reads the field draft, after its call id lookup and before the AI boundary.
+  reading: null as null | (() => Promise<void>),
 }));
 vi.mock('@/lib/auth/services', () => ({
   identityServices: () => live.harness!.identity,
@@ -36,15 +42,32 @@ vi.mock('@/lib/summary-draft/services', async () => {
         model: {
           async generate(request) {
             live.requests.push(request);
+            await live.during?.();
             return { text: JSON.stringify(live.answer), usage: { promptTokenCount: 1_000, candidatesTokenCount: 200 } };
           },
         },
-        armor: { screenPrompt: async () => PASS, screenResponse: async () => PASS },
+        armor: {
+          screenPrompt: async (input) => {
+            live.screened.push('text' in input ? input.text : '[image]');
+            return PASS;
+          },
+          screenResponse: async (input) => {
+            live.screened.push(input.text);
+            return PASS;
+          },
+        },
         quota: ledger,
         budget: ledger,
         log: (line) => live.logs.push(line),
       });
-      return summaryDraftService(live.harness!.handle.db, fieldSummaryReader(live.harness!.field), () => boundary);
+      const reader = fieldSummaryReader(live.harness!.field);
+      const reading = {
+        read: async (companyId: string, draftId: string) => {
+          await live.reading?.();
+          return reader.read(companyId, draftId);
+        },
+      };
+      return summaryDraftService(live.harness!.handle.db, reading, () => boundary);
     },
   };
 });
@@ -89,6 +112,9 @@ beforeEach(async () => {
   live.answer = ANSWER;
   live.requests = [];
   live.logs = [];
+  live.screened = [];
+  live.during = null;
+  live.reading = null;
   // The switch on for both companies, so a refusal of B's owner is the job's, not the switch's.
   await h.admin`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${h.seed.a}, 'ai_summary', true), (${h.seed.b}, 'ai_summary', true)`;
 });
@@ -175,6 +201,64 @@ describe('POST /api/jobs/{jobId}/ai/summary-draft', () => {
     expect(await results()).toHaveLength(1);
   });
 
+  it('lets only one of two requests sent at once with the same call id reach the model', async () => {
+    const job = await editingJob();
+    const callId = randomUUID();
+    // Both pass the call id lookup before either reserves; the first reserves while the second's
+    // model call is still running.
+    let second!: ReturnType<typeof draftSummary>;
+    let resume!: () => void;
+    const reserve = new Promise<void>((resolve) => (resume = resolve));
+    live.reading = async () => {
+      live.reading = null;
+      live.during = async () => {
+        live.during = null;
+        resume();
+        await first;
+      };
+      second = draftSummary(ESTIMATOR_A, job.jobId, callId);
+      await reserve;
+    };
+    const first = draftSummary(ESTIMATOR_A, job.jobId, callId);
+    expect(await first).toMatchObject({ status: 409, body: { error: 'call_reused' } });
+    const stored = await second;
+    expect(stored.status).toBe(201);
+    expect(live.requests).toHaveLength(1);
+    expect(await results()).toHaveLength(1);
+    expect(await ledger()).toEqual([expect.objectContaining({ call_id: callId, state: 'settled' })]);
+    expect(await draftSummary(ESTIMATOR_A, job.jobId, callId)).toEqual({ status: 200, body: stored.body });
+  });
+
+  it('stores and answers nothing when the field work moves to someone else while the model runs', async () => {
+    const job = await editingJob();
+    const callId = randomUUID();
+    live.during = async () => {
+      await h.admin`UPDATE jobs SET field_owner_actor_id = ${h.seed.ownerA.actor}, revision = revision + 1 WHERE id = ${job.jobId}`;
+    };
+    expect(await draftSummary(ESTIMATOR_A, job.jobId, callId)).toMatchObject({ status: 403, body: { error: 'not_field_owner' } });
+    expect(live.requests).toHaveLength(1);
+    expect(await results()).toEqual([]);
+    live.during = null;
+    expect(await draftSummary(ESTIMATOR_A, job.jobId, callId)).toMatchObject({ status: 403, body: { error: 'not_field_owner' } });
+  });
+
+  it('refuses a body over its limit without reading past it', async () => {
+    const job = await editingJob();
+    const path = `/api/jobs/${job.jobId}/ai/summary-draft`;
+    let pulled = 0;
+    const endless = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled += 1;
+        controller.enqueue(new Uint8Array(512).fill(0x20));
+      },
+    });
+    const init = { method: 'POST', headers: request(ESTIMATOR_A, path).headers, body: endless, duplex: 'half' };
+    const res = await json(summaryRoute.POST(new Request(`http://localhost${path}`, init as RequestInit), params({ jobId: job.jobId })));
+    expect(res).toMatchObject({ status: 400, body: { error: 'invalid_request' } });
+    expect(pulled).toBeLessThan(10);
+    expect(live.requests).toEqual([]);
+  });
+
   it('strips every sentence that states a price before the proposal is stored', async () => {
     const job = await editingJob();
     live.answer = {
@@ -229,8 +313,9 @@ describe('POST /api/jobs/{jobId}/ai/summary-draft', () => {
     expect(await results()).toEqual([]);
   });
 
-  it('sends the model no customer name or property address, and logs no planted email, address or coordinates', async () => {
-    const job = await editingJob({ notes: `Owner asked us to email ${EMAIL}; meter photo tagged at ${COORDINATES}; house at ${ADDRESS}.` });
+  it('never lets a typed note carrying the saved address, customer name or coordinates reach the screen or the model', async () => {
+    const job = await editingJob({ notes: `Owner ${CUSTOMER} asked us to email ${EMAIL}; meter photo tagged at ${COORDINATES}; house at ${ADDRESS}.` });
+    h.field.put(h.seed.a, job.draftId, { rooms: [{ id: 'kitchen', field: { name: 'Kitchen', category: 2, floorSf: 120, findings: 'Stain near Testville gate.' } }] });
     const written: string[] = [];
     const capture = (stream: NodeJS.WriteStream) =>
       vi.spyOn(stream, 'write').mockImplementation((chunk: unknown) => {
@@ -248,10 +333,23 @@ describe('POST /api/jobs/{jobId}/ai/summary-draft', () => {
       for (const spy of [...spies, ...consoles]) spy.mockRestore();
     }
     expect(status).toBe(201);
-    // The job row's customer is never read into a request; only the technician's own notes are sent.
+    // The input Model Armor screened and the model got: the saved name, each address part and the
+    // coordinates are gone wherever they were typed; the rest of the note is still there.
     const sent = JSON.stringify(live.requests[0]);
-    expect(sent).not.toContain(CUSTOMER);
-    expect(sent).toContain(EMAIL);
+    const screenedInput = live.screened[0]!;
+    expect(screenedInput).toBe((live.requests[0]!.parts[0] as { text: string }).text);
+    for (const reached of [sent, screenedInput]) {
+      for (const planted of [CUSTOMER, 'Casey', '12 Synthetic Lane', 'Testville', COORDINATES, '37.774929', '-122.419416']) {
+        expect(reached).not.toContain(planted);
+      }
+      // The rest of the note still reaches the model.
+      expect(reached).toContain('asked us to email');
+      expect(reached).toContain('meter photo tagged at');
+      expect(reached).toContain('[removed]');
+    }
+    // What was stored is the digest of exactly that cleaned text.
+    const [stored] = await h.admin<Body[]>`SELECT input_digest FROM ai_results`;
+    expect(stored!.input_digest).toBe(createHash('sha256').update(screenedInput, 'utf8').digest('hex'));
     // The one AI log line holds fixed fields only.
     expect(live.logs).toHaveLength(1);
     const out = JSON.stringify(live.logs) + written.join('\n');

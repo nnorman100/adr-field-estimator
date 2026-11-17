@@ -54,14 +54,14 @@ export const SETTINGS = {
   LINK_SIGNING_KEY: { source: 'terraform', services: SERVING, reader: 'planned' },
   // AI (docs/plans/S7.md, S7-2): where and with which models the web app's text AI runs (the `us`
   // multi-region, V4), and the full resource names of the Model Armor templates it screens with.
-  // The web app reads the two templates for its AI requests (config.ts parseAiConfig, S7-6); the
-  // location and models stay fixed in web/src/lib/ai/ (client.ts, registry.ts), so nothing reads
-  // the other three yet.
+  // The web app reads the text template for its text AI requests (config.ts parseAiConfig, S7-6); the
+  // image template waits for the first image feature (S7-8), and the location and models stay fixed
+  // in web/src/lib/ai/ (client.ts, registry.ts), so nothing reads the other four yet.
   AI_TEXT_LOCATION: { source: 'terraform', services: ['api'], reader: 'planned' },
   AI_TEXT_MODEL: { source: 'terraform', services: ['api'], reader: 'planned' },
   AI_TRANSCRIBE_MODEL: { source: 'terraform', services: ['api'], reader: 'planned' },
   MODEL_ARMOR_TEXT_TEMPLATE: { source: 'terraform', services: SERVING, reader: 'web' },
-  MODEL_ARMOR_IMAGE_TEMPLATE: { source: 'terraform', services: ['api'], reader: 'web' },
+  MODEL_ARMOR_IMAGE_TEMPLATE: { source: 'terraform', services: ['api'], reader: 'planned' },
   // The Live relay's model and location (us-central1), the web app address it calls for admission,
   // turns and settlement, and the audience of its Google ID token there (relayRoute). The relay is
   // still the placeholder, which reads none of them.

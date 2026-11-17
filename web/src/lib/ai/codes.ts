@@ -23,6 +23,7 @@ export const AI_REFUSAL_CODES = Object.freeze([
   'not_ready',
   'quota',
   'budget',
+  'call_reused',
   'unsupported_input',
   'input_blocked',
   'screen_unavailable',

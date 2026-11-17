@@ -224,7 +224,8 @@ export function postgresAiBudget(db: Database, options: { registry?: AiRegistry 
       return withCompany(db, companyId, async (tx): Promise<AiReservation> => {
         await lockCompany(tx, companyId);
         // A retried reservation finds its own row; a call id another call used is refused, so a
-        // settled call can never run again unreserved.
+        // settled call can never run again unreserved. A fresh reservation is granted only a new row,
+        // so two requests naming one call id never both reach the model.
         const [existing] = rows<{ state: string; actor: string; feature: string }>(
           await tx.execute(sql`
             SELECT state, actor_id::text AS actor, feature FROM ai_ledger
@@ -232,6 +233,7 @@ export function postgresAiBudget(db: Database, options: { registry?: AiRegistry 
           `),
         );
         if (existing) {
+          if (request.fresh) return { ok: false, reason: 'reused' };
           if (existing.state === 'reserved' && existing.actor === actorId && existing.feature === feature) {
             return { ok: true, reservationId: reservationIdOf(companyId, callId) };
           }

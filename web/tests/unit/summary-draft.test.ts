@@ -4,6 +4,7 @@ import type { ArmorVerdict } from '@/lib/ai/armor';
 import { createAiBoundary, type AiModelRequest } from '@/lib/ai/call';
 import summaryDraftText from '@/lib/ai/prompts/summary-draft';
 import { AI_REGISTRY } from '@/lib/ai/registry';
+import { parseAiConfig } from '@/lib/config';
 import type { FieldManifest } from '@/lib/field/canonical';
 import {
   summaryDraftRequest,
@@ -33,7 +34,6 @@ function manifest(draft: Record<string, unknown> = {}): FieldManifest {
     rooms: [
       { id: 'hall', field: { name: 'Hall', category: 2, floorSf: 40 } },
       { id: 'kitchen', field: { name: 'Kitchen', category: 2, floorSf: 120, wetFloorSf: 80, findings: 'Toe kick swollen.' } },
-      { id: 'removed', field: { name: 'Old room' } },
     ],
     photos: [
       { id: 'p1', field: { roomId: 'kitchen', shotTag: 'source' } },
@@ -70,7 +70,7 @@ function boundary(answer: unknown) {
   return {
     requests,
     reserved,
-    draft: (facts: SummaryFacts, callId?: string) => call.call(context, summaryDraftRequest(facts, callId)),
+    draft: (facts: SummaryFacts, callId?: string) => call.call(context, summaryDraftRequest(facts, { callId })),
   };
 }
 
@@ -87,14 +87,11 @@ describe('the summary draft prompt', () => {
     const prompt = AI_REGISTRY.summary_draft.prompt!;
     expect(prompt.text).toBe(summaryDraftText);
     expect(prompt.version).toBe(createHash('sha256').update(summaryDraftText, 'utf8').digest('hex'));
-    expect(summaryDraftText.startsWith('You assist the technician reviewing a CONFIRMED structured scope.')).toBe(true);
-    expect(summaryDraftText).toContain('Never state a dollar amount, price, cost or total in them');
-    expect(summaryDraftText.endsWith('Summarize only this inspection, not examples or assistant suggestions.')).toBe(true);
   });
 });
 
 describe('summary draft facts', () => {
-  it('reads the draft in room order, without the summary being drafted or rooms the order does not list', () => {
+  it('reads the draft in room order, without the summary being drafted', () => {
     const facts = summaryFacts(manifest(), NO_EXTRA);
     expect(facts.inspection).toEqual({
       yearBuilt: 1972,
@@ -107,7 +104,13 @@ describe('summary draft facts', () => {
     });
     expect(facts.photoCount).toBe(3);
     expect(JSON.stringify(facts)).not.toContain('My own words.');
-    expect(JSON.stringify(facts)).not.toContain('Old room');
+  });
+
+  it('refuses a room order that does not list the room documents exactly, as Submit does', () => {
+    const unlisted = { ...manifest(), rooms: [...manifest().rooms, { id: 'added', field: { name: 'Den' } }] };
+    expect(() => summaryFacts(unlisted, NO_EXTRA)).toThrow(SummaryFactsError);
+    const missing = { ...manifest(), rooms: manifest().rooms.filter((room) => room.id !== 'hall') };
+    expect(() => summaryFacts(missing, NO_EXTRA)).toThrow(SummaryFactsError);
   });
 
   it('refuses a draft map the field rules would refuse, so no other key (an address) reaches the model', () => {
@@ -117,12 +120,12 @@ describe('summary draft facts', () => {
     ).toThrow(SummaryFactsError);
   });
 
-  it('states the age rule first: testing required before 1978, not from 1978, not when the year is unknown', () => {
+  it('states the age rule first: testing required before 1978, not from 1978, and unresolved when the year is unknown', () => {
     const rule = (draft: Record<string, unknown>) => summaryFactsText(summaryFacts(manifest(draft), NO_EXTRA)).split('\n')[0];
     expect(rule({ yearBuilt: 1977 })).toBe('App age rule: the home was built in 1977, so the app requires lead/asbestos testing before demolition.');
     expect(rule({ yearBuilt: 1978 })).toBe('App age rule: the home was built in 1978, so the app does not require lead/asbestos testing before demolition.');
     expect(rule({ yearBuilt: undefined })).toBe(
-      'App age rule: the year built is not recorded, so the app does not require lead/asbestos testing before demolition.',
+      'App age rule: the year built is not recorded, so the app has not determined whether lead/asbestos testing is required before demolition.',
     );
     const text = summaryFactsText(summaryFacts(manifest({ notes: `one${String.fromCharCode(0x2028)}two\nthree` }), NO_EXTRA));
     expect(text.split('\n')).toHaveLength(3);
@@ -134,7 +137,11 @@ describe('summary draft server rules, through the AI boundary', () => {
     const b = boundary(answer());
     const outcome = await b.draft(summaryFacts(manifest(), NO_EXTRA));
     expect(outcome.ok).toBe(true);
-    expect(b.requests[0]!.systemInstruction).toBe(summaryDraftText);
+    const sent = b.requests[0]!.systemInstruction!;
+    expect(sent).toBe(summaryDraftText);
+    expect(sent.startsWith('You assist the technician reviewing a CONFIRMED structured scope.')).toBe(true);
+    expect(sent).toContain('Never state a dollar amount, price, cost or total in them');
+    expect(sent.endsWith('Summarize only this inspection, not examples or assistant suggestions.')).toBe(true);
     expect(b.requests[0]!.parts).toEqual([{ text: summaryFactsText(summaryFacts(manifest(), NO_EXTRA)) }]);
     expect(b.requests[0]!.responseMimeType).toBe('application/json');
   });
@@ -163,6 +170,28 @@ describe('summary draft server rules, through the AI boundary', () => {
     });
   });
 
+  it('strips a price wrapped across a line break in every field', async () => {
+    const wrapped = 'Cabinet removal total:\n1,200.00';
+    const b = boundary(
+      answer({
+        summary: `Water affected the kitchen.\n${wrapped}.\nThe hall is dry.`,
+        suggestions: [wrapped, 'Move the contents first.'],
+        unpriced_work: [`Kitchen: toe kick removal.\n${wrapped}`],
+        testing_advice: [`Test before demolition.\n${wrapped}`],
+      }),
+    );
+    const outcome = await b.draft(summaryFacts(manifest(), NO_EXTRA));
+    expect(outcome).toMatchObject({
+      ok: true,
+      output: {
+        summary: 'Water affected the kitchen.\nThe hall is dry.',
+        suggestions: ['Move the contents first.'],
+        unpriced_work: ['Kitchen: toe kick removal.'],
+        testing_advice: ['Test before demolition.'],
+      },
+    });
+  });
+
   it('keeps testing advice only for a home built before 1978', async () => {
     const advice = async (yearBuilt: number | undefined) => {
       const outcome = await boundary(answer()).draft(summaryFacts(manifest({ yearBuilt }), NO_EXTRA));
@@ -175,6 +204,30 @@ describe('summary draft server rules, through the AI boundary', () => {
     expect(await advice(undefined)).toEqual([]);
   });
 
+  it('drops lead or asbestos testing advice from every field for a home built in 1978 or later', async () => {
+    const said = answer({
+      summary: 'Water affected the kitchen. Test for asbestos before removing the drywall. The hall is dry.',
+      suggestions: ['Take lead paint samples in the hall.', 'Move the contents first.', 'Wet drywall leads to mold.'],
+      unpriced_work: ['Asbestos testing of the ceiling is requested but not in the scope.', 'Kitchen: toe kick removal.'],
+    });
+    const draft = async (yearBuilt: number | undefined) => {
+      const outcome = await boundary(said).draft(summaryFacts(manifest({ yearBuilt }), NO_EXTRA));
+      if (!outcome.ok) throw new Error(outcome.refusal.code);
+      return outcome.output;
+    };
+    for (const year of [1978, 2004]) {
+      expect(await draft(year)).toEqual({
+        summary: 'Water affected the kitchen. The hall is dry.',
+        suggestions: ['Move the contents first.', 'Wet drywall leads to mold.'],
+        unpriced_work: ['Kitchen: toe kick removal.'],
+        testing_advice: [],
+      });
+    }
+    // Before 1978 the advice stands wherever it is; with no year, only the testing advice field goes.
+    expect(await draft(1977)).toMatchObject({ summary: said.summary, suggestions: said.suggestions, unpriced_work: said.unpriced_work });
+    expect(await draft(undefined)).toEqual({ ...said, testing_advice: [] });
+  });
+
   it('refuses an answer whose whole summary states prices, or that is not the summary shape', async () => {
     expect(await boundary(answer({ summary: 'It costs $500.' })).draft(summaryFacts(manifest(), NO_EXTRA))).toMatchObject({
       ok: false,
@@ -184,6 +237,52 @@ describe('summary draft server rules, through the AI boundary', () => {
       ok: false,
       refusal: { code: 'invalid_output' },
     });
+  });
+});
+
+describe('the shared prompt builder', () => {
+  const identity = { customerName: 'Casey Planted', propertyAddress: '12 Synthetic Lane, Testville, CA 94000' };
+
+  it('removes the saved customer name, each address part and coordinates from every string sent', () => {
+    const facts = summaryFacts(
+      {
+        ...manifest({
+          notes: 'Casey said the main shutoff is at 12 synthetic  lane; pin 37.774929, -122.419416. Planted roses in Testville.',
+        }),
+        rooms: [
+          { id: 'hall', field: { name: 'Hall', findings: 'Meter at 37°46\'29"N by the door.' } },
+          { id: 'kitchen', field: { name: 'Kitchen (Casey)', prepTasks: ['Call Casey Planted at CA 94000 office'] } },
+        ],
+      },
+      { walkthrough: [{ speaker: 'technician', text: 'Gate code for Testville is at -122.4194' }], voiceNotes: ['Casey Planted owns it.'], meterReadings: [] },
+    );
+    const text = summaryDraftRequest(facts, { identity }).facts!;
+    for (const planted of ['Casey', 'Planted', 'Synthetic', 'synthetic', 'Testville', '94000', '37.774929', '-122.419416', '-122.4194', '37°46']) {
+      expect(text).not.toContain(planted);
+    }
+    expect(text).toContain('[removed]');
+    // Measurements and words that merely contain a planted word are kept.
+    expect(text).toContain('main shutoff');
+    expect(text).toContain('roses');
+    expect(text).toContain('"name":"Hall"');
+    expect(text).toContain('"name":"Kitchen ([removed])"');
+  });
+
+  it('leaves words that only contain a planted part, and short numbers, alone', () => {
+    const facts = summaryFacts(manifest({ notes: 'Cascade dryer at 12.5% moisture; Canada geese outside.' }), NO_EXTRA);
+    const text = summaryDraftRequest(facts, { identity }).facts!;
+    expect(text).toContain('Cascade dryer at 12.5% moisture; Canada geese outside.');
+  });
+});
+
+describe('the AI settings', () => {
+  it('need the text template only: a text request starts with no image template set', () => {
+    const template = 'projects/dryscope/locations/us-central1/templates/dryscope-text-test';
+    expect(parseAiConfig({ APP_ENV: 'test', GOOGLE_CLOUD_PROJECT: 'dryscope', MODEL_ARMOR_TEXT_TEMPLATE: template })).toEqual({
+      projectId: 'dryscope',
+      armorTextTemplate: template,
+    });
+    expect(() => parseAiConfig({ APP_ENV: 'test', GOOGLE_CLOUD_PROJECT: 'dryscope' })).toThrow(/MODEL_ARMOR_TEXT_TEMPLATE/);
   });
 });
 

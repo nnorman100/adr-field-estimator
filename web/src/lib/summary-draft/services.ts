@@ -1,4 +1,4 @@
-import { createArmor, createArmorClients } from '@/lib/ai/armor';
+import { createTextArmor } from '@/lib/ai/armor';
 import { postgresAiBudget } from '@/lib/ai/budget';
 import { createAiBoundary } from '@/lib/ai/call';
 import { parseAiClientConfig, vertexModel } from '@/lib/ai/client';
@@ -15,21 +15,16 @@ const ARMOR_TIMEOUT_MS = 10_000;
 let service: SummaryDraftService | null = null;
 let boundary: SummaryDraftBoundary | null = null;
 
-// The real AI boundary: the Vertex text model, Model Armor on the environment's templates, and the
-// Postgres ledger for the quota and the budget. Built on the first call whose company switch is on,
-// so a missing AI setting fails that request closed and never a request with the switch off.
+// The real AI boundary: the Vertex text model, Model Armor on the environment's text template, and
+// the Postgres ledger for the quota and the budget. Built on the first call whose company switch is
+// on, so a missing AI setting fails that request closed and never a request with the switch off.
 function aiBoundary(): SummaryDraftBoundary {
   if (!boundary) {
     const config = parseAiConfig(process.env);
     const ledger = postgresAiBudget(serverDatabase());
-    const templates = config.armorTemplates;
     boundary = createAiBoundary({
       model: vertexModel(parseAiClientConfig({ project: config.projectId })),
-      armor: createArmor({
-        ...createArmorClients(templates),
-        templates,
-        timeoutMs: ARMOR_TIMEOUT_MS,
-      }),
+      armor: createTextArmor(config.armorTextTemplate, ARMOR_TIMEOUT_MS),
       quota: ledger,
       budget: ledger,
     });

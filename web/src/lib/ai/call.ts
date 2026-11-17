@@ -75,10 +75,11 @@ export type AiQuotaPort = {
 // A refused reservation says why and, when it knows, how many seconds until it may fit: the UTC
 // day's or month's end for a spent ceiling or a used-up quota, a minute for room taken only by calls
 // still in progress. `quota` is the ledger's own count of the person's calls today, checked in the
-// same transaction as the money, so parallel calls cannot pass the quota together.
+// same transaction as the money, so parallel calls cannot pass the quota together. `reused` answers a
+// fresh reservation whose call id the ledger already holds.
 export type AiReservation =
   | { ok: true; reservationId: string }
-  | { ok: false; reason: 'daily' | 'monthly' | 'held' | 'quota'; retryAfterSeconds?: number };
+  | { ok: false; reason: 'daily' | 'monthly' | 'held' | 'quota' | 'reused'; retryAfterSeconds?: number };
 
 export type AiBudgetPort = {
   reserve(request: {
@@ -89,6 +90,8 @@ export type AiBudgetPort = {
     model: AiModel;
     microUsd: number;
     at: Date;
+    // The caller named the call id: only a new ledger row is granted, so one id runs one model call.
+    fresh?: boolean;
   }): Promise<AiReservation>;
   // The call's real cost (zero when no model work happened).
   settle(reservationId: string, microUsd: number): Promise<void>;
@@ -152,6 +155,7 @@ const REFUSALS: Readonly<Record<AiRefusalCode, { retryable: boolean; message: st
   not_ready: { retryable: false, message: `This AI feature is not available yet. ${KEEP_WORKING}` },
   quota: { retryable: false, message: `You have used this AI feature as often as allowed today. ${KEEP_WORKING}` },
   budget: { retryable: false, message: `Your company's AI allowance does not cover this request now. ${KEEP_WORKING}` },
+  call_reused: { retryable: false, message: `This AI request was already sent. ${KEEP_WORKING}` },
   unsupported_input: { retryable: false, message: `This AI feature cannot read that input. ${KEEP_WORKING}` },
   input_blocked: { retryable: false, message: `The safety check stopped this AI request. ${KEEP_WORKING}` },
   screen_unavailable: { retryable: true, message: TRY_AGAIN },
@@ -364,8 +368,10 @@ export function createAiBoundary(deps: BoundaryDeps) {
           model: entry.model,
           microUsd,
           at,
+          ...(clientCallId === undefined ? {} : { fresh: true }),
         });
         if (!held.ok) {
+          if (held.reason === 'reused') throw new Refused('call_reused');
           const after = held.retryAfterSeconds;
           if (held.reason === 'quota') throw new Refused('quota', 'not_screened', undefined, after);
           throw new Refused('budget', 'not_screened', held.reason === 'held', after);

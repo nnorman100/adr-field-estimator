@@ -20,17 +20,33 @@ export function statesPrice(text: string): boolean {
   return MONEY.test(text) || (MONEY_WORD.test(text) && NUMBER.test(text));
 }
 
-// The text without any sentence that states a price; lines are kept apart and emptied lines dropped.
-export function stripPriceSentences(text: string): string {
-  return text
+// The text without any sentence `drop` matches; lines are kept apart and emptied lines dropped. A
+// line break ends a sentence only after its end mark, so a clause wrapped onto the next line
+// ("Total:" then "1,200") is one sentence and is dropped whole. Feature rules (the summary's
+// pre-1978 rule) drop their own sentences the same way.
+export function stripSentences(text: string, drop: (sentence: string) => boolean): string {
+  const parts = text.trim().split(/((?<=[.?!])\s+)/);
+  let out = '';
+  let breaks = false;
+  for (let i = 0; i < parts.length; i += 2) {
+    const sentence = parts[i]!;
+    if (sentence.length > 0 && !drop(sentence)) {
+      if (out.length > 0) out += breaks ? '\n' : ' ';
+      out += sentence;
+      breaks = false;
+    }
+    if (parts[i + 1]?.includes('\n')) breaks = true;
+  }
+  return out
     .split('\n')
-    .map((line) =>
-      sentences(line)
-        .filter((sentence) => !statesPrice(sentence))
-        .join(' '),
-    )
+    .map((line) => line.trim())
     .filter((line) => line.length > 0)
     .join('\n');
+}
+
+// The text without any sentence that states a price.
+export function stripPriceSentences(text: string): string {
+  return stripSentences(text, statesPrice);
 }
 
 // The same rule over every string of a structured output; numbers, booleans and shape are kept.
