@@ -13,6 +13,8 @@ import { PROJECTION_CONNECTIONS } from '@/lib/projection/services';
 // reads the real values (runbook step K) and records them here.
 const DATABASE_CONNECTION_LIMIT = { test: 25, live: 100 } as const;
 
+// Two, because the test release stages a revision only 15 minutes after the last traffic move, when
+// a revision that lost its traffic has drained (tests/test_web_release_drain.ts).
 const REVISIONS = 2;
 const MIGRATOR = 1;
 const RESERVE = 10;
