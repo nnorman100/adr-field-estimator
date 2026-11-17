@@ -443,8 +443,9 @@ describe('the first capture', () => {
     expect(await claim(ESTIMATOR_A, id)).toEqual({ status: 409, body: { error: 'job_signed' } });
   });
 
-  // Security audit F1, data made before a draft id that was ever submitted was refused: a job put on
-  // another job's earlier draft, made before drafts carried their job id, never hands that draft on.
+  // Security audit F1: a job whose current draft another job claimed (job_drafts, 0016), as data made
+  // before the claims could hold it, never hands that draft on, even one made before drafts carried
+  // their job id.
   it('refuses a first capture on a job whose current draft another job also holds, and leaves that draft as it is', async () => {
     const victim = { id: randomUUID(), draftId: randomUUID() };
     expect((await create(ESTIMATOR_A2, victim)).status).toBe(201);

@@ -154,6 +154,21 @@ describe('the field owner of a draft', () => {
     expect(await updateDoc(first.caller, path(company, draft), { jobId: other })).toBe(403);
   });
 
+  it('stamps the job id on a draft made before it, even when its owner and revision already match', async () => {
+    const company = randomUUID();
+    const draft = randomUUID();
+    const job = randomUUID();
+    await db.doc(path(company, draft)).create({ fieldOwnerUid: 'uid-1', state: 'editing', field: { notes: 'kept' } });
+    expect(await drafts.setFieldOwner(company, job, draft, 'uid-1', 0)).toBe('same');
+    expect((await db.doc(path(company, draft)).get()).data()).toEqual({ jobId: job, fieldOwnerUid: 'uid-1', state: 'editing', field: { notes: 'kept' } });
+    const newer = randomUUID();
+    await db.doc(path(company, newer)).create({ fieldOwnerUid: 'uid-2', fieldOwnerRevision: 5, state: 'editing', field: {} });
+    expect(await drafts.setFieldOwner(company, job, newer, 'uid-1', 3)).toBe('newer');
+    expect((await db.doc(path(company, newer)).get()).data()).toEqual({ jobId: job, fieldOwnerUid: 'uid-2', fieldOwnerRevision: 5, state: 'editing', field: {} });
+    // Stamped, it is that job's: another job is refused.
+    expect(await drafts.setFieldOwner(company, randomUUID(), draft, 'uid-3', 9)).toBe('taken');
+  });
+
   it('never reaches another company’s draft of the same id', async () => {
     const { company, job, draft, first } = await officeDraft('field-owner-e');
     expect(await drafts.setFieldOwner(company, job, draft, first.uid, 0)).toBe('set');

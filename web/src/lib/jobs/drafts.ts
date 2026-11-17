@@ -17,7 +17,7 @@ import { firestoreSpan } from '@/lib/telemetry/spans';
 // only `field`). A draft id the phone sends is never taken as another job's draft: making a draft
 // over one made for another job is refused, and so is naming a field owner on it. A draft made
 // before this key has none; the server stamps the job id on it the next time it names the field
-// owner, from a list of draft ids that Postgres says this job alone holds (office.ts, draftIdsOf).
+// owner, on the drafts Postgres claims for the job (job_drafts, 0016; office.ts, draftIdsOf).
 export type FieldOwnerResult =
   // Set now, or the draft already named this person at this revision or later.
   | 'set'
@@ -36,7 +36,8 @@ export type DraftStore = JobProjectionStore & {
   ensure(companyId: string, jobId: string, draftId: string, fieldOwnerUid: string | null): Promise<'created' | 'exists' | 'taken'>;
   // In one Firestore transaction: names `fieldOwnerUid` as the draft's field owner unless the draft
   // already holds a newer one or was made for another job. Changes nothing else on the draft (its
-  // state, fence and field work stay as they are), except that a draft made before `jobId` takes it.
+  // state, fence and field work stay as they are), except that a draft made before `jobId` takes it,
+  // whether or not the owner changes.
   setFieldOwner(companyId: string, jobId: string, draftId: string, fieldOwnerUid: string, revision: number): Promise<FieldOwnerResult>;
 };
 
@@ -79,12 +80,16 @@ export function firestoreDraftStore(db: Firestore): DraftStore {
           if (!found.exists) return 'missing';
           const stamped = found.get('jobId');
           if (draftOfOtherJob(stamped, jobId)) return 'taken';
+          // A draft made before `jobId` takes it, whatever the owner answer is.
+          const stamp = stamped === undefined ? { jobId } : {};
           const stored = found.get('fieldOwnerRevision');
           const storedRevision = typeof stored === 'number' ? stored : 0;
-          if (storedRevision > revision) return 'newer';
-          if (found.get('fieldOwnerUid') === fieldOwnerUid && storedRevision === revision) return 'same';
-          tx.update(draft, { fieldOwnerUid, fieldOwnerRevision: revision, ...(stamped === undefined ? { jobId } : {}) });
-          return 'set';
+          let result: FieldOwnerResult = 'set';
+          if (storedRevision > revision) result = 'newer';
+          else if (found.get('fieldOwnerUid') === fieldOwnerUid && storedRevision === revision) result = 'same';
+          if (result === 'set') tx.update(draft, { fieldOwnerUid, fieldOwnerRevision: revision, ...stamp });
+          else if (stamped === undefined) tx.update(draft, stamp);
+          return result;
         }),
       );
     },

@@ -779,6 +779,22 @@ export const jobCoordination = pgTable(
   (t) => [primaryKey({ columns: [t.companyId, t.jobId] })],
 );
 
+// Each field draft id a job has been on, claimed once per company with its job (0016, security audit
+// F1): insert-only.
+export const jobDrafts = pgTable(
+  'job_drafts',
+  {
+    companyId: uuid('company_id').notNull(),
+    draftId: uuid('draft_id').notNull(),
+    jobId: uuid('job_id').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.companyId, t.draftId] }),
+    foreignKey({ name: 'job_drafts_job_fkey', columns: [t.companyId, t.jobId], foreignColumns: [jobs.companyId, jobs.id] }),
+  ],
+);
+
 export const correctionFields = ['property_address', 'customer_name', 'customer_phone', 'customer_email'] as const;
 
 // A correction of a signed job's address, name or contact field (0015, for S5b-4): insert-only.
@@ -825,5 +841,6 @@ export const schema = {
   documentLinks,
   jobAssignments,
   jobCoordination,
+  jobDrafts,
   agreementCorrections,
 };

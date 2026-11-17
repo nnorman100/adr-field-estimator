@@ -68,3 +68,20 @@ the read-only operator policy (an operator reads through `withOperator`; every w
 - Personal data: `job_coordination.office_notes` is free text the office writes and may hold personal
   details (a gate code, a phone number); `agreement_corrections.value` holds the corrected address, name,
   phone or email. `job_assignments` holds ids and times only. Audit details hold ids and revisions only.
+
+## Draft claims (`0016_job_drafts`, security audit F1)
+
+`0016_job_drafts` adds one table; nothing earlier changes. `job_drafts` claims each Firestore field draft id
+once per company for one job: `company_id`, `draft_id` (made on the phone), `job_id`, `created_at`, with the
+key on company and draft id. The server claims a draft id in the same transaction that puts a job on it (a
+new job, a copy, Back to editing), and a draft id already claimed, by another job or by an earlier draft of
+the same job, is 409 `conflict`. So no job takes another job's draft, even one that job submitted and moved
+on from. The first capture and the owner's move name the field owner only on the drafts the table gives the
+job (a current draft no job has claimed is claimed for the job then; one another job claimed is 409). The
+runtime has `SELECT` and `INSERT` only, under forced row-level security with company policies and the
+read-only operator policy, so a claim never moves or goes away.
+
+The file fills the table from each job's current draft and the draft of each of its submissions, reading the
+jobs and submissions as their owner with row-level security unforced for that one transaction and forced again
+before it ends. A draft id that two jobs already name stops the file with an error and changes nothing: which
+job keeps it is the owner's decision, made before the file runs again. The table holds ids and times only.

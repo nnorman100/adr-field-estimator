@@ -72,10 +72,9 @@ export function fakeDrafts(): FakeDrafts {
       let result: 'set' | 'same' | 'newer' = 'set';
       if (stored > revision) result = 'newer';
       else if (draft.fieldOwnerUid === fieldOwnerUid && stored === revision) result = 'same';
-      else {
-        Object.assign(draft, { fieldOwnerUid, fieldOwnerRevision: revision });
-        if (!store.jobOf.has(key)) store.jobOf.set(key, jobId);
-      }
+      else Object.assign(draft, { fieldOwnerUid, fieldOwnerRevision: revision });
+      // A draft made before `jobId` takes it, whatever the owner answer is.
+      if (!store.jobOf.has(key)) store.jobOf.set(key, jobId);
       if (fail.on) {
         fail.on = false;
         fail.afterWrite = false;

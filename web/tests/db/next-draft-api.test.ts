@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { canonicalManifest } from '@/lib/field/canonical';
 import type { SubmissionsService } from '@/lib/submissions/service';
-import { flow } from './submission-flow';
+import { flow, json } from './submission-flow';
 import type { FakeClaims, Harness } from './team-harness';
 
 // S5a-8, Back to editing (owner decision J4; docs/plans/S5.md, section 4, step 7): the next draft
@@ -170,6 +170,20 @@ describe('Back to editing', () => {
     const stored = structuredClone(h.field.draft(h.seed.a, foreign));
     expect(await f.nextDraft(ESTIMATOR_A, jobId, { draftId: foreign, fromDraftId: second })).toMatchObject({ status: 409, body: { error: 'conflict' } });
     expect(h.field.draft(h.seed.a, foreign)).toEqual(stored);
+  });
+
+  it('gives a new draft id to one of two jobs that claim it at once, and refuses the other (security audit F1)', async () => {
+    const { jobId, draftId } = await submittedJob();
+    const contested = randomUUID();
+    const other = randomUUID();
+    const [back, made] = await Promise.all([
+      f.nextDraft(ESTIMATOR_A, jobId, { draftId: contested, fromDraftId: draftId }),
+      json(jobsRoute.POST(request(ESTIMATOR_A2, '/api/jobs', { method: 'POST', body: { id: other, draftId: contested } }), params({}))),
+    ]);
+    expect([back.status, made.status].sort()).toEqual([201, 409]);
+    const winner = back.status === 201 ? jobId : other;
+    expect(await h.admin`SELECT job_id::text AS job FROM job_drafts WHERE draft_id = ${contested}`).toEqual([{ job: winner }]);
+    expect(await h.admin`SELECT id::text FROM jobs WHERE current_draft_id = ${contested}`).toEqual([{ id: winner }]);
   });
 
   it('only the estimator who owns the field work goes back to editing, not the owner who does not; another company never reaches the job', async () => {

@@ -1,5 +1,5 @@
 import { and, eq, isNull } from 'drizzle-orm';
-import { jobAssignments, jobs, jobSubmissions } from '@/db/schema';
+import { jobAssignments, jobDrafts, jobs } from '@/db/schema';
 import type { CompanyTransaction } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
 import type { Identity } from '@/lib/auth';
@@ -148,14 +148,11 @@ export async function lockedJob(tx: CompanyTransaction, companyId: string, jobId
   return row;
 }
 
-// A draft id that was ever submitted: a job's current draft, or an earlier draft of a job that went
-// Back to editing. A draft id a job takes as its new current draft must be none of these, so no job
-// takes another job's draft (the unique key on current_draft_id covers only current drafts).
-export async function draftSubmitted(tx: CompanyTransaction, companyId: string, draftId: string): Promise<boolean> {
-  const [found] = await tx
-    .select({ id: jobSubmissions.id })
-    .from(jobSubmissions)
-    .where(and(eq(jobSubmissions.companyId, companyId), eq(jobSubmissions.draftId, draftId)))
-    .limit(1);
-  return found !== undefined;
+// Claims a draft id for a job (job_drafts, 0016; security audit F1), in the transaction that puts the
+// job on it. False when the id is already claimed, by another job or by an earlier draft of this one:
+// a draft id is claimed once, so no job ever takes another job's draft, even one that job submitted
+// and moved on from. Two claims of one id at once: the second waits for the first and then is false.
+export async function claimDraft(tx: CompanyTransaction, companyId: string, jobId: string, draftId: string): Promise<boolean> {
+  const claimed = await tx.insert(jobDrafts).values({ companyId, draftId, jobId }).onConflictDoNothing().returning({ draftId: jobDrafts.draftId });
+  return claimed.length === 1;
 }

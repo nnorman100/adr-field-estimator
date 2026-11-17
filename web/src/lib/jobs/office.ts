@@ -1,8 +1,8 @@
-import { and, asc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
-import { actors, jobAssignments, jobCoordination, jobs, jobSubmissions, memberships } from '@/db/schema';
+import { and, asc, eq, isNull, sql } from 'drizzle-orm';
+import { actors, jobAssignments, jobCoordination, jobDrafts, jobs, memberships } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
-import { hasAny, jobAccess, JobError, type JobCaller, type JobRow } from './access';
+import { claimDraft, hasAny, jobAccess, JobError, type JobCaller, type JobRow } from './access';
 import type { DraftStore } from './drafts';
 import { assignDigest, type AssignInput, type CoordinationInput, type TransferInput } from './schema';
 import { audit, CHECK_VIOLATION, detailOf, errorCode, type JobDetail } from './service';
@@ -162,36 +162,24 @@ async function uidOf(tx: CompanyTransaction, companyId: string, actorId: string)
   return found?.uid ?? null;
 }
 
-// The job's drafts: each earlier draft a submission was made from, then its current draft last.
+// The job's drafts: each draft it has been on, then its current draft last, as job_drafts (0016)
+// claims them for the job, so a draft another job claimed is never among them (security audit F1).
 // Every one of them names the job's field owner, so a person who no longer owns the field work
 // reads none of them (web/firestore.rules). The current draft is set last, so while any draft does
 // not name the owner yet, the current one does not either, and the job screens offer Start field
-// work, which sets them all again.
-//
-// A draft id another job of the company also names (as its current draft or in its submissions) is
-// left out (security audit F1): such data predates the refusal of a draft id that was ever
-// submitted, and naming a field owner on it would hand that person the other job's field work; when
-// it is the job's current draft, the field work cannot be handed over at all (409). The list is what
-// lets the draft store stamp the job id on a draft made before `jobId` (drafts.ts).
+// work, which sets them all again. A current draft no job has claimed is claimed for the job here;
+// one another job claimed is refused (409), so the field work of another job's draft is never handed
+// on. The list is also what lets the draft store stamp the job id on a draft made before `jobId`
+// (drafts.ts).
 async function draftIdsOf(tx: CompanyTransaction, row: JobRow): Promise<string[]> {
-  const found = await tx
-    .selectDistinct({ draftId: jobSubmissions.draftId })
-    .from(jobSubmissions)
-    .where(and(eq(jobSubmissions.companyId, row.companyId), eq(jobSubmissions.jobId, row.id)));
-  const ids = [...found.map((one) => one.draftId).filter((id) => id !== row.currentDraftId), row.currentDraftId];
-  const shared = await tx
-    .select({ draftId: jobs.currentDraftId })
-    .from(jobs)
-    .where(and(eq(jobs.companyId, row.companyId), ne(jobs.id, row.id), inArray(jobs.currentDraftId, ids)))
-    .union(
-      tx
-        .select({ draftId: jobSubmissions.draftId })
-        .from(jobSubmissions)
-        .where(and(eq(jobSubmissions.companyId, row.companyId), ne(jobSubmissions.jobId, row.id), inArray(jobSubmissions.draftId, ids))),
-    );
-  const others = new Set(shared.map((one) => one.draftId));
-  if (others.has(row.currentDraftId)) throw new JobError('conflict');
-  return ids.filter((id) => !others.has(id));
+  const claimed = await tx
+    .select({ draftId: jobDrafts.draftId })
+    .from(jobDrafts)
+    .where(and(eq(jobDrafts.companyId, row.companyId), eq(jobDrafts.jobId, row.id)))
+    .orderBy(asc(jobDrafts.createdAt), asc(jobDrafts.draftId));
+  const ids = claimed.map((one) => one.draftId);
+  if (!ids.includes(row.currentDraftId) && !(await claimDraft(tx, row.companyId, row.id, row.currentDraftId))) throw new JobError('conflict');
+  return [...ids.filter((id) => id !== row.currentDraftId), row.currentDraftId];
 }
 
 export function officeService(db: Database, drafts: DraftStore): OfficeService {
