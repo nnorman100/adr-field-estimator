@@ -1,0 +1,8 @@
+# Billing plan, step SB-5
+
+Part of [the billing plan](../BILLING.md), section 5, "Ordered steps".
+
+**SB-5 The sync worker and the status rule (L, High).** Slice: server.
+- BE: the pure rule of section 4.2 as one function with a table-driven test. `syncCompany(companyId)`: lock, read the customer's subscriptions from Stripe, pick the live one (section 4.2), apply the rule, write the row with the dated copy of prices, allowance and period, queue access records when access changes, audit `billing_state_changed`. `POST /api/internal/billing-sync` (`serviceRoute`, its own audience): due event rows with back-off, then the daily pass. An event for an unknown customer is marked and counted. `invoice.finalization_failed`, `invoice.payment_action_required`, `charge.dispute.created` and `charge.refunded` also raise an operator alert.
+- Tests: each Stripe status maps as the table says, an unknown status changes nothing; a cancelled subscription beside a new active one gives `full`; two live subscriptions change nothing and raise the alert; an expired first payment reads as "not yet set up"; the price copy is written and dated; events applied in any order, twice, or with one missing end in the same row (a property test over shuffled histories against the stand-in); two syncs at once for one company do not interleave (advisory lock, proved with a held lock); a crash between Stripe's answer and the write (a killed child process, the S7-4 pattern) leaves the old row and the event due; Stripe unreachable changes no access; an event for company A's customer never touches company B; the daily pass corrects a row with no event; only the scheduler account may call the route.
+- Needs: SB-1, SB-2, SB-4.

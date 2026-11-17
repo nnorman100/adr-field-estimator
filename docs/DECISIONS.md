@@ -48,7 +48,7 @@ Status: accepted (owner). Gmail stays for ADR until then. Background: production
 
 ### D-008: DryScope stays a standalone product for now (Oct 28, 2026)
 
-Status: accepted (owner). Options considered: stay standalone; fold into the platform later; rebuild on the platform. Keep shipping in this repo; revisit once DryScope has paying companies. Billing for other companies does not exist here yet.
+Status: accepted (owner). Options considered: stay standalone; fold into the platform later; rebuild on the platform. Keep shipping in this repo; revisit once DryScope has paying companies. Billing for other companies does not exist here yet; the approved billing stage plan is [docs/plans/BILLING.md](plans/BILLING.md) (2026-11-17).
 
 ### D-009: Agents ask before merging any PR (Oct 28, 2026)
 
