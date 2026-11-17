@@ -216,7 +216,7 @@ mid-body, and voice notes and drying readings are not built yet.
 None of these is built, except the owner-filled pricing template noted below. The owner's stance
 on each, from the 2026-11-09 review, in plain words:
 
-- **Company workbook upload:** never ADR's Excel workbook. Instead, a pricing template that each
+- **Company workbook upload:** never one company's own Excel workbook. Instead, a pricing template that each
   owner fills in with their own prices. Arbitrary workbook upload is not built. The fixed
   template is built but switched off: with `PRICE_BOOKS_ENABLED` on, a company owner downloads a
   blank CSV or XLSX template from the Prices page, fills it in, imports it and publishes it
