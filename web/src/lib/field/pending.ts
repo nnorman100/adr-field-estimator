@@ -206,8 +206,8 @@ export const pending = {
   detail: (jobId: string): JobDetail | null => state.details[jobId] ?? null,
   // Taken before a request about the job is sent, and handed back with its answer.
   mark: (jobId: string): number => state.marks[jobId] ?? 0,
-  // Taken before a read of a job is sent: newer than every mark handed out before it, so of two
-  // reads the one sent later decides.
+  // Taken before a read, an archive or a restore of a job is sent: newer than every mark handed out
+  // before it, so of two the one sent later decides.
   markRead(): number {
     state = { ...state, marked: state.marked + 1 };
     return state.marked;
@@ -274,13 +274,16 @@ export const pending = {
     delete moved[jobId];
     change({ moved });
   },
+  // Whether an answer to a read, an archive or a restore of the job sent under `mark` still says how
+  // the job is: it was not refused or archived since, nor read by a request sent after it.
+  answerCounts: (jobId: string, mark: number): boolean => mark >= pending.mark(jobId) && mark >= (state.readAt[jobId] ?? 0),
   // A read of the job sent under `mark` came back, whether or not a screen of the job is still
   // open: a refusal drops every copy of the job; the job (archived or not, S5b-2) says whether it is
   // archived, and an archived answer is newer than any request made before it. Answers false when
   // the job was refused or archived since, so the answer no longer counts.
   // A read sent before the newest read that showed the job no longer counts either.
   readAnswered(jobId: string, answer: Answer<unknown>, mark: number): boolean {
-    if (mark < pending.mark(jobId) || mark < (state.readAt[jobId] ?? 0)) return false;
+    if (!pending.answerCounts(jobId, mark)) return false;
     if (!answer.ok && answer.code === 'archived') change({ archived: flagged(state.archived, jobId, true), marks: { ...state.marks, [jobId]: mark + 0.5 } });
     else if (answer.ok) change({ readAt: { ...state.readAt, [jobId]: mark }, archived: flagged(state.archived, jobId, false) });
     if (!answer.ok && answer.denied) pending.refused(jobId, answer.message, answer.status);

@@ -30,7 +30,8 @@ export type ArchivalAnswered = (kind: ArchivalKind, answer: Answer<ArchivedJob>)
 
 // Sends the job's archive or restore kept on this page, or else `next` with a new change id; one at a
 // time. Once it is done, the job's state is posted for whichever screen or list of it is open now.
-// Answers null when it was already on its way, or another request took its place.
+// Answers null when it was already on its way, another request took its place, or a newer answer
+// about the job came first.
 async function sendArchival(
   session: FieldSession,
   jobId: string,
@@ -43,9 +44,12 @@ async function sendArchival(
   const request: PendingArchival = { ...(kept ?? { ...next!, changeId: crypto.randomUUID() }), sending: true };
   pending.setArchival(jobId, request);
   const send = request.kind === 'archive' ? archiveJob : restoreJob;
+  const sentAt = pending.markRead();
   const answer = await send(session.user, jobId, { revision: request.revision, changeId: request.changeId });
   if (!pending.settleArchival(jobId, request.changeId, !answer.ok && sendAgain(answer) ? 'unanswered' : 'answered')) return null;
-  if (archivalDone(request.kind, answer)) pending.archivalDone(jobId, request.kind === 'archive');
+  if (!archivalDone(request.kind, answer)) return answer;
+  if (!pending.answerCounts(jobId, sentAt)) return null;
+  pending.archivalDone(jobId, request.kind === 'archive');
   return answer;
 }
 

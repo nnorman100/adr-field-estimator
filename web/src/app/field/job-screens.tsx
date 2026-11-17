@@ -56,9 +56,10 @@ export type JobContext = {
   draft: FieldDraft | null;
   draftRef: DraftRef;
   reloadDraft: (source?: 'cache') => Promise<void>;
-  // Takes a refusal of the photo route or the field database (null for none): 401 or 403 drops the
-  // job from the screen; a 404 may be a missing photo, and a 410 an archive (S5b-2) made elsewhere,
-  // so the job is read again and that decides.
+  // Takes a refusal of the photo route or the field database (null for none): 401, or 403 while this
+  // person's field work is not on this phone, drops the job from the screen; a 403 while it is may be
+  // a move (J5) or an archive made elsewhere, a 404 a missing photo, and a 410 an archive (S5b-2), so
+  // the job is read again, nothing is saved meanwhile, and the read decides.
   checkAccess: (refusal: Refusal | null) => void;
   // Takes the server's refusal of the job to this person (null for none). While their field work is
   // on this phone it stays, read only (owner decision J5); otherwise the job goes from the screen.
@@ -112,11 +113,15 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   const [error, setError] = useState<string | null>(null);
   // The job is archived (S5b-2), as the newest answer about it said: a read of it (410, or the job),
   // or an archive or restore done on this page (src/lib/field/pending.ts).
-  const archived = usePending(() => pending.archived(jobId));
+  const archivedSaid = usePending(() => pending.archived(jobId));
   const archivalsDone = usePending(() => pending.archivalsDone(jobId));
   const [archivalsSeen] = useState(archivalsDone);
   const [draftError, setDraftError] = useState<string | null>(null);
   const [readDraft] = useState(draftReads);
+  // Reads of the job asked for, and answered, that decide what a refusal meant: nothing is saved
+  // until the last one asked for is answered.
+  const [checks, setChecks] = useState(0);
+  const [checked, setChecked] = useState(0);
 
   // The server refused the job to this person: every copy of it goes, unless their field work is on
   // this phone (owner decision J5, src/lib/field/pending.ts), when it stays, read only.
@@ -231,15 +236,12 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   const checkAccess = useCallback(
     (refusal: Refusal | null) => {
       if (!refusal) return;
-      if (refusal.status === 401 || refusal.status === 403) return refuse(refusal);
-      if (refusal.status !== 404 && refusal.status !== 410) return;
+      if (refusal.status === 401 || (refusal.status === 403 && !pending.held(jobId))) return refuse(refusal);
+      if (refusal.status !== 403 && refusal.status !== 404 && refusal.status !== 410) return;
       if (refusal.status === 410) pending.archivedSeen(jobId);
-      const sentAt = pending.markRead();
-      void readJob(session.user, jobId).then((answer) => {
-        if (pending.readAnswered(jobId, answer, sentAt) && !answer.ok && answer.denied && pending.denial(jobId)) setDraft(null);
-      });
+      setChecks((count) => count + 1);
     },
-    [refuse, jobId, session.user],
+    [refuse, jobId],
   );
 
   // The first read; each job is its own component (keyed by the parent).
@@ -295,6 +297,12 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [archivalsDone]);
 
+  // A refusal to check: read the job again.
+  useEffect(() => {
+    if (checks > 0) void Promise.resolve().then(() => reloadJob()).finally(() => setChecked((done) => Math.max(done, checks)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [checks]);
+
   // A photo that settled after an earlier screen of this job closed changed the draft: read it again.
   useEffect(() => {
     // Read after this render, as an answer to the change the store posted.
@@ -306,6 +314,8 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   // read does. A refusal then keeps the work on screen instead of dropping the job (J5).
   const held = (detail !== null && detail.job.fieldOwnerActorId === session.actorId) || draft?.fieldOwnerUid === session.user.uid;
   useEffect(() => pending.hold(jobId, held), [jobId, held]);
+  // Archived as the newest answer about the job said, or as its field draft on screen says.
+  const archived = archivedSaid || draft?.state === 'archived';
   // The draft as last read goes with a moved job, for a screen of it opened again on this page.
   const draftId = locator?.currentDraftId ?? detail?.job.currentDraftId ?? null;
   useEffect(() => {
@@ -365,7 +375,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     refuse,
     moved,
     editable:
-      !moved && !archived && !ownerUnset && draftAt === currentDraftId && draft !== null && canEditDraft(draft, session.user.uid, session.capabilities) && (session.online || session.offlineCapture),
+      !moved && !archived && checked === checks && !ownerUnset && draftAt === currentDraftId && draft !== null && canEditDraft(draft, session.user.uid, session.capabilities) && (session.online || session.offlineCapture),
     archived,
     stale: draft !== null && draftError !== null,
   };
