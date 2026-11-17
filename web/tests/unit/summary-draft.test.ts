@@ -4,7 +4,7 @@ import type { ArmorVerdict } from '@/lib/ai/armor';
 import { createAiBoundary, type AiModelRequest } from '@/lib/ai/call';
 import summaryDraftText from '@/lib/ai/prompts/summary-draft';
 import { AI_REGISTRY } from '@/lib/ai/registry';
-import { parseAiConfig } from '@/lib/config';
+import { parseAiConfig, parseConfig } from '@/lib/config';
 import type { JobIdentity } from '@/lib/ai/prompt-facts';
 import type { FieldManifest } from '@/lib/field/canonical';
 import {
@@ -230,6 +230,18 @@ describe('summary draft server rules, through the AI boundary', () => {
     expect(await draft(1977)).toEqual(said);
   });
 
+  it('drops advice joined to a past-test finding, and keeps a finding of what samples showed, unless the home is before 1978', async () => {
+    const said = answer({
+      summary:
+        'A prior asbestos test was negative, but arrange asbestos testing before demolition. Samples showed asbestos in the drywall. The hall is dry.',
+    });
+    for (const year of [1995, undefined]) {
+      const outcome = await boundary(said).draft(summaryFacts(manifest({ yearBuilt: year }), NO_EXTRA));
+      expect(outcome).toMatchObject({ ok: true, output: { summary: 'Samples showed asbestos in the drywall. The hall is dry.' } });
+    }
+    expect(await boundary(said).draft(summaryFacts(manifest({ yearBuilt: 1977 }), NO_EXTRA))).toMatchObject({ ok: true, output: { summary: said.summary } });
+  });
+
   it('refuses an answer whose whole summary states prices, or that is not the summary shape', async () => {
     expect(await boundary(answer({ summary: 'It costs $500.' })).draft(summaryFacts(manifest(), NO_EXTRA))).toMatchObject({
       ok: false,
@@ -271,6 +283,15 @@ describe('the shared prompt builder', () => {
     }
   });
 
+  it('removes a street written without its house number or its unit, ten-digit phones and whole-degree compass pairs', () => {
+    const unit = { customerName: '', propertyAddress: '12 Oak Street Apt 4' };
+    for (const variant of ['Oak St', 'oak street', '12 Oak St', 'Oak Street Apt 4']) {
+      expect({ variant, sent: sent(`Start at ${variant} today.`, unit) }).toEqual({ variant, sent: expect.stringContaining('Start at [removed] today.') });
+    }
+    expect(sent('Call 5595550101 at 37N 122W today.')).toContain('Call [removed] at [removed] today.');
+    expect(sent('Oak floor in the hall.', unit)).toContain('Oak floor in the hall.');
+  });
+
   it('removes the full name, the surname with a title and possessives, never a name word standing alone', () => {
     const hall = { customerName: 'Mary Hall', propertyAddress: '' };
     const text = sent("Wet carpet in the hall. Mary Hall's dog was out; Mrs Hall and Hall, Mary agreed. Mary is the tenant.", hall);
@@ -284,6 +305,14 @@ describe('the shared prompt builder', () => {
 });
 
 describe('the AI settings', () => {
+  it('never stop the server at start: a blank or malformed text template fails only an AI request', () => {
+    for (const value of ['', '   ', 'not-a-template', 'projects/x/templates/y']) {
+      const env = { APP_ENV: 'test', GOOGLE_CLOUD_PROJECT: 'dryscope', MODEL_ARMOR_TEXT_TEMPLATE: value };
+      expect(() => parseConfig(env)).not.toThrow();
+      expect(() => parseAiConfig(env)).toThrow(/MODEL_ARMOR_TEXT_TEMPLATE/);
+    }
+  });
+
   it('need the text template only: a text request starts with no image template set', () => {
     const template = 'projects/dryscope/locations/us-central1/templates/dryscope-text-test';
     expect(parseAiConfig({ APP_ENV: 'test', GOOGLE_CLOUD_PROJECT: 'dryscope', MODEL_ARMOR_TEXT_TEMPLATE: template })).toEqual({

@@ -163,13 +163,14 @@ describe('POST /api/jobs/{jobId}/ai/summary-draft', () => {
     const callId = randomUUID();
     const { status, body } = await draftSummary(ESTIMATOR_A, job.jobId, callId);
     expect(status).toBe(201);
-    expect(body.result).toMatchObject({
+    // The phone gets the proposal and the ids it needs to accept it; the model, prompt version and
+    // time stay in storage (checked below).
+    expect(body.result).toEqual({
+      id: expect.stringMatching(/^[0-9a-f-]{36}$/),
       callId,
       jobId: job.jobId,
       draftId: job.draftId,
       status: 'proposed',
-      model: 'gemini-3.8-flash',
-      promptVersion: AI_REGISTRY.summary_draft.prompt!.version,
       proposal: ANSWER,
     });
     expect(await results()).toEqual([
@@ -286,6 +287,54 @@ describe('POST /api/jobs/{jobId}/ai/summary-draft', () => {
     expect(await results()).toEqual([]);
   });
 
+  it('stores and answers nothing when a Submit starts and aborts while the model runs', async () => {
+    const job = await editingJob();
+    live.during = async () => {
+      const id = randomUUID();
+      await h.admin`
+        INSERT INTO job_submissions (id, company_id, job_id, draft_id, epoch, kind, request_digest, expires_at, created_by_actor_id)
+        VALUES (${id}, ${h.seed.a}, ${job.jobId}, ${job.draftId}, ${randomUUID()}, 'original', ${'a'.repeat(64)}, now() + interval '5 minutes', ${h.seed.estimatorA.actor})
+      `;
+      await h.admin`UPDATE job_submissions SET status = 'aborted', decided_at = now() WHERE id = ${id}`;
+    };
+    expect(await draftSummary(ESTIMATOR_A, job.jobId)).toMatchObject({ status: 409, body: { error: 'draft_not_editing' } });
+    expect(live.requests).toHaveLength(1);
+    expect(await results()).toEqual([]);
+  });
+
+  it('refuses before any model call while a Submit of the draft is pending', async () => {
+    const job = await editingJob();
+    await h.admin`
+      INSERT INTO job_submissions (id, company_id, job_id, draft_id, epoch, kind, request_digest, expires_at, created_by_actor_id)
+      VALUES (${randomUUID()}, ${h.seed.a}, ${job.jobId}, ${job.draftId}, ${randomUUID()}, 'original', ${'a'.repeat(64)}, now() + interval '5 minutes', ${h.seed.estimatorA.actor})
+    `;
+    expect(await draftSummary(ESTIMATOR_A, job.jobId)).toMatchObject({ status: 409, body: { error: 'draft_not_editing' } });
+    expect(live.requests).toEqual([]);
+    expect(await ledger()).toEqual([]);
+  });
+
+  it('answers a retry only for the job’s current draft', async () => {
+    const job = await editingJob();
+    const callId = randomUUID();
+    expect((await draftSummary(ESTIMATOR_A, job.jobId, callId)).status).toBe(201);
+    await h.admin`UPDATE jobs SET current_draft_id = ${randomUUID()}, revision = revision + 1 WHERE id = ${job.jobId}`;
+    expect(await draftSummary(ESTIMATOR_A, job.jobId, callId)).toMatchObject({ status: 409, body: { error: 'call_reused' } });
+  });
+
+  it('stores and answers nothing when the caller is disabled or made office while the model runs', async () => {
+    for (const change of ['disable', 'office'] as const) {
+      const job = await editingJob();
+      live.during = async () => {
+        if (change === 'disable') await h.admin`UPDATE memberships SET status = 'disabled' WHERE id = ${h.seed.estimatorA.membership}`;
+        else await h.admin`UPDATE memberships SET role = 'office' WHERE id = ${h.seed.estimatorA.membership}`;
+      };
+      expect({ change, ...(await draftSummary(ESTIMATOR_A, job.jobId)) }).toMatchObject({ change, status: 403, body: { error: 'not_allowed' } });
+      expect(await results()).toEqual([]);
+      live.during = null;
+      await h.admin`UPDATE memberships SET status = 'active', role = 'estimator' WHERE id = ${h.seed.estimatorA.membership}`;
+    }
+  });
+
   it('refuses a body over its limit without reading past it', async () => {
     const job = await editingJob();
     const path = `/api/jobs/${job.jobId}/ai/summary-draft`;
@@ -374,6 +423,7 @@ describe('POST /api/jobs/{jobId}/ai/summary-draft', () => {
       '(559) 555-0101',
       '559.555.0101',
       '+1 559 555 0101',
+      '5595550101',
       '555-0101',
       'lat 37.77 lon -122.42',
       'latitude: 37.774929',
@@ -381,6 +431,7 @@ describe('POST /api/jobs/{jobId}/ai/summary-draft', () => {
       '37.7749 -122.4194',
       '37°46\'29"N 122°25\'10"W',
       '36.7N, 119.8W',
+      '37N 122W',
     ];
     for (const variant of variants) {
       h.field.put(h.seed.a, job.draftId, { draft: { ...(job.manifest.draft as Record<string, unknown>), notes: `Owner note: ${variant} - start in the kitchen.` } });

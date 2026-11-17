@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
+import { capabilitiesFor } from '@/lib/access';
 import { aiRefusal, type AiCallerContext, type AiOutcome, type AiRefusal, type AiRequest } from '@/lib/ai/call';
 import type { JobIdentity } from '@/lib/ai/prompt-facts';
 import type { Identity } from '@/lib/auth';
 import type { FieldManifest } from '@/lib/field/canonical';
+import { accessFlags } from '@/lib/flags';
 import { jobAccess, JobError, type JobRow } from '@/lib/jobs/access';
 import {
   summaryDraftRequest,
@@ -16,23 +18,25 @@ import {
 
 // POST /api/jobs/{jobId}/ai/summary-draft (docs/plans/S7.md, step S7-6): an AI draft of the job's
 // findings summary, as a proposal only. In this order:
-//   1. the job, in the caller's own company, seen by them (else 404), not archived (410), with the
+//   1. the caller's membership as it is now (active, its role's capabilities), then the job under
+//      its lock, in the caller's own company, seen by them (else 404), not archived (410), with the
 //      `audit` capability (403), and its field work theirs (403): only the field owner writes the
-//      draft, so only they could accept the proposal;
+//      draft, so only they could accept the proposal; and no Submit of its current draft started
+//      (409). Submit starts and fences under the same lock, so the check sees it whole;
 //   2. the company's `ai_summary` switch, exactly on; off answers the boundary's own refusal and
 //      nothing is read or spent;
-//   3. the phone's call id: one this person already used for this job answers the stored proposal
-//      (a retry after a lost answer); one the ledger holds with no proposal, or for another job,
-//      person or feature, is refused, so a used id never runs a second model call (the boundary's
-//      fresh reservation closes the same gap for two requests sent at once);
+//   3. the phone's call id: one this person already used for this job's current draft answers the
+//      stored proposal (a retry after a lost answer); one the ledger holds with no proposal, or for
+//      another job, draft, person or feature, is refused, so a used id never runs a second model
+//      call (the boundary's fresh reservation closes the same gap for two requests sent at once);
 //   4. the job's current draft from the field database, which must be editing, read with the
 //      walkthrough and voice notes under the job's lock, so a field owner transfer (made under the
 //      same lock) cannot let a former owner's request read the new owner's field work;
 //   5. the AI boundary (web/src/lib/ai/call.ts): quota, budget, Model Armor, model, Zod, price
 //      sentences stripped, then the summary's rules (./request.ts);
-//   6. the job, field ownership and the draft checked again under the job's lock (Submit starts and
-//      fences under it), then the proposal stored in ai_results as `proposed`, under the boundary's
-//      call id.
+//   6. step 1 again, and the same draft with no Submit attempt made on it since step 1 (one that
+//      already ended counts too), then the proposal stored in ai_results as `proposed`, under the
+//      boundary's call id.
 // The route never writes the draft: only the technician's accept does, through the field rules
 // (a later S7-6 slice). A refusal stores nothing.
 
@@ -87,9 +91,6 @@ export type SummaryProposal = {
   jobId: string;
   draftId: string;
   status: 'proposed' | 'accepted' | 'rejected';
-  model: string;
-  promptVersion: string;
-  createdAt: string;
   proposal: SummaryDraftOutput;
 };
 
@@ -118,15 +119,14 @@ type ResultRow = {
 
 const rows = <T>(result: unknown) => result as unknown as T[];
 
+// What the phone gets: the proposal and the ids it needs to accept it. The model, prompt version and
+// time stay in ai_results only.
 const view = (row: ResultRow): SummaryProposal => ({
   id: row.id,
   callId: row.call_id,
   jobId: row.job_id,
   draftId: row.draft_id,
   status: row.status,
-  model: row.model,
-  promptVersion: row.prompt_version,
-  createdAt: new Date(row.created_at).toISOString(),
   proposal: row.output,
 });
 
@@ -150,9 +150,16 @@ async function priorCall(
   return { ledger: true, result: row.id ? (row as ResultRow) : null };
 }
 
-// A stored proposal answers a retry only when it is this person's summary draft of this job.
-function replay(result: ResultRow | null, caller: Identity, jobId: string): SummaryProposal {
-  if (!result || result.job_id !== jobId || result.actor_id !== caller.actorId || result.feature !== SUMMARY_DRAFT_FEATURE) {
+// A stored proposal answers a retry only when it is this person's summary draft of this job's
+// current draft.
+function replay(result: ResultRow | null, caller: Identity, job: JobRow): SummaryProposal {
+  if (
+    !result ||
+    result.job_id !== job.id ||
+    result.draft_id !== job.currentDraftId ||
+    result.actor_id !== caller.actorId ||
+    result.feature !== SUMMARY_DRAFT_FEATURE
+  ) {
     throw new SummaryDraftError('call_reused');
   }
   return view(result);
@@ -193,17 +200,46 @@ async function spoken(
   };
 }
 
-// Submit has started on the draft or committed it: the draft is being submitted or is submitted.
-// Submit makes its row under the job's lock before it closes its fence on the draft.
-async function submitStarted(tx: CompanyTransaction, companyId: string, draftId: string): Promise<boolean> {
-  const found = rows(
+// The caller as they are now: their membership is read again and held (FOR SHARE) until the
+// transaction ends, so a role change or a disable made while the model ran is seen here, and one made
+// after this check waits for the answer to be stored.
+async function currentCaller(tx: CompanyTransaction, caller: Identity): Promise<Identity> {
+  const [membership] = rows<{ role: string }>(
     await tx.execute(sql`
-      SELECT 1 FROM job_submissions
-      WHERE company_id = ${companyId}::uuid AND draft_id = ${draftId}::uuid AND status IN ('pending', 'committed')
+      SELECT role FROM memberships
+      WHERE company_id = ${caller.companyId}::uuid AND actor_id = ${caller.actorId}::uuid AND status = 'active'
       LIMIT 1
+      FOR SHARE
     `),
   );
-  return found.length > 0;
+  if (!membership) throw new JobError('not_allowed');
+  return {
+    ...caller,
+    role: membership.role as Identity['role'],
+    capabilities: capabilitiesFor(membership.role, accessFlags(caller.flags)),
+  };
+}
+
+// The one check the first read, both replays and the store go through, under the job's lock (Submit
+// makes its row under it before it closes its fence on the draft): the caller now, the job and its
+// field work, and no Submit pending or committed on its current draft. `attempts` counts every
+// Submit made on the draft, ended ones too, so a Submit that started and aborted in between is seen.
+async function editableJob(
+  tx: CompanyTransaction,
+  caller: Identity,
+  jobId: string,
+): Promise<{ current: Identity; job: JobRow; attempts: number }> {
+  const current = await currentCaller(tx, caller);
+  const job = await jobAccess(tx, current, jobId, ['audit'], { fieldWork: true, lock: true });
+  const [row] = rows<{ attempts: number; open: boolean }>(
+    await tx.execute(sql`
+      SELECT count(*)::int AS attempts, coalesce(bool_or(status IN ('pending', 'committed')), false) AS open
+      FROM job_submissions
+      WHERE company_id = ${caller.companyId}::uuid AND draft_id = ${job.currentDraftId}::uuid
+    `),
+  );
+  if (row!.open) throw new SummaryDraftError('draft_not_editing');
+  return { current, job, attempts: row!.attempts };
 }
 
 // The job's saved customer name and property address: read only so the shared prompt builder can
@@ -224,30 +260,34 @@ export function summaryDraftService(db: Database, reader: SummaryDraftReader, bo
         | { replayed: SummaryProposal }
         | {
             replayed: null;
+            current: Identity;
             job: JobRow;
+            attempts: number;
             identity: JobIdentity;
             said: Pick<SummaryFacts, 'walkthrough' | 'voiceNotes'>;
             manifest: FieldManifest;
           };
       const before = await withCompany(db, companyId, async (tx): Promise<Before> => {
-        const job = await jobAccess(tx, caller, jobId, ['audit'], { fieldWork: true, lock: true });
+        const { current, job, attempts } = await editableJob(tx, caller, jobId);
         if (caller.flags?.ai_summary !== true) throw new SummaryDraftRefused(aiRefusal('feature_off'));
         const prior = await priorCall(tx, companyId, callId);
-        if (prior.ledger) return { replayed: replay(prior.result, caller, jobId) };
+        if (prior.ledger) return { replayed: replay(prior.result, caller, job) };
         const read = await reader.read(companyId, job.currentDraftId);
         if (read === null) throw new JobError('draft_unavailable');
         if (read === 'too_many_rooms' || read === 'too_many_photos') throw new SummaryDraftError('draft_invalid');
         if (read.state !== 'editing') throw new SummaryDraftError('draft_not_editing');
         return {
           replayed: null,
+          current,
           job,
+          attempts,
           identity: await identityOf(tx, companyId, job),
           said: await spoken(tx, companyId, job.id, job.currentDraftId),
           manifest: read.manifest,
         };
       });
       if (before.replayed) return { created: false, result: before.replayed };
-      const { job, identity, said, manifest } = before;
+      const { current, job, attempts, identity, said, manifest } = before;
       const draftId = job.currentDraftId;
 
       let facts: SummaryFacts;
@@ -264,7 +304,7 @@ export function summaryDraftService(db: Database, reader: SummaryDraftReader, bo
         companyId,
         actorId: caller.actorId,
         jobId: job.id,
-        capabilities: caller.capabilities,
+        capabilities: current.capabilities,
         flags: caller.flags,
       };
       const outcome = await boundary().call(context, request);
@@ -272,17 +312,15 @@ export function summaryDraftService(db: Database, reader: SummaryDraftReader, bo
       if (outcome.ok && outcome.promptVersion === null) throw new Error('summary draft prompt has no version');
 
       return withCompany(db, companyId, async (tx) => {
-        // The job, its field work and its draft are checked again under the job's lock: a transfer,
-        // archive or Submit while the model ran leaves the answer unstored and unsent.
-        const current = await jobAccess(tx, caller, jobId, ['audit'], { fieldWork: true, lock: true });
-        if (current.currentDraftId !== draftId || (await submitStarted(tx, companyId, draftId))) {
-          throw new SummaryDraftError('draft_not_editing');
-        }
+        // The same check again: a role change, disable, transfer, archive, Back to editing or any
+        // Submit attempt while the model ran leaves the answer unstored and unsent.
+        const now = await editableJob(tx, caller, jobId);
+        if (now.job.currentDraftId !== draftId || now.attempts !== attempts) throw new SummaryDraftError('draft_not_editing');
         if (!outcome.ok) {
           // The same id sent twice at once: the ledger let only the first reach the model; this one
           // answers its proposal once stored.
           const prior = await priorCall(tx, companyId, callId);
-          return { created: false, result: replay(prior.result, caller, jobId) };
+          return { created: false, result: replay(prior.result, caller, now.job) };
         }
         // The digest of exactly the text sent (after the shared prompt builder cleaned it).
         const inputDigest = createHash('sha256').update(request.facts ?? '', 'utf8').digest('hex');

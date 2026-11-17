@@ -30,10 +30,11 @@ const GAP = '[\\s,.\\-]*';
 const POSSESSIVE = "(?:['’]s)?";
 
 const EMAIL = /[\p{L}\p{N}._%+-]+@[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+/gu;
-// North American numbers with an optional +1, area code in brackets or not, and seven-digit local
-// numbers written with a separator; international numbers starting with +.
+// North American numbers with an optional +1, area code in brackets or not, or ten digits run
+// together; seven-digit local numbers written with a separator; international numbers starting with +.
 const PHONE = new RegExp(
   `${START}(?:\\+?1[\\s.-]?)?(?:\\(\\d{3}\\)\\s*|\\d{3}[\\s.-])\\d{3}[\\s.-]\\d{4}${END}` +
+    `|${START}(?:\\+?1)?\\d{10}${END}` +
     `|${START}\\d{3}[.-]\\d{4}${END}` +
     `|\\+\\d{1,3}(?:[\\s.-]?\\d{2,4}){2,5}${END}`,
   'gu',
@@ -51,7 +52,8 @@ const COORDINATES: readonly RegExp[] = [
   /\d{1,3}\s*°\s*\d{1,2}(?:\.\d+)?\s*['′](?:\s*\d{1,2}(?:\.\d+)?\s*["″])?(?:\s*[NSEW])?/gi,
   // A number with a degree sign that is not a temperature (°F, °C), or with a compass letter.
   new RegExp(`${NUMBER_DEG}\\s*°(?!\\s*[FC]${END})(?:\\s*[NSEW])?`, 'gi'),
-  new RegExp(`${START}\\d{1,3}\\.\\d+\\s*°?\\s*[NS]\\s*,?\\s*\\d{1,3}\\.\\d+\\s*°?\\s*[EW]${END}`, 'gi'),
+  // A pair with compass letters, whole or decimal ("37N 122W", "36.7N, 119.8W").
+  new RegExp(`${START}\\d{1,3}(?:\\.\\d+)?\\s*°?\\s*[NS]\\s*,?\\s*\\d{1,3}(?:\\.\\d+)?\\s*°?\\s*[EW]${END}`, 'gi'),
   // A decimal degree with four or more decimals.
   /(?<![\d.])[-+]?\d{1,3}\.\d{4,}(?![\d.])/g,
 ];
@@ -115,12 +117,16 @@ function addressPatterns(address: string): string[] {
       .split(/[\s.]+/)
       .filter((word) => word.length > 0);
     if (words.join('').replace(/\W/g, '').length < 2) continue;
-    patterns.push(addressPattern(words));
-    // The street without its house number ("Oak St" for "12 Oak Street").
-    if (/^\d/.test(words[0]!) && words.length >= 3) patterns.push(addressPattern(words.slice(1)));
-    // A unit written without its unit word ("Apt 4" also as "#4" is covered; "4" alone is not).
+    // The part with and without its house number ("Oak St" for "12 Oak Street"), each with and
+    // without its unit ("12 Oak Street" and "Oak Street" for "12 Oak Street Apt 4"; "4" alone is not).
     const unit = words.findIndex((word) => UNIT_WORDS.includes(word.toLowerCase()));
-    if (unit > 0 && unit < words.length - 1) patterns.push(addressPattern(words.slice(0, unit)));
+    const starts = /^\d/.test(words[0]!) ? [0, 1] : [0];
+    const ends = unit > 0 && unit < words.length - 1 ? [words.length, unit] : [words.length];
+    for (const start of starts) {
+      for (const end of ends) {
+        if (start === 0 || end - start >= 2) patterns.push(addressPattern(words.slice(start, end)));
+      }
+    }
     // A ZIP code alone.
     for (const word of words) if (/^\d{5}(?:-\d{4})?$/.test(word)) patterns.push(escape(word));
   }

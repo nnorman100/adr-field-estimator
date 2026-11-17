@@ -54,6 +54,17 @@ describe('price sentences', () => {
     expect(stripPriceSentences('- Kitchen wet\n- Total 900\n- Hall dry')).toBe('- Kitchen wet\n- Hall dry');
   });
 
+  it('drops a price whose amount is on the next line or goes on after an abbreviation', () => {
+    expect(stripPriceSentences('Drying cost: $\n900.\nThe hall is dry.')).toBe('The hall is dry.');
+    expect(stripPriceSentences('Drying will cost approx. 900 for labor. The hall is dry.')).toBe('The hall is dry.');
+  });
+
+  it('keeps estimate used as a verb', () => {
+    const advice = 'Estimate which of the 3 air movers can be removed.';
+    expect(statesPrice(advice)).toBe(false);
+    expect(stripPriceSentences(`${advice} The hall is dry.`)).toBe(`${advice} The hall is dry.`);
+  });
+
   it('treats an estimate with an amount as a price', () => {
     expect(statesPrice('The drying estimate is 900.')).toBe(true);
     expect(stripPriceSentences('The drying estimate is 900. Fans run three days.')).toBe('Fans run three days.');

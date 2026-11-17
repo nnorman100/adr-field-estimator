@@ -106,16 +106,20 @@ export function summaryFactsText(facts: SummaryFacts, identity: JobIdentity = NO
 }
 
 // A sentence of lead or asbestos testing advice: it names asbestos or lead ("lead" as a word, so
-// "leads to" or "mislead" do not count) and a test, check, inspection, sample, survey or abatement
-// ("have the drywall checked for asbestos" is advice), and it is not a finding about a test already
-// done ("a prior asbestos test was negative", "no asbestos was found").
+// "leads to" or "mislead" do not count), and one of its clauses names a test, check, inspection,
+// sample, survey or abatement ("have the drywall checked for asbestos" is advice) without being a
+// finding about a test already done ("a prior asbestos test was negative", "samples showed asbestos",
+// "no asbestos was found"). Clauses part at a semicolon or colon, at "but", "however", "yet", "so",
+// "though", "although" or "whereas", and at a comma before "and", so in "a prior asbestos test was
+// negative, but arrange asbestos testing before demolition" the second clause is advice.
 const HAZARD = /\b(?:asbestos|lead)\b/i;
 const TESTING =
   /\b(?:test(?:s|ed|ing)?|check(?:s|ed|ing)?|inspect(?:s|ed|ing|ion|ions)?|sampl(?:e|es|ed|ing)|survey(?:s|ed|ing)?|abatement)\b/i;
 const FINDING =
-  /\b(?:was|were|came back|tested|showed|found|returned|is|are)\s+(?:\w+\s+){0,3}?(?:negative|positive|clear|non-?detect(?:ed)?)\b|\b(?:prior|previous|earlier|existing|past)\s+(?:\w+\s+){0,2}?(?:tests?|testing|reports?|surveys?|results?|inspections?)\b|\bno\s+(?:asbestos|lead)\b(?:\s+\w+){0,4}?\s+(?:found|detected)\b/i;
+  /\b(?:was|were|came back|tested|showed|found|returned|is|are)\s+(?:\w+\s+){0,3}?(?:negative|positive|clear|non-?detect(?:ed)?)\b|\b(?:prior|previous|earlier|existing|past)\s+(?:\w+\s+){0,2}?(?:tests?|testing|reports?|surveys?|results?|inspections?)\b|\bno\s+(?:asbestos|lead)\b(?:\s+\w+){0,4}?\s+(?:found|detected)\b|\b(?:showed|found|detected|confirmed|revealed|indicated|identified)\s+(?:\w+\s+){0,3}?(?:asbestos|lead)\b|\b(?:asbestos|lead)\b(?:\s+\w+){0,3}?\s+(?:was|were)\s+(?:found|detected|present|confirmed|identified)\b/i;
+const CLAUSE = /[;:]|,?\s+(?:but|however|yet|so|though|although|whereas)\b|,\s*and\b/i;
 export function advisesTesting(sentence: string): boolean {
-  return HAZARD.test(sentence) && TESTING.test(sentence) && !FINDING.test(sentence);
+  return HAZARD.test(sentence) && sentence.split(CLAUSE).some((clause) => TESTING.test(clause) && !FINDING.test(clause));
 }
 
 const kept = (lines: readonly string[]) => lines.map((line) => line.trim()).filter((line) => line.length > 0);
