@@ -199,9 +199,11 @@ test('an estimator has no Archive, sees an archived job’s old link as archived
   await openJob(page, '5 Signed Avenue');
   await page.getByRole('button', { name: 'Copy to a new draft' }).click();
   await expect(page.getByRole('button', { name: 'Try copying again' })).toBeVisible();
-  // Leaving the job and opening it again keeps the ids.
+  // Leaving the job and opening it again keeps the ids. (The lost answer's draft, made by the server,
+  // is in the list too, with the same address: the signed row is the one opened.)
   await main(page).getByRole('link', { name: 'Back to jobs' }).click();
-  await openJob(page, '5 Signed Avenue');
+  await main(page).getByRole('listitem').filter({ hasText: 'Signed ·' }).getByRole('link', { name: '5 Signed Avenue' }).click();
+  await expect(page.getByRole('heading', { name: '5 Signed Avenue' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Try copying again' })).toBeVisible();
   await expectNoSideways(page);
   await expectNoAxeViolations(page);
