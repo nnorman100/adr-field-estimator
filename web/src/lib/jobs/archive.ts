@@ -258,7 +258,9 @@ export function archiveService(db: Database, store: ArchiveStore): ArchiveServic
       });
       await inCompany(caller.companyId, async (tx) => {
         await lockedJob(tx, caller.companyId, input.id, { live: true });
-        await field(() => store.createCopy(caller.companyId, input.draftId, made.ownerUid, made.field));
+        const result = await field(() => store.createCopy(caller.companyId, input.id, input.draftId, made.ownerUid, made.field));
+        // A draft made for another job is never the copy's (security audit F1).
+        if (result === 'taken') throw new JobError('conflict');
       });
       await field(() =>
         store.projectJob(caller.companyId, made.detail.job.id, { currentDraftId: made.detail.job.currentDraftId, revision: made.detail.job.revision }),

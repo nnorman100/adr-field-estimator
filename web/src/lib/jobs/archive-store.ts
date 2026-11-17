@@ -1,6 +1,7 @@
 import type { Firestore } from 'firebase-admin/firestore';
 import type { FieldManifest } from '@/lib/field/canonical';
 import { firestoreSpan } from '@/lib/telemetry/spans';
+import { draftOfOtherJob } from './drafts';
 import { firestoreJobProjectionStore, type JobProjectionStore } from './projection';
 
 // The field database side of archive, restore and copy (S5b-2). Postgres decides; these follow it.
@@ -34,9 +35,17 @@ export type ArchiveStore = JobProjectionStore & {
   // in any other state keeps it (its archive never reached the field database) and only takes the
   // revision, so that archive cannot land after this restore.
   restoreDraft(companyId: string, draftId: string, state: 'editing' | 'submitted', revision: number): Promise<ArchiveResult>;
-  // A copy's first draft: an `editing` draft holding the given field map and rooms, made whole or
-  // not at all; `exists` when the draft is already there (a retry), and nothing is changed then.
-  createCopy(companyId: string, draftId: string, fieldOwnerUid: string | null, manifest: Pick<FieldManifest, 'draft' | 'rooms'>): Promise<'created' | 'exists'>;
+  // A copy's first draft: an `editing` draft of the copy (`jobId`, as src/lib/jobs/drafts.ts)
+  // holding the given field map and rooms, made whole or not at all; `exists` when the draft is
+  // already there (a retry), and nothing is changed then; `taken` when the draft there was made for
+  // another job, and nothing is changed either.
+  createCopy(
+    companyId: string,
+    jobId: string,
+    draftId: string,
+    fieldOwnerUid: string | null,
+    manifest: Pick<FieldManifest, 'draft' | 'rooms'>,
+  ): Promise<'created' | 'exists' | 'taken'>;
 };
 
 function storedRevision(value: unknown): number {
@@ -67,12 +76,14 @@ export function firestoreArchiveStore(db: Firestore): ArchiveStore {
     restoreDraft: (companyId, draftId, state, revision) =>
       step(companyId, draftId, revision, (current) => (current === 'archived' ? { state } : {})),
 
-    async createCopy(companyId, draftId, fieldOwnerUid, manifest) {
+    async createCopy(companyId, jobId, draftId, fieldOwnerUid, manifest) {
       const ref = draftRef(companyId, draftId);
       return firestoreSpan('runTransaction', 'drafts', () =>
-        db.runTransaction(async (tx): Promise<'created' | 'exists'> => {
-          if ((await tx.get(ref)).exists) return 'exists';
+        db.runTransaction(async (tx): Promise<'created' | 'exists' | 'taken'> => {
+          const found = await tx.get(ref);
+          if (found.exists) return draftOfOtherJob(found.get('jobId'), jobId) ? 'taken' : 'exists';
           tx.create(ref, {
+            jobId,
             ...(fieldOwnerUid === null ? {} : { fieldOwnerUid }),
             state: 'editing',
             field: manifest.draft ?? {},

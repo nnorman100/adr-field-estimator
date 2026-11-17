@@ -475,12 +475,14 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
       // copy may differ), with where it came from. A retry makes it if it is missing.
       await inCompany(caller.companyId, async (tx) => {
         await lockedJob(tx, caller.companyId, jobId, { live: true });
-        await field(() =>
-          store.createFrom(caller.companyId, input.draftId, made.ownerUid, snapshotManifest(made.source.snapshotBytes!), {
+        const result = await field(() =>
+          store.createFrom(caller.companyId, jobId, input.draftId, made.ownerUid, snapshotManifest(made.source.snapshotBytes!), {
             draftId: made.source.draftId,
             submissionId: made.source.id,
           }),
         );
+        // A draft made for another job or from another submission is never this one (security audit F1).
+        if (result === 'taken') throw new SubmissionError('conflict');
       });
       await field(() => store.projectJob(caller.companyId, jobId, {
         currentDraftId: made.job.currentDraftId, revision: made.job.revision,

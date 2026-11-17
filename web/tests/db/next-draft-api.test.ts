@@ -149,6 +149,29 @@ describe('Back to editing', () => {
     }
   });
 
+  // Security audit F1: a job's own earlier draft, or a draft the field database holds for another
+  // job, is never its next draft version.
+  it('refuses the job’s own earlier draft and a draft made for another job, and leaves both as they are', async () => {
+    const { jobId, draftId, manifest } = await submittedJob();
+    const second = randomUUID();
+    expect((await f.nextDraft(ESTIMATOR_A, jobId, { draftId: second, fromDraftId: draftId })).status).toBe(201);
+    h.field.put(h.seed.a, second, manifest);
+    expect((await f.submitShown(ESTIMATOR_A, jobId, second, manifest)).answer.status).toBe(201);
+    const before = await f.job(jobId);
+    const earlier = structuredClone(h.field.draft(h.seed.a, draftId));
+    expect(await f.nextDraft(ESTIMATOR_A, jobId, { draftId, fromDraftId: second })).toMatchObject({ status: 409, body: { error: 'conflict' } });
+    expect(await f.job(jobId)).toEqual(before);
+    expect(h.field.draft(h.seed.a, draftId)).toEqual(earlier);
+
+    const foreign = randomUUID();
+    const key = `${h.seed.a}/${foreign}`;
+    h.drafts.made.set(key, { fieldOwnerUid: 'estimator-a2' });
+    h.drafts.jobOf.set(key, randomUUID());
+    const stored = structuredClone(h.field.draft(h.seed.a, foreign));
+    expect(await f.nextDraft(ESTIMATOR_A, jobId, { draftId: foreign, fromDraftId: second })).toMatchObject({ status: 409, body: { error: 'conflict' } });
+    expect(h.field.draft(h.seed.a, foreign)).toEqual(stored);
+  });
+
   it('only the estimator who owns the field work goes back to editing, not the owner who does not; another company never reaches the job', async () => {
     const { jobId, draftId } = await submittedJob();
     const before = await everything(h.admin);

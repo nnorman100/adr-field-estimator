@@ -173,6 +173,17 @@ describe('creating a job', () => {
     expect(await jobCount()).toBe(1);
   });
 
+  it('answers 409 when the field database holds the draft id for another job, and leaves that draft as it is', async () => {
+    // Security audit F1: a draft made for another job is never taken as this job's, even where
+    // Postgres does not know the id (a draft made before the job id was written on drafts).
+    const draftId = randomUUID();
+    const key = `${h.seed.a}/${draftId}`;
+    h.drafts.made.set(key, { fieldOwnerUid: 'estimator-a2' });
+    h.drafts.jobOf.set(key, randomUUID());
+    expect(await create(ESTIMATOR_A, { id: randomUUID(), draftId })).toEqual({ status: 409, body: { error: 'conflict' } });
+    expect(h.drafts.made.get(key)).toEqual({ fieldOwnerUid: 'estimator-a2' });
+  });
+
   it('makes the draft on a retry when the first attempt saved the job and lost the draft', async () => {
     const ids = newIds();
     h.drafts.failNext.on = true;

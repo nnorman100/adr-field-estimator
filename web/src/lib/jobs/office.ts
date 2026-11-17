@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { actors, jobAssignments, jobCoordination, jobs, jobSubmissions, memberships } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
@@ -167,12 +167,31 @@ async function uidOf(tx: CompanyTransaction, companyId: string, actorId: string)
 // reads none of them (web/firestore.rules). The current draft is set last, so while any draft does
 // not name the owner yet, the current one does not either, and the job screens offer Start field
 // work, which sets them all again.
+//
+// A draft id another job of the company also names (as its current draft or in its submissions) is
+// left out (security audit F1): such data predates the refusal of a draft id that was ever
+// submitted, and naming a field owner on it would hand that person the other job's field work; when
+// it is the job's current draft, the field work cannot be handed over at all (409). The list is what
+// lets the draft store stamp the job id on a draft made before `jobId` (drafts.ts).
 async function draftIdsOf(tx: CompanyTransaction, row: JobRow): Promise<string[]> {
   const found = await tx
     .selectDistinct({ draftId: jobSubmissions.draftId })
     .from(jobSubmissions)
     .where(and(eq(jobSubmissions.companyId, row.companyId), eq(jobSubmissions.jobId, row.id)));
-  return [...found.map((one) => one.draftId).filter((id) => id !== row.currentDraftId), row.currentDraftId];
+  const ids = [...found.map((one) => one.draftId).filter((id) => id !== row.currentDraftId), row.currentDraftId];
+  const shared = await tx
+    .select({ draftId: jobs.currentDraftId })
+    .from(jobs)
+    .where(and(eq(jobs.companyId, row.companyId), ne(jobs.id, row.id), inArray(jobs.currentDraftId, ids)))
+    .union(
+      tx
+        .select({ draftId: jobSubmissions.draftId })
+        .from(jobSubmissions)
+        .where(and(eq(jobSubmissions.companyId, row.companyId), ne(jobSubmissions.jobId, row.id), inArray(jobSubmissions.draftId, ids))),
+    );
+  const others = new Set(shared.map((one) => one.draftId));
+  if (others.has(row.currentDraftId)) throw new JobError('conflict');
+  return ids.filter((id) => !others.has(id));
 }
 
 export function officeService(db: Database, drafts: DraftStore): OfficeService {
@@ -189,18 +208,21 @@ export function officeService(db: Database, drafts: DraftStore): OfficeService {
   // revision. A current draft that is not there yet (Back to editing makes its draft after its own
   // commit) or a Firestore that cannot be reached answers 503; the same request again sets it. A
   // newer owner already on a draft means a later change won, which is the answer Postgres holds too.
-  async function project(companyId: string, draftIds: readonly string[], uid: string | null, revision: number): Promise<void> {
+  async function project(companyId: string, jobId: string, draftIds: readonly string[], uid: string | null, revision: number): Promise<void> {
     if (uid === null) throw new JobError('draft_unavailable');
     for (const [index, draftId] of draftIds.entries()) {
       let result;
       try {
-        result = await drafts.setFieldOwner(companyId, draftId, uid, revision);
+        result = await drafts.setFieldOwner(companyId, jobId, draftId, uid, revision);
       } catch (error) {
         // Fixed text only: the SDK's message may quote a path.
         console.error('job field owner unavailable', error instanceof Error ? error.name : 'unknown');
         throw new JobError('draft_unavailable');
       }
       if (result === 'missing' && index === draftIds.length - 1) throw new JobError('draft_unavailable');
+      // A draft made for another job is left as it is (security audit F1); when it is the job's
+      // current draft, the field work cannot be handed over at all.
+      if (result === 'taken' && index === draftIds.length - 1) throw new JobError('conflict');
     }
   }
 
@@ -305,7 +327,7 @@ export function officeService(db: Database, drafts: DraftStore): OfficeService {
         }
         return { claimed: next !== row, revision, draftIds: await draftIdsOf(tx, next), detail: await detailOf(tx, next) };
       });
-      await project(caller.companyId, made.draftIds, caller.uid, made.revision);
+      await project(caller.companyId, jobId, made.draftIds, caller.uid, made.revision);
       return { claimed: made.claimed, detail: made.detail };
     },
 
@@ -349,7 +371,7 @@ export function officeService(db: Database, drafts: DraftStore): OfficeService {
           view: await viewOf(tx, next),
         };
       });
-      await project(caller.companyId, made.draftIds, made.uid, made.revision);
+      await project(caller.companyId, jobId, made.draftIds, made.uid, made.revision);
       return made.view;
     },
   };

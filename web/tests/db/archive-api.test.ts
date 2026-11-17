@@ -266,6 +266,7 @@ describe('copy', () => {
       rooms: Object.fromEntries(manifest.rooms.map((room) => [room.id, room.field])),
       photos: {},
       previous: null,
+      jobId: ids.id,
     });
     expect(await auditOf(ids.id)).toEqual(['job_copied']);
     const [audit] = await h.admin<{ details: Record<string, unknown> }[]>`SELECT details FROM audit_events WHERE target = ${ids.id}`;

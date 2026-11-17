@@ -127,7 +127,7 @@ describe('the field rules on a draft Submit has fenced', () => {
     const other = await member(tenant, company, 'estimator');
     const office = await member(tenant, company, 'office');
     const next = randomUUID();
-    expect(await store.createFrom(company, next, owner.uid, MANIFEST, { draftId: randomUUID(), submissionId: randomUUID() })).toBe('created');
+    expect(await store.createFrom(company, randomUUID(), next, owner.uid, MANIFEST, { draftId: randomUUID(), submissionId: randomUUID() })).toBe('created');
     await phoneWrites(owner.caller, company, next, 200);
     await phoneWrites(other.caller, company, next, 403);
     await phoneWrites(office.caller, company, next, 403);

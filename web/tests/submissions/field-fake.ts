@@ -3,6 +3,7 @@ import type { JobProjection } from '@/lib/field/job-projection';
 import type { FieldManifest } from '@/lib/field/canonical';
 import { MAX_PHOTO_REFS, MAX_ROOMS } from '@/lib/field/schema';
 import type { ArchiveResult, ArchiveStore } from '@/lib/jobs/archive-store';
+import { draftOfOtherJob } from '@/lib/jobs/drafts';
 import type { FenceResult, FenceStore, Provenance } from '@/lib/submissions/fence';
 import type { FakeDrafts } from '../db/draft-fake';
 import type { FakeDraftStates } from '../db/evidence-fake';
@@ -28,6 +29,8 @@ export type FakeDraft = {
   previous: Provenance | null;
   // The job revision of the last archive or restore (S5b-2), absent until one.
   archiveRevision?: number;
+  // The job the draft was made for (security audit F1), absent on a draft made before that key.
+  jobId?: string;
 };
 export type FieldData = Record<string, FakeDraft>;
 
@@ -74,7 +77,7 @@ export type FakeField = FenceStore & ArchiveStore & {
 
 const key = (companyId: string, draftId: string) => `${companyId}/${draftId}`;
 
-const emptyDraft = (fieldOwnerUid: string | null): FakeDraft => ({
+const emptyDraft = (fieldOwnerUid: string | null, jobId?: string): FakeDraft => ({
   fieldOwnerUid,
   state: 'editing',
   fence: null,
@@ -82,12 +85,13 @@ const emptyDraft = (fieldOwnerUid: string | null): FakeDraft => ({
   rooms: {},
   photos: {},
   previous: null,
+  ...(jobId === undefined ? {} : { jobId }),
 });
 
 export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts: FakeDrafts; states: FakeDraftStates }): FakeField {
   function load(): FieldData {
     const data = backing.load();
-    for (const [made, { fieldOwnerUid }] of linked?.drafts.made ?? []) data[made] ??= emptyDraft(fieldOwnerUid);
+    for (const [made, { fieldOwnerUid }] of linked?.drafts.made ?? []) data[made] ??= emptyDraft(fieldOwnerUid, linked?.drafts.jobOf.get(made));
     return data;
   }
   function save(data: FieldData): void {
@@ -97,6 +101,7 @@ export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts:
       linked.states.set.set(at, draft.state);
       linked.states.refs.set(at, Object.keys(draft.photos).length);
       if (!linked.drafts.made.has(at)) linked.drafts.made.set(at, { fieldOwnerUid: draft.fieldOwnerUid });
+      if (draft.jobId !== undefined && !linked.drafts.jobOf.has(at)) linked.drafts.jobOf.set(at, draft.jobId);
     }
   }
   // Each call reads, decides and writes with no await in between: one transaction.
@@ -219,22 +224,27 @@ export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts:
         return 'set';
       }),
 
-    createCopy: (companyId, draftId, fieldOwnerUid, manifest) =>
+    createCopy: (companyId, jobId, draftId, fieldOwnerUid, manifest) =>
       call('createCopy', (data) => {
-        if (data[key(companyId, draftId)]) return 'exists' as const;
+        const found = data[key(companyId, draftId)];
+        if (found) return draftOfOtherJob(found.jobId, jobId) ? ('taken' as const) : ('exists' as const);
         data[key(companyId, draftId)] = {
-          ...emptyDraft(fieldOwnerUid),
+          ...emptyDraft(fieldOwnerUid, jobId),
           field: manifest.draft ?? {},
           rooms: Object.fromEntries(manifest.rooms.map((room) => [room.id, room.field ?? {}])),
         };
         return 'created' as const;
       }),
 
-    createFrom: (companyId, draftId, fieldOwnerUid, manifest, previous) =>
+    createFrom: (companyId, jobId, draftId, fieldOwnerUid, manifest, previous) =>
       call('createFrom', (data) => {
-        if (data[key(companyId, draftId)]) return 'exists' as const;
+        const found = data[key(companyId, draftId)];
+        if (found) {
+          const same = found.previous?.draftId === previous.draftId && found.previous?.submissionId === previous.submissionId;
+          return same && !draftOfOtherJob(found.jobId, jobId) ? ('exists' as const) : ('taken' as const);
+        }
         data[key(companyId, draftId)] = {
-          ...emptyDraft(fieldOwnerUid),
+          ...emptyDraft(fieldOwnerUid, jobId),
           field: manifest.draft ?? {},
           rooms: Object.fromEntries(manifest.rooms.map((room) => [room.id, room.field ?? {}])),
           photos: Object.fromEntries(manifest.photos.map((photo) => [photo.id, photo.field ?? {}])),
