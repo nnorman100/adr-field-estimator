@@ -87,7 +87,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   const posted = usePending(() => pending.detail(jobId));
   const mark = usePending(() => pending.mark(jobId));
   const denial = usePending(() => pending.denial(jobId));
-  const detail = newerDetail(read?.mark === mark ? read.detail : null, posted);
+  const detail = newerDetail(read !== null && read.mark >= mark ? read.detail : null, posted);
   const setDetail = useCallback(
     (next: JobDetail, sentAt: number) => {
       if (!pending.publishDetail(jobId, next, sentAt)) return;
@@ -224,7 +224,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   const reloadJob = useCallback(async () => {
     // Server access of a moved job stays revoked: nothing more is asked of it.
     if (!session.online || pending.moved(jobId)?.revoked) return null;
-    const sentAt = pending.mark(jobId);
+    const sentAt = pending.markRead();
     return apply(await readJob(session.user, jobId), sentAt);
   }, [apply, session, jobId]);
 
@@ -233,7 +233,8 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       if (!refusal) return;
       if (refusal.status === 401 || refusal.status === 403) return refuse(refusal);
       if (refusal.status !== 404 && refusal.status !== 410) return;
-      const sentAt = pending.mark(jobId);
+      if (refusal.status === 410) pending.archivedSeen(jobId);
+      const sentAt = pending.markRead();
       void readJob(session.user, jobId).then((answer) => {
         if (pending.readAnswered(jobId, answer, sentAt) && !answer.ok && answer.denied && pending.denial(jobId)) setDraft(null);
       });
@@ -245,7 +246,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   useEffect(() => {
     if (!session.online) return;
     let live = true;
-    const sentAt = pending.mark(jobId);
+    const sentAt = pending.markRead();
     void readJob(session.user, jobId).then((answer) => {
       // A refusal that comes back after this screen closed still drops the job for the next one.
       if (live) void apply(answer, sentAt);

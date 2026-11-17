@@ -85,8 +85,11 @@ type State = {
   // that settled after its screen closed.
   details: Record<string, JobDetail>;
   draftChanges: Record<string, number>;
-  // By job: its access mark, and the server's reason while it refuses to show the job.
+  // By job: its access mark, and the server's reason while it refuses to show the job. `marked` is
+  // the last mark handed out, of any job; `readAt`, by job, the mark of the newest read that showed it.
   marks: Record<string, number>;
+  marked: number;
+  readAt: Record<string, number>;
   denials: Record<string, string>;
   // By job: the field work is on this phone as this person's (or its job says it is theirs).
   held: Record<string, true>;
@@ -115,6 +118,8 @@ const EMPTY = {
   details: {},
   draftChanges: {},
   marks: {},
+  marked: 0,
+  readAt: {},
   denials: {},
   held: {},
   moved: {},
@@ -201,10 +206,16 @@ export const pending = {
   detail: (jobId: string): JobDetail | null => state.details[jobId] ?? null,
   // Taken before a request about the job is sent, and handed back with its answer.
   mark: (jobId: string): number => state.marks[jobId] ?? 0,
+  // Taken before a read of a job is sent: newer than every mark handed out before it, so of two
+  // reads the one sent later decides.
+  markRead(): number {
+    state = { ...state, marked: state.marked + 1 };
+    return state.marked;
+  },
   // Keeps a job answered to a request made under `mark`, unless the job was refused since. Answers
   // whether the answer still counts.
   publishDetail(jobId: string, detail: JobDetail, mark: number): boolean {
-    if (mark !== pending.mark(jobId)) return false;
+    if (mark < pending.mark(jobId)) return false;
     const known = state.details[jobId];
     if (known && known.job.revision >= detail.job.revision) return true;
     const denials = { ...state.denials };
@@ -219,7 +230,7 @@ export const pending = {
     delete details[jobId];
     change({
       details,
-      marks: { ...state.marks, [jobId]: pending.mark(jobId) + 1 },
+      ...remarked(jobId),
       denials: { ...state.denials, [jobId]: message },
     });
   },
@@ -267,11 +278,11 @@ export const pending = {
   // open: a refusal drops every copy of the job; the job (archived or not, S5b-2) says whether it is
   // archived, and an archived answer is newer than any request made before it. Answers false when
   // the job was refused or archived since, so the answer no longer counts.
+  // A read sent before the newest read that showed the job no longer counts either.
   readAnswered(jobId: string, answer: Answer<unknown>, mark: number): boolean {
-    if (mark !== pending.mark(jobId)) return false;
-    if (!answer.ok && answer.code === 'archived') {
-      change({ archived: flagged(state.archived, jobId, true), marks: { ...state.marks, [jobId]: mark + 1 } });
-    } else if (answer.ok && pending.archived(jobId)) change({ archived: flagged(state.archived, jobId, false) });
+    if (mark < pending.mark(jobId) || mark < (state.readAt[jobId] ?? 0)) return false;
+    if (!answer.ok && answer.code === 'archived') pending.archivedSeen(jobId);
+    else if (answer.ok) change({ readAt: { ...state.readAt, [jobId]: mark }, archived: flagged(state.archived, jobId, false) });
     if (!answer.ok && answer.denied) pending.refused(jobId, answer.message, answer.status);
     return true;
   },
@@ -322,12 +333,17 @@ export const pending = {
     return true;
   },
   archived: (jobId: string): boolean => Boolean(state.archived[jobId]),
+  // A route of the job answered 410: the job is archived, and no answer to a request made before now
+  // counts.
+  archivedSeen(jobId: string) {
+    change({ archived: flagged(state.archived, jobId, true), ...remarked(jobId) });
+  },
   // An archive or restore of the job is done: no answer to a request made before now counts, and the
   // open screens and lists of it read again.
   archivalDone(jobId: string, archived: boolean) {
     change({
       archived: flagged(state.archived, jobId, archived),
-      marks: { ...state.marks, [jobId]: pending.mark(jobId) + 1 },
+      ...remarked(jobId),
       archivalsDone: { ...state.archivalsDone, [jobId]: pending.archivalsDone(jobId) + 1 },
     });
   },
@@ -340,6 +356,12 @@ export const pending = {
     change({ draftChanges: { ...state.draftChanges, [jobId]: pending.draftChanges(jobId) + 1 } });
   },
 };
+
+// A new mark for the job, newer than every mark handed out so far.
+function remarked(jobId: string): Pick<State, 'marks' | 'marked'> {
+  const marked = state.marked + 1;
+  return { marks: { ...state.marks, [jobId]: marked }, marked };
+}
 
 function flagged(flags: Record<string, true>, jobId: string, on: boolean): Record<string, true> {
   const next = { ...flags };

@@ -273,6 +273,30 @@ describe('archive and restore done on this page (S5b-2)', () => {
     expect(pending.archived('job-o')).toBe(false);
   });
 
+  it('keeps a restore read later over an archived answer to a read sent before it', () => {
+    pending.openFor('company-a/user-restored-elsewhere');
+    // A read of the archived job is on its way; the job is restored on another phone and opened again.
+    const older = pending.markRead();
+    const newer = pending.markRead();
+    expect(pending.readAnswered('job-n', read, newer)).toBe(true);
+    expect(pending.readAnswered('job-n', gone, older)).toBe(false);
+    expect(pending.archived('job-n')).toBe(false);
+    expect(pending.readAnswered('job-n', read, older)).toBe(false);
+  });
+
+  it('shows the job archived as soon as any route of it answers 410, also when no read gets through after', () => {
+    pending.openFor('company-a/user-archived-save');
+    const before = pending.markRead();
+    pending.archivedSeen('job-s');
+    expect(pending.archived('job-s')).toBe(true);
+    expect(pending.readAnswered('job-s', { ok: false, status: 0, message: 'No answer' }, pending.markRead())).toBe(true);
+    expect(pending.archived('job-s')).toBe(true);
+    expect(pending.readAnswered('job-s', read, before)).toBe(false);
+    expect(pending.archived('job-s')).toBe(true);
+    expect(pending.readAnswered('job-s', read, pending.markRead())).toBe(true);
+    expect(pending.archived('job-s')).toBe(false);
+  });
+
   it('starts empty for another sign-in', () => {
     pending.openFor('company-a/user-archive-1');
     pending.archivalDone('job-a', true);

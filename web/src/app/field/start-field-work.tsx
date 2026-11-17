@@ -29,9 +29,11 @@ export function StartFieldWork({ context, resume }: { context: JobContext & { de
       return;
     }
     setError(answer.message);
-    // Someone else started it meanwhile, the job moved on or was archived (410), or the job was saved
-    // and its draft was not (503): read it again, which decides what the screen offers.
-    if (answer.status === 409 || answer.status === 404 || answer.status === 410 || answer.status === 503) await context.reloadJob();
+    // Archived (410): it is shown archived now, and read again. Someone else started it meanwhile, the
+    // job moved on, or the job was saved and its draft was not (503): read it again, which decides what
+    // the screen offers.
+    if (answer.status === 410) context.checkAccess(answer);
+    else if (answer.status === 409 || answer.status === 404 || answer.status === 503) await context.reloadJob();
   }
 
   return (
