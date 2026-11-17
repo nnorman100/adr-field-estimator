@@ -6,7 +6,7 @@ import type { User } from 'firebase/auth';
 const callApi = vi.fn();
 vi.mock('@/lib/firebase-client', () => ({ callApi: (...args: unknown[]) => callApi(...args) }));
 
-const { createJob, photoAddress, readJob, saveCustomer } = await import('@/lib/field/api');
+const { assignEstimator, claimFieldOwner, createJob, photoAddress, readCoordination, readJob, saveCustomer, transferFieldOwner } = await import('@/lib/field/api');
 const { fieldRefusal } = await import('@/lib/field/store');
 
 const user = { getIdToken: async () => 'token' } as unknown as User;
@@ -44,6 +44,49 @@ describe('job screen answers', () => {
     const input = { name: '', phone: '', email: '', propertyAddress: '', revision: 1, changeId: JOB.id };
     callApi.mockResolvedValue({ status: 409, body: { error: 'stale_revision', revision: 3 } });
     expect(await saveCustomer(user, JOB.id, input)).toEqual(expect.not.objectContaining({ denied: true }));
+  });
+});
+
+const PERSON = { actorId: 'a1', displayName: null, email: 'first@example.com' };
+const VIEW = { jobId: JOB.id, status: 'draft', revision: 2, notes: 'Gate code', fieldOwner: PERSON, assignments: [{ ...PERSON, id: 'x1', assignedAt: '2026-11-16T00:00:00.000Z' }], estimators: [PERSON] };
+
+describe('job coordination answers (S5b-1)', () => {
+  beforeEach(() => callApi.mockReset());
+
+  it('reads the coordination view, and takes one that did not arrive whole as no answer', async () => {
+    callApi.mockResolvedValue({ status: 200, body: VIEW });
+    expect(await readCoordination(user, JOB.id)).toMatchObject({ ok: true, value: { revision: 2, notes: 'Gate code' } });
+    callApi.mockResolvedValue({ status: 200, body: { ...VIEW, assignments: 'cut short' } });
+    expect(await readCoordination(user, JOB.id)).toMatchObject({ ok: false, status: 0 });
+  });
+
+  it('takes 201 and 200 of an assignment as done, and a field owner start of either as done', async () => {
+    for (const status of [200, 201]) {
+      callApi.mockResolvedValue({ status, body: VIEW });
+      expect(await assignEstimator(user, JOB.id, { id: 'x1', estimatorActorId: 'a1' })).toMatchObject({ ok: true });
+    }
+    callApi.mockResolvedValue({ status: 201, body: { job: { id: 'cut short' } } });
+    expect(await claimFieldOwner(user, JOB.id)).toMatchObject({ ok: false, status: 0 });
+  });
+
+  it('words each refusal from its code, keeps the code, and marks a stale revision as stale', async () => {
+    const said: Record<string, [number, RegExp]> = {
+      not_field_owner: [403, /owns this job’s field work can add to it/],
+      field_owner_taken: [409, /already owns/],
+      already_assigned: [409, /already assigned/],
+      not_assignable: [409, /active estimator assigned/],
+      assignment_not_found: [404, /no longer assigned/],
+      assigned_field_owner: [409, /owns the job’s field work/],
+      draft_unavailable: [503, /could not be updated/],
+    };
+    for (const [code, [status, words]] of Object.entries(said)) {
+      callApi.mockResolvedValue({ status, body: { error: code } });
+      const answer = await transferFieldOwner(user, JOB.id, { revision: 1, changeId: 'c1', toActorId: 'a1' });
+      expect(answer).toMatchObject({ ok: false, status, code });
+      expect(answer.ok ? '' : answer.message).toMatch(words);
+    }
+    callApi.mockResolvedValue({ status: 409, body: { error: 'stale_revision' } });
+    expect(await transferFieldOwner(user, JOB.id, { revision: 1, changeId: 'c1', toActorId: 'a1' })).toMatchObject({ stale: true });
   });
 });
 

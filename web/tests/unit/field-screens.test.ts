@@ -22,6 +22,7 @@ describe('field views', () => {
       { view: 'scope', jobId: JOB },
       { view: 'customer', jobId: JOB },
       { view: 'photos', jobId: JOB },
+      { view: 'coordination', jobId: JOB },
     ];
     for (const place of places) expect(at(hrefOf(place).split('?')[1] ?? '')).toEqual(place);
     expect(new Set(places.map((place) => place.view))).toEqual(new Set(FIELD_VIEWS));

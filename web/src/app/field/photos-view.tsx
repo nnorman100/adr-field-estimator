@@ -46,7 +46,9 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
   // connection away until it is shown again, and the picture must still reach this page.
   const [capturing, setCapturing] = useState(false);
   const camera = useRef<HTMLInputElement>(null);
-  const cameraShown = canTake || capturing;
+  // Once the field work moved away from this person nothing more is taken or sent from here (J5): the
+  // photos stay on screen, read only.
+  const cameraShown = canTake || (capturing && !job.moved);
   useEffect(() => {
     const input = camera.current;
     if (!input) return;
@@ -64,6 +66,7 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
 
   async function finish(item: PendingPhoto) {
     const db = job.session.db;
+    if (job.moved) return update(item.id, { step: 'send-failed', message: 'Not sent: another person now owns this job’s field work.' });
     if (!db || !job.session.online) return update(item.id, { step: 'send-failed', message: 'Needs a connection. Send it again when connected.' });
     update(item.id, { step: 'sending', message: undefined });
     const sent = await sendPhoto(job.session.user, jobId, item.id, item.bytes);
@@ -88,7 +91,7 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
 
   async function take(file: File | undefined) {
     setError(null);
-    if (!file) return;
+    if (!file || job.moved) return;
     const capturedAt = new Date().toISOString();
     const bytes = await preparePhoto(file);
     if (!bytes) return setError('This picture could not be read. Take the photo with the camera.');
@@ -147,7 +150,7 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
                 <p role="status">{item.step === 'sending' ? 'Sending the photo…' : item.step === 'saving' ? 'Saving its room and tag…' : 'Not sent yet.'}</p>
                 {item.message ? <p role="alert">{item.message}</p> : null}
                 {item.step === 'send-failed' || item.step === 'save-failed' ? (
-                  <Button variant="outline" disabled={!job.session.online} onClick={() => void finish(item)}>
+                  <Button variant="outline" disabled={!job.session.online || job.moved} onClick={() => void finish(item)}>
                     Send again
                   </Button>
                 ) : null}

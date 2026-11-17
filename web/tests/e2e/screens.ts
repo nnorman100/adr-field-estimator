@@ -30,4 +30,5 @@ export const FIELD_VIEW_SCREENS: Record<string, string> = {
   scope: 'jobs.spec.ts',
   customer: 'jobs.spec.ts',
   photos: 'jobs.spec.ts',
+  coordination: 'jobs.spec.ts',
 };

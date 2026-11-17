@@ -11,13 +11,37 @@ import type { JobView } from '@/lib/field/views';
 import { CustomerView } from './customer-view';
 import { PhotosView } from './photos-view';
 import { ScopeView } from './scope-view';
+import { CoordinationView } from './coordination-view';
+import { StartFieldWork } from './start-field-work';
 import { FieldLink } from './ui';
 
 const TABS: { view: JobView; label: string }[] = [
   { view: 'scope', label: 'Check Scope' },
   { view: 'customer', label: 'Customer and claim' },
   { view: 'photos', label: 'Photos' },
+  { view: 'coordination', label: 'Job coordination' },
 ];
+
+// Who owns this job's field work, as this person sees it (S5b-1): the rules let the owner and office
+// read every draft, and anyone else only the drafts they own (web/firestore.rules), so an estimator
+// whose job is owned by someone else, or by nobody yet, is not sent to read a draft they would be
+// refused.
+type FieldWork = 'mine' | 'other' | 'nobody';
+
+function fieldWorkOf(session: FieldSession, detail: JobDetail): FieldWork {
+  const owner = detail.job.fieldOwnerActorId;
+  if (owner === null) return 'nobody';
+  return owner === session.actorId ? 'mine' : 'other';
+}
+
+const readsEveryDraft = (session: FieldSession) => session.role === 'owner' || session.role === 'office';
+const draftReadable = (session: FieldSession, detail: JobDetail) => readsEveryDraft(session) || fieldWorkOf(session, detail) === 'mine';
+
+// Owner decision J5: the field work moved to another person (or this person was unassigned with it).
+// What they typed and did not send stays on this phone, read only; Save as new draft is S6.
+const MOVED_TEXT =
+  'This job’s field work is no longer yours: another person owns it now. What you changed and did not save stays on this phone, read only, and is not saved to this job.';
+const OTHER_OWNS_TEXT = 'Another person owns this job’s field work, so it is not shown here. The company owner can move it to you.';
 
 export type JobContext = {
   session: FieldSession;
@@ -34,6 +58,11 @@ export type JobContext = {
   // Takes a refusal of the photo route or the field database (null for none): 401 or 403 drops the
   // job from the screen; a 404 may be a missing photo, so the job is read again and that decides.
   checkAccess: (refusal: Refusal | null) => void;
+  // Takes the server's refusal of the job to this person (null for none). While their field work is
+  // on this phone it stays, read only (owner decision J5); otherwise the job goes from the screen.
+  refuse: (refusal: Refusal) => void;
+  // The field work moved away from this person: everything of theirs on screen is read only.
+  moved: boolean;
   // Whether this person may change the field work now (the rules' own test).
   editable: boolean;
   // The last read of the draft did not get through, so the draft on screen may be older than what is
@@ -57,41 +86,73 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   const detail = newerDetail(read?.mark === mark ? read.detail : null, posted);
   const setDetail = useCallback(
     (next: JobDetail, sentAt: number) => {
-      if (pending.publishDetail(jobId, next, sentAt)) setRead({ detail: next, mark: sentAt });
+      if (!pending.publishDetail(jobId, next, sentAt)) return;
+      // The job now names someone else while this person held its field work: recorded now, before any
+      // newer draft replaces the one on screen, so it holds whoever that draft names (J5).
+      if (pending.held(jobId) && next.job.fieldOwnerActorId !== null && next.job.fieldOwnerActorId !== session.actorId) pending.moveAway(jobId);
+      setRead({ detail: next, mark: sentAt });
     },
-    [jobId],
+    [jobId, session.actorId],
   );
   const draftChanges = usePending(() => pending.draftChanges(jobId));
   const [locator, setLocator] = useState<JobProjection | null>(null);
   const [cachedError, setCachedError] = useState<string | null>(null);
-  const [draft, setDraft] = useState<FieldDraft | null>(null);
-  const [draftAt, setDraftAt] = useState<string | null>(null);
+  // A job whose field work moved away from this person, opened again on this page, starts from the
+  // draft as last read (src/lib/field/pending.ts).
+  const movedState = usePending(() => pending.moved(jobId));
+  const [draft, setDraft] = useState<FieldDraft | null>(() => pending.moved(jobId)?.draft ?? null);
+  const [draftAt, setDraftAt] = useState<string | null>(() => pending.moved(jobId)?.draftId ?? null);
+  // The job names this person as its field owner but the draft does not yet (the server's draft step
+  // did not get through): Start field work, sent again, sets it.
+  const [ownerUnset, setOwnerUnset] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [draftError, setDraftError] = useState<string | null>(null);
   const [readDraft] = useState(draftReads);
 
-  // The server refused the job to this person: every copy of it goes (src/lib/field/pending.ts).
-  const deny = useCallback(
-    (message: string) => {
-      pending.denyDetail(jobId, message);
-      setDraft(null);
+  // The server refused the job to this person: every copy of it goes, unless their field work is on
+  // this phone (owner decision J5, src/lib/field/pending.ts), when it stays, read only.
+  const refuse = useCallback(
+    (refusal: Refusal) => {
+      if (!pending.refused(jobId, refusal.message, refusal.status)) setDraft(null);
     },
     [jobId],
   );
+  // The field database refused the draft. An estimator whose job names them but whose draft does not
+  // yet is sent to start the field work again; anything else is a refusal of the job.
+  const refuseDraft = useCallback(
+    (refusal: Refusal, job: JobDetail | null) => {
+      if (refusal.status === 403 && draft === null && job && !readsEveryDraft(session) && fieldWorkOf(session, job) === 'mine' && !pending.moved(jobId)) {
+        setDraftError(null);
+        return setOwnerUnset(true);
+      }
+      refuse(refusal);
+    },
+    [draft, session, jobId, refuse],
+  );
+  // Whether the screens may read this job's draft: not the rules' refusal for an estimator whose job
+  // is someone else's, and nothing more once the field work moved away.
+  const mayReadDraft = useCallback(
+    (job: JobDetail | null) => !pending.moved(jobId)?.revoked && (job === null || draftReadable(session, job)),
+    [jobId, session],
+  );
 
   const reloadDraft = useCallback(
-    async (currentDraftId?: string, source?: 'cache') => {
+    async (currentDraftId?: string, source?: 'cache', job?: JobDetail) => {
       const draftId = currentDraftId ?? locator?.currentDraftId ?? detail?.job.currentDraftId;
-      if (!draftId || !session.db) return;
+      if (!draftId || !session.db || !mayReadDraft(job ?? detail)) return;
       try {
         const found = await readDraft(session.db, { companyId: session.companyId, draftId }, source);
         if (found === SUPERSEDED) return;
         setDraftAt(draftId);
         setDraft(found);
+        // The job names this person but the draft read (an owner reads every draft) names someone else:
+        // the server's draft step did not get through, and Start field work finishes it.
+        const named = job ?? detail;
+        setOwnerUnset(found !== null && named !== null && fieldWorkOf(session, named) === 'mine' && found.fieldOwnerUid !== session.user.uid);
         setDraftError(found ? null : 'The field work of this job is not there yet. Try again in a moment.');
       } catch (error) {
         const refusal = fieldRefusal(error);
-        if (refusal) return deny(refusal.message);
+        if (refusal) return refuseDraft(refusal, job ?? detail);
         // A read that did not get through keeps the draft as last read on screen, and with it any
         // boxes the person has changed and not saved; field work the app cannot read is not shown.
         if (!(error instanceof InvalidFieldData)) {
@@ -104,44 +165,56 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
         );
       }
     },
-    [detail, locator, session, deny, readDraft],
+    [detail, locator, session, refuseDraft, readDraft, mayReadDraft],
   );
 
-  // The locator first, then the draft it names; trying again repeats both.
-  const openDraft = useCallback(async () => {
-    try {
-      // The API populated this server-owned locator, including for jobs made before S6. Read
-      // the document itself to warm the person cache; never cache the API response.
-      const head = await loadJobProjection(session.db, session.companyId, jobId);
-      if (!head) throw new Error('Job locator unavailable');
-      setLocator(head);
-      setCachedError(null);
-      await reloadDraft(head.currentDraftId);
-    } catch (error) {
-      const refusal = fieldRefusal(error);
-      if (refusal) deny(refusal.message);
-      else setDraftError('The field work could not be opened. Try again when connected.');
-    }
-  }, [reloadDraft, jobId, session, deny]);
+  // The locator first, then the draft it names; trying again repeats both. `job` is the job just read,
+  // which the state of this render does not hold yet.
+  const openDraft = useCallback(
+    async (job?: JobDetail) => {
+      if (!mayReadDraft(job ?? detail)) {
+        setDraftError(null);
+        return;
+      }
+      try {
+        // The API populated this server-owned locator, including for jobs made before S6. Read
+        // the document itself to warm the person cache; never cache the API response.
+        const head = await loadJobProjection(session.db, session.companyId, jobId);
+        if (!head) throw new Error('Job locator unavailable');
+        setLocator(head);
+        setCachedError(null);
+        await reloadDraft(head.currentDraftId, undefined, job ?? detail ?? undefined);
+      } catch (error) {
+        const refusal = fieldRefusal(error);
+        if (refusal) refuseDraft(refusal, job ?? detail);
+        else setDraftError('The field work could not be opened. Try again when connected.');
+      }
+    },
+    [reloadDraft, jobId, session, refuseDraft, mayReadDraft, detail],
+  );
 
   const apply = useCallback(
     async (answer: Awaited<ReturnType<typeof readJob>>, sentAt: number): Promise<JobDetail | null> => {
       if (!pending.readAnswered(jobId, answer, sentAt)) return null;
       setError(answer.ok ? null : answer.message);
       if (!answer.ok) {
-        // A refusal to show the job drops every copy of it; no answer keeps the one on screen.
-        if (answer.denied) setDraft(null);
+        // A refusal to show the job drops every copy of it (unless the field work is this person's on
+        // this phone, J5); no answer keeps the one on screen.
+        if (answer.denied && pending.denial(jobId)) setDraft(null);
         return null;
       }
+      // The job is this person's field work again: it opens as usual.
+      if (answer.value.job.fieldOwnerActorId === session.actorId) pending.returned(jobId);
       setDetail(answer.value, sentAt);
-      await openDraft();
+      await openDraft(answer.value);
       return answer.value;
     },
-    [openDraft, setDetail, jobId],
+    [openDraft, setDetail, jobId, session.actorId],
   );
 
   const reloadJob = useCallback(async () => {
-    if (!session.online) return null;
+    // Server access of a moved job stays revoked: nothing more is asked of it.
+    if (!session.online || pending.moved(jobId)?.revoked) return null;
     const sentAt = pending.mark(jobId);
     return apply(await readJob(session.user, jobId), sentAt);
   }, [apply, session, jobId]);
@@ -149,14 +222,14 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   const checkAccess = useCallback(
     (refusal: Refusal | null) => {
       if (!refusal) return;
-      if (refusal.status === 401 || refusal.status === 403) return deny(refusal.message);
+      if (refusal.status === 401 || refusal.status === 403) return refuse(refusal);
       if (refusal.status !== 404) return;
       const sentAt = pending.mark(jobId);
       void readJob(session.user, jobId).then((answer) => {
-        if (pending.readAnswered(jobId, answer, sentAt) && !answer.ok && answer.denied) setDraft(null);
+        if (pending.readAnswered(jobId, answer, sentAt) && !answer.ok && answer.denied && pending.denial(jobId)) setDraft(null);
       });
     },
-    [deny, jobId, session.user],
+    [refuse, jobId, session.user],
   );
 
   // The first read; each job is its own component (keyed by the parent).
@@ -213,6 +286,16 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftChanges]);
 
+  // Whether this person's field work of the job is on this phone: the job names them, or the draft as
+  // read does. A refusal then keeps the work on screen instead of dropping the job (J5).
+  const held = (detail !== null && detail.job.fieldOwnerActorId === session.actorId) || draft?.fieldOwnerUid === session.user.uid;
+  useEffect(() => pending.hold(jobId, held), [jobId, held]);
+  // The draft as last read goes with a moved job, for a screen of it opened again on this page.
+  const draftId = locator?.currentDraftId ?? detail?.job.currentDraftId ?? null;
+  useEffect(() => {
+    if (movedState && draft && (draftAt ?? draftId)) pending.keepDraft(jobId, draft, (draftAt ?? draftId)!);
+  }, [movedState, draft, draftAt, draftId, jobId]);
+
   if (!detail && (denial || (error && (!locator || !draft)))) {
     return (
       <div className="flex flex-col gap-2">
@@ -227,7 +310,17 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   if (!detail && (!locator || !draft)) {
     return <p role="status">{session.online ? 'Opening the job…' : cachedError ?? 'Opening saved field work…'}</p>;
   }
-  const draftId = locator?.currentDraftId ?? detail!.job.currentDraftId;
+  const currentDraftId = locator?.currentDraftId ?? detail!.job.currentDraftId;
+  const fieldWork = detail ? fieldWorkOf(session, detail) : null;
+  const reader = readsEveryDraft(session);
+  // The field work moved away from this person (J5): the server refused them, or the job named someone
+  // else while they held it; recorded in src/lib/field/pending.ts, whoever the draft now names.
+  const moved = movedState !== null;
+  const startable =
+    session.capabilities.includes('scope') &&
+    !moved &&
+    detail !== null &&
+    ((fieldWork === 'nobody' && detail.job.status === 'draft') || (ownerUnset && fieldWork === 'mine'));
 
   const context: JobContext = {
     session,
@@ -238,33 +331,42 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     draft,
     // Until a newer locator's draft finishes loading, the old form remains bound to its own
     // document and read-only. Typed values from it must never be written onto a different draft.
-    draftRef: { companyId: session.companyId, draftId: draftAt ?? draftId },
-    reloadDraft: (source) => reloadDraft(draftAt ?? draftId, source),
+    draftRef: { companyId: session.companyId, draftId: draftAt ?? currentDraftId },
+    reloadDraft: (source) => reloadDraft(draftAt ?? currentDraftId, source),
     checkAccess,
-    editable: draftAt === draftId && draft !== null && canEditDraft(draft, session.user.uid, session.capabilities) && (session.online || session.offlineCapture),
+    refuse,
+    moved,
+    editable:
+      !moved && !ownerUnset && draftAt === currentDraftId && draft !== null && canEditDraft(draft, session.user.uid, session.capabilities) && (session.online || session.offlineCapture),
     stale: draft !== null && draftError !== null,
   };
+  const onDraftViews = view === 'scope' || view === 'photos';
 
   return (
     <div className="flex flex-col gap-4">
       <FieldLink to={{ view: 'jobs', list: null }}>Back to jobs</FieldLink>
       <h2 className="text-xl font-semibold break-words">{detail ? detail.job.propertyAddress || 'No address yet' : 'Saved field work'}</h2>
       <nav aria-label="Job" className="flex flex-wrap gap-x-4">
-        {TABS.map((tab) => (
+        {TABS.filter((tab) => tab.view !== 'coordination' || session.capabilities.some((key) => key === 'coordination' || key === 'assignment')).map((tab) => (
           <FieldLink key={tab.view} to={{ view: tab.view, jobId }} current={tab.view === view} className={tab.view === view ? 'font-semibold' : undefined}>
             {tab.label}
           </FieldLink>
         ))}
       </nav>
-      {(view === 'scope' || view === 'photos') && draft !== null && !context.editable ? (
+      {moved ? (
+        <p role="alert" className="rounded-md bg-foreground/5 p-3 text-sm">
+          {MOVED_TEXT}
+        </p>
+      ) : null}
+      {onDraftViews && startable && detail ? <StartFieldWork context={{ ...context, detail }} resume={ownerUnset && fieldWork === 'mine'} /> : null}
+      {onDraftViews && !moved && !reader && fieldWork === 'other' ? <p className="rounded-md bg-foreground/5 p-3 text-sm">{OTHER_OWNS_TEXT}</p> : null}
+      {onDraftViews && draft !== null && !moved && !context.editable && !(fieldWork === 'other' && !reader) ? (
         <p className="rounded-md bg-foreground/5 p-3 text-sm">
           Read only. Only the estimator who owns this job&rsquo;s field work changes it, while the job is being edited.
         </p>
       ) : null}
-      {(view === 'scope' || view === 'photos') && !session.db ? (
-        <p role="alert">The field database is not set up for this company yet.</p>
-      ) : null}
-      {(view === 'scope' || view === 'photos') && draftError ? (
+      {onDraftViews && !session.db ? <p role="alert">The field database is not set up for this company yet.</p> : null}
+      {onDraftViews && draftError ? (
         <div className="flex flex-col gap-2">
           <p role="alert">{draftError}</p>
           <Button variant="outline" onClick={() => void openDraft()}>
@@ -272,7 +374,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
           </Button>
         </div>
       ) : null}
-      {(view === 'scope' || view === 'photos') && !draft && !draftError && cachedError ? <p role="status">{cachedError}</p> : null}
+      {onDraftViews && !draft && !draftError && cachedError ? <p role="status">{cachedError}</p> : null}
       {/* The views of one job stay mounted and only the open one shows, so moving between them
           keeps what the person has typed and not saved. */}
       <div hidden={view !== 'scope'}>{draft ? <ScopeView key={draftAt} job={context} draft={draft} /> : null}</div>
@@ -291,6 +393,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
           </div>
         )}
       </div>
+      <div hidden={view !== 'coordination'}>{detail ? <CoordinationView job={{ ...context, detail }} open={view === 'coordination'} /> : null}</div>
     </div>
   );
 }

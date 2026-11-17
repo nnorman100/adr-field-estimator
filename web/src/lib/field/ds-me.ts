@@ -31,6 +31,9 @@ export type DsMe = {
   companyId?: string;
   role?: string;
   capabilities?: string[];
+  // The person's id in the company (GET /api/me `actor.id`), saved with the facts above; absent on a
+  // row written before S5b-1.
+  actorId?: string;
   // When the person signed in (the ID token's auth_time), in milliseconds since 1970.
   authTime?: number;
 };
@@ -87,6 +90,7 @@ export function parseMe(value: unknown): DsMe | null {
     !isString(config.projectId) ||
     (row.companyId !== undefined && !isString(row.companyId)) ||
     (row.role !== undefined && !isString(row.role)) ||
+    (row.actorId !== undefined && !isString(row.actorId)) ||
     (row.capabilities !== undefined &&
       !(Array.isArray(row.capabilities) && row.capabilities.every((item) => typeof item === 'string'))) ||
     (row.authTime !== undefined && !(typeof row.authTime === 'number' && Number.isFinite(row.authTime)))
