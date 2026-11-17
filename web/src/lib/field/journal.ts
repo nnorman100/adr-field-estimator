@@ -5,7 +5,8 @@
 // became of it.
 //
 // An entry: the operation id, the (tenant, person) it belongs to, the draft, the document writes
-// (absolute values only), when it was made, whether it reached Firestore's cache, and its state:
+// (absolute values only), when it was made, the server update time of each document as the phone
+// held it, and its state:
 // - pending: waiting for the server's answer;
 // - rejected: the rules refused it (`reason`); never sent again (step 6);
 // - changed: the server holds other values and nothing refused it (the same person's other phone
@@ -62,8 +63,6 @@ export type JournalEntry = {
   writes: DocWrite[];
   at: number;
   state: JournalState;
-  // Firestore's local write finished: the SDK holds the edit in its own queue.
-  reached: boolean;
   // Per document written: the server's update time (microseconds) of the copy the phone held when
   // the edit was made, null when it held none (a new room or photo). What the server holds after a
   // restart is judged against it (judge). Absent on a path: unknown.
@@ -99,7 +98,7 @@ export async function appendEntry(
   bases: Record<string, number | null> = {},
   id: string = crypto.randomUUID(),
 ): Promise<JournalEntry> {
-  const row: Omit<JournalEntry, 'seq'> = { id, tenantId: owner.tenantId, uid: owner.uid, draftPath, writes, at: Date.now(), state: 'pending', reached: false, bases };
+  const row: Omit<JournalEntry, 'seq'> = { id, tenantId: owner.tenantId, uid: owner.uid, draftPath, writes, at: Date.now(), state: 'pending', bases };
   let abandoned = false;
   let active: IDBTransaction | undefined;
   const added = withDatabase(SPEC, (db) => {
@@ -157,8 +156,6 @@ function changeEntry(entry: Pick<JournalEntry, 'seq' | 'tenantId' | 'uid'>, chan
     }),
   );
 }
-
-export const markReached = (entry: JournalEntry): Promise<void> => changeEntry(entry, (row) => ({ ...row, reached: true }));
 
 // The server accepted it: pruned.
 export const removeEntry = (entry: Pick<JournalEntry, 'seq' | 'tenantId' | 'uid'>): Promise<void> => changeEntry(entry, () => null);
@@ -264,12 +261,10 @@ export type Outcome = { kind: 'acked' } | { kind: 'rejected'; reason: RejectReas
 // a newer `set` or `delete` of the document writes every key it does not name as absent. `newer`
 // are entries that are not judged here but were made after (this page's own, whose promises answer
 // for them): a key one of them wrote is not held against an older entry.
-// - The rules refuse the draft (finished or archived, moved, no access): an entry is acked only when
-//   the server's update times show its write landed: each of its documents is a room or photo
-//   document the server changed since the entry's base, holding its values. The rules took no write
-//   after the fence, so such a change came before it. The draft document itself is changed by the
-//   fence, and a removed document has no update time, so neither shows it: such an entry is
-//   rejected with the reason, even when the values happen to match (step 6).
+// - The rules refuse the draft (finished or archived, moved, no access): every entry is rejected
+//   with the reason and kept, even when the server's values happen to match it (step 6). A newer
+//   document version never proves this phone's write landed: another phone may have changed the
+//   same document before the fence (Firstmate rulings R3 and R2, 2026-11-17).
 // - Otherwise an entry whose newest values the server holds is acked. One whose documents the server
 //   has not changed since its base never landed and is made again (reissue); one whose documents
 //   changed since (another phone wrote later), or whose base is unknown, is changed and kept.
@@ -311,10 +306,8 @@ export function judge(
     const paths = [...new Set(entry.writes.map((write) => write.path))];
     const since = (path: string) => changedSince(docs.get(path)!, entry.bases?.[path]);
     const reason = draftRefusal(draft, uid, role);
-    if (reason) {
-      const landed = paths.every((path) => path !== entry.draftPath && 'data' in docs.get(path)! && since(path) === true);
-      outcomes.set(entry.seq, held && landed ? { kind: 'acked' } : { kind: 'rejected', reason });
-    } else if (held) outcomes.set(entry.seq, { kind: 'acked' });
+    if (reason) outcomes.set(entry.seq, { kind: 'rejected', reason });
+    else if (held) outcomes.set(entry.seq, { kind: 'acked' });
     else outcomes.set(entry.seq, !overtaken && paths.every((path) => since(path) === false) ? { kind: 'reissue' } : { kind: 'changed' });
   }
   return outcomes;

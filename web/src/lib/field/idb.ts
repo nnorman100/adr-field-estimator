@@ -59,32 +59,26 @@ function openOnce(spec: DbSpec): Promise<IDBDatabase> {
 }
 
 // One connection; the caller closes it. A lost connection is tried once more, then ReopenTheApp.
-export async function openDatabase(spec: DbSpec): Promise<IDBDatabase> {
-  try {
-    return await openOnce(spec);
-  } catch (error) {
-    if (!connectionLost(error)) throw error;
-  }
-  try {
-    return await openOnce(spec);
-  } catch (error) {
-    throw connectionLost(error) ? new ReopenTheApp() : error;
-  }
+export function openDatabase(spec: DbSpec): Promise<IDBDatabase> {
+  return withDatabase(spec, async (db) => db, false);
 }
 
-// Runs `work` on a fresh connection and closes it after. When the connection is lost during the
-// work, it runs once more on a new one; a second loss is ReopenTheApp. `work` must be safe to run
-// twice (a lost connection commits nothing).
-export async function withDatabase<T>(spec: DbSpec, work: (db: IDBDatabase) => Promise<T>): Promise<T> {
+// Runs `work` on a fresh connection and closes it after (unless `close` is false: openDatabase hands
+// the connection on). One retry budget covers the open and the work together: the first lost
+// connection, in either, starts once more on a new connection; a second loss, in either, is
+// ReopenTheApp, never a third connection. `work` must be safe to run twice (a lost connection
+// commits nothing).
+export async function withDatabase<T>(spec: DbSpec, work: (db: IDBDatabase) => Promise<T>, close = true): Promise<T> {
   for (let attempt = 1; ; attempt += 1) {
-    const db = await openDatabase(spec);
+    let db: IDBDatabase | null = null;
     try {
+      db = await openOnce(spec);
       return await work(db);
     } catch (error) {
       if (!connectionLost(error)) throw error;
       if (attempt === 2) throw new ReopenTheApp();
     } finally {
-      db.close();
+      if (close) db?.close();
     }
   }
 }

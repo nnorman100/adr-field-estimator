@@ -7,9 +7,9 @@
 // 2. Acknowledge: while the page lives, the write's own promise answers. Accepted: the entry is
 //    pruned. Refused by the rules: rejected, with the reason the server's copy of the draft and the
 //    person's access now give. No answer (the client stopped): the entry stays pending.
-//    After a restart (the promise is gone) whether an entry reached Firestore is unknown: its
-//    "reached" mark is written after the fact and a killed page can lose it. So nothing is made
-//    again blindly. Once the sync gate has opened and Firestore has sent its queue, the documents
+//    After a restart (the promise is gone) whether an entry reached Firestore is unknown (a page
+//    can be killed between the entry and the write, or after both). So nothing is made again
+//    blindly. Once the sync gate has opened and Firestore has sent its queue, the documents
 //    are read from the server and judged against each entry's base (journal.ts judge): an entry is
 //    made again only when the server has not changed its documents since it was made.
 // 6. A refused entry is never sent again, so nothing changes a submitted record.
@@ -25,7 +25,6 @@ import {
   draftRefusal,
   judge,
   markChanged,
-  markReached,
   readJournal,
   rejectEntry,
   removeEntry,
@@ -159,14 +158,12 @@ function follow(client: FieldClient, entry: JournalEntry, acknowledged: Promise<
     .finally(() => followed.delete(key));
 }
 
-// Hands an entry's writes to Firestore (./local-edit.ts) and marks it reached only at the local
-// receipt. `handed` says whether the writes reached the SDK at all; once they did, their promise
-// answers for the entry.
+// Hands an entry's writes to Firestore (./local-edit.ts), answering at the local receipt. `handed`
+// says whether the writes reached the SDK at all; once they did, their promise answers for the entry.
 async function send(client: FieldClient, ref: DraftRef, entry: JournalEntry): Promise<{ acknowledged: Promise<void> } | { error: unknown; handed: boolean }> {
   const sent: { made?: Promise<void> } = {};
   try {
     const receipt = await queueFieldEdit(client, ref, (db) => (sent.made = applyWrites(db, entry.writes)));
-    void markReached(entry).catch((error: unknown) => lose(personKey(entry), error));
     follow(client, entry, receipt.acknowledged);
     return receipt;
   } catch (error) {

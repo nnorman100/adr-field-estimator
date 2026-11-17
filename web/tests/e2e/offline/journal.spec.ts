@@ -54,24 +54,24 @@ test.describe('the recovery journal (S6-4)', () => {
     lane.cut(['auth', 'firestore']);
     await phone.call('journalWrite', person, world.draftPath, notes);
     expect(await phone.call('journal', person)).toEqual([entryFor('pending', { tenantId: world.tenantId, uid: world.owner.uid })]);
-    await expect.poll(async () => (await phone.call('journal', person))[0]?.reached).toBe(true);
+    await expect.poll(async () => (await phone.call('readCache', person, world.draftPath)).pending).toBe(true);
     await expectNothingSent(lane);
 
     await phone.page.reload();
-    expect(await phone.call('journal', person)).toEqual([entryFor('pending', { reached: true })]);
+    expect(await phone.call('journal', person)).toEqual([entryFor('pending')]);
     expect(await phone.call('start', person, 'persistent')).toBe('persistent');
     await kill(phone, browserName);
 
     // The journal is there before anything starts.
     phone = await FieldPhone.open(context, lane);
-    expect(await phone.call('journal', person)).toEqual([entryFor('pending', { reached: true })]);
+    expect(await phone.call('journal', person)).toEqual([entryFor('pending')]);
     // A killed page cannot give back the Firestore cache's single-window lease, which the SDK honours
     // for 5 seconds (MAX_PRIMARY_ELIGIBLE_AGE_MS in firebase 13.1.0); a start inside it says
     // "Reopen the app" (S6-3). The phone is opened again after it.
     await phone.page.waitForTimeout(6_000);
     await phone.page.close();
     phone = await reopen(context, phone, person);
-    expect(await phone.call('journal', person)).toEqual([entryFor('pending', { reached: true })]);
+    expect(await phone.call('journal', person)).toEqual([entryFor('pending')]);
     lane.restore(['auth', 'firestore']);
     await expect.poll(async () => (await readDraft(world)).field.notes, { timeout: SEND_MS }).toBe(notes['field.notes']);
     // The server has the edit, so the journal holds nothing for it any more.
@@ -103,7 +103,7 @@ test.describe('the recovery journal (S6-4)', () => {
       const person = await online(phone, world);
       lane.cut(['auth', 'firestore']);
       const write = await phone.call('journalWrite', person, world.draftPath, notes);
-      await expect.poll(async () => (await phone.call('journal', person))[0]?.reached).toBe(true);
+      await expect.poll(async () => (await phone.call('readCache', person, world.draftPath)).pending).toBe(true);
       await expectNothingSent(lane);
       // The job is finished on the server while the phone has no signal.
       await fenceDraft(world);
@@ -135,7 +135,7 @@ test.describe('the recovery journal (S6-4)', () => {
     const person = await online(phone, world);
     lane.cut(['auth', 'firestore']);
     await phone.call('journalWrite', person, world.draftPath, notes);
-    await expect.poll(async () => (await phone.call('journal', person))[0]?.reached).toBe(true);
+    await expect.poll(async () => (await phone.call('readCache', person, world.draftPath)).pending).toBe(true);
     await expectNothingSent(lane);
     // The owner moves the field work to Ben while Ana's phone has no signal: Ana may no longer
     // even read the draft.
@@ -153,7 +153,7 @@ test.describe('the recovery journal (S6-4)', () => {
     const person = await online(phone, world);
     lane.cut(['auth', 'firestore']);
     await phone.call('journalWrite', person, world.draftPath, notes);
-    await expect.poll(async () => (await phone.call('journal', person))[0]?.reached).toBe(true);
+    await expect.poll(async () => (await phone.call('readCache', person, world.draftPath)).pending).toBe(true);
     await expectNothingSent(lane);
     // The person is removed from the company while the phone has no signal; the gate let them in
     // as an estimator before.
@@ -219,7 +219,7 @@ test.describe('the recovery journal (S6-4)', () => {
     lane.cut(['auth', 'firestore']);
     await phone.call('journalWrite', person, world.draftPath, { 'field.airMovers': 1 });
     await phone.call('journalWrite', person, world.draftPath, { 'field.airMovers': 0 });
-    await expect.poll(async () => (await phone.call('journal', person)).map((entry) => entry.reached)).toEqual([true, true]);
+    await expect.poll(() => phone.call('readCache', person, world.draftPath)).toMatchObject({ pending: true, data: { field: { airMovers: 0 } } });
     await expectNothingSent(lane);
     await kill(phone, browserName);
     await fenceDraft(world);
@@ -297,8 +297,7 @@ test.describe('a lost IndexedDB connection reaches the person as "Reopen the app
     const kept = await phone.call('journalWrite', person, world.draftPath, notes);
     expect(await phone.call('op', kept)).toEqual({ state: 'pending' });
     expect(await phone.call('journal', person)).toHaveLength(1);
-    // The first entry's own bookkeeping is finished before the next losses start.
-    await expect.poll(async () => (await phone.call('journal', person))[0]?.reached).toBe(true);
+    await expect.poll(async () => (await phone.call('readCache', person, world.draftPath)).pending).toBe(true);
     await phone.call('loseConnection', 2, 'ds-journal');
     const refused = await phone.call('journalWrite', person, world.draftPath, { 'field.notes': 'never made' });
     expect(await phone.call('op', refused)).toEqual({ state: 'rejected', code: expect.stringContaining('Reopen the app.') });
@@ -322,7 +321,7 @@ test.describe('a lost IndexedDB connection reaches the person as "Reopen the app
     await phone.call('sync', person);
     await expect.poll(() => phone.call('gate', person)).toBe('reopen');
     // Nothing was lost: the entry is still there for the next start.
-    expect(await phone.call('journal', person)).toEqual([entryFor('pending', { reached: false })]);
+    expect(await phone.call('journal', person)).toEqual([entryFor('pending')]);
     await context.close();
   });
 });
@@ -346,5 +345,18 @@ test.describe('the one IndexedDB wrapper (S6-4)', () => {
     expect(await phone.call('tryRead', 'ds-wrapper-lost')).toBe('ok');
     await phone.call('loseConnection', 2, 'ds-wrapper-lost');
     expect(await phone.call('tryRead', 'ds-wrapper-lost')).toBe('Reopen the app.');
+  });
+
+  // One retry budget covers the open and the work (Firstmate ruling R4, 2026-11-17).
+  test('a loss while opening and another in the transaction say to reopen the app, never open a third connection', async ({ page, lane }) => {
+    const phone = await FieldPhone.open(page.context(), lane);
+    expect(await phone.call('tryRead', 'ds-wrapper-budget')).toBe('ok');
+    await phone.call('loseOpen', 1, 'ds-wrapper-budget');
+    expect(await phone.call('tryRead', 'ds-wrapper-budget')).toBe('ok');
+    await phone.call('loseOpen', 2, 'ds-wrapper-budget');
+    expect(await phone.call('tryRead', 'ds-wrapper-budget')).toBe('Reopen the app.');
+    await phone.call('loseOpen', 1, 'ds-wrapper-budget');
+    await phone.call('loseConnection', 1, 'ds-wrapper-budget');
+    expect(await phone.call('tryRead', 'ds-wrapper-budget')).toBe('Reopen the app.');
   });
 });

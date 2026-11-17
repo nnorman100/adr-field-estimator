@@ -8,7 +8,7 @@ const ROOM = `${DRAFT}/rooms/r1`;
 let seq = 0;
 function entry(writes: DocWrite[], bases?: Record<string, number | null>): JournalEntry {
   seq += 1;
-  return { seq, id: `op${seq}`, tenantId: 't', uid: 'ana', draftPath: DRAFT, writes, at: seq, state: 'pending', reached: true, ...(bases ? { bases } : {}) };
+  return { seq, id: `op${seq}`, tenantId: 't', uid: 'ana', draftPath: DRAFT, writes, at: seq, state: 'pending', ...(bases ? { bases } : {}) };
 }
 const notes = (value: string | null): DocWrite => ({ path: DRAFT, op: 'update', fields: { 'field.notes': value } });
 const editing = (field: Record<string, unknown>, more: Record<string, unknown> = {}): ServerDoc => ({ data: { state: 'editing', fieldOwnerUid: 'ana', field, ...more } });
@@ -39,12 +39,12 @@ describe('the journal after a restart', () => {
     expect(run([one], { [DRAFT]: draft })).toEqual({ [one.seq]: { kind: 'rejected', reason } });
   });
 
-  // The fence is checked before an entry is acknowledged (step 6, Firstmate ruling R3 of
-  // 2026-11-17): only a server update time can show a write landed before it.
-  it('acks an entry that landed before the draft was finished: its room document was updated since the entry was made', () => {
+  // The fence is checked before an entry is acknowledged (step 6, Firstmate rulings R3 and R2 of
+  // 2026-11-17): a newer document version alone never proves this phone's write landed.
+  it('rejects an entry of a finished draft as locked even when its room document was updated since with its value', () => {
     const one = entry([{ path: ROOM, op: 'update', fields: { 'field.name': 'Hall' } }], { [ROOM]: 10 });
     const docs = { [DRAFT]: editing({}, { state: 'submitted' }), [ROOM]: { data: { field: { name: 'Hall' } }, updateTime: 20 } };
-    expect(run([one], docs)).toEqual({ [one.seq]: { kind: 'acked' } });
+    expect(run([one], docs)).toEqual({ [one.seq]: { kind: 'rejected', reason: 'locked' } });
   });
 
   it('rejects a draft-level entry as locked once the draft is finished, even when its value matches: the fence itself updates the draft', () => {
@@ -137,12 +137,20 @@ describe('the journal after a restart, once the draft is finished', () => {
     expect(run([hall, back], docs)).toEqual({ [hall.seq]: { kind: 'rejected', reason: 'locked' }, [back.seq]: { kind: 'rejected', reason: 'locked' } });
   });
 
-  it('acks a photo reference that landed before the fence, and rejects one that never did', () => {
+  it('rejects a photo reference whether or not a newer version holds its value, and one that never landed', () => {
     const landed = entry([{ path: PHOTO, op: 'set', data: { field: { shotTag: 'overview' } } }], { [PHOTO]: null });
     const other = `${DRAFT}/photos/p2`;
     const refused = entry([{ path: other, op: 'set', data: { field: { shotTag: 'meter' } } }], { [other]: null });
     const docs = { [DRAFT]: fenced({}), [PHOTO]: { data: { field: { shotTag: 'overview' } }, updateTime: 20 }, [other]: { missing: true } as ServerDoc };
-    expect(run([landed, refused], docs)).toEqual({ [landed.seq]: { kind: 'acked' }, [refused.seq]: { kind: 'rejected', reason: 'locked' } });
+    expect(run([landed, refused], docs)).toEqual({ [landed.seq]: { kind: 'rejected', reason: 'locked' }, [refused.seq]: { kind: 'rejected', reason: 'locked' } });
+  });
+
+  // The review's reproduction: the other phone's edit of another key gives the room a newer version.
+  it('rejects Hall then Kitchen as locked when another phone changed the room and finished the job, though the room holds Kitchen', () => {
+    const hall = entry([{ path: ROOM, op: 'update', fields: { 'field.name': 'Hall' } }], { [ROOM]: 10 });
+    const kitchen = entry([{ path: ROOM, op: 'update', fields: { 'field.name': 'Kitchen' } }], { [ROOM]: 10 });
+    const docs = { [DRAFT]: fenced({}), [ROOM]: { data: { field: { name: 'Kitchen', affectedSf: 120 } }, updateTime: 20 } };
+    expect(run([hall, kitchen], docs)).toEqual({ [hall.seq]: { kind: 'rejected', reason: 'locked' }, [kitchen.seq]: { kind: 'rejected', reason: 'locked' } });
   });
 
   it('rejects a room removal as locked: a removed document has no update time to show it landed', () => {

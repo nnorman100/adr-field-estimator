@@ -36,6 +36,19 @@ IDBDatabase.prototype.transaction = function (this: IDBDatabase, ...args: Parame
   }
   return realTransaction.apply(this, args);
 } as IDBDatabase['transaction'];
+// Safari's lost connection as an open's own error, for the next `openLost` opens of `lostOpenIn`.
+let openLost = 0;
+let lostOpenIn = '';
+const realOpen = IDBFactory.prototype.open;
+IDBFactory.prototype.open = function (this: IDBFactory, name: string, version?: number) {
+  if (openLost > 0 && name === lostOpenIn) {
+    openLost -= 1;
+    const failed = { error: new DOMException('Connection to Indexed Database server lost. Refresh the page to try again', 'UnknownError'), onerror: null as null | (() => void) };
+    setTimeout(() => failed.onerror?.(), 0);
+    return failed as unknown as IDBOpenDBRequest;
+  }
+  return realOpen.call(this, name, version);
+} as typeof realOpen;
 const testSpec = (name: string, version: number): DbSpec => ({ name, version, upgrade: (db) => void db.createObjectStore('rows') });
 const ops = new Map<string, { state: 'pending' | 'acked' | 'rejected'; code?: string }>();
 let counter = 0;
@@ -188,7 +201,7 @@ const f = {
   },
   // The person's journal entries, oldest first, without their ids.
   async journal(person: Pick<Person, 'tenantId' | 'uid'>) {
-    return (await readJournal(person)).map(({ state, reason, reached, writes, tenantId, uid }) => ({ state, reason, reached, writes, tenantId, uid }));
+    return (await readJournal(person)).map(({ state, reason, writes, tenantId, uid }) => ({ state, reason, writes, tenantId, uid }));
   },
   forgetJournal: (person: Pick<Person, 'tenantId' | 'uid'>) => forgetJournal(person),
 
@@ -214,6 +227,11 @@ const f = {
   loseConnection(times: number, name: string): void {
     lost = times;
     lostIn = name;
+  },
+  // The same lost connection from the next `times` opens of the database `name`.
+  loseOpen(times: number, name: string): void {
+    openLost = times;
+    lostOpenIn = name;
   },
   // What the shell's start reads from ds-me: the newest row's (tenant/person), or its failure.
   async latestMeAnswer(): Promise<string | null> {
