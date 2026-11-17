@@ -6,9 +6,9 @@ import { draftRefusal, judge, type DocWrite, type JournalEntry, type ServerDoc }
 const DRAFT = 'companies/c/drafts/d';
 const ROOM = `${DRAFT}/rooms/r1`;
 let seq = 0;
-function entry(writes: DocWrite[]): JournalEntry {
+function entry(writes: DocWrite[], bases?: Record<string, number | null>): JournalEntry {
   seq += 1;
-  return { seq, id: `op${seq}`, tenantId: 't', uid: 'ana', draftPath: DRAFT, writes, at: seq, state: 'pending', reached: true };
+  return { seq, id: `op${seq}`, tenantId: 't', uid: 'ana', draftPath: DRAFT, writes, at: seq, state: 'pending', reached: true, ...(bases ? { bases } : {}) };
 }
 const notes = (value: string | null): DocWrite => ({ path: DRAFT, op: 'update', fields: { 'field.notes': value } });
 const editing = (field: Record<string, unknown>, more: Record<string, unknown> = {}): ServerDoc => ({ data: { state: 'editing', fieldOwnerUid: 'ana', field, ...more } });
@@ -39,9 +39,17 @@ describe('the journal after a restart', () => {
     expect(run([one], { [DRAFT]: draft })).toEqual({ [one.seq]: { kind: 'rejected', reason } });
   });
 
-  it('acks an entry that landed before the draft was finished', () => {
-    const one = entry([notes('in time')]);
-    expect(run([one], { [DRAFT]: editing({ notes: 'in time' }, { state: 'submitted' }) })).toEqual({ [one.seq]: { kind: 'acked' } });
+  // The fence is checked before an entry is acknowledged (step 6, Firstmate ruling R3 of
+  // 2026-11-17): only a server update time can show a write landed before it.
+  it('acks an entry that landed before the draft was finished: its room document was updated since the entry was made', () => {
+    const one = entry([{ path: ROOM, op: 'update', fields: { 'field.name': 'Hall' } }], { [ROOM]: 10 });
+    const docs = { [DRAFT]: editing({}, { state: 'submitted' }), [ROOM]: { data: { field: { name: 'Hall' } }, updateTime: 20 } };
+    expect(run([one], docs)).toEqual({ [one.seq]: { kind: 'acked' } });
+  });
+
+  it('rejects a draft-level entry as locked once the draft is finished, even when its value matches: the fence itself updates the draft', () => {
+    const one = entry([notes('in time')], { [DRAFT]: 10 });
+    expect(run([one], { [DRAFT]: { ...editing({ notes: 'in time' }, { state: 'submitted' }), updateTime: 30 } })).toEqual({ [one.seq]: { kind: 'rejected', reason: 'locked' } });
   });
 
   it('does not hold a key against an older entry when this page wrote it since', () => {
@@ -106,3 +114,80 @@ describe('the refusal reason', () => {
     expect(run([one], { [DRAFT]: draft }, [], 'office')).toEqual({ [one.seq]: { kind: 'rejected', reason: 'role-changed' } });
   });
 });
+
+// Firstmate ruling R3 (2026-11-17): writes refused after the fence stay "rejected: locked", even
+// when the server's value happens to match what they wrote.
+describe('the journal after a restart, once the draft is finished', () => {
+  const PHOTO = `${DRAFT}/photos/p1`;
+  const fenced = (field: Record<string, unknown>): ServerDoc => ({ ...editing(field, { state: 'submitted' }), updateTime: 50 });
+
+  it('rejects both of 1 then 0 saved offline and refused, though the server still holds 0', () => {
+    const one = entry([{ path: DRAFT, op: 'update', fields: { 'field.airMovers': 1 } }], { [DRAFT]: 10 });
+    const zero = entry([{ path: DRAFT, op: 'update', fields: { 'field.airMovers': 0 } }], { [DRAFT]: 10 });
+    expect(run([one, zero], { [DRAFT]: fenced({ airMovers: 0 }) })).toEqual({
+      [one.seq]: { kind: 'rejected', reason: 'locked' },
+      [zero.seq]: { kind: 'rejected', reason: 'locked' },
+    });
+  });
+
+  it('rejects a room edit refused after the fence whose value matches: the room was not updated since', () => {
+    const hall = entry([{ path: ROOM, op: 'update', fields: { 'field.name': 'Hall' } }], { [ROOM]: 10 });
+    const back = entry([{ path: ROOM, op: 'update', fields: { 'field.name': 'Kitchen' } }], { [ROOM]: 10 });
+    const docs = { [DRAFT]: fenced({}), [ROOM]: { data: { field: { name: 'Kitchen' } }, updateTime: 10 } };
+    expect(run([hall, back], docs)).toEqual({ [hall.seq]: { kind: 'rejected', reason: 'locked' }, [back.seq]: { kind: 'rejected', reason: 'locked' } });
+  });
+
+  it('acks a photo reference that landed before the fence, and rejects one that never did', () => {
+    const landed = entry([{ path: PHOTO, op: 'set', data: { field: { shotTag: 'overview' } } }], { [PHOTO]: null });
+    const other = `${DRAFT}/photos/p2`;
+    const refused = entry([{ path: other, op: 'set', data: { field: { shotTag: 'meter' } } }], { [other]: null });
+    const docs = { [DRAFT]: fenced({}), [PHOTO]: { data: { field: { shotTag: 'overview' } }, updateTime: 20 }, [other]: { missing: true } as ServerDoc };
+    expect(run([landed, refused], docs)).toEqual({ [landed.seq]: { kind: 'acked' }, [refused.seq]: { kind: 'rejected', reason: 'locked' } });
+  });
+
+  it('rejects a room removal as locked: a removed document has no update time to show it landed', () => {
+    const removed = entry([{ path: ROOM, op: 'delete' }, { path: DRAFT, op: 'update', fields: { 'field.roomOrder': [] } }], { [ROOM]: 10, [DRAFT]: 10 });
+    expect(run([removed], { [DRAFT]: fenced({ roomOrder: [] }), [ROOM]: { missing: true } })).toEqual({ [removed.seq]: { kind: 'rejected', reason: 'locked' } });
+  });
+});
+
+// Firstmate ruling R1 (2026-11-17): whether an entry reached Firestore is unknown after a restart. It
+// is made again only when the server has not changed its documents since it was made.
+describe('the journal after a restart, for an edit that may never have reached Firestore', () => {
+  const PHOTO = `${DRAFT}/photos/p1`;
+
+  it.each([
+    ['the draft', [notes('A')], { [DRAFT]: 10 }, { [DRAFT]: { ...editing({ notes: 'B' }), updateTime: 20 } }],
+    ['a room', [{ path: ROOM, op: 'update', fields: { 'field.name': 'A' } }], { [ROOM]: 10 }, { [DRAFT]: editing({}), [ROOM]: { data: { field: { name: 'B' } }, updateTime: 20 } }],
+    ['a photo', [{ path: PHOTO, op: 'set', data: { field: { shotTag: 'overview' } } }], { [PHOTO]: null }, { [DRAFT]: editing({}), [PHOTO]: { data: { field: { shotTag: 'meter' } }, updateTime: 20 } }],
+    ['a removal', [{ path: ROOM, op: 'delete' }], { [ROOM]: 10 }, { [DRAFT]: editing({}), [ROOM]: { data: { field: { name: 'B' } }, updateTime: 20 } }],
+  ] as [string, DocWrite[], Record<string, number | null>, Record<string, ServerDoc>][])(
+    'never makes %s edit again over a later save from another phone: it is changed and kept',
+    (_name, writes, bases, docs) => {
+      const one = entry(writes, bases);
+      expect(run([one], docs)).toEqual({ [one.seq]: { kind: 'changed' } });
+    },
+  );
+
+  it.each([
+    ['the draft', [notes('A')], { [DRAFT]: 10 }, { [DRAFT]: { ...editing({}), updateTime: 10 } }],
+    ['a room', [{ path: ROOM, op: 'update', fields: { 'field.name': 'A' } }], { [ROOM]: 10 }, { [DRAFT]: editing({}), [ROOM]: { data: { field: { name: 'B' } }, updateTime: 10 } }],
+    ['a photo', [{ path: PHOTO, op: 'set', data: { field: { shotTag: 'overview' } } }], { [PHOTO]: null }, { [DRAFT]: editing({}), [PHOTO]: { missing: true } }],
+    ['a removal', [{ path: ROOM, op: 'delete' }], { [ROOM]: 10 }, { [DRAFT]: editing({}), [ROOM]: { data: { field: { name: 'B' } }, updateTime: 10 } }],
+  ] as [string, DocWrite[], Record<string, number | null>, Record<string, ServerDoc>][])('makes %s edit again when the server has not changed it since', (_name, writes, bases, docs) => {
+    const one = entry(writes, bases);
+    expect(run([one], docs)).toEqual({ [one.seq]: { kind: 'reissue' } });
+  });
+
+  it('keeps an edit whose base is unknown rather than making it again', () => {
+    const one = entry([notes('A')]);
+    expect(run([one], { [DRAFT]: { ...editing({}), updateTime: 10 } })).toEqual({ [one.seq]: { kind: 'changed' } });
+  });
+
+  it('does not make an edit again when a later edit of this phone wrote one of its keys', () => {
+    const older = entry([{ path: DRAFT, op: 'update', fields: { 'field.notes': 'A', 'field.airMovers': 2 } }], { [DRAFT]: 10 });
+    const later = entry([notes('typed later')], { [DRAFT]: 10 });
+    expect(run([older, later], { [DRAFT]: { ...editing({}), updateTime: 10 } })).toEqual({ [older.seq]: { kind: 'changed' }, [later.seq]: { kind: 'reissue' } });
+  });
+});
+

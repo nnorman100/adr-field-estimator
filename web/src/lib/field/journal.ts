@@ -64,6 +64,10 @@ export type JournalEntry = {
   state: JournalState;
   // Firestore's local write finished: the SDK holds the edit in its own queue.
   reached: boolean;
+  // Per document written: the server's update time (microseconds) of the copy the phone held when
+  // the edit was made, null when it held none (a new room or photo). What the server holds after a
+  // restart is judged against it (judge). Absent on a path: unknown.
+  bases?: Record<string, number | null>;
   reason?: RejectReason;
 };
 
@@ -88,8 +92,14 @@ const ownerRange = (owner: Owner) => IDBKeyRange.only([owner.tenantId, owner.uid
 // Adds an entry, state pending, and answers it once the transaction has committed. Throws
 // JournalNotSaved when it could not be saved in time: the transaction is aborted, and an open that
 // answers later starts none. Only a commit already under way when the time ran out is removed again.
-export async function appendEntry(owner: Owner, draftPath: string, writes: DocWrite[], id: string = crypto.randomUUID()): Promise<JournalEntry> {
-  const row: Omit<JournalEntry, 'seq'> = { id, tenantId: owner.tenantId, uid: owner.uid, draftPath, writes, at: Date.now(), state: 'pending', reached: false };
+export async function appendEntry(
+  owner: Owner,
+  draftPath: string,
+  writes: DocWrite[],
+  bases: Record<string, number | null> = {},
+  id: string = crypto.randomUUID(),
+): Promise<JournalEntry> {
+  const row: Omit<JournalEntry, 'seq'> = { id, tenantId: owner.tenantId, uid: owner.uid, draftPath, writes, at: Date.now(), state: 'pending', reached: false, bases };
   let abandoned = false;
   let active: IDBTransaction | undefined;
   const added = withDatabase(SPEC, (db) => {
@@ -178,8 +188,18 @@ export function forgetJournal(owner: Owner): Promise<void> {
 
 // ---- After a restart: what became of each entry (step 2) ----
 
-// The server's copy of one document: its data, none, or not readable by this person.
-export type ServerDoc = { data: Record<string, unknown> } | { missing: true } | { denied: true };
+// The server's copy of one document: its data and its update time (microseconds; absent when
+// unknown), none, or not readable by this person.
+export type ServerDoc = { data: Record<string, unknown>; updateTime?: number } | { missing: true } | { denied: true };
+
+// Whether the server's copy changed since `base` (the copy the edit was made against): null when
+// that cannot be told.
+function changedSince(doc: ServerDoc, base: number | null | undefined): boolean | null {
+  if (base === undefined || 'denied' in doc) return null;
+  if ('missing' in doc) return base !== null;
+  if (doc.updateTime === undefined) return null;
+  return base === null || doc.updateTime > base;
+}
 
 // What one write expects the server to hold, by key: '' is whether the document exists; a dotted
 // key is one value (undefined: no such key).
@@ -234,16 +254,26 @@ export function draftRefusal(draft: ServerDoc, uid: string, role: string | null 
   return null;
 }
 
-export type Outcome = { kind: 'acked' } | { kind: 'rejected'; reason: RejectReason } | { kind: 'changed' };
+// `reissue`: the edit never reached the server and nothing changed its documents since it was made,
+// so it is made again as it was.
+export type Outcome = { kind: 'acked' } | { kind: 'rejected'; reason: RejectReason } | { kind: 'changed' } | { kind: 'reissue' };
 
 // What became of each of `judged`, given the server's documents (by path) and drafts (by draft
-// path). Only the newest entry per document and key is compared: an older entry's key that a newer
-// entry wrote counts as the newer one's comparison, and a newer `set` or `delete` of the document
-// writes every key it does not name as absent. `newer` are entries that are not judged here
-// but were made after (this page's own, whose promises answer for them): a key one of them wrote
-// is not held against an older entry. An entry whose newest values the server holds is acked; any
-// other is rejected when the rules refuse the draft, and changed when they do not. An entry whose
-// documents were not all read is left out (judged on a later try).
+// path), read after Firestore sent its queue. Only the newest entry per document and key is
+// compared: an older entry's key that a newer entry wrote counts as the newer one's comparison, and
+// a newer `set` or `delete` of the document writes every key it does not name as absent. `newer`
+// are entries that are not judged here but were made after (this page's own, whose promises answer
+// for them): a key one of them wrote is not held against an older entry.
+// - The rules refuse the draft (finished or archived, moved, no access): an entry is acked only when
+//   the server's update times show its write landed: each of its documents is a room or photo
+//   document the server changed since the entry's base, holding its values. The rules took no write
+//   after the fence, so such a change came before it. The draft document itself is changed by the
+//   fence, and a removed document has no update time, so neither shows it: such an entry is
+//   rejected with the reason, even when the values happen to match (step 6).
+// - Otherwise an entry whose newest values the server holds is acked. One whose documents the server
+//   has not changed since its base never landed and is made again (reissue); one whose documents
+//   changed since (another phone wrote later), or whose base is unknown, is changed and kept.
+// An entry whose documents were not all read is left out (judged on a later try).
 export function judge(
   judged: JournalEntry[],
   newer: JournalEntry[],
@@ -268,18 +298,24 @@ export function judge(
     const draft = drafts.get(entry.draftPath);
     if (!draft || entry.writes.some((write) => !docs.has(write.path))) continue;
     let held = true;
+    // A key of this entry that a later entry wrote: making this one again would undo that one.
+    let overtaken = false;
     for (const write of entry.writes) {
       for (const [key] of expectations(write)) {
         const latest = newest.get(`${write.path}\u0000${key}`)!;
+        if (latest.seq !== entry.seq) overtaken = true;
         if (latest.live) continue;
         if (!holds(docs.get(latest.path)!, latest.key, latest.expected)) held = false;
       }
     }
-    if (held) outcomes.set(entry.seq, { kind: 'acked' });
-    else {
-      const reason = draftRefusal(draft, uid, role);
-      outcomes.set(entry.seq, reason ? { kind: 'rejected', reason } : { kind: 'changed' });
-    }
+    const paths = [...new Set(entry.writes.map((write) => write.path))];
+    const since = (path: string) => changedSince(docs.get(path)!, entry.bases?.[path]);
+    const reason = draftRefusal(draft, uid, role);
+    if (reason) {
+      const landed = paths.every((path) => path !== entry.draftPath && 'data' in docs.get(path)! && since(path) === true);
+      outcomes.set(entry.seq, held && landed ? { kind: 'acked' } : { kind: 'rejected', reason });
+    } else if (held) outcomes.set(entry.seq, { kind: 'acked' });
+    else outcomes.set(entry.seq, !overtaken && paths.every((path) => since(path) === false) ? { kind: 'reissue' } : { kind: 'changed' });
   }
   return outcomes;
 }

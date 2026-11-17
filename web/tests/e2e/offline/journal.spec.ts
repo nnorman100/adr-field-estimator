@@ -5,7 +5,7 @@ import type { BrowserContext } from '@playwright/test';
 import { expect, expectNothingSent, test, SEND_MS } from './fixture';
 import { FieldPhone, inDays, serveMe } from './field-phone';
 import type { Person as FieldPerson } from './harness/field';
-import { adminDb, fenceDraft, readDraft, seedCompany, type World } from './world';
+import { adminDb, fenceDraft, readDraft, removeAccess, seedCompany, type World } from './world';
 
 // Offline and worker tests need the service worker, which the suite blocks by default.
 test.use({ serviceWorkers: 'allow' });
@@ -146,6 +146,97 @@ test.describe('the recovery journal (S6-4)', () => {
     await context.close();
   });
 
+  test('a write refused after the person lost their access is rejected as no-access, not owner-changed', async ({ browser, lane }) => {
+    const context = await browser.newContext();
+    const world = await seedCompany();
+    const phone = await FieldPhone.open(context, lane);
+    const person = await online(phone, world);
+    lane.cut(['auth', 'firestore']);
+    await phone.call('journalWrite', person, world.draftPath, notes);
+    await expect.poll(async () => (await phone.call('journal', person))[0]?.reached).toBe(true);
+    await expectNothingSent(lane);
+    // The person is removed from the company while the phone has no signal; the gate let them in
+    // as an estimator before.
+    await removeAccess(world.companyId, world.owner);
+    serveMe(lane, { status: 403, error: 'member_disabled' });
+    lane.restore(['auth', 'firestore']);
+    await expect.poll(() => phone.call('journal', person), { timeout: SEND_MS }).toEqual([entryFor('rejected', { reason: 'no-access' })]);
+    expect((await readDraft(world)).field).not.toHaveProperty('notes');
+    await context.close();
+  });
+
+  test('an edit made while the next start is still making earlier entries again lands after them', async ({ browser, lane }) => {
+    const context = await browser.newContext();
+    const world = await seedCompany();
+    let phone = await FieldPhone.open(context, lane);
+    const person = await online(phone, world);
+    lane.cut(['auth', 'firestore']);
+    await phone.call('journalOnly', person, world.draftPath, { 'field.notes': 'older' });
+    await phone.call('journalOnly', person, world.draftPath, { 'field.notes': 'old' });
+    await phone.page.close({ runBeforeUnload: false });
+
+    phone = await FieldPhone.open(context, lane);
+    expect(await phone.call('start', person, 'persistent')).toBe('persistent');
+    const fresh = await phone.call('syncAndWrite', person, world.draftPath, { 'field.notes': 'new' });
+    expect(await phone.call('op', fresh)).toEqual({ state: 'pending' });
+    lane.restore(['auth', 'firestore']);
+    await expect.poll(() => phone.call('op', fresh), { timeout: SEND_MS }).toEqual({ state: 'acked' });
+    await expect.poll(() => phone.call('journal', person), { timeout: SEND_MS }).toEqual([]);
+    expect((await readDraft(world)).field.notes).toBe('new');
+    await context.close();
+  });
+
+  // Firstmate ruling R1 (2026-11-17): after a restart it is unknown whether an entry reached
+  // Firestore, so it is never made again blindly over a later save from another phone.
+  test('an edit that may never have reached Firestore is not made again over another phone\'s later save: it is kept as changed', async ({ browser, lane }) => {
+    const context = await browser.newContext();
+    const world = await seedCompany();
+    let phone = await FieldPhone.open(context, lane);
+    const person = await online(phone, world);
+    lane.cut(['auth', 'firestore']);
+    await phone.call('journalOnly', person, world.draftPath, { 'field.notes': 'A, typed on this phone' });
+    await phone.page.close({ runBeforeUnload: false });
+    // The same person's other phone saves later.
+    await adminDb().doc(world.draftPath).update({ 'field.notes': 'B, from the other phone' });
+
+    phone = await reopen(context, phone, person);
+    lane.restore(['auth', 'firestore']);
+    await expect.poll(() => phone.call('journal', person), { timeout: SEND_MS }).toEqual([
+      expect.objectContaining({ state: 'changed', writes: [expect.objectContaining({ fields: { 'field.notes': 'A, typed on this phone' } })] }),
+    ]);
+    await phone.page.waitForTimeout(3000);
+    expect((await readDraft(world)).field.notes).toBe('B, from the other phone');
+    await context.close();
+  });
+
+  // Firstmate ruling R3 (2026-11-17): a write refused after the fence stays rejected: locked, even
+  // when the server's value happens to match it.
+  test('1 then 0 saved offline, the page killed and the job finished elsewhere: both are rejected as locked though the server still holds 0', async ({ browser, browserName, lane }) => {
+    const context = await browser.newContext();
+    const world = await seedCompany();
+    let phone = await FieldPhone.open(context, lane);
+    const person = await online(phone, world);
+    lane.cut(['auth', 'firestore']);
+    await phone.call('journalWrite', person, world.draftPath, { 'field.airMovers': 1 });
+    await phone.call('journalWrite', person, world.draftPath, { 'field.airMovers': 0 });
+    await expect.poll(async () => (await phone.call('journal', person)).map((entry) => entry.reached)).toEqual([true, true]);
+    await expectNothingSent(lane);
+    await kill(phone, browserName);
+    await fenceDraft(world);
+    const submitted = await readDraft(world);
+
+    // The killed page's Firestore lease runs out first (5 seconds; see the killed-page test).
+    phone = await FieldPhone.open(context, lane);
+    await phone.page.waitForTimeout(6_000);
+    await phone.page.close();
+    phone = await reopen(context, phone, person);
+    lane.restore(['auth', 'firestore']);
+    const locked = (value: number) => expect.objectContaining({ state: 'rejected', reason: 'locked', writes: [expect.objectContaining({ fields: { 'field.airMovers': value } })] });
+    await expect.poll(() => phone.call('journal', person), { timeout: SEND_MS }).toEqual([locked(1), locked(0)]);
+    expect(await readDraft(world)).toEqual(submitted);
+    await context.close();
+  });
+
   test('rows are kept per company and person: one person\'s are never read or removed for another', async ({ browser, lane }) => {
     const context = await browser.newContext();
     const [one, two] = [await seedCompany({ people: ['ana', 'ben'] }), await seedCompany()];
@@ -241,6 +332,11 @@ test.describe('the one IndexedDB wrapper (S6-4)', () => {
     const phone = await FieldPhone.open(page.context(), lane);
     await phone.call('hold', 'ds-wrapper-test');
     expect(await phone.call('upgrade', 'ds-wrapper-test')).toBe('upgraded');
+  });
+
+  test('a failed request rejects its transaction with the request\'s own error', async ({ page, lane }) => {
+    const phone = await FieldPhone.open(page.context(), lane);
+    expect(await phone.call('failedTransaction', 'ds-wrapper-failed')).toBe('ConstraintError');
   });
 
   test('a lost connection is opened once more; a second loss says to reopen the app', async ({ page, lane }) => {

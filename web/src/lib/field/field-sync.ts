@@ -5,7 +5,7 @@ import { appCheckSeam, fieldUser, settle, type FieldClient } from '@/lib/field-d
 import { meKey, readMe, updateMe, type DsMe } from './ds-me';
 import { meActor, sessionValid, SyncGate, type GateState, type MeAnswer, type MeFacts } from './sync-gate';
 import { evaluate, onWorkRemoved, pendingReason, type RetentionEvent } from './retention';
-import { onJournalLost, reconcileJournal, reissueJournal } from './journal-sync';
+import { onJournalLost, reconcileJournal } from './journal-sync';
 import { savedLock, savedReason } from './unsent';
 
 // Runs the sync gate for one person's started field client (S6-3), and does what each of its
@@ -117,7 +117,7 @@ export function runFieldSync(
     if (shown.kind === 'open') {
       void settle(client).catch(() => undefined);
       // What became of the edits an earlier page left in the recovery journal (S6-4).
-      void reconcileJournal(client, shown.facts.role);
+      void reconcileJournal(client);
       void remember(row, shown.facts);
     }
   }
@@ -153,9 +153,6 @@ export function runFieldSync(
   // is asked, which alone may remove work past the limit or show it again.
   if (initial) apply(initial);
   if (lock) refuse(lock);
-  // Edits an earlier page journaled but never handed to Firestore are queued again before the gate
-  // opens (S6-4).
-  void reissueJournal(client);
   gate.start();
   return gate;
 }

@@ -11,9 +11,9 @@ import { companyAuth } from '../../../../src/lib/firebase-client';
 import { fieldWrite, mirrorSignIn, setAppCheckSeam, startFieldClient, stopFieldClient, type CacheKind, type FieldClient } from '../../../../src/lib/field-db';
 import { readLatestMe, saveMe, updateMe, type DsMe } from '../../../../src/lib/field/ds-me';
 import { runFieldSync } from '../../../../src/lib/field/field-sync';
-import { openDatabase, withDatabase, type DbSpec } from '../../../../src/lib/field/idb';
+import { openDatabase, transact, withDatabase, type DbSpec } from '../../../../src/lib/field/idb';
 import { appendEntry, forgetJournal, readJournal } from '../../../../src/lib/field/journal';
-import { journaledEdit } from '../../../../src/lib/field/journal-sync';
+import { basesOf, journaledEdit } from '../../../../src/lib/field/journal-sync';
 import { evaluate } from '../../../../src/lib/field/retention';
 import { signOutDiscarding, signOutKeeping, signOutOnRefusal } from '../../../../src/lib/field/sign-out';
 import type { GateState, SyncGate } from '../../../../src/lib/field/sync-gate';
@@ -179,9 +179,12 @@ const f = {
     return id;
   },
   // Only the journal's entry, never handed to Firestore: what a page killed between the two leaves.
+  // Its bases are read from the person's started client as the app reads them (none without one).
   async journalOnly(person: Pick<Person, 'tenantId' | 'uid'>, path: string, fields: Record<string, unknown>): Promise<void> {
     const [, companyId, , draftId] = path.split('/');
-    await appendEntry(person, `companies/${companyId}/drafts/${draftId}`, [{ path, op: 'update', fields }]);
+    const writes = [{ path, op: 'update' as const, fields }];
+    const client = running.get(key(person))?.client;
+    await appendEntry(person, `companies/${companyId}/drafts/${draftId}`, writes, client ? await basesOf(client.db, writes) : {});
   },
   // The person's journal entries, oldest first, without their ids.
   async journal(person: Pick<Person, 'tenantId' | 'uid'>) {
@@ -216,6 +219,27 @@ const f = {
   async latestMeAnswer(): Promise<string | null> {
     const me = await readLatestMe();
     return me === null || typeof me === 'string' ? me : `${me.tenantId}/${me.uid}`;
+  },
+  // A transaction whose request fails (a key added twice): the error it rejects with, by name.
+  async failedTransaction(name: string): Promise<string> {
+    try {
+      await withDatabase(testSpec(name, 1), (db) =>
+        transact(db, 'rows', 'readwrite', (transaction) => {
+          const store = transaction.objectStore('rows');
+          store.put('one', 'same');
+          store.add('two', 'same');
+          return () => undefined;
+        }),
+      );
+      return 'committed';
+    } catch (error) {
+      return error instanceof Error ? error.name : String(error);
+    }
+  },
+  // The gate started and a field edit made in the same moment, as a screen can at the app's start.
+  async syncAndWrite(person: Person, path: string, fields: Record<string, unknown>): Promise<string> {
+    f.sync(person);
+    return f.journalWrite(person, path, fields);
   },
   // One read through the wrapper: 'ok', or the error's message.
   async tryRead(name: string): Promise<string> {

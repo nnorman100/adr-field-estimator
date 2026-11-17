@@ -90,14 +90,14 @@ export async function withDatabase<T>(spec: DbSpec, work: (db: IDBDatabase) => P
 }
 
 // One transaction, settled when it has committed (not when its requests answered: a page that
-// navigates away first loses it) or has failed. `change` queues the requests; its result is what
-// the promise answers.
+// navigates away first loses it) or has aborted. `change` queues the requests; its result is what
+// the promise answers. A failed request aborts the transaction, and the abort carries that
+// request's error (a lost connection included): the error event comes before the abort sets it.
 export function transact<T>(db: IDBDatabase, stores: string | string[], mode: IDBTransactionMode, change: (transaction: IDBTransaction) => () => T): Promise<T> {
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(stores, mode);
     const result = change(transaction);
     transaction.oncomplete = () => resolve(result());
-    transaction.onerror = () => reject(transaction.error ?? new Error('the transaction failed'));
     transaction.onabort = () => reject(transaction.error ?? new Error('the transaction was aborted'));
   });
 }
