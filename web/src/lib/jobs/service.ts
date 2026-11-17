@@ -2,7 +2,7 @@ import { and, asc, desc, eq, ne, or, sql, type SQL } from 'drizzle-orm';
 import { actors, auditEvents, jobAssignments, jobClaims, jobCustomers, jobs } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
-import { canSeeJob, hasAny, isOwnJob, jobAccess, JobError, seesEveryJob, type JobCaller, type JobRow } from './access';
+import { canSeeJob, draftSubmitted, hasAny, isOwnJob, jobAccess, JobError, lockedJob, seesEveryJob, type JobCaller, type JobRow } from './access';
 import type { DraftStore } from './drafts';
 import { createDigest, type ClaimInput, type CreateJobInput, type CustomerInput, type ListQuery } from './schema';
 
@@ -18,6 +18,7 @@ const READ: readonly Capability[] = ['jobs_read'];
 const CREATE: readonly Capability[] = ['jobs_create'];
 const EDIT_CUSTOMER: readonly Capability[] = ['scope', 'coordination'];
 const EDIT_CLAIM: readonly Capability[] = ['scope', 'coordination'];
+const ARCHIVE: readonly Capability[] = ['jobs_archive'];
 
 export type JobView = {
   id: string;
@@ -224,6 +225,7 @@ export function jobsService(db: Database, drafts: DraftStore): JobsService {
           if (existing.status === 'archived') throw new JobError('archived');
           row = existing;
         } else {
+          if (await draftSubmitted(tx, caller.companyId, input.draftId)) throw new JobError('conflict');
           await audit(tx, caller, 'job_created', row.id, { revision: row.revision });
         }
         let ownerUid: string | null = null;
@@ -237,11 +239,15 @@ export function jobsService(db: Database, drafts: DraftStore): JobsService {
         return { created: inserted !== undefined, ownerUid, detail: await detailOf(tx, row) };
       });
       try {
-        await drafts.ensure(caller.companyId, input.draftId, made.ownerUid);
+        await inCompany(caller.companyId, async (tx) => {
+          await lockedJob(tx, caller.companyId, made.detail.job.id, { live: true });
+          await drafts.ensure(caller.companyId, input.draftId, made.ownerUid);
+        });
         await drafts.projectJob(caller.companyId, made.detail.job.id, {
           currentDraftId: made.detail.job.currentDraftId, revision: made.detail.job.revision,
         });
       } catch (error) {
+        if (error instanceof JobError) throw error;
         // Fixed text only: the SDK's message may quote a path.
         console.error('job draft unavailable', error instanceof Error ? error.name : 'unknown');
         throw new JobError('draft_unavailable');
@@ -252,9 +258,12 @@ export function jobsService(db: Database, drafts: DraftStore): JobsService {
     async list(caller, query) {
       need(caller, READ);
       // An estimator lists their own jobs only; asking for the company's is refused, not narrowed.
+      // The archived drafts are the owner's list (S5b-2, `jobs_archive`), of the whole company.
       const everyone = seesEveryJob(caller);
+      const archived = query.scope === 'archived';
       if (query.scope === 'company' && !everyone) throw new JobError('not_allowed');
-      const company = query.scope === 'company' || (query.scope === null && everyone);
+      if (archived) need(caller, ARCHIVE);
+      const company = archived || query.scope === 'company' || (query.scope === null && everyone);
       const after = query.cursor === null ? null : decodeCursor(query.cursor);
       return inCompany(caller.companyId, async (tx) => {
         // The caller is actively assigned to the job (S5b-1): an estimator's own list holds it.
@@ -263,7 +272,7 @@ export function jobsService(db: Database, drafts: DraftStore): JobsService {
           WHERE ${jobAssignments.companyId} = ${jobs.companyId} AND ${jobAssignments.jobId} = ${jobs.id}
             AND ${jobAssignments.estimatorActorId} = ${caller.actorId} AND ${jobAssignments.endedAt} IS NULL
         )`;
-        const where: SQL[] = [eq(jobs.companyId, caller.companyId), ne(jobs.status, 'archived')];
+        const where: SQL[] = [eq(jobs.companyId, caller.companyId), archived ? eq(jobs.status, 'archived') : ne(jobs.status, 'archived')];
         if (!company) where.push(or(eq(jobs.createdByActorId, caller.actorId), eq(jobs.fieldOwnerActorId, caller.actorId), assigned)!);
         if (after) {
           where.push(

@@ -3,6 +3,7 @@ import { openDatabase } from '@/db/client';
 import { databaseDirectory, databaseOperators } from '@/lib/auth/directory';
 import { IdentityRefusal, type TokenVerifier } from '@/lib/auth/identity';
 import type { IdentityServices, OperatorServices } from '@/lib/auth/services';
+import { archiveService } from '@/lib/jobs/archive';
 import { officeService } from '@/lib/jobs/office';
 import { jobsService } from '@/lib/jobs/service';
 import type { JobRoutesService } from '@/lib/jobs/services';
@@ -60,8 +61,8 @@ export type Harness = {
   prices: PricesService;
   // The company profile routes' service (S5a-4).
   profile: ProfileService;
-  // The jobs routes' services (S5a-3 and S5b-1's office service), over the same database and an
-  // in-memory stand-in for the field drafts.
+  // The jobs routes' services (S5a-3, S5b-1's office service and S5b-2's archive, restore and copy),
+  // over the same database and in-memory stand-ins for the field drafts.
   jobs: JobRoutesService;
   drafts: FakeDrafts;
   // The photo routes' service, over the same database, an in-memory evidence bucket and the draft states.
@@ -266,10 +267,14 @@ export async function resetTeamDatabase(
   };
   harness.platform = platformService(handle.db, users, projectInto, noEmailService);
   harness.team = teamService(handle.db, users, projectInto);
-  harness.jobs = { ...jobsService(handle.db, harness.drafts), ...officeService(handle.db, harness.drafts) };
   harness.draftStates = fakeDraftStates(harness.drafts);
   harness.photos = photosService(handle.db, harness.evidence, harness.draftStates);
   harness.field = fakeField(memoryBacking(), { drafts: harness.drafts, states: harness.draftStates });
+  harness.jobs = {
+    ...jobsService(handle.db, harness.drafts),
+    ...officeService(handle.db, harness.drafts),
+    ...archiveService(handle.db, harness.field),
+  };
   harness.submissions = submissionsService(handle.db, harness.field);
   return harness;
 }

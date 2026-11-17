@@ -1,7 +1,7 @@
 import type { z } from 'zod';
 import { IdentityRefusal, type Identity } from '@/lib/auth';
 import { JobError, type JobCaller } from './access';
-import { assignBody, claimBody, coordinationBody, createBody, customerBody, parseListQuery, transferBody } from './schema';
+import { archiveBody, assignBody, claimBody, coordinationBody, copyBody, createBody, customerBody, parseListQuery, transferBody } from './schema';
 import { jobsServices } from './services';
 
 // The jobs routes (src/app/api/jobs/). Each route file wraps one of these in memberRoute; these add
@@ -54,7 +54,7 @@ async function body<T>(request: Request, schema: z.ZodType<T>): Promise<T> {
   return parsed.data;
 }
 
-// GET /api/jobs?scope=company|mine&limit=&cursor=
+// GET /api/jobs?scope=company|mine|archived&limit=&cursor=
 export async function listJobs(request: Request, identity: Identity): Promise<Response> {
   return respond(async () => {
     const query = parseListQuery(new URL(request.url).searchParams);
@@ -145,5 +145,36 @@ export async function transferFieldOwner(request: Request, identity: Identity, c
     const id = await jobId(context);
     const input = await body(request, transferBody);
     return json(await jobsServices().transferFieldOwner(callerOf(identity), id, input));
+  });
+}
+
+// POST /api/jobs/{jobId}/archive  { revision, changeId } (S5b-2, the owner): an unsigned draft leaves
+// every list and answers 410 on every other job route.
+export async function archiveJob(request: Request, identity: Identity, context: RouteContext): Promise<Response> {
+  return respond(async () => {
+    const id = await jobId(context);
+    const input = await body(request, archiveBody);
+    return json(await jobsServices().archive(callerOf(identity), id, input));
+  });
+}
+
+// POST /api/jobs/{jobId}/restore  { revision, changeId } (S5b-2, the owner): an archived job back as
+// it was.
+export async function restoreJob(request: Request, identity: Identity, context: RouteContext): Promise<Response> {
+  return respond(async () => {
+    const id = await jobId(context);
+    const input = await body(request, archiveBody);
+    return json(await jobsServices().restore(callerOf(identity), id, input));
+  });
+}
+
+// POST /api/jobs/{jobId}/copy  { id, draftId } (S5b-2): a new draft job from a signed job's scope.
+// 201 for the new job, 200 for the same request again.
+export async function copyJob(request: Request, identity: Identity, context: RouteContext): Promise<Response> {
+  return respond(async () => {
+    const id = await jobId(context);
+    const input = await body(request, copyBody);
+    const { created, detail } = await jobsServices().copy(callerOf(identity), id, input);
+    return json(detail, created ? 201 : 200);
   });
 }

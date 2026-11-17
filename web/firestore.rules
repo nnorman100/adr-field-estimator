@@ -11,9 +11,12 @@ rules_version = '2';
 // - companies/{companyId}/jobs/{jobId}: server-only locator { currentDraftId: string (1..64), revision: nonnegative int }.
 //   Single-document reads need permission on its current draft; no listing or client writes.
 // - companies/{companyId}/drafts/{draftId}: a draft. `fieldOwnerUid`, `state` (editing,
-//   submitting or submitted), `fence` (the submission holding it, S5a-8) and `previous` (the
-//   submitted draft a "Back to editing" version came from) are the server's
-//   (web/src/lib/submissions/fence.ts). A client may change only the `field` map.
+//   submitting, submitted, or archived while its job is archived, S5b-2), `fence` (the submission
+//   holding it, S5a-8), `previous` (the submitted draft a "Back to editing" version came from) and
+//   `archiveRevision` (the job revision of its last archive or restore) are the server's
+//   (web/src/lib/submissions/fence.ts, web/src/lib/jobs/archive-store.ts). A client may change only
+//   the `field` map, and only while `state` is editing, so every other state refuses every client
+//   write.
 //
 // The `field` maps follow field map v2 (`web/src/lib/field/schema.ts`): the rules check each
 // key's type and size and refuse a key the map does not name. Every key is optional; clearing a
