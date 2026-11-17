@@ -5,8 +5,9 @@
 // start it. So every field write first records a mark here, and the mark is cleared only once the
 // person's client has had every queued write acknowledged with the network on. A mark can be left
 // behind (the app closed between the server's answer and the clearing); that only means one extra
-// question or one "Reopen the app", never a lost edit. The recovery journal (S6-4) gives each edit
-// its own entry later; until then this mark is what "unsent work" means.
+// question or one "Reopen the app", never a lost edit. The recovery journal (S6-4, journal.ts) also
+// keeps each edit as its own entry, but it is in IndexedDB, so this mark is still what "unsent work"
+// means to the start-up watchdog and the sign-in pages.
 //
 // It also holds when the server first refused this person, and which refusal it was: the work
 // stays locked through a start with no answer, and the work of a refusal in RETAINED_REASONS is

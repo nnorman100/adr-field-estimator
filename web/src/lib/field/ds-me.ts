@@ -1,4 +1,5 @@
 import type { BrowserSignInConfig } from '@/lib/config';
+import { openDatabase, type DbSpec } from './idb';
 
 // `ds-me`: what the field shell needs to start with no signal (S6-2; docs/plans/S6.md section 3).
 // The sign-in page writes one row at every online sign-in, and the shell reads the newest row
@@ -40,25 +41,18 @@ export type DsMe = {
 
 export const meKey = (tenantId: string, uid: string): string => `${tenantId}/${uid}`;
 
+// Opened through the app's one IndexedDB wrapper (./idb.ts): it closes the connection on a version
+// change and tries a lost connection once more.
+const ME_SPEC: DbSpec = {
+  name: ME_DB,
+  version: ME_DB_VERSION,
+  upgrade: (db) => {
+    db.createObjectStore(ME_STORE, { keyPath: 'key' });
+  },
+};
+
 function openDb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    try {
-      const request = indexedDB.open(ME_DB, ME_DB_VERSION);
-      request.onupgradeneeded = () => {
-        request.result.createObjectStore(ME_STORE, { keyPath: 'key' });
-      };
-      request.onsuccess = () => {
-        const db = request.result;
-        // An upgrade in another window must never wait for this one (a trap in the old app).
-        db.onversionchange = () => db.close();
-        resolve(db);
-      };
-      request.onerror = () => reject(request.error ?? new Error('ds-me could not be opened'));
-      request.onblocked = () => reject(new Error('ds-me is blocked'));
-    } catch (error) {
-      reject(error instanceof Error ? error : new Error('ds-me could not be opened'));
-    }
-  });
+  return openDatabase(ME_SPEC);
 }
 
 function done<T>(request: IDBRequest<T>): Promise<T> {
