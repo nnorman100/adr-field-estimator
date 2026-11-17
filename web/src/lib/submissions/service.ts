@@ -5,7 +5,7 @@ import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant
 import type { Capability } from '@/lib/access';
 import { manifestDigest, type FieldManifest } from '@/lib/field/canonical';
 import { roomFieldSchema } from '@/lib/field/schema';
-import { hasAny, jobAccess, JobError, lockedJob, type JobCaller, type JobRow } from '@/lib/jobs/access';
+import { draftSubmitted, hasAny, jobAccess, JobError, lockedJob, type JobCaller, type JobRow } from '@/lib/jobs/access';
 import { jobPriceTable, namesPriceIds, priceIdsKnown, PricesUnreadable } from '@/lib/scope-lists/version';
 import { readJobDetails } from './details';
 import { SubmissionError, type SubmissionErrorCode } from './errors';
@@ -446,6 +446,7 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
           // Only from the job's current draft: a second call with another new id is 409.
           if (job.currentDraftId !== input.fromDraftId) throw new SubmissionError('conflict');
           if (job.status !== 'submitted' || !source) throw new SubmissionError('not_submitted');
+          if (await draftSubmitted(tx, caller.companyId, input.draftId)) throw new SubmissionError('conflict');
           [next] = await tx
             .update(jobs)
             .set({

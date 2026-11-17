@@ -2,7 +2,7 @@ import { and, asc, desc, eq, ne, or, sql, type SQL } from 'drizzle-orm';
 import { actors, auditEvents, jobAssignments, jobClaims, jobCustomers, jobs } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
-import { canSeeJob, hasAny, isOwnJob, jobAccess, JobError, lockedJob, seesEveryJob, type JobCaller, type JobRow } from './access';
+import { canSeeJob, draftSubmitted, hasAny, isOwnJob, jobAccess, JobError, lockedJob, seesEveryJob, type JobCaller, type JobRow } from './access';
 import type { DraftStore } from './drafts';
 import { createDigest, type ClaimInput, type CreateJobInput, type CustomerInput, type ListQuery } from './schema';
 
@@ -225,6 +225,7 @@ export function jobsService(db: Database, drafts: DraftStore): JobsService {
           if (existing.status === 'archived') throw new JobError('archived');
           row = existing;
         } else {
+          if (await draftSubmitted(tx, caller.companyId, input.draftId)) throw new JobError('conflict');
           await audit(tx, caller, 'job_created', row.id, { revision: row.revision });
         }
         let ownerUid: string | null = null;

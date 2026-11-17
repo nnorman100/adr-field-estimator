@@ -288,6 +288,23 @@ describe('copy', () => {
     // Office starts the copy with no field owner, as an office job.
     expect((await read(OFFICE_A, ids.id)).body).toMatchObject({ job: { fieldOwnerActorId: null } });
   });
+
+  it('never takes another job’s earlier draft: a copy, a new job and Back to editing refuse its id', async () => {
+    const { jobId: source } = await signedJob();
+    const { jobId: other, draftId: earlier, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
+    expect((await f.submitShown(ESTIMATOR_A, other, earlier, manifest)).answer.status).toBe(201);
+    expect((await f.nextDraft(ESTIMATOR_A, other, { draftId: randomUUID(), fromDraftId: earlier })).status).toBe(201);
+    const { jobId: third, draftId: thirdDraft, manifest: thirdManifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
+    expect((await f.submitShown(ESTIMATOR_A, third, thirdDraft, thirdManifest)).answer.status).toBe(201);
+    const before = await everything(h.admin);
+    const stored = structuredClone(h.field.draft(h.seed.a, earlier));
+    const refused = { status: 409, body: { error: 'conflict' } };
+    expect(await copy(OWNER_A, source, { id: randomUUID(), draftId: earlier })).toEqual(refused);
+    expect(await json(jobsRoute.POST(request(OWNER_A, '/api/jobs', { method: 'POST', body: { id: randomUUID(), draftId: earlier } }), params({})))).toEqual(refused);
+    expect(await f.nextDraft(ESTIMATOR_A, third, { draftId: earlier, fromDraftId: thirdDraft })).toEqual(refused);
+    expect(await everything(h.admin)).toBe(before);
+    expect(h.field.draft(h.seed.a, earlier)).toEqual(stored);
+  });
 });
 
 // Holds the next call of a field method at its start until `open`, which may come before the call.

@@ -1,5 +1,5 @@
 import { and, eq, isNull } from 'drizzle-orm';
-import { jobAssignments, jobs } from '@/db/schema';
+import { jobAssignments, jobs, jobSubmissions } from '@/db/schema';
 import type { CompanyTransaction } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
 import type { Identity } from '@/lib/auth';
@@ -146,4 +146,16 @@ export async function lockedJob(tx: CompanyTransaction, companyId: string, jobId
   if (!row) throw new JobError('not_found');
   if (options.live && row.status === 'archived') throw new JobError('archived');
   return row;
+}
+
+// A draft id that was ever submitted: a job's current draft, or an earlier draft of a job that went
+// Back to editing. A draft id a job takes as its new current draft must be none of these, so no job
+// takes another job's draft (the unique key on current_draft_id covers only current drafts).
+export async function draftSubmitted(tx: CompanyTransaction, companyId: string, draftId: string): Promise<boolean> {
+  const [found] = await tx
+    .select({ id: jobSubmissions.id })
+    .from(jobSubmissions)
+    .where(and(eq(jobSubmissions.companyId, companyId), eq(jobSubmissions.draftId, draftId)))
+    .limit(1);
+  return found !== undefined;
 }

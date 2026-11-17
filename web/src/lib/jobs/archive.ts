@@ -4,7 +4,7 @@ import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant
 import type { Capability } from '@/lib/access';
 import type { FieldDoc } from '@/lib/field/canonical';
 import { snapshotManifest } from '@/lib/submissions/snapshot';
-import { canSeeJob, hasAny, jobAccess, JobError, lockedJob, type JobCaller, type JobRow } from './access';
+import { canSeeJob, draftSubmitted, hasAny, jobAccess, JobError, lockedJob, type JobCaller, type JobRow } from './access';
 import type { ArchiveStore } from './archive-store';
 import { copyDigest, type ArchiveInput, type CopyInput } from './schema';
 import { audit, CHECK_VIOLATION, detailOf, errorCode, type JobDetail, type JobView } from './service';
@@ -220,8 +220,10 @@ export function archiveService(db: Database, store: ArchiveStore): ArchiveServic
           )
           .where(and(eq(agreements.companyId, caller.companyId), eq(agreements.jobId, source.id), eq(agreements.kind, 'original')));
         if (!signed?.bytes) throw new JobError('not_signed');
+        // The address as signed: the snapshot's, never the live job row's.
         const snapshot = JSON.parse(Buffer.from(signed.bytes).toString('utf8')) as { job?: { propertyAddress?: unknown } };
-        const address = typeof snapshot.job?.propertyAddress === 'string' ? snapshot.job.propertyAddress : source.propertyAddress;
+        const address = snapshot.job?.propertyAddress;
+        if (typeof address !== 'string') throw new JobError('not_signed');
         // Whoever does field work owns the field work of the copy they start, as a new job.
         const owner = hasAny(caller, ['scope']) ? caller.actorId : null;
         const [inserted] = await tx
@@ -249,6 +251,7 @@ export function archiveService(db: Database, store: ArchiveStore): ArchiveServic
           if (existing.status === 'archived') throw new JobError('archived');
           row = existing;
         } else {
+          if (await draftSubmitted(tx, caller.companyId, input.draftId)) throw new JobError('conflict');
           await audit(tx, caller, 'job_copied', row.id, { revision: row.revision, copiedFrom: source.id });
         }
         return { created: inserted !== undefined, ownerUid: await ownerUid(tx, row), field: copiedField(signed.bytes), detail: await detailOf(tx, row) };
