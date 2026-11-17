@@ -29,7 +29,7 @@ const END = '(?![\\p{L}\\p{N}])';
 const GAP = '[\\s,.\\-]*';
 const POSSESSIVE = "(?:['’]s)?";
 
-const EMAIL = /[\p{L}\p{N}._%+-]+@[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+/gu;
+const EMAIL = /(?<![\p{L}\p{N}._%+-])[\p{L}\p{N}._%+-]+@[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+/gu;
 // North American numbers with an optional +1, area code in brackets or not, or ten digits run
 // together; seven-digit local numbers written with a separator; international numbers starting with +.
 const PHONE = new RegExp(
