@@ -232,8 +232,11 @@ describe('refusals', () => {
   });
 
   it('refuses a feature whose prompt is not written yet, and Live (the relay path)', async () => {
+    // Scope fill's prompt comes with S7-7 (the summary draft has had its own since S7-6).
     const h = harness({ registry: AI_REGISTRY });
-    expect(await h.boundary.call(context(), summaryRequest)).toMatchObject({ refusal: { code: 'not_ready' } });
+    expect(await h.boundary.call(context({ flags: { ai_scope_fill: true } }), { ...summaryRequest, feature: 'scope_fill' })).toMatchObject({
+      refusal: { code: 'not_ready' },
+    });
     const live = harness();
     expect(
       await live.boundary.call(context({ flags: { live_voice: true } }), {

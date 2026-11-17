@@ -1,0 +1,256 @@
+import { createHash } from 'node:crypto';
+import { sql } from 'drizzle-orm';
+import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
+import { aiRefusal, type AiCallerContext, type AiOutcome, type AiRefusal, type AiRequest } from '@/lib/ai/call';
+import type { Identity } from '@/lib/auth';
+import type { FieldManifest } from '@/lib/field/canonical';
+import { jobAccess, JobError, type JobRow } from '@/lib/jobs/access';
+import {
+  summaryDraftRequest,
+  summaryFacts,
+  summaryFactsText,
+  SummaryFactsError,
+  type SummaryDraftOutput,
+  type SummaryFacts,
+} from './request';
+
+// POST /api/jobs/{jobId}/ai/summary-draft (docs/plans/S7.md, step S7-6): an AI draft of the job's
+// findings summary, as a proposal only. In this order:
+//   1. the job, in the caller's own company, seen by them (else 404), not archived (410), with the
+//      `audit` capability (403), and its field work theirs (403): only the field owner writes the
+//      draft, so only they could accept the proposal;
+//   2. the company's `ai_summary` switch, exactly on; off answers the boundary's own refusal and
+//      nothing is read or spent;
+//   3. the phone's call id: one this person already used for this job answers the stored proposal
+//      (a retry after a lost answer); one the ledger holds with no proposal, or for another job,
+//      person or feature, is refused, so a used id never runs a second model call;
+//   4. the job's current draft from the field database, which must be editing;
+//   5. the AI boundary (web/src/lib/ai/call.ts): quota, budget, Model Armor, model, Zod, price
+//      sentences stripped, then the summary's rules (./request.ts);
+//   6. the proposal stored in ai_results as `proposed`, under the boundary's call id.
+// The route never writes the draft: only the technician's accept does, through the field rules
+// (a later S7-6 slice). A refusal stores nothing.
+
+export const SUMMARY_DRAFT_FEATURE = 'summary_draft';
+
+export const SUMMARY_DRAFT_ERRORS = {
+  invalid_request: 400,
+  // The call id was used for another job, person or feature, or its earlier call ended without a
+  // proposal: a new attempt needs a new id.
+  call_reused: 409,
+  // The draft is being submitted, is submitted or is archived: Check Scope is closed.
+  draft_not_editing: 409,
+  // The draft's field data does not match the field map.
+  draft_invalid: 409,
+} as const;
+export type SummaryDraftErrorCode = keyof typeof SUMMARY_DRAFT_ERRORS;
+
+export class SummaryDraftError extends Error {
+  readonly status: number;
+  constructor(readonly code: SummaryDraftErrorCode) {
+    super(`Summary draft refused: ${code}`);
+    this.name = 'SummaryDraftError';
+    this.status = SUMMARY_DRAFT_ERRORS[code];
+  }
+}
+
+// The AI boundary refused the call (or the switch is off): the route answers its fixed words.
+export class SummaryDraftRefused extends Error {
+  constructor(readonly refusal: AiRefusal) {
+    super(`Summary draft refused by the AI boundary: ${refusal.code}`);
+    this.name = 'SummaryDraftRefused';
+  }
+}
+
+// The field database's view of a draft, read only.
+export type SummaryDraftReader = {
+  // The draft's state and field data now, or null when there is no such draft; `too_many_rooms` or
+  // `too_many_photos` when a nested collection is over its cap.
+  read(
+    companyId: string,
+    draftId: string,
+  ): Promise<{ state: string; manifest: FieldManifest } | 'too_many_rooms' | 'too_many_photos' | null>;
+};
+
+export type SummaryDraftBoundary = {
+  call<T>(context: AiCallerContext, request: AiRequest<T>): Promise<AiOutcome<T>>;
+};
+
+export type SummaryProposal = {
+  id: string;
+  callId: string;
+  jobId: string;
+  draftId: string;
+  status: 'proposed' | 'accepted' | 'rejected';
+  model: string;
+  promptVersion: string;
+  createdAt: string;
+  proposal: SummaryDraftOutput;
+};
+
+export type SummaryDraftService = {
+  draft(caller: Identity, jobId: string, callId: string): Promise<{ created: boolean; result: SummaryProposal }>;
+};
+
+// Most walkthrough turns and voice notes one draft sends: far more than a 45-minute walkthrough or
+// a day of notes holds, and a bound on what one request can read.
+export const MAX_TURNS = 2_000;
+export const MAX_VOICE_NOTES = 200;
+
+type ResultRow = {
+  id: string;
+  call_id: string;
+  job_id: string;
+  draft_id: string;
+  actor_id: string;
+  feature: string;
+  status: SummaryProposal['status'];
+  model: string;
+  prompt_version: string;
+  created_at: string;
+  output: SummaryDraftOutput;
+};
+
+const rows = <T>(result: unknown) => result as unknown as T[];
+
+const view = (row: ResultRow): SummaryProposal => ({
+  id: row.id,
+  callId: row.call_id,
+  jobId: row.job_id,
+  draftId: row.draft_id,
+  status: row.status,
+  model: row.model,
+  promptVersion: row.prompt_version,
+  createdAt: new Date(row.created_at).toISOString(),
+  proposal: row.output,
+});
+
+const RESULT_COLUMNS = sql`r.id::text, r.call_id::text, r.job_id::text, r.draft_id::text, r.actor_id::text, r.feature, r.status,
+  r.model, r.prompt_version, r.created_at::text, r.output`;
+
+// The ledger row of a call id and its proposal, if either exists.
+async function priorCall(
+  tx: CompanyTransaction,
+  companyId: string,
+  callId: string,
+): Promise<{ ledger: boolean; result: ResultRow | null }> {
+  const [row] = rows<{ ledger: boolean } & Partial<ResultRow> & { id: string | null }>(
+    await tx.execute(sql`
+      SELECT true AS ledger, ${RESULT_COLUMNS}
+      FROM ai_ledger l LEFT JOIN ai_results r ON r.company_id = l.company_id AND r.call_id = l.call_id
+      WHERE l.company_id = ${companyId}::uuid AND l.call_id = ${callId}::uuid
+    `),
+  );
+  if (!row) return { ledger: false, result: null };
+  return { ledger: true, result: row.id ? (row as ResultRow) : null };
+}
+
+// A stored proposal answers a retry only when it is this person's summary draft of this job.
+function replay(result: ResultRow | null, caller: Identity, jobId: string): SummaryProposal {
+  if (!result || result.job_id !== jobId || result.actor_id !== caller.actorId || result.feature !== SUMMARY_DRAFT_FEATURE) {
+    throw new SummaryDraftError('call_reused');
+  }
+  return view(result);
+}
+
+// The walkthrough turns that passed screening and the reviewed voice-note transcripts of a draft,
+// in the order they were said or recorded. Blocked and unscreened turns hold no words (0012).
+async function spoken(
+  tx: CompanyTransaction,
+  companyId: string,
+  jobId: string,
+  draftId: string,
+): Promise<Pick<SummaryFacts, 'walkthrough' | 'voiceNotes'>> {
+  const turns = rows<{ speaker: string; text: string }>(
+    await tx.execute(sql`
+      SELECT t.speaker, t.text
+      FROM live_turns t JOIN live_sessions s ON s.company_id = t.company_id AND s.id = t.session_id
+      WHERE t.company_id = ${companyId}::uuid AND s.job_id = ${jobId}::uuid AND s.draft_id = ${draftId}::uuid
+        AND t.verdict = 'passed' AND t.speaker IN ('technician', 'assistant')
+      ORDER BY s.started_at, s.id, t.seq
+      LIMIT ${MAX_TURNS}
+    `),
+  );
+  const notes = rows<{ transcript: string }>(
+    await tx.execute(sql`
+      SELECT transcript FROM voice_notes
+      WHERE company_id = ${companyId}::uuid AND job_id = ${jobId}::uuid AND draft_id = ${draftId}::uuid AND state = 'reviewed'
+      ORDER BY created_at, id
+      LIMIT ${MAX_VOICE_NOTES}
+    `),
+  );
+  return {
+    walkthrough: turns.map((turn) => ({
+      speaker: turn.speaker as 'technician' | 'assistant',
+      text: turn.text,
+    })),
+    voiceNotes: notes.map((note) => note.transcript),
+  };
+}
+
+export function summaryDraftService(db: Database, reader: SummaryDraftReader, boundary: () => SummaryDraftBoundary): SummaryDraftService {
+  return {
+    async draft(caller, jobId, callIdInput) {
+      const callId = callIdInput.toLowerCase();
+      const companyId = caller.companyId;
+      type Before = { replayed: SummaryProposal } | { replayed: null; job: JobRow; said: Pick<SummaryFacts, 'walkthrough' | 'voiceNotes'> };
+      const before = await withCompany(db, companyId, async (tx): Promise<Before> => {
+        const job = await jobAccess(tx, caller, jobId, ['audit'], { fieldWork: true });
+        if (caller.flags?.ai_summary !== true) throw new SummaryDraftRefused(aiRefusal('feature_off'));
+        const prior = await priorCall(tx, companyId, callId);
+        if (prior.ledger) return { replayed: replay(prior.result, caller, jobId) };
+        return {
+          replayed: null,
+          job,
+          said: await spoken(tx, companyId, job.id, job.currentDraftId),
+        };
+      });
+      if (before.replayed) return { created: false, result: before.replayed };
+      const { job, said } = before;
+      const draftId = job.currentDraftId;
+
+      const read = await reader.read(companyId, draftId);
+      if (read === null) throw new JobError('draft_unavailable');
+      if (read === 'too_many_rooms' || read === 'too_many_photos') throw new SummaryDraftError('draft_invalid');
+      if (read.state !== 'editing') throw new SummaryDraftError('draft_not_editing');
+      let facts: SummaryFacts;
+      try {
+        // Accepted meter readings arrive with field map v3 (S7-8); the draft holds none yet.
+        facts = summaryFacts(read.manifest, { ...said, meterReadings: [] });
+      } catch (error) {
+        if (error instanceof SummaryFactsError) throw new SummaryDraftError('draft_invalid');
+        throw error;
+      }
+
+      const request = summaryDraftRequest(facts, callId);
+      const context: AiCallerContext = {
+        companyId,
+        actorId: caller.actorId,
+        jobId: job.id,
+        capabilities: caller.capabilities,
+        flags: caller.flags,
+      };
+      const outcome = await boundary().call(context, request);
+      if (!outcome.ok) throw new SummaryDraftRefused(outcome.refusal);
+      if (outcome.promptVersion === null) throw new Error('summary draft prompt has no version');
+      const inputDigest = createHash('sha256').update(summaryFactsText(facts), 'utf8').digest('hex');
+
+      return withCompany(db, companyId, async (tx) => {
+        // Model Armor passed the output (a blocked one is a refusal above), so its verdict is `passed`.
+        const inserted = rows<ResultRow>(
+          await tx.execute(sql`
+            INSERT INTO ai_results AS r (company_id, call_id, job_id, draft_id, actor_id, feature, input_digest, prompt_version, model, output, verdict_category)
+            VALUES (${companyId}::uuid, ${outcome.callId}::uuid, ${job.id}::uuid, ${draftId}::uuid, ${caller.actorId}::uuid, ${SUMMARY_DRAFT_FEATURE},
+                    ${inputDigest}, ${outcome.promptVersion}, ${outcome.model}, ${JSON.stringify(outcome.output)}::text::jsonb, 'passed')
+            ON CONFLICT (company_id, call_id) DO NOTHING
+            RETURNING ${RESULT_COLUMNS}
+          `),
+        );
+        if (inserted[0]) return { created: true, result: view(inserted[0]) };
+        // The same id sent twice at once: both ran, the first stored; the second answers it.
+        const prior = await priorCall(tx, companyId, outcome.callId);
+        return { created: false, result: replay(prior.result, caller, jobId) };
+      });
+    },
+  };
+}

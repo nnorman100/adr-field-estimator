@@ -98,6 +98,7 @@ describe('API sign-in gate', () => {
       '/api/jobs/:id/submissions',
       '/api/jobs/:id/drafts',
       '/api/jobs/:id/estimate',
+      '/api/jobs/:id/ai/summary-draft',
       '/api/jobs/:id/agreements',
       '/api/jobs/:id/scope-lists',
       '/api/jobs/:id/signing-link',

@@ -129,6 +129,9 @@ export type AiRequest<T> = {
   schema: z.ZodType<T>;
   // The feature's own server rules, after the price rule (pre-1978 advice, exact quotes).
   rules?: (output: T) => T;
+  // The phone's own id for this call (a uuid), so a retry after a lost answer names the same ledger
+  // row and the same stored proposal (S7-6). A new id is made when there is none.
+  callId?: string;
 };
 
 // retryAfterSeconds is set for a quota or budget refusal when the ledger knows when it may fit; the
@@ -158,6 +161,11 @@ const REFUSALS: Readonly<Record<AiRefusalCode, { retryable: boolean; message: st
   invalid_output: { retryable: true, message: TRY_AGAIN },
   output_blocked: { retryable: false, message: `The safety check stopped the AI answer. ${KEEP_WORKING}` },
 };
+
+// The fixed answer for a refusal, for a route that refuses before it calls (a switch that is off).
+export function aiRefusal(code: AiRefusalCode): AiRefusal {
+  return { code, ...REFUSALS[code] };
+}
 
 const contextSchema = z.object({
   companyId: z.uuid(),
@@ -282,7 +290,8 @@ export function createAiBoundary(deps: BoundaryDeps) {
 
   async function call<T>(context: AiCallerContext, request: AiRequest<T>): Promise<AiOutcome<T>> {
     const started = Date.now();
-    const callId = newCallId();
+    const clientCallId = request?.callId;
+    const callId = clientCallId ?? newCallId();
     const entry = isAiFeature(request?.feature) ? registry[request.feature] : undefined;
     const line: Partial<AiLogLine> = {
       feature: entry?.feature,
@@ -320,6 +329,7 @@ export function createAiBoundary(deps: BoundaryDeps) {
       try {
         // 1. Caller context.
         if (!entry || !contextSchema.safeParse(context).success) throw new Refused('invalid_context');
+        if (clientCallId !== undefined && !z.uuid().safeParse(clientCallId).success) throw new Refused('invalid_context');
         // 2. Capability and feature switch (exactly true; anything else is off).
         if (!context.capabilities.includes(entry.capability)) throw new Refused('not_allowed');
         if (context.flags[entry.flag] !== true) throw new Refused('feature_off');

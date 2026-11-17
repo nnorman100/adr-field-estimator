@@ -9,7 +9,9 @@ import {
 } from '../../src/lib/ai/call';
 import { AI_REGISTRY, type AiFeature, type AiFeatureEntry, type AiRegistry } from '../../src/lib/ai/registry';
 import type { AiLogLine } from '../../src/lib/ai/telemetry';
-import { datasetSha256, loadDataset, type DatasetName, type InjectionCase } from './datasets';
+import type { FieldManifest } from '../../src/lib/field/canonical';
+import { summaryDraftRequest, summaryFacts, type SummaryFacts } from '../../src/lib/summary-draft/request';
+import { datasetSha256, loadDataset, type DatasetName, type InjectionCase, type SummaryJob } from './datasets';
 import type { Answer, CaseScore, Metric, Score } from './score';
 import { scoreLive, scoreMeterReading, scoreVoiceNotes } from './score-media';
 import { scopeOutput, scoreInjection, scoreJobSummary, scoreScopeFill, scoreSummary } from './score-text';
@@ -37,7 +39,44 @@ export type EvalAdapter = {
   request(item: unknown): AiRequest<unknown>;
   response(output: unknown): unknown;
 };
-export const ADAPTERS: Partial<Record<Suite, EvalAdapter>> = {};
+
+// A summary job as the technician would have left its draft (field map v2), read through the
+// route's own facts builder (src/lib/summary-draft/request.ts): the cause of loss in the job notes,
+// each room's affected materials in its findings, a mold loss's rooms as mold rooms, and one photo
+// reference per photo. The datasets hold no walkthrough, voice note or meter reading.
+export function summaryJobFacts(job: SummaryJob): SummaryFacts {
+  const { facts } = job;
+  const ids = facts.rooms.map((_, index) => `room-${index + 1}`);
+  const counts = { airMovers: facts.airMovers, dehumidifiers: facts.dehumidifiers, dryingDays: facts.dryingDays };
+  const manifest: FieldManifest = {
+    draft: {
+      ...(facts.yearBuilt === null ? {} : { yearBuilt: facts.yearBuilt }),
+      roomOrder: ids,
+      notes: [`Cause of loss: ${facts.cause}.`, facts.notes].filter((part) => part.length > 0).join(' '),
+      ...Object.fromEntries(Object.entries(counts).filter(([, value]) => value !== undefined)),
+    },
+    rooms: facts.rooms.map((room, index) => ({
+      id: ids[index]!,
+      field: {
+        name: room.name,
+        category: facts.loss === 'mold' ? 'mold' : room.category,
+        floorSf: room.floorSf,
+        wetFloorSf: room.wetFloorSf,
+        ...(room.materials.length > 0 ? { findings: `Affected materials: ${room.materials.join(', ')}.` } : {}),
+      },
+    })),
+    photos: Array.from({ length: facts.photoCount }, (_, index) => ({ id: `photo-${index + 1}`, field: {} })),
+  };
+  return summaryFacts(manifest, { walkthrough: [], voiceNotes: [], meterReadings: [] });
+}
+
+// S7-6: the summary draft, sent as its route sends it; its output is already the scorer's shape.
+const summaryAdapter: EvalAdapter = {
+  request: (item) => summaryDraftRequest(summaryJobFacts(item as SummaryJob)) as AiRequest<unknown>,
+  response: (output) => output,
+};
+
+export const ADAPTERS: Partial<Record<Suite, EvalAdapter>> = { summary: summaryAdapter };
 
 type SuiteDef = {
   feature: AiFeature;
