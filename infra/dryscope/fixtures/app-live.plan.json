@@ -360,7 +360,7 @@
        "sandboxes": [],
        "scaling": [
         {
-         "max_instance_count": 10,
+         "max_instance_count": 7,
          "min_instance_count": 1
         }
        ],
