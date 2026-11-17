@@ -1,6 +1,7 @@
 // The phone's reads and writes of one job's field draft in the field database (S5a-6), through the
-// Firebase web SDK. Screens enqueue writes through fieldWrite on the shell's person client;
-// local receipts and server acknowledgements are separate (./local-edit.ts). The rules (web/firestore.rules)
+// Firebase web SDK. Screens hand an edit's document writes to journaledEdit (./journal-sync.ts),
+// which journals them and enqueues them through fieldWrite on the shell's person client; local
+// receipts and server acknowledgements are separate (./local-edit.ts). The rules (web/firestore.rules)
 // let only the draft's field owner, while it is `editing`, change only the `field` maps; each write
 // here changes nothing else, and its values come from ./forms.ts, checked by the same schema.
 //
