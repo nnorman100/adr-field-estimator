@@ -15,7 +15,8 @@
 // read, change and removal here names its (tenant, person) and touches only their rows.
 //
 // Opened only through ./idb.ts. A phone whose storage does not answer within WRITE_WITHIN_MS gets
-// JournalNotSaved for a new entry, and the edit is not made.
+// JournalNotSaved for a new entry, and the edit is not made. While any entry is here the person's
+// unsent mark (./unsent.ts) stays set, so the sign-in pages ask before anything is discarded.
 import { canonicalJson } from './canonical';
 import { transact, withDatabase, type DbSpec } from './idb';
 
@@ -80,17 +81,28 @@ function within<T>(promise: Promise<T>, ms: number): Promise<T | 'timeout'> {
 const ownerRange = (owner: Owner) => IDBKeyRange.only([owner.tenantId, owner.uid]);
 
 // Adds an entry, state pending, and answers it once the transaction has committed. Throws
-// JournalNotSaved when it could not be saved in time; a late commit is then removed again.
+// JournalNotSaved when it could not be saved in time: the transaction is aborted, and an open that
+// answers later starts none. Only a commit already under way when the time ran out is removed again.
 export async function appendEntry(owner: Owner, draftPath: string, writes: DocWrite[], id: string = crypto.randomUUID()): Promise<JournalEntry> {
   const row: Omit<JournalEntry, 'seq'> = { id, tenantId: owner.tenantId, uid: owner.uid, draftPath, writes, at: Date.now(), state: 'pending', reached: false };
-  const added = withDatabase(SPEC, (db) =>
-    transact(db, JOURNAL_STORE, 'readwrite', (transaction) => {
+  let abandoned = false;
+  let active: IDBTransaction | undefined;
+  const added = withDatabase(SPEC, (db) => {
+    if (abandoned) return Promise.reject(new JournalNotSaved());
+    return transact(db, JOURNAL_STORE, 'readwrite', (transaction) => {
+      active = transaction;
       const request = transaction.objectStore(JOURNAL_STORE).add(row);
       return () => ({ ...row, seq: request.result as number });
-    }),
-  );
+    });
+  });
   const answer = await within(added, WRITE_WITHIN_MS).catch(() => 'failed' as const);
   if (answer === 'timeout' || answer === 'failed') {
+    abandoned = true;
+    try {
+      active?.abort();
+    } catch {
+      // Already committing or finished: removed below.
+    }
     // An entry for an edit that was not made must never be sent later.
     void added.then((entry) => removeEntry(entry), () => undefined);
     throw new JournalNotSaved();
@@ -210,7 +222,8 @@ export type Outcome = { kind: 'acked' } | { kind: 'rejected'; reason: RejectReas
 
 // What became of each of `judged`, given the server's documents (by path) and drafts (by draft
 // path). Only the newest entry per document and key is compared: an older entry's key that a newer
-// entry wrote counts as the newer one's comparison. `newer` are entries that are not judged here
+// entry wrote counts as the newer one's comparison, and a newer `set` or `delete` of the document
+// writes every key it does not name as absent. `newer` are entries that are not judged here
 // but were made after (this page's own, whose promises answer for them): a key one of them wrote
 // is not held against an older entry. An entry whose newest values the server holds is acked; any
 // other is rejected when the rules refuse the draft, and changed when they do not. An entry whose
@@ -227,6 +240,9 @@ export function judge(
   const all = [...judged.map((entry) => ({ entry, live: false })), ...newer.map((entry) => ({ entry, live: true }))].sort((a, b) => a.entry.seq - b.entry.seq);
   for (const { entry, live } of all) {
     for (const write of entry.writes) {
+      if (write.op !== 'update') {
+        for (const [slot, prior] of newest) if (prior.path === write.path) newest.set(slot, { ...prior, seq: entry.seq, expected: undefined, live });
+      }
       for (const [key, expected] of expectations(write)) newest.set(`${write.path}\u0000${key}`, { seq: entry.seq, path: write.path, key, expected, live });
     }
   }

@@ -59,6 +59,23 @@ describe('the journal after a restart', () => {
     expect(run([removed], { ...docs, [ROOM]: { data: { field: { name: 'Kitchen' } } } })).toEqual({ [removed.seq]: { kind: 'changed' } });
   });
 
+  it('acks a room added, edited and removed offline: the removal supersedes its earlier keys', () => {
+    const added = entry([{ path: ROOM, op: 'set', data: { field: { name: 'Kitchen' } } }, { path: DRAFT, op: 'update', fields: { 'field.roomOrder': ['r1'] } }]);
+    const edited = entry([{ path: ROOM, op: 'update', fields: { 'field.name': 'Hall', 'field.notes': 'wet' } }]);
+    const removed = entry([{ path: ROOM, op: 'delete' }, { path: DRAFT, op: 'update', fields: { 'field.roomOrder': [] } }]);
+    const docs = { [DRAFT]: editing({ roomOrder: [] }), [ROOM]: { missing: true } as ServerDoc };
+    expect(run([added, edited, removed], docs)).toEqual({ [added.seq]: { kind: 'acked' }, [edited.seq]: { kind: 'acked' }, [removed.seq]: { kind: 'acked' } });
+  });
+
+  it('treats a whole-document write as removing the keys it does not name', () => {
+    const PHOTO = `${DRAFT}/photos/p1`;
+    const older = entry([{ path: PHOTO, op: 'update', fields: { 'field.roomId': 'r1' } }]);
+    const replaced = entry([{ path: PHOTO, op: 'set', data: { field: { shotTag: 'overview' } } }]);
+    const docs = { [DRAFT]: editing({}), [PHOTO]: { data: { field: { shotTag: 'overview' } } } as ServerDoc };
+    expect(run([older, replaced], docs)).toEqual({ [older.seq]: { kind: 'acked' }, [replaced.seq]: { kind: 'acked' } });
+    expect(run([older, replaced], { ...docs, [PHOTO]: { data: { field: { shotTag: 'overview', roomId: 'r1' } } } })).toEqual({ [older.seq]: { kind: 'changed' }, [replaced.seq]: { kind: 'acked' } });
+  });
+
   it('leaves out an entry whose documents did not all answer', () => {
     const one = entry([{ path: ROOM, op: 'update', fields: { 'field.name': 'Hall' } }]);
     expect(run([one], { [DRAFT]: editing({}) })).toEqual({});
