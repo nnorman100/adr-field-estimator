@@ -44,12 +44,14 @@ export const profileInput = z.strictObject({
     .transform((value) => value.toLowerCase()),
   address: line(500),
   phone: line(80),
+  // The length is checked again before the patterns: Zod still runs the refinement after max(254)
+  // has failed, and EMAIL_SHAPE's time grows with the square of the length (security audit F2).
   email: z
     .string()
     .trim()
     .toLowerCase()
     .max(254)
-    .refine((value) => value === '' || (EMAIL.test(value) && EMAIL_SHAPE.test(value))),
+    .refine((value) => value === '' || (value.length <= 254 && EMAIL.test(value) && EMAIL_SHAPE.test(value))),
   license: line(80),
   signoff: line(150),
   emergencyPhone: line(80).optional(),
