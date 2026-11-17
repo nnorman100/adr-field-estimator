@@ -284,6 +284,20 @@ describe('archive and restore done on this page (S5b-2)', () => {
     expect(pending.readAnswered('job-n', read, older)).toBe(false);
   });
 
+  it('keeps a restore read later when the archived answer to an earlier read comes back first', () => {
+    pending.openFor('company-a/user-restored-late');
+    const before = pending.markRead();
+    // The archived job is opened; the screen closes, the job is restored on another phone and opened again.
+    const older = pending.markRead();
+    const newer = pending.markRead();
+    expect(pending.readAnswered('job-l', gone, older)).toBe(true);
+    expect(pending.archived('job-l')).toBe(true);
+    expect(pending.readAnswered('job-l', read, before)).toBe(false);
+    expect(pending.readAnswered('job-l', read, newer)).toBe(true);
+    expect(pending.archived('job-l')).toBe(false);
+    expect(pending.mark('job-l')).toBeLessThanOrEqual(newer);
+  });
+
   it('shows the job archived as soon as any route of it answers 410, also when no read gets through after', () => {
     pending.openFor('company-a/user-archived-save');
     const before = pending.markRead();

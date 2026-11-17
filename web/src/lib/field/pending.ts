@@ -281,7 +281,7 @@ export const pending = {
   // A read sent before the newest read that showed the job no longer counts either.
   readAnswered(jobId: string, answer: Answer<unknown>, mark: number): boolean {
     if (mark < pending.mark(jobId) || mark < (state.readAt[jobId] ?? 0)) return false;
-    if (!answer.ok && answer.code === 'archived') pending.archivedSeen(jobId);
+    if (!answer.ok && answer.code === 'archived') change({ archived: flagged(state.archived, jobId, true), marks: { ...state.marks, [jobId]: mark + 0.5 } });
     else if (answer.ok) change({ readAt: { ...state.readAt, [jobId]: mark }, archived: flagged(state.archived, jobId, false) });
     if (!answer.ok && answer.denied) pending.refused(jobId, answer.message, answer.status);
     return true;
