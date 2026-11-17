@@ -395,7 +395,8 @@ describe('runtime role and row-level security (migration 0003)', () => {
   });
 
   it('carries nothing over on one pooled connection used for A, then B, then nothing', async () => {
-    // openDatabase keeps exactly one connection, so all three uses share it.
+    // One use at a time takes the pool's idle connection again, so all three share it (the pid
+    // check below proves it).
     const handle = openDatabase({ APP_ENV: 'test', DATABASE_URL: urlAs(API_USER, apiPassword) });
     try {
       const pid = async (tx: { execute: typeof handle.db.execute }) =>
