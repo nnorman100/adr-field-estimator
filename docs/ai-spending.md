@@ -1,5 +1,7 @@
 # Company AI spending
 
+> **Old-app history.** This page describes the retired Python app's AI allowance. For the rebuilt app see [AI.md](AI.md) (the operator's ceilings) and the billing plan, [plans/BILLING.md](plans/BILLING.md) (the owner's spending cap; `docs/access/billing.md` is written by its step SB-7).
+
 Each company starts with a **$10 monthly AI allowance before launch**, shared across
 its members and AI features. A company without an explicit override uses the platform
 default in code; reserving or reading AI work never writes that default to company

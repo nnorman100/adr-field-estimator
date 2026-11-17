@@ -4,7 +4,7 @@ This is the accepted rebuild target, not a description of the current deployment
 
 | Data | Authoritative owner | Permitted copies and constraints |
 | --- | --- | --- |
-| Companies, memberships, capabilities, office customer details and assignments, invitations, billing and feature flags | Postgres | Server-written Firestore access/header projections only. Client claims or a company header do not grant access. Office coordination remains SQL-owned. |
+| Companies, memberships, capabilities, office customer details and assignments, invitations, billing (the tables planned in [BILLING.md](plans/BILLING.md) steps SB-1, SB-14 and SB-21) and feature flags | Postgres | Server-written Firestore access/header projections only. Client claims or a company header do not grant access. Office coordination remains SQL-owned. |
 | Unsubmitted observations, rooms, measurements, findings, technician transcript and field evidence review | Firestore field database | Persistent phone cache and local recovery journal. Field owner writes prescribed field fields; other staff view only when authorized. Office fields do not share field-write ownership. |
 | Published price books, working copies, job pins and adjustment/addition approvals | Postgres | Dated read-only phone copies. Client or Firestore totals and approvals are never authoritative. |
 | Submitted inspection snapshots, four document payloads, calculation versions, proposal hashes, signatures, link-use state and reports | Postgres | Immutable canonical bytes alongside typed query columns. Firestore holds only server-owned submission ID/status; offline document copies are read-only. |
