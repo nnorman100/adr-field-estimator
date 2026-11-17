@@ -293,3 +293,37 @@ test('a restore whose field step did not get through is sent again from the jobs
   expect(sent).toHaveLength(2);
   expect(sent[1]).toEqual(sent[0]);
 });
+
+// R3 (firstmate ruling): Archive and Copy follow the person's keys and the job's state, not whether
+// this phone's field work moved away; the moved, read-only state limits only field editing.
+test('the owner who moves the field work to an estimator still sees Archive, and Copy once the job is signed', async ({ page, request }) => {
+  test.setTimeout(150_000);
+  const company = await seedCompany('archive-moved', { owner: 'owner', first: 'estimator' });
+  const owner = company.people.owner!;
+  // The owner starts the job, so they own its field work, and assigns the estimator.
+  const jobId = await seedJob(request, company, owner, '41 Handed Over Lane');
+  const [estimator] = await adminSql()<{ id: string }[]>`SELECT id::text FROM actors WHERE company_id = ${company.id}::uuid AND uid = ${company.people.first!.uid}`;
+  const assigned = await request.post(`${JOBS_BASE_URL}/api/jobs/${jobId}/assignments`, { headers: await bearer(company, owner), data: { id: randomUUID(), estimatorActorId: estimator!.id } });
+  expect(assigned.status()).toBe(201);
+
+  await signIn(page, company, owner);
+  await openJob(page, '41 Handed Over Lane');
+  await main(page).getByRole('link', { name: 'Job coordination' }).click();
+  await page.getByLabel('Move it to').selectOption({ label: 'first' });
+  await page.getByRole('button', { name: 'Move field work' }).click();
+  await expect(page.getByText('first owns the field work.')).toBeVisible();
+  // The owner's screen now holds field work that moved away: field editing is read only.
+  await main(page).getByRole('link', { name: 'Check Scope' }).click();
+  await expect(page.getByText(/field work is no longer yours/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Archive job' })).toBeVisible();
+
+  // Signed meanwhile: saving office notes reads the job again on this page, still moved.
+  await adminSql()`UPDATE jobs SET status = 'signed', revision = revision + 1 WHERE id = ${jobId}::uuid`;
+  await main(page).getByRole('link', { name: 'Job coordination' }).click();
+  await page.getByRole('textbox', { name: 'Office notes' }).fill('Signed on site');
+  await page.getByRole('button', { name: 'Save notes' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Notes saved.' })).toBeVisible();
+  await expect(page.getByText(/field work is no longer yours/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Copy to a new draft' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Archive job' })).toHaveCount(0);
+});

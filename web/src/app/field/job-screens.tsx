@@ -424,7 +424,9 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
         )}
       </div>
       <div hidden={view !== 'coordination'}>{detail ? <CoordinationView job={{ ...context, detail }} open={view === 'coordination'} /> : null}</div>
-      {detail && !moved && !archived ? <JobActions job={{ ...context, detail }} onAnswered={archivalAnswered} /> : null}
+      {/* Archive and Copy follow the person's keys and the job's state; the moved, read-only state
+          limits only field editing. */}
+      {detail && !archived ? <JobActions job={{ ...context, detail }} onAnswered={archivalAnswered} /> : null}
     </div>
   );
 }
