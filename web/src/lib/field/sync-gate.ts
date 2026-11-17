@@ -32,7 +32,8 @@ export type MeAnswer = { status: number; body: unknown };
 export type AppCheckSeam = { mode: 'monitor' | 'enforce'; token(): Promise<unknown> };
 
 // What the server said about the person, kept in ds-me for the offline start.
-export type MeFacts = { companyId: string; companyName: string; role: string; capabilities: string[]; expiresAt: number };
+// `actorId`: the person's id in the company, from the same answer (field-sync.ts adds it).
+export type MeFacts = { companyId: string; companyName: string; role: string; capabilities: string[]; actorId?: string; expiresAt: number };
 
 export type GateState =
   | { kind: 'starting' }
@@ -63,6 +64,13 @@ export function meFacts(body: unknown): { companyId: string; capabilities: strin
     return null;
   }
   return { companyId, capabilities: capabilities as string[] };
+}
+
+// The person's id in the company (`actor.id`) of a 200 from GET /api/me, as the field row keeps it;
+// nothing when the answer has none.
+export function meActor(body: unknown): { actorId: string } | Record<string, never> {
+  const actorId = field(field(body, 'actor'), 'id');
+  return typeof actorId === 'string' && actorId ? { actorId } : {};
 }
 
 // One answer of GET /api/me, judged. `now` is milliseconds since 1970.

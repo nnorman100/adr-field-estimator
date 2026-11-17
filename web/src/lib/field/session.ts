@@ -11,6 +11,9 @@ export type FieldSession = {
   db: Firestore;
   client: FieldClient;
   companyId: string;
+  // The signed-in person's id in this company (GET /api/me, `actor.id`): tells their own jobs and
+  // field work from other people's. Required, never guessed (review decision D).
+  actorId: string;
   role: string;
   capabilities: string[];
   online: boolean;
@@ -25,4 +28,15 @@ export function watchSignIn(saved: DsMe, uid: string, lost: () => void, ready?: 
     if (user?.uid !== uid) lost();
     else ready?.();
   });
+}
+
+// What the job screens need of the person to start: company, role and actor id. A saved sign-in
+// written before the actor id was kept has the first two and not the third; it waits for one online
+// check ('needs-check'); anything less is not a sign-in the screens can use (null).
+export function sessionIdentity(me: { companyId: string | null; role: string | null; actorId: string | null }):
+  | { companyId: string; role: string; actorId: string }
+  | 'needs-check'
+  | null {
+  if (!me.companyId || !me.role) return null;
+  return me.actorId ? { companyId: me.companyId, role: me.role, actorId: me.actorId } : 'needs-check';
 }

@@ -33,6 +33,8 @@ async function saveRow(page: Page, lane: NetworkLane, world: World, who: Person,
     savedAt: Date.now(),
     role: 'estimator',
     companyId: world.companyId,
+    // The row the sign-in page saves holds the person's actor id too (S5b-1).
+    actorId: 'actor',
     capabilities: ['scope'],
     authTime: Date.now() - ageDays * DAY,
   };

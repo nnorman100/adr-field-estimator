@@ -126,6 +126,7 @@ test('the sign-in is saved before the field app is offered, and removed before s
   const rows = await savedRows(page);
   expect(rows).toHaveLength(1);
   expect(Object.keys(rows[0]!).sort()).toEqual([
+    'actorId',
     'address',
     'authTime',
     'capabilities',

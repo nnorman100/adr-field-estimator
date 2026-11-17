@@ -21,7 +21,7 @@ import {
 } from '@/lib/firebase-client';
 import { saveMe } from '@/lib/field/ds-me';
 import { prepareFieldShell } from '@/lib/field/register-worker';
-import { meFacts } from '@/lib/field/sync-gate';
+import { meActor, meFacts } from '@/lib/field/sync-gate';
 import { evaluate, watchRetention } from '@/lib/field/retention';
 import type { LockReason } from '@/lib/field/unsent';
 import {
@@ -221,6 +221,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
           config,
           role: outcome.role,
           ...(meFacts(body) ?? {}),
+          ...meActor(body),
           ...(Number.isFinite(authTime) ? { authTime } : {}),
         });
         const signedIn = outcome;

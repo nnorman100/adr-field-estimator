@@ -4,6 +4,7 @@ import {
   APP_CHECK_MONITOR_WAIT_MS,
   ASK_WITHIN_MS,
   judgeMe,
+  meActor,
   OFFLINE_RETRY_MS,
   sessionValid,
   SyncGate,
@@ -33,6 +34,16 @@ function me(expiresAt: number | null, extra: Record<string, unknown> = {}): MeAn
   };
 }
 const refused = (status: number, error: string): MeAnswer => ({ status, body: { error } });
+
+describe('the actor id of an /api/me answer (S5b-1)', () => {
+  it('is the person\'s id in the company, saved with the sign-in row, and nothing when the answer has none', () => {
+    expect(meActor(me(NOW + DAY).body)).toEqual({ actorId: 'actor-a' });
+    expect(meActor({ actor: { id: '' } })).toEqual({});
+    expect(meActor({ actor: { id: 4 } })).toEqual({});
+    expect(meActor({ company: { id: 'c' } })).toEqual({});
+    expect(meActor(null)).toEqual({});
+  });
+});
 
 describe('one /api/me answer, judged', () => {
   it('opens on a 200 whose access record runs past now', () => {

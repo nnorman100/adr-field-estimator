@@ -36,6 +36,22 @@ describe('ds-me rows', () => {
 });
 
 // S6-3 adds what the server said at the last online check and when the person signed in.
+describe('ds-me rows with the S5b-1 actor id', () => {
+  const WITH_ACTOR = { ...ROW, companyId: 'company-a', role: 'estimator', capabilities: ['scope'], authTime: 2, actorId: 'actor-a' };
+
+  it('are read with it, and without it (a row saved before S5b-1)', () => {
+    expect(parseMe(WITH_ACTOR)).toEqual(WITH_ACTOR);
+    expect(parseMe({ ...WITH_ACTOR, actorId: undefined })).not.toBeNull();
+  });
+
+  it.each([
+    ['an empty actor id', { ...WITH_ACTOR, actorId: '' }],
+    ['an actor id that is not text', { ...WITH_ACTOR, actorId: 7 }],
+  ])('are skipped when damaged: %s', (_name, value) => {
+    expect(parseMe(value)).toBeNull();
+  });
+});
+
 describe('ds-me rows with the S6-3 facts', () => {
   const FACTS = { ...ROW, companyId: 'company-a', role: 'estimator', capabilities: ['scope'], authTime: 2 };
 
