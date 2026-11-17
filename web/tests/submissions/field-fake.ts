@@ -2,6 +2,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import type { JobProjection } from '@/lib/field/job-projection';
 import type { FieldManifest } from '@/lib/field/canonical';
 import { MAX_PHOTO_REFS, MAX_ROOMS } from '@/lib/field/schema';
+import type { ArchiveResult, ArchiveStore } from '@/lib/jobs/archive-store';
 import type { FenceResult, FenceStore, Provenance } from '@/lib/submissions/fence';
 import type { FakeDrafts } from '../db/draft-fake';
 import type { FakeDraftStates } from '../db/evidence-fake';
@@ -25,6 +26,8 @@ export type FakeDraft = {
   rooms: Record<string, unknown>;
   photos: Record<string, unknown>;
   previous: Provenance | null;
+  // The job revision of the last archive or restore (S5b-2), absent until one.
+  archiveRevision?: number;
 };
 export type FieldData = Record<string, FakeDraft>;
 
@@ -49,9 +52,11 @@ export const fileBacking = (path: string): Backing => ({
   },
 });
 
-type Method = keyof FenceStore;
+type Method = keyof FenceStore | keyof ArchiveStore;
 
-export type FakeField = FenceStore & {
+// Also the archive, restore and copy writer of S5b-2 (src/lib/jobs/archive-store.ts), on the same
+// drafts, so Submit and the photo route see an archived draft as the real field database holds it.
+export type FakeField = FenceStore & ArchiveStore & {
   // The drafts as stored now (a copy).
   data(): FieldData;
   projected: Map<string, JobProjection>;
@@ -187,6 +192,42 @@ export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts:
         draft.state = 'editing';
         draft.fence = null;
         return 'released' as const;
+      }),
+
+    // As the real writer: a draft takes an archive or restore only at a newer job revision, and a
+    // restore changes the state only of a draft that is archived.
+    archiveDraft: (companyId, draftId, revision) =>
+      call('archiveDraft', (data): ArchiveResult => {
+        const draft = data[key(companyId, draftId)];
+        if (!draft) return 'missing';
+        const stored = draft.archiveRevision ?? 0;
+        if (stored > revision) return 'newer';
+        if (stored === revision) return 'same';
+        Object.assign(draft, { state: 'archived', archiveRevision: revision });
+        return 'set';
+      }),
+
+    restoreDraft: (companyId, draftId, state, revision) =>
+      call('restoreDraft', (data): ArchiveResult => {
+        const draft = data[key(companyId, draftId)];
+        if (!draft) return 'missing';
+        const stored = draft.archiveRevision ?? 0;
+        if (stored > revision) return 'newer';
+        if (stored === revision) return 'same';
+        if (draft.state === 'archived') draft.state = state;
+        draft.archiveRevision = revision;
+        return 'set';
+      }),
+
+    createCopy: (companyId, draftId, fieldOwnerUid, manifest) =>
+      call('createCopy', (data) => {
+        if (data[key(companyId, draftId)]) return 'exists' as const;
+        data[key(companyId, draftId)] = {
+          ...emptyDraft(fieldOwnerUid),
+          field: manifest.draft ?? {},
+          rooms: Object.fromEntries(manifest.rooms.map((room) => [room.id, room.field ?? {}])),
+        };
+        return 'created' as const;
       }),
 
     createFrom: (companyId, draftId, fieldOwnerUid, manifest, previous) =>

@@ -84,6 +84,11 @@ const JOB_COORDINATION = { revision: 1, changeId: '0c6e2a84-5d17-4b39-9e60-7f2a1
 const JOB_ASSIGN = { id: '9e4b2d76-1a3c-4f58-8b07-6d2e5a1c9f34', estimatorActorId: '3b7d1f95-8c2e-4a60-9d14-2f6b8e0a5c71' };
 const JOB_TRANSFER = { revision: 1, changeId: '6a2c8e40-7b91-4d35-a2f6-1e9c3b5d7a08', toActorId: '3b7d1f95-8c2e-4a60-9d14-2f6b8e0a5c71' };
 
+// Archive, restore and copy (S5b-2), with the suite's own ids; the path carries the other company's
+// job.
+const JOB_ARCHIVE = { revision: 1, changeId: '2f8a4c61-9d3b-4e07-b5a2-7c1e6f0d3b98' };
+const JOB_COPY = { id: '5d9e1b37-4a2c-4f86-9e03-1b7d5c2a8f64', draftId: '8b3f7a15-2c9e-4d40-a6b1-3e5c9d7f0a82' };
+
 // Link bodies (S5a-11b), with the suite's own ids.
 const JOB_LINK = { id: '7a1c3e59-2b84-4d60-9f17-5c3e8a0b2d49', estimateId: '5b8e1c47-3f2a-4d96-8e01-4c7a9b2d6f15', proposalSha256: '0'.repeat(64) };
 const JOB_DOCUMENT_LINK = { id: '1e5b9d27-6a40-4c83-b2f9-8d0e3a7c6b15', set: 'homeowner' };
@@ -167,6 +172,11 @@ export const MATRIX: readonly MatrixRow[] = [
   row('api/jobs/[jobId]/assignments/[assignmentId]', 'DELETE', 'company', { own: 'cross' }),
   row('api/jobs/[jobId]/field-owner', 'POST', 'company', { own: 'cross' }),
   row('api/jobs/[jobId]/field-owner/transfer', 'POST', 'company', { body: JOB_TRANSFER, own: 'cross' }),
+  // S5b-2: archive, restore and copy of another company's job are 404 to every role allowed them
+  // (403 to a role that is not), and nothing is changed or made.
+  row('api/jobs/[jobId]/archive', 'POST', 'company', { body: JOB_ARCHIVE, own: 'cross' }),
+  row('api/jobs/[jobId]/restore', 'POST', 'company', { body: JOB_ARCHIVE, own: 'cross' }),
+  row('api/jobs/[jobId]/copy', 'POST', 'company', { body: JOB_COPY, own: 'cross' }),
 
   row('api/invitations/[invitationId]', 'GET', 'invitation'),
   row('api/invitations/[invitationId]/accept', 'POST', 'invitation'),

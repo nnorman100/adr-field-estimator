@@ -109,6 +109,29 @@ export const transferBody = z.strictObject({
   toActorId: uuid,
 });
 
+// POST /api/jobs/{id}/archive and /restore (S5b-2): the job revision the screen last saw and this
+// change's own id, as the customer save, so a lost answer sent again is the same change.
+export const archiveBody = z.strictObject({
+  revision,
+  changeId: uuid,
+});
+
+// POST /api/jobs/{id}/copy (S5b-2): the new job's id and its first draft's id, both made on the
+// phone, so the same copy sent again makes one job and one draft.
+export const copyBody = z.strictObject({
+  id: uuid,
+  draftId: uuid,
+});
+
+export type ArchiveInput = z.infer<typeof archiveBody>;
+export type CopyInput = z.infer<typeof copyBody>;
+
+// SHA-256 of a copy request in a fixed key order. It is the new job's create digest, and names the
+// signed job copied, so neither a create nor a copy of another job can pass for a retry of it.
+export function copyDigest(sourceJobId: string, input: CopyInput): string {
+  return createHash('sha256').update(JSON.stringify({ copyOf: sourceJobId, id: input.id, draftId: input.draftId })).digest('hex');
+}
+
 export type CoordinationInput = z.infer<typeof coordinationBody>;
 export type AssignInput = z.infer<typeof assignBody>;
 export type TransferInput = z.infer<typeof transferBody>;
@@ -122,14 +145,15 @@ export type CreateJobInput = z.infer<typeof createBody>;
 export type CustomerInput = z.infer<typeof customerBody>;
 export type ClaimInput = z.infer<typeof claimBody>;
 
-export const LIST_SCOPES = ['company', 'mine'] as const;
+// `archived` (S5b-2) is the owner's list of archived drafts, the only list that holds them.
+export const LIST_SCOPES = ['company', 'mine', 'archived'] as const;
 export type ListScope = (typeof LIST_SCOPES)[number];
 export const DEFAULT_PAGE = 25;
 export const MAX_PAGE = 50;
 
 export type ListQuery = { scope: ListScope | null; limit: number; cursor: string | null };
 
-// GET /api/jobs?scope=company|mine&limit=1..50&cursor=... Anything else is a bad request.
+// GET /api/jobs?scope=company|mine|archived&limit=1..50&cursor=... Anything else is a bad request.
 export function parseListQuery(params: URLSearchParams): ListQuery | null {
   const scope = params.get('scope');
   if (scope !== null && !(LIST_SCOPES as readonly string[]).includes(scope)) return null;
