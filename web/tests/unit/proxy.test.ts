@@ -108,6 +108,9 @@ describe('API sign-in gate', () => {
       '/api/jobs/:id/assignments/:id',
       '/api/jobs/:id/field-owner',
       '/api/jobs/:id/field-owner/transfer',
+      '/api/jobs/:id/archive',
+      '/api/jobs/:id/restore',
+      '/api/jobs/:id/copy',
     ]);
     expect(call('/api/me').headers.get('x-middleware-next')).toBe('1');
     expect(call('/api/me/extra').status).toBe(401);
@@ -134,7 +137,7 @@ describe('API sign-in gate', () => {
       `/api/companies/${id}x/team`,
       `/api/companies/${id}/members/${id}/delete`,
       `/api/invitations/${id}/accept/`,
-      `/api/jobs/${id}/archive`,
+      `/api/jobs/${id}/archive/extra`,
       `/api/jobs/${id}/customer/`,
       `/api/jobs/${id}/photos`,
       `/api/jobs/${id}/photos/${id}/original`,

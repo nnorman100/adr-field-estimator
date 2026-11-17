@@ -1,13 +1,16 @@
 import { serverDatabase } from '@/lib/auth/services';
 import { parseProjectionConfig } from '@/lib/config';
 import { firestoreFor } from '@/lib/projection/firestore';
+import { archiveService, type ArchiveService } from './archive';
+import { firestoreArchiveStore } from './archive-store';
 import { firestoreDraftStore } from './drafts';
 import { officeService, type OfficeService } from './office';
 import { jobsService, type JobsService } from './service';
 
-// Every jobs route's service: the jobs themselves (S5a-3) and the office's coordination, assignment
-// and field owner (S5b-1), over one database and one field database.
-export type JobRoutesService = JobsService & OfficeService;
+// Every jobs route's service: the jobs themselves (S5a-3), the office's coordination, assignment
+// and field owner (S5b-1), and archive, restore and copy (S5b-2), over one database and one field
+// database.
+export type JobRoutesService = JobsService & OfficeService & ArchiveService;
 
 let service: JobRoutesService | null = null;
 
@@ -18,8 +21,9 @@ export function jobsServices(): JobRoutesService {
   if (!service) {
     const config = parseProjectionConfig(process.env);
     const db = serverDatabase();
-    const drafts = firestoreDraftStore(firestoreFor(config));
-    service = { ...jobsService(db, drafts), ...officeService(db, drafts) };
+    const firestore = firestoreFor(config);
+    const drafts = firestoreDraftStore(firestore);
+    service = { ...jobsService(db, drafts), ...officeService(db, drafts), ...archiveService(db, firestoreArchiveStore(firestore)) };
   }
   return service;
 }

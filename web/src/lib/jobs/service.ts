@@ -18,6 +18,7 @@ const READ: readonly Capability[] = ['jobs_read'];
 const CREATE: readonly Capability[] = ['jobs_create'];
 const EDIT_CUSTOMER: readonly Capability[] = ['scope', 'coordination'];
 const EDIT_CLAIM: readonly Capability[] = ['scope', 'coordination'];
+const ARCHIVE: readonly Capability[] = ['jobs_archive'];
 
 export type JobView = {
   id: string;
@@ -252,9 +253,12 @@ export function jobsService(db: Database, drafts: DraftStore): JobsService {
     async list(caller, query) {
       need(caller, READ);
       // An estimator lists their own jobs only; asking for the company's is refused, not narrowed.
+      // The archived drafts are the owner's list (S5b-2, `jobs_archive`), of the whole company.
       const everyone = seesEveryJob(caller);
+      const archived = query.scope === 'archived';
       if (query.scope === 'company' && !everyone) throw new JobError('not_allowed');
-      const company = query.scope === 'company' || (query.scope === null && everyone);
+      if (archived) need(caller, ARCHIVE);
+      const company = archived || query.scope === 'company' || (query.scope === null && everyone);
       const after = query.cursor === null ? null : decodeCursor(query.cursor);
       return inCompany(caller.companyId, async (tx) => {
         // The caller is actively assigned to the job (S5b-1): an estimator's own list holds it.
@@ -263,7 +267,7 @@ export function jobsService(db: Database, drafts: DraftStore): JobsService {
           WHERE ${jobAssignments.companyId} = ${jobs.companyId} AND ${jobAssignments.jobId} = ${jobs.id}
             AND ${jobAssignments.estimatorActorId} = ${caller.actorId} AND ${jobAssignments.endedAt} IS NULL
         )`;
-        const where: SQL[] = [eq(jobs.companyId, caller.companyId), ne(jobs.status, 'archived')];
+        const where: SQL[] = [eq(jobs.companyId, caller.companyId), archived ? eq(jobs.status, 'archived') : ne(jobs.status, 'archived')];
         if (!company) where.push(or(eq(jobs.createdByActorId, caller.actorId), eq(jobs.fieldOwnerActorId, caller.actorId), assigned)!);
         if (after) {
           where.push(

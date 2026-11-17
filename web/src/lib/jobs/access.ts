@@ -32,6 +32,12 @@ export const JOB_ERRORS = {
   not_assignable: 409,
   assignment_not_found: 404,
   assigned_field_owner: 409,
+  // Archive and restore (S5b-2): a restore of a job that is not archived, and an archive while a
+  // Submit of the job is still deciding or writing its marker (it settles within minutes).
+  not_archived: 409,
+  submission_in_progress: 409,
+  // Copy (S5b-2) makes a new draft from a signed job only.
+  not_signed: 409,
   // The job is saved but its field draft could not be made or updated; the same request again
   // makes it.
   draft_unavailable: 503,
@@ -104,13 +110,14 @@ export async function isAssigned(tx: CompanyTransaction, caller: Pick<JobCaller,
 // to the field work (photos, Submit, Back to editing): the caller must own the job's field work,
 // whatever their role (docs/spec.md 6.2). `customer` is for the customer and claim saves (owner
 // decision J3): the owner and office by their role, an estimator only while they own the field work,
-// not only because they are assigned the job.
+// not only because they are assigned the job. `archived` is for archive and restore only (S5b-2):
+// they reach an archived job, which every other route answers with 410.
 export async function jobAccess(
   tx: CompanyTransaction,
   caller: JobCaller,
   jobId: string,
   needs: readonly Capability[],
-  options: { lock?: boolean; fieldWork?: boolean; customer?: boolean } = {},
+  options: { lock?: boolean; fieldWork?: boolean; customer?: boolean; archived?: boolean } = {},
 ): Promise<JobRow> {
   const found = tx
     .select()
@@ -119,7 +126,7 @@ export async function jobAccess(
     .limit(1);
   const [row] = await (options.lock ? found.for('update') : found);
   if (!row || !(canSeeJob(caller, row) || (await isAssigned(tx, caller, row.id)))) throw new JobError('not_found');
-  if (row.status === 'archived') throw new JobError('archived');
+  if (row.status === 'archived' && !options.archived) throw new JobError('archived');
   if (!hasAny(caller, needs)) throw new JobError('not_allowed');
   if (options.fieldWork && !ownsFieldWork(caller, row)) throw new JobError('not_field_owner');
   if (options.customer && !seesEveryJob(caller) && !ownsFieldWork(caller, row)) throw new JobError('not_field_owner');
