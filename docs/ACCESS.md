@@ -10,7 +10,7 @@ The sections of this document, one file per area (each keeps its original headin
 - [Superadmin](access/superadmin.md): Superadmin and the platform operator.
 - [Prices API](access/prices.md): Prices API (rebuilt app, S4-6).
 - [Company profile API](access/company-profile.md): Company profile API (rebuilt app, S5a-4 and S5a-4b).
-- [AI usage and ceilings](access/ai-usage.md): AI usage and ceilings (rebuilt app, S7-4).
+- [AI usage and ceilings](access/ai-usage.md): AI usage and ceilings (rebuilt app, S7-4); AI summary draft (rebuilt app, S7-6).
 - [Non-role access](access/non-role-access.md): Non-role access (anonymous, links, server-only).
 - [Jobs routes](access/jobs.md): Jobs routes (rebuilt app, S5a-3); Office jobs routes (rebuilt app, S5b-1): coordination, assignment, the field owner and its move; Field database job locators (S6 follow-up); Archive, restore and copy (rebuilt app, S5b-2).
 - [Photo routes](access/photos.md): Photo routes (rebuilt app, S5a-5).

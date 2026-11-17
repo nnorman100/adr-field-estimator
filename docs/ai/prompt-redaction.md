@@ -23,6 +23,7 @@ Each match is replaced by `[removed]`. Matching ignores case, and a match must b
   - each of these with a possessive ('s).
 
   A name word on its own is kept. For a customer named Mary Hall, "the hall" stays.
+
 - **The saved property address.** Each comma-separated part is removed in its common spellings:
   - street words and their short forms (Street or St, Avenue or Ave, Road or Rd, Lane or Ln, and the others in the file);
   - unit words (Unit, Apt, Suite, Ste, No, #);
@@ -30,6 +31,7 @@ Each match is replaced by `[removed]`. Matching ignores case, and a match must b
   - any case, punctuation or spacing.
 
   The street without its house number or its unit is removed, and so is the ZIP code on its own.
+
 - **Any email address.**
 - **Any phone number.** This covers North American numbers (with or without +1, area code in brackets or not, or ten digits run together), seven-digit numbers written with a separator, and numbers starting with +.
 - **Anything shaped like coordinates:**
