@@ -16,6 +16,7 @@ The approved plan (Oct 24, 2026) for making this repository the complete DryScop
   - Never run a blanket `firebase deploy`. Deploy only `hosting:alert-disaster`, after the backend.
   - Keep secrets out of the repo, the wiki and Notion.
 - **Shared notes:** LLM Wiki `projects/adr-field-estimator.md`, and the Notion page "ADR Field Estimator (Alert Disaster Restoration field app)" in Second Brain / Notes.
+- **Rebuild stage plans:** `docs/plans/README.md` lists each stage plan (S3, pricing, S5, S6, S7, TC and S8 go-live: the live project, the domain, drills, the old app's deletion and switch-over day).
 - **Code pointers:** this file names functions, not line numbers, because lines drift. Search for the function.
 
 ## Context
