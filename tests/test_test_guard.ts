@@ -228,6 +228,9 @@ function runGuard(change: Change, opts: { labels?: string[]; noConfig?: boolean 
     env.GITHUB_EVENT_PATH = event;
   }
   const r = spawnSync('node', [GUARD, base], { cwd: dir, env, encoding: 'utf8' });
+  // Remove the repository now rather than all of them in afterAll, whose one hook timeout a slow
+  // host can exceed once there are many cases (afterAll still cleans up after a failed run).
+  rmSync(dir, { recursive: true, force: true });
   return { code: r.status, out: `${r.stdout}${r.stderr}` };
 }
 
