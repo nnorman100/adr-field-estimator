@@ -38,4 +38,6 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: lts/*
-      - run: npm audit --audit-level=high
+      # Fails on any high or critical advisory except the owner-approved ones in
+      # .github/audit-exceptions.json, and prints every one it skips.
+      - run: node scripts/audit-check.mjs
