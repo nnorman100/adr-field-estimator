@@ -245,7 +245,8 @@ export function archiveService(db: Database, store: ArchiveStore): ArchiveServic
           const [existing] = await tx
             .select()
             .from(jobs)
-            .where(and(eq(jobs.companyId, caller.companyId), eq(jobs.id, input.id)));
+            .where(and(eq(jobs.companyId, caller.companyId), eq(jobs.id, input.id)))
+            .for('update');
           // A retry only when it is the same copy of the same job, by someone who may see the copy.
           if (!existing || existing.requestDigest !== digest || !canSeeJob(caller, existing)) throw new JobError('conflict');
           if (existing.status === 'archived') throw new JobError('archived');

@@ -229,7 +229,8 @@ export function jobsService(db: Database, drafts: DraftStore): JobsService {
           const [existing] = await tx
             .select()
             .from(jobs)
-            .where(and(eq(jobs.companyId, caller.companyId), eq(jobs.id, input.id)));
+            .where(and(eq(jobs.companyId, caller.companyId), eq(jobs.id, input.id)))
+            .for('update');
           // No such job: the draft id is another job's. Same id: it is a retry only when the body is
           // the same and the caller may see that job.
           if (!existing || existing.requestDigest !== digest || !canSeeJob(caller, existing)) throw new JobError('conflict');
