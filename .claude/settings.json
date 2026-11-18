@@ -24,6 +24,31 @@
       }
     ]
   },
+  "skillOverrides": {
+    "code-to-design": "off",
+    "stitch::code-to-design": "off",
+    "design-md": "off",
+    "enhance-prompt": "off",
+    "extract-design-md": "off",
+    "stitch::extract-design-md": "off",
+    "extract-static-html": "off",
+    "stitch::extract-static-html": "off",
+    "generate-design": "off",
+    "stitch::generate-design": "off",
+    "manage-design-system": "off",
+    "stitch::manage-design-system": "off",
+    "react-components": "off",
+    "stitch::react-components": "off",
+    "react-native": "off",
+    "react-vite-dashboard": "off",
+    "remotion": "off",
+    "shadcn-ui": "off",
+    "site-md": "off",
+    "stitch-loop": "off",
+    "taste-design": "off",
+    "upload-to-stitch": "off",
+    "stitch::upload-to-stitch": "off"
+  },
   "permissions": {
     "deny": [
       "Read(./.env)",
