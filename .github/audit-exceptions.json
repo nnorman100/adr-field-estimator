@@ -1,0 +1,10 @@
+{
+  "exceptions": [
+    {
+      "id": "GHSA-fc5q-39xc-vjpf",
+      "reason": "picomatch ReDoS (high) with no patched release; it reaches only dev tooling (vitest, vite, tinyglobby, fdir). The owner waived this one advisory and nothing else.",
+      "approved": "2026-11-18",
+      "recheckBy": "2026-12-18"
+    }
+  ]
+}
