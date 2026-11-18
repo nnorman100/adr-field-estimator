@@ -9,7 +9,8 @@
 // of each document as the phone held it, what the phone held of what it writes (`before`), and its
 // state:
 // - pending: waiting for the server's answer;
-// - rejected: the rules refused it (`reason`); never sent again (step 6);
+// - rejected: the rules refused it (`reason`); never sent again by recovery (step 6), only by the
+//   person's Try again (S6-4b), and then only while the server still holds what the edit was made on;
 // - refused: the server refused it but why is not known yet (the draft or the person's role could
 //   not be read): never sent again, and its reason is read at the next online recovery;
 // - changed: the server holds other values and nothing refused it (the same person's other phone
