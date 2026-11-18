@@ -38,7 +38,9 @@ import { manifestProblem, SNAPSHOT_FORMAT, snapshotBytes, snapshotManifest, stor
 // No Postgres transaction is held across a Firestore call, except the fence, which is closed under
 // the job's lock and its row's lock (closeFence). A failure talking to Firestore leaves the row pending: never an
 // abort, so a retry racing a failing attempt can still commit, and never a release, so nothing is
-// unlocked while its row could still commit.
+// unlocked while its row could still commit. A fence call that outlasts the idle-in-transaction
+// limit (db/client.ts) ends the transaction the same way: the row stays pending, and a fence that
+// lands after the locks are gone is released by the worker once its row is aborted (repair.ts).
 
 // Submit and Back to editing are scope work: the owner and the estimator (docs/ACCESS.md).
 const SUBMIT: readonly Capability[] = ['scope'];
