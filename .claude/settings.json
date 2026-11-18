@@ -1,5 +1,17 @@
 {
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/scripts/push-guard.mjs\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
@@ -17,9 +29,16 @@
       "Read(./.env)",
       "Read(./.env.*)",
       "Read(./**/*service-account*.json)",
+      "Read(./**/*.key)",
+      "Read(./**/*.tfstate)",
+      "Read(./**/*.tfstate.*)",
+      "Read(~/.config/gcloud/**)",
       "Bash(git push --force:*)",
       "Bash(git push -f:*)",
       "Bash(git push origin master:*)",
+      "Bash(git * push --force*)",
+      "Bash(git * push -f*)",
+      "Bash(git * push origin master*)",
       "Bash(firebase deploy)",
       "Bash(firebase deploy --project:*)"
     ],
@@ -34,7 +53,9 @@
       "Bash(python scripts/deploy_backend.py:*)",
       "Bash(python scripts/stamp_hosting.py:*)",
       "Bash(gh pr merge:*)",
-      "Bash(gh pr edit:*)"
+      "Bash(gh pr edit:*)",
+      "Bash(gh-axi pr merge:*)",
+      "Bash(gh-axi pr edit:*)"
     ]
   }
 }
