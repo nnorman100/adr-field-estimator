@@ -226,6 +226,21 @@ describe('Back to editing', () => {
     expect(h.field.draft(h.seed.a, body.draftId)).toEqual({ ...stored, jobId });
   });
 
+  // Security audit F1: the claim commits before the stamp, so a lost answer from the stamp never leaves
+  // a draft the previous version made stamped without its claim.
+  it('commits the claim before stamping a next draft the previous version made, so a lost answer leaves it claimed', async () => {
+    const { jobId, draftId } = await submittedJob();
+    const body = { draftId: randomUUID(), fromDraftId: draftId };
+    expect((await f.nextDraft(ESTIMATOR_A, jobId, body)).status).toBe(201);
+    await h.admin`DELETE FROM job_drafts WHERE draft_id = ${body.draftId}`;
+    h.field.unstamp(h.seed.a, body.draftId);
+    h.field.loseNext.createFrom = true;
+    expect((await f.nextDraft(ESTIMATOR_A, jobId, body)).status).toBe(503);
+    expect(h.field.draft(h.seed.a, body.draftId)?.jobId).toBe(jobId);
+    expect(await h.admin`SELECT job_id::text AS job FROM job_drafts WHERE draft_id = ${body.draftId}`).toEqual([{ job: jobId }]);
+    expect((await f.nextDraft(ESTIMATOR_A, jobId, body)).status).toBe(200);
+  });
+
   it('gives a new draft id to one of two jobs that claim it at once, and refuses the other (security audit F1)', async () => {
     const { jobId, draftId } = await submittedJob();
     const contested = randomUUID();

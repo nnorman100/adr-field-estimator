@@ -218,6 +218,22 @@ describe('creating a job', () => {
     expect(await h.admin`SELECT job_id::text AS job FROM job_drafts WHERE draft_id = ${held.draftId}`).toEqual([{ job: other.id }]);
   });
 
+  // Security audit F1: the claim commits before the stamp. When the field database stamps a draft the
+  // previous version made and its answer is lost, the draft is never left stamped without its claim.
+  it('commits the claim before stamping a draft the previous version made, so a lost answer leaves it claimed', async () => {
+    const ids = newIds();
+    expect((await create(ESTIMATOR_A, ids)).status).toBe(201);
+    const key = `${h.seed.a}/${ids.draftId}`;
+    await h.admin`DELETE FROM job_drafts WHERE draft_id = ${ids.draftId}`;
+    h.drafts.jobOf.delete(key);
+    h.drafts.failNext.on = true;
+    h.drafts.failNext.afterWrite = true;
+    expect(await create(ESTIMATOR_A, ids)).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
+    expect(h.drafts.jobOf.get(key)).toBe(ids.id);
+    expect(await h.admin`SELECT job_id::text AS job FROM job_drafts WHERE draft_id = ${ids.draftId}`).toEqual([{ job: ids.id }]);
+    expect((await create(ESTIMATOR_A, ids)).status).toBe(200);
+  });
+
   it('makes the draft on a retry when the first attempt saved the job and lost the draft', async () => {
     const ids = newIds();
     h.drafts.failNext.on = true;

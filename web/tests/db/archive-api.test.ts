@@ -330,6 +330,21 @@ describe('copy', () => {
     expect(h.field.draft(h.seed.a, ids.draftId)).toEqual({ ...stored, jobId: ids.id });
   });
 
+  // Security audit F1: the claim commits before the stamp, so a lost answer from the stamp never leaves
+  // a copy draft the previous version made stamped without its claim.
+  it('commits the claim before stamping a copy draft the previous version made, so a lost answer leaves it claimed', async () => {
+    const { jobId: source } = await signedJob();
+    const ids = { id: randomUUID(), draftId: randomUUID() };
+    expect((await copy(OWNER_A, source, ids)).status).toBe(201);
+    await h.admin`DELETE FROM job_drafts WHERE draft_id = ${ids.draftId}`;
+    h.field.unstamp(h.seed.a, ids.draftId);
+    h.field.loseNext.createCopy = true;
+    expect((await copy(OWNER_A, source, ids)).status).toBe(503);
+    expect(h.field.draft(h.seed.a, ids.draftId)?.jobId).toBe(ids.id);
+    expect(await h.admin`SELECT job_id::text AS job FROM job_drafts WHERE draft_id = ${ids.draftId}`).toEqual([{ job: ids.id }]);
+    expect((await copy(OWNER_A, source, ids)).status).toBe(200);
+  });
+
   it('refuses a copy onto a draft the field database holds for another job, and commits nothing', async () => {
     const { jobId: source } = await signedJob();
     const foreign = randomUUID();

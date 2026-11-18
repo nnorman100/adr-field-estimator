@@ -234,6 +234,10 @@ export function jobsService(db: Database, drafts: DraftStore): JobsService {
           // the same and the caller may see that job.
           if (!existing || existing.requestDigest !== digest || !canSeeJob(caller, existing)) throw new JobError('conflict');
           if (existing.status === 'archived') throw new JobError('archived');
+          // A retry holds its draft id for the job in Postgres (security audit F1), in this transaction, which
+          // commits before the field database is touched: a draft the previous version made is stamped only
+          // once the claim is committed, so a lost answer from that stamp never leaves it unclaimed.
+          if (!(await holdDraft(tx, caller.companyId, existing.id, input.draftId))) throw new JobError('conflict');
           row = existing;
         } else {
           if (!(await claimDraft(tx, caller.companyId, row.id, input.draftId))) throw new JobError('conflict');
@@ -254,8 +258,6 @@ export function jobsService(db: Database, drafts: DraftStore): JobsService {
       try {
         await inCompany(caller.companyId, async (tx) => {
           await lockedJob(tx, caller.companyId, made.detail.job.id, { live: true });
-          // The draft id is the job's in Postgres before a draft under it is made or stamped (security audit F1).
-          if (!(await holdDraft(tx, caller.companyId, made.detail.job.id, input.draftId))) throw new JobError('conflict');
           // A draft made for another job is never this job's.
           if ((await drafts.ensure(caller.companyId, made.detail.job.id, input.draftId, made.ownerUid)) === 'taken') throw new JobError('conflict');
         });

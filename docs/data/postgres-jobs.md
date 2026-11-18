@@ -79,8 +79,9 @@ an earlier draft of the same job, or named by any submission, is 409 `conflict`.
 job's draft, even one that job submitted and moved on from, including one the previous version (still
 serving while a release migrates) put a job on without claiming it. A retry of a create, copy or Back to editing
 holds its draft id for the job in the table (claimed by the job, or claimed for it now when no job has
-claimed it and no other job's submission names it) before it touches the field database, and only then
-stamps the job id on a draft made before drafts carried it. The first capture and the owner's move name the
+claimed it and no other job's submission names it) in a transaction that commits before it touches the
+field database, and only then stamps the job id on a draft made before drafts carried it, so a lost answer
+from that stamp never leaves the draft stamped without its claim. The first capture and the owner's move name the
 field owner only on drafts the table gives the job: the drafts of its own submissions and its current draft
 that no job has claimed are claimed for the job first, a submitted draft another job claimed is left out,
 and a current draft another job claimed is 409. The

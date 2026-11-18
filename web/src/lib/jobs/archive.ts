@@ -249,6 +249,10 @@ export function archiveService(db: Database, store: ArchiveStore): ArchiveServic
           // A retry only when it is the same copy of the same job, by someone who may see the copy.
           if (!existing || existing.requestDigest !== digest || !canSeeJob(caller, existing)) throw new JobError('conflict');
           if (existing.status === 'archived') throw new JobError('archived');
+          // A retry holds its draft id for the job in Postgres (security audit F1), in this transaction, which
+          // commits before the field database is touched: a draft the previous version made is stamped only
+          // once the claim is committed, so a lost answer from that stamp never leaves it unclaimed.
+          if (!(await holdDraft(tx, caller.companyId, existing.id, input.draftId))) throw new JobError('conflict');
           row = existing;
         } else {
           if (!(await claimDraft(tx, caller.companyId, row.id, input.draftId))) throw new JobError('conflict');
@@ -260,8 +264,6 @@ export function archiveService(db: Database, store: ArchiveStore): ArchiveServic
       });
       await inCompany(caller.companyId, async (tx) => {
         await lockedJob(tx, caller.companyId, input.id, { live: true });
-        // The draft id is the job's in Postgres before a draft under it is made or stamped (security audit F1).
-        if (!(await holdDraft(tx, caller.companyId, input.id, input.draftId))) throw new JobError('conflict');
         const result = await field(() => store.createCopy(caller.companyId, input.id, input.draftId, made.ownerUid, made.field));
         // A draft made for another job is never the copy's (security audit F1).
         if (result === 'taken') throw new JobError('conflict');

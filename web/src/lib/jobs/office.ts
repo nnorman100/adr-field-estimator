@@ -177,13 +177,11 @@ async function draftIdsOf(tx: CompanyTransaction, row: JobRow): Promise<string[]
   const claimed = await tx
     .select({ draftId: jobDrafts.draftId })
     .from(jobDrafts)
-    .where(and(eq(jobDrafts.companyId, row.companyId), eq(jobDrafts.jobId, row.id)))
-    .orderBy(asc(jobDrafts.draftId));
+    .where(and(eq(jobDrafts.companyId, row.companyId), eq(jobDrafts.jobId, row.id)));
   const submitted = await tx
     .selectDistinct({ draftId: jobSubmissions.draftId })
     .from(jobSubmissions)
-    .where(and(eq(jobSubmissions.companyId, row.companyId), eq(jobSubmissions.jobId, row.id)))
-    .orderBy(asc(jobSubmissions.draftId));
+    .where(and(eq(jobSubmissions.companyId, row.companyId), eq(jobSubmissions.jobId, row.id)));
   const held = new Set(claimed.map((one) => one.draftId));
   for (const { draftId } of submitted) {
     if (!held.has(draftId) && (await holdDraft(tx, row.companyId, row.id, draftId))) held.add(draftId);

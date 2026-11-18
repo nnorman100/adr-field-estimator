@@ -441,6 +441,10 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
         if (job.currentDraftId === input.draftId) {
           // The same change again (its answer was lost): nothing more to change in Postgres.
           if (!source) throw new SubmissionError('conflict');
+          // A retry holds its draft id for the job in Postgres (security audit F1), in this transaction, which
+          // commits before the field database is touched: a draft the previous version made is stamped only
+          // once the claim is committed, so a lost answer from that stamp never leaves it unclaimed.
+          if (!(await holdDraft(tx, caller.companyId, jobId, input.draftId))) throw new SubmissionError('conflict');
         } else {
           if (job.status === 'signed') throw new SubmissionError('job_signed');
           // Only from the job's current draft: a second call with another new id is 409.
@@ -478,8 +482,6 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
       // copy may differ), with where it came from. A retry makes it if it is missing.
       await inCompany(caller.companyId, async (tx) => {
         await lockedJob(tx, caller.companyId, jobId, { live: true });
-        // The draft id is the job's in Postgres before a draft under it is made or stamped (security audit F1).
-        if (!(await holdDraft(tx, caller.companyId, jobId, input.draftId))) throw new SubmissionError('conflict');
         const result = await field(() =>
           store.createFrom(caller.companyId, jobId, input.draftId, made.ownerUid, snapshotManifest(made.source.snapshotBytes!), {
             draftId: made.source.draftId,

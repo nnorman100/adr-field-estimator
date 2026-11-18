@@ -72,6 +72,8 @@ export type FakeField = FenceStore & ArchiveStore & {
   unstamp(companyId: string, draftId: string): void;
   // Makes the next call of a method fail as if Firestore were unreachable, before it changes anything.
   failNext: Partial<Record<Method, boolean>>;
+  // Makes the next call of a method do its work and then fail, as if Firestore's answer were lost.
+  loseNext: Partial<Record<Method, boolean>>;
   // Awaited at the start of the next call of a method, so a test can hold one attempt mid-way.
   gate: Partial<Record<Method, () => Promise<void>>>;
   // Every call, by method name, in order.
@@ -122,11 +124,16 @@ export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts:
     const data = load();
     const result = work(data);
     save(data);
+    if (fake.loseNext[method]) {
+      fake.loseNext[method] = false;
+      throw new Error('field database answer lost');
+    }
     return result;
   }
 
   const fake: FakeField = {
     failNext: {},
+    loseNext: {},
     gate: {},
     calls: [],
     projected: new Map(),
