@@ -101,6 +101,10 @@ function optionsFor(company: Company, stand: Stand): LoadOptions {
     thinkMs: 0,
     officePauseMs: 1000,
     retryMs: 200,
+    // A job is started only when its burst comes 3 seconds before the end, so it finishes inside the run.
+    finishMarginMs: 3000,
+    // The browser suite's own server on this machine.
+    allowLocal: true,
     identityToolkitUrl: `http://${AUTH_EMULATOR_HOST}/identitytoolkit.googleapis.com`,
     firestoreUrl: `http://${FIRESTORE_EMULATOR_HOST}`,
     ...(stands[stand] ? { fetch: stands[stand] } : {}),
@@ -121,21 +125,28 @@ function signInFor(options: LoadOptions, company: Company) {
   };
 }
 
-async function run(stand: Stand) {
-  const company = await loadCompany();
+async function runIn(company: Company, stand: Stand) {
   const options = optionsFor(company, stand);
-  const report = await runLoadTest(options, await readPassMarks(), {
+  return runLoadTest(options, await readPassMarks(), {
     password: async () => PASSWORD,
     totpCode: async () => '',
     signIn: signInFor(options, company),
-    // The owner's readings from the database log and the instance chart.
-    afterRun: async () => ({ connectionErrors: 0, peakCpuPercent: 12, peakConnections: 6, maxConnections: 25, peakInstances: 1 }),
+    // The owner's readings from the database log and the database's charts.
+    afterRun: async () => ({ connectionErrors: 0, peakCpuPercent: 12, peakConnections: 6, maxConnections: 25 }),
   });
-  return { company, report };
+}
+
+async function run(stand: Stand) {
+  const company = await loadCompany();
+  return { company, report: await runIn(company, stand) };
 }
 
 test('a ten-second run with two load users measures every pass mark and finds every record exactly once', async () => {
-  const { company, report } = await run('plain');
+  // The load company already holds a finished job with documents, as the owner's reused load
+  // company holds its earlier runs' jobs: one run first seeds it (and warms this new server).
+  const company = await loadCompany();
+  const seed = await runIn(company, 'plain');
+  const report = await runIn(company, 'plain');
   expect(report.errorsByKind).toEqual({});
   // The time marks are the owner's run's to judge (S8-22): this server is a cold local build on a
   // shared CI runner. Here each must have been measured, and the error and record marks must pass.
@@ -161,9 +172,8 @@ test('a ten-second run with two load users measures every pass mark and finds ev
   expect(mark('office day: each office user read documents').passed).toBe(true);
   expect(mark('database processor under 80%').passed).toBe(true);
   expect(mark('database connections under max_connections less 10').passed).toBe(true);
-  expect(report.instances).toEqual({ peak: 1, limit: 1 });
+  expect(mark('no request refused for lack of an instance').passed).toBe(true);
 
-  // What the database holds for the company is exactly what the report counted.
   const db = adminSql();
   const [counts] = await db<{ jobs: number; submissions: number; estimates: number; photos: number }[]>`
     SELECT (SELECT count(*)::int FROM jobs WHERE company_id = ${company.id}) AS jobs,
@@ -171,7 +181,10 @@ test('a ten-second run with two load users measures every pass mark and finds ev
       (SELECT count(*)::int FROM job_estimates WHERE company_id = ${company.id}) AS estimates,
       (SELECT count(*)::int FROM evidence_objects WHERE company_id = ${company.id} AND kind = 'photo') AS photos
   `;
-  expect(counts).toEqual({ jobs: report.records.jobs, submissions: report.records.jobs, estimates: report.records.jobs, photos: report.records.photos });
+  // What the database holds for the company is exactly what the two runs counted.
+  const both = (key: 'jobs' | 'photos') => seed.records[key] + report.records[key];
+  expect(seed.records.problems).toEqual([]);
+  expect(counts).toEqual({ jobs: both('jobs'), submissions: both('jobs'), estimates: both('jobs'), photos: both('photos') });
 });
 
 test('a deliberately slow stand-in for the app fails the reads pass mark', async () => {

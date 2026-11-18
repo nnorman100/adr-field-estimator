@@ -14,11 +14,11 @@
 // It never calls an AI route. Every record's id is noted before it is written; an answer that is
 // lost or a 5xx is sent again with the same id, as the phone does, and whatever stays unknown is
 // settled at the end by reading the app and its field drafts. The end lists what the run made through the app and checks
-// every record is present exactly once. It prints percentiles, asks the owner for the readings only
-// the test project's logs and charts hold (the database log's refused connections, any of which fails
-// the run; the database's peak processor use and connections against its max_connections; the
-// peak Cloud Run instances, shown against the limit but not judged), and exits non-zero when a pass
-// mark in web/load/pass-marks.json fails or a reading is not given.
+// every record is present exactly once. It counts every request Cloud Run itself refused for lack
+// of an instance (any fails the run), prints percentiles, asks the owner for the readings only the
+// test project's logs and charts hold (the database log's refused connections, any of which fails
+// the run; the database's peak processor use and connections against its max_connections), and
+// exits non-zero when a pass mark in web/load/pass-marks.json fails or a reading is not given.
 //
 //   LOAD_TEST_PASSWORD=... node scripts/load-test.ts --url <test address> --company <sign-in address> \
 //     --api-key <web API key> \
@@ -45,6 +45,7 @@ export type PassMarks = {
   finishMaxMs: number;
   errorRateBelow: number;
   databaseConnectionErrors: number;
+  instanceRefusals: number;
   databaseCpuBelowPercent: number;
   connectionHeadroom: number;
 };
@@ -65,6 +66,11 @@ export type LoadOptions = {
   thinkMs: number;
   officePauseMs: number;
   retryMs: number;
+  // A technician starts a job only when its first burst falls this long before the end, so the
+  // job is finished inside the measured window.
+  finishMarginMs: number;
+  // The browser suite's own server on this machine; never set by the owner's command line.
+  allowLocal?: boolean;
   // The Google endpoints; only a test points these at the emulators.
   identityToolkitUrl?: string;
   firestoreUrl?: string;
@@ -72,9 +78,9 @@ export type LoadOptions = {
 };
 
 // What the owner reads after the run: the database log's count of refused connections in the
-// run's window, the test database's peak processor use (percent) and peak connections with its
-// max_connections setting, and the web app's peak instances.
-export type OwnerReadings = { connectionErrors: number; peakCpuPercent: number; peakConnections: number; maxConnections: number; peakInstances: number };
+// run's window, and the test database's peak processor use (percent) and peak connections with its
+// max_connections setting.
+export type OwnerReadings = { connectionErrors: number; peakCpuPercent: number; peakConnections: number; maxConnections: number };
 
 export type Deps = {
   password: () => Promise<string>;
@@ -89,7 +95,8 @@ export type Deps = {
 
 export type Category = 'read' | 'photo' | 'finish' | 'write' | 'field';
 
-type Sample = { category: Category; label: string; ms: number; status: number; error: string | null };
+// `noInstance`: Cloud Run itself refused the request for lack of an instance (see refusedForInstance).
+type Sample = { category: Category; label: string; ms: number; status: number; error: string | null; noInstance: boolean };
 
 export type Stats = { count: number; p50: number | null; p95: number | null; p99: number | null; max: number | null };
 
@@ -121,7 +128,6 @@ export type Report = {
   errorRate: number;
   errorsByKind: Record<string, number>;
   records: Records;
-  instances: { peak: number; limit: number | null };
   marks: { name: string; passed: boolean; detail: string }[];
   passed: boolean;
 };
@@ -158,11 +164,11 @@ export function statsOf(values: readonly number[]): Stats {
 
 const isLoopback = (host: string) => host === 'localhost' || host === '127.0.0.1' || host === '[::1]';
 
-export type TestConfig = { origins: string[]; maxInstances: number | null; projectId: string; fieldDatabaseId: string; sqlInstance: string };
+export type TestConfig = { origins: string[]; projectId: string; fieldDatabaseId: string; sqlInstance: string };
 
 /**
  * What the test environment's settings (infra/dryscope/app/envs/test.tfvars) say the kit needs:
- * its web addresses, the web app's maximum instances, the project, and the names of the field
+ * its web addresses, the project, and the names of the field
  * database and the Cloud SQL instance (infra/dryscope/modules/naming). Read through the one tfvars
  * reader the guard tests use (web/tests/unit/tfvars.ts), loaded by its file address so plain Node
  * runs it with type stripping; it imports nothing.
@@ -174,9 +180,7 @@ export async function testConfigOf(text: string): Promise<TestConfig> {
   const projectId = vars.project_id;
   if (environment !== 'test' || typeof projectId !== 'string') throw new Error('test.tfvars does not describe the test environment');
   const origins = Array.isArray(vars.allowed_origins) ? vars.allowed_origins.filter((origin): origin is string => typeof origin === 'string').map((origin) => new URL(origin).origin) : [];
-  const scaling = vars.api_scaling;
-  const max = scaling && typeof scaling === 'object' && !Array.isArray(scaling) ? scaling.max_instances : undefined;
-  return { origins, maxInstances: typeof max === 'number' ? max : null, projectId, fieldDatabaseId: `dryscope-field-${environment}`, sqlInstance: `dryscope-${environment}-pg` };
+  return { origins, projectId, fieldDatabaseId: `dryscope-field-${environment}`, sqlInstance: `dryscope-${environment}-pg` };
 }
 
 export async function readTestConfig(): Promise<TestConfig> {
@@ -185,10 +189,11 @@ export async function readTestConfig(): Promise<TestConfig> {
 
 /**
  * Accepts only the test address: an origin listed for test (allowed_origins in test.tfvars) whose
- * health answer says `test`, or a loopback server whose health answer says `local` (the browser
- * suite's). Anything else, a live host above all, is refused before any sign-in or password is sent.
+ * health answer says `test`. Anything else, a live host above all, is refused before any sign-in or
+ * password is sent. Only the browser suite (allowLocal) may also use its loopback server, whose
+ * health answer says `local`; the owner's command line never can.
  */
-export async function checkTarget(baseUrl: string, testOrigins: readonly string[], doFetch: typeof fetch = fetch): Promise<'test' | 'local'> {
+export async function checkTarget(baseUrl: string, testOrigins: readonly string[], doFetch: typeof fetch = fetch, allowLocal = false): Promise<'test' | 'local'> {
   let url: URL;
   try {
     url = new URL(baseUrl);
@@ -196,9 +201,9 @@ export async function checkTarget(baseUrl: string, testOrigins: readonly string[
     throw new Error('--url is not an address');
   }
   if (url.pathname !== '/' || url.search || url.hash || url.username || url.password) throw new Error('--url must be the site root only');
-  const local = isLoopback(url.hostname) && (url.protocol === 'http:' || url.protocol === 'https:');
+  const local = allowLocal && isLoopback(url.hostname) && (url.protocol === 'http:' || url.protocol === 'https:');
   if (!local && (url.protocol !== 'https:' || !testOrigins.includes(url.origin))) {
-    throw new Error('refused: only an address listed for test in infra/dryscope/app/envs/test.tfvars, or a local server, is accepted');
+    throw new Error('refused: only an address listed for test in infra/dryscope/app/envs/test.tfvars is accepted');
   }
   let env: unknown;
   try {
@@ -222,6 +227,26 @@ export async function loadCompany(baseUrl: string, address: string, doFetch: typ
   if (typeof name !== 'string' || !name.startsWith('load-')) throw new Error('refused: the company name does not start with load-');
   if (typeof body.tenantId !== 'string') throw new Error('the company has no sign-in tenant');
   return { tenantId: body.tenantId, name };
+}
+
+/**
+ * Whether an answer is Cloud Run's own refusal for lack of an instance rather than the app's: Cloud
+ * Run answers 429 (the maximum instances reached) or 503 (the maximum instances probably reached)
+ * with its own page, and 500 with "The request was aborted because there was no available instance"
+ * when it could not start instances fast enough (docs.cloud.google.com/run/docs/troubleshooting).
+ * Every error the app itself answers is JSON naming its code (`{"error": "..."}`), its own 429 and
+ * 503s included.
+ */
+export function refusedForInstance(status: number, text: string): boolean {
+  if (status !== 429 && status !== 500 && status !== 503) return false;
+  let appError = false;
+  try {
+    appError = typeof (JSON.parse(text) as { error?: unknown } | null)?.error === 'string';
+  } catch {
+    appError = false;
+  }
+  if (appError) return false;
+  return status !== 500 || /no available instance/i.test(text);
 }
 
 // --- Arguments -----------------------------------------------------------------------------------
@@ -270,6 +295,8 @@ export function parseArgs(argv: string[], config: TestConfig): LoadOptions {
     thinkMs: 2000,
     officePauseMs: 20_000,
     retryMs: 1000,
+    // The last job a technician starts has its burst at least 90 seconds before the end.
+    finishMarginMs: 90_000,
   };
 }
 
@@ -285,10 +312,11 @@ export async function passwordSignIn(
 ): Promise<string> {
   const doFetch = options.fetch ?? fetch;
   const base = options.identityToolkitUrl ?? 'https://identitytoolkit.googleapis.com';
+  const appOrigin = new URL(options.baseUrl).origin;
   const post = async (path: string, body: unknown) => {
     const res = await doFetch(`${base}${path}?key=${encodeURIComponent(options.apiKey)}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Origin: appOrigin, Referer: `${appOrigin}/` },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
@@ -335,8 +363,8 @@ function firestoreValue(value: unknown): unknown {
 }
 
 /** One photo's bytes: a JPEG start and fresh random bytes, so every upload is a new file. */
-export function freshPhoto(size = PHOTO_BYTES): Uint8Array<ArrayBuffer> {
-  const bytes = new Uint8Array(randomBytes(size));
+export function freshPhoto(): Uint8Array<ArrayBuffer> {
+  const bytes = new Uint8Array(randomBytes(PHOTO_BYTES));
   bytes.set([0xff, 0xd8, 0xff, 0xe0], 0);
   return bytes;
 }
@@ -345,7 +373,8 @@ export function freshPhoto(size = PHOTO_BYTES): Uint8Array<ArrayBuffer> {
 
 const sleep = (ms: number, until = Infinity) => new Promise<void>((done) => setTimeout(done, Math.max(0, Math.min(ms, until - Date.now()))));
 
-type Answer = { status: number; body: Record<string, unknown> | null };
+// `sha256`: of the answer's bytes, for reading a photo back.
+type Answer = { status: number; body: Record<string, unknown> | null; sha256: string | null };
 
 // What a write's last answer says about the record: made (or already made), refused, or unknown.
 const outcomeOf = (answer: Answer): Outcome => (answer.status === 200 || answer.status === 201 ? 'made' : answer.status >= 400 && answer.status < 500 ? 'refused' : 'unknown');
@@ -360,14 +389,24 @@ export async function runLoadTest(options: LoadOptions, marks: PassMarks, deps: 
   const doFetch = options.fetch ?? fetch;
   const log = deps.log ?? (() => {});
   const testConfig = await readTestConfig();
-  await checkTarget(options.baseUrl, testConfig.origins, doFetch);
+  await checkTarget(options.baseUrl, testConfig.origins, doFetch, options.allowLocal === true);
   const company = await loadCompany(options.baseUrl, options.company, doFetch);
   log(`target checked; company ${company.name}; ${options.users.length} load users`);
 
-  // Each load user's membership of the load company, in the role given, checked once before the clock starts.
+  // Each load user's membership of the load company, in the role given, checked once before the
+  // clock starts. Not measured, so a lost answer or a 5xx (a server still starting) is asked again.
   async function memberOf(user: LoadUser, token: string): Promise<string> {
-    const res = await doFetch(new URL('/api/me', options.baseUrl), { redirect: 'manual', signal: AbortSignal.timeout(TIMEOUT_MS), headers: { authorization: `Bearer ${token}` } });
-    if (res.status !== 200) throw new Error(`the app answered ${res.status} for a load user before the run; nothing was written`);
+    let res: Response | null = null;
+    for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
+      try {
+        res = await doFetch(new URL('/api/me', options.baseUrl), { redirect: 'manual', signal: AbortSignal.timeout(TIMEOUT_MS), headers: { authorization: `Bearer ${token}` } });
+        if (res.status < 500) break;
+      } catch (error) {
+        if (attempt === ATTEMPTS) throw error;
+      }
+      await sleep(options.retryMs);
+    }
+    if (res?.status !== 200) throw new Error(`the app answered ${res?.status ?? 'nothing'} for a load user before the run; nothing was written`);
     const body = (await res.json()) as { company?: { id?: unknown; name?: unknown }; role?: unknown };
     if (body.company?.name !== company.name || typeof body.company.id !== 'string' || body.role !== user.role) {
       throw new Error(`refused: a load user is not ${user.role === 'office' ? 'an office user' : 'a technician'} of the load company`);
@@ -391,9 +430,8 @@ export async function runLoadTest(options: LoadOptions, marks: PassMarks, deps: 
 
   const samples: Sample[] = [];
   const made: MadeJob[] = [];
-  // Documents read by each office user, and the technicians still at work.
+  // Documents read by each office user.
   const officeReads = new Map<Session, number>();
-  let techniciansAtWork = sessions.filter((session) => session.user.role === 'estimator').length;
 
   async function call(
     session: Session,
@@ -407,7 +445,9 @@ export async function runLoadTest(options: LoadOptions, marks: PassMarks, deps: 
     const start = performance.now();
     let status = 0;
     let body: Record<string, unknown> | null = null;
+    let sha256: string | null = null;
     let error: string | null = null;
+    let noInstance = false;
     try {
       const res = await doFetch(url, {
         ...init,
@@ -416,7 +456,10 @@ export async function runLoadTest(options: LoadOptions, marks: PassMarks, deps: 
         headers: { authorization: `Bearer ${session.token}`, ...(init.headers as Record<string, string> | undefined) },
       });
       status = res.status;
-      const text = await res.text();
+      const raw = Buffer.from(await res.arrayBuffer());
+      sha256 = createHash('sha256').update(raw).digest('hex');
+      const text = raw.toString('utf8');
+      noInstance = refusedForInstance(status, text);
       try {
         body = text ? (JSON.parse(text) as Record<string, unknown>) : null;
       } catch {
@@ -428,9 +471,9 @@ export async function runLoadTest(options: LoadOptions, marks: PassMarks, deps: 
     } catch (caught) {
       error = caught instanceof Error ? caught.name : 'error';
     }
-    samples.push({ category, label, ms: performance.now() - start, status, error });
+    samples.push({ category, label, ms: performance.now() - start, status, error, noInstance });
     // A lost answer, or a 200 that fails its check, is status 0; a refusal keeps its status.
-    return { status: error === null || status >= 400 ? status : 0, body };
+    return { status: error === null || status >= 400 ? status : 0, body, sha256 };
   }
 
   // A write sent again with the same id and body while its answer is lost or a 5xx, as the phone
@@ -489,10 +532,10 @@ export async function runLoadTest(options: LoadOptions, marks: PassMarks, deps: 
     await fieldWrite(session, 'draft', draftPath, manifest.draft as Record<string, unknown>, false);
 
     // The photos: whenever ten more have been taken on the technician's photo clock, the ten are
-    // sent at once, each with its reference in the draft once it is stored.
+    // sent at once, each with its reference in the draft once it is stored. A job already started
+    // sends all its photos, even when the end comes first.
     for (let burst = 0; burst < options.burstsPerJob; burst += 1) {
       await sleep(session.nextBurstAt - Date.now(), deadline);
-      if (Date.now() >= deadline) break;
       session.nextBurstAt += 10 * options.photoGapMs;
       await Promise.all(
         Array.from({ length: 10 }, async () => {
@@ -512,20 +555,39 @@ export async function runLoadTest(options: LoadOptions, marks: PassMarks, deps: 
     // Each change's own id, made once, so a change sent again is the same change.
     const customerChange = randomUUID();
     const claimChange = randomUUID();
+    // A save is confirmed by its answer, or, when the answer was lost, by reading the job back.
+    type Detail = { job?: { revision?: unknown; propertyAddress?: unknown }; customer?: { name?: unknown }; claim?: { claimNumber?: unknown } };
+    const confirmed = async (answer: Answer, saved: (detail: Detail) => boolean): Promise<Detail | null> => {
+      if (outcomeOf(answer) === 'made') return answer.body as Detail;
+      if (outcomeOf(answer) === 'refused') return null;
+      const read = await call(session, 'read', 'job', `/api/jobs/${job.jobId}`);
+      return read.status === 200 && saved(read.body as Detail) ? (read.body as Detail) : null;
+    };
+    const customerName = `Load Customer ${session.number}-${sequence}`;
+    const claimNumber = `LOAD-${sequence}`;
     let revision = Number((created.body?.job as { revision?: unknown } | undefined)?.revision ?? 1);
-    const customer = await write(() =>
-      call(session, 'write', 'customer', `/api/jobs/${job.jobId}/customer`, json('PUT', {
-        revision, changeId: customerChange, name: `Load Customer ${session.number}-${sequence}`, phone: '555-0100', email: '', propertyAddress: `${sequence} Load Test Lane`,
-      })),
+    const customer = await confirmed(
+      await write(() =>
+        call(session, 'write', 'customer', `/api/jobs/${job.jobId}/customer`, json('PUT', {
+          revision, changeId: customerChange, name: customerName, phone: '555-0100', email: '', propertyAddress: `${sequence} Load Test Lane`,
+        })),
+      ),
+      (detail) => detail.customer?.name === customerName,
     );
-    revision = Number((customer.body?.job as { revision?: unknown } | undefined)?.revision ?? revision);
+    // No Finish until the customer and the claim are both saved.
+    if (!customer) return;
+    revision = Number(customer.job?.revision ?? revision);
     await think();
-    await write(() =>
-      call(session, 'write', 'claim', `/api/jobs/${job.jobId}/claim`, json('PUT', {
-        revision, changeId: claimChange, carrier: 'Load Carrier', claimNumber: `LOAD-${sequence}`, policyNumber: '', dateOfLoss: null,
-        lossCause: 'Load test', adjusterName: '', adjusterEmail: '', adjusterPhone: '', deductible: '',
-      })),
+    const claim = await confirmed(
+      await write(() =>
+        call(session, 'write', 'claim', `/api/jobs/${job.jobId}/claim`, json('PUT', {
+          revision, changeId: claimChange, carrier: 'Load Carrier', claimNumber, policyNumber: '', dateOfLoss: null,
+          lossCause: 'Load test', adjusterName: '', adjusterEmail: '', adjusterPhone: '', deductible: '',
+        })),
+      ),
+      (detail) => detail.claim?.claimNumber === claimNumber,
     );
+    if (!claim) return;
     await think();
     // Finish (Submit): the draft as written, so a photo whose reference was never written is not in it.
     job.submissionId = randomUUID();
@@ -536,42 +598,44 @@ export async function runLoadTest(options: LoadOptions, marks: PassMarks, deps: 
     await call(session, 'read', 'documents', `/api/jobs/${job.jobId}/estimate`, {}, hasDocuments);
   }
 
+  // A technician starts a job only when its burst falls finishMarginMs before the end, so every
+  // job is saved, finished, priced and its documents read inside the window; after the last one,
+  // the job list is refreshed until the end.
   async function technician(session: Session) {
-    try {
-      await opening(session);
-      for (let sequence = 1; Date.now() < deadline; sequence += 1) {
-        await call(session, 'read', 'job list', '/api/jobs?scope=mine');
-        await fieldJob(session, sequence);
-        await think();
-      }
-    } finally {
-      techniciansAtWork -= 1;
+    await opening(session);
+    for (let sequence = 1; Date.now() < deadline && session.nextBurstAt + options.finishMarginMs < deadline; sequence += 1) {
+      await call(session, 'read', 'job list', '/api/jobs?scope=mine');
+      await fieldJob(session, sequence);
+      await think();
+    }
+    while (Date.now() < deadline) {
+      await call(session, 'read', 'job list', '/api/jobs?scope=mine');
+      await sleep(options.officePauseMs, deadline);
     }
   }
 
-  // The office day: the list refreshed, a job that has documents opened, and its documents. Until
-  // an office user has read documents once, it keeps going past the deadline while a technician is
-  // still at work, checking every second for a job whose documents are ready, and tries once more
-  // after the last technician stops; one that never reads any fails the run.
+  // The office day, inside the window: the list refreshed, a job that has documents opened, and its
+  // documents. A job has documents when this run priced it, or when the list shows it finished and
+  // this run did not make it (the load company's earlier jobs); one this run is still finishing is
+  // left alone. Until a job has documents it checks every second; an office user that never reads
+  // any fails the run.
   async function officeDay(session: Session) {
     officeReads.set(session, 0);
     await opening(session);
-    let lastTry = false;
-    for (;;) {
-      if (Date.now() >= deadline) {
-        if (officeReads.get(session)! > 0 || lastTry) break;
-        lastTry = techniciansAtWork === 0;
-      }
-      await call(session, 'read', 'job list', '/api/jobs?scope=company');
-      // A job of this run that has documents (its estimate was made).
-      const ready = made.filter((job) => job.estimated === 'made');
+    while (Date.now() < deadline) {
+      const list = await call(session, 'read', 'job list', '/api/jobs?scope=company');
+      const ours = new Set(made.map((job) => job.jobId));
+      const earlier = ((list.body?.jobs as { id?: unknown; status?: unknown }[] | undefined) ?? [])
+        .filter((job) => job.status === 'submitted' && typeof job.id === 'string' && !ours.has(job.id))
+        .map((job) => String(job.id));
+      const ready = [...made.filter((job) => job.estimated === 'made').map((job) => job.jobId), ...earlier];
       const pick = ready[Math.floor(Math.random() * ready.length)];
       if (!pick) {
-        await sleep(Math.min(options.officePauseMs, 1000));
+        await sleep(Math.min(options.officePauseMs, 1000), deadline);
         continue;
       }
-      await call(session, 'read', 'job', `/api/jobs/${pick.jobId}`);
-      if ((await call(session, 'read', 'documents', `/api/jobs/${pick.jobId}/estimate`, {}, hasDocuments)).status === 200) {
+      await call(session, 'read', 'job', `/api/jobs/${pick}`);
+      if ((await call(session, 'read', 'documents', `/api/jobs/${pick}/estimate`, {}, hasDocuments)).status === 200) {
         officeReads.set(session, officeReads.get(session)! + 1);
       }
       await sleep(options.officePauseMs, deadline);
@@ -583,13 +647,16 @@ export async function runLoadTest(options: LoadOptions, marks: PassMarks, deps: 
   const broken = ended.find((result) => result.status === 'rejected');
   if (broken) throw broken.reason;
   const endedAt = Date.now();
+  // Every request of the run is judged: no job is started unless it can finish inside the window,
+  // and a job already under way at the end is measured to its end.
   const runSamples = [...samples];
+  // A minute either side of the run, for the database's own log lines and charts.
+  const window = { start: new Date(startedAt - 60_000).toISOString(), end: new Date(Math.max(deadline, endedAt) + 60_000).toISOString() };
   log(`run finished after ${Math.round((endedAt - startedAt) / 1000)} seconds; checking records`);
   const records = await checkRecords(sessions, made, call, `${fieldBase}/companies/${companyId}/drafts`);
   records.officeReads = sessions.filter((session) => session.user.role === 'office').map((session) => officeReads.get(session) ?? 0);
-  // A minute either side, for the database's own log lines of the run.
-  const owner = await deps.afterRun({ start: new Date(startedAt - 60_000).toISOString(), end: new Date(Date.now() + 60_000).toISOString() });
-  return judge(runSamples, records, marks, owner, testConfig.maxInstances);
+  const owner = await deps.afterRun(window);
+  return judge(runSamples, records, marks, owner);
 }
 
 // --- The records check ---------------------------------------------------------------------------
@@ -604,8 +671,9 @@ type PhotoLogRow = { id?: unknown; sha256?: unknown };
 // is read with its field draft: a job that holds a record holds the submission this run sent (the
 // draft's fence names it) and no other. Each photo whose sending was made or unknown is looked for
 // among the draft's photo references. An estimate there is the one this run made, for its record,
-// and its photo log names each referenced photo once with its bytes' hash and nothing else; every
-// other photo is read back by its id. A read that does not answer whether a record is there leaves
+// and its photo log names each referenced photo once with its bytes' hash and nothing else. Every
+// photo sent is read back by its id and its bytes compared, and one the app holds that a finished
+// job's record lacks is a problem. A read that does not answer whether a record is there leaves
 // its outcome unresolved, and that fails the check.
 export async function checkRecords(sessions: Session[], made: MadeJob[], call: Call, draftBase: string): Promise<Records> {
   const problems: string[] = [];
@@ -667,7 +735,6 @@ export async function checkRecords(sessions: Session[], made: MadeJob[], call: C
     }
     if (!resolved) continue;
 
-    let logged = false;
     if (recorded) {
       const answer = await call(job.session, 'read', 'check estimate', `/api/jobs/${job.jobId}/estimate`);
       const estimate = answer.body?.estimate as { submissionId?: unknown; documents?: { photoLog?: PhotoLogRow[] } | null } | null | undefined;
@@ -676,22 +743,28 @@ export async function checkRecords(sessions: Session[], made: MadeJob[], call: C
         if (job.estimated === 'made') problems.push(`job ${n}: the estimate was answered but is not there`);
       } else {
         counts.estimates += 1;
-        logged = true;
         if ((job.estimated !== 'made' && job.estimated !== 'unknown') || estimate.submissionId !== job.submissionId) problems.push(`job ${n}: an estimate this run did not make`);
+        // The documents name each referenced photo once, with its bytes' hash, and nothing else.
         const rows = estimate.documents?.photoLog ?? [];
         for (const photoId of referenced) {
           const found = rows.filter((row) => row.id === photoId);
-          if (found.length !== 1 || found[0]!.sha256 !== job.photos.get(photoId)!.sha256) problems.push(`job ${n}: a photo is in the record ${found.length} times`);
-          else counts.photos += 1;
+          if (found.length !== 1 || found[0]!.sha256 !== job.photos.get(photoId)!.sha256) problems.push(`job ${n}: a photo is in the documents ${found.length} times`);
         }
-        if (rows.length !== referenced.size) problems.push(`job ${n}: the record holds ${rows.length} photos, the draft references ${referenced.size}`);
+        if (rows.length !== referenced.size) problems.push(`job ${n}: the documents hold ${rows.length} photos, the draft references ${referenced.size}`);
       }
     }
+    // Every photo sent is read back by its id, its bytes compared with what was sent.
     for (const [photoId, photo] of job.photos) {
-      if (photo.stored === 'refused' || (logged && referenced.has(photoId))) continue;
+      if (photo.stored === 'refused') continue;
       const answer = await call(job.session, 'read', 'check photo', `/api/jobs/${job.jobId}/photos/${photoId}`);
-      if (answer.status === 200) counts.photos += 1;
-      else if (answer.status !== 404 || photo.stored === 'made' || referenced.has(photoId)) problems.push(`job ${n}: a photo that was sent is not found (${answer.status})`);
+      if (answer.status === 200) {
+        if (answer.sha256 !== photo.sha256) problems.push(`job ${n}: a photo's bytes differ from what was sent`);
+        else counts.photos += 1;
+        // A photo the app holds is part of the job's record once the job is finished.
+        if (recorded && !referenced.has(photoId)) problems.push(`job ${n}: a stored photo is not in the job's record`);
+      } else if (answer.status !== 404 || photo.stored === 'made' || referenced.has(photoId)) {
+        problems.push(`job ${n}: a photo that was sent is not found (${answer.status})`);
+      }
     }
   }
   return { ...counts, officeReads: [], problems };
@@ -699,7 +772,7 @@ export async function checkRecords(sessions: Session[], made: MadeJob[], call: C
 
 // --- Judging -------------------------------------------------------------------------------------
 
-export function judge(samples: readonly Sample[], records: Records, marks: PassMarks, owner: OwnerReadings, instanceLimit: number | null): Report {
+export function judge(samples: readonly Sample[], records: Records, marks: PassMarks, owner: OwnerReadings): Report {
   const of = (category: Category) => samples.filter((s) => s.category === category).map((s) => s.ms);
   const stats = { read: statsOf(of('read')), photo: statsOf(of('photo')), finish: statsOf(of('finish')), write: statsOf(of('write')), field: statsOf(of('field')) };
   const failed = samples.filter((s) => s.error !== null);
@@ -726,6 +799,11 @@ export function judge(samples: readonly Sample[], records: Records, marks: PassM
       name: 'no error from running out of database connections',
       passed: connections !== null && connections <= marks.databaseConnectionErrors,
       detail: connections === null ? 'no count from the database log' : `${connections} refused connections in the database log`,
+    },
+    {
+      name: 'no request refused for lack of an instance',
+      passed: samples.filter((s) => s.noInstance).length <= marks.instanceRefusals,
+      detail: `${samples.filter((s) => s.noInstance).length} requests refused by Cloud Run for lack of an instance`,
     },
     {
       name: 'database processor under 80%',
@@ -758,7 +836,6 @@ export function judge(samples: readonly Sample[], records: Records, marks: PassM
     errorRate,
     errorsByKind,
     records,
-    instances: { peak: owner.peakInstances, limit: instanceLimit },
     marks: result,
     passed: result.every((mark) => mark.passed),
   };
@@ -772,7 +849,6 @@ export function formatReport(report: Report): string[] {
   }
   for (const [kind, count] of Object.entries(report.errorsByKind)) lines.push(`error: ${kind} x${count}`);
   for (const mark of report.marks) lines.push(`${mark.passed ? 'PASS' : 'FAIL'} ${mark.name}: ${mark.detail}`);
-  lines.push(`Cloud Run instances: peak ${report.instances.peak} of a limit of ${report.instances.limit ?? 'unknown'} (not judged: this pass mark waits for the owner)`);
   lines.push(report.passed ? 'load test: the measured pass marks passed' : 'load test: a pass mark failed');
   return lines;
 }
@@ -836,8 +912,7 @@ async function main() {
       const peakCpuPercent = await askNumber('Peak processor use, percent: ', true);
       const peakConnections = await askNumber('Peak connections: ');
       const maxConnections = await askNumber('Its max_connections setting: ');
-      const peakInstances = await askNumber('Peak instances on the web app\'s Cloud Run instance chart: ');
-      return { connectionErrors, peakCpuPercent, peakConnections, maxConnections, peakInstances };
+      return { connectionErrors, peakCpuPercent, peakConnections, maxConnections };
     },
     log: (line) => console.log(line),
   });
