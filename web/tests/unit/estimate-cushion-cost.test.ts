@@ -1,8 +1,9 @@
 // Security audit F3: the high end's cushion used to sort every area line again for each cushion band, two decimal
 // divisions per comparison, so one large owner price table kept the server busy for seconds. The order does not
 // depend on the band, so it is worked out once per pricing, and one walk down that order meets each band's limit in
-// turn: a line's share changes only at the bands whose limit falls within its own square feet. The totals do not
-// change; the cost now grows with lines plus bands, not with lines times bands.
+// turn: a line divides only at the bands whose area left ends within its own square feet. Each band's area left is
+// still cut by every line in turn, so the shares round exactly as before and the totals do not change; the divisions
+// now grow with lines plus bands, not with lines times bands.
 
 import { describe, expect, it } from 'vitest';
 
@@ -55,5 +56,35 @@ describe('F3 the cushion walks its area lines once, not once per band', () => {
     const elapsed = performance.now() - started;
     expect(estimate.lines.length).toBe(3000);
     expect(elapsed).toBeLessThan(5000);
+  });
+
+  it('C3 each band cuts its area left line by line, so the shares round to the cent as before', () => {
+    const rooms = [
+      ...Array.from({ length: 5 }, (_, index) =>
+        room(`Up ${index}`, { unfinished_sf: '0.80000000000008', waste_percent: '25.000000000005' }),
+      ),
+      ...Array.from({ length: 5 }, (_, index) =>
+        room(`Down ${index}`, { unfinished_sf: '0.79999999999992', waste_percent: '24.999999999995' }),
+      ),
+      room('Hall', { finished_sf: 100 }),
+    ];
+    const items = [
+      item('demo_unfinished', { unit_price: '1.00' }),
+      item('demo_finished', { quantity_source: 'room:demolition:finished', unit_price: '0.25' }),
+    ];
+    const brackets = [
+      { up_to_sf: 100, percent: '99.8' },
+      { up_to_sf: 101, percent: '0' },
+      { up_to_sf: null, percent: '0' },
+    ];
+    const tableJson = table(items, {
+      estimate_mode: 'range',
+      area_basis: 'demolition_with_waste',
+      range: { first_sf: 100, first_percent: '99.8', beyond_percent: '0', brackets },
+    });
+    const estimate = priced(tableJson, job(rooms));
+    expect(estimate.lines.length).toBe(11);
+    expect(estimate.totals.low?.total).toBe('35.00');
+    expect(estimate.totals.high?.total).toBe('67.44');
   });
 });
