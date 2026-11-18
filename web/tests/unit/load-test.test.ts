@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs';
 import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import {
@@ -9,11 +8,11 @@ import {
   judge,
   loadCompany,
   parseArgs,
-  parseTestTfvars,
   percentile,
   readPassMarks,
   readTestConfig,
   statsOf,
+  testConfigOf,
   type Records,
 } from '../../scripts/load-test';
 
@@ -64,15 +63,31 @@ const TEST_ORIGIN = 'https://dryscope-api-test-570228742694.us-central1.run.app'
 const LIVE_ORIGIN = 'https://dryscope-api-live-570228742694.us-central1.run.app';
 
 describe('the target guard', () => {
-  it('reads the addresses configured for test, and the web app\'s instance limit', async () => {
+  it('reads the test settings: the addresses, the instance limit, the project and the resource names', async () => {
     const config = await readTestConfig();
-    expect(config.origins).toContain(TEST_ORIGIN);
+    expect(config).toEqual({ origins: [TEST_ORIGIN], maxInstances: 1, projectId: 'dryscope', fieldDatabaseId: 'dryscope-field-test', sqlInstance: 'dryscope-test-pg' });
     expect(config.origins).not.toContain(LIVE_ORIGIN);
-    expect(config.maxInstances).toBe(1);
-    expect(parseTestTfvars('allowed_origins = ["https://a.example.com", "https://test.example.com/"]\napi_scaling = {\n  max_instances = 3\n}\nlive_scaling = {\n  max_instances = 9\n}')).toEqual({
-      origins: ['https://a.example.com', 'https://test.example.com'],
-      maxInstances: 3,
-    });
+  });
+
+  it('reads the settings as Terraform does: a commented-out address is not accepted', async () => {
+    const text = [
+      'project_id = "dryscope"',
+      'environment = "test"',
+      'allowed_origins = [',
+      '  "https://a.example.com",',
+      '  # "https://retired.example.com",',
+      '  "https://test.example.com/",',
+      ']',
+      'api_scaling = {',
+      '  max_instances = 3 # the budget',
+      '}',
+      'live_scaling = {',
+      '  max_instances = 9',
+      '}',
+    ].join('\n');
+    expect(await testConfigOf(text)).toMatchObject({ origins: ['https://a.example.com', 'https://test.example.com'], maxInstances: 3 });
+    await expect(testConfigOf(text.replace('environment = "test"', 'environment = "live"'))).rejects.toThrow(/test environment/);
+    await expect(testConfigOf(`${text}\nenvironment = "test"`)).rejects.toThrow(/given twice/);
   });
 
   it('accepts only an address listed for test, when the service says test', async () => {
@@ -111,33 +126,40 @@ describe('the arguments', () => {
   const technicians = ['t1@example.com', 't2@example.com', 't3@example.com', 't4@example.com', 't5@example.com'];
   const office = ['o1@example.com', 'o2@example.com'];
   const args = (techs = technicians, offs = office) => [
-    '--url', `${TEST_ORIGIN}`, '--company', 'load-one', '--api-key', 'k', '--project', 'p', '--database', 'd',
+    '--url', `${TEST_ORIGIN}`, '--company', 'load-one', '--api-key', 'k',
     '--technicians', techs.join(','), '--office', offs.join(','),
   ];
 
+  const config = { origins: [TEST_ORIGIN], maxInstances: 1, projectId: 'dryscope', fieldDatabaseId: 'dryscope-field-test', sqlInstance: 'dryscope-test-pg' };
+  const parse = (argv: string[]) => parseArgs(argv, config);
+
   it('takes the pilot: five technicians and two office users, for 20 minutes with a one-minute opening', () => {
-    const options = parseArgs(args());
+    const options = parse(args());
     expect(options.users).toEqual([...technicians.map((email) => ({ email, role: 'estimator' })), ...office.map((email) => ({ email, role: 'office' }))]);
-    expect(options).toMatchObject({ durationMs: 20 * 60_000, openingMs: 60_000, photosPerJob: 20, photoGapMs: 30_000, photoBytes: 1024 * 1024 });
+    expect(options).toMatchObject({ durationMs: 20 * 60_000, openingMs: 60_000, burstsPerJob: 2, photoGapMs: 30_000 });
+    // The test project and its field database come from the test settings, never an argument.
+    expect(options).toMatchObject({ projectId: 'dryscope', databaseId: 'dryscope-field-test' });
   });
 
   it('refuses another roster, or one account twice', () => {
-    expect(() => parseArgs(args(technicians.slice(0, 4)))).toThrow(/exactly 5/);
-    expect(() => parseArgs(args([...technicians, 't6@example.com']))).toThrow(/exactly 5/);
-    expect(() => parseArgs(args(technicians, office.slice(0, 1)))).toThrow(/exactly 2/);
-    expect(() => parseArgs(args([...technicians.slice(0, 4), 'T1@example.com']))).toThrow(/different account/);
-    expect(() => parseArgs(args(technicians, ['o1@example.com', 't2@example.com']))).toThrow(/different account/);
+    expect(() => parse(args(technicians.slice(0, 4)))).toThrow(/exactly 5/);
+    expect(() => parse(args([...technicians, 't6@example.com']))).toThrow(/exactly 5/);
+    expect(() => parse(args(technicians, office.slice(0, 1)))).toThrow(/exactly 2/);
+    expect(() => parse(args([...technicians.slice(0, 4), 'T1@example.com']))).toThrow(/different account/);
+    expect(() => parse(args(technicians, ['o1@example.com', 't2@example.com']))).toThrow(/different account/);
   });
 
   it('has no option to shorten the run, widen the opening or change the photos', () => {
-    expect(() => parseArgs([...args(), '--minutes', '1'])).toThrow(/unknown option/);
-    expect(() => parseArgs([...args(), '--opening-seconds', '600'])).toThrow(/unknown option/);
-    expect(() => parseArgs([...args(), '--photos-per-job', '1'])).toThrow(/unknown option/);
+    expect(() => parse([...args(), '--minutes', '1'])).toThrow(/unknown option/);
+    expect(() => parse([...args(), '--opening-seconds', '600'])).toThrow(/unknown option/);
+    expect(() => parse([...args(), '--photos-per-job', '1'])).toThrow(/unknown option/);
+    expect(() => parse([...args(), '--project', 'other'])).toThrow(/unknown option/);
+    expect(() => parse([...args(), '--database', 'other'])).toThrow(/unknown option/);
   });
 
   it('never takes the password from an argument', () => {
-    expect(() => parseArgs([...args(), '--password', 'secret'])).toThrow(/never from an argument/);
-    expect(() => parseArgs([...args(), '--pass', 'secret'])).toThrow(/never from an argument/);
+    expect(() => parse([...args(), '--password', 'secret'])).toThrow(/never from an argument/);
+    expect(() => parse([...args(), '--pass', 'secret'])).toThrow(/never from an argument/);
   });
 
   it('shows the question but never what is typed for the password or the authenticator code', async () => {
@@ -156,9 +178,9 @@ describe('the arguments', () => {
 });
 
 describe('the photos', () => {
-  it('makes every photo a new JPEG file of the size asked', () => {
-    const one = freshPhoto(1024 * 1024);
-    const two = freshPhoto(1024 * 1024);
+  it('makes every photo a new 1 MB JPEG file', () => {
+    const one = freshPhoto();
+    const two = freshPhoto();
     expect(one.byteLength).toBe(1024 * 1024);
     expect([...one.subarray(0, 3)]).toEqual([0xff, 0xd8, 0xff]);
     expect(Buffer.from(one).equals(Buffer.from(two))).toBe(false);
@@ -166,8 +188,8 @@ describe('the photos', () => {
 });
 
 describe('judging the run against the pass marks', () => {
-  const records: Records = { jobs: 2, submissions: 2, estimates: 2, photos: 20, officeDocuments: 3, problems: [] };
-  const clean = { connectionErrors: 0, peakInstances: 1 };
+  const records: Records = { jobs: 2, submissions: 2, estimates: 2, photos: 20, officeReads: [3, 2], problems: [] };
+  const clean = { connectionErrors: 0, peakCpuPercent: 42.5, peakConnections: 9, maxConnections: 25, peakInstances: 1 };
   const sample = (category: 'read' | 'photo' | 'finish', ms: number, error: string | null = null) => ({ category, label: category, ms, status: error ? 503 : 200, error });
   const quick = [...Array.from({ length: 40 }, () => sample('read', 100)), ...Array.from({ length: 20 }, () => sample('photo', 800)), sample('finish', 900), sample('finish', 1200)];
 
@@ -179,6 +201,9 @@ describe('judging the run against the pass marks', () => {
       ['Finish, slowest', true],
       ['errors', true],
       ['no error from running out of database connections', true],
+      ['database processor under 80%', true],
+      ['database connections under max_connections less 10', true],
+      ['office day: each office user read documents', true],
       ['every created record present exactly once', true],
     ]);
     expect(report.passed).toBe(true);
@@ -197,16 +222,35 @@ describe('judging the run against the pass marks', () => {
   });
 
   it('fails the run on a single refused database connection, however low the error rate', async () => {
-    const report = judge(quick, records, await readPassMarks(), { connectionErrors: 1, peakInstances: 1 }, 1);
+    const report = judge(quick, records, await readPassMarks(), { ...clean, connectionErrors: 1 }, 1);
     expect(report.marks.find((mark) => mark.name === 'errors')!.passed).toBe(true);
     expect(report.marks.find((mark) => mark.name.startsWith('no error from running out'))).toMatchObject({ passed: false, detail: '1 refused connections in the database log' });
     expect(report.passed).toBe(false);
-    expect(judge(quick, records, await readPassMarks(), { connectionErrors: Number.NaN, peakInstances: 1 }, 1).passed).toBe(false);
+    expect(judge(quick, records, await readPassMarks(), { ...clean, connectionErrors: Number.NaN }, 1).passed).toBe(false);
   });
 
-  it('gives the owner the database log filter for the run\'s window', () => {
-    expect(connectionLogFilter('dryscope', { start: '2026-11-18T01:00:00.000Z', end: '2026-11-18T01:22:00.000Z' })).toBe(
-      'resource.type="cloudsql_database" AND logName="projects/dryscope/logs/cloudsql.googleapis.com%2Fpostgres.log" AND timestamp>="2026-11-18T01:00:00.000Z" AND timestamp<="2026-11-18T01:22:00.000Z" AND ("too many clients" OR "remaining connection slots")',
+  it('fails a busy database or a missing reading, and leaves the instances unjudged', async () => {
+    const marks = await readPassMarks();
+    const mark = (owner: typeof clean, name: string) => judge(quick, records, marks, owner, 1).marks.find((found) => found.name === name)!;
+    expect(mark({ ...clean, peakCpuPercent: 80 }, 'database processor under 80%')).toMatchObject({ passed: false, detail: 'peak 80% (under 80%)' });
+    expect(mark({ ...clean, peakCpuPercent: Number.NaN }, 'database processor under 80%')).toMatchObject({ passed: false, detail: 'no reading' });
+    expect(mark({ ...clean, peakConnections: 15 }, 'database connections under max_connections less 10').passed).toBe(false);
+    expect(mark({ ...clean, peakConnections: 14 }, 'database connections under max_connections less 10').passed).toBe(true);
+    expect(mark({ ...clean, maxConnections: Number.NaN }, 'database connections under max_connections less 10')).toMatchObject({ passed: false, detail: 'no reading' });
+    const crowded = judge(quick, records, marks, { ...clean, peakInstances: 7 }, 1);
+    expect(crowded.passed).toBe(true);
+    expect(crowded.instances).toEqual({ peak: 7, limit: 1 });
+  });
+
+  it('fails the run when an office user never read documents', async () => {
+    const report = judge(quick, { ...records, officeReads: [4, 0] }, await readPassMarks(), clean, 1);
+    expect(report.marks.find((mark) => mark.name.startsWith('office day'))).toMatchObject({ passed: false, detail: 'documents read 4, 0 times' });
+    expect(report.passed).toBe(false);
+  });
+
+  it('gives the owner the test database\'s log filter for the run\'s window', () => {
+    expect(connectionLogFilter({ projectId: 'dryscope', sqlInstance: 'dryscope-test-pg' }, { start: '2026-11-18T01:00:00.000Z', end: '2026-11-18T01:22:00.000Z' })).toBe(
+      'resource.type="cloudsql_database" AND resource.labels.database_id="dryscope:dryscope-test-pg" AND logName="projects/dryscope/logs/cloudsql.googleapis.com%2Fpostgres.log" AND timestamp>="2026-11-18T01:00:00.000Z" AND timestamp<="2026-11-18T01:22:00.000Z" AND ("too many clients" OR "remaining connection slots")',
     );
   });
 
@@ -215,9 +259,8 @@ describe('judging the run against the pass marks', () => {
     expect(report.marks.find((mark) => mark.name === 'Finish, slowest')).toMatchObject({ passed: false, detail: 'no samples' });
   });
 
-  it('holds the marks written before any run, with no switch to turn the records check off', async () => {
+  it('holds the marks written before any run', async () => {
     const marks = await readPassMarks();
-    expect(marks).toMatchObject({ readsP95Ms: 2000, photoP95Ms: 5000, finishMaxMs: 5000, errorRateBelow: 0.02, databaseConnectionErrors: 0 });
-    expect(Object.keys(JSON.parse(readFileSync(new URL('../../load/pass-marks.json', import.meta.url), 'utf8')))).not.toContain('everyRecordOnce');
+    expect(marks).toMatchObject({ readsP95Ms: 2000, photoP95Ms: 5000, finishMaxMs: 5000, errorRateBelow: 0.02, databaseConnectionErrors: 0, databaseCpuBelowPercent: 80, connectionHeadroom: 10 });
   });
 });

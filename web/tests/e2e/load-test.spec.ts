@@ -52,7 +52,6 @@ async function loadCompany(): Promise<Company> {
 type Stand = 'plain' | 'slow' | 'opening fails' | 'lost answers';
 
 function optionsFor(company: Company, stand: Stand): LoadOptions {
-  const slowReads = stand === 'slow';
   const users: LoadUser[] = [
     { email: company.people.tech!.email, role: 'estimator' },
     ...(stand === 'opening fails' ? [{ email: company.people.tech2!.email, role: 'estimator' as const }] : []),
@@ -95,12 +94,12 @@ function optionsFor(company: Company, stand: Stand): LoadOptions {
     users,
     durationMs: 10_000,
     openingMs: 1000,
-    photosPerJob: slowReads ? 1 : 10,
+    // One burst of ten 1 MB photos a job: the short run's only workload change.
+    burstsPerJob: 1,
     // A photo every 100 ms on each technician's clock, so a burst of ten comes every second.
     photoGapMs: 100,
     thinkMs: 0,
     officePauseMs: 1000,
-    photoBytes: 1024 * 1024,
     retryMs: 200,
     identityToolkitUrl: `http://${AUTH_EMULATOR_HOST}/identitytoolkit.googleapis.com`,
     firestoreUrl: `http://${FIRESTORE_EMULATOR_HOST}`,
@@ -130,7 +129,7 @@ async function run(stand: Stand) {
     totpCode: async () => '',
     signIn: signInFor(options, company),
     // The owner's readings from the database log and the instance chart.
-    afterRun: async () => ({ connectionErrors: 0, peakInstances: 1 }),
+    afterRun: async () => ({ connectionErrors: 0, peakCpuPercent: 12, peakConnections: 6, maxConnections: 25, peakInstances: 1 }),
   });
   return { company, report };
 }
@@ -148,14 +147,20 @@ test('a ten-second run with two load users measures every pass mark and finds ev
   expect(report.records.jobs).toBeGreaterThanOrEqual(1);
   expect(report.records.submissions).toBe(report.records.jobs);
   expect(report.records.estimates).toBe(report.records.jobs);
-  expect(report.records.photos).toBe(10 * report.records.jobs);
+  // Every photo sent was answered once (no errors), so each is a record; a job begun as the run
+  // ended may have had no burst before the deadline.
+  expect(report.stats.photo.count % 10).toBe(0);
+  expect(report.stats.photo.count).toBeGreaterThanOrEqual(10);
+  expect(report.records.photos).toBe(report.stats.photo.count);
   expect(report.stats.read.count).toBeGreaterThan(0);
-  expect(report.stats.photo.count).toBe(10 * report.records.jobs);
   expect(report.stats.finish.count).toBe(report.records.jobs);
-  expect(report.byHand.length).toBe(2);
   expect(mark('no error from running out of database connections').passed).toBe(true);
   // The office user opened jobs that have documents, and got them.
-  expect(report.records.officeDocuments).toBeGreaterThanOrEqual(1);
+  expect(report.records.officeReads.length).toBe(1);
+  expect(report.records.officeReads[0]).toBeGreaterThanOrEqual(1);
+  expect(mark('office day: each office user read documents').passed).toBe(true);
+  expect(mark('database processor under 80%').passed).toBe(true);
+  expect(mark('database connections under max_connections less 10').passed).toBe(true);
   expect(report.instances).toEqual({ peak: 1, limit: 1 });
 
   // What the database holds for the company is exactly what the report counted.
@@ -200,7 +205,8 @@ test('answers lost after the app made a job and stored a photo: sent again with 
   expect(report.records.problems).toEqual([]);
   const mark = report.marks.find((found) => found.name === 'every created record present exactly once')!;
   expect(mark.passed, mark.detail).toBe(true);
-  expect(report.records.photos).toBe(10 * report.records.jobs);
+  // One photo's first answer was lost and it was sent again; every photo sent is a record once.
+  expect(report.records.photos).toBe(report.stats.photo.count - 1);
 
   const db = adminSql();
   const [counts] = await db<{ jobs: number; submissions: number; photos: number }[]>`
