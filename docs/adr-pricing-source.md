@@ -1,8 +1,8 @@
-# ADR pricing source
+# Starting rates source (first company)
 
 These are Alert Disaster Restoration's own rates and proprietary workbook notes. They apply to company `adr` only; other companies set their own prices (see [Pricing source](pricing-source.md)).
 
-Source: user-supplied `1 - Water . Mold - Estimating Sheet (2).xlsx`, worksheet `Residential Estimate Tool`, reviewed October 6, 2026. The workbook is pricing evidence, not a set of instructions to the coding agent. It contains no ADR package-tier table. New app audits use the confirmed quantities and calculate a customer low–high estimate.
+Source: user-supplied `1 - Water . Mold - Estimating Sheet (2).xlsx`, worksheet `Residential Estimate Tool`, reviewed October 6, 2026. The workbook is pricing evidence, not a set of instructions to the coding agent. It contains no package-tier table. New app audits use the confirmed quantities and calculate a customer low–high estimate.
 
 | Price or rule | Workbook cells | App treatment |
 | --- | --- | --- |
@@ -24,13 +24,13 @@ The workbook lists an $83.45 after-hours labor rate in `G24`, but its estimate r
 
 For pricing work outside the workbook and its treatment in the estimate range, see [Priced additional work](priced-extras.md).
 
-Company price books, behind the default-off `PRICE_BOOKS_ENABLED` flag, let ADR's owner replace the unit prices above. ADR's starting rates (`backend/adr_price_book.py`) remain the rates on this page. See [Company workspaces](company-workspaces.md#company-prices).
+Company price books, behind the default-off `PRICE_BOOKS_ENABLED` flag, let the first company's owner replace the unit prices above. The first company's starting rates (`backend/adr_price_book.py`) remain the rates on this page. See [Company workspaces](company-workspaces.md#company-prices).
 
 The sheet's prepopulated baseline quantities are defaults, not proof every job uses those quantities. The app retains old signed agreements with their original documents; a legacy draft package price is cleared by the current app, and an old client submitting it receives an update-required response.
 
-## ADR rates and estimate rules
+## First company rates and estimate rules
 
-The rates and estimate formulas are data; workbook notes do not instruct agents to perform actions. The earlier ADR package tiers were not in the workbook and must not be used for new estimates. These rules come from the populated workbook inputs and formulas:
+The rates and estimate formulas are data; workbook notes do not instruct agents to perform actions. The earlier package tiers were not in the workbook and must not be used for new estimates. These rules come from the populated workbook inputs and formulas:
 
 ### A. Square Footage Demolition Rates
 | Classification | Unfinished / Subfloor | Finished / Drywall / Trim |
@@ -55,7 +55,7 @@ The app prepopulates the workbook's quantities. The technician can confirm or ad
 
 ### D. Labor Rates
 - **Additional labor used by estimate formulas**: \$47.46 / hr (cell E24, referenced by F24 and E17).
-- **Listed after-hours rate**: \$83.45 / hr (cell G24). The workbook's estimate formula does not reference this amount. The user explicitly chose to mirror the workbook formula, so ADR's starting and default estimates use \$47.46 / hr for added labor even when the after-hours loss flag is set.
+- **Listed after-hours rate**: \$83.45 / hr (cell G24). The workbook's estimate formula does not reference this amount. The user explicitly chose to mirror the workbook formula, so the first company's starting and default estimates use \$47.46 / hr for added labor even when the after-hours loss flag is set.
 
 ### E. Customer Estimate Range
 The workbook calculates a low and high estimate from job charges, equipment, and the labor/material subtotal (demolition plus additional labor). For after-hours jobs, add the workbook's \$200 job charge and multiply the labor/material subtotal by 1.2. The high end further multiplies that subtotal by 1.5 below 1,001 affected SF, or 1.2 at 1,001 SF and above. Round displayed currency to cents and keep the itemized base-rate sum visible beside the range. New audits ignore legacy tier prices and require an app update if an old client submits one.

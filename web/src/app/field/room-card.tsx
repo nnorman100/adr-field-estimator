@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import type { ScopeLists } from '@/lib/field/api';
 import { editsAfterSave, roomChanges, roomTypeChoice, ROOM_FIELDS, withEdits, type FormValues, type RoomLists } from '@/lib/field/forms';
 import { MAX_FINDINGS, type RoomField } from '@/lib/field/schema';
-import { saveRoomField } from '@/lib/field/store';
+import { roomFieldWrites } from '@/lib/field/store';
 import type { JobContext } from './job-screens';
 import { RoomItems, RoomPrepTasks } from './room-lists';
 import { Box, Choice, Outcome, READ_AGAIN } from './ui';
@@ -131,7 +131,7 @@ export function RoomCard({
     const sent = edits;
     const sentLists = listEdits;
     if (Object.keys(changes).length === 0) return setNotice('Nothing to save.');
-    await saveEdit((db) => saveRoomField(db, job.draftRef, roomId, changes), 'Room saved.', () => {
+    await saveEdit(roomFieldWrites(job.draftRef, roomId, changes), 'Room saved.', () => {
       setEdits((current) => editsAfterSave(current, sent));
       // A list changed again while saving stays as edited; one saved as sent shows the stored list.
       setListEdits((current) => ({

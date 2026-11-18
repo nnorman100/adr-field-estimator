@@ -3,8 +3,15 @@ name: Web app
 # Separate from ci.yml so the existing jobs behave exactly as before. Covers only web/ (the
 # TypeScript rebuild skeleton); every job has a time limit.
 #
-# Every pull request runs every job, with no path filter, so `company-isolation` and `check` report
+# Every pull request starts every job, with no path filter, so `company-isolation` and `check` report
 # on each one and can be required checks. Pushes to master keep the path filter.
+#
+# A pull request that changes nothing under web/, live-relay-placeholder/ or this file cannot affect
+# the database, emulators, company-isolation, e2e or image jobs. Each of them starts with a step
+# (id `changes`) that compares the pull request's merge commit with its first parent, master (hence
+# checkout's fetch-depth 2); when nothing there changed, the job's later steps are skipped and the
+# job still reports success. When the diff cannot run, the job runs in full. Pushes to master and
+# `check` always run in full.
 on:
   push:
     branches: [master]
@@ -32,11 +39,26 @@ jobs:
       APP_ENV: test
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+      # Skips the rest of this job on pull requests outside web/ (see the top of this file).
+      - name: Skip pull requests that change nothing under web
+        id: changes
+        working-directory: .
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] &&
+            git diff --quiet HEAD^1 HEAD -- web live-relay-placeholder .github/workflows/web.yml; then
+            echo "web=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::This pull request changes nothing under web/, live-relay-placeholder/ or web.yml; skipping."
+          else
+            echo "web=true" >> "$GITHUB_OUTPUT"
+          fi
       # npm run test:db starts its own throwaway PostgreSQL 16: the postgres:16 image when a Docker
       # daemon answers (GitHub's Ubuntu image), otherwise initdb/pg_ctl from
       # /usr/lib/postgresql/16/bin. The self-hosted runner's container has neither, so only there
       # this installs the Ubuntu postgresql-16 package, without creating or starting a cluster.
       - name: Install PostgreSQL 16 when there is no Docker daemon
+        if: steps.changes.outputs.web == 'true'
         run: |
           if ! docker version --format '{{.Server.Version}}' > /dev/null 2>&1 &&
             [ ! -x /usr/lib/postgresql/16/bin/initdb ]; then
@@ -47,12 +69,15 @@ jobs:
               -o Dpkg::Options::=--force-confold postgresql-16
           fi
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.changes.outputs.web == 'true'
         with:
           node-version: lts/*
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci
+        if: steps.changes.outputs.web == 'true'
       - run: npm run test:db
+        if: steps.changes.outputs.web == 'true'
 
   # Firebase Auth and Firestore emulators under a demo- project id only (tests/emu/run.ts
   # refuses any other id). `check` below fails when this job does.
@@ -62,21 +87,39 @@ jobs:
     # machine never collide on 9399 or 8399. Only here: `npm test` in `check` must see the default ports.
     env:
       EMU_PORTS: auto
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+      # Skips the rest of this job on pull requests outside web/ (see the top of this file).
+      - name: Skip pull requests that change nothing under web
+        id: changes
+        working-directory: .
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] &&
+            git diff --quiet HEAD^1 HEAD -- web live-relay-placeholder .github/workflows/web.yml; then
+            echo "web=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::This pull request changes nothing under web/, live-relay-placeholder/ or web.yml; skipping."
+          else
+            echo "web=true" >> "$GITHUB_OUTPUT"
+          fi
       # The Firestore emulator runs on Java 21 or later.
       - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        if: steps.changes.outputs.web == 'true'
         with:
           distribution: temurin
           java-version: '21'
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.changes.outputs.web == 'true'
         with:
           node-version: lts/*
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci
+        if: steps.changes.outputs.web == 'true'
       - run: npm run test:emu
+        if: steps.changes.outputs.web == 'true'
 
   # The company-isolation gate (S3-17): two companies in two tenants, every route called with the
   # other's ids, SQL as the runtime role and the Firestore rules (docs/ACCESS.md, "Company isolation
@@ -91,8 +134,23 @@ jobs:
       EMU_PORTS: auto
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+      # Skips the rest of this job on pull requests outside web/ (see the top of this file).
+      - name: Skip pull requests that change nothing under web
+        id: changes
+        working-directory: .
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] &&
+            git diff --quiet HEAD^1 HEAD -- web live-relay-placeholder .github/workflows/web.yml; then
+            echo "web=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::This pull request changes nothing under web/, live-relay-placeholder/ or web.yml; skipping."
+          else
+            echo "web=true" >> "$GITHUB_OUTPUT"
+          fi
       # Same PostgreSQL 16 setup as the database job, and Java 21 for the Firestore emulator.
       - name: Install PostgreSQL 16 when there is no Docker daemon
+        if: steps.changes.outputs.web == 'true'
         run: |
           if ! docker version --format '{{.Server.Version}}' > /dev/null 2>&1 &&
             [ ! -x /usr/lib/postgresql/16/bin/initdb ]; then
@@ -103,22 +161,26 @@ jobs:
               -o Dpkg::Options::=--force-confold postgresql-16
           fi
       - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        if: steps.changes.outputs.web == 'true'
         with:
           distribution: temurin
           java-version: '21'
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.changes.outputs.web == 'true'
         with:
           node-version: lts/*
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci
+        if: steps.changes.outputs.web == 'true'
       - run: npm run test:isolation
+        if: steps.changes.outputs.web == 'true'
 
   check:
     needs: [database, emulators, company-isolation]
     if: always() && !cancelled()
     runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Require the database job
@@ -152,18 +214,33 @@ jobs:
     # machine never collide on 9399 or 8399. Only here: `npm test` in `check` must see the default ports.
     env:
       EMU_PORTS: auto
-    timeout-minutes: 20
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+      # Skips the rest of this job on pull requests outside web/ (see the top of this file).
+      - name: Skip pull requests that change nothing under web
+        id: changes
+        working-directory: .
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] &&
+            git diff --quiet HEAD^1 HEAD -- web live-relay-placeholder .github/workflows/web.yml; then
+            echo "web=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::This pull request changes nothing under web/, live-relay-placeholder/ or web.yml; skipping."
+          else
+            echo "web=true" >> "$GITHUB_OUTPUT"
+          fi
       # The job-screen tests (tests/e2e/jobs.spec.ts) start a throwaway PostgreSQL 16 as test:db does:
       # the postgres:16 image when a Docker daemon answers (GitHub's Ubuntu image), otherwise
       # initdb/pg_ctl from /usr/lib/postgresql/16/bin. The self-hosted runner's container has neither, so only there
       # this installs the Ubuntu postgresql-16 package, without creating or starting a cluster.
       - name: Install PostgreSQL 16 when there is no Docker daemon
+        if: steps.changes.outputs.web == 'true'
         run: |
           if ! docker version --format '{{.Server.Version}}' > /dev/null 2>&1 &&
             [ ! -x /usr/lib/postgresql/16/bin/initdb ]; then
@@ -175,17 +252,22 @@ jobs:
           fi
       # The offline tests (tests/e2e/offline) start the Firestore emulator, which needs Java 21 or later.
       - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        if: steps.changes.outputs.web == 'true'
         with:
           distribution: temurin
           java-version: '21'
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.changes.outputs.web == 'true'
         with:
           node-version: lts/*
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci
+        if: steps.changes.outputs.web == 'true'
       - run: npx playwright install --with-deps chromium webkit
+        if: steps.changes.outputs.web == 'true'
       - run: npm run test:e2e -- --workers=2
+        if: steps.changes.outputs.web == 'true'
         env:
           E2E_SHARD: ${{ matrix.shard }}/4
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -211,25 +293,44 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 2
+      # Skips the rest of this job on pull requests outside web/ (see the top of this file).
+      - name: Skip pull requests that change nothing under web
+        id: changes
+        working-directory: .
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] &&
+            git diff --quiet HEAD^1 HEAD -- web live-relay-placeholder .github/workflows/web.yml; then
+            echo "web=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::This pull request changes nothing under web/, live-relay-placeholder/ or web.yml; skipping."
+          else
+            echo "web=true" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.changes.outputs.web == 'true'
         with:
           node-version: lts/*
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci
+        if: steps.changes.outputs.web == 'true'
       # No Docker daemon on the runner: crane assembles the image (owner decision 2026-11-10).
       - name: Install crane
+        if: steps.changes.outputs.web == 'true'
         run: |
           scripts/install-crane.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Refuse a build without the commit
+        if: steps.changes.outputs.web == 'true'
         run: |
           if scripts/build-image.sh web --output "$RUNNER_TEMP/nocommit.tar" >/dev/null 2>&1; then
             echo "::error::The image built without a commit."; exit 1
           fi
       - name: Build the image without Docker
+        if: steps.changes.outputs.web == 'true'
         run: scripts/build-image.sh web --commit "$GITHUB_SHA" --version "$CHECK_VERSION" --output "$RUNNER_TEMP/web-image.tar" --stage "$RUNNER_TEMP/web-stage"
       - name: Check the image configuration
+        if: steps.changes.outputs.web == 'true'
         run: |
           config=$(tar -xOf "$RUNNER_TEMP/web-image.tar" manifest.json | node scripts/check-image.ts config-path)
           tar -xOf "$RUNNER_TEMP/web-image.tar" "$config" | node scripts/check-image.ts web --commit "$GITHUB_SHA" --version "$CHECK_VERSION"
@@ -240,6 +341,7 @@ jobs:
       # exporting nothing (no K_SERVICE, no project): the log must say tracing started in that mode
       # and never that it could not start.
       - name: Run as on Cloud Run and smoke-check
+        if: steps.changes.outputs.web == 'true'
         run: |
           (cd "$RUNNER_TEMP/web-stage/app" && env -i PATH="$PATH" NODE_ENV=production PORT=8080 \
             HOSTNAME=127.0.0.1 APP_ENV=test APP_COMMIT="$GITHUB_SHA" APP_VERSION="$CHECK_VERSION" node server.js > "$RUNNER_TEMP/web.log" 2>&1 &)
@@ -251,11 +353,13 @@ jobs:
             echo "::error::Tracing failed to start."; cat "$RUNNER_TEMP/web.log"; exit 1
           fi
       - name: Refuse to start without APP_ENV
+        if: steps.changes.outputs.web == 'true'
         run: |
           status=0
           (cd "$RUNNER_TEMP/web-stage/app" && env -i PATH="$PATH" PORT=8090 timeout 60 node server.js) >/dev/null 2>&1 || status=$?
           test "$status" = 1
       - name: Live relay placeholder answers 503
+        if: steps.changes.outputs.web == 'true'
         run: |
           scripts/build-image.sh live-placeholder --output "$RUNNER_TEMP/live-image.tar" --stage "$RUNNER_TEMP/live-stage"
           config=$(tar -xOf "$RUNNER_TEMP/live-image.tar" manifest.json | node scripts/check-image.ts config-path)

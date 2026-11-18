@@ -2,8 +2,8 @@ import { and, asc, desc, eq, ne, or, sql, type SQL } from 'drizzle-orm';
 import { actors, auditEvents, jobAssignments, jobClaims, jobCustomers, jobs } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
-import { canSeeJob, draftSubmitted, hasAny, isOwnJob, jobAccess, JobError, lockedJob, seesEveryJob, type JobCaller, type JobRow } from './access';
-import type { DraftStore } from './drafts';
+import { canSeeJob, claimDraft, hasAny, holdDraft, isOwnJob, jobAccess, JobError, lockedJob, seesEveryJob, type JobCaller, type JobRow } from './access';
+import type { DraftLookup, DraftStore } from './drafts';
 import { createDigest, type ClaimInput, type CreateJobInput, type CustomerInput, type ListQuery } from './schema';
 
 // The jobs of a company (S5a-3). Every function runs inside withCompany for the company of the
@@ -181,6 +181,17 @@ function decodeCursor(cursor: string): { time: string; id: string } {
   return { time, id };
 }
 
+// The field database's draft under this id, read before the request commits it (security audit F1).
+export async function findDraft(drafts: DraftLookup, companyId: string, draftId: string): Promise<{ jobId: unknown } | null> {
+  try {
+    return await drafts.findDraft(companyId, draftId);
+  } catch (error) {
+    // Fixed text only: the SDK's message may quote a path.
+    console.error('job draft unavailable', error instanceof Error ? error.name : 'unknown');
+    throw new JobError('draft_unavailable');
+  }
+}
+
 export function jobsService(db: Database, drafts: DraftStore): JobsService {
   async function inCompany<T>(companyId: string, run: (tx: CompanyTransaction) => Promise<T>): Promise<T> {
     try {
@@ -218,14 +229,21 @@ export function jobsService(db: Database, drafts: DraftStore): JobsService {
           const [existing] = await tx
             .select()
             .from(jobs)
-            .where(and(eq(jobs.companyId, caller.companyId), eq(jobs.id, input.id)));
+            .where(and(eq(jobs.companyId, caller.companyId), eq(jobs.id, input.id)))
+            .for('update');
           // No such job: the draft id is another job's. Same id: it is a retry only when the body is
           // the same and the caller may see that job.
           if (!existing || existing.requestDigest !== digest || !canSeeJob(caller, existing)) throw new JobError('conflict');
           if (existing.status === 'archived') throw new JobError('archived');
+          // A retry holds its draft id for the job in Postgres (security audit F1), in this transaction, which
+          // commits before the field database is touched: a draft the previous version made is stamped only
+          // once the claim is committed, so a lost answer from that stamp never leaves it unclaimed.
+          if (!(await holdDraft(tx, caller.companyId, existing.id, input.draftId))) throw new JobError('conflict');
           row = existing;
         } else {
-          if (await draftSubmitted(tx, caller.companyId, input.draftId)) throw new JobError('conflict');
+          if (!(await claimDraft(tx, caller.companyId, row.id, input.draftId))) throw new JobError('conflict');
+          // A draft id claimed now was never this job's: a draft already under it was made for another.
+          if (await findDraft(drafts, caller.companyId, input.draftId)) throw new JobError('conflict');
           await audit(tx, caller, 'job_created', row.id, { revision: row.revision });
         }
         let ownerUid: string | null = null;
@@ -241,7 +259,8 @@ export function jobsService(db: Database, drafts: DraftStore): JobsService {
       try {
         await inCompany(caller.companyId, async (tx) => {
           await lockedJob(tx, caller.companyId, made.detail.job.id, { live: true });
-          await drafts.ensure(caller.companyId, input.draftId, made.ownerUid);
+          // A draft made for another job is never this job's.
+          if ((await drafts.ensure(caller.companyId, made.detail.job.id, input.draftId, made.ownerUid)) === 'taken') throw new JobError('conflict');
         });
         await drafts.projectJob(caller.companyId, made.detail.job.id, {
           currentDraftId: made.detail.job.currentDraftId, revision: made.detail.job.revision,

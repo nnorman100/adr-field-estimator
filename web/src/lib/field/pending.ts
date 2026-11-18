@@ -8,6 +8,13 @@
 //   is unanswered the other waits (a second save would move the revision on, and the first one's
 //   resend would then meet a conflict instead of its own answer).
 // - Photos: per job, each with its id and the very bytes sent.
+// - Copy a signed job (S5b-2): per signed job, the new job's and draft's ids, so a lost answer is
+//   sent again with the same ids and makes one draft.
+// - Archive and restore (S5b-2): per job, the change and its id while it has no answer or its field
+//   step did not get through (5xx), to send again from wherever the job is shown next, also once it
+//   has left the list it was sent from. Once one is done, whether the job is archived is posted per
+//   job, as its reads also post it, for whichever screen or list is open now: answers to requests
+//   made before it no longer count, and they read again.
 //
 // A send in flight is marked here, not in the screen, so a screen opened again while it is on its
 // way cannot send it a second time; an answer settles only the request that still holds its slot.
@@ -55,6 +62,9 @@ export type CoordRequest =
   | { kind: 'unassign'; assignmentId: string }
   | { kind: 'notes'; revision: number; changeId: string; notes: string };
 export type PendingCoord = { key: string; at: string; done: string; request: CoordRequest; sending: boolean };
+export type PendingCopy = { id: string; draftId: string; sending: boolean };
+export type ArchivalKind = 'archive' | 'restore';
+export type PendingArchival = { kind: ArchivalKind; address: string; revision: number; changeId: string; sending: boolean };
 export type PendingPhoto = {
   id: string;
   bytes: Blob;
@@ -75,8 +85,11 @@ type State = {
   // that settled after its screen closed.
   details: Record<string, JobDetail>;
   draftChanges: Record<string, number>;
-  // By job: its access mark, and the server's reason while it refuses to show the job.
+  // By job: its access mark, and the server's reason while it refuses to show the job. `marked` is
+  // the last mark handed out, of any job; `readAt`, by job, the mark of the newest read that showed it.
   marks: Record<string, number>;
+  marked: number;
+  readAt: Record<string, number>;
   denials: Record<string, string>;
   // By job: the field work is on this phone as this person's (or its job says it is theirs).
   held: Record<string, true>;
@@ -85,6 +98,15 @@ type State = {
   // job is still readable (the owner, office) but the field work is another person's.
   moved: Record<string, { draft: FieldDraft | null; draftId: string | null; revoked: boolean }>;
   coord: Record<string, PendingCoord>;
+  // By signed job: its copy sent and not answered yet.
+  copies: Record<string, PendingCopy>;
+  // By job: its archive or restore not settled yet.
+  archivals: Record<string, PendingArchival>;
+  // By job: archived, as the newest answer about it said; and how many archives or restores were done.
+  archived: Record<string, true>;
+  archivalsDone: Record<string, number>;
+  // By job: a refusal waits for a read of the job sent after the mark handed out last when it came.
+  verifying: Record<string, number>;
   // By job: how many coordination writes were answered, so a screen that read before knows to read again.
   coordSettled: Record<string, number>;
 };
@@ -98,10 +120,17 @@ const EMPTY = {
   details: {},
   draftChanges: {},
   marks: {},
+  marked: 0,
+  readAt: {},
   denials: {},
   held: {},
   moved: {},
   coord: {},
+  copies: {},
+  archivals: {},
+  archived: {},
+  archivalsDone: {},
+  verifying: {},
   coordSettled: {},
 };
 let state: State = { owner: null, ...EMPTY };
@@ -180,10 +209,16 @@ export const pending = {
   detail: (jobId: string): JobDetail | null => state.details[jobId] ?? null,
   // Taken before a request about the job is sent, and handed back with its answer.
   mark: (jobId: string): number => state.marks[jobId] ?? 0,
+  // Taken before a read of a job is sent: newer than every mark handed out before it, so of two
+  // reads the one sent later decides.
+  markRead(): number {
+    state = { ...state, marked: state.marked + 1 };
+    return state.marked;
+  },
   // Keeps a job answered to a request made under `mark`, unless the job was refused since. Answers
   // whether the answer still counts.
   publishDetail(jobId: string, detail: JobDetail, mark: number): boolean {
-    if (mark !== pending.mark(jobId)) return false;
+    if (mark < pending.mark(jobId)) return false;
     const known = state.details[jobId];
     if (known && known.job.revision >= detail.job.revision) return true;
     const denials = { ...state.denials };
@@ -198,8 +233,9 @@ export const pending = {
     delete details[jobId];
     change({
       details,
-      marks: { ...state.marks, [jobId]: pending.mark(jobId) + 1 },
+      ...remarked(jobId),
       denials: { ...state.denials, [jobId]: message },
+      archived: flagged(state.archived, jobId, false),
     });
   },
   denial: (jobId: string): string | null => state.denials[jobId] ?? null,
@@ -242,11 +278,28 @@ export const pending = {
     delete moved[jobId];
     change({ moved });
   },
+  // A refusal of a write or a read of the job that only a read of the job sent after now can explain
+  // (a move, an archive, a missing photo): nothing of it is saved until such a read is answered.
+  verify(jobId: string) {
+    change({ verifying: { ...state.verifying, [jobId]: state.marked } });
+  },
+  verifying: (jobId: string): number | null => state.verifying[jobId] ?? null,
   // A read of the job sent under `mark` came back, whether or not a screen of the job is still
-  // open: a refusal drops every copy of the job. Answers false when the job was refused since, so
-  // the answer no longer counts.
+  // open: one sent after a refusal to verify settles it; a refusal drops every copy of the job; the
+  // job (archived or not, S5b-2) says whether it is archived, and an archived answer is newer than
+  // any request made before it. Answers false when the job was refused or archived since, so the
+  // answer no longer counts.
+  // A read sent before the newest read that showed the job no longer counts either.
   readAnswered(jobId: string, answer: Answer<unknown>, mark: number): boolean {
-    if (mark !== pending.mark(jobId)) return false;
+    if (mark < pending.mark(jobId) || mark < (state.readAt[jobId] ?? 0)) return false;
+    const verifying = state.verifying[jobId];
+    if (verifying !== undefined && mark > verifying && (answer.ok || answer.denied || answer.code === 'archived')) {
+      const next = { ...state.verifying };
+      delete next[jobId];
+      change({ verifying: next });
+    }
+    if (!answer.ok && answer.code === 'archived') change({ archived: flagged(state.archived, jobId, true), marks: { ...state.marks, [jobId]: mark + 0.5 } });
+    else if (answer.ok) change({ readAt: { ...state.readAt, [jobId]: mark }, archived: flagged(state.archived, jobId, false) });
     if (!answer.ok && answer.denied) pending.refused(jobId, answer.message, answer.status);
     return true;
   },
@@ -265,12 +318,75 @@ export const pending = {
     change(settlement === 'answered' ? { coord, coordSettled: { ...state.coordSettled, [jobId]: pending.coordSettled(jobId) + 1 } } : { coord });
     return true;
   },
+  copy: (jobId: string): PendingCopy | null => state.copies[jobId] ?? null,
+  setCopy(jobId: string, copy: PendingCopy) {
+    change({ copies: { ...state.copies, [jobId]: copy } });
+  },
+  // Ends the copy `id` of a signed job if it still holds the slot: no answer keeps its ids to send
+  // again; an answer or a refusal frees them.
+  settleCopy(jobId: string, id: string, settlement: 'unanswered' | 'answered'): boolean {
+    const current = state.copies[jobId];
+    if (current?.id !== id) return false;
+    const copies = { ...state.copies };
+    if (settlement === 'unanswered') copies[jobId] = { ...current, sending: false };
+    else delete copies[jobId];
+    change({ copies });
+    return true;
+  },
+  archivals: (): Record<string, PendingArchival> => state.archivals,
+  archival: (jobId: string): PendingArchival | null => state.archivals[jobId] ?? null,
+  setArchival(jobId: string, archival: PendingArchival) {
+    change({ archivals: { ...state.archivals, [jobId]: archival } });
+  },
+  // Ends the archive or restore `changeId` of a job if it still holds the slot: no answer keeps it to
+  // send again; an answer or a refusal frees it.
+  settleArchival(jobId: string, changeId: string, settlement: 'unanswered' | 'answered'): boolean {
+    const current = state.archivals[jobId];
+    if (current?.changeId !== changeId) return false;
+    const archivals = { ...state.archivals };
+    if (settlement === 'unanswered') archivals[jobId] = { ...current, sending: false };
+    else delete archivals[jobId];
+    change({ archivals });
+    return true;
+  },
+  archived: (jobId: string): boolean => Boolean(state.archived[jobId]),
+  // A route of the job answered 410: the job is archived, and no answer to a request made before now
+  // counts.
+  archivedSeen(jobId: string) {
+    change({ archived: flagged(state.archived, jobId, true), ...remarked(jobId) });
+  },
+  // An archive or restore of the job is done: the open screens and lists of it read again. Unless a
+  // read already showed a newer revision of the job than the one it answered (`revision`), whether
+  // it is archived is posted and no answer to a request made before now counts.
+  archivalDone(jobId: string, archived: boolean, revision?: number) {
+    const current = revision === undefined || revision >= (state.details[jobId]?.job.revision ?? 0);
+    change({
+      ...(current ? { archived: flagged(state.archived, jobId, archived), ...remarked(jobId) } : {}),
+      archivalsDone: { ...state.archivalsDone, [jobId]: pending.archivalsDone(jobId) + 1 },
+    });
+  },
+  // Of one job, or of every job.
+  archivalsDone: (jobId?: string): number =>
+    jobId === undefined ? Object.values(state.archivalsDone).reduce((sum, count) => sum + count, 0) : (state.archivalsDone[jobId] ?? 0),
   draftChanges: (jobId: string): number => state.draftChanges[jobId] ?? 0,
   // A send changed the job's field draft after its screen closed: the open screen reads it again.
   draftChanged(jobId: string) {
     change({ draftChanges: { ...state.draftChanges, [jobId]: pending.draftChanges(jobId) + 1 } });
   },
 };
+
+// A new mark for the job, newer than every mark handed out so far.
+function remarked(jobId: string): Pick<State, 'marks' | 'marked'> {
+  const marked = state.marked + 1;
+  return { marks: { ...state.marks, [jobId]: marked }, marked };
+}
+
+function flagged(flags: Record<string, true>, jobId: string, on: boolean): Record<string, true> {
+  const next = { ...flags };
+  if (on) next[jobId] = true;
+  else delete next[jobId];
+  return next;
+}
 
 // The newer of two copies of a job, by revision; either may be missing.
 export function newerDetail(a: JobDetail | null, b: JobDetail | null): JobDetail | null {
