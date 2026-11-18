@@ -34,16 +34,18 @@ const IDLE_TIMEOUT_SECONDS = 60;
 
 // Time limits (security audit F5), so one slow caller cannot hold every connection of an instance.
 // A transaction keeps its connection until it ends, and some wait on an outside service while open
-// (Submit's fence, team invitations, member disable, the operator's actions, the access-renewal
-// run), so without limits a slow or stuck outside call queued every other request behind it.
+// (Submit's fence, draft creation, member disable, the operator's actions, the access-renewal run),
+// so without limits a slow or stuck outside call queued every other request behind it.
 // - A transaction (every company read and write is one, db/tenant.ts) waits at most
-//   QUEUE_TIMEOUT_SECONDS for a free connection; then it is refused (QUEUE_TIMEOUT, never sent) and
-//   the route answers 503, as for any database failure. A single query outside a transaction may
-//   instead be pipelined behind a running statement, so the statement limit bounds its wait.
+//   QUEUE_TIMEOUT_SECONDS for a free connection; then it is refused (QUEUE_TIMEOUT, never sent,
+//   isQueueTimeout) and the route answers 503. A single query outside a transaction may instead be
+//   pipelined behind a running statement, so the statement limit bounds its wait.
 // - The server ends a statement after 30 s, a wait for a lock after 10 s, and a transaction that
 //   sits idle between statements for 30 s (it rolls back, its locks are released and the pool
 //   opens a new connection). The access-renewal run raises its own lock wait to 15 s for that
-//   transaction (lib/projection/outbox.ts), which stays below the statement limit.
+//   transaction (lib/projection/outbox.ts), which stays below the statement limit, and a
+//   transaction that must stay open across an outside call raises its own idle limit
+//   (holdAcrossOutsideCall in db/tenant.ts).
 // These are startup settings on every connection opened from these options: the main pool, the
 // access-renewal pool, the health probe and scripts/add-operator.ts. The migration runner has its
 // own settings (migrate.ts).
@@ -62,6 +64,12 @@ const common = {
   onnotice: () => {},
   connection: { application_name: 'dryscope-web', ...SERVER_TIME_LIMITS_MS },
 };
+
+// A caller refused because no connection came free within QUEUE_TIMEOUT_SECONDS: nothing was sent.
+export function isQueueTimeout(error: unknown): boolean {
+  const found = error as { code?: unknown; cause?: { code?: unknown } } | null;
+  return found?.code === 'QUEUE_TIMEOUT' || found?.cause?.code === 'QUEUE_TIMEOUT';
+}
 
 // How the app reaches Postgres, from the validated config only. On Cloud Run that is the Cloud SQL
 // instance mounted under /cloudsql, logging in as the service's IAM database user with a fresh

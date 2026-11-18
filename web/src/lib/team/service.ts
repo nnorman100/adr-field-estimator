@@ -218,6 +218,30 @@ async function lockedInvitation(tx: CompanyTransaction, companyId: string, invit
   return row ?? null;
 }
 
+// An email already a member, or with an open invitation, is not invited again. A convenience check
+// only: acceptance binds the person by sign-in tenant and uid, never by email.
+async function refuseUninvitable(tx: CompanyTransaction, companyId: string, email: string): Promise<void> {
+  const [member] = await tx
+    .select({ id: memberships.id })
+    .from(memberships)
+    .innerJoin(actors, actorOfMembership)
+    .where(and(eq(memberships.companyId, companyId), eq(actors.email, email)))
+    .limit(1);
+  if (member) throw new TeamError('already_member');
+  const [pending] = await tx
+    .select({ id: invitations.id })
+    .from(invitations)
+    .where(and(eq(invitations.companyId, companyId), eq(invitations.email, email), eq(invitations.status, 'pending')));
+  if (pending) throw new TeamError('invitation_pending');
+}
+
+async function pendingInvitation(tx: CompanyTransaction, companyId: string, invitationId: string) {
+  const row = await lockedInvitation(tx, companyId, invitationId);
+  if (!row || row.clearedAt) throw new TeamError('not_found');
+  if (row.status !== 'pending') throw new TeamError('invitation_closed');
+  return row;
+}
+
 async function lockedMember(tx: CompanyTransaction, companyId: string, membershipId: string) {
   const [row] = await tx
     .select({ ...memberColumns, tenant: actors.authTenantId, uid: actors.uid })
@@ -315,6 +339,11 @@ export function teamService(db: Database, users: TenantUsers, project: ProjectAc
       });
     },
 
+    // The sign-in account is made with no transaction open (security audit F5): a short read finds
+    // the company's tenant and checks the email may be invited, the account is made, and only then
+    // does the transaction that writes the invitation open, checking all of it again. Making the
+    // account is safe to repeat and writes nothing to Postgres, so a failure on either side leaves
+    // nothing to undo and the owner can simply try again.
     async invite(
       companyId: string,
       by: TeamActor,
@@ -322,25 +351,16 @@ export function teamService(db: Database, users: TenantUsers, project: ProjectAc
       now: Date,
     ): Promise<{ invitation: InvitationView } & Delivery> {
       allowed(by, 'invitation_created');
+      const { tenant } = await inCompany(db, companyId, async (tx) => {
+        const company = await readyCompany(tx, companyId);
+        await refuseUninvitable(tx, companyId, input.email);
+        return company;
+      });
+      await users.ensureAccount(tenant, input.email);
       return inCompany(db, companyId, async (tx) => {
         const company = await readyCompany(tx, companyId);
-        // A convenience check only: acceptance binds the person by sign-in tenant and uid, never
-        // by email.
-        const [member] = await tx
-          .select({ id: memberships.id })
-          .from(memberships)
-          .innerJoin(actors, actorOfMembership)
-          .where(and(eq(memberships.companyId, companyId), eq(actors.email, input.email)))
-          .limit(1);
-        if (member) throw new TeamError('already_member');
-        const [pending] = await tx
-          .select({ id: invitations.id })
-          .from(invitations)
-          .where(
-            and(eq(invitations.companyId, companyId), eq(invitations.email, input.email), eq(invitations.status, 'pending')),
-          );
-        if (pending) throw new TeamError('invitation_pending');
-
+        if (company.tenant !== tenant) throw new TeamError('conflict');
+        await refuseUninvitable(tx, companyId, input.email);
         const [row] = await tx
           .insert(invitations)
           .values({
@@ -353,13 +373,12 @@ export function teamService(db: Database, users: TenantUsers, project: ProjectAc
           })
           .returning(invitationColumns);
         await audit(tx, companyId, by, 'invitation_created', row!.id, { role: input.role });
-        // Last, so a failure rolls the invitation back and the owner can simply try again.
-        await users.ensureAccount(company.tenant, input.email);
         return { invitation: invitationView(row!, now), delivery: 'copy_link', link: invitationLink(company.slug, row!.id) };
       });
     },
 
-    // A pending invitation, expired or not, gets a fresh 7 days and its link again.
+    // A pending invitation, expired or not, gets a fresh 7 days and its link again. As for invite,
+    // its sign-in account is made between a short read and the transaction that renews it.
     async resend(
       companyId: string,
       by: TeamActor,
@@ -367,11 +386,16 @@ export function teamService(db: Database, users: TenantUsers, project: ProjectAc
       now: Date,
     ): Promise<{ invitation: InvitationView } & Delivery> {
       allowed(by, 'invitation_resent');
+      const found = await inCompany(db, companyId, async (tx) => {
+        const company = await readyCompany(tx, companyId);
+        const row = await pendingInvitation(tx, companyId, invitationId);
+        return { tenant: company.tenant, email: row.email };
+      }, by);
+      await users.ensureAccount(found.tenant, found.email);
       return inCompany(db, companyId, async (tx) => {
         const company = await readyCompany(tx, companyId);
-        const row = await lockedInvitation(tx, companyId, invitationId);
-        if (!row || row.clearedAt) throw new TeamError('not_found');
-        if (row.status !== 'pending') throw new TeamError('invitation_closed');
+        if (company.tenant !== found.tenant) throw new TeamError('conflict');
+        const row = await pendingInvitation(tx, companyId, invitationId);
         const wasExpired = isExpired(row, now);
         const [updated] = await tx
           .update(invitations)
@@ -379,7 +403,6 @@ export function teamService(db: Database, users: TenantUsers, project: ProjectAc
           .where(and(eq(invitations.companyId, companyId), eq(invitations.id, invitationId)))
           .returning(invitationColumns);
         await audit(tx, companyId, by, 'invitation_resent', invitationId, { wasExpired });
-        await users.ensureAccount(company.tenant, row.email);
         return {
           invitation: invitationView(updated!, now),
           delivery: 'copy_link',

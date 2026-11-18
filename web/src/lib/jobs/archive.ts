@@ -1,6 +1,6 @@
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { actors, agreements, jobs, jobSubmissions } from '@/db/schema';
-import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
+import { holdAcrossOutsideCall, withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
 import type { FieldDoc } from '@/lib/field/canonical';
 import { snapshotManifest } from '@/lib/submissions/snapshot';
@@ -265,6 +265,7 @@ export function archiveService(db: Database, store: ArchiveStore): ArchiveServic
       });
       await inCompany(caller.companyId, async (tx) => {
         await lockedJob(tx, caller.companyId, input.id, { live: true });
+        await holdAcrossOutsideCall(tx);
         const result = await field(() => store.createCopy(caller.companyId, input.id, input.draftId, made.ownerUid, made.field));
         // A draft made for another job is never the copy's (security audit F1).
         if (result === 'taken') throw new JobError('conflict');

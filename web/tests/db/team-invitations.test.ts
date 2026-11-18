@@ -116,6 +116,39 @@ describe('inviting', () => {
     expect(await everything(h.admin)).toBe(before);
   });
 
+  // Security audit F5: a slow sign-in service never holds a database connection with a
+  // transaction open, for the owner's invitation or for an operator's resend.
+  it('makes the sign-in account with no transaction open, then writes the invitation', async () => {
+    const seen: number[] = [];
+    const team = teamService(
+      h.handle.db,
+      {
+        async ensureAccount() {
+          const [row] = await h.admin<{ n: number }[]>`
+            SELECT count(*)::int AS n FROM pg_stat_activity
+            WHERE datname = current_database() AND application_name = 'dryscope-web' AND state LIKE 'idle in transaction%'
+          `;
+          seen.push(row!.n);
+        },
+        revokeSessions: async () => {},
+      },
+      async () => {},
+    );
+    const { invitation } = await team.invite(
+      h.seed.a,
+      { kind: 'member', actorId: h.seed.ownerA.actor },
+      { email: 'held@example.test', role: 'office' },
+      new Date(),
+    );
+    const resent = await team.resend(h.seed.a, { kind: 'operator', operatorId: h.seed.operator }, invitation.id, new Date());
+    expect(resent.invitation.status).toBe('pending');
+    expect(seen).toEqual([0, 0]);
+    expect(await h.admin`SELECT action, actor_id, operator_actor_id FROM audit_events WHERE target = ${invitation.id} ORDER BY id`).toEqual([
+      { action: 'invitation_created', actor_id: h.seed.ownerA.actor, operator_actor_id: null },
+      { action: 'invitation_resent', actor_id: null, operator_actor_id: h.seed.operator },
+    ]);
+  });
+
   it('needs a sign-in under 15 minutes old', async () => {
     const response = await invite(
       request({ ...owner(), signedInAgo: 16 * 60 }, `/api/companies/${h.seed.a}/invitations`, {

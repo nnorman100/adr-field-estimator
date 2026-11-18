@@ -58,6 +58,26 @@ describe('GET /api/sign-in/{address}', () => {
     await expect(get('company-a')).rejects.toThrow(/DATABASE_URL/);
   });
 
+  // Security audit F5: a lookup the full pool could not serve within its queue limit.
+  it('answers 503, quoting nothing, when no database connection came free in time', async () => {
+    const refused = Object.assign(new Error('QUEUE_TIMEOUT: Waited more than 10 seconds for a connection'), { code: 'QUEUE_TIMEOUT' });
+    vi.doMock('@/lib/sign-in/services', () => ({
+      signInDirectory: () => ({
+        pageFor: async () => {
+          throw refused;
+        },
+      }),
+    }));
+    try {
+      const res = await get('company-a');
+      expect(res.status).toBe(503);
+      expect(res.headers.get('cache-control')).toBe('no-store');
+      expect(await res.json()).toEqual({ error: 'sign_in_unavailable' });
+    } finally {
+      vi.doUnmock('@/lib/sign-in/services');
+    }
+  });
+
   it('answers 404 for a malformed address without opening a database', async () => {
     vi.stubEnv('APP_ENV', 'test');
     const res = await get('Company_A');

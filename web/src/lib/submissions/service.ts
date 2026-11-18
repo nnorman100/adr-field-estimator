@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { actors, auditEvents, evidenceObjects, jobs, jobSubmissions } from '@/db/schema';
-import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
+import { holdAcrossOutsideCall, withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
 import { manifestDigest, type FieldManifest } from '@/lib/field/canonical';
 import { roomFieldSchema } from '@/lib/field/schema';
@@ -38,9 +38,7 @@ import { manifestProblem, SNAPSHOT_FORMAT, snapshotBytes, snapshotManifest, stor
 // No Postgres transaction is held across a Firestore call, except the fence, which is closed under
 // the job's lock and its row's lock (closeFence). A failure talking to Firestore leaves the row pending: never an
 // abort, so a retry racing a failing attempt can still commit, and never a release, so nothing is
-// unlocked while its row could still commit. A fence call that outlasts the idle-in-transaction
-// limit (db/client.ts) ends the transaction the same way: the row stays pending, and a fence that
-// lands after the locks are gone is released by the worker once its row is aborted (repair.ts).
+// unlocked while its row could still commit.
 
 // Submit and Back to editing are scope work: the owner and the estimator (docs/ACCESS.md).
 const SUBMIT: readonly Capability[] = ['scope'];
@@ -358,6 +356,7 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
       );
       if (!allowed) return 'submission_aborted';
       if ((await submissionRow(tx, caller.companyId, row.id, true))?.status !== 'pending') return 'submission_aborted';
+      await holdAcrossOutsideCall(tx);
       let result = await field(() => store.fence(caller.companyId, row.draftId, fence));
       if (result.outcome === 'held') {
         const held = result.epoch;
@@ -487,6 +486,7 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
       // copy may differ), with where it came from. A retry makes it if it is missing.
       await inCompany(caller.companyId, async (tx) => {
         await lockedJob(tx, caller.companyId, jobId, { live: true });
+        await holdAcrossOutsideCall(tx);
         const result = await field(() =>
           store.createFrom(caller.companyId, jobId, input.draftId, made.ownerUid, snapshotManifest(made.source.snapshotBytes!), {
             draftId: made.source.draftId,
