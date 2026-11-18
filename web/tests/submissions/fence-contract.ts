@@ -146,25 +146,39 @@ export function fenceStoreContract(name: string, probe: () => FenceProbe): void 
 
     it('makes the next draft version whole, with its provenance, and leaves it alone when sent again', async () => {
       const { store, seed, peek } = probe();
-      const [company, draft] = [randomUUID(), randomUUID()];
+      const [company, job, draft] = [randomUUID(), randomUUID(), randomUUID()];
       const previous = { draftId: randomUUID(), submissionId: randomUUID() };
-      expect(await store.createFrom(company, draft, 'uid-owner', MANIFEST, previous)).toBe('created');
+      expect(await store.createFrom(company, job, draft, 'uid-owner', MANIFEST, previous)).toBe('created');
       const made = await peek(company, draft);
       expect(made).toMatchObject({ state: 'editing', fence: null, previous, fieldOwnerUid: 'uid-owner' });
       expect(same(made?.manifest, MANIFEST)).toBe(true);
-      expect(await store.createFrom(company, draft, 'uid-other', { draft: {}, rooms: [], photos: [] }, previous)).toBe('exists');
+      expect(await store.createFrom(company, job, draft, 'uid-other', { draft: {}, rooms: [], photos: [] }, previous)).toBe('exists');
       const again = await peek(company, draft);
       expect(again?.fieldOwnerUid).toBe('uid-owner');
       expect(same(again?.manifest, MANIFEST)).toBe(true);
       // A draft made with nobody owning the field work has no field owner.
       const unowned = randomUUID();
-      await store.createFrom(company, unowned, null, MANIFEST, previous);
+      await store.createFrom(company, job, unowned, null, MANIFEST, previous);
       expect((await peek(company, unowned))?.fieldOwnerUid).toBeNull();
-      // An existing draft is never overwritten.
+      // An existing draft is never overwritten, and one Back to editing did not make from this
+      // submission is not taken as this one (security audit F1).
       const kept = randomUUID();
       await seed(company, kept, MANIFEST);
-      expect(await store.createFrom(company, kept, 'uid-owner', { draft: { notes: 'other' }, rooms: [], photos: [] }, previous)).toBe('exists');
+      expect(await store.createFrom(company, job, kept, 'uid-owner', { draft: { notes: 'other' }, rooms: [], photos: [] }, previous)).toBe('taken');
       expect(same((await peek(company, kept))?.manifest, MANIFEST)).toBe(true);
+    });
+
+    it('never takes a draft made for another job or from another submission (security audit F1)', async () => {
+      const { store, peek } = probe();
+      const [company, job, draft] = [randomUUID(), randomUUID(), randomUUID()];
+      const previous = { draftId: randomUUID(), submissionId: randomUUID() };
+      expect(await store.createFrom(company, job, draft, 'uid-owner', MANIFEST, previous)).toBe('created');
+      const empty = { draft: {}, rooms: [], photos: [] };
+      expect(await store.createFrom(company, randomUUID(), draft, 'uid-other', empty, previous)).toBe('taken');
+      expect(await store.createFrom(company, job, draft, 'uid-other', empty, { ...previous, submissionId: randomUUID() })).toBe('taken');
+      const kept = await peek(company, draft);
+      expect(kept).toMatchObject({ fieldOwnerUid: 'uid-owner', previous });
+      expect(same(kept?.manifest, MANIFEST)).toBe(true);
     });
   });
 }

@@ -109,6 +109,7 @@ describe('identity tables (migration 0002)', () => {
       '0013_company_documents',
       '0014_signing_links',
       '0015_office_jobs',
+      '0016_job_drafts',
     ]);
 
     const rows = await sql<

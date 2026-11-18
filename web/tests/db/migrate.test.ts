@@ -15,7 +15,7 @@ import { emptyDiscardDatabase, startDisposablePostgres, type DisposablePostgres 
 const exec = promisify(execFile);
 const webRoot = fileURLToPath(new URL('../..', import.meta.url));
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const SHIPPED = ['0001_foundation', '0002_identity', '0003_runtime_role', '0004_sign_in_lookup', '0005_access_projection', '0006_platform_operator', '0007_sign_in_address', '0008_feature_flag_writes', '0009_price_tables', '0010_core_job_tables', '0011_submissions_agreements', '0012_ai_live_tables', '0013_company_documents', '0014_signing_links', '0015_office_jobs'];
+const SHIPPED = ['0001_foundation', '0002_identity', '0003_runtime_role', '0004_sign_in_lookup', '0005_access_projection', '0006_platform_operator', '0007_sign_in_address', '0008_feature_flag_writes', '0009_price_tables', '0010_core_job_tables', '0011_submissions_agreements', '0012_ai_live_tables', '0013_company_documents', '0014_signing_links', '0015_office_jobs', '0016_job_drafts'];
 const SHIPPED_TABLES = [
   'access_projection_outbox',
   'actors',
@@ -35,6 +35,7 @@ const SHIPPED_TABLES = [
   'job_claims',
   'job_coordination',
   'job_customers',
+  'job_drafts',
   'job_estimates',
   'job_price_pins',
   'job_submissions',
@@ -51,8 +52,10 @@ const SHIPPED_TABLES = [
   'signing_links',
   'voice_notes',
 ];
+// The tables as of 0015, for the test of that file, which a later file (0016) adds a table after.
+const TABLES_TO_0015 = SHIPPED_TABLES.filter((table) => table !== 'job_drafts');
 // The tables as of 0014, for the test of that file, which a later file (0015) adds tables after.
-const TABLES_TO_0014 = SHIPPED_TABLES.filter((table) => !['agreement_corrections', 'job_assignments', 'job_coordination'].includes(table));
+const TABLES_TO_0014 = TABLES_TO_0015.filter((table) => !['agreement_corrections', 'job_assignments', 'job_coordination'].includes(table));
 // The tables as of 0013, for the test of that file, which a later file (0014) adds tables after.
 const TABLES_TO_0013 = TABLES_TO_0014.filter((table) => table !== 'document_links' && table !== 'signing_links');
 
@@ -629,13 +632,17 @@ describe('numbered migration ledger', () => {
       });
       const before = await holding();
       expect(before.tables).toEqual(TABLES_TO_0014);
-      const migrated = await applyMigrations(disposable.databaseUrl, migrationsDirectory);
+      // Up to and including 0015 only: 0016 adds a table of its own (job-drafts-table.test.ts).
+      const through = await tempMigrations(
+        Object.fromEntries((await readMigrations(migrationsDirectory)).filter((file) => file.id < '0016').map((file) => [`${file.id}.sql`, file.sql])),
+      );
+      const migrated = await applyMigrations(disposable.databaseUrl, through).finally(() => rm(through, { recursive: true, force: true }));
       expect(migrated.applied).toEqual(['0015_office_jobs']);
       const after = await holding();
       // Every row is as it was; the three office tables are added, empty, and no job gains an owner
       // or an assignment.
       expect({ ...after, tables: [] }).toEqual({ ...before, tables: [] });
-      expect(after.tables).toEqual(SHIPPED_TABLES);
+      expect(after.tables).toEqual(TABLES_TO_0015);
       const counts = await withSql(
         (sql) => sql`
           SELECT (SELECT count(*)::int FROM job_assignments) AS assignments, (SELECT count(*)::int FROM job_coordination) AS notes,

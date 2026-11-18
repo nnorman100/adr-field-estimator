@@ -1,11 +1,11 @@
 import { and, asc, eq, isNull, sql } from 'drizzle-orm';
-import { actors, jobAssignments, jobCoordination, jobs, jobSubmissions, memberships } from '@/db/schema';
+import { actors, jobAssignments, jobCoordination, jobDrafts, jobs, jobSubmissions, memberships } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
-import { hasAny, jobAccess, JobError, type JobCaller, type JobRow } from './access';
-import type { DraftStore } from './drafts';
+import { hasAny, holdDraft, jobAccess, JobError, type JobCaller, type JobRow } from './access';
+import { draftOfOtherJob, type DraftStore } from './drafts';
 import { assignDigest, type AssignInput, type CoordinationInput, type TransferInput } from './schema';
-import { audit, CHECK_VIOLATION, detailOf, errorCode, type JobDetail } from './service';
+import { audit, CHECK_VIOLATION, detailOf, errorCode, findDraft, type JobDetail } from './service';
 
 // Office jobs, assignment and the field owner (S5b-1, docs/plans/S5.md; docs/spec.md 6.2). Every
 // function runs inside withCompany for the company of the verified sign-in and goes through the one
@@ -162,17 +162,34 @@ async function uidOf(tx: CompanyTransaction, companyId: string, actorId: string)
   return found?.uid ?? null;
 }
 
-// The job's drafts: each earlier draft a submission was made from, then its current draft last.
-// Every one of them names the job's field owner, so a person who no longer owns the field work
-// reads none of them (web/firestore.rules). The current draft is set last, so while any draft does
-// not name the owner yet, the current one does not either, and the job screens offer Start field
-// work, which sets them all again.
+// The job's drafts: each draft it has been on, then its current draft last, every one of them the job's
+// in job_drafts (0016) before the field database is touched, so a draft another job claimed is never
+// among them (security audit F1). The drafts of the job's own submissions that no job has claimed (the
+// previous version, still serving while a release migrates, submits drafts without claiming them) are
+// claimed for the job here first, in Postgres, and so is a current draft no job has claimed; a
+// submitted draft another job claimed is left out, and a current draft another job claimed is refused
+// (409), so the field work of another job's draft is never handed on. Every one of them names the job's
+// field owner, so a person who no longer owns the field work reads none of them (web/firestore.rules).
+// The current draft is set last, so while any draft does not name the owner yet, the current one does
+// not either, and the job screens offer Start field work, which sets them all again. The list is also
+// what lets the draft store stamp the job id on a draft made before `jobId` (drafts.ts).
 async function draftIdsOf(tx: CompanyTransaction, row: JobRow): Promise<string[]> {
-  const found = await tx
+  const claimed = await tx
+    .select({ draftId: jobDrafts.draftId })
+    .from(jobDrafts)
+    .where(and(eq(jobDrafts.companyId, row.companyId), eq(jobDrafts.jobId, row.id)));
+  const submitted = await tx
     .selectDistinct({ draftId: jobSubmissions.draftId })
     .from(jobSubmissions)
     .where(and(eq(jobSubmissions.companyId, row.companyId), eq(jobSubmissions.jobId, row.id)));
-  return [...found.map((one) => one.draftId).filter((id) => id !== row.currentDraftId), row.currentDraftId];
+  const held = new Set(claimed.map((one) => one.draftId));
+  for (const { draftId } of submitted) {
+    if (!held.has(draftId) && (await holdDraft(tx, row.companyId, row.id, draftId))) held.add(draftId);
+  }
+  if (!held.has(row.currentDraftId) && !(await holdDraft(tx, row.companyId, row.id, row.currentDraftId))) {
+    throw new JobError('conflict');
+  }
+  return [...[...held].filter((id) => id !== row.currentDraftId), row.currentDraftId];
 }
 
 export function officeService(db: Database, drafts: DraftStore): OfficeService {
@@ -185,22 +202,34 @@ export function officeService(db: Database, drafts: DraftStore): OfficeService {
     }
   }
 
+  // The job's drafts (draftIdsOf), read before the commit: a current draft the field database holds
+  // for another job is never handed on, and the request changes nothing (security audit F1).
+  async function draftsToName(tx: CompanyTransaction, row: JobRow): Promise<string[]> {
+    const ids = await draftIdsOf(tx, row);
+    const found = await findDraft(drafts, row.companyId, row.currentDraftId);
+    if (found && draftOfOtherJob(found.jobId, row.id)) throw new JobError('conflict');
+    return ids;
+  }
+
   // The Firestore step: each of the job's drafts names its field owner as Postgres has it, at that
   // revision. A current draft that is not there yet (Back to editing makes its draft after its own
   // commit) or a Firestore that cannot be reached answers 503; the same request again sets it. A
   // newer owner already on a draft means a later change won, which is the answer Postgres holds too.
-  async function project(companyId: string, draftIds: readonly string[], uid: string | null, revision: number): Promise<void> {
+  async function project(companyId: string, jobId: string, draftIds: readonly string[], uid: string | null, revision: number): Promise<void> {
     if (uid === null) throw new JobError('draft_unavailable');
     for (const [index, draftId] of draftIds.entries()) {
       let result;
       try {
-        result = await drafts.setFieldOwner(companyId, draftId, uid, revision);
+        result = await drafts.setFieldOwner(companyId, jobId, draftId, uid, revision);
       } catch (error) {
         // Fixed text only: the SDK's message may quote a path.
         console.error('job field owner unavailable', error instanceof Error ? error.name : 'unknown');
         throw new JobError('draft_unavailable');
       }
       if (result === 'missing' && index === draftIds.length - 1) throw new JobError('draft_unavailable');
+      // A draft made for another job is left as it is (security audit F1); when it is the job's
+      // current draft, the field work cannot be handed over at all.
+      if (result === 'taken' && index === draftIds.length - 1) throw new JobError('conflict');
     }
   }
 
@@ -303,9 +332,9 @@ export function officeService(db: Database, drafts: DraftStore): OfficeService {
         } else {
           revision = (await readCoordination(tx, row)).revision;
         }
-        return { claimed: next !== row, revision, draftIds: await draftIdsOf(tx, next), detail: await detailOf(tx, next) };
+        return { claimed: next !== row, revision, draftIds: await draftsToName(tx, next), detail: await detailOf(tx, next) };
       });
-      await project(caller.companyId, made.draftIds, caller.uid, made.revision);
+      await project(caller.companyId, jobId, made.draftIds, caller.uid, made.revision);
       return { claimed: made.claimed, detail: made.detail };
     },
 
@@ -344,12 +373,12 @@ export function officeService(db: Database, drafts: DraftStore): OfficeService {
         }
         return {
           revision,
-          draftIds: await draftIdsOf(tx, next),
+          draftIds: await draftsToName(tx, next),
           uid: next.fieldOwnerActorId ? await uidOf(tx, caller.companyId, next.fieldOwnerActorId) : null,
           view: await viewOf(tx, next),
         };
       });
-      await project(caller.companyId, made.draftIds, made.uid, made.revision);
+      await project(caller.companyId, jobId, made.draftIds, made.uid, made.revision);
       return made.view;
     },
   };

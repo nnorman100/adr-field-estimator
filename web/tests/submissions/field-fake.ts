@@ -3,6 +3,7 @@ import type { JobProjection } from '@/lib/field/job-projection';
 import type { FieldManifest } from '@/lib/field/canonical';
 import { MAX_PHOTO_REFS, MAX_ROOMS } from '@/lib/field/schema';
 import type { ArchiveResult, ArchiveStore } from '@/lib/jobs/archive-store';
+import { draftOfOtherJob } from '@/lib/jobs/drafts';
 import type { FenceResult, FenceStore, Provenance } from '@/lib/submissions/fence';
 import type { FakeDrafts } from '../db/draft-fake';
 import type { FakeDraftStates } from '../db/evidence-fake';
@@ -28,6 +29,8 @@ export type FakeDraft = {
   previous: Provenance | null;
   // The job revision of the last archive or restore (S5b-2), absent until one.
   archiveRevision?: number;
+  // The job the draft was made for (security audit F1), absent on a draft made before that key.
+  jobId?: string;
 };
 export type FieldData = Record<string, FakeDraft>;
 
@@ -64,8 +67,13 @@ export type FakeField = FenceStore & ArchiveStore & {
   // Writes field data as the phone would while the draft is editing (the rules are not modelled:
   // tests/emu/ checks them).
   put(companyId: string, draftId: string, manifest: Partial<FieldManifest>, fieldOwnerUid?: string | null): void;
+  // Takes the job id off a draft, as on one the previous version made before drafts carried it
+  // (security audit F1).
+  unstamp(companyId: string, draftId: string): void;
   // Makes the next call of a method fail as if Firestore were unreachable, before it changes anything.
   failNext: Partial<Record<Method, boolean>>;
+  // Makes the next call of a method do its work and then fail, as if Firestore's answer were lost.
+  loseNext: Partial<Record<Method, boolean>>;
   // Awaited at the start of the next call of a method, so a test can hold one attempt mid-way.
   gate: Partial<Record<Method, () => Promise<void>>>;
   // Every call, by method name, in order.
@@ -74,7 +82,7 @@ export type FakeField = FenceStore & ArchiveStore & {
 
 const key = (companyId: string, draftId: string) => `${companyId}/${draftId}`;
 
-const emptyDraft = (fieldOwnerUid: string | null): FakeDraft => ({
+const emptyDraft = (fieldOwnerUid: string | null, jobId?: string): FakeDraft => ({
   fieldOwnerUid,
   state: 'editing',
   fence: null,
@@ -82,12 +90,13 @@ const emptyDraft = (fieldOwnerUid: string | null): FakeDraft => ({
   rooms: {},
   photos: {},
   previous: null,
+  ...(jobId === undefined ? {} : { jobId }),
 });
 
 export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts: FakeDrafts; states: FakeDraftStates }): FakeField {
   function load(): FieldData {
     const data = backing.load();
-    for (const [made, { fieldOwnerUid }] of linked?.drafts.made ?? []) data[made] ??= emptyDraft(fieldOwnerUid);
+    for (const [made, { fieldOwnerUid }] of linked?.drafts.made ?? []) data[made] ??= emptyDraft(fieldOwnerUid, linked?.drafts.jobOf.get(made));
     return data;
   }
   function save(data: FieldData): void {
@@ -97,6 +106,7 @@ export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts:
       linked.states.set.set(at, draft.state);
       linked.states.refs.set(at, Object.keys(draft.photos).length);
       if (!linked.drafts.made.has(at)) linked.drafts.made.set(at, { fieldOwnerUid: draft.fieldOwnerUid });
+      if (draft.jobId !== undefined && !linked.drafts.jobOf.has(at)) linked.drafts.jobOf.set(at, draft.jobId);
     }
   }
   // Each call reads, decides and writes with no await in between: one transaction.
@@ -114,11 +124,16 @@ export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts:
     const data = load();
     const result = work(data);
     save(data);
+    if (fake.loseNext[method]) {
+      fake.loseNext[method] = false;
+      throw new Error('field database answer lost');
+    }
     return result;
   }
 
   const fake: FakeField = {
     failNext: {},
+    loseNext: {},
     gate: {},
     calls: [],
     projected: new Map(),
@@ -126,6 +141,11 @@ export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts:
       const at = key(companyId, jobId);
       if ((fake.projected.get(at)?.revision ?? -1) < projection.revision) fake.projected.set(at, { ...projection });
     }),
+    findDraft: (companyId, draftId) =>
+      call('findDraft', (data) => {
+        const found = data[key(companyId, draftId)];
+        return found ? { jobId: found.jobId } : null;
+      }),
     data: () => load(),
     draft: (companyId, draftId) => load()[key(companyId, draftId)] ?? null,
     put(companyId, draftId, manifest, fieldOwnerUid = null) {
@@ -135,6 +155,13 @@ export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts:
       for (const room of manifest.rooms ?? []) draft.rooms[room.id] = room.field;
       for (const photo of manifest.photos ?? []) draft.photos[photo.id] = photo.field;
       save(data);
+    },
+
+    unstamp(companyId, draftId) {
+      const data = load();
+      delete data[key(companyId, draftId)]?.jobId;
+      save(data);
+      linked?.drafts.jobOf.delete(key(companyId, draftId));
     },
 
     fence: (companyId, draftId, fence, replacing) =>
@@ -219,22 +246,35 @@ export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts:
         return 'set';
       }),
 
-    createCopy: (companyId, draftId, fieldOwnerUid, manifest) =>
+    createCopy: (companyId, jobId, draftId, fieldOwnerUid, manifest) =>
       call('createCopy', (data) => {
-        if (data[key(companyId, draftId)]) return 'exists' as const;
+        const found = data[key(companyId, draftId)];
+        if (found) {
+          if (draftOfOtherJob(found.jobId, jobId)) return 'taken' as const;
+          // As the real writer: a draft made before `jobId` takes it.
+          found.jobId ??= jobId;
+          return 'exists' as const;
+        }
         data[key(companyId, draftId)] = {
-          ...emptyDraft(fieldOwnerUid),
+          ...emptyDraft(fieldOwnerUid, jobId),
           field: manifest.draft ?? {},
           rooms: Object.fromEntries(manifest.rooms.map((room) => [room.id, room.field ?? {}])),
         };
         return 'created' as const;
       }),
 
-    createFrom: (companyId, draftId, fieldOwnerUid, manifest, previous) =>
+    createFrom: (companyId, jobId, draftId, fieldOwnerUid, manifest, previous) =>
       call('createFrom', (data) => {
-        if (data[key(companyId, draftId)]) return 'exists' as const;
+        const found = data[key(companyId, draftId)];
+        if (found) {
+          const same = found.previous?.draftId === previous.draftId && found.previous?.submissionId === previous.submissionId;
+          if (!same || draftOfOtherJob(found.jobId, jobId)) return 'taken' as const;
+          // As the real writer: a draft made before `jobId` takes it.
+          found.jobId ??= jobId;
+          return 'exists' as const;
+        }
         data[key(companyId, draftId)] = {
-          ...emptyDraft(fieldOwnerUid),
+          ...emptyDraft(fieldOwnerUid, jobId),
           field: manifest.draft ?? {},
           rooms: Object.fromEntries(manifest.rooms.map((room) => [room.id, room.field ?? {}])),
           photos: Object.fromEntries(manifest.photos.map((photo) => [photo.id, photo.field ?? {}])),

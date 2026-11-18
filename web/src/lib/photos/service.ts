@@ -61,6 +61,19 @@ export function objectNameOf(companyId: string, jobId: string, kind: PhotoKind, 
   return `companies/${companyId}/jobs/${jobId}/${FOLDERS[kind]}/${photoId}`;
 }
 
+const KIND_OF_FOLDER = new Map(Object.entries(FOLDERS).map(([kind, folder]) => [folder, kind as PhotoKind]));
+const ID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+const OBJECT_NAME = new RegExp(`^companies/(${ID})/jobs/(${ID})/([a-z]+)/(${ID})$`);
+
+// The ids an object name of the company holds, read back from the shape objectNameOf writes, or
+// null for a name of any other shape (the records check, S8-3, reports ids and never a name).
+export function objectIdsOf(companyId: string, name: string): { jobId: string; kind: PhotoKind; objectId: string } | null {
+  const match = OBJECT_NAME.exec(name);
+  const kind = match ? KIND_OF_FOLDER.get(match[3]!) : undefined;
+  if (!match || kind === undefined || match[1] !== companyId) return null;
+  return { jobId: match[2]!, kind, objectId: match[4]! };
+}
+
 const RECEIVED: Record<PhotoKind, string> = { photo: 'photo_received', original: 'photo_original_received', signature: 'signature_received' };
 
 const receiptOf = (row: EvidenceRow): Receipt => ({
