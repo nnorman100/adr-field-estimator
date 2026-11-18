@@ -22,13 +22,12 @@ CREATE TABLE job_drafts (
   -- Made on the phone (a uuid), never by the server.
   draft_id uuid NOT NULL,
   job_id uuid NOT NULL,
-  created_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (company_id, draft_id),
   CONSTRAINT job_drafts_job_fkey FOREIGN KEY (company_id, job_id) REFERENCES jobs (company_id, id)
 );
 
--- A job's drafts, oldest first.
-CREATE INDEX job_drafts_company_job ON job_drafts (company_id, job_id, created_at);
+-- A job's drafts.
+CREATE INDEX job_drafts_company_job ON job_drafts (company_id, job_id);
 
 -- 3. The fill. Row-level security is forced on the jobs and their submissions, which binds their
 -- owner (the migrator) too, and no policy is the migrator's: the owner reads them here with it
@@ -73,14 +72,10 @@ BEGIN
 END
 $$;
 
-INSERT INTO job_drafts (company_id, draft_id, job_id, created_at)
-SELECT company_id, draft_id, job_id, min(named_at)
-FROM (
-  SELECT company_id, current_draft_id AS draft_id, id AS job_id, created_at AS named_at FROM jobs
-  UNION ALL
-  SELECT company_id, draft_id, job_id, created_at FROM job_submissions
-) AS named
-GROUP BY company_id, draft_id, job_id;
+INSERT INTO job_drafts (company_id, draft_id, job_id)
+SELECT company_id, current_draft_id, id FROM jobs
+UNION
+SELECT company_id, draft_id, job_id FROM job_submissions;
 
 ALTER TABLE jobs FORCE ROW LEVEL SECURITY;
 ALTER TABLE job_submissions FORCE ROW LEVEL SECURITY;

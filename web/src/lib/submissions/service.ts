@@ -5,7 +5,7 @@ import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant
 import type { Capability } from '@/lib/access';
 import { manifestDigest, type FieldManifest } from '@/lib/field/canonical';
 import { roomFieldSchema } from '@/lib/field/schema';
-import { claimDraft, hasAny, jobAccess, JobError, lockedJob, type JobCaller, type JobRow } from '@/lib/jobs/access';
+import { claimDraft, hasAny, holdDraft, jobAccess, JobError, lockedJob, type JobCaller, type JobRow } from '@/lib/jobs/access';
 import { jobPriceTable, namesPriceIds, priceIdsKnown, PricesUnreadable } from '@/lib/scope-lists/version';
 import { readJobDetails } from './details';
 import { SubmissionError, type SubmissionErrorCode } from './errors';
@@ -478,6 +478,8 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
       // copy may differ), with where it came from. A retry makes it if it is missing.
       await inCompany(caller.companyId, async (tx) => {
         await lockedJob(tx, caller.companyId, jobId, { live: true });
+        // The draft id is the job's in Postgres before a draft under it is made or stamped (security audit F1).
+        if (!(await holdDraft(tx, caller.companyId, jobId, input.draftId))) throw new SubmissionError('conflict');
         const result = await field(() =>
           store.createFrom(caller.companyId, jobId, input.draftId, made.ownerUid, snapshotManifest(made.source.snapshotBytes!), {
             draftId: made.source.draftId,

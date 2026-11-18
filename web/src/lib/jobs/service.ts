@@ -2,7 +2,7 @@ import { and, asc, desc, eq, ne, or, sql, type SQL } from 'drizzle-orm';
 import { actors, auditEvents, jobAssignments, jobClaims, jobCustomers, jobs } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
-import { canSeeJob, claimDraft, hasAny, isOwnJob, jobAccess, JobError, lockedJob, seesEveryJob, type JobCaller, type JobRow } from './access';
+import { canSeeJob, claimDraft, hasAny, holdDraft, isOwnJob, jobAccess, JobError, lockedJob, seesEveryJob, type JobCaller, type JobRow } from './access';
 import type { DraftLookup, DraftStore } from './drafts';
 import { createDigest, type ClaimInput, type CreateJobInput, type CustomerInput, type ListQuery } from './schema';
 
@@ -254,7 +254,9 @@ export function jobsService(db: Database, drafts: DraftStore): JobsService {
       try {
         await inCompany(caller.companyId, async (tx) => {
           await lockedJob(tx, caller.companyId, made.detail.job.id, { live: true });
-          // A draft made for another job is never this job's (security audit F1).
+          // The draft id is the job's in Postgres before a draft under it is made or stamped (security audit F1).
+          if (!(await holdDraft(tx, caller.companyId, made.detail.job.id, input.draftId))) throw new JobError('conflict');
+          // A draft made for another job is never this job's.
           if ((await drafts.ensure(caller.companyId, made.detail.job.id, input.draftId, made.ownerUid)) === 'taken') throw new JobError('conflict');
         });
         await drafts.projectJob(caller.companyId, made.detail.job.id, {

@@ -48,10 +48,9 @@ export function fakeDrafts(): FakeDrafts {
       }
       const existed = store.made.has(key);
       if (existed && draftOfOtherJob(store.jobOf.get(key), jobId)) return 'taken';
-      if (!existed) {
-        store.made.set(key, { fieldOwnerUid });
-        store.jobOf.set(key, jobId);
-      }
+      if (!existed) store.made.set(key, { fieldOwnerUid });
+      // As the real writer: a new draft, or one made before `jobId`, carries this job's id.
+      if (!store.jobOf.has(key)) store.jobOf.set(key, jobId);
       if (fail.on) {
         fail.on = false;
         fail.afterWrite = false;

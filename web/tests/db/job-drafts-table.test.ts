@@ -7,7 +7,7 @@ import postgres from 'postgres';
 import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from 'vitest';
 import { applyMigrations, migrationsDirectory, readMigrations } from '@/db/migrate';
 import { withCompany, withOperator, type CompanyTransaction } from '@/db/tenant';
-import { claimDraft } from '@/lib/jobs/access';
+import { claimDraft, holdDraft } from '@/lib/jobs/access';
 import { FOREIGN_KEY_VIOLATION, INSUFFICIENT_PRIVILEGE, errorCode, newJob, pause, seedJob } from './job-harness';
 import { createDiscardDatabase, emptyDiscardDatabase, loginUrl } from './postgres-harness';
 import { unprotectedRelations } from './row-security-guard';
@@ -107,6 +107,44 @@ describe('migration 0016: the draft claims', () => {
     release();
     expect([await one, await two]).toEqual([true, false]);
     expect(await h.admin`SELECT job_id::text AS job FROM job_drafts WHERE draft_id = ${raced}`).toEqual([{ job: first.id }]);
+  });
+});
+
+// A draft id a job already names, which the previous version (still serving while a release migrates)
+// put it on or submitted without a claim, is held for that job in Postgres before the field database
+// is touched for it (holdDraft, security audit F1); a draft id another job claimed or submitted never is.
+describe('holding a draft id a job already names', () => {
+  const submit = (company: string, job: string, actor: string, draft: string) => h.admin`
+    INSERT INTO job_submissions (id, company_id, job_id, draft_id, epoch, kind, request_digest, expires_at, created_by_actor_id)
+    VALUES (${randomUUID()}, ${company}, ${job}, ${draft}, ${randomUUID()}, 'original', ${'c'.repeat(64)}, now() + interval '1 hour', ${actor})
+  `;
+  const claims = (draft: string) => h.admin`SELECT company_id::text AS company, job_id::text AS job FROM job_drafts WHERE draft_id = ${draft} ORDER BY 1`;
+
+  it('claims an unclaimed draft id for its job, keeps it the job’s, and refuses it to every other job and company', async () => {
+    const [first, second] = [await jobOf(), await jobOf()];
+    const own = randomUUID();
+    await submit(h.seed.a, first.id, h.seed.ownerA.actor, own);
+    expect(await as(h.seed.a, (tx) => holdDraft(tx, h.seed.a, first.id, own))).toBe(true);
+    expect(await as(h.seed.a, (tx) => holdDraft(tx, h.seed.a, first.id, own))).toBe(true);
+    expect(await claims(own)).toEqual([{ company: h.seed.a, job: first.id }]);
+    expect(await as(h.seed.a, (tx) => holdDraft(tx, h.seed.a, second.id, own))).toBe(false);
+
+    // Unclaimed, but another job's submission names it: never this job's, and nothing is claimed.
+    const theirs = randomUUID();
+    await submit(h.seed.a, second.id, h.seed.ownerA.actor, theirs);
+    expect(await as(h.seed.a, (tx) => holdDraft(tx, h.seed.a, first.id, theirs))).toBe(false);
+    expect(await claims(theirs)).toEqual([]);
+
+    // Company B neither reads A's claims nor claims into A; the same id is B's own to hold.
+    expect(await errorCode(as(h.seed.b, (tx) => holdDraft(tx, h.seed.a, first.id, randomUUID())))).toBe(INSUFFICIENT_PRIVILEGE);
+    const inB = await jobOf(h.seed.b);
+    expect(await as(h.seed.b, (tx) => holdDraft(tx, h.seed.b, inB.id, own))).toBe(true);
+    expect(await claims(own)).toEqual(
+      [
+        { company: h.seed.a, job: first.id },
+        { company: h.seed.b, job: inB.id },
+      ].sort((x, y) => x.company.localeCompare(y.company)),
+    );
   });
 });
 

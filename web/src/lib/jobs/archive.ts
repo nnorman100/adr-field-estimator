@@ -4,7 +4,7 @@ import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant
 import type { Capability } from '@/lib/access';
 import type { FieldDoc } from '@/lib/field/canonical';
 import { snapshotManifest } from '@/lib/submissions/snapshot';
-import { canSeeJob, claimDraft, hasAny, jobAccess, JobError, lockedJob, type JobCaller, type JobRow } from './access';
+import { canSeeJob, claimDraft, hasAny, holdDraft, jobAccess, JobError, lockedJob, type JobCaller, type JobRow } from './access';
 import type { ArchiveStore } from './archive-store';
 import { copyDigest, type ArchiveInput, type CopyInput } from './schema';
 import { audit, CHECK_VIOLATION, detailOf, errorCode, type JobDetail, type JobView } from './service';
@@ -260,6 +260,8 @@ export function archiveService(db: Database, store: ArchiveStore): ArchiveServic
       });
       await inCompany(caller.companyId, async (tx) => {
         await lockedJob(tx, caller.companyId, input.id, { live: true });
+        // The draft id is the job's in Postgres before a draft under it is made or stamped (security audit F1).
+        if (!(await holdDraft(tx, caller.companyId, input.id, input.draftId))) throw new JobError('conflict');
         const result = await field(() => store.createCopy(caller.companyId, input.id, input.draftId, made.ownerUid, made.field));
         // A draft made for another job is never the copy's (security audit F1).
         if (result === 'taken') throw new JobError('conflict');

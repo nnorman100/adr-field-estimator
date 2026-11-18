@@ -37,8 +37,9 @@ export type ArchiveStore = JobProjectionStore & DraftLookup & {
   restoreDraft(companyId: string, draftId: string, state: 'editing' | 'submitted', revision: number): Promise<ArchiveResult>;
   // A copy's first draft: an `editing` draft of the copy (`jobId`, as src/lib/jobs/drafts.ts)
   // holding the given field map and rooms, made whole or not at all; `exists` when the draft is
-  // already there (a retry), and nothing is changed then; `taken` when the draft there was made for
-  // another job, and nothing is changed either.
+  // already there for this job (a retry), and nothing is changed then, except that a draft made
+  // before `jobId` takes it (the caller holds the draft id for this job in Postgres first); `taken`
+  // when the draft there was made for another job, and nothing is changed either.
   createCopy(
     companyId: string,
     jobId: string,
@@ -82,7 +83,13 @@ export function firestoreArchiveStore(db: Firestore): ArchiveStore {
       return firestoreSpan('runTransaction', 'drafts', () =>
         db.runTransaction(async (tx): Promise<'created' | 'exists' | 'taken'> => {
           const found = await tx.get(ref);
-          if (found.exists) return draftOfOtherJob(found.get('jobId'), jobId) ? 'taken' : 'exists';
+          if (found.exists) {
+            const stamped = found.get('jobId');
+            if (draftOfOtherJob(stamped, jobId)) return 'taken';
+            // A draft made before `jobId` takes it: the caller holds the draft id for this job in Postgres.
+            if (stamped === undefined) tx.update(ref, { jobId });
+            return 'exists';
+          }
           tx.create(ref, {
             jobId,
             ...(fieldOwnerUid === null ? {} : { fieldOwnerUid }),

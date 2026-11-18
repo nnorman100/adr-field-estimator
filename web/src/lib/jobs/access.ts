@@ -1,4 +1,4 @@
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, isNull, ne } from 'drizzle-orm';
 import { jobAssignments, jobDrafts, jobs, jobSubmissions } from '@/db/schema';
 import type { CompanyTransaction } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
@@ -161,12 +161,34 @@ export async function claimDraft(tx: CompanyTransaction, companyId: string, jobI
     .from(jobSubmissions)
     .where(and(eq(jobSubmissions.companyId, companyId), eq(jobSubmissions.draftId, draftId)))
     .limit(1);
-  return submitted === undefined && (await recordDraft(tx, companyId, jobId, draftId));
-}
-
-// Records a draft id the job is already on (its current draft) as the job's, when no job has claimed
-// it. False when it is claimed already, by this job or another.
-export async function recordDraft(tx: CompanyTransaction, companyId: string, jobId: string, draftId: string): Promise<boolean> {
+  if (submitted !== undefined) return false;
   const claimed = await tx.insert(jobDrafts).values({ companyId, draftId, jobId }).onConflictDoNothing().returning({ draftId: jobDrafts.draftId });
   return claimed.length === 1;
+}
+
+// A draft id the job already names (the draft it was made or copied on, its current draft, or the draft
+// of one of its own submissions) is the job's in job_drafts, checked in Postgres before the field
+// database is touched for it: claimed by this job, or, when no job has claimed it, claimed for the job
+// now. That second case is a draft the previous version (still serving while a release migrates) put
+// the job on, or submitted, without claiming it. False when another job claimed it or a submission of
+// another job names it: then the draft is never this job's, and the field database draft under it is
+// neither stamped nor handed on. Two calls at once: the second waits for the first and reads its claim.
+export async function holdDraft(tx: CompanyTransaction, companyId: string, jobId: string, draftId: string): Promise<boolean> {
+  const holder = async () => {
+    const [claim] = await tx
+      .select({ jobId: jobDrafts.jobId })
+      .from(jobDrafts)
+      .where(and(eq(jobDrafts.companyId, companyId), eq(jobDrafts.draftId, draftId)));
+    return claim?.jobId;
+  };
+  const held = await holder();
+  if (held !== undefined) return held === jobId;
+  const [other] = await tx
+    .select({ id: jobSubmissions.id })
+    .from(jobSubmissions)
+    .where(and(eq(jobSubmissions.companyId, companyId), eq(jobSubmissions.draftId, draftId), ne(jobSubmissions.jobId, jobId)))
+    .limit(1);
+  if (other) return false;
+  await tx.insert(jobDrafts).values({ companyId, draftId, jobId }).onConflictDoNothing();
+  return (await holder()) === jobId;
 }

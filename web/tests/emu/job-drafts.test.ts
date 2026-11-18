@@ -78,6 +78,22 @@ describe('the first draft of a job', () => {
     expect((await db.doc(path(company, draft)).get()).data()).toEqual({ jobId: job, fieldOwnerUid: 'uid-1', state: 'editing', field: { notes: 'work done since' } });
   });
 
+  // Security audit F1, across a release: a draft the previous version made carries no job id, which
+  // proves nothing on its own. The create sent again (its job holds the draft id in Postgres first)
+  // stamps it, and from then on it is that job's alone.
+  it('takes the job id onto a draft made before it when the same create is sent again, and is then refused to another job', async () => {
+    const company = randomUUID();
+    const draft = randomUUID();
+    const job = randomUUID();
+    await db.doc(path(company, draft)).create({ fieldOwnerUid: 'uid-1', state: 'editing', field: { notes: 'made by the previous version' } });
+    expect(await drafts.ensure(company, job, draft, 'uid-1')).toBe('exists');
+    const stamped = { jobId: job, fieldOwnerUid: 'uid-1', state: 'editing', field: { notes: 'made by the previous version' } };
+    expect((await db.doc(path(company, draft)).get()).data()).toEqual(stamped);
+    expect(await drafts.ensure(company, randomUUID(), draft, 'uid-2')).toBe('taken');
+    expect(await drafts.ensure(company, job, draft, 'uid-1')).toBe('exists');
+    expect((await db.doc(path(company, draft)).get()).data()).toEqual(stamped);
+  });
+
   it('has no field owner while nobody owns the field work, and then nobody can edit it', async () => {
     const tenant = await createTenant('job-drafts-b');
     const company = randomUUID();

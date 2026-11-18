@@ -307,6 +307,29 @@ describe('copy', () => {
     expect(h.field.draft(h.seed.a, earlier)).toEqual(stored);
   });
 
+  // Security audit F1, across a release: the previous version made the copy and its draft with no
+  // claim and no job id on the draft. The same copy sent again claims the draft id for the copy in
+  // Postgres first, then stamps the draft; a draft id Postgres holds for another job is refused and
+  // its draft not stamped.
+  it('claims and stamps a copy draft the previous version made when the same copy is sent again, and refuses one another job holds', async () => {
+    const { jobId: source } = await signedJob();
+    const ids = { id: randomUUID(), draftId: randomUUID() };
+    expect((await copy(OWNER_A, source, ids)).status).toBe(201);
+    await h.admin`DELETE FROM job_drafts WHERE draft_id = ${ids.draftId}`;
+    h.field.unstamp(h.seed.a, ids.draftId);
+    const { jobId: other } = await draftJob();
+    await h.admin`INSERT INTO job_drafts (company_id, draft_id, job_id) VALUES (${h.seed.a}, ${ids.draftId}, ${other})`;
+    const stored = structuredClone(h.field.draft(h.seed.a, ids.draftId));
+    expect(await copy(OWNER_A, source, ids)).toEqual({ status: 409, body: { error: 'conflict' } });
+    expect(h.field.draft(h.seed.a, ids.draftId)).toEqual(stored);
+    expect(stored?.jobId).toBeUndefined();
+
+    await h.admin`DELETE FROM job_drafts WHERE draft_id = ${ids.draftId}`;
+    expect((await copy(OWNER_A, source, ids)).status).toBe(200);
+    expect(await h.admin`SELECT job_id::text AS job FROM job_drafts WHERE draft_id = ${ids.draftId}`).toEqual([{ job: ids.id }]);
+    expect(h.field.draft(h.seed.a, ids.draftId)).toEqual({ ...stored, jobId: ids.id });
+  });
+
   it('refuses a copy onto a draft the field database holds for another job, and commits nothing', async () => {
     const { jobId: source } = await signedJob();
     const foreign = randomUUID();

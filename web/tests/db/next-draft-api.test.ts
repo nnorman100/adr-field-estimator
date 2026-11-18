@@ -203,6 +203,29 @@ describe('Back to editing', () => {
     expect(await f.job(jobId)).toEqual(before);
   });
 
+  // Security audit F1, across a release: the previous version went back to editing without claiming
+  // the new draft id or writing the job id on the draft it made. The same request sent again claims
+  // the id for the job in Postgres first, then stamps the draft; an id Postgres holds for another job
+  // is refused and its draft not stamped.
+  it('claims and stamps a next draft the previous version made when the same request is sent again, and refuses one another job holds', async () => {
+    const { jobId, draftId } = await submittedJob();
+    const body = { draftId: randomUUID(), fromDraftId: draftId };
+    expect((await f.nextDraft(ESTIMATOR_A, jobId, body)).status).toBe(201);
+    await h.admin`DELETE FROM job_drafts WHERE draft_id = ${body.draftId}`;
+    h.field.unstamp(h.seed.a, body.draftId);
+    const other = await f.readyJob(ESTIMATOR_A, h.seed.a);
+    await h.admin`INSERT INTO job_drafts (company_id, draft_id, job_id) VALUES (${h.seed.a}, ${body.draftId}, ${other.jobId})`;
+    const stored = structuredClone(h.field.draft(h.seed.a, body.draftId));
+    expect(await f.nextDraft(ESTIMATOR_A, jobId, body)).toMatchObject({ status: 409, body: { error: 'conflict' } });
+    expect(h.field.draft(h.seed.a, body.draftId)).toEqual(stored);
+    expect(stored?.jobId).toBeUndefined();
+
+    await h.admin`DELETE FROM job_drafts WHERE draft_id = ${body.draftId}`;
+    expect((await f.nextDraft(ESTIMATOR_A, jobId, body)).status).toBe(200);
+    expect(await h.admin`SELECT job_id::text AS job FROM job_drafts WHERE draft_id = ${body.draftId}`).toEqual([{ job: jobId }]);
+    expect(h.field.draft(h.seed.a, body.draftId)).toEqual({ ...stored, jobId });
+  });
+
   it('gives a new draft id to one of two jobs that claim it at once, and refuses the other (security audit F1)', async () => {
     const { jobId, draftId } = await submittedJob();
     const contested = randomUUID();

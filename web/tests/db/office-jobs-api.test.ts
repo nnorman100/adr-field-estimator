@@ -582,6 +582,30 @@ describe('moving the field work (owner decision J5)', () => {
     expect(draftOf(later)).toEqual({ fieldOwnerUid: 'estimator-a2', fieldOwnerRevision: revision + 1 });
     expect(draftOf(draftId)).toEqual({ fieldOwnerUid: 'estimator-a2', fieldOwnerRevision: revision + 1 });
     expect(h.drafts.jobOf.get(`${h.seed.a}/${draftId}`)).toBe(id);
+    // Postgres first: the draft is claimed for the job, not only stamped in the field database.
+    expect(await h.admin`SELECT job_id::text AS job FROM job_drafts WHERE draft_id = ${draftId}`).toEqual([{ job: id }]);
+  });
+
+  // Security audit F1: a draft of the job's own submission that another job holds in Postgres is left
+  // out of the move, unstamped and with its owner as it was; the rest of the job's drafts move.
+  it('leaves out an earlier draft another job holds, and claims the rest for the job before naming the owner', async () => {
+    const { id, draftId } = await claimedJob();
+    h.field.put(h.seed.a, draftId, MANIFEST);
+    expect((await submitDraft(ESTIMATOR_A, id, { id: randomUUID(), draftId, digest: await manifestDigest(MANIFEST) })).status).toBe(201);
+    const later = randomUUID();
+    expect((await nextDraft(ESTIMATOR_A, id, { draftId: later, fromDraftId: draftId })).status).toBe(201);
+    const other = await officeJob();
+    await h.admin`DELETE FROM job_drafts WHERE job_id = ${id}`;
+    await h.admin`INSERT INTO job_drafts (company_id, draft_id, job_id) VALUES (${h.seed.a}, ${draftId}, ${other.id})`;
+    h.drafts.jobOf.delete(`${h.seed.a}/${draftId}`);
+    const stored = structuredClone(draftOf(draftId));
+    const { revision } = (await coordination(OWNER_A, id)).body;
+    expect((await transfer(OWNER_A, id, { revision, changeId: randomUUID(), toActorId: estimatorA2 })).status).toBe(200);
+    expect(draftOf(draftId)).toEqual(stored);
+    expect(h.drafts.jobOf.has(`${h.seed.a}/${draftId}`)).toBe(false);
+    expect(await h.admin`SELECT job_id::text AS job FROM job_drafts WHERE draft_id = ${draftId}`).toEqual([{ job: other.id }]);
+    expect(draftOf(later)).toEqual({ fieldOwnerUid: 'estimator-a2', fieldOwnerRevision: revision + 1 });
+    expect(await h.admin`SELECT job_id::text AS job FROM job_drafts WHERE draft_id = ${later}`).toEqual([{ job: id }]);
   });
 
   it('stops a Submit whose field work moved to another person while it ran, and frees the draft for the new owner', async () => {

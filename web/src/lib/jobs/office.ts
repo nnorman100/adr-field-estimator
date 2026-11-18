@@ -2,7 +2,7 @@ import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 import { actors, jobAssignments, jobCoordination, jobDrafts, jobs, jobSubmissions, memberships } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
-import { hasAny, jobAccess, JobError, recordDraft, type JobCaller, type JobRow } from './access';
+import { hasAny, holdDraft, jobAccess, JobError, type JobCaller, type JobRow } from './access';
 import { draftOfOtherJob, type DraftStore } from './drafts';
 import { assignDigest, type AssignInput, type CoordinationInput, type TransferInput } from './schema';
 import { audit, CHECK_VIOLATION, detailOf, errorCode, findDraft, type JobDetail } from './service';
@@ -162,32 +162,36 @@ async function uidOf(tx: CompanyTransaction, companyId: string, actorId: string)
   return found?.uid ?? null;
 }
 
-// The job's drafts: each draft it has been on, then its current draft last, as job_drafts (0016)
-// claims them for the job, so a draft another job claimed is never among them (security audit F1),
-// with each draft one of its submissions was made from (the previous version, still serving while a
-// release migrates, submits drafts without claiming them; claimDraft refuses those to every job).
-// Every one of them names the job's field owner, so a person who no longer owns the field work
-// reads none of them (web/firestore.rules). The current draft is set last, so while any draft does
-// not name the owner yet, the current one does not either, and the job screens offer Start field
-// work, which sets them all again. A current draft no job has claimed is claimed for the job here;
-// one another job claimed is refused (409), so the field work of another job's draft is never handed
-// on. The list is also what lets the draft store stamp the job id on a draft made before `jobId`
-// (drafts.ts).
+// The job's drafts: each draft it has been on, then its current draft last, every one of them the job's
+// in job_drafts (0016) before the field database is touched, so a draft another job claimed is never
+// among them (security audit F1). The drafts of the job's own submissions that no job has claimed (the
+// previous version, still serving while a release migrates, submits drafts without claiming them) are
+// claimed for the job here first, in Postgres, and so is a current draft no job has claimed; a
+// submitted draft another job claimed is left out, and a current draft another job claimed is refused
+// (409), so the field work of another job's draft is never handed on. Every one of them names the job's
+// field owner, so a person who no longer owns the field work reads none of them (web/firestore.rules).
+// The current draft is set last, so while any draft does not name the owner yet, the current one does
+// not either, and the job screens offer Start field work, which sets them all again. The list is also
+// what lets the draft store stamp the job id on a draft made before `jobId` (drafts.ts).
 async function draftIdsOf(tx: CompanyTransaction, row: JobRow): Promise<string[]> {
   const claimed = await tx
     .select({ draftId: jobDrafts.draftId })
     .from(jobDrafts)
     .where(and(eq(jobDrafts.companyId, row.companyId), eq(jobDrafts.jobId, row.id)))
-    .orderBy(asc(jobDrafts.createdAt), asc(jobDrafts.draftId));
+    .orderBy(asc(jobDrafts.draftId));
   const submitted = await tx
     .selectDistinct({ draftId: jobSubmissions.draftId })
     .from(jobSubmissions)
-    .where(and(eq(jobSubmissions.companyId, row.companyId), eq(jobSubmissions.jobId, row.id)));
-  const ids = [...new Set([...claimed, ...submitted].map((one) => one.draftId))];
-  if (!claimed.some((one) => one.draftId === row.currentDraftId) && !(await recordDraft(tx, row.companyId, row.id, row.currentDraftId))) {
+    .where(and(eq(jobSubmissions.companyId, row.companyId), eq(jobSubmissions.jobId, row.id)))
+    .orderBy(asc(jobSubmissions.draftId));
+  const held = new Set(claimed.map((one) => one.draftId));
+  for (const { draftId } of submitted) {
+    if (!held.has(draftId) && (await holdDraft(tx, row.companyId, row.id, draftId))) held.add(draftId);
+  }
+  if (!held.has(row.currentDraftId) && !(await holdDraft(tx, row.companyId, row.id, row.currentDraftId))) {
     throw new JobError('conflict');
   }
-  return [...ids.filter((id) => id !== row.currentDraftId), row.currentDraftId];
+  return [...[...held].filter((id) => id !== row.currentDraftId), row.currentDraftId];
 }
 
 export function officeService(db: Database, drafts: DraftStore): OfficeService {

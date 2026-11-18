@@ -787,7 +787,6 @@ export const jobDrafts = pgTable(
     companyId: uuid('company_id').notNull(),
     draftId: uuid('draft_id').notNull(),
     jobId: uuid('job_id').notNull(),
-    createdAt: createdAt(),
   },
   (t) => [
     primaryKey({ columns: [t.companyId, t.draftId] }),

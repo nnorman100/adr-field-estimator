@@ -67,6 +67,9 @@ export type FakeField = FenceStore & ArchiveStore & {
   // Writes field data as the phone would while the draft is editing (the rules are not modelled:
   // tests/emu/ checks them).
   put(companyId: string, draftId: string, manifest: Partial<FieldManifest>, fieldOwnerUid?: string | null): void;
+  // Takes the job id off a draft, as on one the previous version made before drafts carried it
+  // (security audit F1).
+  unstamp(companyId: string, draftId: string): void;
   // Makes the next call of a method fail as if Firestore were unreachable, before it changes anything.
   failNext: Partial<Record<Method, boolean>>;
   // Awaited at the start of the next call of a method, so a test can hold one attempt mid-way.
@@ -145,6 +148,13 @@ export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts:
       for (const room of manifest.rooms ?? []) draft.rooms[room.id] = room.field;
       for (const photo of manifest.photos ?? []) draft.photos[photo.id] = photo.field;
       save(data);
+    },
+
+    unstamp(companyId, draftId) {
+      const data = load();
+      delete data[key(companyId, draftId)]?.jobId;
+      save(data);
+      linked?.drafts.jobOf.delete(key(companyId, draftId));
     },
 
     fence: (companyId, draftId, fence, replacing) =>
@@ -232,7 +242,12 @@ export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts:
     createCopy: (companyId, jobId, draftId, fieldOwnerUid, manifest) =>
       call('createCopy', (data) => {
         const found = data[key(companyId, draftId)];
-        if (found) return draftOfOtherJob(found.jobId, jobId) ? ('taken' as const) : ('exists' as const);
+        if (found) {
+          if (draftOfOtherJob(found.jobId, jobId)) return 'taken' as const;
+          // As the real writer: a draft made before `jobId` takes it.
+          found.jobId ??= jobId;
+          return 'exists' as const;
+        }
         data[key(companyId, draftId)] = {
           ...emptyDraft(fieldOwnerUid, jobId),
           field: manifest.draft ?? {},
@@ -246,7 +261,10 @@ export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts:
         const found = data[key(companyId, draftId)];
         if (found) {
           const same = found.previous?.draftId === previous.draftId && found.previous?.submissionId === previous.submissionId;
-          return same && !draftOfOtherJob(found.jobId, jobId) ? ('exists' as const) : ('taken' as const);
+          if (!same || draftOfOtherJob(found.jobId, jobId)) return 'taken' as const;
+          // As the real writer: a draft made before `jobId` takes it.
+          found.jobId ??= jobId;
+          return 'exists' as const;
         }
         data[key(companyId, draftId)] = {
           ...emptyDraft(fieldOwnerUid, jobId),

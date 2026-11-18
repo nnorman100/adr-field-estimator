@@ -134,4 +134,23 @@ describe('the field rules on a draft Submit has fenced', () => {
     // Its provenance is the server's.
     expect(await updateDoc(owner.caller, draftPath(company, next), { previous: { draftId: 'x', submissionId: 'y' } })).toBe(403);
   });
+
+  // Security audit F1, across a release: a next draft the previous version made carries no job id.
+  // Back to editing sent again (its job holds the draft id in Postgres first) stamps it when the
+  // provenance is the same, and from then on it is that job's alone.
+  it('take the job id onto a next draft made before it when the same Back to editing is sent again, and refuse it to another job', async () => {
+    const company = randomUUID();
+    const next = randomUUID();
+    const job = randomUUID();
+    const previous = { draftId: randomUUID(), submissionId: randomUUID() };
+    const made = { fieldOwnerUid: 'uid-owner', state: 'editing', field: { notes: 'made by the previous version' }, previous };
+    await db.doc(draftPath(company, next)).create(made);
+    const empty = { draft: {}, rooms: [], photos: [] };
+    expect(await store.createFrom(company, job, next, 'uid-owner', empty, { ...previous, submissionId: randomUUID() })).toBe('taken');
+    expect((await db.doc(draftPath(company, next)).get()).data()).toEqual(made);
+    expect(await store.createFrom(company, job, next, 'uid-owner', empty, previous)).toBe('exists');
+    expect((await db.doc(draftPath(company, next)).get()).data()).toEqual({ ...made, jobId: job });
+    expect(await store.createFrom(company, randomUUID(), next, 'uid-other', empty, previous)).toBe('taken');
+    expect((await db.doc(draftPath(company, next)).get()).data()).toEqual({ ...made, jobId: job });
+  });
 });

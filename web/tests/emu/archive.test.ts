@@ -172,4 +172,21 @@ describe('a copy’s draft', () => {
     expect(await store.createCopy(companyId, randomUUID(), draft, 'uid-other', manifest)).toBe('taken');
     expect((await db.doc(at).get()).data()).toEqual({ jobId: job, fieldOwnerUid: estimator.uid, state: 'editing', field: { ...manifest.draft, scopeConfirmed: true } });
   });
+
+  // Security audit F1, across a release: a copy's draft the previous version made carries no job id.
+  // The copy sent again (its job holds the draft id in Postgres first) stamps it, and from then on it
+  // is that job's alone.
+  it('takes the job id onto a draft made before it when the same copy is sent again, and is then refused to another job', async () => {
+    const companyId = randomUUID();
+    const draft = randomUUID();
+    const job = randomUUID();
+    const at = path(companyId, draft);
+    const made = { fieldOwnerUid: 'uid-1', state: 'editing', field: { notes: 'made by the previous version' } };
+    await db.doc(at).create(made);
+    const manifest = { draft: { notes: 'from the signed job' }, rooms: [] };
+    expect(await store.createCopy(companyId, job, draft, 'uid-1', manifest)).toBe('exists');
+    expect((await db.doc(at).get()).data()).toEqual({ ...made, jobId: job });
+    expect(await store.createCopy(companyId, randomUUID(), draft, 'uid-2', manifest)).toBe('taken');
+    expect((await db.doc(at).get()).data()).toEqual({ ...made, jobId: job });
+  });
 });

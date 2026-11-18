@@ -53,8 +53,9 @@ export type FenceStore = JobProjectionStore & DraftLookup & {
   release(companyId: string, draftId: string, epoch: string): Promise<'released' | 'not_fenced'>;
   // Back to editing: a new `editing` draft of the job holding the given field data, with its
   // provenance. Made whole or not at all; `exists` when the draft is already there with the same job
-  // and provenance (a retry), and nothing is changed then; `taken` when the draft there was made for
-  // another job or from another submission, and nothing is changed either.
+  // and provenance (a retry), and nothing is changed then, except that a draft made before `jobId`
+  // takes it (the caller holds the draft id for this job in Postgres first); `taken` when the draft
+  // there was made for another job or from another submission, and nothing is changed either.
   createFrom(
     companyId: string,
     jobId: string,
@@ -169,7 +170,11 @@ export function firestoreFenceStore(db: Firestore): FenceStore {
         if (found.exists) {
           const from = found.get('previous') as Record<string, unknown> | undefined;
           const same = from?.draftId === previous.draftId && from?.submissionId === previous.submissionId;
-          return same && !draftOfOtherJob(found.get('jobId'), jobId) ? 'exists' : 'taken';
+          const stamped = found.get('jobId');
+          if (!same || draftOfOtherJob(stamped, jobId)) return 'taken';
+          // A draft made before `jobId` takes it: the caller holds the draft id for this job in Postgres.
+          if (stamped === undefined) tx.update(ref, { jobId });
+          return 'exists';
         }
         tx.create(ref, {
           jobId,
