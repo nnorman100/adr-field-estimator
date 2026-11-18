@@ -1,10 +1,10 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, type NextResponse } from 'next/server';
 import { describe, expect, it } from 'vitest';
 import { linkApiPaths, memberApiPaths, publicApiPaths } from '@/lib/public-api';
 import { config, proxy } from '@/proxy';
 
 const call = (path: string, method = 'GET') =>
-  proxy(new NextRequest(new URL(path, 'http://localhost'), { method }));
+  proxy(new NextRequest(new URL(path, 'http://localhost'), { method })) as NextResponse;
 
 describe('API sign-in gate', () => {
   it('runs on every API path and on pages for report-only CSP headers', () => {

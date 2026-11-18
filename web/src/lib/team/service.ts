@@ -382,8 +382,7 @@ export function teamService(db: Database, users: TenantUsers, project: ProjectAc
       await users.ensureAccount(tenant, input.email);
       return inCompany(db, companyId, async (tx) => {
         await lockActiveOwner(tx, companyId, by);
-        const company = await readyCompany(tx, companyId);
-        if (company.tenant !== tenant) throw new TeamError('conflict');
+        const { slug } = await readyCompany(tx, companyId);
         await refuseUninvitable(tx, companyId, input.email);
         const [row] = await tx
           .insert(invitations)
@@ -397,7 +396,7 @@ export function teamService(db: Database, users: TenantUsers, project: ProjectAc
           })
           .returning(invitationColumns);
         await audit(tx, companyId, by, 'invitation_created', row!.id, { role: input.role });
-        return { invitation: invitationView(row!, now), delivery: 'copy_link', link: invitationLink(company.slug, row!.id) };
+        return { invitation: invitationView(row!, now), delivery: 'copy_link', link: invitationLink(slug, row!.id) };
       });
     },
 
@@ -420,8 +419,7 @@ export function teamService(db: Database, users: TenantUsers, project: ProjectAc
       await users.ensureAccount(found.tenant, found.email);
       return inCompany(db, companyId, async (tx) => {
         await lockActiveOwner(tx, companyId, by);
-        const company = await readyCompany(tx, companyId);
-        if (company.tenant !== found.tenant) throw new TeamError('conflict');
+        const { slug } = await readyCompany(tx, companyId);
         const row = await pendingInvitation(tx, companyId, invitationId, true);
         const lastIssued = row.expiresAt.getTime() - INVITATION_DAYS * DAY_MS;
         const issued = new Date(Math.max(now.getTime(), lastIssued));
@@ -435,7 +433,7 @@ export function teamService(db: Database, users: TenantUsers, project: ProjectAc
         return {
           invitation: invitationView(updated!, now),
           delivery: 'copy_link',
-          link: invitationLink(company.slug, invitationId),
+          link: invitationLink(slug, invitationId),
         };
       }, by);
     },

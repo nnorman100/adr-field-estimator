@@ -1,6 +1,7 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { NextRequest } from 'next/server';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { ConfigError, parseBrowserSignInConfig, parseConfig, parseLocalSignInFixture } from '@/lib/config';
 import { isSignInAddress, noSignInDirectory, signInPageFor, type SignInDirectory } from '@/lib/sign-in';
@@ -8,6 +9,7 @@ import type { Database } from '@/db/tenant';
 import { databaseSignInDirectory } from '@/lib/sign-in/database-directory';
 import { localIdentityDirectory, localSignInDirectory, type LocalSignInFixture } from '@/lib/sign-in/local-directory';
 import { endsSession, errorCode, meOutcome, signInErrorMessage } from '@/lib/sign-in/outcome';
+import { SIGN_IN_PAGE_HEADER } from '@/lib/sign-in/page-request';
 
 // The sign-in screens' server half and their pure decisions (S3-13a). tests/e2e/sign-in.spec.ts
 // drives the screens themselves against the Auth emulator.
@@ -78,37 +80,53 @@ describe('GET /api/sign-in/{address}', () => {
     }
   });
 
-  // Security audit F5: the server-rendered sign-in pages (and every screen under the address) send
-  // the browser to a route that answers 503, since a page cannot set that status itself.
-  it('sends a sign-in page whose lookup found no free connection to a 503 that reopens the page', async () => {
-    const refused = Object.assign(new Error('QUEUE_TIMEOUT: Waited more than 10 seconds for a connection'), { code: 'QUEUE_TIMEOUT' });
-    vi.doMock('next/server', async (original) => ({ ...(await original<typeof import('next/server')>()), connection: async () => {} }));
-    vi.doMock('@/lib/sign-in/services', () => ({
-      signInDirectory: () => ({
-        pageFor: async () => {
-          throw refused;
-        },
-      }),
-    }));
-    try {
-      const { loadSignInScreen } = await import('@/app/(auth)/sign-in/[address]/load');
-      const redirected = await loadSignInScreen('company-a', null).then(
-        () => null,
-        (error: unknown) => error as { digest?: string },
-      );
-      expect(redirected?.digest?.split(';').slice(0, 4)).toEqual(['NEXT_REDIRECT', 'replace', '/sign-in/company-a/busy', '307']);
-
-      const { GET } = await import('@/app/(auth)/sign-in/[address]/busy/route');
-      const res = await GET(new Request('http://localhost/sign-in/company-a/busy'), { params: Promise.resolve({ address: 'company-a' }) });
-      expect(res.status).toBe(503);
-      expect(res.headers.get('cache-control')).toBe('no-store');
-      expect(res.headers.get('retry-after')).toBe('10');
-      expect(res.headers.get('refresh')).toBe('10; url=/sign-in/company-a');
-      expect(await res.text()).toBe('DryScope is busy. Try again shortly.\n');
-    } finally {
-      vi.doUnmock('next/server');
+  // Security audit F5: the server-rendered sign-in pages, and every screen under the address, are
+  // looked up in Proxy before they render, so a lookup that found no free connection answers 503
+  // from the address that was asked for.
+  describe('company sign-in pages', () => {
+    const INVITATION = '/sign-in/company-a/invitations/3e8d4f4b-0a5c-4fb1-8d9e-6c7b8a9fa0bd';
+    const directory = (pageFor: () => Promise<unknown>) => vi.doMock('@/lib/sign-in/services', () => ({ signInDirectory: () => ({ pageFor }) }));
+    const visit = async (path: string, init?: { headers: Record<string, string> }) => {
+      const { proxy } = await import('@/proxy');
+      return proxy(new NextRequest(new URL(path, 'http://localhost'), init));
+    };
+    afterEach(() => {
       vi.doUnmock('@/lib/sign-in/services');
-    }
+      vi.doUnmock('next/headers');
+    });
+
+    it('answers a plain 503 from the requested page when no database connection came free in time', async () => {
+      directory(async () => {
+        throw Object.assign(new Error('QUEUE_TIMEOUT: Waited more than 10 seconds for a connection'), { code: 'QUEUE_TIMEOUT' });
+      });
+      for (const path of ['/sign-in/company-a', INVITATION, '/sign-in/company-a/team']) {
+        const res = await visit(path);
+        expect(res.status).toBe(503);
+        expect(res.headers.get('location')).toBeNull();
+        expect(res.headers.get('x-middleware-next')).toBeNull();
+        expect(res.headers.get('cache-control')).toBe('no-store');
+        expect(res.headers.get('retry-after')).toBe('10');
+        expect(await res.text()).toBe('DryScope is busy. Try again shortly.\n');
+      }
+    });
+
+    it('hands the page it found to the screen, and drops a page the browser sent itself', async () => {
+      vi.stubEnv('APP_ENV', 'test');
+      directory(async () => ({ companyName: 'Café A', tenantId: 'tenant-a' }));
+      const found = await visit(INVITATION);
+      expect(found.headers.get('x-middleware-next')).toBe('1');
+      const passed = found.headers.get(`x-middleware-request-${SIGN_IN_PAGE_HEADER}`);
+      vi.doMock('next/headers', () => ({ headers: async () => new Headers(passed ? { [SIGN_IN_PAGE_HEADER]: passed } : {}) }));
+      const { loadSignInScreen } = await import('@/app/(auth)/sign-in/[address]/load');
+      expect(await loadSignInScreen('company-a', 'id')).toMatchObject({ address: 'company-a', companyName: 'Café A', tenantId: 'tenant-a', invitationId: 'id' });
+
+      directory(async () => null);
+      vi.resetModules();
+      const spoofed = encodeURIComponent(JSON.stringify({ companyName: 'Other', tenantId: 'tenant-x' }));
+      const unknown = await visit('/sign-in/company-z', { headers: { [SIGN_IN_PAGE_HEADER]: spoofed } });
+      expect(unknown.headers.get('x-middleware-override-headers')?.split(',')).not.toContain(SIGN_IN_PAGE_HEADER);
+      expect(unknown.headers.get(`x-middleware-request-${SIGN_IN_PAGE_HEADER}`)).toBeNull();
+    });
   });
 
   it('answers 404 for a malformed address without opening a database', async () => {

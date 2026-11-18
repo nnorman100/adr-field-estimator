@@ -39,8 +39,8 @@ const IDLE_TIMEOUT_SECONDS = 60;
 // - A transaction (every company read and write is one, db/tenant.ts) waits at most
 //   QUEUE_TIMEOUT_SECONDS for a free connection; then it is refused (QUEUE_TIMEOUT, never sent,
 //   isQueueTimeout) instead of waiting; the sign-in check of member routes, the public sign-in
-//   lookup, the company sign-in pages (through their busy route) and the scheduled worker pass
-//   answer 503 for it. A single query outside a transaction may instead be pipelined behind a
+//   lookup, the company sign-in pages (in Proxy, lib/sign-in/page-request.ts) and the scheduled
+//   worker pass answer 503 for it. A single query outside a transaction may instead be pipelined behind a
 //   running statement, so the statement limit bounds its wait.
 // - The server ends a statement after 30 s, a wait for a lock after 10 s, and a transaction that
 //   sits idle between statements for 30 s (it rolls back, its locks are released and the pool

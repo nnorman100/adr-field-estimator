@@ -1,4 +1,4 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, type NextResponse } from 'next/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { serviceRoute } from '@/lib/auth/route';
 import {
@@ -114,7 +114,7 @@ describe('POST /api/internal/access-projection', () => {
   });
 
   it('passes the proxy to its own check, and nothing that looks like it does', () => {
-    const at = (path: string) => proxy(new NextRequest(new URL(path, 'http://localhost'), { method: 'POST' }));
+    const at = (path: string) => proxy(new NextRequest(new URL(path, 'http://localhost'), { method: 'POST' })) as NextResponse;
     expect(at('/api/internal/access-projection').headers.get('x-middleware-next')).toBe('1');
     for (const path of ['/api/internal', '/api/internal/access-projection/', '/api/internal/access-projection/x']) {
       expect({ path, status: at(path).status }).toEqual({ path, status: 401 });
