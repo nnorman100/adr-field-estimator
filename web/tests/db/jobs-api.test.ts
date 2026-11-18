@@ -173,6 +173,67 @@ describe('creating a job', () => {
     expect(await jobCount()).toBe(1);
   });
 
+  it('answers 409 when the field database holds the draft id for another job, and leaves that draft as it is', async () => {
+    // Security audit F1: a draft made for another job is never taken as this job's, even where
+    // Postgres does not know the id (a draft made before the job id was written on drafts).
+    const draftId = randomUUID();
+    const key = `${h.seed.a}/${draftId}`;
+    h.drafts.made.set(key, { fieldOwnerUid: 'estimator-a2' });
+    h.drafts.jobOf.set(key, randomUUID());
+    const before = await everything(h.admin);
+    const id = randomUUID();
+    expect(await create(ESTIMATOR_A, { id, draftId })).toEqual({ status: 409, body: { error: 'conflict' } });
+    expect(h.drafts.made.get(key)).toEqual({ fieldOwnerUid: 'estimator-a2' });
+    // Nothing is committed in Postgres, so the same job id with a fresh draft id is a new job.
+    expect(await everything(h.admin)).toBe(before);
+    expect((await create(ESTIMATOR_A, { id, draftId: randomUUID() })).status).toBe(201);
+  });
+
+  // Security audit F1, across a release: the previous version (still serving while the migration
+  // runs) made the job and its draft with no claim and no job id on the draft, which proves nothing on
+  // its own. The same create sent again claims the draft id for the job in Postgres first, then
+  // stamps the draft; a draft id Postgres holds for another job is refused and its draft not stamped.
+  it('claims and stamps a draft the previous version made when the same create is sent again, and refuses one another job holds', async () => {
+    const ids = newIds();
+    expect((await create(ESTIMATOR_A, ids)).status).toBe(201);
+    const key = `${h.seed.a}/${ids.draftId}`;
+    await h.admin`DELETE FROM job_drafts WHERE draft_id = ${ids.draftId}`;
+    h.drafts.jobOf.delete(key);
+    expect((await create(ESTIMATOR_A, ids)).status).toBe(200);
+    expect(await h.admin`SELECT job_id::text AS job FROM job_drafts WHERE draft_id = ${ids.draftId}`).toEqual([{ job: ids.id }]);
+    expect(h.drafts.jobOf.get(key)).toBe(ids.id);
+
+    const held = newIds();
+    expect((await create(ESTIMATOR_A, held)).status).toBe(201);
+    const other = newIds();
+    expect((await create(ESTIMATOR_A, other)).status).toBe(201);
+    const heldKey = `${h.seed.a}/${held.draftId}`;
+    await h.admin`DELETE FROM job_drafts WHERE draft_id = ${held.draftId}`;
+    await h.admin`INSERT INTO job_drafts (company_id, draft_id, job_id) VALUES (${h.seed.a}, ${held.draftId}, ${other.id})`;
+    h.drafts.jobOf.delete(heldKey);
+    const stored = structuredClone(h.drafts.made.get(heldKey));
+    expect(await create(ESTIMATOR_A, held)).toEqual({ status: 409, body: { error: 'conflict' } });
+    expect(h.drafts.jobOf.has(heldKey)).toBe(false);
+    expect(h.drafts.made.get(heldKey)).toEqual(stored);
+    expect(await h.admin`SELECT job_id::text AS job FROM job_drafts WHERE draft_id = ${held.draftId}`).toEqual([{ job: other.id }]);
+  });
+
+  // Security audit F1: the claim commits before the stamp. When the field database stamps a draft the
+  // previous version made and its answer is lost, the draft is never left stamped without its claim.
+  it('commits the claim before stamping a draft the previous version made, so a lost answer leaves it claimed', async () => {
+    const ids = newIds();
+    expect((await create(ESTIMATOR_A, ids)).status).toBe(201);
+    const key = `${h.seed.a}/${ids.draftId}`;
+    await h.admin`DELETE FROM job_drafts WHERE draft_id = ${ids.draftId}`;
+    h.drafts.jobOf.delete(key);
+    h.drafts.failNext.on = true;
+    h.drafts.failNext.afterWrite = true;
+    expect(await create(ESTIMATOR_A, ids)).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
+    expect(h.drafts.jobOf.get(key)).toBe(ids.id);
+    expect(await h.admin`SELECT job_id::text AS job FROM job_drafts WHERE draft_id = ${ids.draftId}`).toEqual([{ job: ids.id }]);
+    expect((await create(ESTIMATOR_A, ids)).status).toBe(200);
+  });
+
   it('makes the draft on a retry when the first attempt saved the job and lost the draft', async () => {
     const ids = newIds();
     h.drafts.failNext.on = true;

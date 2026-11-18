@@ -20,7 +20,7 @@ Words as used in this repo. Entries marked [confirm] are my wording of industry 
 | LGR dehumidifier | Low-grain refrigerant dehumidifier |
 | Drying log | Daily room readings (air, material, thermal) kept as a sidecar |
 | Drying watch | Post-signing monitoring of signed jobs (built, flag off) |
-| Price book | A company's own rates; a company other than ADR has none until it publishes them (editor built, flag off) |
+| Price book | A company's own rates; DryScope has no default prices, so a company has none until it publishes them (editor built, flag off) |
 | Priced extras | Owner-approved pricing for work the workbook does not cover |
 | Revision / proposal hash | Saved version of the scope and its fingerprint; signatures bind to it |
 | Signing link | Single-use, 7-day link for a homeowner to sign on their phone |
