@@ -16,6 +16,15 @@
 --    stops this file with an error naming the jobs and changes nothing: which job keeps a draft, and
 --    how a stuck job moves on, are the owner's decisions, made before this file runs again.
 
+-- For the fill (3, below). Row-level security is forced on the jobs and their submissions, which binds
+-- their owner (the migrator) too, and no policy is the migrator's: the owner reads them with it
+-- unforced, inside this file's one transaction, and forces it again before the file ends. It comes
+-- first, so the strongest lock on jobs is taken before the claims' foreign key takes a weaker one: a
+-- request still running on the previous version, holding a job row, never waits behind this file while
+-- this file waits for it.
+ALTER TABLE jobs NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE job_submissions NO FORCE ROW LEVEL SECURITY;
+
 -- 1. The claims.
 CREATE TABLE job_drafts (
   company_id uuid NOT NULL,
@@ -29,13 +38,7 @@ CREATE TABLE job_drafts (
 -- A job's drafts.
 CREATE INDEX job_drafts_company_job ON job_drafts (company_id, job_id);
 
--- 3. The fill. Row-level security is forced on the jobs and their submissions, which binds their
--- owner (the migrator) too, and no policy is the migrator's: the owner reads them here with it
--- unforced, inside this file's one transaction, and forces it again before the file ends.
-ALTER TABLE jobs NO FORCE ROW LEVEL SECURITY;
-ALTER TABLE job_submissions NO FORCE ROW LEVEL SECURITY;
-
--- Before the fill, two kinds of existing job the owner must settle by hand, each named by company and
+-- 3. The fill. Before it, two kinds of existing job the owner must settle by hand, each named by company and
 -- job id: jobs that name one draft id between them (which job keeps it is the owner's decision), and
 -- jobs in status draft whose current draft was already submitted (a committed submission of that
 -- draft: the record that marks a draft submitted). Either stops this file and changes nothing.

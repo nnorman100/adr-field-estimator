@@ -139,10 +139,12 @@ describe('the field owner of a draft', () => {
     expect(await drafts.setFieldOwner(company, job, draft, first.uid, 0)).toBe('set');
     expect(await updateDoc(first.caller, path(company, draft), { field: { notes: 'submitted notes' } })).toBe(200);
     expect(await createDoc(first.caller, `${path(company, draft)}/rooms/kitchen`, { field: { name: 'Kitchen' } })).toBe(200);
+    const other = randomUUID();
+    // The job id is the server's: the field owner cannot hand the draft to another job.
+    expect(await updateDoc(first.caller, path(company, draft), { jobId: other })).toBe(403);
     await db.doc(path(company, draft)).update({ state: 'submitted' });
     const before = (await db.doc(path(company, draft)).get()).data();
 
-    const other = randomUUID();
     expect(await drafts.ensure(company, other, draft, second.uid)).toBe('taken');
     expect(await drafts.setFieldOwner(company, other, draft, second.uid, 0)).toBe('taken');
     expect(await drafts.setFieldOwner(company, other, draft, second.uid, 9)).toBe('taken');
@@ -150,8 +152,6 @@ describe('the field owner of a draft', () => {
     expect(await getDoc(second.caller, path(company, draft))).toBe(403);
     expect(await getDoc(second.caller, `${path(company, draft)}/rooms/kitchen`)).toBe(403);
     expect(await getDoc(first.caller, path(company, draft))).toBe(200);
-    // The job id is the server's: the field owner cannot hand the draft to another job.
-    expect(await updateDoc(first.caller, path(company, draft), { jobId: other })).toBe(403);
   });
 
   it('stamps the job id on a draft made before it, even when its owner and revision already match', async () => {
