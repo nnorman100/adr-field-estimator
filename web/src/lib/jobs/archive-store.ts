@@ -1,6 +1,7 @@
 import type { Firestore } from 'firebase-admin/firestore';
 import type { FieldManifest } from '@/lib/field/canonical';
 import { firestoreSpan } from '@/lib/telemetry/spans';
+import { draftOfOtherJob, firestoreDraftLookup, type DraftLookup } from './drafts';
 import { firestoreJobProjectionStore, type JobProjectionStore } from './projection';
 
 // The field database side of archive, restore and copy (S5b-2). Postgres decides; these follow it.
@@ -27,16 +28,25 @@ export type ArchiveResult =
   // to the phone after its job's archive.
   | 'missing';
 
-export type ArchiveStore = JobProjectionStore & {
+export type ArchiveStore = JobProjectionStore & DraftLookup & {
   // In one Firestore transaction: the draft becomes `archived` at this job revision.
   archiveDraft(companyId: string, draftId: string, revision: number): Promise<ArchiveResult>;
   // In one Firestore transaction: an `archived` draft becomes `state` at this job revision. A draft
   // in any other state keeps it (its archive never reached the field database) and only takes the
   // revision, so that archive cannot land after this restore.
   restoreDraft(companyId: string, draftId: string, state: 'editing' | 'submitted', revision: number): Promise<ArchiveResult>;
-  // A copy's first draft: an `editing` draft holding the given field map and rooms, made whole or
-  // not at all; `exists` when the draft is already there (a retry), and nothing is changed then.
-  createCopy(companyId: string, draftId: string, fieldOwnerUid: string | null, manifest: Pick<FieldManifest, 'draft' | 'rooms'>): Promise<'created' | 'exists'>;
+  // A copy's first draft: an `editing` draft of the copy (`jobId`, as src/lib/jobs/drafts.ts)
+  // holding the given field map and rooms, made whole or not at all; `exists` when the draft is
+  // already there for this job (a retry), and nothing is changed then, except that a draft made
+  // before `jobId` takes it (the caller holds the draft id for this job in Postgres first); `taken`
+  // when the draft there was made for another job, and nothing is changed either.
+  createCopy(
+    companyId: string,
+    jobId: string,
+    draftId: string,
+    fieldOwnerUid: string | null,
+    manifest: Pick<FieldManifest, 'draft' | 'rooms'>,
+  ): Promise<'created' | 'exists' | 'taken'>;
 };
 
 function storedRevision(value: unknown): number {
@@ -63,16 +73,25 @@ export function firestoreArchiveStore(db: Firestore): ArchiveStore {
 
   return {
     ...firestoreJobProjectionStore(db),
+    ...firestoreDraftLookup(db),
     archiveDraft: (companyId, draftId, revision) => step(companyId, draftId, revision, () => ({ state: 'archived' })),
     restoreDraft: (companyId, draftId, state, revision) =>
       step(companyId, draftId, revision, (current) => (current === 'archived' ? { state } : {})),
 
-    async createCopy(companyId, draftId, fieldOwnerUid, manifest) {
+    async createCopy(companyId, jobId, draftId, fieldOwnerUid, manifest) {
       const ref = draftRef(companyId, draftId);
       return firestoreSpan('runTransaction', 'drafts', () =>
-        db.runTransaction(async (tx): Promise<'created' | 'exists'> => {
-          if ((await tx.get(ref)).exists) return 'exists';
+        db.runTransaction(async (tx): Promise<'created' | 'exists' | 'taken'> => {
+          const found = await tx.get(ref);
+          if (found.exists) {
+            const stamped = found.get('jobId');
+            if (draftOfOtherJob(stamped, jobId)) return 'taken';
+            // A draft made before `jobId` takes it: the caller holds the draft id for this job in Postgres.
+            if (stamped === undefined) tx.update(ref, { jobId });
+            return 'exists';
+          }
           tx.create(ref, {
+            jobId,
             ...(fieldOwnerUid === null ? {} : { fieldOwnerUid }),
             state: 'editing',
             field: manifest.draft ?? {},
