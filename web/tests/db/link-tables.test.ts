@@ -112,7 +112,7 @@ describe('migration 0014: the link tables', () => {
       await other.end({ timeout: 5 });
     }
     const [fn] = await h.admin<{ definer: boolean; config: string[] }[]>`SELECT prosecdef AS definer, proconfig AS config FROM pg_proc WHERE proname = 'signing_link_company'`;
-    expect(fn).toEqual({ definer: true, config: ['search_path=pg_catalog'] });
+    expect(fn).toEqual({ definer: true, config: ['search_path=pg_catalog, pg_temp'] });
   });
 
   it('keeps one pending link per job, a unique token, and seven days from creation', async () => {

@@ -84,3 +84,17 @@ known names stay in code (`web/src/lib/flags/`), so a new flag needs no migratio
 `POST /api/platform/companies/{companyId}/flags` (`{ flag, enabled }`) locks the company row, writes
 the flag and one `feature_flag_changed` audit row naming the operator (`details` holds the new and
 previous value only) in one transaction, and refuses an unknown name before writing.
+
+`0017_definer_search_path` (security audit F4) changes the fixed `search_path` of every `SECURITY
+DEFINER` function, the lookups above and the workers' lookups across companies, from `pg_catalog`
+to `pg_catalog, pg_temp`. PostgreSQL searches the calling session's temporary schema first for
+relation and type names unless `pg_temp` is written in the path. The API user may create temporary
+objects, so before this file it could create a temporary domain called `uuid` or `text` whose check
+runs its own function, and a lookup that declares a variable of that type would run that function
+as the table owner. With `pg_temp` last, `pg_catalog`'s types are found first, as the PostgreSQL
+manual advises for `SECURITY DEFINER` functions; the temporary schema is never searched for
+function or operator names. No owner, body, grant, table or policy changes.
+`web/tests/db/definer-search-path.test.ts` tries the temporary type and a temporary function as the
+API user against each of the five lookups. A definer function added later writes
+`SET search_path = pg_catalog, pg_temp` and names its types with their schema
+(`pg_catalog.uuid`, `pg_catalog.text`).
