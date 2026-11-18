@@ -71,6 +71,10 @@ const MESSAGES: Record<string, string> = {
   assignment_not_found: 'This estimator is no longer assigned. The list is read again.',
   assigned_field_owner: 'This estimator owns the job’s field work. The company owner moves the field work first.',
   draft_unavailable: 'Saved, but the field work could not be updated just now. Try again.',
+  // S5b-2: archive, restore and copy.
+  submission_in_progress: 'A Submit of this job is still finishing. Try again in a moment.',
+  not_archived: 'This job is not archived any more.',
+  not_signed: 'Only a signed job can be copied.',
 };
 
 export function answerMessage(status: number, body: unknown): string {
@@ -188,6 +192,30 @@ export async function transferFieldOwner(user: User, jobId: string, input: Trans
   return answerOf(status, body, coordinationView);
 }
 
+export type ArchiveSave = { revision: number; changeId: string };
+const archivedJob = z.object({ job: jobView });
+export type ArchivedJob = z.infer<typeof archivedJob>;
+
+// S5b-2, the owner: files away an unsigned draft (a draft or a submitted job). The same change id
+// again is the same answer, so a lost answer is sent again as it was.
+export async function archiveJob(user: User, jobId: string, input: ArchiveSave): Promise<Answer<ArchivedJob>> {
+  const { status, body } = await callApi(user, `/api/jobs/${jobId}/archive`, { method: 'POST', json: input });
+  return answerOf(status, body, archivedJob);
+}
+
+// S5b-2, the owner: puts an archived job back as it was.
+export async function restoreJob(user: User, jobId: string, input: ArchiveSave): Promise<Answer<ArchivedJob>> {
+  const { status, body } = await callApi(user, `/api/jobs/${jobId}/restore`, { method: 'POST', json: input });
+  return answerOf(status, body, archivedJob);
+}
+
+// S5b-2: a new draft job from a signed job, with the new job's and draft's ids made on the phone.
+// 201 for the new job, 200 for the same ids again.
+export async function copyJob(user: User, jobId: string, input: { id: string; draftId: string }): Promise<Answer<JobDetail>> {
+  const { status, body } = await callApi(user, `/api/jobs/${jobId}/copy`, { method: 'POST', json: input });
+  return answerOf(status, body, jobDetail, [200, 201]) as Answer<JobDetail>;
+}
+
 async function authorized(user: User, path: string, init: RequestInit = {}): Promise<Response | null> {
   try {
     const token = await user.getIdToken();
@@ -213,14 +241,15 @@ export async function sendPhoto(user: User, jobId: string, photoId: string, byte
   return answerOf(response.status, body, receipt, [200, 201]);
 }
 
-// A photo's bytes as a local address for an <img>; the server's refusal (401, 403, 404); or null
-// when they cannot be read now. The caller revokes the address when the photo leaves the screen.
+// A photo's bytes as a local address for an <img>; the server's refusal (401, 403, 404, or 410 for
+// an archived job); or null when they cannot be read now. The caller revokes the address when the
+// photo leaves the screen.
 export async function photoAddress(user: User, jobId: string, photoId: string): Promise<string | Refusal | null> {
   const response = await authorized(user, `/api/jobs/${jobId}/photos/${photoId}?kind=photo`);
   if (!response) return null;
   if (!response.ok) {
     const answer = answerOf(response.status, await response.json().catch(() => null), z.never());
-    return !answer.ok && answer.denied ? { status: answer.status, message: answer.message } : null;
+    return !answer.ok && (answer.denied || answer.status === 410) ? { status: answer.status, message: answer.message } : null;
   }
   const bytes = await response.blob().catch(() => null);
   return bytes ? URL.createObjectURL(bytes) : null;

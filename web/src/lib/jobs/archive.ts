@@ -4,7 +4,7 @@ import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant
 import type { Capability } from '@/lib/access';
 import type { FieldDoc } from '@/lib/field/canonical';
 import { snapshotManifest } from '@/lib/submissions/snapshot';
-import { canSeeJob, draftSubmitted, hasAny, jobAccess, JobError, lockedJob, type JobCaller, type JobRow } from './access';
+import { canSeeJob, claimDraft, hasAny, holdDraft, jobAccess, JobError, lockedJob, type JobCaller, type JobRow } from './access';
 import type { ArchiveStore } from './archive-store';
 import { copyDigest, type ArchiveInput, type CopyInput } from './schema';
 import { audit, CHECK_VIOLATION, detailOf, errorCode, type JobDetail, type JobView } from './service';
@@ -245,20 +245,29 @@ export function archiveService(db: Database, store: ArchiveStore): ArchiveServic
           const [existing] = await tx
             .select()
             .from(jobs)
-            .where(and(eq(jobs.companyId, caller.companyId), eq(jobs.id, input.id)));
+            .where(and(eq(jobs.companyId, caller.companyId), eq(jobs.id, input.id)))
+            .for('update');
           // A retry only when it is the same copy of the same job, by someone who may see the copy.
           if (!existing || existing.requestDigest !== digest || !canSeeJob(caller, existing)) throw new JobError('conflict');
           if (existing.status === 'archived') throw new JobError('archived');
+          // A retry holds its draft id for the job in Postgres (security audit F1), in this transaction, which
+          // commits before the field database is touched: a draft the previous version made is stamped only
+          // once the claim is committed, so a lost answer from that stamp never leaves it unclaimed.
+          if (!(await holdDraft(tx, caller.companyId, existing.id, input.draftId))) throw new JobError('conflict');
           row = existing;
         } else {
-          if (await draftSubmitted(tx, caller.companyId, input.draftId)) throw new JobError('conflict');
+          if (!(await claimDraft(tx, caller.companyId, row.id, input.draftId))) throw new JobError('conflict');
+          // A draft id claimed now was never this job's: a draft already under it was made for another.
+          if (await field(() => store.findDraft(caller.companyId, input.draftId))) throw new JobError('conflict');
           await audit(tx, caller, 'job_copied', row.id, { revision: row.revision, copiedFrom: source.id });
         }
         return { created: inserted !== undefined, ownerUid: await ownerUid(tx, row), field: copiedField(signed.bytes), detail: await detailOf(tx, row) };
       });
       await inCompany(caller.companyId, async (tx) => {
         await lockedJob(tx, caller.companyId, input.id, { live: true });
-        await field(() => store.createCopy(caller.companyId, input.draftId, made.ownerUid, made.field));
+        const result = await field(() => store.createCopy(caller.companyId, input.id, input.draftId, made.ownerUid, made.field));
+        // A draft made for another job is never the copy's (security audit F1).
+        if (result === 'taken') throw new JobError('conflict');
       });
       await field(() =>
         store.projectJob(caller.companyId, made.detail.job.id, { currentDraftId: made.detail.job.currentDraftId, revision: made.detail.job.revision }),

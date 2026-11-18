@@ -12,8 +12,9 @@ rules_version = '2';
 //   Single-document reads need permission on its current draft; no listing or client writes.
 // - companies/{companyId}/drafts/{draftId}: a draft. `fieldOwnerUid`, `state` (editing,
 //   submitting, submitted, or archived while its job is archived, S5b-2), `fence` (the submission
-//   holding it, S5a-8), `previous` (the submitted draft a "Back to editing" version came from) and
-//   `archiveRevision` (the job revision of its last archive or restore) are the server's
+//   holding it, S5a-8), `previous` (the submitted draft a "Back to editing" version came from),
+//   `archiveRevision` (the job revision of its last archive or restore) and `jobId` (the job the
+//   draft was made for, security audit F1; web/src/lib/jobs/drafts.ts) are the server's
 //   (web/src/lib/submissions/fence.ts, web/src/lib/jobs/archive-store.ts). A client may change only
 //   the `field` map, and only while `state` is editing, so every other state refuses every client
 //   write.
