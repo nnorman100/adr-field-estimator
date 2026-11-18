@@ -2,7 +2,8 @@
 // section 4, steps 1, 2 and 6).
 //
 // 1. Edit: the entry is saved first, with the server's update time of each document as the phone
-//    held it (its base) and what it held of what the edit writes, then the writes go to Firestore.
+//    held it (its base) and what the screen held of what the edit writes, then the writes go to
+//    Firestore.
 //    With a memory cache (Online only, an iPhone browser tab, the fallback) nothing is kept on the
 //    phone: the entry is held in this page's memory only (journal.ts journalInMemory).
 // 2. Acknowledge: while the page lives, the write's own promise answers. Accepted: the entry is
@@ -25,13 +26,13 @@ import { fieldUser, settle, UnsentMarkNotSaved, type FieldClient } from '@/lib/f
 import { callApi } from '@/lib/firebase-client';
 import {
   appendEntry,
-  draftRefusal,
   heldOf,
+  jobDecides,
   jobOf,
   journalInMemory,
   markRefused,
   NO_ANSWER,
-  refusalReason,
+  refusalOf,
   judge,
   markChanged,
   readJournal,
@@ -41,10 +42,11 @@ import {
   untouchedSince,
   whileAdding,
   type DocWrite,
+  type Docs,
+  type JobNow,
   type JournalEntry,
   type RejectReason,
   type Owner,
-  type Held,
   type RoleNow,
   type ServerDoc,
 } from './journal';
@@ -98,8 +100,8 @@ export function journalFailed(client: FieldClient, error: unknown): void {
 export const readEntries = (client: FieldClient): Promise<JournalEntry[]> => readJournal(ownerOf(client));
 
 // The person's role now (GET /api/me), which tells why the rules refuse an edit (journal.ts
-// draftRefusal): null when the server did not let them in, NO_ANSWER when there was no answer
-// within ASK_WITHIN_MS (or no sign-in to ask with), so nothing is classified on a guess.
+// draftRefusal): null when the server refused them, NO_ANSWER when there was no answer within
+// ASK_WITHIN_MS, no sign-in to ask with, or access still renewing, so nothing is classified on a guess.
 function roleNow(client: FieldClient): Promise<RoleNow> {
   const key = personKey(ownerOf(client));
   const found = asking.get(key);
@@ -110,7 +112,7 @@ function roleNow(client: FieldClient): Promise<RoleNow> {
       const user = fieldUser(client.person);
       if (!user) return NO_ANSWER;
       const verdict = judgeMe(await callApi(user, '/api/me'), Date.now());
-      return verdict.kind === 'open' ? verdict.facts.role : null;
+      return verdict.kind === 'open' ? verdict.facts.role : verdict.kind === 'locked' ? null : NO_ANSWER;
     })(),
     new Promise<typeof NO_ANSWER>((done) => (timer = setTimeout(() => done(NO_ANSWER), ASK_WITHIN_MS))),
   ])
@@ -150,21 +152,6 @@ export async function basesOf(db: Firestore, writes: readonly DocWrite[]): Promi
   return bases;
 }
 
-// What the phone's cache holds of each document `writes` write (journal.ts heldOf); a document the
-// cache does not hold is none.
-async function beforeOf(db: Firestore, writes: readonly DocWrite[]): Promise<Record<string, Held>> {
-  const docs = new Map<string, Record<string, unknown> | null>();
-  for (const path of new Set(writes.map((write) => write.path))) {
-    try {
-      const snapshot = await getDocFromCache(doc(db, path));
-      docs.set(path, snapshot.exists() ? snapshot.data() : null);
-    } catch {
-      docs.set(path, null);
-    }
-  }
-  return heldOf(writes, docs);
-}
-
 // What a snapshot read from the server holds of its document.
 function serverDoc(snapshot: DocumentSnapshot): ServerDoc {
   if (!snapshot.exists()) return { missing: true };
@@ -185,15 +172,41 @@ async function readServer(db: Firestore, path: string): Promise<ServerDoc | null
 const REFUSALS = new Set(['permission-denied', 'not-found']);
 const refused = (error: unknown) => REFUSALS.has(String((error as { code?: unknown } | null)?.code));
 
-// Records an entry the server refused: rejected with the reason the server's copy of its draft and
-// the person's role now give, or kept refused, its reason not known yet, when those could not be
-// read (Firstmate ruling R1, 2026-11-17). Either way it is never sent again. True when the reason is
-// known.
+// What the jobs API says of the job now (journal.ts JobNow).
+async function jobNow(client: FieldClient, jobId: string | null): Promise<JobNow> {
+  if (!jobId) return null;
+  const user = fieldUser(client.person);
+  if (!user) return NO_ANSWER;
+  const answer = await readJob(user, jobId).catch(() => null);
+  if (!answer) return NO_ANSWER;
+  if (answer.ok) return { status: answer.value.job.status, currentDraftId: answer.value.job.currentDraftId };
+  if (answer.status === 410) return 'gone';
+  return answer.denied ? 'denied' : NO_ANSWER;
+}
+
+// Why the server refuses this person's edits to the draft at `path` now (journal.ts refusalOf), from
+// its copy of the draft (`draft`, read here when not given), the person's role (`role`, likewise) and,
+// when those leave it open, the job: `jobId`, else the one the draft names.
+async function classify(
+  client: FieldClient,
+  path: string,
+  jobId: string | null,
+  read?: { draft: ServerDoc | null; role: RoleNow },
+): Promise<RejectReason | null | 'unknown'> {
+  const [draft, role]: [ServerDoc | null, RoleNow] = read ? [read.draft, read.role] : await Promise.all([readServer(client.db, path), roleNow(client)]);
+  const uid = client.person.uid;
+  if (!jobDecides(draft, uid, role)) return refusalOf(draft, path, uid, role, null);
+  const named = draft && 'data' in draft && typeof draft.data.jobId === 'string' ? draft.data.jobId : null;
+  return refusalOf(draft, path, uid, role, await jobNow(client, jobId ?? named));
+}
+
+// Records an entry the server refused: rejected with the reason the server gives now (classify), or
+// kept refused, its reason not known yet, when that could not be read (Firstmate ruling R1,
+// 2026-11-17). Either way it is never sent again. True when the reason is known.
 async function refuse(client: FieldClient, entry: JournalEntry): Promise<boolean> {
-  const [draft, role] = await Promise.all([readServer(client.db, entry.draftPath), roleNow(client)]);
-  const reason = refusalReason(draft, entry.uid, role);
-  await (reason ? rejectEntry(entry, reason) : markRefused(entry));
-  return reason !== null;
+  const reason = await classify(client, entry.draftPath, entry.jobId ?? null);
+  await (reason && reason !== 'unknown' ? rejectEntry(entry, reason) : markRefused(entry));
+  return Boolean(reason && reason !== 'unknown');
 }
 
 function follow(client: FieldClient, entry: JournalEntry, acknowledged: Promise<void>): void {
@@ -229,15 +242,16 @@ async function send(client: FieldClient, ref: DraftRef, entry: JournalEntry): Pr
   }
 }
 
-// A field edit from a screen of the job `jobId`: the unsent mark, then the journal entry with its
-// bases and what the phone held (journal.ts whileAdding, so the mark is not cleared before the entry
+// A field edit from a screen of the job `jobId`, built on `held`, the draft's documents as that screen
+// held them (store.ts draftDocs): the unsent mark, then the journal entry with its bases and what the
+// screen held of what it writes (journal.ts whileAdding, so the mark is not cleared before the entry
 // is there), then the edit (./local-edit.ts, which answers at the local receipt). Throws
 // UnsentMarkNotSaved, JournalNotSaved or ReopenTheApp, and makes nothing, when the mark or the entry
 // could not be saved. An Online only client's entry is held in memory, with no mark.
-export async function journaledEdit(client: FieldClient, ref: DraftRef, writes: DocWrite[], jobId: string | null): Promise<{ acknowledged: Promise<void> }> {
+export async function journaledEdit(client: FieldClient, ref: DraftRef, writes: DocWrite[], jobId: string | null, held: Docs): Promise<{ acknowledged: Promise<void> }> {
   const owner = ownerOf(client);
   const person = personKey(owner);
-  const more = { before: await beforeOf(client.db, writes), ...(jobId ? { jobId } : {}) };
+  const more = { before: heldOf(writes, held), ...(jobId ? { jobId } : {}) };
   const entry =
     client.cache !== 'persistent'
       ? await appendEntry(owner, draftPath(ref), writes, {}, more)
@@ -287,19 +301,21 @@ async function remake(client: FieldClient, entries: JournalEntry[]): Promise<boo
 
 const judging = new Map<string, Promise<void>>();
 
-// Once per page and person, when the sync gate opens: what became of the entries an earlier page
-// left pending. Waits for Firestore to send its queue, then reads each entry's documents and draft
-// from the server, asks the server for the person's role, and judges them against everything this
-// page has sent up to then. Entries that never landed are made again here (remake). Entries the
-// server refused before their reason could be read are classified now from the same reads, and
-// never sent. An entry whose documents (or role) did not all answer stays as it is; the next opening
-// of the gate on this page tries again.
+// Each time the sync gate opens. Entries the server refused before their reason could be read are
+// classified now (classify), and never sent; one still unread stays refused, for the next opening.
+// Once per page and person (with a cache that keeps entries on the phone), also what became of the
+// entries an earlier page left pending: waits for Firestore to send its queue, then reads each
+// entry's documents and draft from the server, asks the server for the person's role, and judges
+// them against everything this page has sent up to then. A draft the server refuses now (classify,
+// with the job's 410) rejects its entries; entries that never landed are made again here (remake).
+// An entry whose documents (or role) did not all answer stays as it is; the next opening of the gate
+// on this page tries again.
 export function reconcileJournal(client: FieldClient): Promise<void> {
   const owner = ownerOf(client);
   const key = personKey(owner);
-  if (client.cache !== 'persistent' || judgedHere.has(key)) return Promise.resolve();
   const found = judging.get(key);
   if (found) return found;
+  const replay = client.cache === 'persistent' && !judgedHere.has(key);
   const done = () => {
     judgedHere.add(key);
     sentHere.delete(key);
@@ -308,13 +324,15 @@ export function reconcileJournal(client: FieldClient): Promise<void> {
   const earlier = (entry: JournalEntry) => entry.state === 'pending' && !madeHere.get(key)?.has(entry.seq);
   const run = (async () => {
     const entries = await readJournal(owner);
-    let judged = entries.filter(earlier);
+    let judged = replay ? entries.filter(earlier) : [];
     const unresolved = entries.filter((entry) => entry.state === 'refused');
-    if (judged.length === 0 && unresolved.length === 0) return done();
-    await waitForPendingWrites(client.db);
-    const paths = [
-      ...new Set([...judged.flatMap((entry) => [entry.draftPath, ...entry.writes.map((write) => write.path)]), ...unresolved.map((entry) => entry.draftPath)]),
-    ];
+    if (judged.length === 0 && unresolved.length === 0) {
+      if (replay) done();
+      return;
+    }
+    if (judged.length > 0) await waitForPendingWrites(client.db);
+    const drafts = [...new Set([...judged, ...unresolved].map((entry) => entry.draftPath))];
+    const paths = [...new Set([...drafts, ...judged.flatMap((entry) => entry.writes.map((write) => write.path))])];
     const read = new Map<string, ServerDoc>();
     await Promise.all(
       paths.map(async (path) => {
@@ -324,24 +342,29 @@ export function reconcileJournal(client: FieldClient): Promise<void> {
     );
     const role = await roleNow(client);
     judged = judged.filter(earlier);
+    const reasons = new Map<string, RejectReason | null | 'unknown'>();
+    for (const path of drafts) {
+      const mine = [...judged, ...unresolved].filter((entry) => entry.draftPath === path);
+      reasons.set(path, await classify(client, path, jobOf(mine), { draft: read.get(path) ?? null, role }));
+    }
     const outcomes = judge(judged, sentHere.get(key) ?? [], read, read, owner.uid, role);
     let complete = true;
     for (const entry of unresolved) {
-      const reason = refusalReason(read.get(entry.draftPath) ?? null, owner.uid, role);
-      if (reason) await rejectEntry(entry, reason);
-      else complete = false;
+      const reason = reasons.get(entry.draftPath);
+      if (reason && reason !== 'unknown') await rejectEntry(entry, reason);
     }
     const reissued: JournalEntry[] = [];
     for (const entry of judged) {
+      const reason = reasons.get(entry.draftPath);
       const outcome = outcomes.get(entry.seq);
-      if (!outcome) complete = false;
+      if (reason === 'unknown' || !outcome) complete = false;
+      else if (reason) await rejectEntry(entry, reason);
       else if (outcome.kind === 'acked') await removeEntry(entry);
-      else if (outcome.kind === 'rejected') await rejectEntry(entry, outcome.reason);
       else if (outcome.kind === 'changed') await markChanged(entry);
-      else reissued.push(entry);
+      else if (outcome.kind === 'reissue') reissued.push(entry);
     }
     if (!(await remake(client, reissued))) complete = false;
-    if (complete) done();
+    if (replay && complete) done();
     void settle(client).catch(() => undefined);
   })()
     .catch((error: unknown) => lose(key, error))
@@ -352,25 +375,12 @@ export function reconcileJournal(client: FieldClient): Promise<void> {
 
 // ---- What the "Can't save" sheet does with a set of refused edits (S6-4b) ----
 
-// Why the server refuses this person's edits to the draft now: a fresh check of their access
-// (GET /api/me must let them in), the server's copy of the draft, and while the draft is still being
-// edited the job (`jobId`, or the one the draft names): a 410 is an archive the draft does not show
-// yet. null: it takes them now; 'no-answer' when one of those did not answer.
+// Why the server refuses this person's edits to the draft now (classify): a fresh check of their
+// access, the server's copy of the draft and, where it decides, the job. null: it takes them now;
+// 'no-answer' when one of those did not answer.
 export async function refusalNow(client: FieldClient, path: string, jobId: string | null): Promise<RejectReason | null | 'no-answer'> {
-  const [draft, role] = await Promise.all([readServer(client.db, path), roleNow(client)]);
-  if (!draft || role === NO_ANSWER) return 'no-answer';
-  if (role === null) return 'no-access';
-  const reason = draftRefusal(draft, client.person.uid, role);
-  if (reason === 'unknown') return 'no-answer';
-  if (reason) return reason;
-  const job = jobId ?? ('data' in draft && typeof draft.data.jobId === 'string' ? draft.data.jobId : null);
-  const user = fieldUser(client.person);
-  if (!job) return null;
-  if (!user) return 'no-answer';
-  const answer = await readJob(user, job);
-  if (answer.ok) return null;
-  if (answer.status === 410) return 'archived';
-  return answer.denied ? 'no-access' : 'no-answer';
+  const reason = await classify(client, path, jobId);
+  return reason === 'unknown' ? 'no-answer' : reason;
 }
 
 // Try again for refused edits of one draft. Still refused: each entry keeps the reason the server

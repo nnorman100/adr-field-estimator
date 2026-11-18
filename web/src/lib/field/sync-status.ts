@@ -7,7 +7,11 @@ import { jobOf, type JournalEntry, type RejectReason } from './journal';
 
 export type ProblemReason = 'finished' | Exclude<RejectReason, 'locked'> | 'unknown' | 'changed';
 
+// One job's edits that the server refused for one reason (or holds other values for); a job whose
+// drafts were refused for two reasons (an archived draft, an older finished one) has two.
 export type Problem = {
+  key: string;
+  // The draft of its first edit.
   draftPath: string;
   reason: ProblemReason;
   // The job the edits were made on (journal.ts JournalEntry.jobId), when known.
@@ -15,7 +19,8 @@ export type Problem = {
   entries: JournalEntry[];
   // Save as new draft: only for a job archived while it was being edited, or field work that moved
   // (owner decision J5), and never after the person's own Finish, also when that job was archived
-  // after (that path is Back to editing, J4). The server is asked again before the copy is made.
+  // after (that path is Back to editing, J4); only with the job the edits were made on known, which
+  // the server is asked about again before the copy is made.
   saveAsNew: boolean;
   // Try again: only where the reason can clear (a restore, the field work moved back, access or the
   // role given back, a reason not known yet).
@@ -23,7 +28,7 @@ export type Problem = {
 };
 
 // `kind` is the chip's, the most urgent: Can't save, then Changed on another device, then waiting.
-// `problems` are every refused and every changed set of edits, each draft's own, for the sheet.
+// `problems` are every refused and every changed set of edits, by job and reason, for the sheet.
 export type SyncStatus = { kind: 'saved' | 'on-phone' | 'cant-save' | 'changed'; waiting: number; problems: Problem[] };
 
 // The reason the server gave for the newest refusal: it was read from the server's copy of the draft
@@ -46,20 +51,33 @@ export function syncStatus(entries: readonly JournalEntry[], canSaveAsNew: boole
       into.set(entry.draftPath, [...(into.get(entry.draftPath) ?? []), entry]);
     }
   }
-  const problem = (draftPath: string, group: JournalEntry[], reason: ProblemReason): Problem => ({
+  const problem = (key: string, draftPath: string, group: JournalEntry[], reason: ProblemReason): Problem => ({
+    key,
     draftPath,
     reason,
     jobId: jobOf(group),
     entries: group,
-    saveAsNew: canSaveAsNew && (reason === 'archived' || reason === 'owner-changed'),
+    saveAsNew: canSaveAsNew && jobOf(group) !== null && (reason === 'archived' || reason === 'owner-changed'),
     tryAgain: reason !== 'finished' && reason !== 'changed',
   });
-  const problems = [
-    ...[...refused].map(([path, group]) => problem(path, group, reasonOf(group))),
-    ...[...changed].map(([path, group]) => problem(path, group, 'changed')),
-  ];
+  const byJob = new Map<string, Problem>();
+  const add = (path: string, group: JournalEntry[], reason: ProblemReason) => {
+    const key = `${jobOf(group) ?? path}\u0000${reason}`;
+    const found = byJob.get(key);
+    byJob.set(key, found ? { ...found, entries: [...found.entries, ...group].sort((a, b) => a.seq - b.seq), jobId: found.jobId ?? jobOf(group) } : problem(key, path, group, reason));
+  };
+  for (const [path, group] of refused) add(path, group, reasonOf(group));
+  for (const [path, group] of changed) add(path, group, 'changed');
   const kind = refused.size > 0 ? 'cant-save' : changed.size > 0 ? 'changed' : waiting > 0 ? 'on-phone' : 'saved';
-  return { kind, waiting, problems };
+  return { kind, waiting, problems: [...byJob.values()] };
+}
+
+// A problem's edits, one draft's at a time, in the order they were made: Try again and Save as new
+// draft work on one draft.
+export function byDraft(entries: readonly JournalEntry[]): JournalEntry[][] {
+  const drafts = new Map<string, JournalEntry[]>();
+  for (const entry of entries) drafts.set(entry.draftPath, [...(drafts.get(entry.draftPath) ?? []), entry]);
+  return [...drafts.values()];
 }
 
 export const SAVED = 'Saved';
@@ -67,14 +85,16 @@ export const SAVED_ON_PHONE = 'Saved on this phone';
 export const CANT_SAVE = 'Can’t save';
 export const CHANGED_ELSEWHERE = 'Changed on another device';
 
-// The chip's words.
+// Most urgent first: what the person can do least about.
+const URGENCY: readonly ProblemReason[] = ['no-access', 'role-changed', 'owner-changed', 'archived', 'finished', 'unknown'];
+
+// The chip's words: with refusals, the most urgent reason.
 export function chipText(status: SyncStatus): string {
   if (status.kind === 'saved') return SAVED;
   if (status.kind === 'on-phone') return `${SAVED_ON_PHONE} (${status.waiting} waiting to send)`;
   if (status.kind === 'changed') return CHANGED_ELSEWHERE;
-  const refused = status.problems.filter((problem) => problem.reason !== 'changed');
-  const [only] = refused;
-  return refused.length === 1 && only ? `${CANT_SAVE}: ${REASONS[only.reason].short}` : `${CANT_SAVE}: ${refused.length} jobs`;
+  const urgent = URGENCY.find((reason) => status.problems.some((problem) => problem.reason === reason)) ?? 'unknown';
+  return `${CANT_SAVE}: ${REASONS[urgent].short}`;
 }
 
 // Per reason: the chip's few words, the sheet's title and what to do.
@@ -82,7 +102,7 @@ export const REASONS: Record<ProblemReason, { short: string; title: string; text
   finished: {
     short: 'job finished',
     title: 'This job was finished',
-    text: 'These changes were made after the job was finished, so they were not saved. To change the job, go to Finish and review, tap Back to editing, then make them again.',
+    text: 'These changes reached DryScope after the job was finished, so they were not saved. To change the job, go to Finish and review, tap Back to editing, then make them again.',
   },
   archived: {
     short: 'job archived',
@@ -115,5 +135,8 @@ export const REASONS: Record<ProblemReason, { short: string; title: string; text
     text: 'This job was changed on another device after these changes were made here, so they were not sent and the other device’s version is kept. Discard them, and make them again if they are still needed.',
   },
 };
+
+// A finished job that was archived after: Finish and review opens only once it is restored.
+export const RESTORE_FIRST = 'This job is archived too: the company owner must restore it before Finish and review opens.';
 
 export const PHOTOS_STAY = 'Photos stay with the old job: they are not copied to the new draft.';

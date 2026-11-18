@@ -68,7 +68,8 @@ async function saveYear(page: Page, year: string) {
   await expect(page.getByRole('form', { name: 'Job scope' }).getByRole('status')).toContainText('Saved on this phone');
 }
 
-// The person's journal entries, read from the phone's own store.
+// The person's journal entries, read from the phone's own store (Save as new draft's record of what
+// its copy wrote is kept beside them, and is not one).
 function journal(page: Page): Promise<{ id: string; state: string; reason?: string; draftPath: string }[]> {
   return page.evaluate(
     () =>
@@ -79,7 +80,7 @@ function journal(page: Page): Promise<{ id: string; state: string; reason?: stri
           const read = open.result.transaction('entries', 'readonly').objectStore('entries').getAll();
           read.onsuccess = () => {
             open.result.close();
-            resolve(read.result);
+            resolve((read.result as { kind?: string; id: string; state: string; draftPath: string }[]).filter((row) => row.kind !== 'copy'));
           };
           read.onerror = () => reject(read.error);
         };
@@ -156,20 +157,23 @@ test('a write refused because the job was archived is sent by Try again once the
   expect(await journal(page)).toEqual([]);
 });
 
-test('a job finished and then archived is still finished: Back to editing, never Save as new draft', async ({ context, lane }) => {
+test('a job finished and then archived is still finished: never Save as new draft, and restored first for Back to editing', async ({ context, lane }) => {
   const world = await seedCompany();
   const { page, jobId } = await openJob(context, lane, world);
   await offline(page, lane);
   await saveYear(page, '1962');
   // Finished by the person, then archived (the archive keeps the fence), while the phone had no signal.
   await adminDb().doc(world.draftPath).update({ state: 'archived', fence: { submissionId: 's1', epoch: 'e1', expiresAt: new Date() } });
+  lane.serve(`/api/jobs/${jobId}`, json({ error: 'archived' }, 410));
   await online(page, lane);
   await expect(chip(page)).toHaveText('Can’t save: job finished', { timeout: SEND_MS });
   await chip(page).getByRole('button').click();
   const sheet = page.getByRole('dialog', { name: 'Changes not saved' });
   await expect(sheet.getByRole('heading', { name: 'This job was finished' })).toBeVisible();
-  await expect(sheet.getByRole('link', { name: 'Go to Finish and review' })).toHaveAttribute('href', new RegExp(`/jobs/${jobId}/finish$`));
+  await expect(sheet.getByText('the company owner must restore it before Finish and review opens')).toBeVisible();
+  await expect(sheet.getByRole('link', { name: 'Go to Finish and review' })).toHaveCount(0);
   await expect(sheet.getByRole('button', { name: 'Save as new draft' })).toHaveCount(0);
+  await expect(sheet.getByRole('button', { name: 'Try again' })).toHaveCount(0);
 });
 
 test('Try again never sends an edit over a value saved since it was refused: it is Changed on another device', async ({ context, lane }) => {

@@ -9,7 +9,8 @@ import { photoAddress, sendPhoto, SHOT_NAMES } from '@/lib/field/api';
 import { pending as unsent, usePending, type PendingPhoto } from '@/lib/field/pending';
 import { preparePhoto } from '@/lib/field/photo';
 import { MAX_PHOTO_REFS, SHOT_TAGS, type PhotoField } from '@/lib/field/schema';
-import { fieldRefusal, photoRefWrites, type FieldDraft } from '@/lib/field/store';
+import { draftDocs, fieldRefusal, photoRefWrites, type FieldDraft } from '@/lib/field/store';
+import type { FieldClient } from '@/lib/field-db';
 import type { JobContext } from './job-screens';
 import { Choice, Outcome, Section } from './ui';
 
@@ -21,6 +22,14 @@ function fieldOf(roomId: string, shotTag: string, capturedAt: string): PhotoFiel
     ...(shotTag ? { shotTag: shotTag as PhotoField['shotTag'] & string } : {}),
     capturedAt,
   };
+}
+
+// A photo's reference is saved (its own send, or Try again from the sync chip's sheet): it leaves the
+// photos being sent, and no longer holds the unsent mark.
+export function photoReferenceSaved(client: FieldClient, jobId: string, photoId: string): void {
+  unsent.removePhoto(jobId, photoId);
+  photoSent(client.person.tenantId, client.person.uid, photoId);
+  void settle(client).catch(() => undefined);
 }
 
 // Photos (S5a-6): the camera, a room and a shot tag for each photo, and the job's photos. A photo's
@@ -78,14 +87,13 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
     }
     update(item.id, { step: 'saving' });
     try {
-      const { acknowledged } = await journaledEdit(job.session.client, job.draftRef, photoRefWrites(job.draftRef, item.id, item.field), jobId);
+      const writes = photoRefWrites(job.draftRef, item.id, item.field);
+      const { acknowledged } = await journaledEdit(job.session.client, job.draftRef, writes, jobId, draftDocs(job.draftRef, draft));
       await acknowledged;
       // The screen that sent it may have closed since: then the open one is told to read the draft.
       if (live.current) await job.reloadDraft();
       else unsent.draftChanged(jobId);
-      unsent.removePhoto(jobId, item.id);
-      photoSent(job.session.client.person.tenantId, job.session.user.uid, item.id);
-      void settle(job.session.client).catch(() => undefined);
+      photoReferenceSaved(job.session.client, jobId, item.id);
     } catch (error) {
       update(item.id, { step: 'save-failed', message: 'The photo is stored but its room and tag were not saved. Save again.' });
       job.checkAccess(fieldRefusal(error));

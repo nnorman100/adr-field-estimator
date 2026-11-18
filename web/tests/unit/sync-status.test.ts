@@ -3,8 +3,12 @@ import {
   appendEntry,
   draftRefusal,
   heldOf,
+  jobDecides,
   journalInMemory,
+  mergeFields,
+  NO_ANSWER,
   readJournal,
+  refusalOf,
   rejectEntry,
   removeEntry,
   retryVerdict,
@@ -59,6 +63,19 @@ describe('the sync chip', () => {
     expect(status).toMatchObject({ kind: 'changed', waiting: 1, problems: [{ reason: 'changed', saveAsNew: false, tryAgain: false }] });
   });
 
+  it('says the most urgent reason, never a count of jobs, and keeps one panel per job and reason', () => {
+    const archived = entry('rejected', 'archived');
+    const finished = { ...entry('rejected', 'locked', undefined, OTHER), jobId: 'job-1' };
+    const moved = entry('rejected', 'no-access', undefined, 'companies/c/drafts/f');
+    const status = syncStatus([archived, finished, moved], true);
+    expect(chipText(status)).toBe('Can’t save: no access');
+    expect(chipText(syncStatus([archived, finished], true))).toBe('Can’t save: job archived');
+    expect(syncStatus([archived, finished], true).problems).toMatchObject([
+      { jobId: 'job-1', reason: 'archived' },
+      { jobId: 'job-1', reason: 'finished', saveAsNew: false },
+    ]);
+  });
+
   it('keeps every set of edits for the sheet while the chip says the most urgent', () => {
     const status = syncStatus([entry('rejected', 'archived'), entry('changed', undefined, undefined, OTHER), entry('pending')], true);
     expect(chipText(status)).toBe('Can’t save: job archived');
@@ -70,6 +87,46 @@ describe('the sync chip', () => {
         { draftPath: OTHER, reason: 'changed', jobId: 'job-2' },
       ],
     });
+  });
+});
+
+describe('why the server refuses, from its copy of the draft and the job', () => {
+  const editing = { data: { state: 'editing', fieldOwnerUid: 'ana', field: {} } };
+  const job = (status: string, currentDraftId = 'd') => ({ status, currentDraftId });
+
+  it('a draft still being edited whose job answers 410 was archived; a job that answers nothing is not judged', () => {
+    expect(jobDecides(editing, 'ana', 'estimator')).toBe(true);
+    expect(refusalOf(editing, DRAFT, 'ana', 'estimator', 'gone')).toBe('archived');
+    expect(refusalOf(editing, DRAFT, 'ana', 'estimator', NO_ANSWER)).toBe('unknown');
+    expect(refusalOf(editing, DRAFT, 'ana', 'estimator', job('draft'))).toBeNull();
+    expect(refusalOf(editing, DRAFT, 'ana', NO_ANSWER, job('draft'))).toBe('unknown');
+    expect(refusalOf(editing, DRAFT, 'ana', null, job('draft'))).toBe('no-access');
+  });
+
+  it('a draft an estimator cannot read moved only while its job is still edited on it: never a new draft of a job finished or archived since', () => {
+    const denied = { denied: true } as const;
+    expect(jobDecides(denied, 'ana', 'estimator')).toBe(true);
+    expect(refusalOf(denied, DRAFT, 'ana', 'estimator', job('draft'))).toBe('owner-changed');
+    // Finished on another device, then moved and archived: no copy.
+    for (const now of ['gone', 'denied', job('archived')] as const) expect(refusalOf(denied, DRAFT, 'ana', 'estimator', now)).toBe('no-access');
+    expect(refusalOf(denied, DRAFT, 'ana', 'estimator', job('submitted'))).toBe('locked');
+    expect(refusalOf(denied, DRAFT, 'ana', 'estimator', job('draft', 'newer'))).toBe('locked');
+    expect(refusalOf(denied, DRAFT, 'ana', 'estimator', NO_ANSWER)).toBe('unknown');
+    for (const reason of ['no-access', 'locked'] as const) {
+      expect(syncStatus([entry('rejected', reason)], true)).toMatchObject({ problems: [{ saveAsNew: false }] });
+    }
+    // With no job known to ask, it stays moved, but is never copied.
+    expect(refusalOf(denied, DRAFT, 'ana', 'estimator', null)).toBe('owner-changed');
+    const unknownJob: JournalEntry = { ...entry('rejected', 'owner-changed') };
+    delete unknownJob.jobId;
+    expect(syncStatus([unknownJob], true)).toMatchObject({ problems: [{ reason: 'owner-changed', saveAsNew: false, tryAgain: true }] });
+  });
+
+  it('a finished draft needs no job: it is finished whatever the job says', () => {
+    const fence = { submissionId: 's', epoch: 'e', expiresAt: new Date() };
+    const finished = { data: { state: 'archived', fence, fieldOwnerUid: 'ana', field: {} } };
+    expect(jobDecides(finished, 'ana', 'estimator')).toBe(false);
+    expect(refusalOf(finished, DRAFT, 'ana', 'estimator', null)).toBe('locked');
   });
 });
 
@@ -99,7 +156,7 @@ describe('Save as new draft', () => {
     expect(await newDraftIds({ tenantId: 't', uid: 'ben' }, DRAFT)).not.toEqual(first);
   });
 
-  it('copies the cached draft and rooms, then the refused edits, onto the new draft, without photos or the scope approval', () => {
+  it('copies the cached draft and rooms as cached, scope approval too, then the refused edits, onto the new draft, without photos', () => {
     const NEW = 'companies/c/drafts/n';
     const edits = entry('rejected', 'owner-changed', [
       { path: `${DRAFT}/rooms/r2`, op: 'set', data: { field: { name: 'Hall' } } },
@@ -108,10 +165,10 @@ describe('Save as new draft', () => {
     ]);
     const cached = { field: { yearBuilt: 1962, roomOrder: ['r1'], scopeConfirmed: true }, rooms: [{ id: 'r1', field: { name: 'Kitchen' } }] };
     expect(copyWrites(cached, [edits], DRAFT, NEW)).toEqual([
-      { path: NEW, op: 'update', fields: { 'field.yearBuilt': 1962, 'field.roomOrder': ['r1'] } },
+      { path: NEW, op: 'update', fields: { 'field.yearBuilt': 1962, 'field.roomOrder': ['r1'], 'field.scopeConfirmed': true } },
       { path: `${NEW}/rooms/r1`, op: 'set', data: { field: { name: 'Kitchen' } } },
       { path: `${NEW}/rooms/r2`, op: 'set', data: { field: { name: 'Hall' } } },
-      { path: NEW, op: 'update', fields: { 'field.roomOrder': ['r1', 'r2'] } },
+      { path: NEW, op: 'update', fields: { 'field.roomOrder': ['r1', 'r2'], 'field.scopeConfirmed': true } },
     ]);
   });
 
@@ -124,6 +181,46 @@ describe('Save as new draft', () => {
       { path: DRAFT, op: 'update', fields: { 'field.roomOrder': ['r1'] } },
     ]);
     expect(copyWrites({ field: {}, rooms: [{ id: 'r1', field: { name: 'Kitchen' } }] }, [removed], DRAFT, NEW)).toBeNull();
+  });
+});
+
+describe('Save as new draft into a new draft the copy wrote before', () => {
+  const NEW = 'companies/c/drafts/n';
+  const docs = (all: Record<string, Record<string, unknown> | null>) => new Map(Object.entries(all));
+  const year = (value: unknown): DocWrite => ({ path: NEW, op: 'update', fields: { 'field.yearBuilt': value } });
+
+  it('writes a later refused edit only where the new draft still holds what the copy put there', () => {
+    const copied = docs({ [NEW]: { field: { yearBuilt: 1962, notes: 'copied' } } });
+    const later: DocWrite[] = [year(1965), { path: NEW, op: 'update', fields: { 'field.notes': 'later' } }];
+    // The person changed the year on the new draft since; the notes are as copied.
+    const plan = mergeFields(later, copied, docs({ [NEW]: { state: 'editing', field: { yearBuilt: 1970, notes: 'copied' } } }));
+    expect(plan.write).toEqual([{ path: NEW, op: 'update', fields: { 'field.notes': 'later' } }]);
+    expect(plan.changed).toEqual([year(1965)]);
+    expect(plan.copied.get(NEW)).toEqual({ field: { yearBuilt: 1962, notes: 'later' } });
+  });
+
+  it('never takes a field emptied on the new draft since the copy for one nobody touched', () => {
+    const copied = docs({ [NEW]: { field: { yearBuilt: 1962 } } });
+    const plan = mergeFields([year(1965)], copied, docs({ [NEW]: { field: {} } }));
+    expect(plan).toMatchObject({ write: [], changed: [year(1965)] });
+  });
+
+  it('writes the first copy into the new draft as it was made, and nothing again when that copy already landed', () => {
+    const made = docs({ [NEW]: { field: {} } });
+    const room: DocWrite = { path: `${NEW}/rooms/r1`, op: 'set', data: { field: { name: 'Kitchen' } } };
+    const copy: DocWrite[] = [year(1962), room];
+    const first = mergeFields(copy, made, docs({ [NEW]: { field: {} }, [room.path]: null }));
+    expect(first).toMatchObject({ write: [year(1962), room], changed: [] });
+    const again = mergeFields(copy, made, docs({ [NEW]: { field: { yearBuilt: 1962 } }, [room.path]: { field: { name: 'Kitchen' } } }));
+    expect(again).toMatchObject({ write: [], changed: [] });
+    expect(again.copied).toEqual(first.copied);
+  });
+
+  it('never updates a room deleted on the new draft since: it is changed', () => {
+    const path = `${NEW}/rooms/r1`;
+    const copied = docs({ [NEW]: { field: {} }, [path]: { field: { name: 'Kitchen' } } });
+    const rename: DocWrite = { path, op: 'update', fields: { 'field.name': 'Den' } };
+    expect(mergeFields([rename], copied, docs({ [path]: null }))).toMatchObject({ write: [], changed: [rename] });
   });
 });
 

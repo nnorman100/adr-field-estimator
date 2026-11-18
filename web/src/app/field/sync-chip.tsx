@@ -2,13 +2,16 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { fieldUser } from '@/lib/field-db';
+import { readJob } from '@/lib/field/api';
 import type { DsMe } from '@/lib/field/ds-me';
-import { watchJournal } from '@/lib/field/journal';
+import { watchJournal, type JournalEntry } from '@/lib/field/journal';
 import { discardEntries, journalFailed, readEntries, tryAgain } from '@/lib/field/journal-sync';
 import { saveAsNewDraft } from '@/lib/field/new-draft';
 import { pending } from '@/lib/field/pending';
-import { chipText, PHOTOS_STAY, REASONS, SAVED_ON_PHONE, syncStatus, type Problem, type SyncStatus } from '@/lib/field/sync-status';
+import { byDraft, chipText, PHOTOS_STAY, REASONS, RESTORE_FIRST, syncStatus, type Problem, type SyncStatus } from '@/lib/field/sync-status';
 import { useFieldClient } from './field-store';
+import { photoReferenceSaved } from './photos-view';
 import { go, Outcome } from './ui';
 
 // The sync chip on every field screen and its "Can't save" sheet (S6-4b; docs/plans/S6/S6-4.md),
@@ -113,18 +116,13 @@ export function SyncChip({ me }: { me: DsMe }) {
         <div className="mt-3 flex flex-col gap-6">
           {problems.map((problem) => (
             <ProblemPanel
-              key={`${problem.draftPath}/${problem.reason}`}
+              key={problem.key}
               problem={problem}
               me={me}
               online={online}
               onLeave={() => sheet.current?.close()}
             />
           ))}
-          {status.waiting > 0 ? (
-            <p className="text-base">
-              {SAVED_ON_PHONE} ({status.waiting} waiting to send)
-            </p>
-          ) : null}
         </div>
         <form method="dialog" className="mt-4 flex flex-col">
           <Button variant="outline" value="">
@@ -158,6 +156,22 @@ function ProblemPanel({
   const count = problem.entries.length;
   const label = jobLabel(problem);
 
+  // A finished job: Finish and review is offered once the job answers (it opens there), and an
+  // archived one (410) says the owner must restore it first.
+  const [finishOpen, setFinishOpen] = useState<boolean | null>(null);
+  const finishedJob = problem.reason === 'finished' ? problem.jobId : null;
+  useEffect(() => {
+    const user = client ? fieldUser(client.person) : null;
+    if (!finishedJob || !online || !user) return;
+    let live = true;
+    void readJob(user, finishedJob).then((answer) => {
+      if (live && (answer.ok || answer.status === 410)) setFinishOpen(answer.ok);
+    }, () => undefined);
+    return () => {
+      live = false;
+    };
+  }, [client, finishedJob, online]);
+
   async function run(label: string, work: () => Promise<string | null>) {
     if (!client || busy) return;
     setBusy(label);
@@ -172,31 +186,49 @@ function ProblemPanel({
     }
   }
 
+  // The edits are saved: the job's open screen reads the job and its draft again (the job was
+  // restored, or its field work came back), and a photo reference sent leaves the photos being sent.
+  const sent = (edits: readonly JournalEntry[]) => {
+    const jobId = edits.find((entry) => entry.jobId)?.jobId;
+    if (!client || !jobId) return;
+    pending.returned(jobId);
+    pending.verify(jobId);
+    for (const write of edits.flatMap((entry) => entry.writes)) {
+      const photo = /\/photos\/([^/]+)$/.exec(write.path)?.[1];
+      if (photo && write.op === 'set') photoReferenceSaved(client, jobId, photo);
+    }
+  };
+
   const again = () =>
     run('Sending again…', async () => {
       if (!online) return 'Needs a connection';
-      const answer = await tryAgain(client!, problem.entries);
-      if (answer === 'no-answer') return 'No answer from DryScope. Check the signal and try again.';
-      if (answer === 'refused') return 'Still can’t save: the reason above still holds.';
-      // The job's open screen reads its draft again, as after a photo sent from a closed screen.
-      if (answer === 'sent' && problem.jobId) pending.draftChanged(problem.jobId);
+      const answers: string[] = [];
+      for (const edits of byDraft(problem.entries)) {
+        const answer = await tryAgain(client!, edits);
+        answers.push(answer);
+        if (answer === 'sent') sent(edits);
+      }
+      if (answers.includes('no-answer')) return 'No answer from DryScope. Check the signal and try again.';
+      if (answers.includes('refused')) return 'Still can’t save: the reason above still holds.';
       return null;
     });
 
   const saveAsNew = () =>
     run('Saving as a new draft…', async () => {
       if (!online) return 'Needs a connection';
-      const answer = await saveAsNewDraft(client!, problem.entries);
-      if (answer.kind === 'saved') {
-        onLeave();
-        go({ view: 'scope', jobId: answer.jobId });
-        return null;
+      let made: string | null = null;
+      for (const edits of byDraft(problem.entries)) {
+        const answer = await saveAsNewDraft(client!, edits);
+        if (answer.kind === 'saved') made = answer.jobId;
+        else if (answer.kind === 'not-kept') return 'This job’s field work is not kept on this phone, so there is nothing to copy.';
+        else if (answer.kind === 'no-answer') return 'No answer from DryScope. Try again: it makes the same new draft.';
+        else return answer.message;
       }
-      if (answer.kind === 'not-kept')
-        return 'This job’s field work is not kept on this phone, so there is nothing to copy.';
-      if (answer.kind === 'no-answer')
-        return 'No answer from DryScope. Try again: it makes the same new draft.';
-      return answer.message;
+      if (made) {
+        onLeave();
+        go({ view: 'scope', jobId: made });
+      }
+      return null;
     });
 
   const discard = () =>
@@ -229,7 +261,8 @@ function ProblemPanel({
           Try again
         </Button>
       ) : null}
-      {problem.reason === 'finished' && problem.jobId ? (
+      {finishOpen === false ? <p className="text-base">{RESTORE_FIRST}</p> : null}
+      {finishOpen === true && problem.jobId ? (
         <a
           className="inline-flex min-h-11 items-center text-base font-medium underline"
           href={`/sign-in/${me.address}/jobs/${problem.jobId}/finish`}

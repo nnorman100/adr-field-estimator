@@ -8,20 +8,21 @@
 // The new job's and draft's ids come from the person and the draft the edits were refused for
 // (newDraftIds), so they are chosen before the first send, survive a closed app with nothing more to
 // store, and every try for that draft makes one job (POST /api/jobs answers the same job for the
-// same ids and body), also when a later refusal joins the edits. The copy is made once: each refused
-// entry is marked as copied before it is written, and once the new draft holds field work (on the
-// server, or in this phone's journal), only edits not yet copied are written to it, so a new draft
-// already edited after the copy is never copied over.
+// same ids and body), also when a later refusal joins the edits. What the copy put into the new draft
+// is recorded on the phone (journal.ts saveCopy). A later recovery into it writes the later refused
+// edits only, and each field only while the new draft still holds what the copy put there (journal.ts
+// mergeFields, checked in the transaction that writes them): a field changed since keeps its value
+// and is kept here as changed on another device. The first copy is judged the same way against the
+// new draft as POST /api/jobs makes it, so a copy that landed before its record was saved is not
+// written again.
 // Photo references are not copied: a photo id is registered to its job and cannot be used under
 // another one, and photo bytes are not kept on the phone until the photo queue (S6-5).
-import { collection, doc, getDocFromCache, getDocFromServer, getDocsFromCache, getDocsFromServer } from 'firebase/firestore';
+import { collection, doc, getDocFromCache, getDocFromServer, getDocsFromCache, runTransaction } from 'firebase/firestore';
 import { fieldUser, type FieldClient } from '@/lib/field-db';
-import { COPY_CLEARED_KEYS } from '@/lib/jobs/archive';
 import { createJob } from './api';
-import { ReopenTheApp } from './idb';
-import { discardEntries, journaledEdit, readEntries, refusalNow } from './journal-sync';
-import { jobOf, markCopied, rejectEntry, type DocWrite, type JournalEntry, type Owner } from './journal';
-import { draftPath, type DraftRef } from './store';
+import { discardEntries, refusalNow } from './journal-sync';
+import { appendEntry, jobOf, mergeFields, readCopy, rejectEntry, saveCopy, type DocWrite, type JournalEntry, type Owner } from './journal';
+import { draftPath, stageWrites, type DraftRef } from './store';
 
 function uuidOf(bytes: Uint8Array): string {
   const b = Uint8Array.from(bytes.subarray(0, 16));
@@ -43,36 +44,25 @@ export async function newDraftIds(owner: Owner, draftPath: string): Promise<{ jo
 // The cached draft as it was read: its `field` map and its room documents' `field` maps by id.
 export type CachedDraft = { field: Record<string, unknown>; rooms: { id: string; field: Record<string, unknown> }[] };
 
-// The refused edits moved onto the new draft, in the order they were made, without the approval a
-// copy clears or a photo reference.
+// The refused edits moved onto the new draft, in the order they were made, without a photo reference.
 function movedWrites(entries: readonly JournalEntry[], oldPath: string, newPath: string): DocWrite[] {
   const moved = (path: string) => (path === oldPath ? newPath : path.startsWith(`${oldPath}/`) ? `${newPath}${path.slice(oldPath.length)}` : null);
-  const cleared = new Set<string>(COPY_CLEARED_KEYS.map((key) => `field.${key}`));
   const writes: DocWrite[] = [];
   for (const entry of [...entries].sort((a, b) => a.seq - b.seq)) {
     for (const write of entry.writes) {
       const path = moved(write.path);
-      if (path === null || path.startsWith(`${newPath}/photos/`)) continue;
-      if (write.op === 'update') {
-        const kept = Object.fromEntries(Object.entries(write.fields).filter(([key]) => !(path === newPath && cleared.has(key))));
-        if (Object.keys(kept).length > 0) writes.push({ ...write, path, fields: kept });
-      } else writes.push({ ...write, path });
+      if (path !== null && !path.startsWith(`${newPath}/photos/`)) writes.push({ ...write, path });
     }
   }
   return writes;
 }
 
-// The writes that make the new draft: the cached field map (without the approval a copy clears, as
-// S5b-2's copy does), each cached room as it is, then the refused edits moved onto the new draft.
-// A photo reference is left out. null when the room order they end with names a room they do not
-// hold (the cache holds only part of the draft): such a copy could not be opened.
+// The writes that make the new draft: the cached field map, each cached room as it is, then the
+// refused edits moved onto the new draft. A photo reference is left out. null when the room order
+// they end with names a room they do not hold (the cache holds only part of the draft): such a copy
+// could not be opened.
 export function copyWrites(cached: CachedDraft, entries: readonly JournalEntry[], oldPath: string, newPath: string): DocWrite[] | null {
-  const cleared = new Set<string>(COPY_CLEARED_KEYS.map((key) => `field.${key}`));
-  const fields = Object.fromEntries(
-    Object.entries(cached.field)
-      .map(([key, value]) => [`field.${key}`, value] as const)
-      .filter(([key]) => !cleared.has(key)),
-  );
+  const fields = Object.fromEntries(Object.entries(cached.field).map(([key, value]) => [`field.${key}`, value]));
   const writes: DocWrite[] = [];
   if (Object.keys(fields).length > 0) writes.push({ path: newPath, op: 'update', fields });
   for (const room of cached.rooms) writes.push({ path: `${newPath}/rooms/${room.id}`, op: 'set', data: { field: room.field } });
@@ -114,18 +104,17 @@ async function cachedDraft(client: FieldClient, path: string): Promise<CachedDra
   }
 }
 
-// Whether the new draft already holds field work: on the server, or in an edit of this phone's.
-async function madeAlready(client: FieldClient, newPath: string): Promise<boolean> {
-  if ((await readEntries(client)).some((entry) => entry.draftPath === newPath)) return true;
-  const [draft, rooms] = await Promise.all([getDocFromServer(doc(client.db, newPath)), getDocsFromServer(collection(client.db, newPath, 'rooms'))]);
-  return Object.keys((draft.data()?.field ?? {}) as Record<string, unknown>).length > 0 || !rooms.empty;
+// The first copy's writes (copyWrites) from the cached draft; null when the draft is not kept here.
+async function firstCopy(client: FieldClient, entries: readonly JournalEntry[], oldPath: string, newPath: string): Promise<DocWrite[] | null> {
+  const cached = await cachedDraft(client, oldPath);
+  return cached ? copyWrites(cached, entries, oldPath, newPath) : null;
 }
 
 // Asks the server whether these refused edits of one draft may still go into a new draft (archived
 // while being edited, or the field work moved); makes the new job (POST /api/jobs, which makes its
-// draft with this person as its field owner); writes the copy into it as one journaled edit, once;
-// then drops the refused entries: the work is now the new draft's, kept on the phone until the
-// server has it.
+// draft with this person as its field owner); writes the copy, or a later recovery, into it in one
+// transaction (journal.ts mergeFields), records what it put there, keeps each field changed since as
+// changed on another device, then drops the refused entries: the server has the work now.
 export async function saveAsNewDraft(client: FieldClient, entries: readonly JournalEntry[]): Promise<SaveAsNew> {
   const first = entries[0];
   const user = fieldUser(client.person);
@@ -138,27 +127,36 @@ export async function saveAsNewDraft(client: FieldClient, entries: readonly Jour
     for (const entry of entries) await rejectEntry(entry, reason);
     return { kind: 'refused', message: 'These changes cannot be saved as a new draft: the reason above changed.' };
   }
-  const cached = await cachedDraft(client, first.draftPath);
-  if (!cached) return { kind: 'not-kept' };
-  const owner = { tenantId: client.person.tenantId, uid: client.person.uid };
+  const owner: Owner = { tenantId: client.person.tenantId, uid: client.person.uid };
   const { jobId, draftId } = await newDraftIds(owner, first.draftPath);
   const ref: DraftRef = { companyId, draftId };
   const newPath = draftPath(ref);
-  const copy = copyWrites(cached, entries, first.draftPath, newPath);
-  if (!copy) return { kind: 'not-kept' };
+  const record = await readCopy(owner, newPath);
+  const writes = record ? movedWrites(entries, first.draftPath, newPath) : await firstCopy(client, entries, first.draftPath, newPath);
+  if (!writes) return { kind: 'not-kept' };
   const answer = await createJob(user, { id: jobId, draftId, propertyAddress: '' });
   if (!answer.ok) return answer.status === 0 || answer.status >= 500 ? { kind: 'no-answer' } : { kind: 'refused', message: answer.message };
+  // Before the first copy, the new draft as POST /api/jobs makes it.
+  const base = record ?? new Map([[newPath, { field: {} }]]);
+  let plan: ReturnType<typeof mergeFields>;
   try {
-    const made = await madeAlready(client, newPath);
-    const writes = made ? movedWrites(entries.filter((entry) => !entry.copied), first.draftPath, newPath) : copy;
-    for (const entry of entries) if (!entry.copied) await markCopied(entry);
-    // The new draft into this phone's cache first, so the edit has a draft to land on.
-    await getDocFromServer(doc(client.db, newPath));
-    if (writes.length > 0) await journaledEdit(client, ref, writes, jobId);
-  } catch (error) {
-    if (error instanceof ReopenTheApp) throw error;
+    plan = await runTransaction(client.db, async (transaction) => {
+      const server = new Map<string, Record<string, unknown> | null>();
+      for (const path of new Set(writes.map((write) => write.path))) {
+        const snapshot = await transaction.get(doc(client.db, path));
+        server.set(path, snapshot.exists() ? snapshot.data() : null);
+      }
+      const found = mergeFields(writes, base, server);
+      stageWrites(client.db, transaction, found.write);
+      return found;
+    });
+  } catch {
     return { kind: 'no-answer' };
   }
+  await saveCopy(owner, newPath, plan.copied);
+  for (const field of plan.changed) await appendEntry(owner, newPath, [field], {}, { jobId, state: 'changed' });
+  // The new draft into this phone's cache, so its screen opens on it.
+  await getDocFromServer(doc(client.db, newPath)).catch(() => undefined);
   await discardEntries(client, entries);
   return { kind: 'saved', jobId };
 }

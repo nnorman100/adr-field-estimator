@@ -5,7 +5,7 @@ import { UnsentMarkNotSaved } from '@/lib/field-db';
 import { ReopenTheApp } from '@/lib/field/idb';
 import { JournalNotSaved, type DocWrite } from '@/lib/field/journal';
 import { journaledEdit } from '@/lib/field/journal-sync';
-import { fieldRefusal } from '@/lib/field/store';
+import { draftDocs, fieldRefusal } from '@/lib/field/store';
 import type { JobContext } from './job-screens';
 
 // A form waits for local persistence, so the technician can keep working with no signal.
@@ -39,7 +39,7 @@ export function useFieldEdit(job: JobContext) {
       job.checkAccess(fieldRefusal(error));
     };
     try {
-      const { acknowledged } = await journaledEdit(job.session.client, job.draftRef, writes, job.jobId);
+      const { acknowledged } = await journaledEdit(job.session.client, job.draftRef, writes, job.jobId, draftDocs(job.draftRef, job.draft));
       // The SDK's local transaction is finished; update the draft before clearing the form's edits.
       await job.reloadDraft('cache');
       if (current()) {
