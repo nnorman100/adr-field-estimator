@@ -78,6 +78,39 @@ describe('GET /api/sign-in/{address}', () => {
     }
   });
 
+  // Security audit F5: the server-rendered sign-in pages (and every screen under the address) send
+  // the browser to a route that answers 503, since a page cannot set that status itself.
+  it('sends a sign-in page whose lookup found no free connection to a 503 that reopens the page', async () => {
+    const refused = Object.assign(new Error('QUEUE_TIMEOUT: Waited more than 10 seconds for a connection'), { code: 'QUEUE_TIMEOUT' });
+    vi.doMock('next/server', async (original) => ({ ...(await original<typeof import('next/server')>()), connection: async () => {} }));
+    vi.doMock('@/lib/sign-in/services', () => ({
+      signInDirectory: () => ({
+        pageFor: async () => {
+          throw refused;
+        },
+      }),
+    }));
+    try {
+      const { loadSignInScreen } = await import('@/app/(auth)/sign-in/[address]/load');
+      const redirected = await loadSignInScreen('company-a', null).then(
+        () => null,
+        (error: unknown) => error as { digest?: string },
+      );
+      expect(redirected?.digest?.split(';').slice(0, 4)).toEqual(['NEXT_REDIRECT', 'replace', '/sign-in/company-a/busy', '307']);
+
+      const { GET } = await import('@/app/(auth)/sign-in/[address]/busy/route');
+      const res = await GET(new Request('http://localhost/sign-in/company-a/busy'), { params: Promise.resolve({ address: 'company-a' }) });
+      expect(res.status).toBe(503);
+      expect(res.headers.get('cache-control')).toBe('no-store');
+      expect(res.headers.get('retry-after')).toBe('10');
+      expect(res.headers.get('refresh')).toBe('10; url=/sign-in/company-a');
+      expect(await res.text()).toBe('DryScope is busy. Try again shortly.\n');
+    } finally {
+      vi.doUnmock('next/server');
+      vi.doUnmock('@/lib/sign-in/services');
+    }
+  });
+
   it('answers 404 for a malformed address without opening a database', async () => {
     vi.stubEnv('APP_ENV', 'test');
     const res = await get('Company_A');
