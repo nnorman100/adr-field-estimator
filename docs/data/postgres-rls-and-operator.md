@@ -94,7 +94,7 @@ runs its own function, and a lookup that declares a variable of that type would 
 as the table owner. With `pg_temp` last, `pg_catalog`'s types are found first, as the PostgreSQL
 manual advises for `SECURITY DEFINER` functions; the temporary schema is never searched for
 function or operator names. No owner, body, grant, table or policy changes.
-`web/tests/db/definer-search-path.test.ts` tries the temporary type and a temporary function as the
-API user against each of the five lookups. A definer function added later writes
+`web/tests/db/definer-search-path.test.ts` tries the temporary type as the API user against each of
+the five lookups. A definer function added later writes
 `SET search_path = pg_catalog, pg_temp` and names its types with their schema
 (`pg_catalog.uuid`, `pg_catalog.text`).
