@@ -9,7 +9,8 @@
 //   the current branch, or its push target, is master;
 //   any form: git -C <dir>, git -c k=v and other global options, VAR=value and wrapper prefixes
 //   (env, command, exec, nohup, time, timeout, nice, sudo), compound commands (; && || | &),
-//   subshells, $(...) and backticks, `sh -c` / `bash -c` scripts and eval.
+//   subshells, $(...) and backticks, `sh -c` / `bash -c` scripts and eval. The body of a quoted
+//   here-document (<<'EOF') is text, such as a PR body, so it is not checked.
 // It is not a security boundary against deliberate obfuscation (variables, aliases, scripts);
 // GitHub branch protection still guards master. On unreadable input it allows the command.
 import { spawnSync } from 'node:child_process';
@@ -27,6 +28,7 @@ export function splitCommands(text) {
   let words = [];
   let word = null;
   let dropNext = false; // the next word is a redirection target, not an argument
+  const heredocs = []; // here-documents whose bodies start after the current line
   const endWord = () => {
     if (word === null) return;
     if (dropNext) dropNext = false;
@@ -71,7 +73,10 @@ export function splitCommands(text) {
     } else if (c === ' ' || c === '\t') {
       endWord();
       i++;
-    } else if (';&|\n()`'.includes(c)) {
+    } else if (c === '\n') {
+      endCommand();
+      i = skipHeredocs(text, i + 1, heredocs, commands);
+    } else if (';&|()`'.includes(c)) {
       endCommand();
       i++;
     } else if (c === '$' && text[i + 1] === '(') {
@@ -80,7 +85,12 @@ export function splitCommands(text) {
     } else if (c === '<' || c === '>') {
       if (word !== null && /^\d+$/.test(word)) word = null;
       else endWord();
+      const start = i;
       while (text[i] === '<' || text[i] === '>') i++;
+      if (text.slice(start, i) === '<<') {
+        i = readHeredocDelimiter(text, i, heredocs);
+        continue;
+      }
       if (text[i] === '&') i++;
       dropNext = true;
     } else {
@@ -90,6 +100,61 @@ export function splitCommands(text) {
   }
   endCommand();
   return commands;
+}
+
+/** After `<<`: read the delimiter word; a quoted one (<<'EOF', <<"EOF", <<\EOF) stops expansion. */
+function readHeredocDelimiter(text, i, heredocs) {
+  const stripTabs = text[i] === '-';
+  if (stripTabs) i++;
+  while (text[i] === ' ' || text[i] === '\t') i++;
+  let delimiter = '';
+  let quoted = false;
+  while (i < text.length && !' \t\n;&|()<>'.includes(text[i])) {
+    const c = text[i];
+    if (c === "'" || c === '"') {
+      const close = text.indexOf(c, i + 1);
+      const end = close === -1 ? text.length : close;
+      delimiter += text.slice(i + 1, end);
+      quoted = true;
+      i = end + 1;
+    } else if (c === '\\') {
+      delimiter += text[i + 1] ?? '';
+      quoted = true;
+      i += 2;
+    } else {
+      delimiter += c;
+      i++;
+    }
+  }
+  if (delimiter) heredocs.push({ delimiter, quoted, stripTabs });
+  return i;
+}
+
+/**
+ * Skip the bodies of pending here-documents that start at `i`. A quoted body is plain text and is
+ * not checked; an unquoted body can run $(...) or backticks, so it is checked like a command.
+ */
+function skipHeredocs(text, i, heredocs, commands) {
+  while (heredocs.length) {
+    const { delimiter, quoted, stripTabs } = heredocs.shift();
+    let lineStart = i;
+    let bodyEnd = text.length;
+    let next = text.length;
+    while (lineStart < text.length) {
+      const eol = text.indexOf('\n', lineStart);
+      const lineEnd = eol === -1 ? text.length : eol;
+      const line = text.slice(lineStart, lineEnd);
+      if ((stripTabs ? line.replace(/^\t+/, '') : line) === delimiter) {
+        bodyEnd = lineStart;
+        next = eol === -1 ? text.length : eol + 1;
+        break;
+      }
+      lineStart = lineEnd + 1;
+    }
+    if (!quoted) commands.push(...splitCommands(text.slice(i, bodyEnd)));
+    i = next;
+  }
+  return i;
 }
 
 const WRAPPERS = new Set(['env', 'command', 'exec', 'nohup', 'time', 'timeout', 'nice', 'sudo']);

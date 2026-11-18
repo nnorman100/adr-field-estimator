@@ -99,6 +99,16 @@ test.each([
   expect(check(command)).toBeNull();
 });
 
+test('a quoted here-document body is text; an unquoted one and the lines after it are checked', () => {
+  const body =
+    'Tried `git -C /x push --force origin fm/none`: refused.\nAlso git push origin master.';
+  expect(check(`cat > /tmp/pr.md <<'EOF'\n${body}\nEOF\ngh-axi pr view 1`)).toBeNull();
+  expect(check(`cat <<"EOF" | gh-axi pr comment 1 --body-file -\n${body}\nEOF`)).toBeNull();
+  expect(check(`cat <<-\\EOF > /tmp/x\n\t${body}\n\tEOF`)).toBeNull();
+  expect(check(`cat <<EOF > /tmp/x\n$(git push -f)\nEOF`)).toMatch(/force-push/);
+  expect(check(`cat <<'EOF' > /tmp/x\n${body}\nEOF\ngit -C /repo push -f`)).toMatch(/force-push/);
+});
+
 const runHook = (input: unknown) =>
   spawnSync('node', [path.join(ROOT, 'scripts/push-guard.mjs')], {
     input: JSON.stringify(input),
