@@ -442,6 +442,50 @@ describe('the first capture', () => {
     await h.admin`UPDATE jobs SET status = 'signed', revision = revision + 1 WHERE id = ${id}`;
     expect(await claim(ESTIMATOR_A, id)).toEqual({ status: 409, body: { error: 'job_signed' } });
   });
+
+  // Security audit F1: a job whose current draft another job claimed (job_drafts, 0016), as data made
+  // before the claims could hold it, never hands that draft on, even one made before drafts carried
+  // their job id.
+  it('refuses a first capture on a job whose current draft another job also holds, and leaves that draft as it is', async () => {
+    const victim = { id: randomUUID(), draftId: randomUUID() };
+    expect((await create(ESTIMATOR_A2, victim)).status).toBe(201);
+    h.field.put(h.seed.a, victim.draftId, MANIFEST);
+    expect((await submitDraft(ESTIMATOR_A2, victim.id, { id: randomUUID(), draftId: victim.draftId, digest: await manifestDigest(MANIFEST) })).status).toBe(201);
+    expect((await nextDraft(ESTIMATOR_A2, victim.id, { draftId: randomUUID(), fromDraftId: victim.draftId })).status).toBe(201);
+    const { id } = await officeJob();
+    await assign(OFFICE_A, id, h.seed.estimatorA.actor);
+    await h.admin`UPDATE jobs SET current_draft_id = ${victim.draftId}, revision = revision + 1 WHERE id = ${id}`;
+    h.drafts.jobOf.delete(`${h.seed.a}/${victim.draftId}`);
+    const before = structuredClone(draftOf(victim.draftId));
+    expect(await claim(ESTIMATOR_A, id)).toEqual({ status: 409, body: { error: 'conflict' } });
+    expect(draftOf(victim.draftId)).toEqual(before);
+    expect((await read(OWNER_A, id)).body.job.fieldOwnerActorId).toBeNull();
+  });
+
+  it('refuses a first capture on a job whose current draft the field database holds for another job, and changes nothing', async () => {
+    const { id, draftId } = await officeJob();
+    await assign(OFFICE_A, id, h.seed.estimatorA.actor);
+    h.drafts.jobOf.set(`${h.seed.a}/${draftId}`, randomUUID());
+    const before = await everything(h.admin);
+    const stored = structuredClone(draftOf(draftId));
+    expect(await claim(ESTIMATOR_A, id)).toEqual({ status: 409, body: { error: 'conflict' } });
+    expect(draftOf(draftId)).toEqual(stored);
+    expect(await everything(h.admin)).toBe(before);
+  });
+
+  it('never reaches the draft of another company that has the same id', async () => {
+    const ids = { id: randomUUID(), draftId: randomUUID() };
+    expect((await create(ESTIMATOR_A, ids)).status).toBe(201);
+    const before = structuredClone(draftOf(ids.draftId));
+    const other = { id: randomUUID(), draftId: ids.draftId };
+    expect((await create(ESTIMATOR_B, other)).status).toBe(201);
+    expect((await claim(ESTIMATOR_B, other.id)).status).toBe(200);
+    expect(await claim(ESTIMATOR_B, ids.id)).toEqual({ status: 404, body: { error: 'not_found' } });
+    expect(draftOf(ids.draftId)).toEqual(before);
+    expect(h.drafts.jobOf.get(`${h.seed.a}/${ids.draftId}`)).toBe(ids.id);
+    expect(h.drafts.jobOf.get(`${h.seed.b}/${ids.draftId}`)).toBe(other.id);
+    expect(h.drafts.made.get(`${h.seed.b}/${ids.draftId}`)?.fieldOwnerUid).toBe('estimator-b');
+  });
 });
 
 describe('moving the field work (owner decision J5)', () => {
@@ -521,6 +565,47 @@ describe('moving the field work (owner decision J5)', () => {
     expect((await transfer(OWNER_A, id, { revision, changeId: randomUUID(), toActorId: estimatorA2 })).status).toBe(200);
     expect(draftOf(later)).toEqual({ fieldOwnerUid: 'estimator-a2', fieldOwnerRevision: revision + 1 });
     expect(draftOf(draftId)).toEqual({ fieldOwnerUid: 'estimator-a2', fieldOwnerRevision: revision + 1 });
+  });
+
+  // Security audit F1, across a release: drafts the previous version put the job on and submitted
+  // were never claimed; they are still the job's, and the new owner is named on them too.
+  it('names the new owner on an earlier draft the previous version left unclaimed', async () => {
+    const { id, draftId } = await claimedJob();
+    h.field.put(h.seed.a, draftId, MANIFEST);
+    expect((await submitDraft(ESTIMATOR_A, id, { id: randomUUID(), draftId, digest: await manifestDigest(MANIFEST) })).status).toBe(201);
+    const later = randomUUID();
+    expect((await nextDraft(ESTIMATOR_A, id, { draftId: later, fromDraftId: draftId })).status).toBe(201);
+    await h.admin`DELETE FROM job_drafts WHERE job_id = ${id}`;
+    h.drafts.jobOf.delete(`${h.seed.a}/${draftId}`);
+    const { revision } = (await coordination(OWNER_A, id)).body;
+    expect((await transfer(OWNER_A, id, { revision, changeId: randomUUID(), toActorId: estimatorA2 })).status).toBe(200);
+    expect(draftOf(later)).toEqual({ fieldOwnerUid: 'estimator-a2', fieldOwnerRevision: revision + 1 });
+    expect(draftOf(draftId)).toEqual({ fieldOwnerUid: 'estimator-a2', fieldOwnerRevision: revision + 1 });
+    expect(h.drafts.jobOf.get(`${h.seed.a}/${draftId}`)).toBe(id);
+    // Postgres first: the draft is claimed for the job, not only stamped in the field database.
+    expect(await h.admin`SELECT job_id::text AS job FROM job_drafts WHERE draft_id = ${draftId}`).toEqual([{ job: id }]);
+  });
+
+  // Security audit F1: a draft of the job's own submission that another job holds in Postgres is left
+  // out of the move, unstamped and with its owner as it was; the rest of the job's drafts move.
+  it('leaves out an earlier draft another job holds, and claims the rest for the job before naming the owner', async () => {
+    const { id, draftId } = await claimedJob();
+    h.field.put(h.seed.a, draftId, MANIFEST);
+    expect((await submitDraft(ESTIMATOR_A, id, { id: randomUUID(), draftId, digest: await manifestDigest(MANIFEST) })).status).toBe(201);
+    const later = randomUUID();
+    expect((await nextDraft(ESTIMATOR_A, id, { draftId: later, fromDraftId: draftId })).status).toBe(201);
+    const other = await officeJob();
+    await h.admin`DELETE FROM job_drafts WHERE job_id = ${id}`;
+    await h.admin`INSERT INTO job_drafts (company_id, draft_id, job_id) VALUES (${h.seed.a}, ${draftId}, ${other.id})`;
+    h.drafts.jobOf.delete(`${h.seed.a}/${draftId}`);
+    const stored = structuredClone(draftOf(draftId));
+    const { revision } = (await coordination(OWNER_A, id)).body;
+    expect((await transfer(OWNER_A, id, { revision, changeId: randomUUID(), toActorId: estimatorA2 })).status).toBe(200);
+    expect(draftOf(draftId)).toEqual(stored);
+    expect(h.drafts.jobOf.has(`${h.seed.a}/${draftId}`)).toBe(false);
+    expect(await h.admin`SELECT job_id::text AS job FROM job_drafts WHERE draft_id = ${draftId}`).toEqual([{ job: other.id }]);
+    expect(draftOf(later)).toEqual({ fieldOwnerUid: 'estimator-a2', fieldOwnerRevision: revision + 1 });
+    expect(await h.admin`SELECT job_id::text AS job FROM job_drafts WHERE draft_id = ${later}`).toEqual([{ job: id }]);
   });
 
   it('stops a Submit whose field work moved to another person while it ran, and frees the draft for the new owner', async () => {
@@ -630,7 +715,7 @@ describe('moving the field work (owner decision J5)', () => {
     const { id, draftId } = await claimedJob();
     expect((await transfer(OWNER_A, id, { revision: 1, changeId: randomUUID(), toActorId: estimatorA2 })).status).toBe(200);
     // A slow first-capture request made at coordination revision 1 arrives after the move.
-    expect(await h.drafts.setFieldOwner(h.seed.a, draftId, 'estimator-a', 1)).toBe('newer');
+    expect(await h.drafts.setFieldOwner(h.seed.a, id, draftId, 'estimator-a', 1)).toBe('newer');
     expect(draftOf(draftId)?.fieldOwnerUid).toBe('estimator-a2');
     // And the estimator who lost the field work cannot take it back.
     expect(await claim(ESTIMATOR_A, id)).toEqual({ status: 409, body: { error: 'field_owner_taken' } });

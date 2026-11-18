@@ -69,6 +69,15 @@ export const CAPABILITIES: readonly Capability[] = Object.freeze([
   ...PRICE_CAPABILITIES.owner,
 ]);
 
+// Actions only the platform operator takes, each through an operatorRoute under /api/platform/. No
+// company role holds them, an owner included, so none is a capability key. The table under
+// "Operator-only actions" in docs/access/superadmin.md lists the same names
+// (tests/unit/operator-actions.test.ts).
+export const OPERATOR_ACTIONS = Object.freeze([
+  // S8-3: the records check after a restore, read-only, one audit row per run.
+  'records_check',
+] as const);
+
 // The company switches that decide which keys exist. The flag is passed in, not read from the
 // environment here, so a caller cannot forget it; the company's switches supply it (web/src/lib/flags/).
 export type AccessFlags = { priceBooks: boolean };

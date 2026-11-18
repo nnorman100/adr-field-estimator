@@ -126,13 +126,16 @@ describe('codeql.yml', () => {
     expect(triggers.push.branches).toEqual(['master']);
   });
 
-  it('runs only JavaScript/TypeScript on every pull request', () => {
+  it('does not run on pull requests', () => {
+    expect(workflow('codeql.yml').on).not.toHaveProperty('pull_request');
+  });
+
+  it('runs only JavaScript/TypeScript, unscoped', () => {
     const job = analyze();
     expect(job).not.toHaveProperty('if');
     expect(job.strategy.matrix.language).toEqual(['javascript-typescript']);
     expect(job.steps[0].uses.startsWith('actions/checkout@')).toBe(true);
     expect(job.steps[0].with['fetch-depth']).toBe(0);
-    expect(workflow('codeql.yml').on.pull_request.branches).toEqual(['master']);
     expect(scopeGatedParts(workflow('codeql.yml'))).toEqual([]);
     for (const step of job.steps) expect(step).not.toHaveProperty('if');
     const uses: string[] = job.steps.map((s: Data) => s.uses ?? '');

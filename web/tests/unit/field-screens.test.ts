@@ -18,6 +18,7 @@ describe('field views', () => {
       { view: 'jobs', list: null },
       { view: 'jobs', list: 'mine' },
       { view: 'jobs', list: 'company' },
+      { view: 'jobs', list: 'archived' },
       { view: 'new-job' },
       { view: 'scope', jobId: JOB },
       { view: 'customer', jobId: JOB },
