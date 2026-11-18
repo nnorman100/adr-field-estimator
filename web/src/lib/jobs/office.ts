@@ -1,6 +1,6 @@
 import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 import { actors, jobAssignments, jobCoordination, jobDrafts, jobs, jobSubmissions, memberships } from '@/db/schema';
-import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
+import { holdAcrossOutsideCall, withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
 import { hasAny, holdDraft, jobAccess, JobError, type JobCaller, type JobRow } from './access';
 import { draftOfOtherJob, type DraftStore } from './drafts';
@@ -206,6 +206,7 @@ export function officeService(db: Database, drafts: DraftStore): OfficeService {
   // for another job is never handed on, and the request changes nothing (security audit F1).
   async function draftsToName(tx: CompanyTransaction, row: JobRow): Promise<string[]> {
     const ids = await draftIdsOf(tx, row);
+    await holdAcrossOutsideCall(tx);
     const found = await findDraft(drafts, row.companyId, row.currentDraftId);
     if (found && draftOfOtherJob(found.jobId, row.id)) throw new JobError('conflict');
     return ids;

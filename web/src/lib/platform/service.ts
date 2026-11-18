@@ -348,6 +348,7 @@ export function platformService(db: Database, users: PlatformUsers, project: Pro
           });
           // Last, and before the commit: if either fails, nothing changes and the operator can try
           // again. A commit that fails after the revocation only signs the old owner out.
+          await holdAcrossOutsideCall(tx);
           await users.ensureAccount(company.auth_tenant_id, input.email);
           if (current) await users.revokeSessions(current.tenant, current.uid);
           return {

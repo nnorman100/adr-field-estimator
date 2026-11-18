@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { isQueueTimeout } from '@/db/client';
 import { actors, auditEvents, evidenceObjects, jobs, jobSubmissions } from '@/db/schema';
 import { holdAcrossOutsideCall, withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
@@ -140,8 +141,15 @@ export async function abortPending(tx: CompanyTransaction, companyId: string, id
 export type DecidedRow = Pick<SubmissionRow, 'id' | 'jobId' | 'draftId' | 'epoch' | 'status'>;
 
 // The marker of a decided row (step 5), then the row's marker state. `false` when the marker could
-// not be written now: the row stays as it is for the worker. Never throws.
-export async function writeMarker(db: Database, store: FenceStore, companyId: string, row: DecidedRow): Promise<boolean> {
+// not be written now: the row stays as it is for the worker. Never throws, except that the worker's
+// pass (`scheduled`) ends when no database connection came free in time (isQueueTimeout).
+export async function writeMarker(
+  db: Database,
+  store: FenceStore,
+  companyId: string,
+  row: DecidedRow,
+  { scheduled = false }: { scheduled?: boolean } = {},
+): Promise<boolean> {
   try {
     if (row.status === 'committed') {
       const marked = await store.markSubmitted(companyId, row.draftId, row.epoch, row.id);
@@ -171,6 +179,7 @@ export async function writeMarker(db: Database, store: FenceStore, companyId: st
     });
     return true;
   } catch (error) {
+    if (scheduled && isQueueTimeout(error)) throw error;
     console.error('submission marker unavailable', error instanceof Error ? error.name : 'unknown');
     return false;
   }
@@ -468,6 +477,7 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
           if (!(await claimDraft(tx, caller.companyId, jobId, input.draftId))) throw new SubmissionError('conflict');
           // A draft id claimed now was never this job's: a draft already under it was made for another
           // job or from another submission.
+          await holdAcrossOutsideCall(tx);
           if (await field(() => store.findDraft(caller.companyId, input.draftId))) throw new SubmissionError('conflict');
           await audit(tx, caller.companyId, caller.actorId, 'job_back_to_editing', jobId, { revision: next!.revision });
           changed = true;

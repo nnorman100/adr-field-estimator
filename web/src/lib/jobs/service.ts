@@ -243,6 +243,7 @@ export function jobsService(db: Database, drafts: DraftStore): JobsService {
         } else {
           if (!(await claimDraft(tx, caller.companyId, row.id, input.draftId))) throw new JobError('conflict');
           // A draft id claimed now was never this job's: a draft already under it was made for another.
+          await holdAcrossOutsideCall(tx);
           if (await findDraft(drafts, caller.companyId, input.draftId)) throw new JobError('conflict');
           await audit(tx, caller, 'job_created', row.id, { revision: row.revision });
         }

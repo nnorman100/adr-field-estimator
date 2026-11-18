@@ -38,7 +38,8 @@ const IDLE_TIMEOUT_SECONDS = 60;
 // so without limits a slow or stuck outside call queued every other request behind it.
 // - A transaction (every company read and write is one, db/tenant.ts) waits at most
 //   QUEUE_TIMEOUT_SECONDS for a free connection; then it is refused (QUEUE_TIMEOUT, never sent,
-//   isQueueTimeout) and the route answers 503. A single query outside a transaction may instead be
+//   isQueueTimeout) instead of waiting; the sign-in check of member routes, the public sign-in
+//   lookup and the scheduled worker pass answer 503 for it. A single query outside a transaction may instead be
 //   pipelined behind a running statement, so the statement limit bounds its wait.
 // - The server ends a statement after 30 s, a wait for a lock after 10 s, and a transaction that
 //   sits idle between statements for 30 s (it rolls back, its locks are released and the pool
@@ -67,8 +68,7 @@ const common = {
 
 // A caller refused because no connection came free within QUEUE_TIMEOUT_SECONDS: nothing was sent.
 export function isQueueTimeout(error: unknown): boolean {
-  const found = error as { code?: unknown; cause?: { code?: unknown } } | null;
-  return found?.code === 'QUEUE_TIMEOUT' || found?.cause?.code === 'QUEUE_TIMEOUT';
+  return (error as { code?: unknown } | null)?.code === 'QUEUE_TIMEOUT';
 }
 
 // How the app reaches Postgres, from the validated config only. On Cloud Run that is the Cloud SQL

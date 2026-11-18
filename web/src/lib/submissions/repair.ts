@@ -90,7 +90,7 @@ export async function runSubmissionRepair(
         if (decided.aborted) summary.aborted += 1;
         row = { ...row, status: decided.status };
       }
-      if (await writeMarker(db, store, companyId, row)) summary.marked += 1;
+      if (await writeMarker(db, store, companyId, row, { scheduled: true })) summary.marked += 1;
       else summary.failed += 1;
     }
     const reopen = await withCompany(db, companyId, (tx) =>

@@ -478,6 +478,37 @@ describe('the worker', () => {
     expect(await f.expectOneOutcome(h.seed.a, jobId, draftId)).toBe('committed');
   });
 
+  // Security audit F5: a worker pass whose marker acknowledgement found no free database connection
+  // ends there, so the scheduled caller sees 503, and the row waits for the next pass.
+  it('ends the worker pass when the marker acknowledgement finds no free database connection', async () => {
+    const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
+    h.field.failNext.markSubmitted = true;
+    expect((await f.submitShown(ESTIMATOR_A, jobId, draftId, manifest)).answer.status).toBe(201);
+    const refused = Object.assign(new Error('QUEUE_TIMEOUT: Waited more than 10 seconds for a connection'), { code: 'QUEUE_TIMEOUT' });
+    // Full for the one transaction after the marker write: the acknowledgement.
+    let full = false;
+    const db = new Proxy(h.handle.db, {
+      get: (target, key) => {
+        if (key !== 'transaction' || !full) return Reflect.get(target, key);
+        full = false;
+        return () => Promise.reject(refused);
+      },
+    });
+    const store = new Proxy(h.field, {
+      get: (target, key) =>
+        key === 'markSubmitted'
+          ? async (...args: Parameters<FenceStore['markSubmitted']>) => {
+              const marked = await target.markSubmitted(...args);
+              full = true;
+              return marked;
+            }
+          : Reflect.get(target, key),
+    });
+    await expect(runSubmissionRepair(db, store, { markerGraceSeconds: 0 })).rejects.toMatchObject({ code: 'QUEUE_TIMEOUT' });
+    expect((await f.submissions(jobId))[0]).toMatchObject({ status: 'committed', marker_state: 'pending' });
+    expect(await runSubmissionRepair(h.handle.db, h.field, { markerGraceSeconds: 0 })).toEqual({ aborted: 0, marked: 1, failed: 0 });
+  });
+
   it('writes a release the request could not after an abort, and leaves a marker it cannot write for the next run', async () => {
     const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
     h.field.failNext.release = true;

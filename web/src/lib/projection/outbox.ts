@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
+import { holdAcrossOutsideCall, withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Role } from '@/lib/access';
 import { AccessStoreError, type AccessStore } from './store';
 
@@ -201,6 +201,7 @@ async function projectOnce(
       // which the next run handles once this one lets go of the actor.
       const target = await targetFor(tx, companyId, actorId);
       const version = await decisionVersion(tx);
+      await holdAcrossOutsideCall(tx);
       if (target.kind === 'grant') {
         const expiresAt = new Date(now().getTime() + ACCESS_TTL_MS);
         await store.grant({

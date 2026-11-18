@@ -123,6 +123,7 @@ export function archiveService(db: Database, store: ArchiveStore): ArchiveServic
   async function settle(companyId: string, jobId: string): Promise<void> {
     await inCompany(companyId, async (tx) => {
       const row = await lockedJob(tx, companyId, jobId);
+      await holdAcrossOutsideCall(tx);
       await field(() =>
         row.status === 'archived'
           ? store.archiveDraft(companyId, row.currentDraftId, row.revision)
@@ -258,6 +259,7 @@ export function archiveService(db: Database, store: ArchiveStore): ArchiveServic
         } else {
           if (!(await claimDraft(tx, caller.companyId, row.id, input.draftId))) throw new JobError('conflict');
           // A draft id claimed now was never this job's: a draft already under it was made for another.
+          await holdAcrossOutsideCall(tx);
           if (await field(() => store.findDraft(caller.companyId, input.draftId))) throw new JobError('conflict');
           await audit(tx, caller, 'job_copied', row.id, { revision: row.revision, copiedFrom: source.id });
         }
