@@ -52,8 +52,8 @@ describe('reading a request body', () => {
 // sent on every create, a 412 is read back as "exists" with the stored hash, and nothing else is
 // swallowed. The real precondition is checked against the real bucket in S5a-12.
 describe('the bucket adapter', () => {
-  type Call = { name: string; options?: { generation?: string }; saved?: Parameters<BucketFile['save']> };
-  function bucketOf(behaviour: Partial<Pick<BucketFile, 'save' | 'getMetadata' | 'createReadStream'>>) {
+  type Call = { name: string; options?: { generation?: string }; saved?: Parameters<BucketFile['save']>; deleted?: boolean };
+  function bucketOf(behaviour: Partial<Pick<BucketFile, 'save' | 'getMetadata' | 'createReadStream' | 'delete'>>) {
     const calls: Call[] = [];
     const bucket: Bucket = {
       file(name, options) {
@@ -66,6 +66,10 @@ describe('the bucket adapter', () => {
           },
           getMetadata: async () => behaviour.getMetadata?.() ?? [{}],
           createReadStream: () => behaviour.createReadStream?.() ?? Readable.from([]),
+          delete: async () => {
+            call.deleted = true;
+            return behaviour.delete?.();
+          },
         };
       },
     };
@@ -138,5 +142,18 @@ describe('the bucket adapter', () => {
       },
     });
     await expect(bucketEvidenceStore(broken.bucket).open('n', 1n)).rejects.toThrow('denied');
+  });
+
+  it('deletes only the one generation it is given, and passes a failure on', async () => {
+    const { bucket, calls } = bucketOf({});
+    await bucketEvidenceStore(bucket).delete('companies/c/jobs/j/photos/p', 42n);
+    expect(calls).toEqual([{ name: 'companies/c/jobs/j/photos/p', options: { generation: '42' }, deleted: true }]);
+    const denied = Object.assign(new Error('denied'), { code: 403 });
+    const broken = bucketOf({
+      delete: async () => {
+        throw denied;
+      },
+    });
+    await expect(bucketEvidenceStore(broken.bucket).delete('n', 1n)).rejects.toBe(denied);
   });
 });

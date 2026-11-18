@@ -1,5 +1,5 @@
 import type { ReadableStream as WebReadableStream } from 'node:stream/web';
-import { and, count, eq, inArray } from 'drizzle-orm';
+import { and, count, eq, getTableColumns, inArray } from 'drizzle-orm';
 import { auditEvents, evidenceObjects } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import { MAX_PHOTO_REFS } from '@/lib/field/schema';
@@ -85,28 +85,33 @@ const receiptOf = (row: EvidenceRow): Receipt => ({
   createdAt: row.createdAt.toISOString(),
 });
 
+const rowsOfId = (caller: JobCaller, jobId: string, photoId: string) =>
+  and(
+    eq(evidenceObjects.companyId, caller.companyId),
+    eq(evidenceObjects.jobId, jobId),
+    eq(evidenceObjects.objectId, photoId),
+    inArray(evidenceObjects.kind, ['photo', 'original', 'signature']),
+  );
+
 async function registryRows(tx: CompanyTransaction, caller: JobCaller, jobId: string, photoId: string): Promise<EvidenceRow[]> {
-  return tx
-    .select()
-    .from(evidenceObjects)
-    .where(
-      and(
-        eq(evidenceObjects.companyId, caller.companyId),
-        eq(evidenceObjects.jobId, jobId),
-        eq(evidenceObjects.objectId, photoId),
-        inArray(evidenceObjects.kind, ['photo', 'original', 'signature']),
-      ),
-    );
+  return tx.select().from(evidenceObjects).where(rowsOfId(caller, jobId, photoId));
 }
 
-// The photos the server holds for a job, counted from the registry and not from the phone's own
-// reference documents: a caller that never writes a reference still meets the limit.
-async function storedPhotoCount(tx: CompanyTransaction, caller: JobCaller, jobId: string): Promise<number> {
-  const [row] = await tx
-    .select({ total: count() })
+// The registry rows of one id and the photos the server holds for the job, read in one statement so
+// both come from one snapshot: an id seen as not registered is never then counted as registered.
+// The photos are counted from the registry, not from the phone's own reference documents, so a
+// caller that never writes a reference still meets the limit.
+async function registryView(tx: CompanyTransaction, caller: JobCaller, jobId: string, photoId: string): Promise<{ rows: EvidenceRow[]; photos: number }> {
+  const stored = tx
+    .select({ total: count().as('total') })
     .from(evidenceObjects)
-    .where(and(eq(evidenceObjects.companyId, caller.companyId), eq(evidenceObjects.jobId, jobId), eq(evidenceObjects.kind, 'photo')));
-  return row?.total ?? 0;
+    .where(and(eq(evidenceObjects.companyId, caller.companyId), eq(evidenceObjects.jobId, jobId), eq(evidenceObjects.kind, 'photo')))
+    .as('stored');
+  const found = await tx
+    .select({ photos: stored.total, row: getTableColumns(evidenceObjects) })
+    .from(stored)
+    .leftJoin(evidenceObjects, rowsOfId(caller, jobId, photoId));
+  return { rows: found.flatMap((one) => (one.row ? [one.row] : [])), photos: Number(found[0]?.photos ?? 0) };
 }
 
 export function photosService(db: Database, store: EvidenceStore, drafts: DraftStates): PhotosService {
@@ -146,11 +151,11 @@ export function photosService(db: Database, store: EvidenceStore, drafts: DraftS
         // A new photo adds to the field work: only its field owner adds one, whatever their role (an
         // original or a signature does not need it).
         const job = await jobAccess(tx, caller, jobId, sendNeeds(kind), { fieldWork: kind === 'photo' });
-        const rows = await registryRows(tx, caller, jobId, photoId);
+        const { rows, photos } = await registryView(tx, caller, jobId, photoId);
         const same = rows.find((row) => row.kind === kind);
         if (kind === 'signature' && !same) await requireSignable(tx, caller, job);
         // A new photo is refused at the limit before its body is read.
-        if (kind === 'photo' && !same && (await storedPhotoCount(tx, caller, jobId)) >= MAX_PHOTO_REFS) throw new PhotoError('photo_limit');
+        if (kind === 'photo' && !same && photos >= MAX_PHOTO_REFS) throw new PhotoError('photo_limit');
         return { job, same, photo: rows.find((row) => row.kind === 'photo') };
       });
 
@@ -191,48 +196,63 @@ export function photosService(db: Database, store: EvidenceStore, drafts: DraftS
       if (made.outcome === 'exists' && made.sha256 !== sha256) throw new PhotoError('photo_conflict');
 
       // 5. The registry row, once. Two requests that stored the same bytes at once make one row.
-      return withCompany(db, caller.companyId, async (tx) => {
-        const job = await jobAccess(tx, caller, jobId, sendNeeds(kind), { lock: true, fieldWork: kind === 'photo' });
-        if (kind === 'photo' && job.status !== 'draft') throw new PhotoError('draft_locked');
-        // Counted again under the job's row lock, because two requests may pass the first count together.
-        // A photo id already registered is not new and is settled below.
-        if (kind === 'photo' && !(await registryRows(tx, caller, jobId, photoId)).some((row) => row.kind === 'photo') && (await storedPhotoCount(tx, caller, jobId)) >= MAX_PHOTO_REFS) {
-          throw new PhotoError('photo_limit');
+      try {
+        return await withCompany(db, caller.companyId, async (tx) => {
+          const job = await jobAccess(tx, caller, jobId, sendNeeds(kind), { lock: true, fieldWork: kind === 'photo' });
+          if (kind === 'photo' && job.status !== 'draft') throw new PhotoError('draft_locked');
+          // Counted again under the job's row lock, because two requests may pass the first count
+          // together. A photo id already registered is not new and is settled below.
+          if (kind === 'photo') {
+            const now = await registryView(tx, caller, jobId, photoId);
+            if (!now.rows.some((row) => row.kind === 'photo') && now.photos >= MAX_PHOTO_REFS) throw new PhotoError('photo_limit');
+          }
+          if (kind === 'signature') {
+            const [there] = (await registryRows(tx, caller, jobId, photoId)).filter((row) => row.kind === kind);
+            if (!there) await requireSignable(tx, caller, job);
+          }
+          const [inserted] = await tx
+            .insert(evidenceObjects)
+            .values({
+              companyId: caller.companyId,
+              jobId,
+              objectId: photoId,
+              kind,
+              objectName: name,
+              generation: made.generation,
+              sha256,
+              sizeBytes: bytes.byteLength,
+              contentType,
+              createdByActorId: caller.actorId,
+            })
+            .onConflictDoNothing()
+            .returning();
+          if (inserted) {
+            await tx.insert(auditEvents).values({
+              companyId: caller.companyId,
+              actorId: caller.actorId,
+              action: RECEIVED[kind],
+              target: jobId,
+              details: { kind, sizeBytes: bytes.byteLength },
+            });
+            return { created: true, receipt: receiptOf(inserted) };
+          }
+          const [existing] = (await registryRows(tx, caller, jobId, photoId)).filter((row) => row.kind === kind);
+          if (!existing || existing.sha256 !== sha256) throw new PhotoError('photo_conflict');
+          return { created: false, receipt: receiptOf(existing) };
+        });
+      } catch (error) {
+        // A new photo refused at the limit under the lock leaves no object of its own behind, so the
+        // bucket never holds more photos than the registry. Only the generation this request made is
+        // deleted; a failed delete does not change the answer.
+        if (error instanceof PhotoError && error.code === 'photo_limit' && made.outcome === 'created') {
+          try {
+            await store.delete(name, made.generation);
+          } catch (failure) {
+            console.error('photo store delete failed', failure instanceof Error ? failure.name : 'unknown');
+          }
         }
-        if (kind === 'signature') {
-          const [there] = (await registryRows(tx, caller, jobId, photoId)).filter((row) => row.kind === kind);
-          if (!there) await requireSignable(tx, caller, job);
-        }
-        const [inserted] = await tx
-          .insert(evidenceObjects)
-          .values({
-            companyId: caller.companyId,
-            jobId,
-            objectId: photoId,
-            kind,
-            objectName: name,
-            generation: made.generation,
-            sha256,
-            sizeBytes: bytes.byteLength,
-            contentType,
-            createdByActorId: caller.actorId,
-          })
-          .onConflictDoNothing()
-          .returning();
-        if (inserted) {
-          await tx.insert(auditEvents).values({
-            companyId: caller.companyId,
-            actorId: caller.actorId,
-            action: RECEIVED[kind],
-            target: jobId,
-            details: { kind, sizeBytes: bytes.byteLength },
-          });
-          return { created: true, receipt: receiptOf(inserted) };
-        }
-        const [existing] = (await registryRows(tx, caller, jobId, photoId)).filter((row) => row.kind === kind);
-        if (!existing || existing.sha256 !== sha256) throw new PhotoError('photo_conflict');
-        return { created: false, receipt: receiptOf(existing) };
-      });
+        throw error;
+      }
     },
 
     async open(caller, jobId, photoId, kind) {
