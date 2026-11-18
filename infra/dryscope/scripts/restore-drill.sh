@@ -29,8 +29,11 @@
 #       Zone outage: phases 2 and 3 with the admission and the app's login check, then prints the
 #       app root's repoint and the tag, check and traffic commands for the owner. --zone must
 #       differ from the original's zone. Never deletes.
-#   restore-drill.sh --env <test|live> --recovery --salvage [--salvage-region <region>] [--dry-run]
-#       Regional outage: phase 4 only (a data copy; no repoint). Never deletes.
+#   restore-drill.sh --env <test|live> --recovery --salvage [--salvage-region <US region>] [--dry-run]
+#       Regional outage: phase 4 only (a data copy, in another US region; no repoint). Never deletes.
+#
+# Any access the run gives your own account (a database user on a copy, holding the migrator's
+# role, for the checks) is temporary: it is removed as soon as the checks end and on every exit.
 #
 # --dry-run prints every command (lines starting "+ ") and makes no call; owner steps and
 # questions are listed but not waited for. Every gcloud command names its project with
@@ -162,11 +165,15 @@ if [ "$MODE" = drill ] || [ "$MODE" = lost-instance ]; then
   [ -n "$ZONE" ] || die "--zone is required: a zone of $REGION other than the original's"
   [ -n "$DOMAIN" ] || die "--domain is required: the printed commands read health at $PUBLIC_HOST"
 fi
+if [ -n "$ZONE" ] && [ "$MODE" != drill ] && [ "$MODE" != lost-instance ]; then
+  die "--zone is only for the drill and --lost-instance: a damaged-rows or salvage copy needs no zone"
+fi
 if [ -n "$ZONE" ] && [[ ! "$ZONE" =~ ^$REGION-[a-z]$ ]]; then
   die "--zone must be a zone of $REGION, such as $REGION-b"
 fi
-if [[ ! "$SALVAGE_REGION" =~ ^[a-z]+-[a-z]+[0-9]+$ ]] || [ "$SALVAGE_REGION" = "$REGION" ]; then
-  die "--salvage-region must be a region other than $REGION"
+# Records stay in the US (docs/runbook/backups.md; the lawyer checklist's data-residency question).
+if [[ ! "$SALVAGE_REGION" =~ ^us-[a-z]+[0-9]+$ ]] || [ "$SALVAGE_REGION" = "$REGION" ]; then
+  die "--salvage-region must be a US region other than $REGION, such as us-east1"
 fi
 
 # Under /tmp with a short name: the Auth Proxy's socket path must stay under the 108-byte limit.
@@ -180,13 +187,24 @@ FACTS=()
 DONE=0
 ACCOUNT=""
 PUT_BACK=""
+MARKER_COMPANY="<company>"
+SERVING_IMAGES=""
+RELEASE_COMMIT=""
+RUNNING=0
+GRANTS=()
 
 finish() {
   local code=$?
   if [ -n "$PROXY_PID" ]; then kill "$PROXY_PID" 2>/dev/null || true; fi
+  revoke_all
   rm -rf "$TMP"
-  if [ "$DONE" = 0 ] && [ -n "$PHASE" ]; then
-    RESULTS+=("$PHASE: $((SECONDS - PHASE_T0))s fail")
+  # Every run that started prints its result block, a failed one too.
+  if [ "$DONE" = 0 ] && [ "$RUNNING" = 1 ]; then
+    if [ -n "$PHASE" ]; then
+      RESULTS+=("$PHASE: $((SECONDS - PHASE_T0))s fail")
+    else
+      RESULTS+=("stopped between phases: fail")
+    fi
     result_block fail
     if [ -n "$PUT_BACK" ]; then
       printf '\nPut test back by hand, in this order, before anything else; delete the drill copies only after it:\n'
@@ -199,8 +217,12 @@ trap finish EXIT
 
 # One printed line per command, "+ " then each argument shell-quoted.
 show() {
-  local out="+" arg
-  for arg in "$@"; do out+=" $(printf '%q' "$arg")"; done
+  local out="+" arg quoted
+  for arg in "$@"; do
+    [ -z "$ACCOUNT" ] || arg="${arg//"$ACCOUNT"/<your-account>}"
+    printf -v quoted '%q' "$arg"
+    out+=" $quoted"
+  done
   printf '%s\n' "$out"
 }
 
@@ -286,6 +308,9 @@ result_block() {
 
 # One command: each step runs only if the one before it passed, so nothing is applied unless the
 # plan check accepted the plan, and the subshell leaves your own directory as it was.
+# shellcheck source=restore-drill-print.sh
+source "$HERE/restore-drill-print.sh"
+
 # Your other variables come from the TF_VAR_ values you exported before the run (see the top).
 tf_lines() { # root, override value or "" for emptied
   local root="$1"
@@ -293,18 +318,26 @@ tf_lines() { # root, override value or "" for emptied
     "(cd $(printf '%q' "$INFRA/$root") &&" \
     "  terraform init -reconfigure -backend-config=envs/backend-$ENV.hcl &&" \
     "  terraform plan -var-file=envs/$ENV.tfvars -var sql_instance_override=$2 -out=$ENV.tfplan &&" \
-    "  terraform show -json $ENV.tfplan > $ENV.json &&" \
-    "  node ../scripts/check-plan.js $root $ENV $ENV.json &&" \
+    "  terraform show -json $ENV.tfplan | node ../scripts/check-plan.js $root $ENV - &&" \
     "  terraform apply $ENV.tfplan)"
 }
 
-# The recorded revision serving all traffic again: tagged candidate and checked, then moved.
-traffic_back_lines() {
-  printf '%s\n' \
-    "gcloud run services update-traffic $API_SERVICE --update-tags=candidate=$SERVING --region=$REGION --project=$PROJECT" \
-    "curl -fsS https://$CANDIDATE_HOST/api/health   # must report env $ENV and database ok" \
-    "gcloud run services update-traffic $API_SERVICE --to-revisions=$SERVING=100 --region=$REGION --project=$PROJECT" \
-    "curl -fsS https://$PUBLIC_HOST/api/health"
+
+# The put-back still owed, as one chain: the recorded revision tagged candidate and checked, then
+# all traffic, then the serving address; only then the drain wait and the two applies that clear
+# the override. Prints from the step named on.
+put_back() { # from: traffic, app or data
+  local steps=()
+  case "$1" in
+    traffic)
+      steps+=("$(step_uses "$SERVING" "$PROJECT:$REGION:$SQL_SOURCE")" "$(step_images "$SERVING" "$SERVING_IMAGES")"
+        "$(step_tag "$SERVING")" "$(step_reaches candidate "$SERVING")" "$(step_health "$CANDIDATE_HOST")"
+        "$(step_move "$SERVING")" "$(step_reaches "" "$SERVING")" "$(step_health "$PUBLIC_HOST")")
+      ;&
+    app) steps+=("$(step_drain)" "$(tf_lines app "")") ;&
+    data) steps+=("$(tf_lines data "")") ;;
+  esac
+  chain "${steps[@]}"
 }
 
 # An RFC 3339 UTC time as text that sorts in time order; fails on anything else.
@@ -353,6 +386,47 @@ wait_op() { # operation name
   run gcloud sql operations wait "$1" --timeout=unlimited --project="$PROJECT"
 }
 
+# Your account's temporary database user on a copy: removed right after the checks and, through
+# finish, on every exit. If a removal fails, the exact command is printed for you to run.
+revoke_all() {
+  local instance
+  for instance in "${GRANTS[@]}"; do
+    if ! run gcloud sql users delete "$ACCOUNT" --instance="$instance" --project="$PROJECT" --quiet; then
+      printf 'Remove your temporary access to %s by hand now: gcloud sql users delete "$(gcloud config get-value account)" --instance=%s --project=%s --quiet\n' \
+        "$instance" "$instance" "$PROJECT" >&2
+    fi
+  done
+  GRANTS=()
+}
+
+auth_header() { # a fresh token in a private header file, never on a command line
+  local token
+  get token "<token>" gcloud auth print-access-token --project="$PROJECT" || return 1
+  (umask 077 && printf 'Authorization: Bearer %s\n' "$token" >"$TMP/auth-header")
+}
+
+# The release's drain rule (web/scripts/release-drain.ts; S8-2): stage a revision only once 15
+# minutes have passed since the service last changed, since a revision that lost traffic can keep an
+# idle instance holding database connections that long.
+DRAIN_JQ='(.updateTime | sub("\\.[0-9]+"; "") | fromdateiso8601) + 900 - $now | if . < 0 then 0 elif . > 900 then 900 else ceil end'
+SERVICE_URL="https://run.googleapis.com/v2/projects/$PROJECT/locations/$REGION/services/$API_SERVICE"
+
+drain_wait() {
+  local json left i
+  for i in 1 2 3; do
+    auth_header || fail "could not get a token"
+    get json '{}' curl -fsS -H "@$TMP/auth-header" "$SERVICE_URL" || fail "could not read when $API_SERVICE last changed"
+    [ "$DRY" = 0 ] || return 0
+    left="$(printf '%s' "$json" | jq -r --argjson now "$(date -u +%s)" "$DRAIN_JQ")" ||
+      fail "could not read when $API_SERVICE last changed"
+    [ "$left" -gt 0 ] || return 0
+    [ "$i" -lt 3 ] || fail "$API_SERVICE keeps changing: stage nothing until it has been still for 15 minutes"
+    printf '   waiting %ss before staging: a revision that lost traffic can hold database connections for 15 minutes\n' "$left"
+    sleep "$left"
+  done
+}
+
+
 # Phase 3's checks, as your own Google account through the Auth Proxy. The account is added to
 # the copy only (never to the original, and with no IAM change, so nothing admits the app early)
 # as an IAM database user holding the migrator's role. Row-level security is forced on every
@@ -365,7 +439,7 @@ db_checks() { # instance, region, marker before, marker after ("" for none)
   cat >"$TMP/checks.sql" <<'SQL'
 BEGIN;
 SET LOCAL ROLE :"migrator";
-SELECT 'ledger|' || id FROM migration_ledger ORDER BY id;
+SELECT 'ledger|' || id || '|' || checksum FROM migration_ledger ORDER BY id;
 DO $$
 DECLARE t text;
 BEGIN
@@ -377,6 +451,7 @@ END
 $$;
 \if :{?before}
 SELECT 'marker_before|' || count(*) FROM jobs WHERE id = :'before'::uuid;
+SELECT 'marker_company|' || company_id FROM jobs WHERE id = :'before'::uuid;
 SELECT 'marker_after|' || count(*) FROM jobs WHERE id = :'after'::uuid;
 \endif
 SELECT 'rows|' || table_name || '|' ||
@@ -387,24 +462,36 @@ SQL
   local markers=()
   [ -z "$before" ] || markers=(-v "before=$before" -v "after=$after")
   [ -n "$ACCOUNT" ] || get ACCOUNT "<your-account>" gcloud config get-value account --project="$PROJECT"
+  GRANTS+=("$instance")
   run gcloud sql users create "$ACCOUNT" --instance="$instance" --type=cloud_iam_user \
     --database-roles="$MIGRATE_DB_USER" --project="$PROJECT"
   proxy_start "$conn" --auto-iam-authn
   get out "<checks>" psql -X -A -t -q -v ON_ERROR_STOP=1 -v "migrator=$MIGRATE_DB_USER" "${markers[@]}" \
     -h "$PROXY_HOST" -U "$ACCOUNT" -d "$SQL_DATABASE" -f "$TMP/checks.sql"
   proxy_stop
+  revoke_all
   [ "$DRY" = 0 ] || return 0
-  expected="$(find "$REPO/web/migrations" -maxdepth 1 -name '*.sql' -printf '%f\n' | sed 's/\.sql$//' | sort)"
+  # Each row as id|checksum (the SHA-256 of the file's bytes, as web/src/db/migrate.ts records it).
+  expected="$(ledger_of_checkout)"
   got="$(printf '%s\n' "$out" | sed -n 's/^ledger|//p' | sort)"
   [ -n "$got" ] || fail "the migration ledger on $instance is empty"
   level="$(printf '%s\n' "$got" | wc -l | tr -d ' ')"
   [ "$got" = "$(printf '%s\n' "$expected" | head -n "$level")" ] ||
-    fail "the ledger on $instance is not the first $level migrations of web/migrations (pull your checkout, then compare): $(printf '%s\n' "$got" | tr '\n' ' ')"
-  printf '   ledger: %s migrations, through %s\n' "$level" "$(printf '%s\n' "$got" | tail -n 1)"
-  FACTS+=("ledger on $instance: through $(printf '%s\n' "$got" | tail -n 1)")
+    fail "the ledger on $instance (id and checksum) is not the first $level migrations of web/migrations (pull your checkout, then compare): $(printf '%s\n' "$got" | cut -d'|' -f1 | tr '\n' ' ')"
+  # Up to the restore point: every migration of the release serving then, with the same checksums.
+  if [ -n "$RELEASE_COMMIT" ]; then
+    local release
+    release="$(ledger_of_commit "$RELEASE_COMMIT")" ||
+      fail "could not read the migrations of commit $RELEASE_COMMIT from your checkout"
+    [ "$(printf '%s\n' "$got" | head -n "$(printf '%s\n' "$release" | wc -l)")" = "$release" ] ||
+      fail "the ledger on $instance lacks or differs from the migrations of the release serving at the restore point (commit $RELEASE_COMMIT)"
+  fi
+  printf '   ledger: %s migrations with their checksums, through %s\n' "$level" "$(printf '%s\n' "$got" | tail -n 1 | cut -d'|' -f1)"
+  FACTS+=("ledger on $instance: through $(printf '%s\n' "$got" | tail -n 1 | cut -d'|' -f1)")
   if [ -n "$before" ]; then
     [ "$(printf '%s\n' "$out" | sed -n 's/^marker_before|//p')" = 1 ] || fail "the first marker is not on the copy"
     [ "$(printf '%s\n' "$out" | sed -n 's/^marker_after|//p')" = 0 ] || fail "the second marker is on the copy"
+    MARKER_COMPANY="$(printf '%s\n' "$out" | sed -n 's/^marker_company|//p')"
     printf '   markers: first there, second not\n'
   fi
   local counts
@@ -412,11 +499,72 @@ SQL
   FACTS+=("rows on $conn: ${counts% }")
 }
 
+# id|checksum for each file of web/migrations, in order, hashed in one call (once per run).
+CHECKOUT_LEDGER=""
+ledger_of_checkout() {
+  local sum=sha256sum
+  command -v sha256sum >/dev/null || sum="shasum -a 256"
+  [ -n "$CHECKOUT_LEDGER" ] ||
+    CHECKOUT_LEDGER="$( (cd "$REPO/web/migrations" && $sum -- *.sql) | sed 's/^\([0-9a-f]*\) [ *]\(.*\)\.sql$/\2|\1/' | sort)"
+  printf '%s\n' "$CHECKOUT_LEDGER"
+}
+
+# id|checksum for each migration file at a commit, in order: the commit's files, each of which must
+# have the same bytes in your checkout (the same git blob), with the checkout's checksums.
+ledger_of_commit() {
+  local listed blobs here ids
+  listed="$(git -C "$REPO" ls-tree "$1" web/migrations/ | grep '\.sql$')" || return 1
+  blobs="$(printf '%s\n' "$listed" | awk '{print $3}')"
+  ids="$(printf '%s\n' "$listed" | sed 's#.*/##; s/\.sql$//')"
+  # shellcheck disable=SC2046,SC2086 # one path per line, no spaces (NNNN_words.sql)
+  here="$(cd "$REPO" && git hash-object -- $(printf '%s\n' "$listed" | cut -f2))" || return 1
+  [ "$blobs" = "$here" ] || {
+    printf 'a migration of commit %s differs in your checkout\n' "$1" >&2
+    return 1
+  }
+  ledger_of_checkout | grep -F -f <(printf '%s|\n' $ids) | sort
+}
+
+# The release serving now, from its health answer (a 503 one too, while its database is down):
+# releases are paused in the drill, and a zone recovery's copy is checked against the release that
+# was serving, so its migrations are the ones the copy must hold.
+serving_commit() {
+  local body
+  get body '{}' curl -sS --retry 3 "https://$PUBLIC_HOST/api/health" || fail "could not read health at $PUBLIC_HOST"
+  [ "$DRY" = 0 ] || return 0
+  RELEASE_COMMIT="$(printf '%s' "$body" | jq -r '.commit // empty')"
+  [[ "$RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]] || fail "health at $PUBLIC_HOST reports no commit"
+  git -C "$REPO" cat-file -e "$RELEASE_COMMIT^{commit}" 2>/dev/null ||
+    fail "commit $RELEASE_COMMIT is not in your checkout: git fetch, then run again"
+  FACTS+=("release serving: commit $RELEASE_COMMIT")
+}
+
 # The web app's own database account logs in to the copy (after the data root admits it).
 login_check() { # connection name
   proxy_start "$1" --auto-iam-authn --impersonate-service-account="$API_SA"
   run psql -X -A -t -q -v ON_ERROR_STOP=1 -h "$PROXY_HOST" -U "$API_DB_USER" -d "$SQL_DATABASE" -c 'SELECT 1'
   proxy_stop
+}
+
+# Both markers on the original, read as the web app's own account in the first marker's company
+# inside a read-only transaction: the first made no later than the chosen minute, the second after.
+markers_on_original() {
+  local out
+  cat >"$TMP/markers.sql" <<'SQL'
+BEGIN READ ONLY;
+SET LOCAL app.company_id = :'company';
+SELECT count(*) FILTER (WHERE id = :'before'::uuid AND created_at <= :'pit'::timestamptz) || '|' ||
+       count(*) FILTER (WHERE id = :'after'::uuid AND created_at > :'pit'::timestamptz)
+FROM jobs WHERE id IN (:'before'::uuid, :'after'::uuid);
+ROLLBACK;
+SQL
+  proxy_start "$PROJECT:$REGION:$SQL_SOURCE" --auto-iam-authn --impersonate-service-account="$API_SA"
+  get out "1|1" psql -X -A -t -q -v ON_ERROR_STOP=1 -v "company=$MARKER_COMPANY" -v "before=$MARKER_BEFORE" \
+    -v "after=$MARKER_AFTER" -v "pit=$PIT" -h "$PROXY_HOST" -U "$API_DB_USER" -d "$SQL_DATABASE" -f "$TMP/markers.sql"
+  proxy_stop
+  [ "$out" = "1|1" ] ||
+    fail "the markers are not both on $SQL_SOURCE in one company, the first made by $PIT and the second after it"
+  printf '   markers on %s: first by the chosen minute, second after it\n' "$SQL_SOURCE"
 }
 
 health() { # host
@@ -447,23 +595,34 @@ serving_revision() {
   [ -n "$SERVING" ] || fail "no revision serves all traffic on $API_SERVICE"
 }
 
+revision_images() { # revision JSON: its container images, in order, as one line
+  printf '%s' "$1" | jq -c '[.spec.containers[].image]'
+}
+
+# A revision may take traffic only if it names the right database and runs the recorded revision's
+# images: Terraform keeps the service template's image, which can be a later release's.
 revision_uses() { # revision, the database connection it must name
-  local json got
+  local json got images
   get json '{}' gcloud run revisions describe "$1" --region="$REGION" --project="$PROJECT" --format=json
   [ "$DRY" = 0 ] || return 0
   got="$(printf '%s' "$json" | jq -r '[.spec.containers[].env[]? | select(.name == "SQL_CONNECTION_NAME") | .value] | first // empty')"
   [ "$got" = "$2" ] || fail "revision $1 uses database ${got:-none}, not $2"
+  images="$(revision_images "$json")"
+  [ "$images" = "$SERVING_IMAGES" ] ||
+    fail "revision $1 runs $images, not the recorded revision's $SERVING_IMAGES: it may need migrations the copy lacks, so do not move traffic to it"
 }
 
 # The copy holds every migration applied before its point in time, and a release migrates before
 # its revision exists, so a serving revision made no later than that time finds its schema there.
+# Records the serving revision's images: the only ones a repointed revision may run.
 serving_fits_copy() {
-  local created
-  get created "<created>" gcloud run revisions describe "$SERVING" --region="$REGION" --project="$PROJECT" \
-    --format='value(metadata.creationTimestamp)'
-  [ "$DRY" = 0 ] || return 0
+  local json created
+  get json '{}' gcloud run revisions describe "$SERVING" --region="$REGION" --project="$PROJECT" --format=json
+  if [ "$DRY" = 1 ]; then SERVING_IMAGES="<serving-images>"; return 0; fi
+  created="$(printf '%s' "$json" | jq -r '.metadata.creationTimestamp // empty')"
+  SERVING_IMAGES="$(revision_images "$json")"
   not_after "$created" "$PIT" ||
-    fail "revision $SERVING was made at $created, after $PIT: the copy may lack migrations it needs, so do not repoint"
+    fail "revision $SERVING was made at ${created:-an unknown time}, after $PIT: the copy may lack migrations it needs, so do not repoint"
 }
 
 move_to() { # revision, its database connection: tagged candidate and checked there, then given all traffic
@@ -507,11 +666,12 @@ phase_markers() {
     printf '   waiting until 30 seconds after it...\n'
     sleep $((PIT_EPOCH + 30 - $(date -u +%s)))
   fi
-  ask MARKER_AFTER "Make a second new job through the app now (marker 2), then paste its job id:"
+  ask MARKER_AFTER "Make a second new job in the same company through the app now (marker 2), then paste its job id:"
   local id
   for id in "$MARKER_BEFORE" "$MARKER_AFTER"; do
     [ "$DRY" = 1 ] || [[ "$id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || die "a job id is a uuid"
   done
+  [ "$MARKER_BEFORE" != "$MARKER_AFTER" ] || die "the two markers must be two different jobs"
   FACTS+=("point in time: $PIT" "markers: $MARKER_BEFORE before, $MARKER_AFTER after")
   pass
 }
@@ -520,18 +680,13 @@ phase_copy() {
   phase 2 "point-in-time copy of $SQL_SOURCE to $PIT"
   local zone=() op latest i source_zone copy_zone
   [ -z "$ZONE" ] || zone=(--preferred-zone="$ZONE")
-  # A zone recovery's copy must not land in the original's zone. In a real zone outage the
-  # original may not answer; then only the copy's own zone is checked below.
+  # A zone recovery's copy must not land in the original's zone. The zone comes from Cloud SQL's
+  # own record of the original; without it the recovery stops (it never assumes).
   if [ "$MODE" = drill ] || [ "$MODE" = lost-instance ]; then
-    if get source_zone "<original-zone>" gcloud sql instances describe "$SQL_SOURCE" --project="$PROJECT" \
-      --format='value(gceZone)'; then
-      [ "$DRY" = 1 ] || [ -n "$source_zone" ] || fail "no zone reported for $SQL_SOURCE"
-      [ "$source_zone" != "$ZONE" ] || fail "--zone $ZONE is the zone of $SQL_SOURCE: choose another zone of $REGION"
-    else
-      [ "$MODE" = lost-instance ] || fail "could not read the zone of $SQL_SOURCE"
-      printf '   %s does not answer; only the copy'"'"'s zone is checked.\n' "$SQL_SOURCE"
-      source_zone=""
-    fi
+    get source_zone "<original-zone>" gcloud sql instances describe "$SQL_SOURCE" --project="$PROJECT" \
+      --format='value(gceZone)' || fail "could not read the zone of $SQL_SOURCE: a zone recovery needs it"
+    [ "$DRY" = 1 ] || [ -n "$source_zone" ] || fail "no zone reported for $SQL_SOURCE: a zone recovery needs it"
+    [ "$source_zone" != "$ZONE" ] || fail "--zone $ZONE is the zone of $SQL_SOURCE: choose another zone of $REGION"
   fi
   # The drill waits for its chosen minute to become recoverable; an incident time must already be.
   for i in $(seq 20); do
@@ -558,14 +713,16 @@ phase_copy() {
 
 phase_checks() { # admit: 1 to apply the data root's admission and check the app's login
   phase 3 "checks on the copy"
+  [ "$1" = 0 ] || serving_commit
   db_checks "$SQL_COPY" "$REGION" "${MARKER_BEFORE:-}" "${MARKER_AFTER:-}"
   if [ "$1" = 1 ]; then
-    [ "$MODE" != drill ] || PUT_BACK="$(tf_lines data "")"
+    [ "$MODE" != drill ] || PUT_BACK="$(put_back data)"
     owner_step "apply the data root with the copy admitted (S8-6; the services stay on $SQL_SOURCE)" \
       "$(tf_lines data "$SQL_COPY")"
     printf '   Your account needs Service Account Token Creator on %s for this login check.\n' "$API_SA"
     login_check "$PROJECT:$REGION:$SQL_COPY"
   fi
+  [ -z "${MARKER_BEFORE:-}" ] || markers_on_original
   pass
 }
 
@@ -593,22 +750,18 @@ phase_salvage() {
   pass "backup age $age"
 }
 
-fs_get() { # var, database id, path under documents/. The token goes to a private header file,
-  # never to a command line.
-  local hdr="$TMP/auth-header" token
-  if [ ! -s "$hdr" ]; then
-    get token "<token>" gcloud auth print-access-token --project="$PROJECT"
-    (umask 077 && printf 'Authorization: Bearer %s\n' "$token" >"$hdr")
-  fi
-  get "$1" '{}' curl -fsS -H "@$hdr" \
+fs_get() { # var, database id, path under documents/, with draft_snapshot's token
+  get "$1" '{}' curl -fsS -H "@$TMP/auth-header" \
     "https://firestore.googleapis.com/v1/projects/$PROJECT/databases/$2/documents/$3"
 }
 
 # One draft as the app loads it (web/src/lib/field/store.ts, loadDraft): the draft document and
 # its rooms and photos subcollections, each document by id with its fields, in one canonical
 # form. Fails if a read fails, the draft is missing, or a list does not fit in one page.
-draft_snapshot() { # var, database id
+draft_snapshot() { # var, database id. A fresh token each time, in a private header file, never on
+  # a command line.
   local doc rooms photos snapshot
+  auth_header || return 1
   fs_get doc "$2" "$DRAFT" || return 1
   fs_get rooms "$2" "$DRAFT/rooms?pageSize=300" || return 1
   fs_get photos "$2" "$DRAFT/photos?pageSize=300" || return 1
@@ -623,7 +776,7 @@ draft_snapshot() { # var, database id
 
 phase_field() {
   phase 5 "field database restore"
-  local json name snap original restored i rooms photos
+  local json name snap original restored i rooms photos op state
   get json '[]' gcloud firestore backups list --location="$REGION" --project="$PROJECT" --format=json
   if [ "$DRY" = 1 ]; then
     name="<backup-name>"
@@ -633,16 +786,25 @@ phase_field() {
       '[.[] | select(.database == $db and .state == "READY")] | sort_by(.snapshotTime) | last | select(. != null)
       | "\(.name) \(.snapshotTime)"') || fail "no ready backup of $FS_DB"
   fi
-  run gcloud firestore databases restore --source-backup="$name" --destination-database="$FS_COPY" --project="$PROJECT"
+  get op "<operation>" gcloud firestore databases restore --source-backup="$name" --destination-database="$FS_COPY" \
+    --project="$PROJECT" --format='value(name)'
   ask DRAFT "Path of one field draft that has not changed since $snap: companies/<company id>/drafts/<draft id>"
   [ "$DRY" = 1 ] || [[ "$DRAFT" =~ ^companies/[A-Za-z0-9_-]+/drafts/[A-Za-z0-9_-]+$ ]] ||
     die "a draft path is companies/<company id>/drafts/<draft id>"
   draft_snapshot original "$FS_DB" || fail "could not read the draft, its rooms and photos from $FS_DB"
   for i in $(seq 120); do
-    if draft_snapshot restored "$FS_COPY" 2>/dev/null; then break; fi
-    [ "$i" -lt 120 ] || fail "the restored database did not answer with the draft within an hour"
+    get state '{"done":true}' gcloud firestore operations describe "$op" --database="$FS_COPY" --project="$PROJECT" \
+      --format=json
+    [ "$DRY" = 1 ] && break
+    if [ "$(printf '%s' "$state" | jq -r '.done == true')" = true ]; then
+      [ "$(printf '%s' "$state" | jq -r 'has("error")')" = false ] ||
+        fail "the restore into $FS_COPY failed: $(printf '%s' "$state" | jq -r '.error.message // .error')"
+      break
+    fi
+    [ "$i" -lt 120 ] || fail "the restore into $FS_COPY did not finish within an hour"
     sleep 30
   done
+  draft_snapshot restored "$FS_COPY" || fail "could not read the draft, its rooms and photos from the restored $FS_COPY"
   if [ "$DRY" = 0 ]; then
     [ "$original" = "$restored" ] ||
       fail "the restored draft differs from the original (its fields, rooms or photo references, by id)"
@@ -686,9 +848,8 @@ phase_repoint() {
   serving_revision
   FACTS+=("recorded revision: $SERVING")
   serving_fits_copy
-  PUT_BACK="$(traffic_back_lines)
-$(tf_lines app "")
-$(tf_lines data "")"
+  PUT_BACK="$(put_back traffic)"
+  drain_wait
   owner_step "apply the app root pointing the services at the copy (S8-6)" "$(tf_lines app "$SQL_COPY")"
   local fresh
   get fresh "<fresh-revision>" gcloud run services describe "$API_SERVICE" --region="$REGION" --project="$PROJECT" \
@@ -697,10 +858,10 @@ $(tf_lines data "")"
   move_to "$fresh" "$PROJECT:$REGION:$SQL_COPY"
   printf '   Putting back: the recorded revision serves again before any admission is removed.\n'
   move_to "$SERVING" "$PROJECT:$REGION:$SQL_SOURCE"
-  PUT_BACK="$(tf_lines app "")
-$(tf_lines data "")"
+  PUT_BACK="$(put_back app)"
+  drain_wait
   owner_step "apply the app root with the override emptied" "$(tf_lines app "")"
-  PUT_BACK="$(tf_lines data "")"
+  PUT_BACK="$(put_back data)"
   owner_step "apply the data root with the override emptied (removes the admission)" "$(tf_lines data "")"
   PUT_BACK=""
   pass "fresh revision $fresh"
@@ -721,51 +882,8 @@ phase_cleanup() {
   pass
 }
 
-print_copy_back() {
-  cat <<EOF
-
-The validated copy is $SQL_COPY. Nothing was repointed and nothing was deleted.
-Copy back only the damaged rows (docs/runbook/backups.md, "Damaged rows"):
-  1. Read the damaged rows by company id and id from the copy, through the Auth Proxy as
-     $ACCOUNT with SET ROLE to the migrator and FORCE lifted inside a transaction that is
-     rolled back (as these checks did), and the same rows on $SQL_SOURCE as the migrator.
-  2. Never write a signed record or a guarded table's rows (the guard triggers refuse it; never
-     disable one). A damaged signed record is an owner decision, recorded in a sidecar.
-  3. On $SQL_SOURCE, as the migrator (the way db:migrate is run), one transaction per table:
-       BEGIN;
-       ALTER TABLE <table> NO FORCE ROW LEVEL SECURITY;
-       UPDATE <table> ... WHERE company_id = '<company id>' AND id IN (<damaged ids>);
-       -- psql prints UPDATE <n>: unless n is exactly the number of ids, ROLLBACK;
-       ALTER TABLE <table> FORCE ROW LEVEL SECURITY;
-       COMMIT;
-     Rows written since $PIT stay.
-  4. Run the records check for each company (operator screen, "Check records").
-  5. Delete $SQL_COPY only when you decide to; this script never does.
-EOF
-}
-
-print_repoint() {
-  local sql="$PROJECT:$REGION:$SQL_COPY" rev='.status.traffic[] | select(.percent == 100) | .revisionName'
-  cat <<EOF
-
-The copy $SQL_COPY passed its checks and the web app's account logs in to it.
-The revision serving now is $SERVING. Repoint the app (S8-6), then move traffic only after
-each check prints what its comment says:
-$(tf_lines app "$SQL_COPY" | sed 's/^/  /')
-  FRESH="\$(gcloud run services describe $API_SERVICE --region=$REGION --project=$PROJECT --format='value(status.latestCreatedRevisionName)')"
-  gcloud run revisions describe "\$FRESH" --region=$REGION --project=$PROJECT --format=json | jq -r '.spec.containers[].env[]? | select(.name == "SQL_CONNECTION_NAME") | .value'   # must print $sql
-  gcloud run services update-traffic $API_SERVICE --update-tags="candidate=\$FRESH" --region=$REGION --project=$PROJECT
-  gcloud run services describe $API_SERVICE --region=$REGION --project=$PROJECT --format=json | jq -r '.status.traffic[] | select(.tag == "candidate") | .revisionName'   # must print \$FRESH
-  curl -fsS https://$CANDIDATE_HOST/api/health   # must report env $ENV and database ok
-  gcloud run services update-traffic $API_SERVICE --to-revisions="\$FRESH=100" --region=$REGION --project=$PROJECT
-  gcloud run services describe $API_SERVICE --region=$REGION --project=$PROJECT --format=json | jq -r '$rev'   # must print \$FRESH
-  curl -fsS https://$PUBLIC_HOST/api/health
-Keep the recovered database serving; a return to the original is a separate owner decision.
-Your account $ACCOUNT stays a user of $SQL_COPY with the migrator's role until you remove it.
-EOF
-}
-
 preflight
+RUNNING=1
 case "$MODE" in
   drill)
     phase_markers
@@ -787,8 +905,10 @@ case "$MODE" in
     FACTS+=("point in time: $PIT")
     phase_copy
     phase_checks 1
+    phase 7 "repoint checks"
     serving_revision
     serving_fits_copy
+    pass
     print_repoint
     ;;
   salvage)
