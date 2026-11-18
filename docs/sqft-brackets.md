@@ -4,7 +4,7 @@ Company owners can add square-foot price brackets to an area item, add cushion
 brackets, and choose **Tiered** (the default) or **Whole-job** under Company prices.
 Office staff, estimators and support retain their read-only price view. These
 controls use the existing price-book rollout switch; this change enables no flags
-and changes no ADR rates or v1 rate books.
+and changes no starting rates or v1 rate books.
 
 A price bracket belongs to one item. In tiered mode its quantity is that item's
 combined square feet across matching rooms, or its typed square-foot quantity,

@@ -8,7 +8,7 @@ The approved plan (Oct 24, 2026) for making this repository the complete DryScop
 - **Merged and released:** all of Phase 1 and all six Phase 2 steps (see the Oct 24–25 rows in `RELEASES.md`). Phase 0 items 1–4 and 6 are not recorded as done; item 6 (the local SMTP timeout test fails on Windows, passes in CI) is still open.
 - **In the serving revision:** Phase 3a readiness (F1, #147) is on. The newest 100% row in `RELEASES.md` records `AI_FEATURES=readiness`. The voice-note gate (#148) is in that revision and is not behind `AI_FEATURES`. Drying watch (A1, #149), priced extras (F2, #150), job summaries and AI usage (O1 + O3, #151), and the price editor (#153) are in that same revision and stay off: `AI_FEATURES` is only `readiness`, and `PRICE_BOOKS_ENABLED` is unset. Compare each later merge with the source commit of the newest `live` row. The rel5 commit was rolled back, so it is on `master` and is not serving.
 - **In flight:** the price editor is not an open PR. #153 is already in the serving revision, with the editor off until `PRICE_BOOKS_ENABLED` is set. Check `gh-axi pr list` before editing shared files.
-- **Next for Nate:** phone checks that are still open (check 8 below, including a physical iPhone), and the ADR company profile and invitation check (Phase 0 items 1–3). Merged pull requests deploy automatically, test then live; the owner-only exceptions are listed in `HANDOFF.md` ("Rules that decide what you may do").
+- **Next for Nate:** phone checks that are still open (check 8 below, including a physical iPhone), and the first company's profile and invitation check (Phase 0 items 1–3). Merged pull requests deploy automatically, test then live; the owner-only exceptions are listed in `HANDOFF.md` ("Rules that decide what you may do").
 - **Next for an agent:** finish and review the in-flight PRs, then prepare the next batched release using the `RELEASES.md` recipe. Each item is one small PR that passes the eight checks below.
 - **Rules that hold:**
   - Read `AGENTS.md` and `VISION.md` first.
@@ -31,7 +31,7 @@ _History only. For current feature state use `docs/STATUS.md`; for what is servi
 - Shipped Oct 24–25: jobs list tabs and search (#130), GPS stamp (#134), address autocomplete and map (#136), copy to draft (#133), and Phase 2 document delivery through delivery status and Resend (#144).
 - Already ported or better in the field estimator, so skipped: dictation to scope, the Live bar, documents, superadmin, owner/office dashboards, new job intake, and Dryscope pricing (it doesn't match the workbook).
 - Never observed on a device: releases have been checked signed-out only. Still open: phone checks of the newer features, a physical iPhone, a Google-account invitee, and invitation email in Gmail and Outlook. The local WebKit install is missing, so WebKit results come from CI.
-- ADR has no company profile or logo since #127; the app shows its name only until Nate uploads one (Phase 0 item 2).
+- The first company has no company profile or logo since #127; the app shows its name only until Nate uploads one (Phase 0 item 2).
 - Wiki notes `projects/adr-field-estimator.md` and `projects/dryscope.md` were last updated Oct 24 and do not cover the releases above.
 
 ## How every item ships
@@ -62,7 +62,7 @@ These are for the rebuilt app in `web/`. Each stage plan's section 9 in `docs/pl
 
 ## Phase 0: Prove what's live (about 1 day, mostly Nate)
 1. **Phone test 2 (Nate, on his phone):** walkthrough with room chips, shot list, QR tag scan and print, drying log, claim details, sizing check, Fill scope, signing on site and by link. Do it on an iPhone if one is available. Log what Nate observes in `RELEASES.md` and the release notes, kept separate from mock results.
-2. **ADR company profile:** Nate, as owner, uploads ADR's logo and contact details in Account. Then check the documents and the signing page show it.
+2. **First company profile:** Nate, as owner, uploads the first company's logo and contact details in Account. Then check the documents and the signing page show it.
 3. **Invitation check:** send one invitation to a Google account and one to an Outlook address. Check the logo renders and that accepting works.
 4. Fix only what the test finds, as small PRs.
 5. ~~Update the wiki notes~~ Done Oct 24 (ADR note, Dryscope note, index, log).
@@ -108,7 +108,7 @@ Design:
   - Homeowner: the signed proposal and photo log.
   - Adjuster: the itemized claim, the scope defense letter, and the existing scope-code JSON export. Send it only when the claim details hold an adjuster email. Make no ESX claim (`AGENTS.md`).
   - Crew lead: a job summary of address, rooms, equipment and drying days. Prices are left out unless Nate asks.
-- **Data needed:** a crew-lead email on the company profile or the job, and a delivery on/off switch for each company (owner setting; default on for ADR once tested).
+- **Data needed:** a crew-lead email on the company profile or the job, and a delivery on/off switch for each company (owner setting; default on for the first company once tested).
 
 Steps, each its own PR:
 1. Shared SMTP sender plus the delivery record and retry, with no emails switched on yet. High risk, because it touches the invitation path; release with Nate's go.
@@ -121,7 +121,7 @@ Steps, each its own PR:
 5. Crew-lead email and the delivery switch for each company.
 6. Delivery status and Resend. Merged and released (Oct 25), including the Help how-to "Sending documents". Current permissions, offline behavior and retry rules are described in [Document delivery](company-workspaces.md#document-delivery). Nate's real-phone check remains open.
 
-Release steps 1–2 together, then 3–6. Run real-send checks to the test inbox's plus-addresses, then do one real ADR job with Nate.
+Release steps 1–2 together, then 3–6. Run real-send checks to the test inbox's plus-addresses, then do one real job with Nate.
 
 **Later, not in this plan:** texting through Twilio or Telnyx with US business (10DLC) registration; letting homeowners upload photos through the link; the remaining VISION pieces (arbitrary company workbook upload, drying schedule, automatic deploys).
 
@@ -130,7 +130,7 @@ Release steps 1–2 together, then 3–6. Run real-send checks to the test inbox
 - **Old Dryscope repo:** no action now. Whether to archive `nnorman100/Dryscope` after Phase 1 ships is Nate's decision later.
 
 ## Risks and dependencies
-- **Gmail SMTP from Nate's account:** Gmail allows about 500 emails a day, and the sender is personal. Fine for ADR now. Before other companies send at volume, plan a move to a transactional email service with its own domain (needs Nate's decision).
+- **Gmail SMTP from Nate's account:** Gmail allows about 500 emails a day, and the sender is personal. Fine for the first company now. Before other companies send at volume, plan a move to a transactional email service with its own domain (needs Nate's decision).
 - **Maps key:** approved and configured; key handling and limits are recorded in [firebase-isolation.md](firebase-isolation.md#address-suggestions-and-the-job-map).
 - **Data compatibility:** new photo GPS fields and delivery records mean rolling back to an older revision makes jobs lose those features, so fixing forward is the safer option. Note this in each release's rollback section, as #122 did.
 
