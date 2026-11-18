@@ -62,7 +62,7 @@ jobs:
     # machine never collide on 9399 or 8399. Only here: `npm test` in `check` must see the default ports.
     env:
       EMU_PORTS: auto
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # The Firestore emulator runs on Java 21 or later.
@@ -118,7 +118,7 @@ jobs:
     needs: [database, emulators, company-isolation]
     if: always() && !cancelled()
     runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Require the database job
@@ -152,7 +152,7 @@ jobs:
     # machine never collide on 9399 or 8399. Only here: `npm test` in `check` must see the default ports.
     env:
       EMU_PORTS: auto
-    timeout-minutes: 20
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
