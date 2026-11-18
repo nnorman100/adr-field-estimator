@@ -1,4 +1,5 @@
 import { sql } from 'drizzle-orm';
+import { isLockTimeout } from '@/db/client';
 import { holdAcrossOutsideCall, withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Role } from '@/lib/access';
 import { AccessStoreError, type AccessStore } from './store';
@@ -107,13 +108,6 @@ async function decisionVersion(tx: CompanyTransaction): Promise<number> {
   const version = Number(row?.version);
   if (!Number.isSafeInteger(version)) throw new ProjectionError('version_out_of_range');
   return version;
-}
-
-const LOCK_NOT_AVAILABLE = '55P03';
-
-function lockTimedOut(error: unknown): boolean {
-  const found = error as { code?: string; cause?: { code?: string } } | null;
-  return (found?.code ?? found?.cause?.code) === LOCK_NOT_AVAILABLE;
 }
 
 // A fixed code for the outbox row; never the error's text, which can quote ids or credentials.
@@ -225,7 +219,7 @@ async function projectOnce(
     });
   } catch (error) {
     if (claimed.length === 0) {
-      if (lockTimedOut(error)) return 'busy';
+      if (isLockTimeout(error)) return 'busy';
       throw error;
     }
     // The rows stay waiting; the next run after the back-off tries again.

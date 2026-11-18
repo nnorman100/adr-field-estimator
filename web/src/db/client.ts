@@ -73,6 +73,13 @@ export function isQueueTimeout(error: unknown): boolean {
   return (error as { code?: unknown } | null)?.code === 'QUEUE_TIMEOUT';
 }
 
+// A statement that waited longer than its lock limit for a row another transaction holds (55P03,
+// lock_not_available), as postgres.js reports it or as Drizzle wraps it.
+export function isLockTimeout(error: unknown): boolean {
+  const found = error as { code?: string; cause?: { code?: string } } | null;
+  return (found?.code ?? found?.cause?.code) === '55P03';
+}
+
 // How the app reaches Postgres, from the validated config only. On Cloud Run that is the Cloud SQL
 // instance mounted under /cloudsql, logging in as the service's IAM database user with a fresh
 // access token as the password (no password is stored anywhere); elsewhere it is DATABASE_URL.

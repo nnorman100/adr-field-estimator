@@ -465,6 +465,43 @@ describe('the worker', () => {
     expect(h.field.draft(h.seed.a, running.draftId)?.state).toBe('submitting');
   });
 
+  // Security audit F5: the 10 s lock limit (db/client.ts) ends a wait for a row another transaction
+  // holds; the pass leaves that row for the next one and repairs the rest.
+  it('leaves an expired attempt whose row is locked past the lock limit for the next pass, and repairs the rest', async () => {
+    const locked = await f.readyJob(ESTIMATOR_A, h.seed.a);
+    const free = await f.readyJob(ESTIMATOR_A, h.seed.a);
+    live.service = shortWindow();
+    h.field.gate.read = () => new Promise<void>(() => {});
+    void f.submitShown(ESTIMATOR_A, locked.jobId, locked.draftId, locked.manifest);
+    await until(() => h.field.draft(h.seed.a, locked.draftId)?.state === 'submitting', 'the first fence');
+    await until(() => h.field.gate.read === undefined, 'the first attempt stalled');
+    h.field.gate.read = () => new Promise<void>(() => {});
+    void f.submitShown(ESTIMATOR_A, free.jobId, free.draftId, free.manifest);
+    await until(() => h.field.draft(h.seed.a, free.draftId)?.state === 'submitting', 'the second fence');
+    await expire();
+
+    const release = latch();
+    let held = false;
+    const holder = h.admin.begin(async (sql) => {
+      await sql`SELECT id FROM job_submissions WHERE job_id = ${locked.jobId} FOR UPDATE`;
+      held = true;
+      await release.wait;
+    });
+    try {
+      await until(() => held, 'the row lock');
+      expect(await runSubmissionRepair(h.handle.db, h.field, { markerGraceSeconds: 0 })).toEqual({ aborted: 1, marked: 1, failed: 1 });
+    } finally {
+      release.open();
+      await holder;
+    }
+    expect((await f.submissions(locked.jobId)).map((row) => row.status)).toEqual(['pending']);
+    expect(h.field.draft(h.seed.a, locked.draftId)?.state).toBe('submitting');
+    expect(await f.expectOneOutcome(h.seed.a, free.jobId, free.draftId)).toBe('aborted');
+    expect(h.field.draft(h.seed.a, free.draftId)?.state).toBe('editing');
+    expect(await runSubmissionRepair(h.handle.db, h.field, { markerGraceSeconds: 0 })).toEqual({ aborted: 1, marked: 1, failed: 0 });
+    expect(await f.expectOneOutcome(h.seed.a, locked.jobId, locked.draftId)).toBe('aborted');
+  });
+
   it('writes a submitted marker the request could not, after the grace', async () => {
     const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
     h.field.failNext.markSubmitted = true;
