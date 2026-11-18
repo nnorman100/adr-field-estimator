@@ -81,14 +81,24 @@ describe('the bucket reader', () => {
       'q/a#1': {},
     };
     const first = bucketOf(objects, 2);
-    expect(await bucketEvidenceObjects(first.bucket).list('p/', 2)).toEqual({ names: ['p/a', 'p/b'], more: true });
+    expect(await bucketEvidenceObjects(first.bucket).list('p/', 2, 100)).toEqual({ names: ['p/a', 'p/b'], more: true });
     // p/b's second generation sits on the next bucket page; it is listed before the name is closed.
     expect(first.queries.map((query) => [query.prefix, query.pageToken])).toEqual([
       ['p/', undefined],
       ['p/', '2'],
     ]);
     const all = bucketOf(objects, 2);
-    expect(await bucketEvidenceObjects(all.bucket).list('p/', 10)).toEqual({ names: ['p/a', 'p/b', 'p/c', 'p/d'], more: false });
+    expect(await bucketEvidenceObjects(all.bucket).list('p/', 10, 100)).toEqual({ names: ['p/a', 'p/b', 'p/c', 'p/d'], more: false });
     expect(all.queries.every((query) => query.versions === true && query.autoPaginate === false)).toBe(true);
+  });
+
+  it('stops at the cap on version entries read, whatever the names, and says more follow', async () => {
+    // One name with five kept generations, then another name.
+    const objects: Record<string, Stored> = { 'p/b#1': {} };
+    for (let generation = 1; generation <= 5; generation += 1) objects[`p/a#${generation}`] = { live: generation === 5 };
+    const { bucket, queries } = bucketOf(objects, 2);
+    expect(await bucketEvidenceObjects(bucket).list('p/', 10, 4)).toEqual({ names: ['p/a'], more: true });
+    // Two bucket pages of two entries: the cap of four entries, never more.
+    expect(queries.map((query) => query.maxResults)).toEqual([4, 2]);
   });
 });

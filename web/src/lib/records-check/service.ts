@@ -79,9 +79,10 @@ export type CheckPage = {
 // How long a run's pages may follow its first one.
 export const RUN_HOURS = 1;
 
-// Rows and drafts per page, registry rows and agreements per page (each a bucket call), and the cap
-// on object names the one objects pass compares.
-export const PAGE_SIZES = { rows: 100, stats: 50, objects: 5000 };
+// Rows and drafts per page, registry rows and agreements per page (each a bucket call), and the two
+// caps on the one objects pass: the object names it compares and the version entries it reads (a
+// versioned listing gives one entry per kept generation).
+export const PAGE_SIZES = { rows: 100, stats: 50, objects: 5000, objectEntries: 15000 };
 // Object names looked up in the registry per query.
 const NAME_BATCH = 500;
 const STAT_CONCURRENCY = 8;
@@ -151,9 +152,6 @@ const partAfter = (part: Part): Cursor | null => {
 function nextById(part: Part, ids: string[], more: boolean): Cursor | null {
   return more ? { part, after: ids[ids.length - 1]! } : partAfter(part);
 }
-
-const afterId = (cursor: Cursor): string | null =>
-  typeof cursor.after === 'string' ? cursor.after : null;
 
 type PartResult = {
   checked: number;
@@ -232,7 +230,7 @@ export function recordsCheckService(
     runId: string | undefined,
     cursor: Cursor,
   ): Promise<PartResult> {
-    const after = afterId(cursor);
+    const after = cursor.after;
     switch (cursor.part) {
       case 'committed': {
         const rows = await read(operatorId, companyId, async (tx) => {
@@ -370,7 +368,7 @@ export function recordsCheckService(
       case 'objects': {
         await read(operatorId, companyId, (tx) => admitted(tx, operatorId, companyId, runId));
         const prefix = `companies/${companyId}/`;
-        const { names: page, more } = await objects.list(prefix, sizes.objects);
+        const { names: page, more } = await objects.list(prefix, sizes.objects, sizes.objectEntries);
         const keys = page.map((name) => objectIdsOf(companyId, name));
         const registered = await read(operatorId, companyId, async (tx) => {
           const found: { objectName: string }[] = [];

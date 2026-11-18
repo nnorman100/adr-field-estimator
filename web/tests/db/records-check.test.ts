@@ -411,7 +411,7 @@ describe('the records check reads only what the operator policy lets it read', (
 describe('a run', () => {
   it('finds nothing in a clean company, page by page, and writes one audit row for the run', async () => {
     await cleanCompany(h.seed.a, h.seed.ownerA.actor);
-    setPageSizes({ rows: 1, stats: 1, objects: 100 });
+    setPageSizes({ rows: 1, stats: 1, objects: 100, objectEntries: 1000 });
     const before = await everything(h.admin);
     const pages = await run(h.seed.a);
     expect(totals(pages)).toEqual(zeros());
@@ -448,7 +448,7 @@ describe('a run', () => {
     const clean = await cleanCompany(h.seed.a, h.seed.ownerA.actor);
     const planted = await plantDifferences(h.seed.a, clean);
     expectFound(await run(h.seed.a), planted, 1);
-    setPageSizes({ rows: 1, stats: 1, objects: 100 });
+    setPageSizes({ rows: 1, stats: 1, objects: 100, objectEntries: 1000 });
     expectFound(await run(h.seed.a), planted, 1);
     expect(await runRows()).toHaveLength(2);
   });
@@ -516,7 +516,7 @@ describe('a run', () => {
     await cleanCompany(h.seed.a, h.seed.ownerA.actor);
     const cleanB = await cleanCompany(h.seed.b, h.seed.ownerB.actor);
     const plantedB = await plantDifferences(h.seed.b, cleanB);
-    setPageSizes({ rows: 1, stats: 1, objects: 100 });
+    setPageSizes({ rows: 1, stats: 1, objects: 100, objectEntries: 1000 });
     const pages = await run(h.seed.a);
     expect(totals(pages)).toEqual(zeros());
     const answer = JSON.stringify(pages);

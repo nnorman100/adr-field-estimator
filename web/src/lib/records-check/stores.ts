@@ -31,9 +31,14 @@ export type EvidenceObjects = {
   // a restore that copied it back under a new live generation still finds it while it is kept.
   stat(name: string, generation: bigint): Promise<ObjectStat | null>;
   // Names under `prefix` that the bucket holds a readable generation of, live or kept (noncurrent),
-  // each once, in name order; at most `count` of them, and whether more follow. The bucket's own
-  // page tokens stay inside this call.
-  list(prefix: string, count: number): Promise<{ names: string[]; more: boolean }>;
+  // each once, in name order; at most `count` of them, and whether more follow. It reads at most
+  // `maxEntries` version entries: when that cap stops it first, the names so far come back with
+  // `more` set. The bucket's own page tokens stay inside this call.
+  list(
+    prefix: string,
+    count: number,
+    maxEntries: number,
+  ): Promise<{ names: string[]; more: boolean }>;
 };
 
 function markOf(data: Record<string, unknown> | undefined): DraftMark {
@@ -121,8 +126,9 @@ export function bucketEvidenceObjects(bucket: ListingBucket): EvidenceObjects {
       };
     },
 
-    async list(prefix, count) {
+    async list(prefix, count, maxEntries) {
       const names: string[] = [];
+      let entries = 0;
       let pageToken: string | undefined;
       // A versioned listing gives one entry per generation, in name order and then generation
       // order. This follows the bucket's page tokens until it has seen one name past the `count`
@@ -132,16 +138,18 @@ export function bucketEvidenceObjects(bucket: ListingBucket): EvidenceObjects {
         const [files, next] = await bucket.getFiles({
           prefix,
           versions: true,
-          maxResults: Math.min(1000, count + 1),
+          maxResults: Math.max(1, Math.min(1000, count + 1, maxEntries - entries)),
           autoPaginate: false,
           ...(pageToken === undefined ? {} : { pageToken }),
         });
+        entries += files.length;
         for (const { name } of files) {
           if (names[names.length - 1] !== name) names.push(name);
         }
         if (names.length > count) return { names: names.slice(0, count), more: true };
         pageToken = next?.pageToken;
         if (pageToken === undefined) return { names, more: false };
+        if (entries >= maxEntries) return { names, more: true };
       }
     },
   };
