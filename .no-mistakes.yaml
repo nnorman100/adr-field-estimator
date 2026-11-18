@@ -48,16 +48,16 @@ auto_fix:
 commands:
   # The run worktree starts with tracked files only, so install both packages.
   prepare: "npm ci --prefer-offline && npm --prefix web ci --prefer-offline"
-  # Root lint and vitest, then web type check, lint, unit tests and the Firebase
+  # Root format check, lint and vitest, then web type check, lint, unit tests and the Firebase
   # emulator suite (demo- project only, needs Java 21+, takes a few minutes). Only test:emu gets
   # EMU_PORTS=auto (free emulator ports per run, so concurrent runs never collide); the unit
   # step must see the defaults.
-  test: "npm run lint && npx vitest run && npm --prefix web run typecheck && npm --prefix web run lint && npm --prefix web test && EMU_PORTS=auto npm --prefix web run test:emu"
+  test: "npm run format:check && npm run lint && npx vitest run && npm --prefix web run typecheck && npm --prefix web run lint && npm --prefix web test && EMU_PORTS=auto npm --prefix web run test:emu"
 
 test:
   instructions: |
-    Testing in the pipeline: the local test run is exactly `npm run lint`,
-    `npx vitest run`, `npm --prefix web run typecheck`, `npm --prefix web run
+    Testing in the pipeline: the local test run is exactly `npm run format:check`,
+    `npm run lint`, `npx vitest run`, `npm --prefix web run typecheck`, `npm --prefix web run
     lint`, `npm --prefix web test` (unit) and `EMU_PORTS=auto npm --prefix web
     run test:emu` (Firebase emulators on free ports). Do not run `npm run test:db`, `npm run test:e2e`,
     `npm run test:browser`, `npm run build`, the root Firestore emulator suites

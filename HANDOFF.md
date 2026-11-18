@@ -81,14 +81,8 @@ sweep off.
 
 ## Rules that decide what you may do
 
-- The owner approves every merge: agents ask before merging any PR and nothing merges
-  automatically (D-009, kept on Nov 9, 2026; D-012 in `docs/DECISIONS.md`). High-risk
-  work needs two separate independent reviews on top of the pipeline review, from models that did not write the code. Deploys run to test first, then live. Still owner-only:
-  anything that deletes data, cannot be undone, or changes security or permissions (IAM, secrets,
-  Firebase Auth settings); turning on deletion or new pricing; and production steps the owner
-  runs.
-- Never run a blanket `firebase deploy`; only `firebase deploy --only hosting:alert-disaster --project alert-disaster-field-2026`
-  after the backend is deployed.
+- Who may merge, how releases run and what stays owner-only are set in `AGENTS.md` ("Hard
+  rules" and "Risk and merging"); this file does not copy them.
 - Never weaken a test, eval fixture, threshold or workflow; the Test guard blocks it.
 - Keep `index.html` and `public/index.html` identical.
 - Required docs (`README.md`, `CLAUDE.md`, `AGENTS.md`, this file, `docs/spec.md`,
