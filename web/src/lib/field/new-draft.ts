@@ -5,23 +5,21 @@
 // person's own Finish, also when that job was archived after: that path is Back to editing (J4). The
 // server is asked first (journal-sync.ts refusalNow), never the reason last recorded.
 //
-// The new job's and draft's ids come from the person and the draft the edits were refused for
-// (newDraftIds), so they are chosen before the first send, survive a closed app with nothing more to
-// store, and every try for that draft makes one job (POST /api/jobs answers the same job for the
-// same ids and body), also when a later refusal joins the edits. What the copy put into the new draft
-// is recorded on the phone (journal.ts saveCopy). A later recovery into it writes the later refused
-// edits only, and each field only while the new draft still holds what the copy put there (journal.ts
-// mergeFields, checked in the transaction that writes them): a field changed since keeps its value
-// and is kept here as changed on another device. The first copy is judged the same way against the
-// new draft as POST /api/jobs makes it, so a copy that landed before its record was saved is not
-// written again.
+// One copy per refused draft: the new job's and draft's ids come from the person and the draft the
+// edits were refused for (newDraftIds), so they are chosen before the first send, survive a closed
+// app with nothing more to store, and every try makes one job (POST /api/jobs answers the same job
+// for the same ids and body). The copy is written in one transaction, only into a new draft still as
+// POST /api/jobs made it (journal.ts copyVerdict); one that already holds it is saved. A copy is never
+// merged into: once that new draft holds anything else (an earlier copy, work made on it since), the
+// edits can go into another new draft of their own ('another'), whose ids also come from the edits
+// themselves, so each try of those edits makes one job too.
 // Photo references are not copied: a photo id is registered to its job and cannot be used under
 // another one, and photo bytes are not kept on the phone until the photo queue (S6-5).
 import { collection, doc, getDocFromCache, getDocFromServer, getDocsFromCache, runTransaction } from 'firebase/firestore';
 import { fieldUser, type FieldClient } from '@/lib/field-db';
 import { createJob } from './api';
 import { discardEntries, refusalNow } from './journal-sync';
-import { appendEntry, jobOf, mergeFields, readCopy, rejectEntry, saveCopy, type DocWrite, type JournalEntry, type Owner } from './journal';
+import { copyVerdict, jobOf, rejectEntry, type DocWrite, type JournalEntry, type Owner } from './journal';
 import { draftPath, stageWrites, type DraftRef } from './store';
 
 function uuidOf(bytes: Uint8Array): string {
@@ -34,9 +32,10 @@ function uuidOf(bytes: Uint8Array): string {
 }
 
 // The new job's and draft's ids for the person's refused edits of one draft: the same person and
-// draft always give the same ids.
-export async function newDraftIds(owner: Owner, draftPath: string): Promise<{ jobId: string; draftId: string }> {
-  const text = JSON.stringify({ tenantId: owner.tenantId, uid: owner.uid, draftPath });
+// draft always give the same ids. With `entries` (another new draft): the ids of those edits too.
+export async function newDraftIds(owner: Owner, draftPath: string, entries?: readonly Pick<JournalEntry, 'id'>[]): Promise<{ jobId: string; draftId: string }> {
+  const ids = entries ? entries.map((entry) => entry.id).sort() : undefined;
+  const text = JSON.stringify({ tenantId: owner.tenantId, uid: owner.uid, draftPath, ...(ids ? { ids } : {}) });
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)));
   return { jobId: uuidOf(digest.subarray(0, 16)), draftId: uuidOf(digest.subarray(16, 32)) };
 }
@@ -85,6 +84,8 @@ export type SaveAsNew =
   | { kind: 'saved'; jobId: string }
   // The draft is not kept on this phone, so there is nothing to copy.
   | { kind: 'not-kept' }
+  // The new draft for these edits holds other work (an earlier copy): they can go into another one.
+  | { kind: 'exists' }
   // No answer from the server: the same ids are sent again on the next try.
   | { kind: 'no-answer' }
   | { kind: 'refused'; message: string };
@@ -104,18 +105,12 @@ async function cachedDraft(client: FieldClient, path: string): Promise<CachedDra
   }
 }
 
-// The first copy's writes (copyWrites) from the cached draft; null when the draft is not kept here.
-async function firstCopy(client: FieldClient, entries: readonly JournalEntry[], oldPath: string, newPath: string): Promise<DocWrite[] | null> {
-  const cached = await cachedDraft(client, oldPath);
-  return cached ? copyWrites(cached, entries, oldPath, newPath) : null;
-}
-
 // Asks the server whether these refused edits of one draft may still go into a new draft (archived
 // while being edited, or the field work moved); makes the new job (POST /api/jobs, which makes its
-// draft with this person as its field owner); writes the copy, or a later recovery, into it in one
-// transaction (journal.ts mergeFields), records what it put there, keeps each field changed since as
-// changed on another device, then drops the refused entries: the server has the work now.
-export async function saveAsNewDraft(client: FieldClient, entries: readonly JournalEntry[]): Promise<SaveAsNew> {
+// draft with this person as its field owner); writes the copy into it in one transaction, only while
+// it is as made (journal.ts copyVerdict), then drops the refused entries: the server has the work
+// now. `another`: into another new draft of their own, once the first one holds other work.
+export async function saveAsNewDraft(client: FieldClient, entries: readonly JournalEntry[], another = false): Promise<SaveAsNew> {
   const first = entries[0];
   const user = fieldUser(client.person);
   const companyId = first ? /^companies\/([^/]+)\//.exec(first.draftPath)?.[1] : undefined;
@@ -128,33 +123,31 @@ export async function saveAsNewDraft(client: FieldClient, entries: readonly Jour
     return { kind: 'refused', message: 'These changes cannot be saved as a new draft: the reason above changed.' };
   }
   const owner: Owner = { tenantId: client.person.tenantId, uid: client.person.uid };
-  const { jobId, draftId } = await newDraftIds(owner, first.draftPath);
+  const { jobId, draftId } = await newDraftIds(owner, first.draftPath, another ? entries : undefined);
   const ref: DraftRef = { companyId, draftId };
   const newPath = draftPath(ref);
-  const record = await readCopy(owner, newPath);
-  const writes = record ? movedWrites(entries, first.draftPath, newPath) : await firstCopy(client, entries, first.draftPath, newPath);
+  const cached = await cachedDraft(client, first.draftPath);
+  const writes = cached ? copyWrites(cached, entries, first.draftPath, newPath) : null;
   if (!writes) return { kind: 'not-kept' };
   const answer = await createJob(user, { id: jobId, draftId, propertyAddress: '' });
   if (!answer.ok) return answer.status === 0 || answer.status >= 500 ? { kind: 'no-answer' } : { kind: 'refused', message: answer.message };
-  // Before the first copy, the new draft as POST /api/jobs makes it.
-  const base = record ?? new Map([[newPath, { field: {} }]]);
-  let plan: ReturnType<typeof mergeFields>;
+  let verdict: ReturnType<typeof copyVerdict>;
   try {
-    plan = await runTransaction(client.db, async (transaction) => {
+    verdict = await runTransaction(client.db, async (transaction) => {
       const server = new Map<string, Record<string, unknown> | null>();
-      for (const path of new Set(writes.map((write) => write.path))) {
+      for (const path of new Set([newPath, ...writes.map((write) => write.path)])) {
         const snapshot = await transaction.get(doc(client.db, path));
         server.set(path, snapshot.exists() ? snapshot.data() : null);
       }
-      const found = mergeFields(writes, base, server);
-      stageWrites(client.db, transaction, found.write);
+      const found = copyVerdict(writes, newPath, server);
+      if (found === 'write') stageWrites(client.db, transaction, writes);
       return found;
     });
   } catch {
     return { kind: 'no-answer' };
   }
-  await saveCopy(owner, newPath, plan.copied);
-  for (const field of plan.changed) await appendEntry(owner, newPath, [field], {}, { jobId, state: 'changed' });
+  // Another new draft is these edits' own: anything in it is their copy, made on an earlier try.
+  if (verdict === 'exists' && !another) return { kind: 'exists' };
   // The new draft into this phone's cache, so its screen opens on it.
   await getDocFromServer(doc(client.db, newPath)).catch(() => undefined);
   await discardEntries(client, entries);

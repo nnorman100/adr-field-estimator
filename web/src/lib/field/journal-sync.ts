@@ -184,29 +184,35 @@ async function jobNow(client: FieldClient, jobId: string | null): Promise<JobNow
   return answer.denied ? 'denied' : NO_ANSWER;
 }
 
+type Classified = { reason: RejectReason | null | 'unknown'; jobId: string | null };
+
 // Why the server refuses this person's edits to the draft at `path` now (journal.ts refusalOf), from
 // its copy of the draft (`draft`, read here when not given), the person's role (`role`, likewise) and,
-// when those leave it open, the job: `jobId`, else the one the draft names.
+// when those leave it open, the job: `jobId`, else the one the draft names. `jobId` in the answer:
+// the given one, else the one the server's copy of the draft names (null: neither).
 async function classify(
   client: FieldClient,
   path: string,
   jobId: string | null,
   read?: { draft: ServerDoc | null; role: RoleNow },
-): Promise<RejectReason | null | 'unknown'> {
+): Promise<Classified> {
   const [draft, role]: [ServerDoc | null, RoleNow] = read ? [read.draft, read.role] : await Promise.all([readServer(client.db, path), roleNow(client)]);
   const uid = client.person.uid;
-  if (!jobDecides(draft, uid, role)) return refusalOf(draft, path, uid, role, null);
-  const named = draft && 'data' in draft && typeof draft.data.jobId === 'string' ? draft.data.jobId : null;
-  return refusalOf(draft, path, uid, role, await jobNow(client, jobId ?? named));
+  const job = jobId ?? (draft && 'data' in draft && typeof draft.data.jobId === 'string' ? draft.data.jobId : null);
+  if (!jobDecides(draft, uid, role)) return { reason: refusalOf(draft, path, uid, role, null), jobId: job };
+  return { reason: refusalOf(draft, path, uid, role, await jobNow(client, job)), jobId: job };
 }
 
-// Records an entry the server refused: rejected with the reason the server gives now (classify), or
-// kept refused, its reason not known yet, when that could not be read (Firstmate ruling R1,
-// 2026-11-17). Either way it is never sent again. True when the reason is known.
+// Records an entry the server refused: refused at once, so it is never sent again, also when the page
+// closes before its reason is read; then rejected with the reason the server gives now (classify),
+// or kept refused, its reason not known yet, when that could not be read (Firstmate ruling R1,
+// 2026-11-17). True when the reason is known.
 async function refuse(client: FieldClient, entry: JournalEntry): Promise<boolean> {
-  const reason = await classify(client, entry.draftPath, entry.jobId ?? null);
-  await (reason && reason !== 'unknown' ? rejectEntry(entry, reason) : markRefused(entry));
-  return Boolean(reason && reason !== 'unknown');
+  await markRefused(entry);
+  const { reason, jobId } = await classify(client, entry.draftPath, entry.jobId ?? null);
+  if (!reason || reason === 'unknown') return false;
+  await rejectEntry(entry, reason, jobId);
+  return true;
 }
 
 function follow(client: FieldClient, entry: JournalEntry, acknowledged: Promise<void>): void {
@@ -303,6 +309,7 @@ const judging = new Map<string, Promise<void>>();
 
 // Each time the sync gate opens. Entries the server refused before their reason could be read are
 // classified now (classify), and never sent; one still unread stays refused, for the next opening.
+// So is an entry rejected before its job was kept (S6-4a), with the job the server's draft names.
 // Once per page and person (with a cache that keeps entries on the phone), also what became of the
 // entries an earlier page left pending: waits for Firestore to send its queue, then reads each
 // entry's documents and draft from the server, asks the server for the person's role, and judges
@@ -325,7 +332,7 @@ export function reconcileJournal(client: FieldClient): Promise<void> {
   const run = (async () => {
     const entries = await readJournal(owner);
     let judged = replay ? entries.filter(earlier) : [];
-    const unresolved = entries.filter((entry) => entry.state === 'refused');
+    const unresolved = entries.filter((entry) => entry.state === 'refused' || (entry.state === 'rejected' && !entry.jobId));
     if (judged.length === 0 && unresolved.length === 0) {
       if (replay) done();
       return;
@@ -342,7 +349,7 @@ export function reconcileJournal(client: FieldClient): Promise<void> {
     );
     const role = await roleNow(client);
     judged = judged.filter(earlier);
-    const reasons = new Map<string, RejectReason | null | 'unknown'>();
+    const reasons = new Map<string, Classified>();
     for (const path of drafts) {
       const mine = [...judged, ...unresolved].filter((entry) => entry.draftPath === path);
       reasons.set(path, await classify(client, path, jobOf(mine), { draft: read.get(path) ?? null, role }));
@@ -350,15 +357,15 @@ export function reconcileJournal(client: FieldClient): Promise<void> {
     const outcomes = judge(judged, sentHere.get(key) ?? [], read, read, owner.uid, role);
     let complete = true;
     for (const entry of unresolved) {
-      const reason = reasons.get(entry.draftPath);
-      if (reason && reason !== 'unknown') await rejectEntry(entry, reason);
+      const { reason, jobId } = reasons.get(entry.draftPath)!;
+      if (reason && reason !== 'unknown') await rejectEntry(entry, reason, jobId);
     }
     const reissued: JournalEntry[] = [];
     for (const entry of judged) {
-      const reason = reasons.get(entry.draftPath);
+      const { reason, jobId } = reasons.get(entry.draftPath)!;
       const outcome = outcomes.get(entry.seq);
       if (reason === 'unknown' || !outcome) complete = false;
-      else if (reason) await rejectEntry(entry, reason);
+      else if (reason) await rejectEntry(entry, reason, jobId);
       else if (outcome.kind === 'acked') await removeEntry(entry);
       else if (outcome.kind === 'changed') await markChanged(entry);
       else if (outcome.kind === 'reissue') reissued.push(entry);
@@ -379,7 +386,7 @@ export function reconcileJournal(client: FieldClient): Promise<void> {
 // access, the server's copy of the draft and, where it decides, the job. null: it takes them now;
 // 'no-answer' when one of those did not answer.
 export async function refusalNow(client: FieldClient, path: string, jobId: string | null): Promise<RejectReason | null | 'no-answer'> {
-  const reason = await classify(client, path, jobId);
+  const { reason } = await classify(client, path, jobId);
   return reason === 'unknown' ? 'no-answer' : reason;
 }
 

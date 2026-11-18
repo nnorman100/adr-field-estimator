@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   appendEntry,
+  copyVerdict,
   draftRefusal,
   heldOf,
   jobDecides,
   journalInMemory,
-  mergeFields,
   NO_ANSWER,
   readJournal,
   refusalOf,
@@ -19,7 +19,7 @@ import {
   type RejectReason,
 } from '@/lib/field/journal';
 import { copyWrites, newDraftIds } from '@/lib/field/new-draft';
-import { chipText, syncStatus } from '@/lib/field/sync-status';
+import { changedFields, chipText, syncStatus } from '@/lib/field/sync-status';
 
 // What the field screens' sync chip and "Can't save" sheet offer (S6-4b; docs/plans/S6/S6-4.md),
 // what Save as new draft writes, and what Try again sends.
@@ -107,8 +107,8 @@ describe('why the server refuses, from its copy of the draft and the job', () =>
     const denied = { denied: true } as const;
     expect(jobDecides(denied, 'ana', 'estimator')).toBe(true);
     expect(refusalOf(denied, DRAFT, 'ana', 'estimator', job('draft'))).toBe('owner-changed');
-    // Finished on another device, then moved and archived: no copy.
-    for (const now of ['gone', 'denied', job('archived')] as const) expect(refusalOf(denied, DRAFT, 'ana', 'estimator', now)).toBe('no-access');
+    // Finished on another device, then moved and archived (410), or not shown to them: no copy.
+    for (const now of ['gone', 'denied'] as const) expect(refusalOf(denied, DRAFT, 'ana', 'estimator', now)).toBe('no-access');
     expect(refusalOf(denied, DRAFT, 'ana', 'estimator', job('submitted'))).toBe('locked');
     expect(refusalOf(denied, DRAFT, 'ana', 'estimator', job('draft', 'newer'))).toBe('locked');
     expect(refusalOf(denied, DRAFT, 'ana', 'estimator', NO_ANSWER)).toBe('unknown');
@@ -156,6 +156,15 @@ describe('Save as new draft', () => {
     expect(await newDraftIds({ tenantId: 't', uid: 'ben' }, DRAFT)).not.toEqual(first);
   });
 
+  it('makes another new draft its own ids from the edits it holds, the same for the same edits', async () => {
+    const owner = { tenantId: 't', uid: 'ana' };
+    const first = await newDraftIds(owner, DRAFT);
+    const another = await newDraftIds(owner, DRAFT, [{ id: 'op2' }, { id: 'op1' }]);
+    expect(another).not.toEqual(first);
+    expect(await newDraftIds(owner, DRAFT, [{ id: 'op1' }, { id: 'op2' }])).toEqual(another);
+    expect(await newDraftIds(owner, DRAFT, [{ id: 'op3' }])).not.toEqual(another);
+  });
+
   it('copies the cached draft and rooms as cached, scope approval too, then the refused edits, onto the new draft, without photos', () => {
     const NEW = 'companies/c/drafts/n';
     const edits = entry('rejected', 'owner-changed', [
@@ -184,43 +193,43 @@ describe('Save as new draft', () => {
   });
 });
 
-describe('Save as new draft into a new draft the copy wrote before', () => {
+describe('Save as new draft writes one copy into a new draft, never into one that holds other work', () => {
   const NEW = 'companies/c/drafts/n';
   const docs = (all: Record<string, Record<string, unknown> | null>) => new Map(Object.entries(all));
-  const year = (value: unknown): DocWrite => ({ path: NEW, op: 'update', fields: { 'field.yearBuilt': value } });
+  const room: DocWrite = { path: `${NEW}/rooms/r1`, op: 'set', data: { field: { name: 'Kitchen' } } };
+  const copy: DocWrite[] = [{ path: NEW, op: 'update', fields: { 'field.yearBuilt': 1962, 'field.roomOrder': ['r1'] } }, room];
 
-  it('writes a later refused edit only where the new draft still holds what the copy put there', () => {
-    const copied = docs({ [NEW]: { field: { yearBuilt: 1962, notes: 'copied' } } });
-    const later: DocWrite[] = [year(1965), { path: NEW, op: 'update', fields: { 'field.notes': 'later' } }];
-    // The person changed the year on the new draft since; the notes are as copied.
-    const plan = mergeFields(later, copied, docs({ [NEW]: { state: 'editing', field: { yearBuilt: 1970, notes: 'copied' } } }));
-    expect(plan.write).toEqual([{ path: NEW, op: 'update', fields: { 'field.notes': 'later' } }]);
-    expect(plan.changed).toEqual([year(1965)]);
-    expect(plan.copied.get(NEW)).toEqual({ field: { yearBuilt: 1962, notes: 'later' } });
+  it('writes the copy into the new draft as POST /api/jobs made it', () => {
+    expect(copyVerdict(copy, NEW, docs({ [NEW]: { state: 'editing', field: {} }, [room.path]: null }))).toBe('write');
   });
 
-  it('never takes a field emptied on the new draft since the copy for one nobody touched', () => {
-    const copied = docs({ [NEW]: { field: { yearBuilt: 1962 } } });
-    const plan = mergeFields([year(1965)], copied, docs({ [NEW]: { field: {} } }));
-    expect(plan).toMatchObject({ write: [], changed: [year(1965)] });
+  it('writes nothing again when that copy already landed (an answer lost after the commit)', () => {
+    expect(copyVerdict(copy, NEW, docs({ [NEW]: { field: { yearBuilt: 1962, roomOrder: ['r1'] } }, [room.path]: { field: { name: 'Kitchen' } } }))).toBe('held');
   });
 
-  it('writes the first copy into the new draft as it was made, and nothing again when that copy already landed', () => {
-    const made = docs({ [NEW]: { field: {} } });
-    const room: DocWrite = { path: `${NEW}/rooms/r1`, op: 'set', data: { field: { name: 'Kitchen' } } };
-    const copy: DocWrite[] = [year(1962), room];
-    const first = mergeFields(copy, made, docs({ [NEW]: { field: {} }, [room.path]: null }));
-    expect(first).toMatchObject({ write: [year(1962), room], changed: [] });
-    const again = mergeFields(copy, made, docs({ [NEW]: { field: { yearBuilt: 1962 } }, [room.path]: { field: { name: 'Kitchen' } } }));
-    expect(again).toMatchObject({ write: [], changed: [] });
-    expect(again.copied).toEqual(first.copied);
+  it('never writes over a new draft changed since the copy, or holding an earlier copy', () => {
+    // Another device cleared the year on the new draft after the copy landed.
+    expect(copyVerdict(copy, NEW, docs({ [NEW]: { field: { roomOrder: ['r1'] } }, [room.path]: { field: { name: 'Kitchen' } } }))).toBe('exists');
+    // A later refusal of the same draft, after the first copy holds other values.
+    const later: DocWrite[] = [{ path: NEW, op: 'update', fields: { 'field.notes': 'later' } }];
+    expect(copyVerdict(later, NEW, docs({ [NEW]: { field: { yearBuilt: 1962 } } }))).toBe('exists');
+    // A room of the copy that is there already, with the field map still empty.
+    expect(copyVerdict(copy, NEW, docs({ [NEW]: { field: {} }, [room.path]: { field: { name: 'Den' } } }))).toBe('exists');
   });
+});
 
-  it('never updates a room deleted on the new draft since: it is changed', () => {
-    const path = `${NEW}/rooms/r1`;
-    const copied = docs({ [NEW]: { field: {} }, [path]: { field: { name: 'Kitchen' } } });
-    const rename: DocWrite = { path, op: 'update', fields: { 'field.name': 'Den' } };
-    expect(mergeFields([rename], copied, docs({ [path]: null }))).toMatchObject({ write: [], changed: [rename] });
+describe('Changed on another device names each field', () => {
+  it('lists the job’s fields and the rooms the edits change, each once, in the order made', () => {
+    const edits = [
+      entry('changed', undefined, [{ path: DRAFT, op: 'update', fields: { 'field.yearBuilt': 1962, 'field.notes': 'x' } }]),
+      entry('changed', undefined, [
+        { path: `${DRAFT}/rooms/r2`, op: 'set', data: { field: { name: 'Hall' } } },
+        { path: `${DRAFT}/rooms/r1`, op: 'update', fields: { 'field.floorSf': 120 } },
+        { path: `${DRAFT}/rooms/r3`, op: 'delete' },
+        { path: DRAFT, op: 'update', fields: { 'field.roomOrder': ['r1', 'r2'], 'field.yearBuilt': 1965 } },
+      ]),
+    ];
+    expect(changedFields(edits)).toEqual(['Year built', 'Notes', 'Room Hall', 'A room’s floor area (sq ft)', 'A room removed', 'Room order']);
   });
 });
 

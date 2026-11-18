@@ -3,6 +3,7 @@
 // words for the phone's work: Saved (the server has it), Saved on this phone (waiting to send) and
 // Can't save (refused, with the reason and what to do). An edit the server holds other values for,
 // with no refusal, is "Changed on another device", never "Can't save".
+import { FACT_FIELDS, ROOM_FIELDS } from './forms';
 import { jobOf, type JournalEntry, type RejectReason } from './journal';
 
 export type ProblemReason = 'finished' | Exclude<RejectReason, 'locked'> | 'unknown' | 'changed';
@@ -117,26 +118,57 @@ export const REASONS: Record<ProblemReason, { short: string; title: string; text
   'role-changed': {
     short: 'your role changed',
     title: 'Your role no longer changes field work',
-    text: 'These changes were not saved. They stay on this phone: Try again once the company owner gives you back a role that does field work, or discard them.',
+    text: 'These changes were not saved. Try again once the company owner gives you back a role that does field work, or discard them.',
   },
   'no-access': {
     short: 'no access',
     title: 'You no longer have access to this job',
-    text: 'These changes were not saved. They stay on this phone: Try again once the company owner gives you access again, or discard them.',
+    text: 'These changes were not saved. Try again once the company owner gives you access again, or discard them.',
   },
   unknown: {
     short: 'checking why',
     title: 'DryScope did not accept these changes',
-    text: 'The reason is checked the next time this phone has a signal. They stay on this phone until then: Try again, or discard them.',
+    text: 'The reason is checked the next time this phone has a signal. Try again, or discard them.',
   },
   changed: {
     short: 'changed on another device',
     title: CHANGED_ELSEWHERE,
-    text: 'This job was changed on another device after these changes were made here, so they were not sent and the other device’s version is kept. Discard them, and make them again if they are still needed.',
+    text: 'This job was changed on another device after these changes were made here, so DryScope keeps the other device’s version. Discard removes these changes from this phone; make them again if they are still needed.',
   },
 };
 
 // A finished job that was archived after: Finish and review opens only once it is restored.
-export const RESTORE_FIRST = 'This job is archived too: the company owner must restore it before Finish and review opens.';
+export const RESTORE_FIRST =
+  'These changes reached DryScope after the job was finished, so they were not saved. This job is archived too: the company owner must restore it before Finish and review opens. Then tap Back to editing there and make them again.';
+
+// Where the refused and changed edits are kept: on this phone, or (Online only) on this page only.
+export function keptText(onPhone: boolean): string {
+  return onPhone
+    ? 'These changes stay on this phone until they are sent or discarded.'
+    : 'Online only keeps nothing on this phone: these changes go when this page closes.';
+}
+
+const FACT_LABELS = new Map<string, string>([...FACT_FIELDS.map((field) => [field.key, field.label] as const), ['roomOrder', 'Room order'], ['summary', 'Summary']]);
+const ROOM_LABELS = new Map<string, string>(ROOM_FIELDS.map((field) => [field.key, field.label]));
+
+// What edits change, by name, in the order they were made, each once: the job's fields, a room's
+// (added, removed, or one of its fields), and a photo's room and tag.
+export function changedFields(entries: readonly JournalEntry[]): string[] {
+  const names = new Set<string>();
+  for (const entry of [...entries].sort((a, b) => a.seq - b.seq)) {
+    for (const write of entry.writes) {
+      const rest = write.path.startsWith(`${entry.draftPath}/`) ? write.path.slice(entry.draftPath.length + 1).split('/') : [];
+      const keys = write.op === 'update' ? Object.keys(write.fields).map((key) => key.replace(/^field\./, '')) : [];
+      if (write.path === entry.draftPath) for (const key of keys) names.add(FACT_LABELS.get(key) ?? key);
+      else if (rest[0] === 'photos') names.add('A photo’s room and tag');
+      else if (rest[0] === 'rooms' && write.op === 'delete') names.add('A room removed');
+      else if (rest[0] === 'rooms' && write.op === 'set') {
+        const name = (write.data.field as { name?: unknown } | undefined)?.name;
+        names.add(typeof name === 'string' && name ? `Room ${name}` : 'A room added');
+      } else if (rest[0] === 'rooms') for (const key of keys) names.add(`A room’s ${(ROOM_LABELS.get(key) ?? key).toLowerCase()}`);
+    }
+  }
+  return [...names];
+}
 
 export const PHOTOS_STAY = 'Photos stay with the old job: they are not copied to the new draft.';

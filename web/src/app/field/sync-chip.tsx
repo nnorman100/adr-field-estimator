@@ -9,9 +9,9 @@ import { watchJournal, type JournalEntry } from '@/lib/field/journal';
 import { discardEntries, journalFailed, readEntries, tryAgain } from '@/lib/field/journal-sync';
 import { saveAsNewDraft } from '@/lib/field/new-draft';
 import { pending } from '@/lib/field/pending';
-import { byDraft, chipText, PHOTOS_STAY, REASONS, RESTORE_FIRST, syncStatus, type Problem, type SyncStatus } from '@/lib/field/sync-status';
+import { byDraft, changedFields, chipText, keptText, PHOTOS_STAY, REASONS, RESTORE_FIRST, syncStatus, type Problem, type SyncStatus } from '@/lib/field/sync-status';
 import { useFieldClient } from './field-store';
-import { photoReferenceSaved } from './photos-view';
+import { photoReferenceDone } from './photos-view';
 import { go, Outcome } from './ui';
 
 // The sync chip on every field screen and its "Can't save" sheet (S6-4b; docs/plans/S6/S6-4.md),
@@ -25,9 +25,12 @@ export const DISCARD_TITLE = 'Discard these changes?';
 export const DISCARD_CONFIRM = 'Discard changes';
 export const DISCARD_KEEP = 'Keep them';
 export const SAVE_AS_NEW = 'Save as new draft';
+export const SAVE_AS_ANOTHER = 'Save as another new draft';
 
-// How a panel names its job: the address this page last read for it, else the start of its id.
-function jobLabel(problem: Problem): string {
+// How a panel names its job: the address this page last read for it, else the start of its id; none
+// once the server refused this person the job (no access), so nothing of it is shown.
+function jobLabel(problem: Problem): string | null {
+  if (problem.reason === 'no-access') return null;
   const address = problem.jobId ? pending.detail(problem.jobId)?.job.propertyAddress : '';
   if (address) return address;
   return problem.jobId ? `Job ${problem.jobId.slice(0, 8)}` : `Draft ${problem.draftPath.split('/').at(-1)?.slice(0, 8) ?? ''}`;
@@ -37,6 +40,8 @@ export function SyncChip({ me }: { me: DsMe }) {
   const field = useFieldClient();
   const client = field?.client ?? null;
   const [status, setStatus] = useState<SyncStatus | null>(null);
+  // How many times the sheet was opened: each opening asks the server again what it offers.
+  const [opened, setOpened] = useState(0);
   const sheet = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const canSaveAsNew =
@@ -95,7 +100,10 @@ export function SyncChip({ me }: { me: DsMe }) {
           <button
             type="button"
             className="inline-flex min-h-11 items-center rounded-full border border-input bg-accent px-4 text-base font-medium"
-            onClick={() => sheet.current?.showModal()}
+            onClick={() => {
+              setOpened((count) => count + 1);
+              sheet.current?.showModal();
+            }}
           >
             {text}
           </button>
@@ -120,6 +128,7 @@ export function SyncChip({ me }: { me: DsMe }) {
               problem={problem}
               me={me}
               online={online}
+              opened={opened}
               onLeave={() => sheet.current?.close()}
             />
           ))}
@@ -138,11 +147,13 @@ function ProblemPanel({
   problem,
   me,
   online,
+  opened,
   onLeave,
 }: {
   problem: Problem;
   me: DsMe;
   online: boolean;
+  opened: number;
   onLeave: () => void;
 }) {
   const field = useFieldClient();
@@ -155,22 +166,26 @@ function ProblemPanel({
   const client = field?.client;
   const count = problem.entries.length;
   const label = jobLabel(problem);
+  // Once the new draft for these edits holds other work: they can go into another one of their own.
+  const [another, setAnother] = useState(false);
 
   // A finished job: Finish and review is offered once the job answers (it opens there), and an
-  // archived one (410) says the owner must restore it first.
-  const [finishOpen, setFinishOpen] = useState<boolean | null>(null);
+  // archived one (410) says the owner must restore it first; asked again at each opening of the
+  // sheet, and only that opening's answer counts.
+  const [finish, setFinish] = useState<{ opened: number; open: boolean } | null>(null);
+  const finishOpen = finish?.opened === opened ? finish.open : null;
   const finishedJob = problem.reason === 'finished' ? problem.jobId : null;
   useEffect(() => {
     const user = client ? fieldUser(client.person) : null;
     if (!finishedJob || !online || !user) return;
     let live = true;
     void readJob(user, finishedJob).then((answer) => {
-      if (live && (answer.ok || answer.status === 410)) setFinishOpen(answer.ok);
+      if (live && (answer.ok || answer.status === 410)) setFinish({ opened, open: answer.ok });
     }, () => undefined);
     return () => {
       live = false;
     };
-  }, [client, finishedJob, online]);
+  }, [client, finishedJob, online, opened]);
 
   async function run(label: string, work: () => Promise<string | null>) {
     if (!client || busy) return;
@@ -186,17 +201,24 @@ function ProblemPanel({
     }
   }
 
+  // A photo reference these edits set leaves the photos being sent: it was sent, or discarded.
+  const photosDone = (edits: readonly JournalEntry[]) => {
+    const jobId = edits.find((entry) => entry.jobId)?.jobId;
+    if (!client || !jobId) return;
+    for (const write of edits.flatMap((entry) => entry.writes)) {
+      const photo = /\/photos\/([^/]+)$/.exec(write.path)?.[1];
+      if (photo && write.op === 'set') photoReferenceDone(client, jobId, photo);
+    }
+  };
+
   // The edits are saved: the job's open screen reads the job and its draft again (the job was
-  // restored, or its field work came back), and a photo reference sent leaves the photos being sent.
+  // restored, or its field work came back).
   const sent = (edits: readonly JournalEntry[]) => {
     const jobId = edits.find((entry) => entry.jobId)?.jobId;
     if (!client || !jobId) return;
     pending.returned(jobId);
     pending.verify(jobId);
-    for (const write of edits.flatMap((entry) => entry.writes)) {
-      const photo = /\/photos\/([^/]+)$/.exec(write.path)?.[1];
-      if (photo && write.op === 'set') photoReferenceSaved(client, jobId, photo);
-    }
+    photosDone(edits);
   };
 
   const again = () =>
@@ -218,9 +240,13 @@ function ProblemPanel({
       if (!online) return 'Needs a connection';
       let made: string | null = null;
       for (const edits of byDraft(problem.entries)) {
-        const answer = await saveAsNewDraft(client!, edits);
+        const answer = await saveAsNewDraft(client!, edits, another);
         if (answer.kind === 'saved') made = answer.jobId;
         else if (answer.kind === 'not-kept') return 'This job’s field work is not kept on this phone, so there is nothing to copy.';
+        else if (answer.kind === 'exists') {
+          setAnother(true);
+          return 'A new draft was already saved from this job. Save these changes as another new draft, or discard them.';
+        }
         else if (answer.kind === 'no-answer') return 'No answer from DryScope. Try again: it makes the same new draft.';
         else return answer.message;
       }
@@ -234,6 +260,7 @@ function ProblemPanel({
   const discard = () =>
     run('Discarding…', async () => {
       await discardEntries(client!, problem.entries);
+      photosDone(problem.entries);
       return null;
     });
 
@@ -243,15 +270,23 @@ function ProblemPanel({
         {words.title}
       </h3>
       <p id={textId} className="text-base">
-        {words.text}
+        {finishOpen === false ? RESTORE_FIRST : words.text}
       </p>
       <p className="text-sm">
-        {label}: {count === 1 ? '1 change' : `${count} changes`} on this phone.
+        {label ? `${label}: ` : ''}
+        {count === 1 ? '1 change' : `${count} changes`}. {keptText(client?.cache === 'persistent')}
       </p>
+      {problem.reason === 'changed' ? (
+        <ul className="list-disc pl-6 text-base" aria-label="Changed fields">
+          {changedFields(problem.entries).map((name) => (
+            <li key={name}>{name}</li>
+          ))}
+        </ul>
+      ) : null}
       {problem.saveAsNew ? (
         <>
           <Button disabled={busy !== null || !online} onClick={() => void saveAsNew()}>
-            {SAVE_AS_NEW}
+            {another ? SAVE_AS_ANOTHER : SAVE_AS_NEW}
           </Button>
           <p className="text-sm">{PHOTOS_STAY}</p>
         </>
@@ -261,7 +296,6 @@ function ProblemPanel({
           Try again
         </Button>
       ) : null}
-      {finishOpen === false ? <p className="text-base">{RESTORE_FIRST}</p> : null}
       {finishOpen === true && problem.jobId ? (
         <a
           className="inline-flex min-h-11 items-center text-base font-medium underline"
@@ -296,8 +330,8 @@ function ProblemPanel({
           {DISCARD_TITLE}
         </h2>
         <p id={`${textId}-confirm`} className="mt-3 text-base">
-          {count === 1 ? 'The change' : `The ${count} changes`} to {label} will be removed from this phone.
-          DryScope never had {count === 1 ? 'it' : 'them'}, so this cannot be undone.
+          {count === 1 ? 'The change' : `The ${count} changes`} to {label ?? 'this job'} will be removed from this
+          phone. What DryScope already has is not changed. This cannot be undone.
         </p>
         <form method="dialog" className="mt-4 flex flex-col gap-2">
           <Button autoFocus variant="outline" value="">
