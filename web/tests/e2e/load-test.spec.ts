@@ -21,7 +21,7 @@ test.setTimeout(180_000);
 
 // A `load-` company with price books on, one published price and the profile its documents print.
 async function loadCompany(): Promise<Company> {
-  const company = await seedCompany('load', { owner: 'owner', tech: 'estimator', office: 'office' });
+  const company = await seedCompany('load', { owner: 'owner', tech: 'estimator', tech2: 'estimator', office: 'office' });
   const db = adminSql();
   const name = `load-${randomUUID().slice(0, 8)}`;
   await db`
@@ -49,9 +49,13 @@ async function loadCompany(): Promise<Company> {
   return { ...company, name };
 }
 
-function optionsFor(company: Company, slowReads: boolean): LoadOptions {
+type Stand = 'plain' | 'slow' | 'opening fails' | 'lost answers';
+
+function optionsFor(company: Company, stand: Stand): LoadOptions {
+  const slowReads = stand === 'slow';
   const users: LoadUser[] = [
     { email: company.people.tech!.email, role: 'estimator' },
+    ...(stand === 'opening fails' ? [{ email: company.people.tech2!.email, role: 'estimator' as const }] : []),
     { email: company.people.office!.email, role: 'office' },
   ];
   // The slow stand-in: every read of the app answers 2.1 seconds late, past the 2-second mark.
@@ -61,6 +65,27 @@ function optionsFor(company: Company, slowReads: boolean): LoadOptions {
     if (read) await new Promise((done) => setTimeout(done, 2100));
     return fetch(input, init);
   };
+  // The app's first answer to a load user opening it, once every user has signed in, is a 503.
+  let meCalls = 0;
+  const openingFails: typeof fetch = async (input, init) => {
+    const url = new URL(String(input));
+    if (url.origin === new URL(JOBS_BASE_URL).origin && url.pathname === '/api/me' && ++meCalls === users.length + 1) {
+      return Response.json({ error: 'identity_unavailable' }, { status: 503 });
+    }
+    return fetch(input, init);
+  };
+  // The first answer to making a job and to sending a photo is lost after the app acted on it.
+  const lost = new Set<string>();
+  const lostAnswers: typeof fetch = async (input, init) => {
+    const url = new URL(String(input));
+    const kind = url.origin !== new URL(JOBS_BASE_URL).origin ? null : init?.method === 'POST' && url.pathname === '/api/jobs' ? 'jobs' : init?.method === 'PUT' && url.pathname.includes('/photos/') ? 'photos' : null;
+    const answer = await fetch(input, init);
+    if (!kind || lost.has(kind)) return answer;
+    lost.add(kind);
+    await answer.arrayBuffer();
+    return Response.json({ error: `${kind}_unavailable` }, { status: 503 });
+  };
+  const stands: Partial<Record<Stand, typeof fetch>> = { slow, 'opening fails': openingFails, 'lost answers': lostAnswers };
   return {
     baseUrl: `${JOBS_BASE_URL}/`,
     company: company.address,
@@ -71,13 +96,15 @@ function optionsFor(company: Company, slowReads: boolean): LoadOptions {
     durationMs: 10_000,
     openingMs: 1000,
     photosPerJob: slowReads ? 1 : 10,
-    photoGapMs: 30_000,
+    // A photo every 100 ms on each technician's clock, so a burst of ten comes every second.
+    photoGapMs: 100,
     thinkMs: 0,
     officePauseMs: 1000,
     photoBytes: 1024 * 1024,
+    retryMs: 200,
     identityToolkitUrl: `http://${AUTH_EMULATOR_HOST}/identitytoolkit.googleapis.com`,
     firestoreUrl: `http://${FIRESTORE_EMULATOR_HOST}`,
-    ...(slowReads ? { fetch: slow } : {}),
+    ...(stands[stand] ? { fetch: stands[stand] } : {}),
   };
 }
 
@@ -95,19 +122,21 @@ function signInFor(options: LoadOptions, company: Company) {
   };
 }
 
-async function run(slowReads: boolean) {
+async function run(stand: Stand) {
   const company = await loadCompany();
-  const options = optionsFor(company, slowReads);
+  const options = optionsFor(company, stand);
   const report = await runLoadTest(options, await readPassMarks(), {
     password: async () => PASSWORD,
     totpCode: async () => '',
     signIn: signInFor(options, company),
+    // The owner's readings from the database log and the instance chart.
+    afterRun: async () => ({ connectionErrors: 0, peakInstances: 1 }),
   });
   return { company, report };
 }
 
 test('a ten-second run with two load users measures every pass mark and finds every record exactly once', async () => {
-  const { company, report } = await run(false);
+  const { company, report } = await run('plain');
   expect(report.errorsByKind).toEqual({});
   // The time marks are the owner's run's to judge (S8-22): this server is a cold local build on a
   // shared CI runner. Here each must have been measured, and the error and record marks must pass.
@@ -123,7 +152,11 @@ test('a ten-second run with two load users measures every pass mark and finds ev
   expect(report.stats.read.count).toBeGreaterThan(0);
   expect(report.stats.photo.count).toBe(10 * report.records.jobs);
   expect(report.stats.finish.count).toBe(report.records.jobs);
-  expect(report.byHand.length).toBe(4);
+  expect(report.byHand.length).toBe(2);
+  expect(mark('no error from running out of database connections').passed).toBe(true);
+  // The office user opened jobs that have documents, and got them.
+  expect(report.records.officeDocuments).toBeGreaterThanOrEqual(1);
+  expect(report.instances).toEqual({ peak: 1, limit: 1 });
 
   // What the database holds for the company is exactly what the report counted.
   const db = adminSql();
@@ -137,9 +170,43 @@ test('a ten-second run with two load users measures every pass mark and finds ev
 });
 
 test('a deliberately slow stand-in for the app fails the reads pass mark', async () => {
-  const { report } = await run(true);
+  const { report } = await run('slow');
   const reads = report.marks.find((mark) => mark.name === 'reads, 95th percentile')!;
   expect(reads.passed).toBe(false);
   expect(report.stats.read.p95!).toBeGreaterThan(2000);
   expect(report.passed).toBe(false);
+});
+
+test('two technicians, one opening answered 503: the run still reports, and each technician\'s records are found', async () => {
+  const { company, report } = await run('opening fails');
+  expect(report.errorsByKind).toEqual({ 'me 503 identity_unavailable': 1 });
+  expect(report.records.problems).toEqual([]);
+  const mark = report.marks.find((found) => found.name === 'every created record present exactly once')!;
+  expect(mark.passed, mark.detail).toBe(true);
+
+  const db = adminSql();
+  const [counts] = await db<{ jobs: number; technicians: number; estimates: number }[]>`
+    SELECT count(*)::int AS jobs, count(DISTINCT created_by_actor_id)::int AS technicians,
+      (SELECT count(*)::int FROM job_estimates WHERE company_id = ${company.id}) AS estimates
+    FROM jobs WHERE company_id = ${company.id}
+  `;
+  expect(counts).toEqual({ jobs: report.records.jobs, technicians: 2, estimates: report.records.estimates });
+  expect(report.records.estimates).toBe(report.records.jobs);
+});
+
+test('answers lost after the app made a job and stored a photo: sent again with the same ids, each record is there exactly once', async () => {
+  const { company, report } = await run('lost answers');
+  expect(report.errorsByKind).toEqual({ 'create job 503 jobs_unavailable': 1, 'photo 503 photos_unavailable': 1 });
+  expect(report.records.problems).toEqual([]);
+  const mark = report.marks.find((found) => found.name === 'every created record present exactly once')!;
+  expect(mark.passed, mark.detail).toBe(true);
+  expect(report.records.photos).toBe(10 * report.records.jobs);
+
+  const db = adminSql();
+  const [counts] = await db<{ jobs: number; submissions: number; photos: number }[]>`
+    SELECT (SELECT count(*)::int FROM jobs WHERE company_id = ${company.id}) AS jobs,
+      (SELECT count(*)::int FROM job_submissions WHERE company_id = ${company.id} AND status = 'committed') AS submissions,
+      (SELECT count(*)::int FROM evidence_objects WHERE company_id = ${company.id} AND kind = 'photo') AS photos
+  `;
+  expect(counts).toEqual({ jobs: report.records.jobs, submissions: report.records.submissions, photos: report.records.photos });
 });

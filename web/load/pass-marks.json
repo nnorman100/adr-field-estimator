@@ -1,14 +1,9 @@
 {
-  "about": "The load test's pass marks (docs/plans/S8/S8-7.md), written before any run. web/scripts/load-test.ts judges the measured ones and exits non-zero when one fails; the owner reads the byHand ones from the test project's charts and logs and records them with the run (S8-22).",
+  "about": "The load test's pass marks (docs/plans/S8/S8-7.md), written before any run. web/scripts/load-test.ts judges the measured ones and the database log's count of refused connections, and exits non-zero when one fails. The Cloud Run instance mark waits for the owner: the kit prints the peak against the limit without judging it. The owner reads the byHand ones from the test project's charts and records them with the run (S8-22).",
   "readsP95Ms": 2000,
   "photoP95Ms": 5000,
   "finishMaxMs": 5000,
   "errorRateBelow": 0.02,
-  "everyRecordOnce": true,
-  "byHand": [
-    "No error from running out of database connections in the app's logs during the run",
-    "Cloud Run stayed below its maximum instances",
-    "Database processor stayed under 80%",
-    "Database connections stayed under max_connections less 10"
-  ]
+  "databaseConnectionErrors": 0,
+  "byHand": ["Database processor stayed under 80%", "Database connections stayed under max_connections less 10"]
 }
