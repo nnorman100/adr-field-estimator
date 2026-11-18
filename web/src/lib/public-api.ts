@@ -85,6 +85,7 @@ export const operatorApiPaths: readonly string[] = [
   '/api/platform/companies/:id/owner',
   '/api/platform/companies/:id/team',
   '/api/platform/companies/:id/prices',
+  '/api/platform/companies/:id/records-check',
   '/api/platform/companies/:id/members/:id',
   '/api/platform/companies/:id/members/:id/enable',
   '/api/platform/companies/:id/members/:id/reset-second-step',
