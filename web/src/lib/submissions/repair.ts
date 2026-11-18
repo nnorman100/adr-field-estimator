@@ -1,4 +1,5 @@
 import { and, eq, or, sql } from 'drizzle-orm';
+import { isLockTimeout } from '@/db/client';
 import { auditEvents, jobSubmissions } from '@/db/schema';
 import { withCompany, type Database } from '@/db/tenant';
 import type { FenceStore } from './fence';
@@ -17,6 +18,8 @@ import { abortPending, writeMarker, type DecidedRow } from './service';
 // - An aborted row whose marker is written and whose expiry passed within the last REOPEN_SECONDS
 //   has its release written again, so a draft still fenced by that epoch goes back to `editing`.
 //   Only companies the lookup returns for other work are visited for this.
+// - A pending row whose lock another transaction still holds past the lock limit (a fence call in
+//   progress) is left for the next pass and counted as failed; the pass goes on with the rest.
 //
 // Only finding the companies with work crosses companies, through job_submission_due_companies
 // (migration 0011), which returns company ids and nothing else. Every row is read and changed inside
@@ -86,11 +89,18 @@ export async function runSubmissionRepair(
             .from(jobSubmissions)
             .where(and(eq(jobSubmissions.companyId, companyId), eq(jobSubmissions.id, row.id)));
           return { aborted, status: now!.status };
+        }).catch((error: unknown) => {
+          if (!isLockTimeout(error)) throw error;
+          return null;
         });
+        if (!decided) {
+          summary.failed += 1;
+          continue;
+        }
         if (decided.aborted) summary.aborted += 1;
         row = { ...row, status: decided.status };
       }
-      if (await writeMarker(db, store, companyId, row)) summary.marked += 1;
+      if (await writeMarker(db, store, companyId, row, { scheduled: true })) summary.marked += 1;
       else summary.failed += 1;
     }
     const reopen = await withCompany(db, companyId, (tx) =>

@@ -41,6 +41,22 @@ describe('Cloud SQL settings', () => {
     expect(connectionOptions(parseConfig({ APP_ENV: 'local', DATABASE_URL: url })).url).toBe(url);
     expect(() => connectionOptions(parseConfig({ APP_ENV: 'local' }))).toThrow(/DATABASE_URL or the SQL_\*/);
   });
+
+  // Security audit F5: one held transaction must not queue every other caller without end.
+  it('opens more than one connection, with a queue limit and the server time limits, on both paths', () => {
+    const local = connectionOptions(parseConfig({ APP_ENV: 'local', DATABASE_URL: 'postgres://dryscope@127.0.0.1:5432/dryscope' }));
+    const cloud = connectionOptions(parseConfig({ APP_ENV: 'test', ...sql }), async () => 'token');
+    for (const { options } of [local, cloud]) {
+      expect(options.max).toBeGreaterThan(1);
+      expect(options.queue_timeout).toBe(10);
+      expect(options.connection).toEqual({
+        application_name: 'dryscope-web',
+        statement_timeout: 30_000,
+        lock_timeout: 10_000,
+        idle_in_transaction_session_timeout: 30_000,
+      });
+    }
+  });
 });
 
 describe('IAM database access token', () => {

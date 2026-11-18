@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
 import { accessProjectionOutbox, actors, auditEvents, companies, invitations, memberships } from '@/db/schema';
-import { withCompany, withOperator, type CompanyTransaction, type Database } from '@/db/tenant';
+import { holdAcrossOutsideCall, withCompany, withOperator, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Role } from '@/lib/access';
 import { IdentityRefusal, sessionRefusal, type Account } from '@/lib/auth';
 import type { TenantUsers } from './users';
@@ -209,13 +209,60 @@ async function readyCompany(tx: CompanyTransaction, companyId: string): Promise<
   return { slug: company.slug, tenant: company.tenant };
 }
 
-async function lockedInvitation(tx: CompanyTransaction, companyId: string, invitationId: string) {
-  const [row] = await tx
+async function invitationRow(tx: CompanyTransaction, companyId: string, invitationId: string, lock: boolean) {
+  const found = tx
     .select({ ...invitationColumns, clearedAt: invitations.clearedAt, acceptedByActorId: invitations.acceptedByActorId })
     .from(invitations)
-    .where(and(eq(invitations.companyId, companyId), eq(invitations.id, invitationId)))
-    .for('update');
+    .where(and(eq(invitations.companyId, companyId), eq(invitations.id, invitationId)));
+  const [row] = await (lock ? found.for('update') : found);
   return row ?? null;
+}
+
+async function lockedInvitation(tx: CompanyTransaction, companyId: string, invitationId: string) {
+  return invitationRow(tx, companyId, invitationId, true);
+}
+
+// The owner who writes an invitation is still the company's active owner when it is written, and
+// stays so until it commits: the operator's owner replacement locks the same membership row.
+async function lockActiveOwner(tx: CompanyTransaction, companyId: string, by: TeamActor): Promise<void> {
+  if (by.kind !== 'member') return;
+  const [owner] = await tx
+    .select({ id: memberships.id })
+    .from(memberships)
+    .where(
+      and(
+        eq(memberships.companyId, companyId),
+        eq(memberships.actorId, by.actorId),
+        eq(memberships.role, 'owner'),
+        eq(memberships.status, 'active'),
+      ),
+    )
+    .for('update');
+  if (!owner) throw new TeamError('not_allowed');
+}
+
+// An email already a member, or with an open invitation, is not invited again. A convenience check
+// only: acceptance binds the person by sign-in tenant and uid, never by email.
+async function refuseUninvitable(tx: CompanyTransaction, companyId: string, email: string): Promise<void> {
+  const [member] = await tx
+    .select({ id: memberships.id })
+    .from(memberships)
+    .innerJoin(actors, actorOfMembership)
+    .where(and(eq(memberships.companyId, companyId), eq(actors.email, email)))
+    .limit(1);
+  if (member) throw new TeamError('already_member');
+  const [pending] = await tx
+    .select({ id: invitations.id })
+    .from(invitations)
+    .where(and(eq(invitations.companyId, companyId), eq(invitations.email, email), eq(invitations.status, 'pending')));
+  if (pending) throw new TeamError('invitation_pending');
+}
+
+async function pendingInvitation(tx: CompanyTransaction, companyId: string, invitationId: string, lock: boolean) {
+  const row = await invitationRow(tx, companyId, invitationId, lock);
+  if (!row || row.clearedAt) throw new TeamError('not_found');
+  if (row.status !== 'pending') throw new TeamError('invitation_closed');
+  return row;
 }
 
 async function lockedMember(tx: CompanyTransaction, companyId: string, membershipId: string) {
@@ -315,6 +362,11 @@ export function teamService(db: Database, users: TenantUsers, project: ProjectAc
       });
     },
 
+    // The sign-in account is made with no transaction open (security audit F5): a short read finds
+    // the company's tenant and checks the email may be invited, the account is made, and only then
+    // does the transaction that writes the invitation open, checking all of it again. Making the
+    // account is safe to repeat and writes nothing to Postgres, so a failure on either side leaves
+    // nothing to undo and the owner can simply try again.
     async invite(
       companyId: string,
       by: TeamActor,
@@ -322,25 +374,16 @@ export function teamService(db: Database, users: TenantUsers, project: ProjectAc
       now: Date,
     ): Promise<{ invitation: InvitationView } & Delivery> {
       allowed(by, 'invitation_created');
-      return inCompany(db, companyId, async (tx) => {
+      const { tenant } = await inCompany(db, companyId, async (tx) => {
         const company = await readyCompany(tx, companyId);
-        // A convenience check only: acceptance binds the person by sign-in tenant and uid, never
-        // by email.
-        const [member] = await tx
-          .select({ id: memberships.id })
-          .from(memberships)
-          .innerJoin(actors, actorOfMembership)
-          .where(and(eq(memberships.companyId, companyId), eq(actors.email, input.email)))
-          .limit(1);
-        if (member) throw new TeamError('already_member');
-        const [pending] = await tx
-          .select({ id: invitations.id })
-          .from(invitations)
-          .where(
-            and(eq(invitations.companyId, companyId), eq(invitations.email, input.email), eq(invitations.status, 'pending')),
-          );
-        if (pending) throw new TeamError('invitation_pending');
-
+        await refuseUninvitable(tx, companyId, input.email);
+        return company;
+      });
+      await users.ensureAccount(tenant, input.email);
+      return inCompany(db, companyId, async (tx) => {
+        await lockActiveOwner(tx, companyId, by);
+        const { slug } = await readyCompany(tx, companyId);
+        await refuseUninvitable(tx, companyId, input.email);
         const [row] = await tx
           .insert(invitations)
           .values({
@@ -353,13 +396,14 @@ export function teamService(db: Database, users: TenantUsers, project: ProjectAc
           })
           .returning(invitationColumns);
         await audit(tx, companyId, by, 'invitation_created', row!.id, { role: input.role });
-        // Last, so a failure rolls the invitation back and the owner can simply try again.
-        await users.ensureAccount(company.tenant, input.email);
-        return { invitation: invitationView(row!, now), delivery: 'copy_link', link: invitationLink(company.slug, row!.id) };
+        return { invitation: invitationView(row!, now), delivery: 'copy_link', link: invitationLink(slug, row!.id) };
       });
     },
 
-    // A pending invitation, expired or not, gets a fresh 7 days and its link again.
+    // A pending invitation, expired or not, gets a fresh 7 days and its link again. As for invite,
+    // its sign-in account is made between a short read and the transaction that renews it. The
+    // renewal counts from the later of this request's time and the last time it was issued, so a
+    // resend that commits after a later one never shortens the invitation.
     async resend(
       companyId: string,
       by: TeamActor,
@@ -367,23 +411,29 @@ export function teamService(db: Database, users: TenantUsers, project: ProjectAc
       now: Date,
     ): Promise<{ invitation: InvitationView } & Delivery> {
       allowed(by, 'invitation_resent');
-      return inCompany(db, companyId, async (tx) => {
+      const found = await inCompany(db, companyId, async (tx) => {
         const company = await readyCompany(tx, companyId);
-        const row = await lockedInvitation(tx, companyId, invitationId);
-        if (!row || row.clearedAt) throw new TeamError('not_found');
-        if (row.status !== 'pending') throw new TeamError('invitation_closed');
-        const wasExpired = isExpired(row, now);
+        const row = await pendingInvitation(tx, companyId, invitationId, false);
+        return { tenant: company.tenant, email: row.email };
+      }, by);
+      await users.ensureAccount(found.tenant, found.email);
+      return inCompany(db, companyId, async (tx) => {
+        await lockActiveOwner(tx, companyId, by);
+        const { slug } = await readyCompany(tx, companyId);
+        const row = await pendingInvitation(tx, companyId, invitationId, true);
+        const lastIssued = row.expiresAt.getTime() - INVITATION_DAYS * DAY_MS;
+        const issued = new Date(Math.max(now.getTime(), lastIssued));
+        const wasExpired = isExpired(row, issued);
         const [updated] = await tx
           .update(invitations)
-          .set({ expiresAt: expiryFrom(now), updatedAt: now })
+          .set({ expiresAt: expiryFrom(issued), updatedAt: issued })
           .where(and(eq(invitations.companyId, companyId), eq(invitations.id, invitationId)))
           .returning(invitationColumns);
         await audit(tx, companyId, by, 'invitation_resent', invitationId, { wasExpired });
-        await users.ensureAccount(company.tenant, row.email);
         return {
           invitation: invitationView(updated!, now),
           delivery: 'copy_link',
-          link: invitationLink(company.slug, invitationId),
+          link: invitationLink(slug, invitationId),
         };
       }, by);
     },
@@ -467,6 +517,7 @@ export function teamService(db: Database, users: TenantUsers, project: ProjectAc
           .where(and(eq(memberships.companyId, companyId), eq(memberships.id, membershipId)));
         await queue(row.actorId);
         await audit(tx, companyId, by, 'member_disabled', membershipId);
+        await holdAcrossOutsideCall(tx);
         await users.revokeSessions(row.tenant, row.uid);
         return { member: memberView({ ...row, status: 'disabled' }) };
       }, by);

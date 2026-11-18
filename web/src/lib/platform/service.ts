@@ -1,6 +1,6 @@
 import { and, eq, sql } from 'drizzle-orm';
 import { actors, auditEvents, invitations, memberships } from '@/db/schema';
-import { withOperator, type CompanyTransaction, type Database } from '@/db/tenant';
+import { holdAcrossOutsideCall, withOperator, type CompanyTransaction, type Database } from '@/db/tenant';
 import { changeCompanyFlag, type FlagChangeResult } from '@/lib/flags';
 import { postgresFlagStore } from '@/lib/flags/store';
 import { readCompanyPrices, readVersionList, type PricesView, type VersionMeta } from '@/lib/prices/service';
@@ -348,6 +348,7 @@ export function platformService(db: Database, users: PlatformUsers, project: Pro
           });
           // Last, and before the commit: if either fails, nothing changes and the operator can try
           // again. A commit that fails after the revocation only signs the old owner out.
+          await holdAcrossOutsideCall(tx);
           await users.ensureAccount(company.auth_tenant_id, input.email);
           if (current) await users.revokeSessions(current.tenant, current.uid);
           return {
@@ -384,6 +385,7 @@ export function platformService(db: Database, users: PlatformUsers, project: Pro
             .for('update', { of: memberships });
           if (!row) throw new PlatformError('not_found');
           await audit(tx, operatorId, companyId, 'second_step_reset', membershipId, { role: row.role, confirmedBy: 'phone' });
+          await holdAcrossOutsideCall(tx);
           await users.resetSecondStep(row.tenant, row.uid);
         },
         companyId,

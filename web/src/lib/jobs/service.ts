@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, ne, or, sql, type SQL } from 'drizzle-orm';
 import { actors, auditEvents, jobAssignments, jobClaims, jobCustomers, jobs } from '@/db/schema';
-import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
+import { holdAcrossOutsideCall, withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
 import { canSeeJob, claimDraft, hasAny, holdDraft, isOwnJob, jobAccess, JobError, lockedJob, seesEveryJob, type JobCaller, type JobRow } from './access';
 import type { DraftLookup, DraftStore } from './drafts';
@@ -243,6 +243,7 @@ export function jobsService(db: Database, drafts: DraftStore): JobsService {
         } else {
           if (!(await claimDraft(tx, caller.companyId, row.id, input.draftId))) throw new JobError('conflict');
           // A draft id claimed now was never this job's: a draft already under it was made for another.
+          await holdAcrossOutsideCall(tx);
           if (await findDraft(drafts, caller.companyId, input.draftId)) throw new JobError('conflict');
           await audit(tx, caller, 'job_created', row.id, { revision: row.revision });
         }
@@ -259,6 +260,7 @@ export function jobsService(db: Database, drafts: DraftStore): JobsService {
       try {
         await inCompany(caller.companyId, async (tx) => {
           await lockedJob(tx, caller.companyId, made.detail.job.id, { live: true });
+          await holdAcrossOutsideCall(tx);
           // A draft made for another job is never this job's.
           if ((await drafts.ensure(caller.companyId, made.detail.job.id, input.draftId, made.ownerUid)) === 'taken') throw new JobError('conflict');
         });

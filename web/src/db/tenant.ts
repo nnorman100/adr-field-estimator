@@ -37,6 +37,21 @@ export async function withCompany<T>(
   );
 }
 
+// Every transaction that waits on Firestore or Identity Platform while it is open calls this before
+// the call, so the connection's 30 s idle limit (db/client.ts) does not end it mid-call: for this
+// transaction only, it may sit idle as long as a request may run (Cloud Run's 300 s). They are:
+// - Firestore: Submit's fence (submissions/service.ts closeFence); the draft lookup before a claim
+//   commits and the draft made under its job's lock, in New job (jobs/service.ts create), Copy
+//   (jobs/archive.ts copy) and Back to editing (submissions/service.ts backToEditing); the draft
+//   settled after an archive or restore (jobs/archive.ts settle); the job's drafts read before a
+//   claim or reassignment (jobs/office.ts draftsToName); a member's access record written by the
+//   outbox (projection/outbox.ts projectOnce).
+// - Identity Platform: member disable (team/service.ts disable) and the operator's owner
+//   invitation or replacement and second-step reset (platform/service.ts).
+export async function holdAcrossOutsideCall(tx: CompanyTransaction): Promise<void> {
+  await tx.execute(sql`SET LOCAL idle_in_transaction_session_timeout = '300s'`);
+}
+
 export class OperatorContextError extends Error {
   constructor(message: string) {
     super(message);
