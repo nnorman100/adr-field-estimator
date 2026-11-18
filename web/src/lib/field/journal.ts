@@ -97,6 +97,31 @@ function within<T>(promise: Promise<T>, ms: number): Promise<T | 'timeout'> {
 
 const ownerRange = (owner: Owner) => IDBKeyRange.only([owner.tenantId, owner.uid]);
 
+// Who to tell when a (tenant, person)'s entries changed on this page (the field screens' sync chip,
+// S6-4b). Told after the change committed; they read the journal again.
+const watchers = new Map<string, Set<() => void>>();
+
+export function watchJournal(owner: Owner, listener: () => void): () => void {
+  const key = ownerKey(owner);
+  const set = watchers.get(key) ?? new Set<() => void>();
+  set.add(listener);
+  watchers.set(key, set);
+  return () => {
+    set.delete(listener);
+    if (set.size === 0) watchers.delete(key);
+  };
+}
+
+function changed(owner: Owner): void {
+  for (const listener of watchers.get(ownerKey(owner)) ?? []) {
+    try {
+      listener();
+    } catch {
+      // A screen's failure never fails the journal change that was made.
+    }
+  }
+}
+
 // Per (tenant, person), the edits between their unsent mark and their entry's commit: the journal
 // read now may not hold their entries yet, so field-db.ts settle() leaves the mark while any is.
 const adding = new Map<string, number>();
@@ -137,6 +162,9 @@ export async function appendEntry(
       const request = transaction.objectStore(JOURNAL_STORE).add(row);
       return () => ({ ...row, seq: request.result as number });
     });
+  }).then((entry) => {
+    changed(owner);
+    return entry;
   });
   let lost = false;
   const answer = await within(added, WRITE_WITHIN_MS).catch((error: unknown) => {
@@ -183,7 +211,7 @@ function changeEntry(entry: Pick<JournalEntry, 'seq' | 'tenantId' | 'uid'>, chan
       };
       return () => undefined;
     }),
-  );
+  ).then(() => changed(entry));
 }
 
 // The server accepted it: pruned.
@@ -212,7 +240,7 @@ export function forgetJournal(owner: Owner): Promise<void> {
       };
       return () => undefined;
     }),
-  );
+  ).then(() => changed(owner));
 }
 
 // ---- After a restart: what became of each entry (step 2) ----

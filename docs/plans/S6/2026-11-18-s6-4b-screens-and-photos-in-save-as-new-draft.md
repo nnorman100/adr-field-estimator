@@ -1,0 +1,10 @@
+# S6 plan correction: 2026-11-18: S6-4b screens, and photos in Save as new draft
+
+Part of [the S6 plan](../S6.md), section 12, "Corrections".
+
+S6-4b builds the screens of [S6-4](S6-4.md) on the merged recovery journal (S6-4a): the sync chip on every field screen, the "Can't save" sheet, and Save as new draft, Discard and Try again (`web/src/app/field/sync-chip.tsx`, `web/src/lib/field/sync-status.ts`, `web/src/lib/field/new-draft.ts`). Where it differs from the step's paragraph:
+
+- **Photos (Firstmate decision A, 2026-11-18).** The photo queue `ds-queue` is S6-5's and does not exist yet, so there are no queued `photo` entries to re-point and no photo bytes on the phone after a restart. Save as new draft copies the cached draft's field map and rooms with the refused edits on top, and no photo references: a photo id is registered to its job and cannot be used under another one. The sheet says that photos stay with the old job. **S6-5 re-points queued photos** to the new draft, with new photo ids chosen before the first send, when it builds the queue.
+- **New ids.** The new job's and draft's ids are derived from the refused entries (a SHA-256 of the person, the draft and the entries' operation ids), so they are chosen before the first send and need nothing more stored: the same entries saved twice give the same ids and one job. The new job's property address is empty (the address and customer belong to Postgres; the person adds them on the new job), and the copy leaves out `scopeConfirmed`, as S5b-2's Copy does.
+- **Try again** asks the server for the draft and the person's role now. Still refused: the entries keep the reason the server now gives. Not any more (restored, field work moved back, access or role given back): the edits are sent again as one new journaled edit, in the order they were made, and the old entries go. A job finished by the person's own Finish offers no Try again and no Save as new draft: the sheet links to Finish and review, where Back to editing is (J4).
+- **Changed on another device** offers Open the job and Discard, never Try again: sending it again would overwrite the other device's later save.

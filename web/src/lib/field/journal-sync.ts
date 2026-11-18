@@ -308,3 +308,39 @@ export function reconcileJournal(client: FieldClient): Promise<void> {
   judging.set(key, run);
   return run;
 }
+
+// ---- What the "Can't save" sheet does with a set of refused edits (S6-4b) ----
+
+const draftRefOf = (path: string): DraftRef | null => {
+  const match = /^companies\/([^/]+)\/drafts\/([^/]+)$/.exec(path);
+  return match ? { companyId: match[1]!, draftId: match[2]! } : null;
+};
+
+// Try again: asks the server whether it still refuses the draft. Still refused: each entry keeps
+// its reason, now as the server says it ('refused' while that is not known). Not any more (the job
+// was restored, the field work moved back, access came back): the edits are made again as one new
+// edit, in the order they were made, and the old entries go. 'no-answer' when the server or the
+// role check did not answer: nothing changes.
+export async function tryAgain(client: FieldClient, entries: readonly JournalEntry[]): Promise<'sent' | 'refused' | 'no-answer'> {
+  const first = entries[0];
+  const ref = first ? draftRefOf(first.draftPath) : null;
+  if (!first || !ref) return 'no-answer';
+  const [draft, role] = await Promise.all([readServer(client.db, first.draftPath), roleNow(client)]);
+  if (!draft || role === NO_ANSWER) return 'no-answer';
+  const reason = refusalReason(draft, first.uid, role);
+  if (reason) {
+    for (const entry of entries) await rejectEntry(entry, reason);
+    return 'refused';
+  }
+  const writes = [...entries].sort((a, b) => a.seq - b.seq).flatMap((entry) => entry.writes);
+  await journaledEdit(client, ref, writes);
+  for (const entry of entries) await removeEntry(entry);
+  void settle(client).catch(() => undefined);
+  return 'sent';
+}
+
+// Discard: the edits are dropped from the phone. Only these entries go; the server keeps what it has.
+export async function discardEntries(client: FieldClient, entries: readonly JournalEntry[]): Promise<void> {
+  for (const entry of entries) await removeEntry(entry);
+  void settle(client).catch(() => undefined);
+}

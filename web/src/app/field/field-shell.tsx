@@ -12,6 +12,7 @@ import { useReachable } from './connection';
 import { FieldStore, UnlessHidden, type FieldStorage } from './field-store';
 import { REOPEN_STORAGE_TEXT, REOPEN_TITLE } from './field-store-text';
 import { HomeScreenSheet, useFieldSurface } from './home-screen-sheet';
+import { SyncChip } from './sync-chip';
 
 // The field shell (S6-2): the one page every field screen lives in. The server renders nothing of
 // a person's here, so the page is built once, the service worker keeps that copy, and the Home
@@ -118,6 +119,7 @@ export function FieldShell() {
               {/* The view is read from the address, which only the browser knows. Another sign-in
                   starts the screens afresh, so nothing of the last person's stays on them. */}
               <UnlessHidden me={boot.me}>
+                <SyncChip me={boot.me} />
                 <ShownOnce>
                   <Suspense fallback={<p role="status">Opening your jobs…</p>}>
                     <FieldApp key={meKey(boot.me.tenantId, boot.me.uid)} me={boot.me} />
