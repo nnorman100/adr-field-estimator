@@ -242,7 +242,7 @@ and must not be read as current behaviour. Anything not decided is marked **[ope
 
 ### 6.1 Company-neutral pricing additions and change orders
 
-Source: the ADR-neutral plan (`dry-adr-neutral-plan` report), questions Q1–Q13, accepted as
+Source: the company-neutral plan (`dry-adr-neutral-plan` report), questions Q1–Q13, accepted as
 supplied (rebuild plan, supersession ledger). Prices stay server Decimal math; a model never
 supplies a price.
 
