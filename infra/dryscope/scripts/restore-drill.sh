@@ -494,6 +494,10 @@ SQL
     fail "the ledger on $instance (id and checksum) is not the first $level migrations of web/migrations (pull your checkout, then compare): $(printf '%s\n' "$got" | cut -d'|' -f1 | tr '\n' ' ')"
   # Damaged rows: exactly the original's ledger as it stood at the restore point.
   if [ "$MODE" = damaged-rows ] && [ "$got" != "$LEDGER_AT_PIT" ]; then
+    # Its time is when the migration started: the newest, missing alone, may have been committing.
+    [ "$(printf '%s\n' "$LEDGER_AT_PIT" | sed '$d')" != "$got" ] || [ -z "$LEDGER_RECENT" ] ||
+      [ "$(printf '%s\n' "$LEDGER_AT_PIT" | tail -n 1 | cut -d'|' -f1)" != "$LEDGER_RECENT" ] ||
+      fail "the copy lacks only migration $LEDGER_RECENT, which started within 15 minutes before $PIT and may still have been committing then: stop, and choose a minute when no migration ran"
     fail "the ledger on $instance is not the ledger of $SQL_SOURCE at $PIT (every migration applied by then, with its checksum)"
   fi
   # Up to the restore point: every migration of the release serving then, with the same checksums.
@@ -521,43 +525,20 @@ SQL
 # every migration applied by that minute, read as the migrator (Service Account Token Creator on
 # it) in a read-only transaction.
 LEDGER_AT_PIT=""
+LEDGER_RECENT=""
 ledger_at_pit() {
   printf '%s\n' 'BEGIN READ ONLY;' \
     "SELECT 'ledger|' || id || '|' || checksum FROM migration_ledger WHERE applied_at <= :'pit'::timestamptz ORDER BY id;" \
+    "SELECT 'recent|' || max(id) FROM migration_ledger WHERE applied_at <= :'pit'::timestamptz AND applied_at > :'pit'::timestamptz - interval '15 minutes' HAVING count(*) > 0;" \
     'ROLLBACK;' >"$TMP/ledger.sql"
   printf '   Your account needs Service Account Token Creator on %s to read its ledger on %s.\n' "$MIGRATE_SA" "$SQL_SOURCE"
   proxy_start "$PROJECT:$REGION:$SQL_SOURCE" --auto-iam-authn --impersonate-service-account="$MIGRATE_SA"
   get LEDGER_AT_PIT "" psql -X -A -t -q -v ON_ERROR_STOP=1 -v "pit=$PIT" -h "$PROXY_HOST" -U "$MIGRATE_DB_USER" \
     -d "$SQL_DATABASE" -f "$TMP/ledger.sql"
   proxy_stop
+  LEDGER_RECENT="$(printf '%s\n' "$LEDGER_AT_PIT" | sed -n 's/^recent|//p')"
   LEDGER_AT_PIT="$(printf '%s\n' "$LEDGER_AT_PIT" | sed -n 's/^ledger|//p' | sort)"
   [ "$DRY" = 1 ] || [ -n "$LEDGER_AT_PIT" ] || fail "no migration of $SQL_SOURCE was applied by $PIT"
-}
-
-# id|checksum for each file of web/migrations, in order, hashed in one call (once per run).
-CHECKOUT_LEDGER=""
-ledger_of_checkout() {
-  local sum=sha256sum
-  command -v sha256sum >/dev/null || sum="shasum -a 256"
-  [ -n "$CHECKOUT_LEDGER" ] ||
-    CHECKOUT_LEDGER="$( (cd "$REPO/web/migrations" && $sum -- *.sql) | sed 's/^\([0-9a-f]*\) [ *]\(.*\)\.sql$/\2|\1/' | sort)"
-  printf '%s\n' "$CHECKOUT_LEDGER"
-}
-
-# id|checksum for each migration file at a commit, in order: the commit's files, each of which must
-# have the same bytes in your checkout (the same git blob), with the checkout's checksums.
-ledger_of_commit() {
-  local listed blobs here ids
-  listed="$(git -C "$REPO" ls-tree "$1" web/migrations/ | grep '\.sql$')" || return 1
-  blobs="$(printf '%s\n' "$listed" | awk '{print $3}')"
-  ids="$(printf '%s\n' "$listed" | sed 's#.*/##; s/\.sql$//')"
-  # shellcheck disable=SC2046,SC2086 # one path per line, no spaces (NNNN_words.sql)
-  here="$(cd "$REPO" && git hash-object -- $(printf '%s\n' "$listed" | cut -f2))" || return 1
-  [ "$blobs" = "$here" ] || {
-    printf 'a migration of commit %s differs in your checkout\n' "$1" >&2
-    return 1
-  }
-  ledger_of_checkout | grep -F -f <(printf '%s|\n' $ids) | sort
 }
 
 # The release serving now, from its health answer (a 503 one too, while its database is down):

@@ -231,6 +231,7 @@ case "$*" in *company=*) m="$FAKE_ORIGINAL_MARKERS"; [ -n "$m" ] || m='1|1'; ech
 copy=1; case "$u" in dryscope-migrate-*) copy="" ;; esac
 [ -z "$FAKE_CHECKS_FAIL" ] || [ -z "$copy" ] || exit 3
 files="$(ls "$MIGRATIONS"/*.sql)"; [ -z "$FAKE_LEDGER_DROP_LAST" ] || [ -z "$copy" ] || files="$(echo "$files" | sed '$d')"
+[ -z "$FAKE_LEDGER_RECENT" ] || [ -n "$copy" ] || echo "recent|$(basename "$(echo "$files" | tail -n 1)" .sql)"
 for f in $files; do sum="$(sha256sum "$f" | cut -d' ' -f1)"; [ -z "$FAKE_LEDGER_BAD_SUM" ] || sum=bad; echo "ledger|$(basename "$f" .sql)|$sum"; done
 case "$*" in *before=*) echo 'marker_before|1'; echo 'marker_after|0'; echo 'marker_company|c0000000-0000-4000-8000-000000000001' ;; esac
 echo 'rows|companies|2'; echo 'rows|jobs|14'`;
@@ -773,31 +774,16 @@ describe('restore-drill.sh', { timeout: 300_000 }, () => {
     expect(result.stdout).toContain('result: fail');
   });
 
+  const [SALVAGE, DAMAGED] = [MODES.salvage, MODES['damaged rows']];
   it.each([
-    [
-      'a salvage outside the US',
-      '--env live --recovery --salvage --salvage-region europe-west1',
-      /US region/,
-    ],
-    [
-      'a salvage into the original region',
-      '--env live --recovery --salvage --salvage-region us-central1',
-      /US region/,
-    ],
-    [
-      '--zone on a damaged-rows copy',
-      `--env live --recovery ${PIT} --zone us-central1-b`,
-      /--zone is only for/,
-    ],
+    ['a salvage outside the US', `${SALVAGE} --salvage-region europe-west1`, /US region/],
+    ['a salvage into the original region', `${SALVAGE} --salvage-region us-central1`, /US region/],
+    ['--zone on a damaged-rows copy', `${DAMAGED} --zone us-central1-b`, /--zone is only for/],
     ['an incident mode on test', '--env test --recovery --salvage', /are for live/],
-    [
-      '--domain on a salvage',
-      '--env live --recovery --salvage --domain example.test',
-      /--domain is only for/,
-    ],
+    ['--domain on a salvage', `${SALVAGE} --domain example.test`, /--domain is only for/],
     [
       '--salvage-region on a damaged-rows copy',
-      `--env live --recovery ${PIT} --salvage-region us-east4`,
+      `${DAMAGED} --salvage-region us-east4`,
       /--salvage-region is only for/,
     ],
   ])('refuses %s, before any command', (_case, args, message) => {
@@ -841,6 +827,10 @@ describe('restore-drill.sh', { timeout: 300_000 }, () => {
     const read = s.calls('psql').find((c) => c.includes('pit=2026-11-18T15:04:00Z'))!;
     expect(read[read.indexOf('-U') + 1]).toBe('dryscope-migrate-live@dryscope.iam');
     expect(read[read.indexOf('-h') + 1]).toMatch(/\/dryscope:us-central1:dryscope-live-pg$/);
+    const recent = { FAKE_LEDGER_DROP_LAST: '1', FAKE_LEDGER_RECENT: '1' };
+    const inFlight = fullRun(`--env live --recovery ${PIT}`, 'live', recent).result;
+    expect(inFlight.status).toBe(1);
+    expect(inFlight.stderr).toContain('may still have been committing');
   });
 
   it('removes your temporary access when the checks fail', () => {
@@ -937,6 +927,10 @@ describe('restore-drill.sh', { timeout: 300_000 }, () => {
       /UPDATE jobs SET revision = revision \+ 1, .*\n.*status NOT IN \('submitted', 'signed'\)\n.*AND revision = <its revision as read in step 2>;/,
     );
     expect(write.indexOf('UPDATE jobs')).toBeLessThan(write.indexOf('UPDATE <table>'));
+    const read = text.slice(text.indexOf('  2.'), text.indexOf('  3.'));
+    expect(read).toMatch(/jobs NO FORCE ROW LEVEL SECURITY;\n.*SELECT status, revision FROM jobs/);
+    expect(text.match(/psql -X -v HISTFILE=\/dev\/null /g)).toHaveLength(2);
+    expect(text).toContain('[ "$C" = 1 ] && gcloud sql users delete "$ME"');
   });
 
   it('prints a zone recovery’s repoint only after access on the copy is reconciled', () => {
@@ -945,6 +939,9 @@ describe('restore-drill.sh', { timeout: 300_000 }, () => {
     const out = result.stdout;
     expect(out).toMatch(/re-apply every access change made after[\s\S]*Repoint the app/);
     expect(out).toContain('A session revoked in the sign-in tenant is no substitute');
+    expect(out).toMatch(
+      /a company suspended \(companies.status\)[\s\S]*This\nlist is kept by hand/,
+    );
     const refused = fullRun(MODES['lost instance'], 'live\ndone\nnot yet');
     expect(refused.result.status).toBe(1);
     expect(refused.result.stderr).toContain('is not reconciled with the changes made after');

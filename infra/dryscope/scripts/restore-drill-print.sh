@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # The commands restore-drill.sh prints for you to paste, sourced by it: the Terraform blocks, the
 # put-back chain, the zone-recovery access reconciliation and repoint, and the damaged-rows
-# copy-back. Each chain runs a step only after every step before it passed. Uses restore-drill.sh's
+# copy-back; also the ledger of the checkout and of a commit. Each chain runs a step only after every step before it passed. Uses restore-drill.sh's
 # names and settings; never run on its own.
 
 # Printed commands for you to paste: one chain, each step only after every step before it passed.
@@ -30,17 +30,19 @@ step_reaches() { # tag ("" for all traffic), revision
 step_health() { printf '%s' "curl -fsS $1/api/health | jq -e --arg env $ENV '.status == \"ok\" and .database == \"ok\" and .env == \$env' >/dev/null"; }
 
 # Your temporary access to the copy as the migrator's role, then psql through its own proxy; the
-# closing line removes the access.
+# closing line removes the access only if this session created it (C=1). psql keeps no history.
 copy_session() {
   cat <<EOF
-       ME="\$(gcloud config get-value account --project=$PROJECT)" && D="\$(mktemp -d /tmp/rd.XXXXXX)" &&
-         gcloud sql users create "\$ME" --instance=$SQL_COPY --type=cloud_iam_user --database-roles=$MIGRATE_DB_USER --project=$PROJECT
-       cloud-sql-proxy --auto-iam-authn --unix-socket="\$D" $PROJECT:$REGION:$SQL_COPY & P=\$!
-       psql -h "\$D/$PROJECT:$REGION:$SQL_COPY" -U "\$ME" -d $SQL_DATABASE
+       ME="\$(gcloud config get-value account --project=$PROJECT)" && D="\$(mktemp -d /tmp/rd.XXXXXX)" && C="" &&
+         gcloud sql users create "\$ME" --instance=$SQL_COPY --type=cloud_iam_user --database-roles=$MIGRATE_DB_USER --project=$PROJECT && C=1
+       [ "\$C" = 1 ] && { cloud-sql-proxy --auto-iam-authn --unix-socket="\$D" $PROJECT:$REGION:$SQL_COPY & P=\$!; }
+       [ "\$C" = 1 ] && psql -X -v HISTFILE=/dev/null -h "\$D/$PROJECT:$REGION:$SQL_COPY" -U "\$ME" -d $SQL_DATABASE
 EOF
 }
 copy_session_end() {
-  printf '       kill "$P"; rm -rf "$D"; gcloud sql users delete "$ME" --instance=%s --project=%s --quiet\n' "$SQL_COPY" "$PROJECT"
+  printf '       kill "$P"; rm -rf "$D"; [ "$C" = 1 ] && gcloud sql users delete "$ME" --instance=%s --project=%s --quiet\n' "$SQL_COPY" "$PROJECT"
+  printf '     If the create failed or you stopped it, nothing removes the user: check gcloud sql users list\n'
+  printf '     --instance=%s --project=%s and remove your account only if this session added it.\n' "$SQL_COPY" "$PROJECT"
 }
 
 print_copy_back() {
@@ -62,15 +64,16 @@ $(copy_session_end)
      $MIGRATE_SA), the same way:
        S="\$(mktemp -d /tmp/rd.XXXXXX)" &&
          cloud-sql-proxy --auto-iam-authn --impersonate-service-account=$MIGRATE_SA --unix-socket="\$S" $source & Q=\$!
-       psql -h "\$S/$source" -U $MIGRATE_DB_USER -d $SQL_DATABASE
+       psql -X -v HISTFILE=/dev/null -h "\$S/$source" -U $MIGRATE_DB_USER -d $SQL_DATABASE
          BEGIN; ALTER TABLE <table> NO FORCE ROW LEVEL SECURITY;
          SELECT * FROM <table> WHERE (<primary key columns>) IN ((<a damaged row's key>), ...);
+         -- a row of a job (jobs, or a table with job_id): its job too, in this same transaction
+         ALTER TABLE jobs NO FORCE ROW LEVEL SECURITY;
+         SELECT status, revision FROM jobs WHERE (company_id, id) = (<company>, <job id>);
          ROLLBACK;
      The primary key is the table's full key, as \\d <table> shows it: on a company's table it
      includes company_id (company_id and id; job_customers and job_claims: company_id and job_id).
-     Never read or write by id alone: two companies can hold the same id. For a row of a job (jobs,
-     or a table with job_id) also read its job: SELECT status, revision FROM jobs WHERE
-     (company_id, id) = (<company>, <job id>); Compare the two reads.
+     Never read or write by id alone: two companies can hold the same id. Compare the two reads.
   3. Never write a signed record or a guarded table's rows (the guard triggers refuse it; never
      disable one). A damaged signed record is an owner decision, recorded in a sidecar.
   4. In that same session on $SQL_SOURCE, one transaction per table and one statement per damaged
@@ -106,8 +109,11 @@ print_reconcile() {
   cat <<EOF
 On $SQL_COPY, re-apply every access change made after $PIT, before any traffic moves: a member
 removed or disabled or a role lowered (memberships), an invitation revoked (invitations), an
-operator grant removed (platform_admins), and a homeowner link revoked (signing_links and
-document_links: status revoked, ended_at set). Through temporary access of your own:
+operator grant removed (platform_admins), a company suspended (companies.status), a job assignment
+ended (job_assignments), a field owner transferred (jobs.field_owner_actor_id), a job archived
+(jobs), and a homeowner link revoked or its token rotated (signing_links and document_links). This
+list is kept by hand: anything else that grants or withdraws access counts too.
+Through temporary access of your own:
 $(copy_session)
          BEGIN; SET LOCAL ROLE "$MIGRATE_DB_USER";
          ALTER TABLE <table> NO FORCE ROW LEVEL SECURITY;  -- each table you change
@@ -173,4 +179,31 @@ put_back() { # from: traffic, app or data
     data) steps+=("$(tf_lines data "")") ;;
   esac
   chain "${steps[@]}"
+}
+
+# The ledger as web/migrations and git hold it, for the checks on a copy.
+# id|checksum for each file of web/migrations, in order, hashed in one call (once per run).
+CHECKOUT_LEDGER=""
+ledger_of_checkout() {
+  local sum=sha256sum
+  command -v sha256sum >/dev/null || sum="shasum -a 256"
+  [ -n "$CHECKOUT_LEDGER" ] ||
+    CHECKOUT_LEDGER="$( (cd "$REPO/web/migrations" && $sum -- *.sql) | sed 's/^\([0-9a-f]*\) [ *]\(.*\)\.sql$/\2|\1/' | sort)"
+  printf '%s\n' "$CHECKOUT_LEDGER"
+}
+
+# id|checksum for each migration file at a commit, in order: the commit's files, each of which must
+# have the same bytes in your checkout (the same git blob), with the checkout's checksums.
+ledger_of_commit() {
+  local listed blobs here ids
+  listed="$(git -C "$REPO" ls-tree "$1" web/migrations/ | grep '\.sql$')" || return 1
+  blobs="$(printf '%s\n' "$listed" | awk '{print $3}')"
+  ids="$(printf '%s\n' "$listed" | sed 's#.*/##; s/\.sql$//')"
+  # shellcheck disable=SC2046,SC2086 # one path per line, no spaces (NNNN_words.sql)
+  here="$(cd "$REPO" && git hash-object -- $(printf '%s\n' "$listed" | cut -f2))" || return 1
+  [ "$blobs" = "$here" ] || {
+    printf 'a migration of commit %s differs in your checkout\n' "$1" >&2
+    return 1
+  }
+  ledger_of_checkout | grep -F -f <(printf '%s|\n' $ids) | sort
 }
