@@ -7,24 +7,15 @@ import {
   isServiceApiPath,
 } from '@/lib/public-api';
 import { addCspReportOnly } from '@/lib/csp';
-import { signInPageAddress, signInPageRequest } from '@/lib/sign-in/page-request';
 
 // Deny by default: an /api route outside the public and member lists refuses a caller with no
 // sign-in. A member route (memberRoute in src/lib/auth/route.ts) checks the token, company and job
 // access itself, because Proxy is a backstop, not the authorization layer. The release smoke check
 // (scripts/smoke-release.ts) relies on this refusal. An internal job route (serviceRoute) checks its
 // service token itself in the same way, and a platform operator route (operatorRoute) the operator
-// sign-in. A link route (linkRoute) checks the link token it carries. A company sign-in page and the
-// screens under its address are looked up here first (lib/sign-in/page-request.ts).
-export function proxy(request: NextRequest): NextResponse | Promise<NextResponse> {
+// sign-in. A link route (linkRoute) checks the link token it carries.
+export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  const address = signInPageAddress(pathname);
-  if (address !== null) {
-    return signInPageRequest(request, address).then((response) => {
-      addCspReportOnly(response, pathname);
-      return response;
-    });
-  }
   const api = pathname === '/api' || pathname.startsWith('/api/');
   const allowed =
     !api ||

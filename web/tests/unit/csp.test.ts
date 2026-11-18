@@ -1,13 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { NextRequest, type NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { proxy } from '@/proxy';
 
 afterEach(() => vi.unstubAllEnvs());
 
-// A company sign-in page is looked up first (lib/sign-in/page-request.ts); here no address is known.
-vi.mock('@/lib/sign-in/services', () => ({ signInDirectory: () => ({ pageFor: async () => null }) }));
-
-const headers = (path = '/field') => (proxy(new NextRequest(`https://app.example${path}`)) as NextResponse).headers;
+const headers = (path = '/field') => proxy(new NextRequest(`https://app.example${path}`)).headers;
 const policy = () => headers().get('content-security-policy-report-only') ?? '';
 const sources = (name: string) =>
   policy()
@@ -74,9 +71,9 @@ describe('full CSP is observation only', () => {
     expect(policy()).not.toMatch(/localhost|127\.0\.0\.1|unsafe-eval/);
   });
 
-  it('also observes public pages, API refusals and the service worker, but excludes photo downloads', async () => {
+  it('also observes public pages, API refusals and the service worker, but excludes photo downloads', () => {
     for (const path of ['/', '/sign-in/company-a', '/api/unknown', '/sw.js']) {
-      expect((await proxy(new NextRequest(`https://app.example${path}`))).headers.get('content-security-policy-report-only')).toContain('script-src');
+      expect(headers(path).get('content-security-policy-report-only')).toContain('script-src');
     }
     for (const suffix of ['', '/', '?kind=original']) {
       const sent = headers(`/api/jobs/job-id/photos/photo-id${suffix}`);

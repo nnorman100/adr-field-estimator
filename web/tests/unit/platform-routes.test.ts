@@ -2,7 +2,7 @@ import { readdir } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
-import { NextRequest, type NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { IdentityRefusal, type OperatorDirectory, type TokenVerifier } from '@/lib/auth/identity';
 import { operatorRoute } from '@/lib/auth/route';
 import { isMemberApiPath, isOperatorApiPath, operatorApiPaths } from '@/lib/public-api';
@@ -36,10 +36,10 @@ describe('operator route files', () => {
       const real = pattern.replaceAll(':id', ID);
       expect(isOperatorApiPath(real)).toBe(true);
       expect(isMemberApiPath(real)).toBe(false);
-      expect((proxy(new NextRequest(new URL(real, 'http://localhost'))) as NextResponse).headers.get('x-middleware-next')).toBe('1');
+      expect(proxy(new NextRequest(new URL(real, 'http://localhost'))).headers.get('x-middleware-next')).toBe('1');
     }
     for (const path of ['/api/platform', '/api/platform/operators', `/api/platform/companies/${ID}`, '/api/platform/companies/x/team']) {
-      expect({ path, status: (proxy(new NextRequest(new URL(path, 'http://localhost'))) as NextResponse).status }).toEqual({ path, status: 401 });
+      expect({ path, status: proxy(new NextRequest(new URL(path, 'http://localhost'))).status }).toEqual({ path, status: 401 });
     }
   });
 });

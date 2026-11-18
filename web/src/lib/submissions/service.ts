@@ -46,8 +46,12 @@ const SUBMIT: readonly Capability[] = ['scope'];
 
 // How long a pending row may wait before the worker aborts it, and how close to that a request no
 // longer closes a fence it has not closed yet, so an attempt does not start a fence its row is about
-// to lose (the worker runs every five minutes, docs/plans/S5.md section 4 step 6). That no fence
-// lands after its row is decided is the row lock's work in closeFence, not this margin's.
+// to lose (the worker runs every five minutes, docs/plans/S5.md section 4 step 6). While closeFence's
+// transaction is open, its row lock, not this margin, keeps a fence from landing after its row is
+// decided. A fence call still retrying after that transaction ended (cut off by the server's idle
+// limit, db/tenant.ts holdAcrossOutsideCall, or by the request's end) can land after the worker
+// aborted and released the row; only the worker's later reopen pass (repair.ts) may release it
+// again, and that pass visits only companies with other work due.
 export const SUBMIT_WINDOW_MS = 2 * 60 * 1000;
 export const FENCE_MARGIN_MS = 30 * 1000;
 
@@ -349,9 +353,10 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
   }
 
   // Step 2: the fence, closed under the job's lock and the row's own lock, and only while the caller
-  // still owns the job's field work and the row is still pending, so no move of the field work and no
-  // abort lands between the check and the fence, and the release of an aborted row always comes
-  // after any fence of its epoch. It replaces a fence whose own row is known to be aborted (its
+  // still owns the job's field work and the row is still pending, so, while this transaction is open,
+  // no move of the field work and no abort lands between the check and the fence, and the release of
+  // an aborted row comes after any fence of its epoch closed in it. A fence call still retrying after
+  // the transaction ended can land after that release (see FENCE_MARGIN_MS). It replaces a fence whose own row is known to be aborted (its
   // attempt fenced and never released it). Anything else is not this attempt's to take.
   async function closeFence(caller: JobCaller, row: SubmissionRow): Promise<SubmissionErrorCode | null> {
     const fence = { submissionId: row.id, epoch: row.epoch, expiresAt: row.expiresAt };
