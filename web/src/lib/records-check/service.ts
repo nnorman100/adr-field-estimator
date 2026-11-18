@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { and, eq, gt, inArray, lte, sql, type SQL } from 'drizzle-orm';
 import { agreements, auditEvents, evidenceObjects, jobSubmissions } from '@/db/schema';
 import { withOperator, type CompanyTransaction, type Database } from '@/db/tenant';
@@ -16,15 +16,18 @@ import type { DraftMarks, EvidenceObjects, ObjectStat } from './stores';
 // covers one part, in this order:
 //
 //   committed   committed submissions whose draft does not carry the `submitted` mark of that
-//               submission and its epoch (`archived` keeps the fence, so an archived draft counts as marked)
-//   marks       drafts that carry a mark (`submitted`, or `archived` with a fence) with no committed
-//               submission of that draft and epoch behind it, as after Postgres is restored to an earlier time
+//               submission and its epoch. Only `submitted` is a mark: an archived draft keeps
+//               whatever fence it had, which proves nothing about whether Submit finished
+//   marks       drafts marked `submitted` with no committed submission of that draft and epoch
+//               behind it, as after Postgres is restored to an earlier time
 //   pending     `pending` submissions past their expiry
 //   evidence    registry rows against the generation of the object they registered, which is the
 //               one the photo routes read: missing, another size or another stored SHA-256
 //   objects     names under the company's folder that the bucket holds a readable generation of,
 //               live or kept, with no registry row, each counted once; an id is given only when the
-//               name is the app's shape (objectIdsOf)
+//               name is the app's shape (objectIdsOf). One bounded pass on one page, never resumed
+//               (owner decision 2026-11-18): past PAGE_SIZES.objects names the page says it did not
+//               finish and gives the counts so far, and the run goes on to the next part
 //   signatures  signed agreements whose signature object is missing or differs from its row
 //
 // The answer holds counts and ids only: never a name, an address or an object path. Postgres is read
@@ -56,10 +59,9 @@ export type FindingKind = (typeof FINDINGS)[number];
 export type ObjectKey = { jobId: string; kind: PhotoKind; objectId: string };
 export type Finding = { count: number; ids: (string | ObjectKey)[] };
 
-// Where the next page starts: after this id in that part, or for the objects part after the last
-// object name listed, sealed (sealName) so the answer never holds a path.
-export type Sealed = { sealed: string };
-export type Cursor = { part: Part; after: string | Sealed | null };
+// Where the next page starts: after this id in that part (always null for the objects part, which
+// is one pass).
+export type Cursor = { part: Part; after: string | null };
 
 export type CheckPage = {
   runId: string;
@@ -67,6 +69,9 @@ export type CheckPage = {
   // How many rows, drafts or objects this page looked at.
   checked: number;
   found: Record<FindingKind, Finding>;
+  // True when this page stopped at its cap before comparing everything (the objects part only): its
+  // counts are the counts so far, and the comparison did not finish.
+  unfinished: boolean;
   // The cursor for the next page, or null when the run is complete.
   next: Cursor | null;
 };
@@ -74,15 +79,17 @@ export type CheckPage = {
 // How long a run's pages may follow its first one.
 export const RUN_HOURS = 1;
 
-export const PAGE_SIZES = { rows: 100, stats: 50, objects: 200 };
+// Rows and drafts per page, registry rows and agreements per page (each a bucket call), and the cap
+// on object names the one objects pass compares.
+export const PAGE_SIZES = { rows: 100, stats: 50, objects: 5000 };
+// Object names looked up in the registry per query.
+const NAME_BATCH = 500;
 const STAT_CONCURRENCY = 8;
 
 export const RECORDS_CHECK_ERRORS = {
   not_found: 404,
   // No run of this operator for this company with that id, or it is over RUN_HOURS old.
   run_not_found: 404,
-  // A sealed objects cursor that this run did not seal, or that was changed.
-  bad_cursor: 400,
 } as const;
 export type RecordsCheckErrorCode = keyof typeof RECORDS_CHECK_ERRORS;
 
@@ -97,31 +104,7 @@ export class RecordsCheckError extends Error {
 
 const IS_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-// The objects part continues from exactly the last name it listed, whatever its shape, so a page
-// never counts an object twice or skips one written meanwhile. That name may be a path, so the cursor
-// holds it sealed (AES-256-GCM) with the run's own random key, kept in the run's audit row and read
-// back by the server only; the sealed value is bound to the run and the company.
-function sealName(key: Buffer, bound: string, name: string): Sealed {
-  const nonce = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', key, nonce);
-  cipher.setAAD(Buffer.from(bound));
-  const body = Buffer.concat([cipher.update(name, 'utf8'), cipher.final()]);
-  return { sealed: Buffer.concat([nonce, body, cipher.getAuthTag()]).toString('base64url') };
-}
 
-function openName(key: Buffer, bound: string, sealed: Sealed): string {
-  try {
-    const bytes = Buffer.from(sealed.sealed, 'base64url');
-    const decipher = createDecipheriv('aes-256-gcm', key, bytes.subarray(0, 12));
-    decipher.setAAD(Buffer.from(bound));
-    decipher.setAuthTag(bytes.subarray(bytes.length - 16));
-    return Buffer.concat([decipher.update(bytes.subarray(12, bytes.length - 16)), decipher.final()]).toString('utf8');
-  } catch {
-    throw new RecordsCheckError('bad_cursor');
-  }
-}
-
-const MARKED_STATES = new Set(['submitted', 'archived']);
 
 type Registered = { objectName: string; generation: bigint; sha256: string; sizeBytes: number };
 
@@ -178,6 +161,7 @@ type PartResult = {
   next: Cursor | null;
   // Objects with no row whose name gives no safe id: counted, never named.
   unnamedOrphans?: number;
+  unfinished?: boolean;
 };
 
 // A run's first page, or a later page of that run from the cursor the previous page answered.
@@ -195,21 +179,20 @@ export function recordsCheckService(
     run: (tx: CompanyTransaction) => Promise<T>,
   ) => withOperator(db, operatorId, run, { companyId, readOnly: true });
 
-  // The company exists and, for a later page, the run is this operator's and still open; answers
-  // the run's cursor key.
+  // The company exists and, for a later page, the run is this operator's and still open.
   async function admitted(
     tx: CompanyTransaction,
     operatorId: string,
     companyId: string,
     runId: string | undefined,
-  ): Promise<Buffer | null> {
+  ): Promise<void> {
     const [company] = (await tx.execute(
       sql`SELECT 1 AS one FROM companies WHERE id = ${companyId}::uuid`,
     )) as unknown as unknown[];
     if (!company) throw new RecordsCheckError('not_found');
-    if (runId === undefined) return null;
+    if (runId === undefined) return;
     const [run] = await tx
-      .select({ cursorKey: sql<string | null>`${auditEvents.details} ->> 'cursorKey'` })
+      .select({ id: auditEvents.id })
       .from(auditEvents)
       .where(
         and(
@@ -221,8 +204,7 @@ export function recordsCheckService(
         ),
       )
       .limit(1);
-    if (!run || run.cursorKey === null) throw new RecordsCheckError('run_not_found');
-    return Buffer.from(run.cursorKey, 'base64url');
+    if (!run) throw new RecordsCheckError('run_not_found');
   }
 
   async function registryRows(tx: CompanyTransaction, companyId: string, after: string | null) {
@@ -280,8 +262,7 @@ export function recordsCheckService(
             mark &&
             mark.submissionId === row.id &&
             mark.epoch === row.epoch &&
-            mark.state !== null &&
-            MARKED_STATES.has(mark.state)
+            mark.state === 'submitted'
           );
         });
         return {
@@ -298,11 +279,7 @@ export function recordsCheckService(
       case 'marks': {
         await read(operatorId, companyId, (tx) => admitted(tx, operatorId, companyId, runId));
         const { drafts, more } = await marks.page(companyId, after, sizes.rows);
-        const marked = drafts.filter(
-          (draft) =>
-            draft.state === 'submitted' ||
-            (draft.state === 'archived' && draft.submissionId !== null),
-        );
+        const marked = drafts.filter((draft) => draft.state === 'submitted');
         const named = marked
           .map((draft) => draft.submissionId)
           .filter((id): id is string => id !== null && IS_UUID.test(id));
@@ -391,30 +368,27 @@ export function recordsCheckService(
       }
 
       case 'objects': {
-        const key = await read(operatorId, companyId, (tx) =>
-          admitted(tx, operatorId, companyId, runId),
-        );
-        const bound = `${runId}/${companyId}`;
+        await read(operatorId, companyId, (tx) => admitted(tx, operatorId, companyId, runId));
         const prefix = `companies/${companyId}/`;
-        const sealed = cursor.after !== null && typeof cursor.after === 'object' ? cursor.after : null;
-        const after = sealed === null ? null : openName(key!, bound, sealed);
-        if (after !== null && !after.startsWith(prefix)) throw new RecordsCheckError('bad_cursor');
-        const { names: page, more } = await objects.list(prefix, after, sizes.objects);
+        const { names: page, more } = await objects.list(prefix, sizes.objects);
         const keys = page.map((name) => objectIdsOf(companyId, name));
-        const registered =
-          page.length === 0
-            ? []
-            : await read(operatorId, companyId, (tx) =>
-                tx
-                  .select({ objectName: evidenceObjects.objectName })
-                  .from(evidenceObjects)
-                  .where(
-                    and(
-                      eq(evidenceObjects.companyId, companyId),
-                      inArray(evidenceObjects.objectName, page),
-                    ),
+        const registered = await read(operatorId, companyId, async (tx) => {
+          const found: { objectName: string }[] = [];
+          for (let start = 0; start < page.length; start += NAME_BATCH) {
+            found.push(
+              ...(await tx
+                .select({ objectName: evidenceObjects.objectName })
+                .from(evidenceObjects)
+                .where(
+                  and(
+                    eq(evidenceObjects.companyId, companyId),
+                    inArray(evidenceObjects.objectName, page.slice(start, start + NAME_BATCH)),
                   ),
-              );
+                )),
+            );
+          }
+          return found;
+        });
         const known = new Set(registered.map((row) => row.objectName));
         const orphans = page.flatMap((name, index) =>
           keys[index] !== null && !known.has(name) ? [keys[index]!] : [],
@@ -423,15 +397,12 @@ export function recordsCheckService(
           (name, index) => keys[index] === null && !known.has(name),
         ).length;
 
-        const next: Cursor | null =
-          more && page.length > 0
-            ? { part: 'objects', after: sealName(key!, bound, page[page.length - 1]!) }
-            : partAfter('objects');
         return {
           checked: page.length,
           found: { objectWithoutRow: orphans },
           unnamedOrphans,
-          next,
+          unfinished: more,
+          next: partAfter('objects'),
         };
       }
 
@@ -497,8 +468,6 @@ export function recordsCheckService(
         cursor = input.next;
       } else {
         runId = randomUUID();
-        // The run's own key for sealing the objects cursor; never in an answer or a log.
-        const cursorKey = randomBytes(32).toString('base64url');
         cursor = firstOf(PARTS[0]);
         await withOperator(
           db,
@@ -511,7 +480,7 @@ export function recordsCheckService(
               operatorActorId: operatorId,
               action: 'records_check_run',
               target: companyId,
-              details: { runId, cursorKey },
+              details: { runId },
             });
           },
           { companyId },
@@ -525,7 +494,14 @@ export function recordsCheckService(
       ][])
         found[kind] = { count: ids.length, ids };
       if (result.unnamedOrphans) found.objectWithoutRow.count += result.unnamedOrphans;
-      return { runId, part: cursor.part, checked: result.checked, found, next: result.next };
+      return {
+        runId,
+        part: cursor.part,
+        checked: result.checked,
+        found,
+        unfinished: result.unfinished === true,
+        next: result.next,
+      };
     },
   };
 }

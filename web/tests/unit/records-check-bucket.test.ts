@@ -29,7 +29,7 @@ function bucketOf(objects: Record<string, Stored>, pageSize: number) {
     async getFiles(query) {
       queries.push(query);
       const listable = entries.filter(
-        (entry) => entry.name.startsWith(query.prefix) && entry.name >= query.startOffset && (query.versions || entry.live),
+        (entry) => entry.name.startsWith(query.prefix) && (query.versions || entry.live),
       );
       const from = query.pageToken === undefined ? 0 : Number(query.pageToken);
       const listed = listable.slice(from, from + Math.min(pageSize, query.maxResults));
@@ -69,35 +69,26 @@ describe('the bucket reader', () => {
     await expect(bucketEvidenceObjects(bucket).stat('one', 1n)).rejects.toThrow('denied');
   });
 
-  it('lists each name once, kept generations included, after the given name, following page tokens to a name boundary', async () => {
-    const { bucket, queries } = bucketOf(
-      {
-        'p/a#1': {},
-        // Only kept generations: the live object was deleted.
-        'p/b#1': { live: false },
-        'p/b#2': { live: false },
-        'p/c#1': { live: false },
-        'p/c#2': {},
-        'p/d#1': {},
-        'p/e#1': {},
-      },
-      2,
-    );
-    const store = bucketEvidenceObjects(bucket);
-    expect(await store.list('p/', null, 2)).toEqual({ names: ['p/a', 'p/b'], more: true });
-    // Every generation of the name given is skipped, wherever the bucket's pages fall.
-    expect(await store.list('p/', 'p/b', 2)).toEqual({ names: ['p/c', 'p/d'], more: true });
-    expect(await store.list('p/', 'p/d', 5)).toEqual({ names: ['p/e'], more: false });
-    expect(await store.list('p/', 'p/e', 5)).toEqual({ names: [], more: false });
-    expect(queries.every((query) => query.versions === true && query.autoPaginate === false)).toBe(true);
-    expect(queries.map((query) => [query.startOffset, query.pageToken])).toEqual([
+  it('lists each name once, kept generations included, following page tokens to a name boundary', async () => {
+    const objects = {
+      'p/a#1': {},
+      // Only kept generations: the live object was deleted.
+      'p/b#1': { live: false },
+      'p/b#2': { live: false },
+      'p/c#1': { live: false },
+      'p/c#2': {},
+      'p/d#1': {},
+      'q/a#1': {},
+    };
+    const first = bucketOf(objects, 2);
+    expect(await bucketEvidenceObjects(first.bucket).list('p/', 2)).toEqual({ names: ['p/a', 'p/b'], more: true });
+    // p/b's second generation sits on the next bucket page; it is listed before the name is closed.
+    expect(first.queries.map((query) => [query.prefix, query.pageToken])).toEqual([
       ['p/', undefined],
       ['p/', '2'],
-      ['p/b', undefined],
-      ['p/b', '2'],
-      ['p/b', '4'],
-      ['p/d', undefined],
-      ['p/e', undefined],
     ]);
+    const all = bucketOf(objects, 2);
+    expect(await bucketEvidenceObjects(all.bucket).list('p/', 10)).toEqual({ names: ['p/a', 'p/b', 'p/c', 'p/d'], more: false });
+    expect(all.queries.every((query) => query.versions === true && query.autoPaginate === false)).toBe(true);
   });
 });

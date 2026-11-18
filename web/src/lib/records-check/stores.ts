@@ -31,14 +31,9 @@ export type EvidenceObjects = {
   // a restore that copied it back under a new live generation still finds it while it is kept.
   stat(name: string, generation: bigint): Promise<ObjectStat | null>;
   // Names under `prefix` that the bucket holds a readable generation of, live or kept (noncurrent),
-  // each once, in name order after `after` (null: from the first), every generation of `after`
-  // skipped; at most `count` of them, and whether more follow. The bucket's own page tokens stay
-  // inside this call.
-  list(
-    prefix: string,
-    after: string | null,
-    count: number,
-  ): Promise<{ names: string[]; more: boolean }>;
+  // each once, in name order; at most `count` of them, and whether more follow. The bucket's own
+  // page tokens stay inside this call.
+  list(prefix: string, count: number): Promise<{ names: string[]; more: boolean }>;
 };
 
 function markOf(data: Record<string, unknown> | undefined): DraftMark {
@@ -100,7 +95,6 @@ export type ListingBucket = {
   };
   getFiles(query: {
     prefix: string;
-    startOffset: string;
     versions: true;
     maxResults: number;
     autoPaginate: false;
@@ -127,7 +121,7 @@ export function bucketEvidenceObjects(bucket: ListingBucket): EvidenceObjects {
       };
     },
 
-    async list(prefix, after, count) {
+    async list(prefix, count) {
       const names: string[] = [];
       let pageToken: string | undefined;
       // A versioned listing gives one entry per generation, in name order and then generation
@@ -137,14 +131,13 @@ export function bucketEvidenceObjects(bucket: ListingBucket): EvidenceObjects {
       for (;;) {
         const [files, next] = await bucket.getFiles({
           prefix,
-          startOffset: after ?? prefix,
           versions: true,
           maxResults: Math.min(1000, count + 1),
           autoPaginate: false,
           ...(pageToken === undefined ? {} : { pageToken }),
         });
         for (const { name } of files) {
-          if (name !== after && names[names.length - 1] !== name) names.push(name);
+          if (names[names.length - 1] !== name) names.push(name);
         }
         if (names.length > count) return { names: names.slice(0, count), more: true };
         pageToken = next?.pageToken;

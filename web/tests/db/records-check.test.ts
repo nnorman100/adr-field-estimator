@@ -87,10 +87,8 @@ function fakeStores(): Stores {
       if (stores.fail) throw new Error(`bucket unreachable at ${name}`);
       return stores.objects.get(name)?.get(generation) ?? null;
     },
-    async list(prefix, after, count) {
-      const names = [...stores.objects.keys()]
-        .filter((name) => name.startsWith(prefix) && (after === null || name > after))
-        .sort();
+    async list(prefix, count) {
+      const names = [...stores.objects.keys()].filter((name) => name.startsWith(prefix)).sort();
       return { names: names.slice(0, count), more: names.length > count };
     },
   };
@@ -143,9 +141,8 @@ const call = (company: string, body: unknown = {}, claims: FakeClaims | null = o
     params({ companyId: company }),
   );
 
-// Every page of one run, from its first page to the one with no next cursor. `between` runs after
-// each page, before the next is asked for, to change the stores mid-run.
-async function run(company: string, between?: (page: CheckPage) => void): Promise<CheckPage[]> {
+// Every page of one run, from its first page to the one with no next cursor.
+async function run(company: string): Promise<CheckPage[]> {
   const pages: CheckPage[] = [];
   let body: unknown = {};
   for (let i = 0; i < 500; i += 1) {
@@ -153,7 +150,6 @@ async function run(company: string, between?: (page: CheckPage) => void): Promis
     expect(response.status).toBe(200);
     const page = (await response.json()) as CheckPage;
     pages.push(page);
-    between?.(page);
     if (page.next === null) return pages;
     body = { runId: page.runId, next: page.next };
   }
@@ -208,8 +204,7 @@ type Clean = {
 
 // A company whose stores agree: a signed job (its committed submission marked on its draft, its
 // signature object in the bucket), a photo in the registry and the bucket, a draft still being
-// edited, a submission still pending inside its fence, and a submitted draft whose job was archived
-// since (`archived`, keeping the fence of its committed submission).
+// edited, and a submission still pending inside its fence.
 async function cleanCompany(company: string, actor: string): Promise<Clean> {
   const chain = await seedChain(
     h.admin,
@@ -241,12 +236,6 @@ async function cleanCompany(company: string, actor: string): Promise<Clean> {
     submissionId: pending.id,
     epoch: pending.epoch,
   });
-  const archived = await seedCommitted(h.admin, newSubmission(company, chain.job.id, actor));
-  stores.drafts.set(`${company}/${archived.draft}`, {
-    state: 'archived',
-    submissionId: archived.id,
-    epoch: archived.epoch,
-  });
   await mirrorBucket(company);
   const [photoRow] = await h.admin<
     { id: string }[]
@@ -267,17 +256,10 @@ type Planted = Record<FindingKind, string[]>;
 // One difference of every kind the check looks for, on top of a clean company.
 async function plantDifferences(company: string, clean: Clean): Promise<Planted> {
   const { actor, job } = clean;
-  // A mark with no record, as after Postgres is restored to an earlier time; also an archived draft
-  // that kept the fence of a submission Postgres no longer has.
+  // A mark with no record, as after Postgres is restored to an earlier time.
   const markOnly = randomUUID();
   stores.drafts.set(`${company}/${markOnly}`, {
     state: 'submitted',
-    submissionId: randomUUID(),
-    epoch: randomUUID(),
-  });
-  const archivedMark = randomUUID();
-  stores.drafts.set(`${company}/${archivedMark}`, {
-    state: 'archived',
     submissionId: randomUUID(),
     epoch: randomUUID(),
   });
@@ -355,7 +337,7 @@ async function plantDifferences(company: string, clean: Clean): Promise<Planted>
   stores.objects.delete(signatureRow.object_name);
   return {
     committedWithoutMark: [noDraft.id, stillFenced.id, otherMark.id, otherEpoch.id].sort(),
-    markWithoutCommitted: [markOnly, archivedMark, otherMark.draft, otherEpoch.draft].sort(),
+    markWithoutCommitted: [markOnly, otherMark.draft, otherEpoch.draft].sort(),
     pendingPastExpiry: [expired.id],
     rowWithoutObject: [missing, generationGone, clean.signature].sort(),
     sizeDiffers: [size],
@@ -386,7 +368,7 @@ const runRows = () =>
       operator_actor_id: string;
       actor_id: string | null;
       target: string;
-      details: { runId: string; cursorKey: string };
+      details: { runId: string };
     }[]
   >`
     SELECT company_id::text, operator_actor_id::text, actor_id::text, target, details FROM audit_events WHERE action = 'records_check_run' ORDER BY id
@@ -429,24 +411,22 @@ describe('the records check reads only what the operator policy lets it read', (
 describe('a run', () => {
   it('finds nothing in a clean company, page by page, and writes one audit row for the run', async () => {
     await cleanCompany(h.seed.a, h.seed.ownerA.actor);
-    setPageSizes({ rows: 1, stats: 1, objects: 1 });
+    setPageSizes({ rows: 1, stats: 1, objects: 100 });
     const before = await everything(h.admin);
     const pages = await run(h.seed.a);
     expect(totals(pages)).toEqual(zeros());
-    // Every part is visited in order, a page at a time: 2 committed submissions, 4 drafts, no
-    // expired pending submission, 2 registry rows, 2 objects, 1 agreement.
+    expect(pages.every((page) => !page.unfinished)).toBe(true);
+    // Every part is visited in order, a page at a time: 1 committed submission, 3 drafts, no
+    // expired pending submission, 2 registry rows, the 2 objects in one pass, 1 agreement.
     expect(pages.map((page) => `${page.part}:${page.checked}`)).toEqual([
       'committed:1',
-      'committed:1',
-      'marks:1',
       'marks:1',
       'marks:1',
       'marks:1',
       'pending:0',
       'evidence:1',
       'evidence:1',
-      'objects:1',
-      'objects:1',
+      'objects:2',
       'signatures:1',
     ]);
     expect(new Set(pages.map((page) => page.runId)).size).toBe(1);
@@ -456,12 +436,9 @@ describe('a run', () => {
         operator_actor_id: h.seed.operator,
         actor_id: null,
         target: h.seed.a,
-        details: { runId: pages[0]!.runId, cursorKey: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/) },
+        details: { runId: pages[0]!.runId },
       },
     ]);
-    // The run's cursor key stays on the server.
-    const [row] = await runRows();
-    expect(JSON.stringify(pages)).not.toContain(row!.details.cursorKey);
     // Nothing else changed: the run repairs nothing.
     await h.admin`DELETE FROM audit_events WHERE action = 'records_check_run'`;
     expect(await everything(h.admin)).toBe(before);
@@ -471,9 +448,34 @@ describe('a run', () => {
     const clean = await cleanCompany(h.seed.a, h.seed.ownerA.actor);
     const planted = await plantDifferences(h.seed.a, clean);
     expectFound(await run(h.seed.a), planted, 1);
-    setPageSizes({ rows: 1, stats: 1, objects: 1 });
+    setPageSizes({ rows: 1, stats: 1, objects: 100 });
     expectFound(await run(h.seed.a), planted, 1);
     expect(await runRows()).toHaveLength(2);
+  });
+
+  it('takes only `submitted` as a mark, whatever fence an archived draft kept: the two restore cases', async () => {
+    const clean = await cleanCompany(h.seed.a, h.seed.ownerA.actor);
+    const { actor, job } = clean;
+    // 1. Postgres is restored to before a Submit (no row) and the field database to while that
+    //    Submit was `submitting`; the job is then archived, which keeps the fence. No mark exists.
+    const neverCommitted = randomUUID();
+    stores.drafts.set(`${h.seed.a}/${neverCommitted}`, {
+      state: 'archived',
+      submissionId: randomUUID(),
+      epoch: randomUUID(),
+    });
+    // 2. Postgres keeps a committed row whose marker it wrote, but the field database is restored to
+    //    while the draft was `submitting` and the job is then archived: the mark is missing.
+    const committed = await seedCommitted(h.admin, newSubmission(h.seed.a, job, actor));
+    await h.admin`UPDATE job_submissions SET marker_state = 'done' WHERE id = ${committed.id}`;
+    stores.drafts.set(`${h.seed.a}/${committed.draft}`, {
+      state: 'archived',
+      submissionId: committed.id,
+      epoch: committed.epoch,
+    });
+    const found = totals(await run(h.seed.a));
+    expect(found.markWithoutCommitted).toEqual({ count: 0, ids: [] });
+    expect(found.committedWithoutMark).toEqual({ count: 1, ids: [committed.id] });
   });
 
   it('checks the generation each row registered: a copy restored as a new live generation is clean while the registered one is kept', async () => {
@@ -514,7 +516,7 @@ describe('a run', () => {
     await cleanCompany(h.seed.a, h.seed.ownerA.actor);
     const cleanB = await cleanCompany(h.seed.b, h.seed.ownerB.actor);
     const plantedB = await plantDifferences(h.seed.b, cleanB);
-    setPageSizes({ rows: 1, stats: 1, objects: 1 });
+    setPageSizes({ rows: 1, stats: 1, objects: 100 });
     const pages = await run(h.seed.a);
     expect(totals(pages)).toEqual(zeros());
     const answer = JSON.stringify(pages);
@@ -619,56 +621,28 @@ describe('who may run it', () => {
 });
 
 describe('the objects part', () => {
-  // Pages of one object each, stopping at the first objects page that has a next cursor.
-  async function firstObjectsCursor(company: string): Promise<{ runId: string; next: unknown }> {
-    setPageSizes({ rows: 100, stats: 100, objects: 1 });
-    let body: unknown = {};
-    for (let i = 0; i < 50; i += 1) {
-      const page = (await (await call(company, body)).json()) as CheckPage;
-      if (page.part === 'objects' && page.next?.part === 'objects') return { runId: page.runId, next: page.next };
-      body = { runId: page.runId, next: page.next };
-    }
-    throw new Error('no objects cursor');
-  }
-
-  it('continues from exactly the last name listed, so an object written before the cursor meanwhile is not counted again and no orphan is counted twice', async () => {
+  it('compares the objects in one bounded pass, and says it did not finish, with the counts so far, when there are more than the cap', async () => {
     const clean = await cleanCompany(h.seed.a, h.seed.ownerA.actor);
-    // An orphan whose name gives no id sorts first (`exports` before `jobs`).
+    // Four names in this order: an orphan whose name gives no id (`exports` sorts before `jobs`),
+    // the registered photo and signature, and an orphan with the highest id under the signatures.
     putObject(`companies/${h.seed.a}/exports/${ADDRESS}.pdf`, 1n, { sizeBytes: 10, sha256: null });
-    setPageSizes({ rows: 100, stats: 100, objects: 1 });
-    let added = false;
-    const pages = await run(h.seed.a, (page) => {
-      if (added || page.part !== 'objects') return;
-      added = true;
-      // Written after the first objects page: one sorting before the cursor (not reached by this
-      // run) and one after it (reached).
-      putObject(`companies/${h.seed.a}/aaa-late.txt`, 1n, { sizeBytes: 1, sha256: null });
-      putObject(photoName(h.seed.a, clean.job, '00000000-0000-4000-8000-000000000001'), 1n, { sizeBytes: 1, sha256: null });
-    });
-    expect(totals(pages).objectWithoutRow).toEqual({
-      count: 2,
-      ids: [`${clean.job}/photo/00000000-0000-4000-8000-000000000001`],
-    });
-  });
+    const last = 'ffffffff-ffff-4fff-bfff-ffffffffffff';
+    putObject(photoName(h.seed.a, clean.job, last, 'signatures'), 1n, { sizeBytes: 10, sha256: null });
+    const objectsPage = async () => (await run(h.seed.a)).filter((page) => page.part === 'objects');
 
-  it('holds the last name sealed, refusing a changed cursor or one sealed for another run or company', async () => {
-    await cleanCompany(h.seed.a, h.seed.ownerA.actor);
-    await cleanCompany(h.seed.b, h.seed.ownerB.actor);
-    const mine = await firstObjectsCursor(h.seed.a);
-    expect(JSON.stringify(mine.next)).not.toContain('companies/');
-    const sealed = (mine.next as { after: { sealed: string } }).after.sealed;
-    const flipped = `${sealed.slice(0, 20)}${sealed[20] === 'A' ? 'B' : 'A'}${sealed.slice(21)}`;
-    const answer = async (company: string, runId: string, next: unknown) => {
-      const response = await call(company, { runId, next });
-      return { status: response.status, body: await response.json() };
-    };
-    expect((await answer(h.seed.a, mine.runId, mine.next)).status).toBe(200);
-    const bad = { status: 400, body: { error: 'bad_cursor' } };
-    expect(await answer(h.seed.a, mine.runId, { part: 'objects', after: { sealed: flipped } })).toEqual(bad);
-    const another = await firstObjectsCursor(h.seed.a);
-    expect(await answer(h.seed.a, another.runId, mine.next)).toEqual(bad);
-    const theirs = await firstObjectsCursor(h.seed.b);
-    expect(await answer(h.seed.b, theirs.runId, mine.next)).toEqual(bad);
+    setPageSizes({ ...PAGE_SIZES, objects: 3 });
+    const capped = await objectsPage();
+    expect(capped).toHaveLength(1);
+    expect(capped[0]).toMatchObject({ checked: 3, unfinished: true, next: { part: 'signatures', after: null } });
+    expect(capped[0]!.found.objectWithoutRow).toEqual({ count: 1, ids: [] });
+
+    setPageSizes({ ...PAGE_SIZES, objects: 4 });
+    const whole = await objectsPage();
+    expect(whole[0]).toMatchObject({ checked: 4, unfinished: false });
+    expect(whole[0]!.found.objectWithoutRow).toEqual({
+      count: 2,
+      ids: [{ jobId: clean.job, kind: 'signature', objectId: last }],
+    });
   });
 });
 
