@@ -151,11 +151,12 @@ export function photosService(db: Database, store: EvidenceStore, drafts: DraftS
         // A new photo adds to the field work: only its field owner adds one, whatever their role (an
         // original or a signature does not need it).
         const job = await jobAccess(tx, caller, jobId, sendNeeds(kind), { fieldWork: kind === 'photo' });
-        const { rows, photos } = await registryView(tx, caller, jobId, photoId);
+        const view = kind === 'photo' ? await registryView(tx, caller, jobId, photoId) : null;
+        const rows = view ? view.rows : await registryRows(tx, caller, jobId, photoId);
         const same = rows.find((row) => row.kind === kind);
         if (kind === 'signature' && !same) await requireSignable(tx, caller, job);
         // A new photo is refused at the limit before its body is read.
-        if (kind === 'photo' && !same && photos >= MAX_PHOTO_REFS) throw new PhotoError('photo_limit');
+        if (view && !same && view.photos >= MAX_PHOTO_REFS) throw new PhotoError('photo_limit');
         return { job, same, photo: rows.find((row) => row.kind === 'photo') };
       });
 
@@ -196,63 +197,54 @@ export function photosService(db: Database, store: EvidenceStore, drafts: DraftS
       if (made.outcome === 'exists' && made.sha256 !== sha256) throw new PhotoError('photo_conflict');
 
       // 5. The registry row, once. Two requests that stored the same bytes at once make one row.
-      try {
-        return await withCompany(db, caller.companyId, async (tx) => {
-          const job = await jobAccess(tx, caller, jobId, sendNeeds(kind), { lock: true, fieldWork: kind === 'photo' });
-          if (kind === 'photo' && job.status !== 'draft') throw new PhotoError('draft_locked');
-          // Counted again under the job's row lock, because two requests may pass the first count
-          // together. A photo id already registered is not new and is settled below.
-          if (kind === 'photo') {
-            const now = await registryView(tx, caller, jobId, photoId);
-            if (!now.rows.some((row) => row.kind === 'photo') && now.photos >= MAX_PHOTO_REFS) throw new PhotoError('photo_limit');
-          }
-          if (kind === 'signature') {
-            const [there] = (await registryRows(tx, caller, jobId, photoId)).filter((row) => row.kind === kind);
-            if (!there) await requireSignable(tx, caller, job);
-          }
-          const [inserted] = await tx
-            .insert(evidenceObjects)
-            .values({
-              companyId: caller.companyId,
-              jobId,
-              objectId: photoId,
-              kind,
-              objectName: name,
-              generation: made.generation,
-              sha256,
-              sizeBytes: bytes.byteLength,
-              contentType,
-              createdByActorId: caller.actorId,
-            })
-            .onConflictDoNothing()
-            .returning();
-          if (inserted) {
-            await tx.insert(auditEvents).values({
-              companyId: caller.companyId,
-              actorId: caller.actorId,
-              action: RECEIVED[kind],
-              target: jobId,
-              details: { kind, sizeBytes: bytes.byteLength },
-            });
-            return { created: true, receipt: receiptOf(inserted) };
-          }
-          const [existing] = (await registryRows(tx, caller, jobId, photoId)).filter((row) => row.kind === kind);
-          if (!existing || existing.sha256 !== sha256) throw new PhotoError('photo_conflict');
-          return { created: false, receipt: receiptOf(existing) };
-        });
-      } catch (error) {
-        // A new photo refused at the limit under the lock leaves no object of its own behind, so the
-        // bucket never holds more photos than the registry. Only the generation this request made is
-        // deleted; a failed delete does not change the answer.
-        if (error instanceof PhotoError && error.code === 'photo_limit' && made.outcome === 'created') {
-          try {
-            await store.delete(name, made.generation);
-          } catch (failure) {
-            console.error('photo store delete failed', failure instanceof Error ? failure.name : 'unknown');
-          }
+      return withCompany(db, caller.companyId, async (tx) => {
+        const job = await jobAccess(tx, caller, jobId, sendNeeds(kind), { lock: true, fieldWork: kind === 'photo' });
+        if (kind === 'photo' && job.status !== 'draft') throw new PhotoError('draft_locked');
+        // Counted again under the job's row lock, because two requests may pass the first count
+        // together. A photo id already registered is not new and is settled below. The overflow is
+        // bounded: an object no row registers can only be left in the one race window at exactly
+        // 299 registered photos, at most one per request racing at that instant, and once 300 are
+        // registered every upload is refused before anything is written. The runtime cannot delete
+        // bucket objects, so cleaning up such an object needs a delete permission or a bucket
+        // lifecycle rule, which is the owner's decision.
+        if (kind === 'photo') {
+          const now = await registryView(tx, caller, jobId, photoId);
+          if (!now.rows.some((row) => row.kind === 'photo') && now.photos >= MAX_PHOTO_REFS) throw new PhotoError('photo_limit');
         }
-        throw error;
-      }
+        if (kind === 'signature') {
+          const [there] = (await registryRows(tx, caller, jobId, photoId)).filter((row) => row.kind === kind);
+          if (!there) await requireSignable(tx, caller, job);
+        }
+        const [inserted] = await tx
+          .insert(evidenceObjects)
+          .values({
+            companyId: caller.companyId,
+            jobId,
+            objectId: photoId,
+            kind,
+            objectName: name,
+            generation: made.generation,
+            sha256,
+            sizeBytes: bytes.byteLength,
+            contentType,
+            createdByActorId: caller.actorId,
+          })
+          .onConflictDoNothing()
+          .returning();
+        if (inserted) {
+          await tx.insert(auditEvents).values({
+            companyId: caller.companyId,
+            actorId: caller.actorId,
+            action: RECEIVED[kind],
+            target: jobId,
+            details: { kind, sizeBytes: bytes.byteLength },
+          });
+          return { created: true, receipt: receiptOf(inserted) };
+        }
+        const [existing] = (await registryRows(tx, caller, jobId, photoId)).filter((row) => row.kind === kind);
+        if (!existing || existing.sha256 !== sha256) throw new PhotoError('photo_conflict');
+        return { created: false, receipt: receiptOf(existing) };
+      });
     },
 
     async open(caller, jobId, photoId, kind) {

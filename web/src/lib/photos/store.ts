@@ -22,9 +22,6 @@ export type EvidenceStore = {
   ): Promise<({ outcome: 'created' } | { outcome: 'exists' }) & StoredObject>;
   // The bytes of one generation of an object, or null when there is no such object.
   open(name: string, generation: bigint): Promise<WebReadableStream<Uint8Array> | null>;
-  // Deletes that one generation of an object and nothing else: another generation of the name is
-  // left as it is.
-  delete(name: string, generation: bigint): Promise<void>;
 };
 
 // The part of a Cloud Storage bucket this uses (@google-cloud/storage, through firebase-admin), so a
@@ -41,7 +38,6 @@ export type BucketFile = {
   ): Promise<void>;
   getMetadata(): Promise<[{ generation?: string | number; metadata?: Record<string, unknown> }, ...unknown[]]>;
   createReadStream(): NodeJS.ReadableStream;
-  delete(): Promise<unknown>;
 };
 export type Bucket = { file(name: string, options?: { generation?: string }): BucketFile };
 
@@ -90,10 +86,6 @@ export function bucketEvidenceStore(bucket: Bucket): EvidenceStore {
         throw error;
       }
       return Readable.toWeb(Readable.from(file.createReadStream())) as WebReadableStream<Uint8Array>;
-    },
-
-    async delete(name, generation) {
-      await bucket.file(name, { generation: generation.toString() }).delete();
     },
   };
 }

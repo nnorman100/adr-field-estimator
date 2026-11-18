@@ -17,8 +17,6 @@ export type FakeEvidence = EvidenceStore & {
   failNext: { on: boolean; afterWrite: boolean };
   // Fails the next open.
   failOpen: boolean;
-  // Every call to delete, in order, as `name@generation`.
-  deletes: string[];
 };
 
 export function fakeEvidence(): FakeEvidence {
@@ -28,7 +26,6 @@ export function fakeEvidence(): FakeEvidence {
     creates: [],
     failNext: { on: false, afterWrite: false },
     failOpen: false,
-    deletes: [],
     async create(name, bytes, contentType, sha256) {
       store.creates.push(name);
       const fail = store.failNext;
@@ -55,10 +52,6 @@ export function fakeEvidence(): FakeEvidence {
       const there = store.objects.get(name);
       if (!there || there.generation !== generationWanted) return null;
       return new Response(there.bytes as BodyInit).body as unknown as WebReadableStream<Uint8Array>;
-    },
-    async delete(name, generationWanted) {
-      store.deletes.push(`${name}@${generationWanted}`);
-      if (store.objects.get(name)?.generation === generationWanted) store.objects.delete(name);
     },
   };
   return store;
