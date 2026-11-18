@@ -422,6 +422,9 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
       const made = await inCompany(caller.companyId, async (tx) => {
         // A new draft version of the field work: the field owner's to make.
         const job = await jobAccess(tx, caller, jobId, SUBMIT, { lock: true, fieldWork: true });
+        // A next draft is never the draft it comes from (security audit F1): refused here, before any
+        // claim, so the refused id commits nothing.
+        if (input.draftId === input.fromDraftId) throw new SubmissionError('conflict');
         // The job's latest record: a new draft is made only from it.
         const [latest] = await tx
           .select()

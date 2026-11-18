@@ -94,5 +94,7 @@ before it ends. Before the fill it checks the existing data (security audit F1, 
 nothing, with an error naming each job by company and job id, when a draft id is named by more than one job,
 or when a job in status `draft` is on a draft that was already submitted (a committed submission of its
 current draft; Submit writes the Firestore draft's `submitted` state from that record, so the check reads
-the record in Postgres rather than Firestore). Which job keeps a draft, and how a stuck job moves on, are the
+the record in Postgres rather than Firestore). A draft submitted in Firestore alone, which SQL cannot see, is
+checked by the owner before 0016 runs, read only, with `npm run platform:check-draft-states`
+([migrations runbook](../runbook/migrations.md#before-0016_job_drafts-security-audit-f1)). Which job keeps a draft, and how a stuck job moves on, are the
 owner's decisions, made before the file runs again. The table holds ids only.

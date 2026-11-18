@@ -176,6 +176,39 @@ describe('Back to editing', () => {
     expect((await f.nextDraft(ESTIMATOR_A, jobId, { draftId: randomUUID(), fromDraftId: second })).status).toBe(201);
   });
 
+  // Security audit F1, the planned regression: after job A submits and moves off its first draft,
+  // Back to editing on job B with that id answers 409, and the draft and its field owner stay as they
+  // are; so does job B.
+  it('refuses another job’s earlier draft as a job’s next draft, and leaves both jobs and that draft as they are', async () => {
+    const a = await submittedJob();
+    expect((await f.nextDraft(ESTIMATOR_A, a.jobId, { draftId: randomUUID(), fromDraftId: a.draftId })).status).toBe(201);
+    const b = await submittedJob(ESTIMATOR_A2);
+    const key = `${h.seed.a}/${a.draftId}`;
+    const draft = structuredClone(h.field.draft(h.seed.a, a.draftId));
+    const owner = structuredClone(h.drafts.made.get(key));
+    const before = await everything(h.admin);
+    expect(await f.nextDraft(ESTIMATOR_A2, b.jobId, { draftId: a.draftId, fromDraftId: b.draftId })).toMatchObject({ status: 409, body: { error: 'conflict' } });
+    expect(await everything(h.admin)).toBe(before);
+    expect(h.field.draft(h.seed.a, a.draftId)).toEqual(draft);
+    expect(h.drafts.made.get(key)).toEqual(owner);
+    expect(owner?.fieldOwnerUid).toBe('estimator-a');
+    expect(h.drafts.jobOf.get(key)).toBe(a.jobId);
+  });
+
+  // Security audit F1: a next draft is never the draft it comes from. Sent with one id as both, even
+  // for a job whose current draft the previous version left unclaimed, it is refused before any claim,
+  // so the refused id commits nothing.
+  it('refuses the same id as next draft and source before any claim, so nothing is committed', async () => {
+    const { jobId, draftId } = await submittedJob();
+    await h.admin`DELETE FROM job_drafts WHERE draft_id = ${draftId}`;
+    const before = await everything(h.admin);
+    const stored = structuredClone(h.field.draft(h.seed.a, draftId));
+    expect(await f.nextDraft(ESTIMATOR_A, jobId, { draftId, fromDraftId: draftId })).toMatchObject({ status: 409, body: { error: 'conflict' } });
+    expect(await everything(h.admin)).toBe(before);
+    expect(await h.admin`SELECT job_id FROM job_drafts WHERE draft_id = ${draftId}`).toEqual([]);
+    expect(h.field.draft(h.seed.a, draftId)).toEqual(stored);
+  });
+
   // Security audit F1, across a release: the migration runs while the previous version still serves,
   // and that version puts jobs on drafts and submits them without claiming them or writing their job
   // id on the draft. Such a submitted draft is still no other job's, nor its own job's next draft.
