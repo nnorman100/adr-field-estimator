@@ -11,6 +11,9 @@ import { companyAuth } from '../../../../src/lib/firebase-client';
 import { fieldWrite, mirrorSignIn, setAppCheckSeam, startFieldClient, stopFieldClient, type CacheKind, type FieldClient } from '../../../../src/lib/field-db';
 import { readLatestMe, saveMe, updateMe, type DsMe } from '../../../../src/lib/field/ds-me';
 import { runFieldSync } from '../../../../src/lib/field/field-sync';
+import { openDatabase, transact, withDatabase, type DbSpec } from '../../../../src/lib/field/idb';
+import { appendEntry, forgetJournal, readJournal } from '../../../../src/lib/field/journal';
+import { basesOf, journaledEdit } from '../../../../src/lib/field/journal-sync';
 import { evaluate } from '../../../../src/lib/field/retention';
 import { signOutDiscarding, signOutKeeping, signOutOnRefusal } from '../../../../src/lib/field/sign-out';
 import type { GateState, SyncGate } from '../../../../src/lib/field/sync-gate';
@@ -19,9 +22,34 @@ import { readUnsent, unsentKey, type LockReason } from '../../../../src/lib/fiel
 setLogLevel('silent');
 
 export type Person = { tenantId: string; uid: string; config: BrowserSignInConfig };
-type Running = { client: FieldClient; gate: SyncGate | null; states: GateState[]; removed: boolean };
+type Running = { client: FieldClient; gate: SyncGate | null; states: GateState[]; removed: boolean; reopen?: boolean };
 
 const running = new Map<string, Running>();
+const held: IDBDatabase[] = [];
+let lost = 0;
+let lostIn = '';
+const realTransaction = IDBDatabase.prototype.transaction;
+IDBDatabase.prototype.transaction = function (this: IDBDatabase, ...args: Parameters<IDBDatabase['transaction']>) {
+  if (lost > 0 && this.name === lostIn) {
+    lost -= 1;
+    throw new DOMException('Connection to Indexed Database server lost. Refresh the page to try again', 'UnknownError');
+  }
+  return realTransaction.apply(this, args);
+} as IDBDatabase['transaction'];
+// Safari's lost connection as an open's own error, for the next `openLost` opens of `lostOpenIn`.
+let openLost = 0;
+let lostOpenIn = '';
+const realOpen = IDBFactory.prototype.open;
+IDBFactory.prototype.open = function (this: IDBFactory, name: string, version?: number) {
+  if (openLost > 0 && name === lostOpenIn) {
+    openLost -= 1;
+    const failed = { error: new DOMException('Connection to Indexed Database server lost. Refresh the page to try again', 'UnknownError'), onerror: null as null | (() => void) };
+    setTimeout(() => failed.onerror?.(), 0);
+    return failed as unknown as IDBOpenDBRequest;
+  }
+  return realOpen.call(this, name, version);
+} as typeof realOpen;
+const testSpec = (name: string, version: number): DbSpec => ({ name, version, upgrade: (db) => void db.createObjectStore('rows') });
 const ops = new Map<string, { state: 'pending' | 'acked' | 'rejected'; code?: string }>();
 let counter = 0;
 let tokenAnswer: 'expired' | 'slow' | 'fresh' = 'fresh';
@@ -108,10 +136,12 @@ const f = {
     entry.gate = runFieldSync(entry.client, savedRow(person, signedInDaysAgo), (event) => {
       if ('state' in event) entry.states.push(event.state);
       if ('removed' in event) entry.removed = true;
+      if ('reopen' in event) entry.reopen = true;
     });
   },
   gate(person: Pick<Person, 'tenantId' | 'uid'>): string {
     if (get(person).removed) return 'removed';
+    if (get(person).reopen) return 'reopen';
     const states = get(person).states;
     return states.at(-1)?.kind === 'locked' ? `locked: ${(states.at(-1) as { reason: string }).reason}` : (states.at(-1)?.kind ?? 'starting');
   },
@@ -144,6 +174,105 @@ const f = {
   },
   op: (id: string) => ops.get(id) ?? null,
 
+  // A field edit as the job screens make it (S6-4): journaled, then written (absolute values; dotted
+  // keys under `field`). Answers once the phone has saved it, or with the error that stopped it.
+  async journalWrite(person: Pick<Person, 'tenantId' | 'uid'>, path: string, fields: Record<string, unknown>): Promise<string> {
+    const id = `op${(counter += 1)}`;
+    const [, companyId, , draftId] = path.split('/');
+    try {
+      const { acknowledged } = await journaledEdit(get(person).client, { companyId: companyId!, draftId: draftId! }, [{ path, op: 'update', fields }]);
+      ops.set(id, { state: 'pending' });
+      acknowledged.then(
+        () => ops.set(id, { state: 'acked' }),
+        (error: unknown) => ops.set(id, { state: 'rejected', code: code(error) }),
+      );
+    } catch (error) {
+      ops.set(id, { state: 'rejected', code: code(error) });
+    }
+    return id;
+  },
+  // Only the journal's entry, never handed to Firestore: what a page killed between the two leaves.
+  // Its bases are read from the person's started client as the app reads them (none without one).
+  async journalOnly(person: Pick<Person, 'tenantId' | 'uid'>, path: string, fields: Record<string, unknown>): Promise<void> {
+    const [, companyId, , draftId] = path.split('/');
+    const writes = [{ path, op: 'update' as const, fields }];
+    const client = running.get(key(person))?.client;
+    await appendEntry(person, `companies/${companyId}/drafts/${draftId}`, writes, client ? await basesOf(client.db, writes) : {});
+  },
+  // The person's journal entries, oldest first, without their ids.
+  async journal(person: Pick<Person, 'tenantId' | 'uid'>) {
+    return (await readJournal(person)).map(({ state, reason, writes, tenantId, uid }) => ({ state, reason, writes, tenantId, uid }));
+  },
+  forgetJournal: (person: Pick<Person, 'tenantId' | 'uid'>) => forgetJournal(person),
+
+  // The one IndexedDB wrapper (src/lib/field/idb.ts). `hold` keeps a connection open, as an old
+  // window would; `upgrade` then opens the same database at the next version with no wrapper, as a
+  // newer window's code would, and answers whether it got through or was blocked.
+  async hold(name: string): Promise<void> {
+    held.push(await openDatabase(testSpec(name, 1)));
+  },
+  upgrade(name: string): Promise<'upgraded' | 'blocked' | 'failed'> {
+    return new Promise((resolve) => {
+      const request = indexedDB.open(name, 2);
+      request.onblocked = () => resolve('blocked');
+      request.onerror = () => resolve('failed');
+      request.onsuccess = () => {
+        request.result.close();
+        resolve('upgraded');
+      };
+    });
+  },
+  // Safari's "Connection to Indexed Database server lost" from the next `times` transactions on
+  // the database `name` (only that one: Firestore's own databases are never touched).
+  loseConnection(times: number, name: string): void {
+    lost = times;
+    lostIn = name;
+  },
+  // The same lost connection from the next `times` opens of the database `name`.
+  loseOpen(times: number, name: string): void {
+    openLost = times;
+    lostOpenIn = name;
+  },
+  // What the shell's start reads from ds-me: the newest row's (tenant/person), or its failure.
+  async latestMeAnswer(): Promise<string | null> {
+    const me = await readLatestMe();
+    return me === null || typeof me === 'string' ? me : `${me.tenantId}/${me.uid}`;
+  },
+  // A transaction whose request fails (a key added twice): the error it rejects with, by name.
+  async failedTransaction(name: string): Promise<string> {
+    try {
+      await withDatabase(testSpec(name, 1), (db) =>
+        transact(db, 'rows', 'readwrite', (transaction) => {
+          const store = transaction.objectStore('rows');
+          store.put('one', 'same');
+          store.add('two', 'same');
+          return () => undefined;
+        }),
+      );
+      return 'committed';
+    } catch (error) {
+      return error instanceof Error ? error.name : String(error);
+    }
+  },
+  // The gate started and a field edit made in the same moment, as a screen can at the app's start.
+  async syncAndWrite(person: Person, path: string, fields: Record<string, unknown>): Promise<string> {
+    f.sync(person);
+    return f.journalWrite(person, path, fields);
+  },
+  // One read through the wrapper: 'ok', or the error's message.
+  async tryRead(name: string): Promise<string> {
+    try {
+      await withDatabase(testSpec(name, 1), (db) => new Promise((resolve, reject) => {
+        const request = db.transaction('rows', 'readonly').objectStore('rows').count();
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      }));
+      return 'ok';
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  },
+
   async readCache(person: Pick<Person, 'tenantId' | 'uid'>, path: string): Promise<{ data?: DocumentData | null; pending?: boolean; error?: string }> {
     try {
       const snapshot = await withTimeout(getDocFromCache(doc(get(person).client.db, path)), 8000, null);
@@ -175,11 +304,11 @@ const f = {
   },
   async latestMe(): Promise<string | null> {
     const me = await readLatestMe();
-    return me === null || me === 'unavailable' ? null : `${me.tenantId}/${me.uid}`;
+    return me === null || me === 'unavailable' || me === 'reopen' ? null : `${me.tenantId}/${me.uid}`;
   },
   async latestFacts(): Promise<Pick<DsMe, 'role' | 'companyId' | 'capabilities' | 'authTime'> | null> {
     const me = await readLatestMe();
-    if (me === null || me === 'unavailable') return null;
+    if (me === null || me === 'unavailable' || me === 'reopen') return null;
     return { role: me.role, companyId: me.companyId, capabilities: me.capabilities, authTime: me.authTime };
   },
 

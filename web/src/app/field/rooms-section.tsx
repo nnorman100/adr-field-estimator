@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { readScopeLists, type ScopeLists } from '@/lib/field/api';
 import { roomName } from '@/lib/field/forms';
 import { MAX_ROOMS, type RoomField } from '@/lib/field/schema';
-import { addRoom, removeRoom, type FieldDraft } from '@/lib/field/store';
+import { addRoomWrites, removeRoomWrites, type FieldDraft } from '@/lib/field/store';
 import type { JobContext } from './job-screens';
 import { RoomCard } from './room-card';
 import { Box, Outcome, Section } from './ui';
@@ -64,7 +64,7 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
   // write and the draft read after it: each starts from the order the phone holds.
   async function remove(roomId: string, label: string) {
     if (busy || !window.confirm(`Remove ${label} from this job?`)) return;
-    await saveEdit((db) => removeRoom(db, job.draftRef, roomId, draft.field.roomOrder ?? []), `${label} removed.`);
+    await saveEdit(removeRoomWrites(job.draftRef, roomId, draft.field.roomOrder ?? []), `${label} removed.`);
   }
 
   async function add() {
@@ -72,7 +72,7 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
     const checked = roomName(name);
     if (!checked) return setError('Give the room a name.');
     const roomId = crypto.randomUUID();
-    await saveEdit((db) => addRoom(db, job.draftRef, roomId, checked, draft.field.roomOrder ?? []), `${checked} added.`, () => {
+    await saveEdit(addRoomWrites(job.draftRef, roomId, checked, draft.field.roomOrder ?? []), `${checked} added.`, () => {
       setName((current) => current === name ? '' : current);
     });
   }

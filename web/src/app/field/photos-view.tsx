@@ -2,13 +2,14 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { notePhoto, photoSent } from '@/lib/field/unsent';
-import { fieldWrite, settle } from '@/lib/field-db';
+import { settle } from '@/lib/field-db';
+import { journaledEdit } from '@/lib/field/journal-sync';
 import { Button } from '@/components/ui/button';
 import { photoAddress, sendPhoto, SHOT_NAMES } from '@/lib/field/api';
 import { pending as unsent, usePending, type PendingPhoto } from '@/lib/field/pending';
 import { preparePhoto } from '@/lib/field/photo';
 import { MAX_PHOTO_REFS, SHOT_TAGS, type PhotoField } from '@/lib/field/schema';
-import { fieldRefusal, savePhotoRef, type FieldDraft } from '@/lib/field/store';
+import { fieldRefusal, photoRefWrites, type FieldDraft } from '@/lib/field/store';
 import type { JobContext } from './job-screens';
 import { Choice, Outcome, Section } from './ui';
 
@@ -77,7 +78,8 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
     }
     update(item.id, { step: 'saving' });
     try {
-      await fieldWrite(job.session.client, (fieldDb) => savePhotoRef(fieldDb, job.draftRef, item.id, item.field));
+      const { acknowledged } = await journaledEdit(job.session.client, job.draftRef, photoRefWrites(job.draftRef, item.id, item.field));
+      await acknowledged;
       // The screen that sent it may have closed since: then the open one is told to read the draft.
       if (live.current) await job.reloadDraft();
       else unsent.draftChanged(jobId);
