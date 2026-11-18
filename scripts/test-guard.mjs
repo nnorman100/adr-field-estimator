@@ -21,15 +21,19 @@
 //      (moving, renaming or replacing a test passes).
 //   6. A newly added skip, only, todo or expected-failure marker.
 //   7. Fewer assertion lines than before across the changed test files.
+//   8. A test script in a package.json (one the config's testScripts names)
+//      removed, or changed so that a word of its command is gone or it now
+//      ignores failures. New test scripts and added commands pass.
 // New test files, new tests, new fixtures, docs and ordinary workflow edits
 // (runners, timeouts, pins, new jobs and steps, run text) pass without it.
 //
 // Usage: node scripts/test-guard.mjs <base-commit>
 // Config: .github/test-guard.json, read from the base commit:
 //   { "unguarded": [globs], "guard": [globs], "workflows": [globs],
-//     "protected": [globs], "fixtures": [globs], "tests": [globs] }
+//     "protected": [globs], "fixtures": [globs], "tests": [globs],
+//     "testScripts": { "path/to/package.json": [script-name globs] } }
 // The first of unguarded, guard, workflows and protected that matches a path
-// decides its rule; fixtures and tests apply on top.
+// decides its rule; fixtures, tests and testScripts apply on top.
 // No dependencies: CI runs the base branch's copy of this file with plain node.
 
 import { execFileSync } from 'node:child_process';
@@ -519,10 +523,14 @@ const SKIP_MARKERS = [
 const JS_TEST =
   /^\s*(?:it|test)\s*(?:\.\s*(?:skip|only|todo|fixme|fails?|concurrent|sequential|skipIf\s*\([^)]*\)|runIf\s*\([^)]*\)|each\s*\([^)]*\))\s*)?\(\s*(?:(['"`])((?:\\.|(?!\1).)*)\1)?/;
 const PY_TEST = /^\s*(?:async\s+)?def\s+(test_\w*)\s*\(/;
+// A Terraform test (`run "name" {` in a .tftest.hcl file).
+const TF_TEST = /^\s*run\s+"([^"]*)"\s*\{/;
 
 export function testName(line) {
   const py = PY_TEST.exec(line);
   if (py) return `def ${py[1]}`;
+  const tf = TF_TEST.exec(line);
+  if (tf) return `run ${tf[1]}`;
   const js = JS_TEST.exec(line);
   if (js) return js[2] != null ? `test ${js[2]}` : `test ${line.trim()}`;
   return null;
@@ -580,6 +588,49 @@ export function checkTests(removed, added) {
   return v;
 }
 
+// ------------------------------------------------- package.json scripts
+
+// baseText / headText: the package.json before and after; names: script-name
+// globs. A test script that is removed, loses a word of its command, or newly
+// ignores failures needs the label. Appending commands or adding scripts passes.
+export function checkTestScripts(path, baseText, headText, names) {
+  const isName = matcher(names);
+  const scriptsOf = (text) => {
+    if (text == null) return {};
+    try {
+      const scripts = JSON.parse(text).scripts;
+      return scripts && typeof scripts === 'object' ? scripts : {};
+    } catch {
+      return null;
+    }
+  };
+  const base = scriptsOf(baseText);
+  const head = scriptsOf(headText);
+  if (base == null || head == null) return [`${path}: could not read its scripts as JSON`];
+  const v = [];
+  for (const [name, before] of Object.entries(base)) {
+    if (!isName(name)) continue;
+    if (!Object.hasOwn(head, name)) {
+      v.push(`${path}: test script removed: ${name}`);
+      continue;
+    }
+    const after = String(head[name]);
+    const have = countBy(after.split(/\s+/).filter(Boolean));
+    const lost = [];
+    for (const word of String(before).split(/\s+/).filter(Boolean)) {
+      if (have.get(word)) have.set(word, have.get(word) - 1);
+      else lost.push(word);
+    }
+    if (lost.length) {
+      v.push(`${path}: test script ${name} no longer has: ${lost.join(' ').slice(0, 140)}`);
+    }
+    if (BYPASS_COMMANDS.some((r) => r.test(after) && !r.test(String(before)))) {
+      v.push(`${path}: test script ${name} now ignores failures: ${after.slice(0, 140)}`);
+    }
+  }
+  return v;
+}
+
 // ------------------------------------------------------------------ run
 
 function git(args) {
@@ -622,6 +673,7 @@ export function runGuard(base) {
   const isProtected = matcher(config.protected);
   const isFixture = matcher(config.fixtures);
   const isTest = matcher(config.tests);
+  const testScripts = config.testScripts || {};
 
   const range = `${base}...HEAD`;
   const mergeBase = git(['merge-base', base, 'HEAD']).trim();
@@ -680,6 +732,14 @@ export function runGuard(base) {
           violations.push(`Stored answer changed (${status}): ${path}`);
         }
       }
+    }
+
+    if (Object.hasOwn(testScripts, from) && (status === 'D' || (status === 'R' && from !== to))) {
+      violations.push(`File with test scripts removed or moved (${status}): ${from}`);
+    } else if (Object.hasOwn(testScripts, to)) {
+      violations.push(
+        ...checkTestScripts(to, show(mergeBase, to), show('HEAD', to), testScripts[to]),
+      );
     }
 
     if (status === 'D' && isTest(from)) {

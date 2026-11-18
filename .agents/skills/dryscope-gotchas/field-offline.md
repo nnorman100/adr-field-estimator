@@ -1,0 +1,13 @@
+# Field app and offline work
+
+The phone is often offline, may have two tabs open, and its storage can fail. Most findings here come from forgetting one of those three.
+
+- **A late answer must not overwrite newer state.** A slow read, save, refusal or 410 can arrive after a newer one, after the screen unmounted, or after another tab signed in. Tie each request to the sign-in, link token or revision it was made for, captured when the request starts (not at page load), and drop the answer if that has changed. Order answers by what the server says, not by when the request started.
+- **Check every storage write before the step that relies on it.** IndexedDB and lock writes fail and stall. Sign-out has deleted the saved identity after its lock write failed; a page navigation has aborted an identity write that had not committed. Give storage and network waits a deadline. A write you gave up on can still commit later.
+- **A refusal makes the screen read-only; it never clears the work.** When a save is refused (ownership moved, job archived, access removed), keep what the person typed, visible and unsent. One 404 or 410 is not proof an item is gone for good.
+- **Say "kept on this phone" only when it is.** If the cache fell back to memory, or sign-in will destroy the queue, the message must not promise otherwise. Clear the unsent mark only when no journal entry is refused, unresolved or still being written.
+- **A write to Postgres and Firestore can half-finish.** Postgres commits, then the Firestore step or the response is lost. Keep the exact retry (same change id) until it is answered, have the server return the original result for it, and never report a committed write as not saved.
+- **Replay is a conditional write.** Recovery that replays an older entry must check the document version in the same write, and hold new edits until replay ends. Ordinary field edits are `setDoc` or batched writes, never transactions, because transactions fail offline (S6 plan, section 2).
+- **Sign-out and expiry go through `evaluate(now, event)` in `web/src/lib/field/retention.ts`.** Every way a person is signed out (Team, Prices, the authenticator screens, another tab, an expired session) must record the lock first. A refusal saved late keeps its first time. No flag may exempt the role's offline session limit. Cleanup also runs on foreground resume and while signed out.
+- **Customer and claim details belong to Postgres**, not to the Firestore field cache (`docs/data-ownership.md`).
+- **iPhone Safari differs.** It has no `navigator.connection`. It restores pages from the back-forward cache without re-running mount code, so listen for `pageshow`. Playwright's WebKit is not an iPhone: camera, microphone and signal stay the owner's phone check.

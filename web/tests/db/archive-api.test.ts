@@ -266,6 +266,7 @@ describe('copy', () => {
       rooms: Object.fromEntries(manifest.rooms.map((room) => [room.id, room.field])),
       photos: {},
       previous: null,
+      jobId: ids.id,
     });
     expect(await auditOf(ids.id)).toEqual(['job_copied']);
     const [audit] = await h.admin<{ details: Record<string, unknown> }[]>`SELECT details FROM audit_events WHERE target = ${ids.id}`;
@@ -304,6 +305,59 @@ describe('copy', () => {
     expect(await f.nextDraft(ESTIMATOR_A, third, { draftId: earlier, fromDraftId: thirdDraft })).toEqual(refused);
     expect(await everything(h.admin)).toBe(before);
     expect(h.field.draft(h.seed.a, earlier)).toEqual(stored);
+  });
+
+  // Security audit F1, across a release: the previous version made the copy and its draft with no
+  // claim and no job id on the draft. The same copy sent again claims the draft id for the copy in
+  // Postgres first, then stamps the draft; a draft id Postgres holds for another job is refused and
+  // its draft not stamped.
+  it('claims and stamps a copy draft the previous version made when the same copy is sent again, and refuses one another job holds', async () => {
+    const { jobId: source } = await signedJob();
+    const ids = { id: randomUUID(), draftId: randomUUID() };
+    expect((await copy(OWNER_A, source, ids)).status).toBe(201);
+    await h.admin`DELETE FROM job_drafts WHERE draft_id = ${ids.draftId}`;
+    h.field.unstamp(h.seed.a, ids.draftId);
+    const { jobId: other } = await draftJob();
+    await h.admin`INSERT INTO job_drafts (company_id, draft_id, job_id) VALUES (${h.seed.a}, ${ids.draftId}, ${other})`;
+    const stored = structuredClone(h.field.draft(h.seed.a, ids.draftId));
+    expect(await copy(OWNER_A, source, ids)).toEqual({ status: 409, body: { error: 'conflict' } });
+    expect(h.field.draft(h.seed.a, ids.draftId)).toEqual(stored);
+    expect(stored?.jobId).toBeUndefined();
+
+    await h.admin`DELETE FROM job_drafts WHERE draft_id = ${ids.draftId}`;
+    expect((await copy(OWNER_A, source, ids)).status).toBe(200);
+    expect(await h.admin`SELECT job_id::text AS job FROM job_drafts WHERE draft_id = ${ids.draftId}`).toEqual([{ job: ids.id }]);
+    expect(h.field.draft(h.seed.a, ids.draftId)).toEqual({ ...stored, jobId: ids.id });
+  });
+
+  // Security audit F1: the claim commits before the stamp, so a lost answer from the stamp never leaves
+  // a copy draft the previous version made stamped without its claim.
+  it('commits the claim before stamping a copy draft the previous version made, so a lost answer leaves it claimed', async () => {
+    const { jobId: source } = await signedJob();
+    const ids = { id: randomUUID(), draftId: randomUUID() };
+    expect((await copy(OWNER_A, source, ids)).status).toBe(201);
+    await h.admin`DELETE FROM job_drafts WHERE draft_id = ${ids.draftId}`;
+    h.field.unstamp(h.seed.a, ids.draftId);
+    h.field.loseNext.createCopy = true;
+    expect((await copy(OWNER_A, source, ids)).status).toBe(503);
+    expect(h.field.draft(h.seed.a, ids.draftId)?.jobId).toBe(ids.id);
+    expect(await h.admin`SELECT job_id::text AS job FROM job_drafts WHERE draft_id = ${ids.draftId}`).toEqual([{ job: ids.id }]);
+    expect((await copy(OWNER_A, source, ids)).status).toBe(200);
+  });
+
+  it('refuses a copy onto a draft the field database holds for another job, and commits nothing', async () => {
+    const { jobId: source } = await signedJob();
+    const foreign = randomUUID();
+    const key = `${h.seed.a}/${foreign}`;
+    h.drafts.made.set(key, { fieldOwnerUid: 'estimator-a2' });
+    h.drafts.jobOf.set(key, randomUUID());
+    const before = await everything(h.admin);
+    const stored = structuredClone(h.field.draft(h.seed.a, foreign));
+    const id = randomUUID();
+    expect(await copy(OWNER_A, source, { id, draftId: foreign })).toEqual({ status: 409, body: { error: 'conflict' } });
+    expect(await everything(h.admin)).toBe(before);
+    expect(h.field.draft(h.seed.a, foreign)).toEqual(stored);
+    expect((await copy(OWNER_A, source, { id, draftId: randomUUID() })).status).toBe(201);
   });
 });
 

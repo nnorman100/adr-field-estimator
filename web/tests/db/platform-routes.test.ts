@@ -119,6 +119,7 @@ describe('who may use the operator routes', () => {
       'POST platform/companies/[companyId]/members/[membershipId]/enable',
       'POST platform/companies/[companyId]/members/[membershipId]/reset-second-step',
       'POST platform/companies/[companyId]/owner',
+      'POST platform/companies/[companyId]/records-check',
       'POST platform/companies/[companyId]/status',
       'POST platform/companies/[companyId]/tenant',
       'PUT platform/companies/[companyId]/ai-settings',

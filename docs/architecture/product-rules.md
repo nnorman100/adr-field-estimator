@@ -10,18 +10,18 @@ Moved here on Nov 12, 2026 when `AGENTS.md` was rewritten as the short agent ins
 
 - **Product**: **DryScope**, for water and mold restoration companies, each in its own isolated company workspace.
 - **Company identity**: each company's name, address, licence number and estimator sign-off come only from its own company profile (Company settings) and print exactly as entered. They are never hard-coded in the rebuilt app (`web/`, `infra/dryscope/`) or in the project's rules and docs; the retired legacy app's test fixtures go away with it in S8.
-- **Core Purpose**: Provide field technicians with a multimodal AI assistant that conducts real-time video/voice walkthroughs on iPhones and instantly synthesizes complete, adjuster-ready claims and client-facing proposals.
+- **Core Purpose**: A phone web app: a restoration technician walks a water or mold loss once and leaves with a priced, signable estimate. A live video and voice walkthrough is planned (S7) but not built in `web/` yet; see section 2.
 
 ### 2. Claims engine and live walkthrough
 
 - The old engines (the Python Cloud Run `POST /api/audit` service and WebSocket Live relay, configured by `AUDIT_MODEL`, `OCR_MODEL` and `LIVE_MODEL`) belong to the retired old app. The rebuild's claims engine is TypeScript in `web/src/engine/` (`makeDocuments` in `documents.ts`). The real-time walkthrough relay is not built in `web/` yet (S7; see `docs/ARCHITECTURE.md`).
 - Output is the 4-document claims hub:
   1. Official proposal, headed "[Company] · Official proposal" ("Proposal" tab; sheet-derived low–high estimate + e-signature).
-  2. Itemized claim (ADR scope codes, not Xactimate codes) with waste factors.
+  2. Itemized claim (the company's own scope codes, not Xactimate codes) with waste factors.
   3. Formal IICRC S500 / S520 insurance claim defense letter.
   4. Photo Moisture Audit Log.
 - Pricing and mandatory wording are server calculations, never model output.
-- Bind audits and signatures to a saved revision and proposal hash. Pending/failed OCR is unverified; unpriced work blocks signing. Show the customer estimate range alongside the itemized base-rate calculation. Use ADR internal scope codes and JSON export without ESX compatibility claims.
+- Bind audits and signatures to a saved revision and proposal hash. Pending/failed OCR is unverified; unpriced work blocks signing. Show the customer estimate range alongside the itemized base-rate calculation. Use the company's own scope codes and JSON export without ESX compatibility claims.
 
 ### 4. California Regulatory & Compliance Rules
 
@@ -32,8 +32,8 @@ Moved here on Nov 12, 2026 when `AGENTS.md` was rewritten as the short agent ins
 - **If Year Built >= 1978**:
   - Findings state no pre-testing is required.
 
-#### B. Standard ADR Scoping Disclaimers
-Agents must preserve the exact standard estimate clauses in `web/src/engine/documents.ts` (checked by `web/tests/unit/estimate-documents.test.ts`), taken from ADR's real estimates: the pre-1978 testing paragraph, the IICRC/EPA protective-equipment and containment sentence, the additional-materials sentence, the reconstruction/collateral-damage/testing exclusions, insurance repricing and 30-day validity. Clauses that name the company use the issuing company's name. Crawl spaces, countertops and water heaters have no fixed wording or form flag; technicians describe them in notes or the walkthrough. Documents describe the work as proposed.
+#### B. Standard Scoping Disclaimers
+Agents must preserve the exact standard estimate clauses in `web/src/engine/documents.ts` (checked by `web/tests/unit/estimate-documents.test.ts`). They are DryScope's product defaults, taken from a restoration company's real estimates: the pre-1978 testing paragraph, the IICRC/EPA protective-equipment and containment sentence, the additional-materials sentence, the reconstruction/collateral-damage/testing exclusions, insurance repricing and 30-day validity. Clauses that name the company use the issuing company's name. A company's own clauses are its document settings (Company settings); they print as entered, alongside the product defaults. Crawl spaces, countertops and water heaters have no fixed wording or form flag; technicians describe them in notes or the walkthrough. Documents describe the work as proposed.
 
 #### C. Wording held for lawyer review
 The owner takes these questions to a lawyer; the working list is the [lawyer checklist](../plans/S8/lawyer-checklist.md), which adds the remaining legal questions and, for each item, why it matters, where the answer lands and what the app does until then. Each item below names its checklist row. Until the owner records an answer, the text in A and B above and in `web/src/engine/documents.ts` stays exactly as it is, and DryScope ships no wording of its own for items 3 and 4 (a company may enter its own in its start-work authorization text, `docs/plans/S5.md` S5a-11). Added 2026-11-13 from a review of a restoration company's real estimates (`docs/plans/S5.md`, section 12).
@@ -67,7 +67,7 @@ The owner takes these questions to a lawyer; the working list is the [lawyer che
 - For authorization, invitations, company documents, offline queues or workspace rollout, read `docs/ACCESS.md` and the stage plan in `docs/plans/` (`S3.md`) before changing the implementation or cloud state.
 - Preserve company isolation on every business endpoint, evidence download and Live recheck. Superadmin privileges alone grant account management plus audited read-only support access to any company and its listed support actions; editing customer jobs requires an active company membership.
 - Archiving is a soft, audited status change, never a delete: owners archive unsigned drafts (the source record stays, and its photos stay until the company's record-retention period for them has passed once that deletion is switched on; the job leaves lists and returns 410) and restore them from Archived drafts; superadmin support can archive or restore an unsigned draft in any company, suspended ones included, as an audited support action; and a superadmin archives a suspended company. Signed jobs cannot be archived. A phone holding unsynced work for an archived draft keeps it and offers Save as new draft or Discard.
-- Keep signed source records and evidence paths immutable. Migration and mutable assignment/coordination use private sidecars. ADR's exact notices remain the ADR defaults; other California companies use their own identity and their own published prices.
+- Keep signed source records and evidence paths immutable. Migration and mutable assignment/coordination use private sidecars. The exact standard notices (section 4) remain the product defaults for every company; each company uses its own identity, its own document settings and its own published prices.
 
 ### 7. Device checks
 
