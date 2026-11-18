@@ -212,6 +212,8 @@ export const MATRIX: readonly MatrixRow[] = [
   row(`${PLATFORM_ONE}/owner`, 'POST', 'operator', { body: { email: 'boss@example.test', replace: true } }),
   row(`${PLATFORM_ONE}/team`, 'GET', 'operator'),
   row(`${PLATFORM_ONE}/prices`, 'GET', 'operator'),
+  // S8-3: the records check's first page; a later page also needs the operator's own run id.
+  row(`${PLATFORM_ONE}/records-check`, 'POST', 'operator', { body: {} }),
   row(`${PLATFORM_ONE}/members/[membershipId]`, 'PATCH', 'operator', { body: { role: 'office' } }),
   row(`${PLATFORM_ONE}/members/[membershipId]/enable`, 'POST', 'operator'),
   row(`${PLATFORM_ONE}/members/[membershipId]/reset-second-step`, 'POST', 'operator', { body: { confirmedBy: 'phone' } }),

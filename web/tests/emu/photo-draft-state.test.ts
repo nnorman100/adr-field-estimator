@@ -32,7 +32,7 @@ describe('the state of a draft', () => {
   it('is editing for the draft a job starts with, and whatever the server sets after', async () => {
     const company = randomUUID();
     const draft = randomUUID();
-    await firestoreDraftStore(db).ensure(company, draft, 'uid-1');
+    await firestoreDraftStore(db).ensure(company, randomUUID(), draft, 'uid-1');
     expect(await states.state(company, draft)).toBe('editing');
     for (const state of ['submitting', 'submitted']) {
       await db.doc(path(company, draft)).update({ state });
@@ -44,7 +44,7 @@ describe('the state of a draft', () => {
     const company = randomUUID();
     const draft = randomUUID();
     expect(await states.state(company, draft)).toBeNull();
-    await firestoreDraftStore(db).ensure(company, draft, 'uid-1');
+    await firestoreDraftStore(db).ensure(company, randomUUID(), draft, 'uid-1');
     expect(await states.state(randomUUID(), draft)).toBeNull();
   });
 
@@ -60,7 +60,7 @@ describe('the state of a draft', () => {
   it('counts the photo references of the draft asked for, up to the cap and no further', async () => {
     const company = randomUUID();
     const draft = randomUUID();
-    await firestoreDraftStore(db).ensure(company, draft, 'uid-1');
+    await firestoreDraftStore(db).ensure(company, randomUUID(), draft, 'uid-1');
     expect(await states.photoRefs(company, draft)).toBe(0);
     const add = async (count: number) => {
       const batch = db.batch();

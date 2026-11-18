@@ -2,13 +2,14 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { notePhoto, photoSent } from '@/lib/field/unsent';
-import { fieldWrite, settle } from '@/lib/field-db';
+import { settle } from '@/lib/field-db';
+import { journaledEdit } from '@/lib/field/journal-sync';
 import { Button } from '@/components/ui/button';
 import { photoAddress, sendPhoto, SHOT_NAMES } from '@/lib/field/api';
 import { pending as unsent, usePending, type PendingPhoto } from '@/lib/field/pending';
 import { preparePhoto } from '@/lib/field/photo';
 import { MAX_PHOTO_REFS, SHOT_TAGS, type PhotoField } from '@/lib/field/schema';
-import { fieldRefusal, savePhotoRef, type FieldDraft } from '@/lib/field/store';
+import { fieldRefusal, photoRefWrites, type FieldDraft } from '@/lib/field/store';
 import type { JobContext } from './job-screens';
 import { Choice, Outcome, Section } from './ui';
 
@@ -47,8 +48,8 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
   const [capturing, setCapturing] = useState(false);
   const camera = useRef<HTMLInputElement>(null);
   // Once the field work moved away from this person nothing more is taken or sent from here (J5): the
-  // photos stay on screen, read only.
-  const cameraShown = canTake || (capturing && !job.moved);
+  // photos stay on screen, read only. So too once the job is archived (S5b-2).
+  const cameraShown = canTake || (capturing && !job.moved && !job.archived);
   useEffect(() => {
     const input = camera.current;
     if (!input) return;
@@ -67,6 +68,7 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
   async function finish(item: PendingPhoto) {
     const db = job.session.db;
     if (job.moved) return update(item.id, { step: 'send-failed', message: 'Not sent: another person now owns this job’s field work.' });
+    if (job.archived) return update(item.id, { step: 'send-failed', message: 'Not sent: this job is archived.' });
     if (!db || !job.session.online) return update(item.id, { step: 'send-failed', message: 'Needs a connection. Send it again when connected.' });
     update(item.id, { step: 'sending', message: undefined });
     const sent = await sendPhoto(job.session.user, jobId, item.id, item.bytes);
@@ -76,7 +78,8 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
     }
     update(item.id, { step: 'saving' });
     try {
-      await fieldWrite(job.session.client, (fieldDb) => savePhotoRef(fieldDb, job.draftRef, item.id, item.field));
+      const { acknowledged } = await journaledEdit(job.session.client, job.draftRef, photoRefWrites(job.draftRef, item.id, item.field));
+      await acknowledged;
       // The screen that sent it may have closed since: then the open one is told to read the draft.
       if (live.current) await job.reloadDraft();
       else unsent.draftChanged(jobId);
@@ -91,7 +94,7 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
 
   async function take(file: File | undefined) {
     setError(null);
-    if (!file || job.moved) return;
+    if (!file || job.moved || job.archived) return;
     const capturedAt = new Date().toISOString();
     const bytes = await preparePhoto(file);
     if (!bytes) return setError('This picture could not be read. Take the photo with the camera.');
@@ -150,7 +153,7 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
                 <p role="status">{item.step === 'sending' ? 'Sending the photo…' : item.step === 'saving' ? 'Saving its room and tag…' : 'Not sent yet.'}</p>
                 {item.message ? <p role="alert">{item.message}</p> : null}
                 {item.step === 'send-failed' || item.step === 'save-failed' ? (
-                  <Button variant="outline" disabled={!job.session.online || job.moved} onClick={() => void finish(item)}>
+                  <Button variant="outline" disabled={!job.session.online || job.moved || job.archived} onClick={() => void finish(item)}>
                     Send again
                   </Button>
                 ) : null}

@@ -54,7 +54,7 @@ async function company(name: string) {
   const estimator = await member(tenant, id, 'estimator');
   const owner = await member(tenant, id, 'owner');
   const office = await member(tenant, id, 'office');
-  expect(await firestoreDraftStore(db).ensure(id, draft, estimator.uid)).toBe('created');
+  expect(await firestoreDraftStore(db).ensure(id, randomUUID(), draft, estimator.uid)).toBe('created');
   const at = path(id, draft);
   expect(await updateDoc(estimator.caller, at, { field: { notes: 'wet carpet', roomOrder: ['kitchen'] } })).toBe(200);
   expect(await createDoc(estimator.caller, `${at}/rooms/kitchen`, { field: { name: 'Kitchen' } })).toBe(200);
@@ -152,6 +152,7 @@ describe('a copy’s draft', () => {
     const companyId = randomUUID();
     const estimator = await member(tenant, companyId, 'estimator');
     const draft = randomUUID();
+    const job = randomUUID();
     const manifest = {
       draft: { roomOrder: ['kitchen', 'hall'], notes: 'from the signed job' },
       rooms: [
@@ -159,15 +160,33 @@ describe('a copy’s draft', () => {
         { id: 'hall', field: { name: 'Hall' } },
       ],
     };
-    expect(await store.createCopy(companyId, draft, estimator.uid, manifest)).toBe('created');
+    expect(await store.createCopy(companyId, job, draft, estimator.uid, manifest)).toBe('created');
     const at = path(companyId, draft);
-    expect((await db.doc(at).get()).data()).toEqual({ fieldOwnerUid: estimator.uid, state: 'editing', field: manifest.draft });
+    expect((await db.doc(at).get()).data()).toEqual({ jobId: job, fieldOwnerUid: estimator.uid, state: 'editing', field: manifest.draft });
     const rooms = await db.collection(`${at}/rooms`).get();
     expect(Object.fromEntries(rooms.docs.map((doc) => [doc.id, doc.data()]))).toEqual({ kitchen: { field: { name: 'Kitchen', category: 2 } }, hall: { field: { name: 'Hall' } } });
     expect((await db.collection(`${at}/photos`).get()).size).toBe(0);
     expect(await updateDoc(estimator.caller, at, { field: { ...manifest.draft, scopeConfirmed: true } })).toBe(200);
-    // Sent again, it changes nothing the copier has done since.
-    expect(await store.createCopy(companyId, draft, estimator.uid, manifest)).toBe('exists');
-    expect((await db.doc(at).get()).get('field')).toEqual({ ...manifest.draft, scopeConfirmed: true });
+    // Sent again, it changes nothing the copier has done since; another job never takes it (F1).
+    expect(await store.createCopy(companyId, job, draft, estimator.uid, manifest)).toBe('exists');
+    expect(await store.createCopy(companyId, randomUUID(), draft, 'uid-other', manifest)).toBe('taken');
+    expect((await db.doc(at).get()).data()).toEqual({ jobId: job, fieldOwnerUid: estimator.uid, state: 'editing', field: { ...manifest.draft, scopeConfirmed: true } });
+  });
+
+  // Security audit F1, across a release: a copy's draft the previous version made carries no job id.
+  // The copy sent again (its job holds the draft id in Postgres first) stamps it, and from then on it
+  // is that job's alone.
+  it('takes the job id onto a draft made before it when the same copy is sent again, and is then refused to another job', async () => {
+    const companyId = randomUUID();
+    const draft = randomUUID();
+    const job = randomUUID();
+    const at = path(companyId, draft);
+    const made = { fieldOwnerUid: 'uid-1', state: 'editing', field: { notes: 'made by the previous version' } };
+    await db.doc(at).create(made);
+    const manifest = { draft: { notes: 'from the signed job' }, rooms: [] };
+    expect(await store.createCopy(companyId, job, draft, 'uid-1', manifest)).toBe('exists');
+    expect((await db.doc(at).get()).data()).toEqual({ ...made, jobId: job });
+    expect(await store.createCopy(companyId, randomUUID(), draft, 'uid-2', manifest)).toBe('taken');
+    expect((await db.doc(at).get()).data()).toEqual({ ...made, jobId: job });
   });
 });

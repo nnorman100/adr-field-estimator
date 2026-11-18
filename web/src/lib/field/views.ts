@@ -5,6 +5,7 @@
 //
 //   /field                         the jobs list (the role's default list)
 //   /field?list=mine|company       the jobs list, one list chosen
+//   /field?list=archived           Archived drafts (the owner, S5b-2)
 //   /field?view=new-job            New job
 //   /field?job={id}                Check Scope of one job
 //   /field?job={id}&view=customer  Customer and claim
@@ -19,7 +20,7 @@ export type FieldView = (typeof FIELD_VIEWS)[number];
 export const JOB_VIEWS = ['scope', 'customer', 'photos', 'coordination'] as const;
 export type JobView = (typeof JOB_VIEWS)[number];
 
-export type JobsList = 'mine' | 'company';
+export type JobsList = 'mine' | 'company' | 'archived';
 
 export type FieldPlace =
   | { view: 'jobs'; list: JobsList | null }
@@ -38,7 +39,7 @@ export function placeOf(params: URLSearchParams): FieldPlace {
   }
   if (view === 'new-job') return { view: 'new-job' };
   const list = params.get('list');
-  return { view: 'jobs', list: list === 'mine' || list === 'company' ? list : null };
+  return { view: 'jobs', list: list === 'mine' || list === 'company' || list === 'archived' ? list : null };
 }
 
 export function hrefOf(place: FieldPlace): string {

@@ -16,7 +16,7 @@ import {
   type FormValues,
 } from '@/lib/field/forms';
 import { MAX_NOTES } from '@/lib/field/schema';
-import { saveDraftField, type FieldDraft } from '@/lib/field/store';
+import { draftFieldWrites, type FieldDraft } from '@/lib/field/store';
 import { EquipmentSuggestion } from './equipment-suggestion';
 import type { JobContext } from './job-screens';
 import { RoomsSection } from './rooms-section';
@@ -50,7 +50,7 @@ export function ScopeView({ job, draft }: { job: JobContext; draft: FieldDraft }
     setError(null);
     const sent = edits;
     if (Object.keys(changes).length === 0) return setNotice('Nothing to save.');
-    await saveEdit((db) => saveDraftField(db, job.draftRef, changes), 'Scope saved.', () => {
+    await saveEdit(draftFieldWrites(job.draftRef, changes), 'Scope saved.', () => {
       setEdits((current) => editsAfterSave(current, sent));
     });
   }

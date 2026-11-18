@@ -33,10 +33,13 @@ protected_paths:
   - "package.json"
   - "web/package.json"
 
-# Review findings get up to two automatic fix rounds (the built-in default is 0,
-# which parks every finding for a person). Matches the global setting.
+# No automatic review fix rounds (owner, 2026-11-17, option B). Every review
+# finding goes to the worker, who fixes it and may add or tighten tests. An
+# automatic fix that added the regression test AGENTS.md requires was refused
+# because web/tests/** is a protected path, which stopped runs eight times on
+# 2026-11-17. Protected paths stay; the Test guard still blocks weakened tests.
 auto_fix:
-  review: 2
+  review: 0
 
 # The pipeline's Test step runs lint, type check, unit tests and the emulator
 # suite. GitHub CI is still the official gate: database, end-to-end, build, test
