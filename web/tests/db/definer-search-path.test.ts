@@ -7,7 +7,9 @@ import { loginUrl, sharedRoles, startMigratedDatabase, type MigratedDatabase } f
 // session's temporary schema first for type names, so the API user could create a temporary domain
 // called uuid or text whose CHECK runs its own function, and a lookup that declares a variable of
 // that type would run that function as the table owner. Each case below uses a new connection of
-// the API user, because a session keeps a function it has already compiled.
+// the API user, because a session keeps a function it has already compiled. The API user may also
+// call plpgsql_validator, which compiles a body under the caller's own search_path; the validator
+// cases cover that path, which is why the five lookups name every type, function and operator by schema.
 const { api: apiLogin } = sharedRoles();
 const API_USER = apiLogin.name;
 const PROBE = 'definer-probe';
@@ -17,28 +19,54 @@ let admin: postgres.Sql;
 let companyA: string;
 let operator: string;
 
-// The five PL/pgSQL lookups the runtime may call, each with the type its body declares.
+// The five PL/pgSQL lookups the runtime may call, each with the type its body declares. `indeterminate`
+// calls the same lookup with arguments of indeterminate collation (a || b with a COLLATE "C" and
+// b COLLATE "POSIX"), which a session that validated the function first matches in its compiled-function cache.
+const PARTS = (first: string, second: string) =>
+  `(SELECT '${first}'::pg_catalog.text COLLATE "C" AS a, '${second}'::pg_catalog.text COLLATE "POSIX" AS b) s`;
+const JOINED = 's.a OPERATOR(pg_catalog.||) s.b';
 const LOOKUPS = [
-  { name: 'sign_in_company', type: 'uuid', call: (sql: postgres.Sql) => sql`SELECT sign_in_company('tenant-a')::text AS id` },
+  {
+    name: 'sign_in_company',
+    type: 'uuid',
+    signature: 'sign_in_company(pg_catalog.text)',
+    call: (sql: postgres.Sql) => sql`SELECT sign_in_company('tenant-a')::text AS id`,
+    indeterminate: (sql: postgres.Sql) =>
+      sql.unsafe(`SELECT sign_in_company(${JOINED})::pg_catalog.text AS id FROM ${PARTS('tenant-', 'a')}`),
+  },
   {
     name: 'platform_operator',
     type: 'uuid',
+    signature: 'platform_operator(pg_catalog.text, pg_catalog.text)',
     call: (sql: postgres.Sql) => sql`SELECT platform_operator('operators', 'operator-1')::text AS id`,
+    indeterminate: (sql: postgres.Sql) =>
+      sql.unsafe(`SELECT platform_operator(${JOINED}, 'operator-1')::pg_catalog.text AS id FROM ${PARTS('operator', 's')}`),
   },
   {
     name: 'sign_in_company_page',
     type: 'text',
+    signature: 'sign_in_company_page(pg_catalog.text)',
     call: (sql: postgres.Sql) => sql`SELECT company_name::pg_catalog.text AS name, tenant_id::pg_catalog.text AS tenant FROM sign_in_company_page('tenant-a')`,
+    indeterminate: (sql: postgres.Sql) =>
+      sql.unsafe(
+        `SELECT p.company_name::pg_catalog.text AS name, p.tenant_id::pg_catalog.text AS tenant FROM ${PARTS('tenant-', 'a')} CROSS JOIN LATERAL sign_in_company_page(${JOINED}) p`,
+      ),
   },
   {
     name: 'signing_link_company',
     type: 'uuid',
+    signature: 'signing_link_company(pg_catalog.text)',
     call: (sql: postgres.Sql) => sql`SELECT signing_link_company(repeat('a', 64))::text AS id`,
+    indeterminate: (sql: postgres.Sql) =>
+      sql.unsafe(`SELECT signing_link_company(${JOINED})::pg_catalog.text AS id FROM ${PARTS('a'.repeat(32), 'a'.repeat(32))}`),
   },
   {
     name: 'document_link_company',
     type: 'uuid',
+    signature: 'document_link_company(pg_catalog.text)',
     call: (sql: postgres.Sql) => sql`SELECT document_link_company(repeat('a', 64))::text AS id`,
+    indeterminate: (sql: postgres.Sql) =>
+      sql.unsafe(`SELECT document_link_company(${JOINED})::pg_catalog.text AS id FROM ${PARTS('a'.repeat(32), 'a'.repeat(32))}`),
   },
 ] as const;
 
@@ -119,6 +147,24 @@ describe('SECURITY DEFINER functions and the caller\'s temporary schema (migrati
           `CREATE DOMAIN pg_temp.${lookup.type} AS pg_catalog.${lookup.type} CHECK (pg_temp.definer_probe())`,
         );
         expect(await lookup.call(sql)).toEqual(expected(lookup.name));
+        expect(notices).toEqual([]);
+      } finally {
+        await sql.end({ timeout: 5 });
+      }
+    });
+
+    it(`${lookup.name} does not run the caller's code after the caller validated it under its own search path`, async () => {
+      const { sql, notices } = apiSession();
+      try {
+        await createProbe(sql);
+        await sql.unsafe(
+          `CREATE DOMAIN pg_temp.${lookup.type} AS pg_catalog.${lookup.type} CHECK (pg_temp.definer_probe())`,
+        );
+        await sql.unsafe(
+          `SELECT pg_catalog.plpgsql_validator('${lookup.signature}'::pg_catalog.regprocedure::pg_catalog.oid)`,
+        );
+        notices.length = 0;
+        expect(await lookup.indeterminate(sql)).toEqual(expected(lookup.name));
         expect(notices).toEqual([]);
       } finally {
         await sql.end({ timeout: 5 });

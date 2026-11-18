@@ -93,8 +93,12 @@ objects, so before this file it could create a temporary domain called `uuid` or
 runs its own function, and a lookup that declares a variable of that type would run that function
 as the table owner. With `pg_temp` last, `pg_catalog`'s types are found first, as the PostgreSQL
 manual advises for `SECURITY DEFINER` functions; the temporary schema is never searched for
-function or operator names. No owner, body, grant, table or policy changes.
-`web/tests/db/definer-search-path.test.ts` tries the temporary type as the API user against each of
-the five lookups. A definer function added later writes
+function or operator names. The API user may also call `plpgsql_validator`, which compiles a body
+under the caller's own `search_path` and keeps the compiled copy for the session; a later call whose
+arguments have indeterminate collation reuses it. So 0017 also recreates the five lookups with every
+type, function and operator named by schema (`pg_catalog.uuid`, `pg_catalog.set_config`,
+`OPERATOR(pg_catalog.=)`); the bodies are otherwise unchanged, and `CREATE OR REPLACE` keeps the owner
+and grants. `web/tests/db/definer-search-path.test.ts` covers both the direct call and the validator
+path. No table or policy changes. A definer function added later writes
 `SET search_path = pg_catalog, pg_temp` and names its types with their schema
 (`pg_catalog.uuid`, `pg_catalog.text`).
