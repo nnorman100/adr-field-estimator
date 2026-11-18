@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { OperatorContextError } from '@/db/tenant';
 import type { Operator } from '@/lib/auth';
-import { MAX_SKIP, PARTS, RecordsCheckError, type Cursor, type RecordsCheckInput } from './service';
+import { PARTS, RecordsCheckError, type Cursor, type RecordsCheckInput } from './service';
 import { recordsCheckServices } from './services';
 
 // POST /api/platform/companies/{companyId}/records-check (S8-3), wrapped in operatorRoute with a
@@ -15,24 +15,15 @@ const NO_STORE = { 'Cache-Control': 'no-store' };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 const id = z.string().regex(UUID);
-const objectKey = z.strictObject({
-  jobId: id,
-  kind: z.enum(['photo', 'original', 'signature']),
-  objectId: id,
-});
+const sealed = z.strictObject({ sealed: z.string().regex(/^[A-Za-z0-9_-]{39,2048}$/) });
 const cursor = z
-  .strictObject({
-    part: z.enum(PARTS),
-    after: z.union([id, objectKey, z.null()]),
-    skip: z.int().min(0).max(MAX_SKIP),
-  })
-  // Only the objects part pages by object and skips names; every other part pages by id.
+  .strictObject({ part: z.enum(PARTS), after: z.union([id, sealed, z.null()]) })
+  // Only the objects part continues from a sealed name; every other part pages by id.
   .refine((c) =>
     c.part === 'objects'
       ? typeof c.after !== 'string'
       : typeof c.after !== 'object' || c.after === null,
-  )
-  .refine((c) => c.part === 'objects' || c.skip === 0);
+  );
 const checkBody = z.union([z.strictObject({}), z.strictObject({ runId: id, next: cursor })]);
 
 function json(body: unknown, status = 200): Response {

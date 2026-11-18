@@ -6,13 +6,16 @@ import { bucketEvidenceObjects, type ListingBucket } from '@/lib/records-check/s
 
 type Query = Parameters<ListingBucket['getFiles']>[0];
 
-// Objects by "name#generation"; a listing lists each name once.
-function bucketOf(
-  objects: Record<string, { size?: string; metadata?: Record<string, unknown> }>,
-  pageSize: number,
-) {
+// Objects by "name#generation"; `live: false` marks a kept (noncurrent) generation. A listing
+// gives one entry per generation in name and generation order when asked for versions, and only
+// live generations otherwise.
+type Stored = { size?: string; metadata?: Record<string, unknown>; live?: boolean };
+
+function bucketOf(objects: Record<string, Stored>, pageSize: number) {
   const queries: Query[] = [];
-  const names = [...new Set(Object.keys(objects).map((key) => key.split('#')[0]!))].sort();
+  const entries = Object.entries(objects)
+    .map(([key, stored]) => ({ name: key.split('#')[0]!, generation: Number(key.split('#')[1]), live: stored.live !== false }))
+    .sort((a, b) => (a.name === b.name ? a.generation - b.generation : a.name < b.name ? -1 : 1));
   const bucket: ListingBucket = {
     file(name, options) {
       return {
@@ -25,21 +28,13 @@ function bucketOf(
     },
     async getFiles(query) {
       queries.push(query);
-      const from =
-        query.pageToken === undefined
-          ? names.findIndex((name) => name >= query.startOffset)
-          : Number(query.pageToken);
-      const listed =
-        from === -1
-          ? []
-          : names
-              .filter((name) => name.startsWith(query.prefix))
-              .slice(from, from + Math.min(pageSize, query.maxResults));
+      const listable = entries.filter(
+        (entry) => entry.name.startsWith(query.prefix) && entry.name >= query.startOffset && (query.versions || entry.live),
+      );
+      const from = query.pageToken === undefined ? 0 : Number(query.pageToken);
+      const listed = listable.slice(from, from + Math.min(pageSize, query.maxResults));
       const end = from + listed.length;
-      return [
-        listed.map((name) => ({ name })),
-        from !== -1 && end < names.length ? { pageToken: String(end) } : null,
-      ];
+      return [listed.map(({ name }) => ({ name })), end < listable.length ? { pageToken: String(end) } : null];
     },
   };
   return { bucket, queries };
@@ -74,24 +69,35 @@ describe('the bucket reader', () => {
     await expect(bucketEvidenceObjects(bucket).stat('one', 1n)).rejects.toThrow('denied');
   });
 
-  it('follows the page token inside one call until it has the names asked for, and says whether more follow', async () => {
-    const objects = Object.fromEntries(
-      ['p/a', 'p/b', 'p/c', 'p/d', 'p/e'].map((name) => [`${name}#1`, {}]),
+  it('lists each name once, kept generations included, after the given name, following page tokens to a name boundary', async () => {
+    const { bucket, queries } = bucketOf(
+      {
+        'p/a#1': {},
+        // Only kept generations: the live object was deleted.
+        'p/b#1': { live: false },
+        'p/b#2': { live: false },
+        'p/c#1': { live: false },
+        'p/c#2': {},
+        'p/d#1': {},
+        'p/e#1': {},
+      },
+      2,
     );
-    const { bucket, queries } = bucketOf(objects, 2);
     const store = bucketEvidenceObjects(bucket);
-    expect(await store.list('p/', 'p/b', 3)).toEqual({ names: ['p/b', 'p/c', 'p/d'], more: true });
-    expect(
-      queries.map((query) => [
-        query.startOffset,
-        query.maxResults,
-        query.pageToken,
-        query.autoPaginate,
-      ]),
-    ).toEqual([
-      ['p/b', 3, undefined, false],
-      ['p/b', 1, '3', false],
+    expect(await store.list('p/', null, 2)).toEqual({ names: ['p/a', 'p/b'], more: true });
+    // Every generation of the name given is skipped, wherever the bucket's pages fall.
+    expect(await store.list('p/', 'p/b', 2)).toEqual({ names: ['p/c', 'p/d'], more: true });
+    expect(await store.list('p/', 'p/d', 5)).toEqual({ names: ['p/e'], more: false });
+    expect(await store.list('p/', 'p/e', 5)).toEqual({ names: [], more: false });
+    expect(queries.every((query) => query.versions === true && query.autoPaginate === false)).toBe(true);
+    expect(queries.map((query) => [query.startOffset, query.pageToken])).toEqual([
+      ['p/', undefined],
+      ['p/', '2'],
+      ['p/b', undefined],
+      ['p/b', '2'],
+      ['p/b', '4'],
+      ['p/d', undefined],
+      ['p/e', undefined],
     ]);
-    expect(await store.list('p/', 'p/d', 5)).toEqual({ names: ['p/d', 'p/e'], more: false });
   });
 });

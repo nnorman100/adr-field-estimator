@@ -30,11 +30,13 @@ export type EvidenceObjects = {
   // It is the generation the registry row recorded and the photo routes read (photos/store.ts), so
   // a restore that copied it back under a new live generation still finds it while it is kept.
   stat(name: string, generation: bigint): Promise<ObjectStat | null>;
-  // Names under `prefix` from `startOffset` (inclusive) in name order, at most `count` of them, and
-  // whether more follow. The bucket's own page tokens stay inside this call.
+  // Names under `prefix` that the bucket holds a readable generation of, live or kept (noncurrent),
+  // each once, in name order after `after` (null: from the first), every generation of `after`
+  // skipped; at most `count` of them, and whether more follow. The bucket's own page tokens stay
+  // inside this call.
   list(
     prefix: string,
-    startOffset: string,
+    after: string | null,
     count: number,
   ): Promise<{ names: string[]; more: boolean }>;
 };
@@ -99,6 +101,7 @@ export type ListingBucket = {
   getFiles(query: {
     prefix: string;
     startOffset: string;
+    versions: true;
     maxResults: number;
     autoPaginate: false;
     pageToken?: string;
@@ -124,23 +127,28 @@ export function bucketEvidenceObjects(bucket: ListingBucket): EvidenceObjects {
       };
     },
 
-    async list(prefix, startOffset, count) {
+    async list(prefix, after, count) {
       const names: string[] = [];
       let pageToken: string | undefined;
-      // The bucket may answer a page short of maxResults with more to come, so this follows its
-      // page token until it has `count` names or the listing ends.
+      // A versioned listing gives one entry per generation, in name order and then generation
+      // order. This follows the bucket's page tokens until it has seen one name past the `count`
+      // asked for, so every generation of the last name returned has been listed, or until the
+      // listing ends.
       for (;;) {
         const [files, next] = await bucket.getFiles({
           prefix,
-          startOffset,
-          maxResults: count - names.length,
+          startOffset: after ?? prefix,
+          versions: true,
+          maxResults: Math.min(1000, count + 1),
           autoPaginate: false,
           ...(pageToken === undefined ? {} : { pageToken }),
         });
-        names.push(...files.map((file) => file.name));
+        for (const { name } of files) {
+          if (name !== after && names[names.length - 1] !== name) names.push(name);
+        }
+        if (names.length > count) return { names: names.slice(0, count), more: true };
         pageToken = next?.pageToken;
         if (pageToken === undefined) return { names, more: false };
-        if (names.length >= count) return { names: names.slice(0, count), more: true };
       }
     },
   };

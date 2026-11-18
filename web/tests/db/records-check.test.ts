@@ -87,9 +87,9 @@ function fakeStores(): Stores {
       if (stores.fail) throw new Error(`bucket unreachable at ${name}`);
       return stores.objects.get(name)?.get(generation) ?? null;
     },
-    async list(prefix, startOffset, count) {
+    async list(prefix, after, count) {
       const names = [...stores.objects.keys()]
-        .filter((name) => name.startsWith(prefix) && name >= startOffset)
+        .filter((name) => name.startsWith(prefix) && (after === null || name > after))
         .sort();
       return { names: names.slice(0, count), more: names.length > count };
     },
@@ -108,7 +108,7 @@ let base: Awaited<ReturnType<typeof startTeamServer>>;
 let h: Harness;
 let stores: Stores;
 
-const useSizes = (sizes: typeof PAGE_SIZES) => {
+const setPageSizes = (sizes: typeof PAGE_SIZES) => {
   live.service = recordsCheckService(h.handle.db, stores.marks, stores.bucket, sizes);
 };
 
@@ -120,7 +120,7 @@ beforeEach(async () => {
   h = await resetTeamDatabase(base, live.harness);
   live.harness = h;
   stores = fakeStores();
-  useSizes(PAGE_SIZES);
+  setPageSizes(PAGE_SIZES);
 });
 
 afterEach(() => {
@@ -143,8 +143,9 @@ const call = (company: string, body: unknown = {}, claims: FakeClaims | null = o
     params({ companyId: company }),
   );
 
-// Every page of one run, from its first page to the one with no next cursor.
-async function run(company: string): Promise<CheckPage[]> {
+// Every page of one run, from its first page to the one with no next cursor. `between` runs after
+// each page, before the next is asked for, to change the stores mid-run.
+async function run(company: string, between?: (page: CheckPage) => void): Promise<CheckPage[]> {
   const pages: CheckPage[] = [];
   let body: unknown = {};
   for (let i = 0; i < 500; i += 1) {
@@ -152,6 +153,7 @@ async function run(company: string): Promise<CheckPage[]> {
     expect(response.status).toBe(200);
     const page = (await response.json()) as CheckPage;
     pages.push(page);
+    between?.(page);
     if (page.next === null) return pages;
     body = { runId: page.runId, next: page.next };
   }
@@ -384,7 +386,7 @@ const runRows = () =>
       operator_actor_id: string;
       actor_id: string | null;
       target: string;
-      details: { runId: string };
+      details: { runId: string; cursorKey: string };
     }[]
   >`
     SELECT company_id::text, operator_actor_id::text, actor_id::text, target, details FROM audit_events WHERE action = 'records_check_run' ORDER BY id
@@ -427,7 +429,7 @@ describe('the records check reads only what the operator policy lets it read', (
 describe('a run', () => {
   it('finds nothing in a clean company, page by page, and writes one audit row for the run', async () => {
     await cleanCompany(h.seed.a, h.seed.ownerA.actor);
-    useSizes({ rows: 1, stats: 1, objects: 1 });
+    setPageSizes({ rows: 1, stats: 1, objects: 1 });
     const before = await everything(h.admin);
     const pages = await run(h.seed.a);
     expect(totals(pages)).toEqual(zeros());
@@ -454,9 +456,12 @@ describe('a run', () => {
         operator_actor_id: h.seed.operator,
         actor_id: null,
         target: h.seed.a,
-        details: { runId: pages[0]!.runId },
+        details: { runId: pages[0]!.runId, cursorKey: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/) },
       },
     ]);
+    // The run's cursor key stays on the server.
+    const [row] = await runRows();
+    expect(JSON.stringify(pages)).not.toContain(row!.details.cursorKey);
     // Nothing else changed: the run repairs nothing.
     await h.admin`DELETE FROM audit_events WHERE action = 'records_check_run'`;
     expect(await everything(h.admin)).toBe(before);
@@ -466,7 +471,7 @@ describe('a run', () => {
     const clean = await cleanCompany(h.seed.a, h.seed.ownerA.actor);
     const planted = await plantDifferences(h.seed.a, clean);
     expectFound(await run(h.seed.a), planted, 1);
-    useSizes({ rows: 1, stats: 1, objects: 1 });
+    setPageSizes({ rows: 1, stats: 1, objects: 1 });
     expectFound(await run(h.seed.a), planted, 1);
     expect(await runRows()).toHaveLength(2);
   });
@@ -509,7 +514,7 @@ describe('a run', () => {
     await cleanCompany(h.seed.a, h.seed.ownerA.actor);
     const cleanB = await cleanCompany(h.seed.b, h.seed.ownerB.actor);
     const plantedB = await plantDifferences(h.seed.b, cleanB);
-    useSizes({ rows: 1, stats: 1, objects: 1 });
+    setPageSizes({ rows: 1, stats: 1, objects: 1 });
     const pages = await run(h.seed.a);
     expect(totals(pages)).toEqual(zeros());
     const answer = JSON.stringify(pages);
@@ -523,7 +528,7 @@ describe('a run', () => {
     for (const id of [h.seed.b, ...idsOfB.map((row) => row.id), ...Object.values(plantedB).flat()])
       expect(answer).not.toContain(id.split('/').pop()!);
     // B's own run still finds B's differences.
-    useSizes(PAGE_SIZES);
+    setPageSizes(PAGE_SIZES);
     expectFound(await run(h.seed.b), plantedB, 1);
   });
 });
@@ -554,7 +559,7 @@ describe('who may run it', () => {
   it('refuses a later page with no open run of this operator for this company, an unknown company and a bad cursor', async () => {
     await cleanCompany(h.seed.a, h.seed.ownerA.actor);
     const first = (await (await call(h.seed.b)).json()) as CheckPage;
-    const next = { part: 'marks', after: null, skip: 0 };
+    const next = { part: 'marks', after: null };
     const answers = async (company: string, body: unknown) => {
       const response = await call(company, body);
       return { status: response.status, body: await response.json() };
@@ -595,10 +600,12 @@ describe('who may run it', () => {
     for (const body of [
       { runId: first.runId },
       { next },
-      { runId: first.runId, next: { part: 'objects', after: randomUUID(), skip: 0 } },
-      { runId: first.runId, next: { part: 'marks', after: null, skip: 3 } },
-      { runId: first.runId, next: { part: 'marks', after: 'companies/x', skip: 0 } },
-      { runId: first.runId, next: { part: 'nowhere', after: null, skip: 0 } },
+      { runId: first.runId, next: { part: 'objects', after: randomUUID() } },
+      { runId: first.runId, next: { part: 'marks', after: { sealed: 'A'.repeat(40) } } },
+      { runId: first.runId, next: { part: 'marks', after: null, skip: 0 } },
+      { runId: first.runId, next: { part: 'marks', after: 'companies/x' } },
+      { runId: first.runId, next: { part: 'objects', after: { sealed: 'companies/x' } } },
+      { runId: first.runId, next: { part: 'nowhere', after: null } },
       { extra: true },
     ]) {
       expect({ body, answer: await answers(h.seed.b, body) }).toEqual({
@@ -608,6 +615,60 @@ describe('who may run it', () => {
     }
     // Only the two runs started above wrote audit rows.
     expect(await runRows()).toHaveLength(2);
+  });
+});
+
+describe('the objects part', () => {
+  // Pages of one object each, stopping at the first objects page that has a next cursor.
+  async function firstObjectsCursor(company: string): Promise<{ runId: string; next: unknown }> {
+    setPageSizes({ rows: 100, stats: 100, objects: 1 });
+    let body: unknown = {};
+    for (let i = 0; i < 50; i += 1) {
+      const page = (await (await call(company, body)).json()) as CheckPage;
+      if (page.part === 'objects' && page.next?.part === 'objects') return { runId: page.runId, next: page.next };
+      body = { runId: page.runId, next: page.next };
+    }
+    throw new Error('no objects cursor');
+  }
+
+  it('continues from exactly the last name listed, so an object written before the cursor meanwhile is not counted again and no orphan is counted twice', async () => {
+    const clean = await cleanCompany(h.seed.a, h.seed.ownerA.actor);
+    // An orphan whose name gives no id sorts first (`exports` before `jobs`).
+    putObject(`companies/${h.seed.a}/exports/${ADDRESS}.pdf`, 1n, { sizeBytes: 10, sha256: null });
+    setPageSizes({ rows: 100, stats: 100, objects: 1 });
+    let added = false;
+    const pages = await run(h.seed.a, (page) => {
+      if (added || page.part !== 'objects') return;
+      added = true;
+      // Written after the first objects page: one sorting before the cursor (not reached by this
+      // run) and one after it (reached).
+      putObject(`companies/${h.seed.a}/aaa-late.txt`, 1n, { sizeBytes: 1, sha256: null });
+      putObject(photoName(h.seed.a, clean.job, '00000000-0000-4000-8000-000000000001'), 1n, { sizeBytes: 1, sha256: null });
+    });
+    expect(totals(pages).objectWithoutRow).toEqual({
+      count: 2,
+      ids: [`${clean.job}/photo/00000000-0000-4000-8000-000000000001`],
+    });
+  });
+
+  it('holds the last name sealed, refusing a changed cursor or one sealed for another run or company', async () => {
+    await cleanCompany(h.seed.a, h.seed.ownerA.actor);
+    await cleanCompany(h.seed.b, h.seed.ownerB.actor);
+    const mine = await firstObjectsCursor(h.seed.a);
+    expect(JSON.stringify(mine.next)).not.toContain('companies/');
+    const sealed = (mine.next as { after: { sealed: string } }).after.sealed;
+    const flipped = `${sealed.slice(0, 20)}${sealed[20] === 'A' ? 'B' : 'A'}${sealed.slice(21)}`;
+    const answer = async (company: string, runId: string, next: unknown) => {
+      const response = await call(company, { runId, next });
+      return { status: response.status, body: await response.json() };
+    };
+    expect((await answer(h.seed.a, mine.runId, mine.next)).status).toBe(200);
+    const bad = { status: 400, body: { error: 'bad_cursor' } };
+    expect(await answer(h.seed.a, mine.runId, { part: 'objects', after: { sealed: flipped } })).toEqual(bad);
+    const another = await firstObjectsCursor(h.seed.a);
+    expect(await answer(h.seed.a, another.runId, mine.next)).toEqual(bad);
+    const theirs = await firstObjectsCursor(h.seed.b);
+    expect(await answer(h.seed.b, theirs.runId, mine.next)).toEqual(bad);
   });
 });
 
