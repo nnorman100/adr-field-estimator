@@ -285,6 +285,15 @@ describe('a photo and the draft', () => {
     expect(await auditCount('photo_received')).toBe(1);
   });
 
+  it('counts the photos the server stored, so the 301st is refused although the phone wrote no reference', async () => {
+    const { jobId } = await newJob(ESTIMATOR_A);
+    for (let n = 0; n < MAX_PHOTO_REFS; n += 1) expect((await sendPhoto(ESTIMATOR_A, jobId, randomUUID(), image(`stored ${n}`))).status).toBe(201);
+    const creates = h.evidence.creates.length;
+    expect(await sendPhoto(ESTIMATOR_A, jobId, randomUUID(), image('one too many'))).toEqual({ status: 409, body: { error: 'photo_limit' } });
+    expect(h.evidence.creates).toHaveLength(creates);
+    expect(await rows()).toHaveLength(MAX_PHOTO_REFS);
+  }, 120_000);
+
   it('refuses a new photo for a job that is no longer a draft, whatever the draft says', async () => {
     for (const status of ['submitted', 'signed']) {
       const { jobId } = await newJob(ESTIMATOR_A);

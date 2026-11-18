@@ -1,5 +1,5 @@
 import type { ReadableStream as WebReadableStream } from 'node:stream/web';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, count, eq, inArray } from 'drizzle-orm';
 import { auditEvents, evidenceObjects } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import { MAX_PHOTO_REFS } from '@/lib/field/schema';
@@ -99,6 +99,16 @@ async function registryRows(tx: CompanyTransaction, caller: JobCaller, jobId: st
     );
 }
 
+// The photos the server holds for a job, counted from the registry and not from the phone's own
+// reference documents: a caller that never writes a reference still meets the limit.
+async function storedPhotoCount(tx: CompanyTransaction, caller: JobCaller, jobId: string): Promise<number> {
+  const [row] = await tx
+    .select({ total: count() })
+    .from(evidenceObjects)
+    .where(and(eq(evidenceObjects.companyId, caller.companyId), eq(evidenceObjects.jobId, jobId), eq(evidenceObjects.kind, 'photo')));
+  return row?.total ?? 0;
+}
+
 export function photosService(db: Database, store: EvidenceStore, drafts: DraftStates): PhotosService {
   // A new photo needs a job still on its draft, and a draft still being edited that holds fewer than
   // MAX_PHOTO_REFS photo references (Submit refuses more, should two phones race past the count).
@@ -139,6 +149,8 @@ export function photosService(db: Database, store: EvidenceStore, drafts: DraftS
         const rows = await registryRows(tx, caller, jobId, photoId);
         const same = rows.find((row) => row.kind === kind);
         if (kind === 'signature' && !same) await requireSignable(tx, caller, job);
+        // A new photo is refused at the limit before its body is read.
+        if (kind === 'photo' && !same && (await storedPhotoCount(tx, caller, jobId)) >= MAX_PHOTO_REFS) throw new PhotoError('photo_limit');
         return { job, same, photo: rows.find((row) => row.kind === 'photo') };
       });
 
@@ -182,6 +194,11 @@ export function photosService(db: Database, store: EvidenceStore, drafts: DraftS
       return withCompany(db, caller.companyId, async (tx) => {
         const job = await jobAccess(tx, caller, jobId, sendNeeds(kind), { lock: true, fieldWork: kind === 'photo' });
         if (kind === 'photo' && job.status !== 'draft') throw new PhotoError('draft_locked');
+        // Counted again under the job's row lock, because two requests may pass the first count together.
+        // A photo id already registered is not new and is settled below.
+        if (kind === 'photo' && !(await registryRows(tx, caller, jobId, photoId)).some((row) => row.kind === 'photo') && (await storedPhotoCount(tx, caller, jobId)) >= MAX_PHOTO_REFS) {
+          throw new PhotoError('photo_limit');
+        }
         if (kind === 'signature') {
           const [there] = (await registryRows(tx, caller, jobId, photoId)).filter((row) => row.kind === kind);
           if (!there) await requireSignable(tx, caller, job);
