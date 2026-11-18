@@ -21,16 +21,19 @@
 #         7 S8-6's app-root repoint on test: candidate tag, check, all traffic; then put back
 #         8 the drill's own instances, database and objects removed (names ending in -drill only)
 #         9 a result block to paste into the drill record
-#   restore-drill.sh --env <test|live> --recovery --point-in-time <UTC time> [--dry-run]
+#   restore-drill.sh --env live --recovery --point-in-time <UTC time> [--dry-run]
 #       Damaged rows: phases 2 and 3 without the admission; stops at the validated copy and
 #       prints the row copy-back steps. Never deletes and never repoints.
-#   restore-drill.sh --env <test|live> --recovery --lost-instance --point-in-time <UTC time>
+#   restore-drill.sh --env live --recovery --lost-instance --point-in-time <UTC time>
 #                    --zone <zone> --domain <domain> [--dry-run]
 #       Zone outage: phases 2 and 3 with the admission and the app's login check, then prints the
 #       app root's repoint and the tag, check and traffic commands for the owner. --zone must
 #       differ from the original's zone. Never deletes.
-#   restore-drill.sh --env <test|live> --recovery --salvage [--salvage-region <US region>] [--dry-run]
+#   restore-drill.sh --env live --recovery --salvage [--salvage-region <US region>] [--dry-run]
 #       Regional outage: phase 4 only (a data copy, in another US region; no repoint). Never deletes.
+#   The incident modes run on live only; test rehearses them with the drill. --domain is for the
+#   drill and --lost-instance, --salvage-region for the drill and --salvage; every copy gets a new
+#   name to the second, and the run refuses a destination that already exists.
 #
 # Any access the run gives your own account (a database user on a copy, holding the migrator's
 # role, for the checks) is temporary: it is removed as soon as the checks end and on every exit.
@@ -68,6 +71,7 @@ DOMAIN=""
 PIT=""
 ZONE=""
 SALVAGE_REGION="us-east1"
+SALVAGE_REGION_SET=0
 
 value() {
   [ $# -ge 2 ] && [ -n "$2" ] || die "$1 needs a value"
@@ -79,7 +83,7 @@ while [ $# -gt 0 ]; do
     --domain) value "$@"; DOMAIN="$2"; shift 2 ;;
     --point-in-time) value "$@"; PIT="$2"; shift 2 ;;
     --zone) value "$@"; ZONE="$2"; shift 2 ;;
-    --salvage-region) value "$@"; SALVAGE_REGION="$2"; shift 2 ;;
+    --salvage-region) value "$@"; SALVAGE_REGION="$2"; SALVAGE_REGION_SET=1; shift 2 ;;
     --dry-run) DRY=1; shift ;;
     --recovery) RECOVERY=1; shift ;;
     --lost-instance) LOST=1; shift ;;
@@ -126,7 +130,7 @@ fi
 
 # A deleted Cloud SQL instance's name stays taken for a while, so every run stamps its own names.
 # Only the drill's names end in -drill, and only names ending in -drill are ever deleted.
-STAMP="$(date -u +%y%m%d%H%M)"
+STAMP="$(date -u +%y%m%d%H%M%S)"
 if [ "$MODE" = drill ]; then SUFFIX="-$STAMP-drill"; else SUFFIX="-$STAMP"; fi
 SQL_COPY="$SQL_SOURCE$SUFFIX"
 SQL_SALVAGE="$SQL_SOURCE-salvage$SUFFIX"
@@ -141,6 +145,15 @@ if [ "$RECOVERY" = 0 ] && { [ "$LOST" = 1 ] || [ "$SALVAGE" = 1 ]; }; then
   die "--lost-instance and --salvage are incident modes: add --recovery"
 fi
 [ "$LOST" = 1 ] && [ "$SALVAGE" = 1 ] && die "choose one of --lost-instance and --salvage"
+if [ "$ENV" = test ] && [ "$RECOVERY" = 1 ]; then
+  die "the incident modes (--recovery) are for live; rehearse them on test with the drill"
+fi
+if [ -n "$DOMAIN" ] && [ "$MODE" != drill ] && [ "$MODE" != lost-instance ]; then
+  die "--domain is only for the drill and --lost-instance"
+fi
+if [ "$SALVAGE_REGION_SET" = 1 ] && [ "$MODE" != drill ] && [ "$MODE" != salvage ]; then
+  die "--salvage-region is only for the drill and --salvage"
+fi
 if [ "$ENV" = live ] && [ "$RECOVERY" = 0 ]; then
   die "the drill runs against test only; live is touched only with --recovery, which never deletes"
 fi
@@ -196,7 +209,7 @@ GRANTS=()
 finish() {
   local code=$?
   if [ -n "$PROXY_PID" ]; then kill "$PROXY_PID" 2>/dev/null || true; fi
-  revoke_all
+  revoke_all || [ "$code" != 0 ] || code=1
   rm -rf "$TMP"
   # Every run that started prints its result block, a failed one too.
   if [ "$DONE" = 0 ] && [ "$RUNNING" = 1 ]; then
@@ -226,9 +239,28 @@ show() {
   printf '%s\n' "$out"
 }
 
+# Your account's name never reaches the transcript: every line of the input with it masked.
+redact() {
+  local line
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ -z "$ACCOUNT" ] || line="${line//"$ACCOUNT"/<your-account>}"
+    printf '%s\n' "$line"
+  done
+}
+
+# Runs the command; with MASK=1 (the commands that act as or on your account) its messages go
+# through redact. Its output and exit status are its own.
+call() {
+  if [ "${MASK:-0}" = 1 ]; then
+    { "$@" 2>&1 1>&3 3>&- | redact >&2; } 3>&1
+  else
+    "$@"
+  fi
+}
+
 run() {
   show "$@"
-  [ "$DRY" = 1 ] || "$@"
+  [ "$DRY" = 1 ] || call "$@"
 }
 
 # get VAR PLACEHOLDER command...: runs the command and keeps its output (never printed).
@@ -239,7 +271,7 @@ get() {
   if [ "$DRY" = 1 ]; then
     printf -v "$__var" '%s' "$__placeholder"
   else
-    __out="$("$@")" || return $?
+    __out="$(call "$@")" || return $?
     printf -v "$__var" '%s' "$__out"
   fi
 }
@@ -331,8 +363,9 @@ put_back() { # from: traffic, app or data
   case "$1" in
     traffic)
       steps+=("$(step_uses "$SERVING" "$PROJECT:$REGION:$SQL_SOURCE")" "$(step_images "$SERVING" "$SERVING_IMAGES")"
-        "$(step_tag "$SERVING")" "$(step_reaches candidate "$SERVING")" "$(step_health "$CANDIDATE_HOST")"
-        "$(step_move "$SERVING")" "$(step_reaches "" "$SERVING")" "$(step_health "$PUBLIC_HOST")")
+        "$(step_tag "$SERVING")" "$(step_reaches candidate "$SERVING")" "$(step_revision_health "$SERVING")"
+        "$(step_health "https://$CANDIDATE_HOST")"
+        "$(step_move "$SERVING")" "$(step_reaches "" "$SERVING")" "$(step_health "https://$PUBLIC_HOST")")
       ;&
     app) steps+=("$(step_drain)" "$(tf_lines app "")") ;&
     data) steps+=("$(tf_lines data "")") ;;
@@ -368,7 +401,7 @@ proxy_start() { # connection name, extra proxy flags...
   cloud-sql-proxy "$@" --unix-socket="$dir" "$conn" >"$TMP/proxy.log" 2>&1 &
   PROXY_PID=$!
   for i in $(seq 60); do
-    kill -0 "$PROXY_PID" 2>/dev/null || { sed -n '1,20p' "$TMP/proxy.log" >&2; fail "the Auth Proxy stopped"; }
+    kill -0 "$PROXY_PID" 2>/dev/null || { sed -n '1,20p' "$TMP/proxy.log" | redact >&2; fail "the Auth Proxy stopped"; }
     [ ! -S "$PROXY_HOST/.s.PGSQL.5432" ] || return 0
     sleep 1
   done
@@ -386,17 +419,20 @@ wait_op() { # operation name
   run gcloud sql operations wait "$1" --timeout=unlimited --project="$PROJECT"
 }
 
-# Your account's temporary database user on a copy: removed right after the checks and, through
-# finish, on every exit. If a removal fails, the exact command is printed for you to run.
+# Your account's temporary database user on a copy, listed only once this run created it: removed
+# right after the checks and, through finish, on every exit. If a removal fails, the exact command
+# is printed for you to run and the run fails.
 revoke_all() {
-  local instance
+  local instance left=0
   for instance in "${GRANTS[@]}"; do
-    if ! run gcloud sql users delete "$ACCOUNT" --instance="$instance" --project="$PROJECT" --quiet; then
-      printf 'Remove your temporary access to %s by hand now: gcloud sql users delete "$(gcloud config get-value account)" --instance=%s --project=%s --quiet\n' \
-        "$instance" "$instance" "$PROJECT" >&2
+    if ! MASK=1 run gcloud sql users delete "$ACCOUNT" --instance="$instance" --project="$PROJECT" --quiet; then
+      printf 'Remove your temporary access to %s by hand now: gcloud sql users delete "$(gcloud config get-value account --project=%s)" --instance=%s --project=%s --quiet\n' \
+        "$instance" "$PROJECT" "$instance" "$PROJECT" >&2
+      left=1
     fi
   done
   GRANTS=()
+  [ "$left" = 0 ]
 }
 
 auth_header() { # a fresh token in a private header file, never on a command line
@@ -408,7 +444,7 @@ auth_header() { # a fresh token in a private header file, never on a command lin
 # The release's drain rule (web/scripts/release-drain.ts; S8-2): stage a revision only once 15
 # minutes have passed since the service last changed, since a revision that lost traffic can keep an
 # idle instance holding database connections that long.
-DRAIN_JQ='(.updateTime | sub("\\.[0-9]+"; "") | fromdateiso8601) + 900 - $now | if . < 0 then 0 elif . > 900 then 900 else ceil end'
+DRAIN_JQ='(.updateTime | (capture("^(?<s>[^.]+)(?<f>\\.[0-9]+)?Z$") // error("updateTime is not a UTC time")) | (.s + "Z" | fromdateiso8601) + ("0" + (.f // "") | tonumber)) + 900 - $now | if . < 0 then 0 elif . > 900 then 900 else ceil end'
 SERVICE_URL="https://run.googleapis.com/v2/projects/$PROJECT/locations/$REGION/services/$API_SERVICE"
 
 drain_wait() {
@@ -452,7 +488,8 @@ $$;
 \if :{?before}
 SELECT 'marker_before|' || count(*) FROM jobs WHERE id = :'before'::uuid;
 SELECT 'marker_company|' || company_id FROM jobs WHERE id = :'before'::uuid;
-SELECT 'marker_after|' || count(*) FROM jobs WHERE id = :'after'::uuid;
+SELECT 'marker_after|' || count(*) FROM jobs
+WHERE company_id IN (SELECT company_id FROM jobs WHERE id = :'before'::uuid) AND id = :'after'::uuid;
 \endif
 SELECT 'rows|' || table_name || '|' ||
        (xpath('/row/c/text()', query_to_xml(format('SELECT count(*) AS c FROM public.%I', table_name), false, true, '')))[1]::text
@@ -462,14 +499,14 @@ SQL
   local markers=()
   [ -z "$before" ] || markers=(-v "before=$before" -v "after=$after")
   [ -n "$ACCOUNT" ] || get ACCOUNT "<your-account>" gcloud config get-value account --project="$PROJECT"
-  GRANTS+=("$instance")
-  run gcloud sql users create "$ACCOUNT" --instance="$instance" --type=cloud_iam_user \
+  MASK=1 run gcloud sql users create "$ACCOUNT" --instance="$instance" --type=cloud_iam_user \
     --database-roles="$MIGRATE_DB_USER" --project="$PROJECT"
+  GRANTS+=("$instance")
   proxy_start "$conn" --auto-iam-authn
-  get out "<checks>" psql -X -A -t -q -v ON_ERROR_STOP=1 -v "migrator=$MIGRATE_DB_USER" "${markers[@]}" \
+  MASK=1 get out "<checks>" psql -X -A -t -q -v ON_ERROR_STOP=1 -v "migrator=$MIGRATE_DB_USER" "${markers[@]}" \
     -h "$PROXY_HOST" -U "$ACCOUNT" -d "$SQL_DATABASE" -f "$TMP/checks.sql"
   proxy_stop
-  revoke_all
+  revoke_all || fail "your temporary access to $instance was not removed: remove it by hand as printed above"
   [ "$DRY" = 0 ] || return 0
   # Each row as id|checksum (the SHA-256 of the file's bytes, as web/src/db/migrate.ts records it).
   expected="$(ledger_of_checkout)"
@@ -540,10 +577,27 @@ serving_commit() {
 }
 
 # The web app's own database account logs in to the copy (after the data root admits it).
+# A new IAM grant can take minutes to apply after Terraform reports it, so the login is retried
+# every 30 seconds for up to 10 minutes.
 login_check() { # connection name
+  local i
   proxy_start "$1" --auto-iam-authn --impersonate-service-account="$API_SA"
-  run psql -X -A -t -q -v ON_ERROR_STOP=1 -h "$PROXY_HOST" -U "$API_DB_USER" -d "$SQL_DATABASE" -c 'SELECT 1'
-  proxy_stop
+  for i in $(seq 20); do
+    if run psql -X -A -t -q -v ON_ERROR_STOP=1 -h "$PROXY_HOST" -U "$API_DB_USER" -d "$SQL_DATABASE" -c 'SELECT 1'; then
+      proxy_stop
+      return 0
+    fi
+    [ "$i" -lt 20 ] || { proxy_stop; fail "the web app's account could not log in to $1 within 10 minutes of the admission"; }
+    printf '   login refused; the admission can take minutes to apply: trying again in 30s\n'
+    sleep 30
+  done
+}
+
+# A copy goes only into a destination that does not exist yet: a restore would replace its data.
+must_be_new() { # instance
+  if get _ "" gcloud sql instances describe "$1" --project="$PROJECT" --format='value(name)' 2>/dev/null; then
+    [ "$DRY" = 1 ] || fail "$1 already exists: the run never restores over an existing instance"
+  fi
 }
 
 # Both markers on the original, read as the web app's own account in the first marker's company
@@ -567,9 +621,9 @@ SQL
   printf '   markers on %s: first by the chosen minute, second after it\n' "$SQL_SOURCE"
 }
 
-health() { # host
+health() { # base address, https://...
   local body
-  get body '{"status":"ok","env":"'"$ENV"'","database":"ok"}' curl -fsS --retry 3 "https://$1/api/health"
+  get body '{"status":"ok","env":"'"$ENV"'","database":"ok"}' curl -fsS --retry 3 "$1/api/health"
   [ "$DRY" = 1 ] && return 0
   printf '%s' "$body" | jq -e --arg env "$ENV" '.status == "ok" and .database == "ok" and .env == $env' >/dev/null ||
     fail "health at $1 does not report env $ENV with database ok"
@@ -582,6 +636,20 @@ traffic_of() { # var, tag ("" for the revision serving all traffic)
   if [ "$DRY" = 1 ]; then printf -v "$1" '%s' "<${2:-serving}-revision>"; return 0; fi
   printf -v "$1" '%s' "$(printf '%s' "$json" | jq -r --arg tag "$2" '[.status.traffic[]
     | select(if $tag == "" then .percent == 100 else .tag == $tag end) | .revisionName] | first // empty')"
+}
+
+# The candidate tag's own Cloud Run address routes to the tagged revision and nothing else, so a
+# health answer there comes from that revision; a shared address can still be answered by the
+# revision before it while routing changes.
+revision_health() { # revision the candidate tag must reach
+  local json url
+  get json '{}' gcloud run services describe "$API_SERVICE" --region="$REGION" --project="$PROJECT" --format=json
+  if [ "$DRY" = 1 ]; then url="https://candidate---$API_SERVICE"; else
+    url="$(printf '%s' "$json" | jq -r --arg rev "$1" '[.status.traffic[] | select(.tag == "candidate" and .revisionName == $rev)
+      | .url] | first // empty')"
+    [ -n "$url" ] || fail "the candidate tag has no address of its own reaching $1"
+  fi
+  health "$url"
 }
 
 traffic_is() { # tag ("" for all traffic), revision it must reach
@@ -629,10 +697,11 @@ move_to() { # revision, its database connection: tagged candidate and checked th
   revision_uses "$1" "$2"
   run gcloud run services update-traffic "$API_SERVICE" --update-tags="candidate=$1" --region="$REGION" --project="$PROJECT"
   traffic_is candidate "$1"
-  health "$CANDIDATE_HOST"
+  revision_health "$1"
+  health "https://$CANDIDATE_HOST"
   run gcloud run services update-traffic "$API_SERVICE" --to-revisions="$1=100" --region="$REGION" --project="$PROJECT"
   traffic_is "" "$1"
-  health "$PUBLIC_HOST"
+  health "https://$PUBLIC_HOST"
 }
 
 preflight() {
@@ -698,6 +767,7 @@ phase_copy() {
       fail "$PIT is not recoverable: the latest recoverable time of $SQL_SOURCE is $latest"
     sleep 30
   done
+  must_be_new "$SQL_COPY"
   get op "<operation>" gcloud sql instances clone "$SQL_SOURCE" "$SQL_COPY" --point-in-time="$PIT" "${zone[@]}" \
     --project="$PROJECT" --async --format='value(name)'
   wait_op "$op"
@@ -742,6 +812,7 @@ phase_salvage() {
       fail "no successful automated backup in location us for $SQL_SOURCE"
     age="$(jq -nr --arg t "$start" '(now - ($t | sub("\\.[0-9]+"; "") | fromdateiso8601)) / 60 | floor | "\(. / 60 | floor)h\(. % 60)m"')"
   fi
+  must_be_new "$SQL_SALVAGE"
   get op "<operation>" gcloud sql backups restore "$name" --restore-instance="$SQL_SALVAGE" \
     --region="$SALVAGE_REGION" --project="$PROJECT" --async --format='value(name)'
   wait_op "$op"
@@ -886,6 +957,10 @@ preflight
 RUNNING=1
 case "$MODE" in
   drill)
+    owner_step "tell everyone using test to stop writing there until this drill ends" \
+      "Anything written on test during the drill (a job, a draft, a photo, a signature) is discarded:" \
+      "traffic goes back to $SQL_SOURCE and the copy holding it is deleted. Your own two marker jobs" \
+      "are the only writes the drill needs."
     phase_markers
     phase_copy
     phase_checks 1
@@ -894,6 +969,7 @@ case "$MODE" in
     phase_files
     phase_repoint
     phase_cleanup
+    printf '\n   Tell everyone using test that they may write there again.\n'
     ;;
   damaged-rows)
     FACTS+=("point in time: $PIT")

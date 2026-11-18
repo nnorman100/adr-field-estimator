@@ -162,16 +162,25 @@ case "$1 $2 $3" in
   'auth print-access-token --project=dryscope')
     n=$(($(cat "$st/tokens" 2>/dev/null || echo 0) + 1)); echo "$n" > "$st/tokens"; echo "token-$n"; exit 0 ;;
   'sql instances describe')
-    case "$4" in *-pg) [ -z "$FAKE_SOURCE_ZONE_FAILS" ] || exit 1; echo "$FAKE_SOURCE_ZONE" ;; *) cat "$st/zone" ;; esac; exit 0 ;;
+    # A copy exists only once the run made it (or FAKE_EXISTING says it was there already).
+    case "$4" in
+      *-pg) [ -z "$FAKE_SOURCE_ZONE_FAILS" ] || exit 1; echo "$FAKE_SOURCE_ZONE" ;;
+      *) [ -e "$st/made-$4" ] || [ -n "$FAKE_EXISTING" ] || exit 1; cat "$st/zone" 2>/dev/null || echo "$4" ;;
+    esac; exit 0 ;;
   'sql instances get-latest-recovery-time') echo 2099-01-01T00:00:00Z; exit 0 ;;
+  # As the Cloud SDK does, the user commands name the user in their messages.
+  'sql users create') echo "Created user [$4]." >&2; [ -z "$FAKE_CREATE_FAILS" ] || exit 1; exit 0 ;;
+  'sql users delete') echo "Deleted user [$4]." >&2; [ -z "$FAKE_REVOKE_FAILS" ] || exit 1; exit 0 ;;
   'sql instances clone')
-    echo "$5" > "$st/copy"
+    echo "$5" > "$st/copy"; touch "$st/made-$5"
     for a in "$@"; do case "$a" in --preferred-zone=*) echo "$a" | sed 's/^--preferred-zone=//' > "$st/zone" ;; esac; done
     echo operation-clone; exit 0 ;;
   'sql backups list')
     echo '[{"name":"projects/dryscope/backups/automated-us","type":"AUTOMATED","state":"SUCCESSFUL","location":"us","backupInterval":{"startTime":"2026-11-17T09:00:01.5Z"}},{"name":"projects/dryscope/backups/on-demand-us","type":"ON_DEMAND","state":"SUCCESSFUL","location":"us","backupInterval":{"startTime":"2026-11-17T20:00:00Z"}},{"name":"projects/dryscope/backups/automated-regional","type":"AUTOMATED","state":"SUCCESSFUL","location":"us-central1","backupInterval":{"startTime":"2026-11-17T21:00:00Z"}}]'
     exit 0 ;;
-  'sql backups restore') echo operation-restore; exit 0 ;;
+  'sql backups restore')
+    for a in "$@"; do case "$a" in --restore-instance=*) touch "$st/made-$(echo "$a" | sed 's/^--restore-instance=//')" ;; esac; done
+    echo operation-restore; exit 0 ;;
   'firestore backups list')
     echo '[{"name":"projects/dryscope/locations/us-central1/backups/field-1","database":"projects/dryscope/databases/'"$FAKE_FIRESTORE"'","state":"READY","snapshotTime":"2026-11-17T10:00:00Z"}]'
     exit 0 ;;
@@ -186,7 +195,7 @@ case "$1 $2 $3" in
     case "$*" in
       *latestCreatedRevisionName*) echo rev-fresh ;;
       *) serving="$(cat "$st/serving" 2>/dev/null || echo rev-old)"; tag="$(cat "$st/tag" 2>/dev/null || echo rev-older)"
-         echo '{"status":{"traffic":[{"revisionName":"'"$serving"'","percent":100},{"revisionName":"'"$tag"'","tag":"candidate","percent":0}]}}' ;;
+         echo '{"status":{"traffic":[{"revisionName":"'"$serving"'","percent":100},{"revisionName":"'"$tag"'","tag":"candidate","percent":0,"url":"https://candidate---svc.a.run.app"}]}}' ;;
     esac; exit 0 ;;
   'run services update-traffic')
     [ -z "$FAKE_TRAFFIC_STUCK" ] || exit 0
@@ -206,7 +215,13 @@ const FAKE_PROXY = String.raw`dir=""; for a in "$@"; do case "$a" in --unix-sock
 mkdir -p "$dir/$conn"
 exec node -e "require('net').createServer().listen(process.argv[1])" "$dir/$conn/.s.PGSQL.5432"`;
 
-const FAKE_PSQL = String.raw`case "$*" in *'SELECT 1'*) echo 1; exit 0 ;; esac
+const FAKE_PSQL = String.raw`u=""; prev=""; for a in "$@"; do [ "$prev" != -U ] || u="$a"; prev="$a"; done
+echo "psql: note: connecting as user \"$u\"" >&2
+# The app's login fails FAKE_LOGIN_FAILS times first, as while a new IAM grant is applying.
+case "$*" in *'SELECT 1'*)
+  n=$(($(cat "$HOME/logins" 2>/dev/null || echo 0) + 1)); echo "$n" > "$HOME/logins"
+  [ "$n" -gt "$FAKE_LOGIN_FAILS" ] || exit 2
+  echo 1; exit 0 ;; esac
 case "$*" in *company=*) m="$FAKE_ORIGINAL_MARKERS"; [ -n "$m" ] || m='1|1'; echo "$m"; exit 0 ;; esac
 [ -z "$FAKE_CHECKS_FAIL" ] || exit 3
 files="$(ls "$MIGRATIONS"/*.sql)"; [ -z "$FAKE_LEDGER_DROP_LAST" ] || files="$(echo "$files" | sed '$d')"
@@ -220,8 +235,8 @@ case "$url" in
   https://run.googleapis.com/*)
     # Still for long by default; FAKE_CHANGED_AGO seconds ago for the first FAKE_CHANGED_READS reads.
     n=$(($(cat "$HOME/state/run-reads" 2>/dev/null || echo 0) + 1)); mkdir -p "$HOME/state"; echo "$n" > "$HOME/state/run-reads"
-    at=2020-01-01T00:00:00.5Z
-    [ "$n" -gt "$FAKE_CHANGED_READS" ] || at="$(date -u -d "@$(( $(date -u +%s) - FAKE_CHANGED_AGO ))" +%Y-%m-%dT%H:%M:%S.123456Z)"
+    at=2020-01-01T00:00:00.5Z; frac="$FAKE_CHANGED_FRACTION"; [ -n "$frac" ] || frac=123456
+    [ "$n" -gt "$FAKE_CHANGED_READS" ] || at="$(date -u -d "@$(( $(date -u +%s) - FAKE_CHANGED_AGO ))" +%Y-%m-%dT%H:%M:%S).$frac"Z
     echo '{"updateTime":"'"$at"'"}' ;;
   */rooms\?*) v=1; case "$url" in *-drill/*) [ -z "$FAKE_ROOM_DRIFT" ] || v=2 ;; esac
     echo '{"documents":[{"name":"projects/dryscope/databases/x/documents/companies/c1/drafts/d1/rooms/r1","fields":{"moisture":{"integerValue":"'"$v"'"}}}]}' ;;
@@ -233,7 +248,7 @@ const HEAD = spawnSync('git', ['-C', ROOT, 'rev-parse', 'HEAD'], {
   encoding: 'utf8',
 }).stdout.trim();
 const MARKERS = '11111111-1111-1111-1111-111111111111\n22222222-2222-2222-2222-222222222222';
-const DRILL_ANSWERS = `test\n${MARKERS}\ndone\ncompanies/c1/drafts/d1\ndone\ndone\ndone`;
+const DRILL_ANSWERS = `test\ndone\n${MARKERS}\ndone\ncompanies/c1/drafts/d1\ndone\ndone\ndone`;
 
 const FAKES = {
   gcloud: FAKE_GCLOUD,
@@ -258,6 +273,7 @@ function fakeEnv(env: 'test' | 'live', extra: Record<string, string> = {}) {
     FAKE_SOURCE_CONNECTION: n.connection,
     FAKE_COMMIT: HEAD,
     FAKE_CHANGED_READS: '0',
+    FAKE_LOGIN_FAILS: '0',
     FAKE_CHANGED_AGO: '0',
     TF_VAR_api_image: 'api@sha256:1',
     TF_VAR_live_image: 'live@sha256:1',
@@ -337,10 +353,10 @@ describe('restore-drill.sh', { timeout: 300_000 }, () => {
     for (const target of targets) expect(target).toMatch(/-drill$/);
     const instanceDeletes = deletes.filter((c) => c.includes('instances'));
     expect(instanceDeletes.map((c) => c[4])).toEqual([
-      expect.stringMatching(/^dryscope-test-pg-\d{10}-drill$/),
-      expect.stringMatching(/^dryscope-test-pg-\d{10}-drill$/),
-      expect.stringMatching(/^dryscope-test-pg-salvage-\d{10}-drill$/),
-      expect.stringMatching(/^dryscope-test-pg-salvage-\d{10}-drill$/),
+      expect.stringMatching(/^dryscope-test-pg-\d{12}-drill$/),
+      expect.stringMatching(/^dryscope-test-pg-\d{12}-drill$/),
+      expect.stringMatching(/^dryscope-test-pg-salvage-\d{12}-drill$/),
+      expect.stringMatching(/^dryscope-test-pg-salvage-\d{12}-drill$/),
     ]);
     const lastTraffic = commands.findLastIndex((c) => c.includes('update-traffic'));
     const firstInstanceDelete = commands.findIndex((c) => c.includes('instances') && isDelete(c));
@@ -426,16 +442,51 @@ describe('restore-drill.sh', { timeout: 300_000 }, () => {
     expect(grantsRevoked(gcloud)).toBe(2);
     // The copy goes to the named zone, not the original's.
     expect(clone).toContain('--preferred-zone=us-central1-b');
+    // Each revision's health is read at the candidate tag's own address, which only it answers.
+    const tagHealth = run.calls.flatMap((c, i) =>
+      c[0] === 'curl' && c.at(-1) === 'https://candidate---svc.a.run.app/api/health' ? [i] : [],
+    );
+    expect(tagHealth).toHaveLength(2);
+    // The testers are asked to stop writing before the drill, and told when they may again.
+    const out = result.stdout;
+    expect(out.indexOf('stop writing there until this drill ends')).toBeGreaterThan(-1);
+    expect(out.indexOf('stop writing there')).toBeLessThan(out.indexOf('== Phase 1'));
+    expect(out.indexOf('may write there again')).toBeGreaterThan(out.indexOf('== Phase 8'));
+  });
+
+  it('never restores over an instance that already exists', () => {
+    const { s, result } = fullRun(`--env live --recovery ${PIT}`, 'live', { FAKE_EXISTING: '1' });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/dryscope-live-pg-\d{12} already exists/);
+    expect(s.calls('gcloud').filter((c) => c.includes('clone'))).toEqual([]);
+    const salvage = fullRun('--env live --recovery --salvage', 'live', { FAKE_EXISTING: '1' });
+    expect(salvage.result.status).toBe(1);
+    expect(
+      salvage.s.calls('gcloud').filter((c) => c[1] === 'backups' && c[2] === 'restore'),
+    ).toEqual([]);
+  });
+
+  it('retries the app login while the new admission applies, and stops after 10 minutes', () => {
+    const { s, result } = fullRun(MODES['lost instance'], 'live\ndone', { FAKE_LOGIN_FAILS: '2' });
+    expect(result.status, result.stderr + result.stdout).toBe(0);
+    expect(s.calls('psql').filter((c) => c.includes('SELECT 1'))).toHaveLength(3);
+    expect(s.calls('sleep').filter((c) => c[0] === '30')).toHaveLength(2);
+    // After the repoint, the owner puts access back as it was before the outage.
+    expect(result.stdout).toContain('Re-apply every access change made after');
+    const never = fullRun(MODES['lost instance'], 'live\ndone', { FAKE_LOGIN_FAILS: '99' });
+    expect(never.result.status).toBe(1);
+    expect(never.result.stderr).toContain('could not log in');
+    expect(never.s.calls('psql').filter((c) => c.includes('SELECT 1'))).toHaveLength(20);
   });
 
   it.each([
-    ['damaged rows', `--env test --recovery ${PIT}`, 'test'],
+    ['damaged rows', `--env live --recovery ${PIT}`, 'live'],
     [
       'lost instance',
-      `--env test --recovery --lost-instance ${PIT} --zone us-central1-b --domain example.test`,
-      'test\ndone',
+      `--env live --recovery --lost-instance ${PIT} --zone us-central1-b --domain example.test`,
+      'live\ndone',
     ],
-    ['salvage', '--env test --recovery --salvage', 'test'],
+    ['salvage', '--env live --recovery --salvage', 'live'],
   ])(
     'runs an incident mode against the stubs, deletes nothing and removes its access (%s)',
     (_mode, args, stdin) => {
@@ -454,7 +505,7 @@ describe('restore-drill.sh', { timeout: 300_000 }, () => {
   );
 
   it('restores the latest automated daily backup in us, not a later on-demand or regional one', () => {
-    const { s, result } = fullRun('--env test --recovery --salvage', 'test');
+    const { s, result } = fullRun('--env live --recovery --salvage', 'live');
     expect(result.status, result.stderr).toBe(0);
     const restore = s.calls('gcloud').find((c) => c[1] === 'backups' && c[2] === 'restore')!;
     expect(restore[3]).toBe('projects/dryscope/backups/automated-us');
@@ -462,11 +513,11 @@ describe('restore-drill.sh', { timeout: 300_000 }, () => {
 
   it('refuses a zone recovery into the original’s own zone, before any copy', () => {
     const { s, result } = fullRun(
-      `--env test --recovery --lost-instance ${PIT} --zone us-central1-a --domain example.test`,
-      'test\ndone',
+      `--env live --recovery --lost-instance ${PIT} --zone us-central1-a --domain example.test`,
+      'live\ndone',
     );
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('--zone us-central1-a is the zone of dryscope-test-pg');
+    expect(result.stderr).toContain('--zone us-central1-a is the zone of dryscope-live-pg');
     expect(s.calls('gcloud').filter((c) => c.includes('clone'))).toEqual([]);
   });
 
@@ -478,10 +529,10 @@ describe('restore-drill.sh', { timeout: 300_000 }, () => {
   });
 
   it('checks the copy as you, added to the copy only, through a proxy socket of its own', () => {
-    const { s, result } = fullRun(`--env test --recovery ${PIT}`, 'test');
+    const { s, result } = fullRun(`--env live --recovery ${PIT}`, 'live');
     expect(result.status, result.stderr).toBe(0);
     const copy = s.calls('gcloud').find((c) => c.includes('clone'))![4];
-    expect(copy).toMatch(/^dryscope-test-pg-\d{10}$/);
+    expect(copy).toMatch(/^dryscope-live-pg-\d{12}$/);
     expect(s.calls('gcloud').filter((c) => c.includes('users') && c.includes('create'))).toEqual([
       [
         'sql',
@@ -490,7 +541,7 @@ describe('restore-drill.sh', { timeout: 300_000 }, () => {
         'owner@example.test',
         `--instance=${copy}`,
         '--type=cloud_iam_user',
-        '--database-roles=dryscope-migrate-test@dryscope.iam',
+        '--database-roles=dryscope-migrate-live@dryscope.iam',
         '--project=dryscope',
       ],
     ]);
@@ -504,12 +555,12 @@ describe('restore-drill.sh', { timeout: 300_000 }, () => {
   });
 
   it('stops an incident run at a time that is not recoverable yet, before any copy', () => {
-    const { s, result } = drill(`--env test --recovery ${PIT}`, 'test', {
+    const { s, result } = drill(`--env live --recovery ${PIT}`, 'live', {
       gcloud: `case "$*" in *get-latest-recovery-time*) echo 2026-11-18T15:03:59.5Z ;; esac`,
     });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(
-      'the latest recoverable time of dryscope-test-pg is 2026-11-18T15:03:59.5Z',
+      'the latest recoverable time of dryscope-live-pg is 2026-11-18T15:03:59.5Z',
     );
     expect(s.calls('gcloud').filter((c) => c.includes('clone'))).toEqual([]);
   });
@@ -543,7 +594,7 @@ describe('restore-drill.sh', { timeout: 300_000 }, () => {
       .slice(start + 1, end)
       .map((l) => l.slice(5))
       .join('\n');
-    const copy = /dryscope-test-pg-\d{10}-drill/.exec(block)![0];
+    const copy = /dryscope-test-pg-\d{12}-drill/.exec(block)![0];
     for (const [check, applied] of [
       ['exit 1', ['init', 'plan', 'show']],
       ['exit 0', ['init', 'plan', 'show', 'apply']],
@@ -581,10 +632,7 @@ describe('restore-drill.sh', { timeout: 300_000 }, () => {
   });
 
   it('prints the recorded images for the lost-instance repoint to check', () => {
-    const { result } = fullRun(
-      MODES['lost instance'].replace('--env live', '--env test'),
-      'test\ndone',
-    );
+    const { result } = fullRun(MODES['lost instance'], 'live\ndone');
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain(`jq -c '[.spec.containers[].image]')" = '["api@sha256:1"]' ]`);
   });
@@ -600,7 +648,7 @@ describe('restore-drill.sh', { timeout: 300_000 }, () => {
     expect(token).toBeGreaterThan(done);
     expect(read).toBeGreaterThan(token);
     expect(calls[read].at(-1)).toMatch(
-      /\/databases\/dryscope-field-test-\d{10}-drill\/documents\//,
+      /\/databases\/dryscope-field-test-\d{12}-drill\/documents\//,
     );
   });
 
@@ -610,14 +658,14 @@ describe('restore-drill.sh', { timeout: 300_000 }, () => {
     });
     expect(result.status).toBe(1);
     expect(result.stderr).toMatch(
-      /the restore into dryscope-field-test-\d{10}-drill failed: backup unreadable/,
+      /the restore into dryscope-field-test-\d{12}-drill failed: backup unreadable/,
     );
     expect(result.stdout).toMatch(/phase 5 field database restore: \d+s fail/);
   });
 
   it('refuses the same job as both markers', () => {
     const same = '11111111-1111-1111-1111-111111111111';
-    const { s, result } = fullRun(MODES.drill, `test\n${same}\n${same}`);
+    const { s, result } = fullRun(MODES.drill, `test\ndone\n${same}\n${same}`);
     expect(result.status).toBe(2);
     expect(result.stderr).toContain('the two markers must be two different jobs');
     expect(s.calls('gcloud').filter((c) => c.includes('clone'))).toEqual([]);
@@ -694,28 +742,20 @@ describe('restore-drill.sh', { timeout: 300_000 }, () => {
   });
 
   it('stops a zone recovery when the original’s zone cannot be read, with a result block', () => {
-    const { s, result } = fullRun(
-      MODES['lost instance'].replace('--env live', '--env test'),
-      'test\ndone',
-      {
-        FAKE_SOURCE_ZONE_FAILS: '1',
-      },
-    );
+    const { s, result } = fullRun(MODES['lost instance'], 'live\ndone', {
+      FAKE_SOURCE_ZONE_FAILS: '1',
+    });
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('could not read the zone of dryscope-test-pg');
+    expect(result.stderr).toContain('could not read the zone of dryscope-live-pg');
     expect(s.calls('gcloud').filter((c) => c.includes('clone'))).toEqual([]);
     expect(result.stdout).toMatch(/phase 2 point-in-time copy .*: \d+s fail/);
     expect(result.stdout).toContain('result: fail');
   });
 
   it('prints the result block when a zone recovery stops at its repoint checks', () => {
-    const { result } = fullRun(
-      MODES['lost instance'].replace('--env live', '--env test'),
-      'test\ndone',
-      {
-        FAKE_CREATED: '2099-01-01T00:00:00Z',
-      },
-    );
+    const { result } = fullRun(MODES['lost instance'], 'live\ndone', {
+      FAKE_CREATED: '2099-01-01T00:00:00Z',
+    });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('so do not repoint');
     expect(result.stdout).toMatch(/phase 7 repoint checks: \d+s fail/);
@@ -738,6 +778,17 @@ describe('restore-drill.sh', { timeout: 300_000 }, () => {
       `--env live --recovery ${PIT} --zone us-central1-b`,
       /--zone is only for/,
     ],
+    ['an incident mode on test', '--env test --recovery --salvage', /are for live/],
+    [
+      '--domain on a salvage',
+      '--env live --recovery --salvage --domain example.test',
+      /--domain is only for/,
+    ],
+    [
+      '--salvage-region on a damaged-rows copy',
+      `--env live --recovery ${PIT} --salvage-region us-east4`,
+      /--salvage-region is only for/,
+    ],
   ])('refuses %s, before any command', (_case, args, message) => {
     const { s, result } = drill(`${args} --dry-run`);
     expect(result.status).toBe(2);
@@ -751,7 +802,7 @@ describe('restore-drill.sh', { timeout: 300_000 }, () => {
   });
 
   it('fails a copy whose ledger checksum differs from the migration file', () => {
-    const { result } = fullRun(`--env test --recovery ${PIT}`, 'test', {
+    const { result } = fullRun(`--env live --recovery ${PIT}`, 'live', {
       FAKE_LEDGER_BAD_SUM: '1',
     });
     expect(result.status).toBe(1);
@@ -759,24 +810,20 @@ describe('restore-drill.sh', { timeout: 300_000 }, () => {
   });
 
   it('fails a zone-recovery copy that lacks a migration of the release serving at the restore point', () => {
-    const { result } = fullRun(
-      MODES['lost instance'].replace('--env live', '--env test'),
-      'test\ndone',
-      {
-        FAKE_LEDGER_DROP_LAST: '1',
-      },
-    );
+    const { result } = fullRun(MODES['lost instance'], 'live\ndone', {
+      FAKE_LEDGER_DROP_LAST: '1',
+    });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(
       `the migrations of the release serving at the restore point (commit ${HEAD})`,
     );
     // A damaged-rows copy may be older than the newest release: a shorter ledger is a valid prefix.
-    const older = fullRun(`--env test --recovery ${PIT}`, 'test', { FAKE_LEDGER_DROP_LAST: '1' });
+    const older = fullRun(`--env live --recovery ${PIT}`, 'live', { FAKE_LEDGER_DROP_LAST: '1' });
     expect(older.result.status, older.result.stderr).toBe(0);
   });
 
   it('removes your temporary access when the checks fail', () => {
-    const { s, result } = fullRun(`--env test --recovery ${PIT}`, 'test', {
+    const { s, result } = fullRun(`--env live --recovery ${PIT}`, 'live', {
       FAKE_CHECKS_FAIL: '1',
     });
     expect(result.status).not.toBe(0);
@@ -784,17 +831,82 @@ describe('restore-drill.sh', { timeout: 300_000 }, () => {
     expect(result.stdout).toContain('result: fail');
   });
 
+  it('fails the run, printing the removal to run by hand, when your temporary access cannot be removed', () => {
+    const { s, result } = fullRun(`--env live --recovery ${PIT}`, 'live', {
+      FAKE_REVOKE_FAILS: '1',
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(
+      /Remove your temporary access to dryscope-live-pg-\d{12} by hand now: gcloud sql users delete/,
+    );
+    expect(result.stdout).toContain('result: fail');
+    expect(result.stdout).not.toContain('result: pass');
+    expect(result.stdout).not.toContain('Copy back only the damaged rows');
+    expect(result.stdout + result.stderr).not.toContain('owner@example.test');
+    expect(s.calls('gcloud').filter(isRevoke)).toHaveLength(1);
+  });
+
+  it('removes no database user it did not create', () => {
+    const { s, result } = fullRun(`--env live --recovery ${PIT}`, 'live', {
+      FAKE_CREATE_FAILS: '1',
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toContain('result: fail');
+    expect(
+      s.calls('gcloud').filter((c) => c.includes('users') && c.includes('create')),
+    ).toHaveLength(1);
+    expect(s.calls('gcloud').filter(isRevoke)).toEqual([]);
+    expect(result.stdout + result.stderr).not.toContain('owner@example.test');
+  });
+
+  it('counts a fraction of a second in the drain: a change 899.1 seconds ago still waits', () => {
+    // The clock reads one fixed second, so the wait left is exactly 0.9 seconds.
+    const { s, result } = drill(
+      MODES.drill,
+      DRILL_ANSWERS,
+      {
+        ...FAKES,
+        date: '[ "$*" != "-u +%s" ] || { echo 1798000000; exit 0; }; PATH="$REAL_PATH" exec date "$@"',
+      },
+      fakeEnv('test', {
+        FAKE_CHANGED_READS: '1',
+        FAKE_CHANGED_AGO: '900',
+        FAKE_CHANGED_FRACTION: '9',
+      }),
+    );
+    expect(result.status, result.stderr + result.stdout).toBe(0);
+    const calls = ordered(s);
+    const firstRead = calls.findIndex(
+      (c) => c[0] === 'curl' && c.at(-1)!.startsWith('https://run.googleapis.com/'),
+    );
+    const firstMove = calls.findIndex((c) => c.includes('update-traffic'));
+    const waits = calls.filter((c, i) => i > firstRead && i < firstMove && c[0] === 'sleep');
+    expect(waits).toEqual([['sleep', '1']]);
+  });
+
   it('prints copy-back reads that lift forced row-level security and temporary access that ends', () => {
-    const { result } = fullRun(`--env test --recovery ${PIT}`, 'test');
+    const { result } = fullRun(`--env live --recovery ${PIT}`, 'live');
     expect(result.status, result.stderr).toBe(0);
     const text = result.stdout.slice(result.stdout.indexOf('Copy back only the damaged rows'));
     expect(text.match(/ALTER TABLE <table> NO FORCE ROW LEVEL SECURITY;/g)).toHaveLength(3);
-    expect(text).toMatch(/gcloud sql users create "\$ME" --instance=dryscope-test-pg-\d{10} /);
-    expect(text).toMatch(/gcloud sql users delete "\$ME" --instance=dryscope-test-pg-\d{10} /);
+    expect(text).toMatch(/gcloud sql users create "\$ME" --instance=dryscope-live-pg-\d{12} /);
+    expect(text).toMatch(/gcloud sql users delete "\$ME" --instance=dryscope-live-pg-\d{12} /);
     expect(text).toContain(
-      '--impersonate-service-account=dryscope-migrate-test@dryscope.iam.gserviceaccount.com',
+      '--impersonate-service-account=dryscope-migrate-live@dryscope.iam.gserviceaccount.com',
     );
-    expect(text).toContain('WHERE <primary key> = <the row');
+    // Every read and write by the full primary key, never id alone; a write only while the
+    // whole row is as compared.
+    expect(text).not.toMatch(/WHERE <primary key> /);
+    expect(text.match(/WHERE \(<primary key columns>\) IN /g)).toHaveLength(2);
+    expect(text).toContain('WHERE (<primary key columns>) = (<the row');
+    expect(text).toContain(
+      'AND (<every column>) IS NOT DISTINCT FROM (<the whole row as read in step 2>);',
+    );
+    // Each proxy in a fresh private directory, stopped by its own process id, then removed.
+    expect(text).not.toContain('kill %');
+    expect(text.match(/="\$\(mktemp -d \/tmp\/rd\.XXXXXX\)"/g)).toHaveLength(2);
+    expect(text).toContain('kill "$P"; rm -rf "$D";');
+    expect(text).toContain('kill "$Q"; rm -rf "$S"');
   });
 
   it.each(['test', 'live'] as const)('uses the names the Terraform plans evaluate (%s)', (env) => {
