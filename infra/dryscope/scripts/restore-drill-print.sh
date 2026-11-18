@@ -1,7 +1,8 @@
 # shellcheck shell=bash
-# The commands restore-drill.sh prints for you to paste, sourced by it: the put-back chain, the
-# zone-recovery repoint and the damaged-rows copy-back. Each chain runs a step only after every
-# step before it passed. Uses restore-drill.sh's names and settings; never run on its own.
+# The commands restore-drill.sh prints for you to paste, sourced by it: the Terraform blocks, the
+# put-back chain, the zone-recovery access reconciliation and repoint, and the damaged-rows
+# copy-back. Each chain runs a step only after every step before it passed. Uses restore-drill.sh's
+# names and settings; never run on its own.
 
 # Printed commands for you to paste: one chain, each step only after every step before it passed.
 chain() {
@@ -27,13 +28,23 @@ step_reaches() { # tag ("" for all traffic), revision
   printf '%s' "[ \"\$(gcloud run services describe $API_SERVICE --region=$REGION --project=$PROJECT --format=json | jq -r '[.status.traffic[] | select($select) | .revisionName] | first // empty')\" = \"$2\" ]"
 }
 step_health() { printf '%s' "curl -fsS $1/api/health | jq -e --arg env $ENV '.status == \"ok\" and .database == \"ok\" and .env == \$env' >/dev/null"; }
-# Health at the candidate tag's own Cloud Run address, which only the tagged revision answers.
-step_revision_health() { # revision
-  step_health "\"\$(gcloud run services describe $API_SERVICE --region=$REGION --project=$PROJECT --format=json | jq -r --arg rev $1 '[.status.traffic[] | select(.tag == \"candidate\" and .revisionName == \$rev) | .url] | first // empty')\""
+
+# Your temporary access to the copy as the migrator's role, then psql through its own proxy; the
+# closing line removes the access.
+copy_session() {
+  cat <<EOF
+       ME="\$(gcloud config get-value account --project=$PROJECT)" && D="\$(mktemp -d /tmp/rd.XXXXXX)" &&
+         gcloud sql users create "\$ME" --instance=$SQL_COPY --type=cloud_iam_user --database-roles=$MIGRATE_DB_USER --project=$PROJECT
+       cloud-sql-proxy --auto-iam-authn --unix-socket="\$D" $PROJECT:$REGION:$SQL_COPY & P=\$!
+       psql -h "\$D/$PROJECT:$REGION:$SQL_COPY" -U "\$ME" -d $SQL_DATABASE
+EOF
+}
+copy_session_end() {
+  printf '       kill "$P"; rm -rf "$D"; gcloud sql users delete "$ME" --instance=%s --project=%s --quiet\n' "$SQL_COPY" "$PROJECT"
 }
 
 print_copy_back() {
-  local copy="$PROJECT:$REGION:$SQL_COPY" source="$PROJECT:$REGION:$SQL_SOURCE"
+  local source="$PROJECT:$REGION:$SQL_SOURCE"
   cat <<EOF
 
 The validated copy is $SQL_COPY. Nothing was repointed and nothing was deleted.
@@ -41,15 +52,12 @@ Copy back only the damaged rows (docs/runbook/backups.md, "Damaged rows"). Row-l
 forced on every table, so each read and write below lifts it inside its own transaction.
   1. Read the damaged rows from the copy, by the table's full primary key, as the migrator's role,
      through your own account; the access is temporary, so the last command removes it:
-       ME="\$(gcloud config get-value account --project=$PROJECT)" && D="\$(mktemp -d /tmp/rd.XXXXXX)" &&
-         gcloud sql users create "\$ME" --instance=$SQL_COPY --type=cloud_iam_user --database-roles=$MIGRATE_DB_USER --project=$PROJECT
-       cloud-sql-proxy --auto-iam-authn --unix-socket="\$D" $copy & P=\$!
-       psql -h "\$D/$copy" -U "\$ME" -d $SQL_DATABASE
+$(copy_session)
          BEGIN; SET LOCAL ROLE "$MIGRATE_DB_USER";
          ALTER TABLE <table> NO FORCE ROW LEVEL SECURITY;
          SELECT * FROM <table> WHERE (<primary key columns>) IN ((<a damaged row's key>), ...);
          ROLLBACK;
-       kill "\$P"; rm -rf "\$D"; gcloud sql users delete "\$ME" --instance=$SQL_COPY --project=$PROJECT --quiet
+$(copy_session_end)
   2. Read the same rows on $SQL_SOURCE as the migrator itself (Service Account Token Creator on
      $MIGRATE_SA), the same way:
        S="\$(mktemp -d /tmp/rd.XXXXXX)" &&
@@ -60,7 +68,9 @@ forced on every table, so each read and write below lifts it inside its own tran
          ROLLBACK;
      The primary key is the table's full key, as \\d <table> shows it: on a company's table it
      includes company_id (company_id and id; job_customers and job_claims: company_id and job_id).
-     Never read or write by id alone: two companies can hold the same id. Compare the two reads.
+     Never read or write by id alone: two companies can hold the same id. For a row of a job (jobs,
+     or a table with job_id) also read its job: SELECT status, revision FROM jobs WHERE
+     (company_id, id) = (<company>, <job id>); Compare the two reads.
   3. Never write a signed record or a guarded table's rows (the guard triggers refuse it; never
      disable one). A damaged signed record is an owner decision, recorded in a sidecar.
   4. In that same session on $SQL_SOURCE, one transaction per table and one statement per damaged
@@ -68,18 +78,45 @@ forced on every table, so each read and write below lifts it inside its own tran
      revision too) is still exactly as read in step 2:
        BEGIN;
        ALTER TABLE <table> NO FORCE ROW LEVEL SECURITY;
+       -- a row of a job: first lock its job and advance its revision, as a normal save does; a
+       -- submitted or signed job, or one changed since step 2, gives UPDATE 0: ROLLBACK; and stop.
+       ALTER TABLE jobs NO FORCE ROW LEVEL SECURITY;
+       UPDATE jobs SET revision = revision + 1, last_change_id = gen_random_uuid(), updated_at = now()
+         WHERE (company_id, id) = (<company>, <job id>) AND status NOT IN ('submitted', 'signed')
+           AND revision = <its revision as read in step 2>;
+       -- (a damaged jobs row itself: set its columns in that same UPDATE, with no second one)
        UPDATE <table> SET (<columns>) = (<values from the copy>)
          WHERE (<primary key columns>) = (<the row's key>)
            AND (<every column>) IS NOT DISTINCT FROM (<the whole row as read in step 2>);
        -- a row missing on $SQL_SOURCE: INSERT INTO <table> (<all columns>) VALUES (<the copy's values>);
        -- psql prints UPDATE 1 or INSERT 0 1 for each: on any other count, ROLLBACK; (someone
        -- changed the row since you compared it) and compare again.
-       ALTER TABLE <table> FORCE ROW LEVEL SECURITY;
+       ALTER TABLE <table> FORCE ROW LEVEL SECURITY; ALTER TABLE jobs FORCE ROW LEVEL SECURITY;
        COMMIT;
      Rows written since $PIT stay, and so does any edit made since you compared. Then stop the
      proxy and remove its directory: kill "\$Q"; rm -rf "\$S"
   5. Run the records check for each company (operator screen, "Check records").
   6. Delete $SQL_COPY only when you decide to; this script never does.
+EOF
+}
+
+# Before any traffic can move to a zone recovery's copy: the copy holds every role, membership,
+# invitation, operator grant and homeowner link as it stood at the restore point.
+print_reconcile() {
+  cat <<EOF
+On $SQL_COPY, re-apply every access change made after $PIT, before any traffic moves: a member
+removed or disabled or a role lowered (memberships), an invitation revoked (invitations), an
+operator grant removed (platform_admins), and a homeowner link revoked (signing_links and
+document_links: status revoked, ended_at set). Through temporary access of your own:
+$(copy_session)
+         BEGIN; SET LOCAL ROLE "$MIGRATE_DB_USER";
+         ALTER TABLE <table> NO FORCE ROW LEVEL SECURITY;  -- each table you change
+         UPDATE <table> SET ... WHERE (<primary key columns>) = (<the row's key>);
+         ALTER TABLE <table> FORCE ROW LEVEL SECURITY;
+         COMMIT;
+$(copy_session_end)
+A session revoked in the sign-in tenant is no substitute: signing in again reads the role from
+the copy.
 EOF
 }
 
@@ -98,18 +135,42 @@ EOF
     "FRESH=\"\$(gcloud run services describe $API_SERVICE --region=$REGION --project=$PROJECT --format='value(status.latestCreatedRevisionName)')\"" \
     "[ -n \"\$FRESH\" ] && [ \"\$FRESH\" != \"$SERVING\" ]" \
     "$(step_uses '"$FRESH"' "$sql")" "$(step_images '"$FRESH"' "$SERVING_IMAGES")" \
-    "$(step_tag '"$FRESH"')" "$(step_reaches candidate '$FRESH')" "$(step_revision_health '"$FRESH"')" \
-    "$(step_health "https://$CANDIDATE_HOST")" \
+    "$(step_tag '"$FRESH"')" "$(step_reaches candidate '$FRESH')" "$(step_health "https://$CANDIDATE_HOST")" \
     "$(step_move '"$FRESH"')" "$(step_reaches "" '$FRESH')" "$(step_health "https://$PUBLIC_HOST")" | sed 's/^/  /'
   cat <<EOF
 If the images check fails, the service template holds a later release that may need migrations
 the copy lacks: move no traffic; that is an owner decision. Keep the recovered database serving;
 a return to the original is a separate owner decision. Your temporary access to the copy was
-removed when the checks ended.
-
-Once traffic has moved, before anyone else works on it: the copy restored every role, membership,
-invitation and operator grant as it was at $PIT. Re-apply every access change made after that
-minute (a member removed, a role lowered, an invitation revoked), or revoke every member's
-sessions in the company's sign-in tenant so each signs in again under the roles now in force.
+removed when the checks ended. Access on the copy was reconciled before this command was printed.
 EOF
+}
+
+# A Terraform block as one command: each step runs only if the one before it passed, so nothing is
+# applied unless the plan check accepted the plan, and the subshell leaves your own directory as it
+# was. Your other variables come from the TF_VAR_ values you exported before the run (see the top).
+tf_lines() { # root, override value or "" for emptied
+  local root="$1"
+  printf '%s\n' \
+    "(cd $(printf '%q' "$INFRA/$root") &&" \
+    "  terraform init -reconfigure -backend-config=envs/backend-$ENV.hcl &&" \
+    "  terraform plan -var-file=envs/$ENV.tfvars -var sql_instance_override=$2 -out=$ENV.tfplan &&" \
+    "  terraform show -json $ENV.tfplan | node ../scripts/check-plan.js $root $ENV - &&" \
+    "  terraform apply $ENV.tfplan)"
+}
+
+# The put-back still owed, as one chain: the recorded revision tagged candidate and checked, then
+# all traffic, then the serving address; only then the drain wait and the two applies that clear
+# the override. Prints from the step named on.
+put_back() { # from: traffic, app or data
+  local steps=()
+  case "$1" in
+    traffic)
+      steps+=("$(step_uses "$SERVING" "$PROJECT:$REGION:$SQL_SOURCE")" "$(step_images "$SERVING" "$SERVING_IMAGES")"
+        "$(step_tag "$SERVING")" "$(step_reaches candidate "$SERVING")" "$(step_health "https://$CANDIDATE_HOST")"
+        "$(step_move "$SERVING")" "$(step_reaches "" "$SERVING")" "$(step_health "https://$PUBLIC_HOST")")
+      ;&
+    app) steps+=("$(step_drain)" "$(tf_lines app "")") ;&
+    data) steps+=("$(tf_lines data "")") ;;
+  esac
+  chain "${steps[@]}"
 }

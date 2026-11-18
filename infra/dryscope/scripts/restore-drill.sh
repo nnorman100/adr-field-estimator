@@ -26,9 +26,9 @@
 #       prints the row copy-back steps. Never deletes and never repoints.
 #   restore-drill.sh --env live --recovery --lost-instance --point-in-time <UTC time>
 #                    --zone <zone> --domain <domain> [--dry-run]
-#       Zone outage: phases 2 and 3 with the admission and the app's login check, then prints the
-#       app root's repoint and the tag, check and traffic commands for the owner. --zone must
-#       differ from the original's zone. Never deletes.
+#       Zone outage: phases 2 and 3 with the admission and the app's login check; once you confirm
+#       access on the copy is reconciled, prints the app root's repoint and the tag, check and
+#       traffic commands. --zone must differ from the original's zone. Never deletes.
 #   restore-drill.sh --env live --recovery --salvage [--salvage-region <US region>] [--dry-run]
 #       Regional outage: phase 4 only (a data copy, in another US region; no repoint). Never deletes.
 #   The incident modes run on live only; test rehearses them with the drill. --domain is for the
@@ -205,6 +205,7 @@ SERVING_IMAGES=""
 RELEASE_COMMIT=""
 RUNNING=0
 GRANTS=()
+PENDING_GRANT=""
 
 finish() {
   local code=$?
@@ -338,40 +339,8 @@ result_block() {
   printf 'result: %s\n----- end -----\n' "$1"
 }
 
-# One command: each step runs only if the one before it passed, so nothing is applied unless the
-# plan check accepted the plan, and the subshell leaves your own directory as it was.
 # shellcheck source=restore-drill-print.sh
 source "$HERE/restore-drill-print.sh"
-
-# Your other variables come from the TF_VAR_ values you exported before the run (see the top).
-tf_lines() { # root, override value or "" for emptied
-  local root="$1"
-  printf '%s\n' \
-    "(cd $(printf '%q' "$INFRA/$root") &&" \
-    "  terraform init -reconfigure -backend-config=envs/backend-$ENV.hcl &&" \
-    "  terraform plan -var-file=envs/$ENV.tfvars -var sql_instance_override=$2 -out=$ENV.tfplan &&" \
-    "  terraform show -json $ENV.tfplan | node ../scripts/check-plan.js $root $ENV - &&" \
-    "  terraform apply $ENV.tfplan)"
-}
-
-
-# The put-back still owed, as one chain: the recorded revision tagged candidate and checked, then
-# all traffic, then the serving address; only then the drain wait and the two applies that clear
-# the override. Prints from the step named on.
-put_back() { # from: traffic, app or data
-  local steps=()
-  case "$1" in
-    traffic)
-      steps+=("$(step_uses "$SERVING" "$PROJECT:$REGION:$SQL_SOURCE")" "$(step_images "$SERVING" "$SERVING_IMAGES")"
-        "$(step_tag "$SERVING")" "$(step_reaches candidate "$SERVING")" "$(step_revision_health "$SERVING")"
-        "$(step_health "https://$CANDIDATE_HOST")"
-        "$(step_move "$SERVING")" "$(step_reaches "" "$SERVING")" "$(step_health "https://$PUBLIC_HOST")")
-      ;&
-    app) steps+=("$(step_drain)" "$(tf_lines app "")") ;&
-    data) steps+=("$(tf_lines data "")") ;;
-  esac
-  chain "${steps[@]}"
-}
 
 # An RFC 3339 UTC time as text that sorts in time order; fails on anything else.
 utc() {
@@ -421,9 +390,16 @@ wait_op() { # operation name
 
 # Your account's temporary database user on a copy, listed only once this run created it: removed
 # right after the checks and, through finish, on every exit. If a removal fails, the exact command
-# is printed for you to run and the run fails.
+# is printed for you to run and the run fails. A create whose outcome is unknown (it failed or was
+# interrupted) is never removed, since the user may have been there before; it is reported instead.
 revoke_all() {
   local instance left=0
+  if [ -n "$PENDING_GRANT" ]; then
+    printf 'Your temporary access to %s may have been created: check gcloud sql users list --instance=%s --project=%s and, if your account is listed and was not there before this run, remove it: gcloud sql users delete "$(gcloud config get-value account --project=%s)" --instance=%s --project=%s --quiet\n' \
+      "$PENDING_GRANT" "$PENDING_GRANT" "$PROJECT" "$PROJECT" "$PENDING_GRANT" "$PROJECT" >&2
+    PENDING_GRANT=""
+    left=1
+  fi
   for instance in "${GRANTS[@]}"; do
     if ! MASK=1 run gcloud sql users delete "$ACCOUNT" --instance="$instance" --project="$PROJECT" --quiet; then
       printf 'Remove your temporary access to %s by hand now: gcloud sql users delete "$(gcloud config get-value account --project=%s)" --instance=%s --project=%s --quiet\n' \
@@ -462,7 +438,6 @@ drain_wait() {
   done
 }
 
-
 # Phase 3's checks, as your own Google account through the Auth Proxy. The account is added to
 # the copy only (never to the original, and with no IAM change, so nothing admits the app early)
 # as an IAM database user holding the migrator's role. Row-level security is forced on every
@@ -499,8 +474,10 @@ SQL
   local markers=()
   [ -z "$before" ] || markers=(-v "before=$before" -v "after=$after")
   [ -n "$ACCOUNT" ] || get ACCOUNT "<your-account>" gcloud config get-value account --project="$PROJECT"
+  [ "$DRY" = 1 ] || PENDING_GRANT="$instance"
   MASK=1 run gcloud sql users create "$ACCOUNT" --instance="$instance" --type=cloud_iam_user \
     --database-roles="$MIGRATE_DB_USER" --project="$PROJECT"
+  PENDING_GRANT=""
   GRANTS+=("$instance")
   proxy_start "$conn" --auto-iam-authn
   MASK=1 get out "<checks>" psql -X -A -t -q -v ON_ERROR_STOP=1 -v "migrator=$MIGRATE_DB_USER" "${markers[@]}" \
@@ -515,6 +492,10 @@ SQL
   level="$(printf '%s\n' "$got" | wc -l | tr -d ' ')"
   [ "$got" = "$(printf '%s\n' "$expected" | head -n "$level")" ] ||
     fail "the ledger on $instance (id and checksum) is not the first $level migrations of web/migrations (pull your checkout, then compare): $(printf '%s\n' "$got" | cut -d'|' -f1 | tr '\n' ' ')"
+  # Damaged rows: exactly the original's ledger as it stood at the restore point.
+  if [ "$MODE" = damaged-rows ] && [ "$got" != "$LEDGER_AT_PIT" ]; then
+    fail "the ledger on $instance is not the ledger of $SQL_SOURCE at $PIT (every migration applied by then, with its checksum)"
+  fi
   # Up to the restore point: every migration of the release serving then, with the same checksums.
   if [ -n "$RELEASE_COMMIT" ]; then
     local release
@@ -534,6 +515,23 @@ SQL
   local counts
   counts="$(printf '%s\n' "$out" | sed -n 's/^rows|\([^|]*\)|\(.*\)$/\1=\2/p' | tr '\n' ' ')"
   FACTS+=("rows on $conn: ${counts% }")
+}
+
+# Damaged rows: the original is up, so the release at the restore point is its own ledger then:
+# every migration applied by that minute, read as the migrator (Service Account Token Creator on
+# it) in a read-only transaction.
+LEDGER_AT_PIT=""
+ledger_at_pit() {
+  printf '%s\n' 'BEGIN READ ONLY;' \
+    "SELECT 'ledger|' || id || '|' || checksum FROM migration_ledger WHERE applied_at <= :'pit'::timestamptz ORDER BY id;" \
+    'ROLLBACK;' >"$TMP/ledger.sql"
+  printf '   Your account needs Service Account Token Creator on %s to read its ledger on %s.\n' "$MIGRATE_SA" "$SQL_SOURCE"
+  proxy_start "$PROJECT:$REGION:$SQL_SOURCE" --auto-iam-authn --impersonate-service-account="$MIGRATE_SA"
+  get LEDGER_AT_PIT "" psql -X -A -t -q -v ON_ERROR_STOP=1 -v "pit=$PIT" -h "$PROXY_HOST" -U "$MIGRATE_DB_USER" \
+    -d "$SQL_DATABASE" -f "$TMP/ledger.sql"
+  proxy_stop
+  LEDGER_AT_PIT="$(printf '%s\n' "$LEDGER_AT_PIT" | sed -n 's/^ledger|//p' | sort)"
+  [ "$DRY" = 1 ] || [ -n "$LEDGER_AT_PIT" ] || fail "no migration of $SQL_SOURCE was applied by $PIT"
 }
 
 # id|checksum for each file of web/migrations, in order, hashed in one call (once per run).
@@ -638,20 +636,6 @@ traffic_of() { # var, tag ("" for the revision serving all traffic)
     | select(if $tag == "" then .percent == 100 else .tag == $tag end) | .revisionName] | first // empty')"
 }
 
-# The candidate tag's own Cloud Run address routes to the tagged revision and nothing else, so a
-# health answer there comes from that revision; a shared address can still be answered by the
-# revision before it while routing changes.
-revision_health() { # revision the candidate tag must reach
-  local json url
-  get json '{}' gcloud run services describe "$API_SERVICE" --region="$REGION" --project="$PROJECT" --format=json
-  if [ "$DRY" = 1 ]; then url="https://candidate---$API_SERVICE"; else
-    url="$(printf '%s' "$json" | jq -r --arg rev "$1" '[.status.traffic[] | select(.tag == "candidate" and .revisionName == $rev)
-      | .url] | first // empty')"
-    [ -n "$url" ] || fail "the candidate tag has no address of its own reaching $1"
-  fi
-  health "$url"
-}
-
 traffic_is() { # tag ("" for all traffic), revision it must reach
   local got
   traffic_of got "$1"
@@ -697,11 +681,21 @@ move_to() { # revision, its database connection: tagged candidate and checked th
   revision_uses "$1" "$2"
   run gcloud run services update-traffic "$API_SERVICE" --update-tags="candidate=$1" --region="$REGION" --project="$PROJECT"
   traffic_is candidate "$1"
-  revision_health "$1"
   health "https://$CANDIDATE_HOST"
   run gcloud run services update-traffic "$API_SERVICE" --to-revisions="$1=100" --region="$REGION" --project="$PROJECT"
   traffic_is "" "$1"
   health "https://$PUBLIC_HOST"
+}
+
+# A zone recovery's repoint is printed only once access on the copy matches every change made after
+# the restore point, so no traffic can move to roles or homeowner links that were since withdrawn.
+reconcile_access() {
+  printf '\n>> Owner step: reconcile access on %s before any traffic moves\n' "$SQL_COPY"
+  print_reconcile
+  ask RECONCILED "Type reconciled once every access change made after $PIT is on $SQL_COPY, or none if there was none:"
+  [ "$DRY" = 1 ] || [ "$RECONCILED" = reconciled ] || [ "$RECONCILED" = none ] ||
+    fail "access on $SQL_COPY is not reconciled with the changes made after $PIT: no repoint is printed"
+  FACTS+=("access on $SQL_COPY: $RECONCILED")
 }
 
 preflight() {
@@ -783,7 +777,7 @@ phase_copy() {
 
 phase_checks() { # admit: 1 to apply the data root's admission and check the app's login
   phase 3 "checks on the copy"
-  [ "$1" = 0 ] || serving_commit
+  if [ "$1" = 0 ]; then ledger_at_pit; else serving_commit; fi
   db_checks "$SQL_COPY" "$REGION" "${MARKER_BEFORE:-}" "${MARKER_AFTER:-}"
   if [ "$1" = 1 ]; then
     [ "$MODE" != drill ] || PUT_BACK="$(put_back data)"
@@ -837,7 +831,10 @@ draft_snapshot() { # var, database id. A fresh token each time, in a private hea
   fs_get rooms "$2" "$DRAFT/rooms?pageSize=300" || return 1
   fs_get photos "$2" "$DRAFT/photos?pageSize=300" || return 1
   if [ "$DRY" = 1 ]; then printf -v "$1" '%s' '{}'; return 0; fi
-  snapshot="$(jq -cnS --argjson d "$doc" --argjson r "$rooms" --argjson p "$photos" '
+  # Through private files, never on a command line: the draft's text is private.
+  (umask 077 && printf '%s' "$doc" >"$TMP/d.json" && printf '%s' "$rooms" >"$TMP/r.json" && printf '%s' "$photos" >"$TMP/p.json")
+  snapshot="$(jq -cnS --slurpfile ds "$TMP/d.json" --slurpfile rs "$TMP/r.json" --slurpfile ps "$TMP/p.json" '
+    $ds[0] as $d | $rs[0] as $r | $ps[0] as $p |
     def docs($list): if $list.nextPageToken then error("more than one page")
       else [($list.documents // [])[] | {id: (.name | split("/") | last), fields: (.fields // {})}] | sort_by(.id) end;
     if ($d.fields | type) != "object" then error("no draft") else
@@ -890,7 +887,7 @@ phase_field() {
 
 phase_files() {
   phase 6 "evidence files: soft delete and earlier version"
-  local soft="gs://$BUCKET/$OBJ_SOFT" version="gs://$BUCKET/$OBJ_VERSION" gen md5 v1md5 now
+  local soft="gs://$BUCKET/$OBJ_SOFT" version="gs://$BUCKET/$OBJ_VERSION" gen md5 v1md5 now restored
   printf 'dryscope drill %s v1\n' "$STAMP" >"$TMP/v1"
   printf 'dryscope drill %s v2\n' "$STAMP" >"$TMP/v2"
   # Soft delete: with versioning on, a delete makes the live object noncurrent; deleting that
@@ -903,6 +900,11 @@ phase_files() {
   run gcloud storage restore "$soft#$gen" --project="$PROJECT"
   get now "<md5>" gcloud storage objects describe "$soft" --project="$PROJECT" --format='value(md5_hash)'
   [ "$now" = "$md5" ] || fail "the object restored from soft delete differs"
+  # A restore makes a new generation; the app and the records check open a registered file by the
+  # generation recorded for it, so a restored registered photo or signature stays unreadable there.
+  get restored "<new-generation>" gcloud storage objects describe "$soft" --project="$PROJECT" --format='value(generation)'
+  [ "$DRY" = 1 ] || [ "$restored" != "$gen" ] || fail "the object restored from soft delete kept generation $gen: expected a new one"
+  FACTS+=("soft delete: generation $gen restored as $restored; the app opens a registered file only by its recorded generation, so a deleted registered photo or signature stays unreadable in the app after this restore (owner decision)")
   # Earlier version: copy generation 1 back over the live object.
   run gcloud storage cp "$TMP/v1" "$version" --project="$PROJECT"
   get gen "<generation>" gcloud storage objects describe "$version" --project="$PROJECT" --format='value(generation)'
@@ -984,6 +986,7 @@ case "$MODE" in
     phase 7 "repoint checks"
     serving_revision
     serving_fits_copy
+    reconcile_access
     pass
     print_repoint
     ;;

@@ -189,8 +189,12 @@ case "$1 $2 $3" in
     # Not done at the first look, then done (or failed).
     if [ -e "$st/op-seen" ]; then op="$FAKE_FS_OP"; [ -n "$op" ] || op='{"done":true}'; echo "$op"; else touch "$st/op-seen"; echo '{"done":false}'; fi
     exit 0 ;;
+  'storage restore '*) touch "$st/restored"; exit 0 ;;
   'storage objects describe')
-    case "$*" in *generation*) echo 1700 ;; *) echo md5-1 ;; esac; exit 0 ;;
+    case "$*" in
+      *soft-drill*generation*) if [ -e "$st/restored" ] && [ -z "$FAKE_SAME_GENERATION" ]; then echo 1701; else echo 1700; fi ;;
+      *generation*) echo 1700 ;; *) echo md5-1 ;;
+    esac; exit 0 ;;
   'run services describe')
     case "$*" in
       *latestCreatedRevisionName*) echo rev-fresh ;;
@@ -223,8 +227,10 @@ case "$*" in *'SELECT 1'*)
   [ "$n" -gt "$FAKE_LOGIN_FAILS" ] || exit 2
   echo 1; exit 0 ;; esac
 case "$*" in *company=*) m="$FAKE_ORIGINAL_MARKERS"; [ -n "$m" ] || m='1|1'; echo "$m"; exit 0 ;; esac
-[ -z "$FAKE_CHECKS_FAIL" ] || exit 3
-files="$(ls "$MIGRATIONS"/*.sql)"; [ -z "$FAKE_LEDGER_DROP_LAST" ] || files="$(echo "$files" | sed '$d')"
+# The checks and a short ledger are the copy's; the migrator's own read of the original is whole.
+copy=1; case "$u" in dryscope-migrate-*) copy="" ;; esac
+[ -z "$FAKE_CHECKS_FAIL" ] || [ -z "$copy" ] || exit 3
+files="$(ls "$MIGRATIONS"/*.sql)"; [ -z "$FAKE_LEDGER_DROP_LAST" ] || [ -z "$copy" ] || files="$(echo "$files" | sed '$d')"
 for f in $files; do sum="$(sha256sum "$f" | cut -d' ' -f1)"; [ -z "$FAKE_LEDGER_BAD_SUM" ] || sum=bad; echo "ledger|$(basename "$f" .sql)|$sum"; done
 case "$*" in *before=*) echo 'marker_before|1'; echo 'marker_after|0'; echo 'marker_company|c0000000-0000-4000-8000-000000000001' ;; esac
 echo 'rows|companies|2'; echo 'rows|jobs|14'`;
@@ -249,6 +255,8 @@ const HEAD = spawnSync('git', ['-C', ROOT, 'rev-parse', 'HEAD'], {
 }).stdout.trim();
 const MARKERS = '11111111-1111-1111-1111-111111111111\n22222222-2222-2222-2222-222222222222';
 const DRILL_ANSWERS = `test\ndone\n${MARKERS}\ndone\ncompanies/c1/drafts/d1\ndone\ndone\ndone`;
+// The zone recovery's answers: go on, the admission applied, access on the copy reconciled.
+const LOST = 'live\ndone\nreconciled';
 
 const FAKES = {
   gcloud: FAKE_GCLOUD,
@@ -442,11 +450,15 @@ describe('restore-drill.sh', { timeout: 300_000 }, () => {
     expect(grantsRevoked(gcloud)).toBe(2);
     // The copy goes to the named zone, not the original's.
     expect(clone).toContain('--preferred-zone=us-central1-b');
-    // Each revision's health is read at the candidate tag's own address, which only it answers.
-    const tagHealth = run.calls.flatMap((c, i) =>
-      c[0] === 'curl' && c.at(-1) === 'https://candidate---svc.a.run.app/api/health' ? [i] : [],
-    );
-    expect(tagHealth).toHaveLength(2);
+    // Each tagged revision is checked at the load-balanced candidate host, never at run.app.
+    const urls = run.of('curl').map((c) => c.at(-1)!);
+    expect(urls.filter((u) => u.includes('run.app'))).toEqual([]);
+    const candidate = 'https://candidate.test.example.test/api/health';
+    expect(urls.filter((u) => u === candidate)).toHaveLength(2);
+    // The draft's text reaches jq through private files, never its arguments.
+    expect(run.of('jq').filter((c) => c.join(' ').includes('moisture'))).toEqual([]);
+    // A soft-delete restore gives a new generation, recorded with the limit it means for the app.
+    expect(result.stdout).toContain('soft delete: generation 1700 restored as 1701;');
     // The testers are asked to stop writing before the drill, and told when they may again.
     const out = result.stdout;
     expect(out.indexOf('stop writing there until this drill ends')).toBeGreaterThan(-1);
@@ -467,13 +479,11 @@ describe('restore-drill.sh', { timeout: 300_000 }, () => {
   });
 
   it('retries the app login while the new admission applies, and stops after 10 minutes', () => {
-    const { s, result } = fullRun(MODES['lost instance'], 'live\ndone', { FAKE_LOGIN_FAILS: '2' });
+    const { s, result } = fullRun(MODES['lost instance'], LOST, { FAKE_LOGIN_FAILS: '2' });
     expect(result.status, result.stderr + result.stdout).toBe(0);
     expect(s.calls('psql').filter((c) => c.includes('SELECT 1'))).toHaveLength(3);
     expect(s.calls('sleep').filter((c) => c[0] === '30')).toHaveLength(2);
-    // After the repoint, the owner puts access back as it was before the outage.
-    expect(result.stdout).toContain('Re-apply every access change made after');
-    const never = fullRun(MODES['lost instance'], 'live\ndone', { FAKE_LOGIN_FAILS: '99' });
+    const never = fullRun(MODES['lost instance'], LOST, { FAKE_LOGIN_FAILS: '99' });
     expect(never.result.status).toBe(1);
     expect(never.result.stderr).toContain('could not log in');
     expect(never.s.calls('psql').filter((c) => c.includes('SELECT 1'))).toHaveLength(20);
@@ -484,7 +494,7 @@ describe('restore-drill.sh', { timeout: 300_000 }, () => {
     [
       'lost instance',
       `--env live --recovery --lost-instance ${PIT} --zone us-central1-b --domain example.test`,
-      'live\ndone',
+      LOST,
     ],
     ['salvage', '--env live --recovery --salvage', 'live'],
   ])(
@@ -514,7 +524,7 @@ describe('restore-drill.sh', { timeout: 300_000 }, () => {
   it('refuses a zone recovery into the original’s own zone, before any copy', () => {
     const { s, result } = fullRun(
       `--env live --recovery --lost-instance ${PIT} --zone us-central1-a --domain example.test`,
-      'live\ndone',
+      LOST,
     );
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('--zone us-central1-a is the zone of dryscope-live-pg');
@@ -545,12 +555,13 @@ describe('restore-drill.sh', { timeout: 300_000 }, () => {
         '--project=dryscope',
       ],
     ]);
-    const [proxy] = s.calls('cloud-sql-proxy');
+    // Your own proxy is the one impersonating no one; your psql connects as you.
+    const proxy = s.calls('cloud-sql-proxy').find((c) => !c.join(' ').includes('--impersonate'))!;
     const socket = proxy
       .find((a) => a.startsWith('--unix-socket='))!
       .slice('--unix-socket='.length);
-    expect(socket).toMatch(/^\/tmp\/rd\.[A-Za-z0-9]{6}\/p1$/);
-    const [psql] = s.calls('psql');
+    expect(socket).toMatch(/^\/tmp\/rd\.[A-Za-z0-9]{6}\/p\d$/);
+    const psql = s.calls('psql').find((c) => c.includes('owner@example.test'))!;
     expect(psql[psql.indexOf('-h') + 1]).toBe(`${socket}/dryscope:us-central1:${copy}`);
   });
 
@@ -632,7 +643,7 @@ describe('restore-drill.sh', { timeout: 300_000 }, () => {
   });
 
   it('prints the recorded images for the lost-instance repoint to check', () => {
-    const { result } = fullRun(MODES['lost instance'], 'live\ndone');
+    const { result } = fullRun(MODES['lost instance'], LOST);
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain(`jq -c '[.spec.containers[].image]')" = '["api@sha256:1"]' ]`);
   });
@@ -742,7 +753,7 @@ describe('restore-drill.sh', { timeout: 300_000 }, () => {
   });
 
   it('stops a zone recovery when the original’s zone cannot be read, with a result block', () => {
-    const { s, result } = fullRun(MODES['lost instance'], 'live\ndone', {
+    const { s, result } = fullRun(MODES['lost instance'], LOST, {
       FAKE_SOURCE_ZONE_FAILS: '1',
     });
     expect(result.status).toBe(1);
@@ -753,7 +764,7 @@ describe('restore-drill.sh', { timeout: 300_000 }, () => {
   });
 
   it('prints the result block when a zone recovery stops at its repoint checks', () => {
-    const { result } = fullRun(MODES['lost instance'], 'live\ndone', {
+    const { result } = fullRun(MODES['lost instance'], LOST, {
       FAKE_CREATED: '2099-01-01T00:00:00Z',
     });
     expect(result.status).toBe(1);
@@ -810,16 +821,26 @@ describe('restore-drill.sh', { timeout: 300_000 }, () => {
   });
 
   it('fails a zone-recovery copy that lacks a migration of the release serving at the restore point', () => {
-    const { result } = fullRun(MODES['lost instance'], 'live\ndone', {
+    const { result } = fullRun(MODES['lost instance'], LOST, {
       FAKE_LEDGER_DROP_LAST: '1',
     });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(
       `the migrations of the release serving at the restore point (commit ${HEAD})`,
     );
-    // A damaged-rows copy may be older than the newest release: a shorter ledger is a valid prefix.
-    const older = fullRun(`--env live --recovery ${PIT}`, 'live', { FAKE_LEDGER_DROP_LAST: '1' });
-    expect(older.result.status, older.result.stderr).toBe(0);
+  });
+
+  it('fails a damaged-rows copy whose ledger lacks a migration the original had applied by then', () => {
+    const { s, result } = fullRun(`--env live --recovery ${PIT}`, 'live', {
+      FAKE_LEDGER_DROP_LAST: '1',
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('is not the ledger of dryscope-live-pg at 2026-11-18T15:04');
+    expect(result.stdout).not.toContain('Copy back only the damaged rows');
+    // The expected ledger is the original's own, read as the migrator, up to the restore point.
+    const read = s.calls('psql').find((c) => c.includes('pit=2026-11-18T15:04:00Z'))!;
+    expect(read[read.indexOf('-U') + 1]).toBe('dryscope-migrate-live@dryscope.iam');
+    expect(read[read.indexOf('-h') + 1]).toMatch(/\/dryscope:us-central1:dryscope-live-pg$/);
   });
 
   it('removes your temporary access when the checks fail', () => {
@@ -857,6 +878,8 @@ describe('restore-drill.sh', { timeout: 300_000 }, () => {
     ).toHaveLength(1);
     expect(s.calls('gcloud').filter(isRevoke)).toEqual([]);
     expect(result.stdout + result.stderr).not.toContain('owner@example.test');
+    // A create whose outcome is unknown is reported, with the check to make.
+    expect(result.stderr).toMatch(/access to dryscope-live-pg-\d{12} may have been created/);
   });
 
   it('counts a fraction of a second in the drain: a change 899.1 seconds ago still waits', () => {
@@ -907,6 +930,33 @@ describe('restore-drill.sh', { timeout: 300_000 }, () => {
     expect(text.match(/="\$\(mktemp -d \/tmp\/rd\.XXXXXX\)"/g)).toHaveLength(2);
     expect(text).toContain('kill "$P"; rm -rf "$D";');
     expect(text).toContain('kill "$Q"; rm -rf "$S"');
+    // A row of a job is written only with its job locked, unsigned, unsubmitted and as compared,
+    // and its revision advanced, in the same transaction.
+    const write = text.slice(text.indexOf('  4.'), text.indexOf('  5.'));
+    expect(write).toMatch(
+      /UPDATE jobs SET revision = revision \+ 1, .*\n.*status NOT IN \('submitted', 'signed'\)\n.*AND revision = <its revision as read in step 2>;/,
+    );
+    expect(write.indexOf('UPDATE jobs')).toBeLessThan(write.indexOf('UPDATE <table>'));
+  });
+
+  it('prints a zone recovery’s repoint only after access on the copy is reconciled', () => {
+    const { result } = fullRun(MODES['lost instance'], LOST);
+    expect(result.status, result.stderr).toBe(0);
+    const out = result.stdout;
+    expect(out).toMatch(/re-apply every access change made after[\s\S]*Repoint the app/);
+    expect(out).toContain('A session revoked in the sign-in tenant is no substitute');
+    const refused = fullRun(MODES['lost instance'], 'live\ndone\nnot yet');
+    expect(refused.result.status).toBe(1);
+    expect(refused.result.stderr).toContain('is not reconciled with the changes made after');
+    expect(refused.result.stdout).not.toContain('Repoint the app');
+    expect(refused.result.stdout).toContain('result: fail');
+  });
+
+  it('fails the soft-delete restore when the restored object kept its old generation', () => {
+    const { result } = fullRun(MODES.drill, DRILL_ANSWERS, { FAKE_SAME_GENERATION: '1' });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('kept generation 1700: expected a new one');
+    expect(result.stdout).toMatch(/phase 6 evidence files.*: \d+s fail/);
   });
 
   it.each(['test', 'live'] as const)('uses the names the Terraform plans evaluate (%s)', (env) => {
