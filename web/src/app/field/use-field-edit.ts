@@ -39,7 +39,7 @@ export function useFieldEdit(job: JobContext) {
       job.checkAccess(fieldRefusal(error));
     };
     try {
-      const { acknowledged } = await journaledEdit(job.session.client, job.draftRef, writes);
+      const { acknowledged } = await journaledEdit(job.session.client, job.draftRef, writes, job.jobId);
       // The SDK's local transaction is finished; update the draft before clearing the form's edits.
       await job.reloadDraft('cache');
       if (current()) {

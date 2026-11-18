@@ -1,29 +1,21 @@
 'use client';
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
-import { doc, getDocFromCache, type Firestore } from 'firebase/firestore';
 import { Button } from '@/components/ui/button';
 import type { DsMe } from '@/lib/field/ds-me';
-import { readJournal, watchJournal, type JournalEntry } from '@/lib/field/journal';
-import { discardEntries, tryAgain } from '@/lib/field/journal-sync';
+import { watchJournal } from '@/lib/field/journal';
+import { discardEntries, journalFailed, readEntries, tryAgain } from '@/lib/field/journal-sync';
 import { saveAsNewDraft } from '@/lib/field/new-draft';
-import {
-  chipText,
-  PHOTOS_STAY,
-  REASONS,
-  syncStatus,
-  type DraftFacts,
-  type Problem,
-  type SyncStatus,
-} from '@/lib/field/sync-status';
+import { pending } from '@/lib/field/pending';
+import { chipText, PHOTOS_STAY, REASONS, SAVED_ON_PHONE, syncStatus, type Problem, type SyncStatus } from '@/lib/field/sync-status';
 import { useFieldClient } from './field-store';
 import { go, Outcome } from './ui';
 
 // The sync chip on every field screen and its "Can't save" sheet (S6-4b; docs/plans/S6/S6-4.md),
-// read from the person's recovery journal (src/lib/field/journal.ts) and read again each time it
-// changes on this page. It matches the job screens' Archive (./job-actions.tsx): native modal
-// dialogs (modern-web-guidance "dialog"), and a confirm whose safe choice has the focus. Nothing
-// here shows with a cache that keeps nothing (the banners say so instead).
+// read from the person's recovery journal (src/lib/field/journal.ts; with an Online only cache, the
+// one this page holds in memory) and read again each time it changes on this page. It matches the
+// job screens' Archive (./job-actions.tsx): native modal dialogs (modern-web-guidance "dialog"), and
+// a confirm whose safe choice has the focus.
 
 export const SHEET_TITLE = 'Changes not saved';
 export const DISCARD_TITLE = 'Discard these changes?';
@@ -31,25 +23,11 @@ export const DISCARD_CONFIRM = 'Discard changes';
 export const DISCARD_KEEP = 'Keep them';
 export const SAVE_AS_NEW = 'Save as new draft';
 
-type Facts = Map<string, DraftFacts>;
-
-async function factsOf(db: Firestore, entries: readonly JournalEntry[]): Promise<Facts> {
-  const facts: Facts = new Map();
-  for (const path of new Set(
-    entries.filter((entry) => entry.state !== 'pending').map((entry) => entry.draftPath),
-  )) {
-    try {
-      const snapshot = await getDocFromCache(doc(db, path));
-      const data = snapshot.exists() ? snapshot.data() : {};
-      facts.set(path, {
-        state: typeof data.state === 'string' ? data.state : null,
-        jobId: typeof data.jobId === 'string' ? data.jobId : null,
-      });
-    } catch {
-      facts.set(path, { state: null, jobId: null });
-    }
-  }
-  return facts;
+// How a panel names its job: the address this page last read for it, else the start of its id.
+function jobLabel(problem: Problem): string {
+  const address = problem.jobId ? pending.detail(problem.jobId)?.job.propertyAddress : '';
+  if (address) return address;
+  return problem.jobId ? `Job ${problem.jobId.slice(0, 8)}` : `Draft ${problem.draftPath.split('/').at(-1)?.slice(0, 8) ?? ''}`;
 }
 
 export function SyncChip({ me }: { me: DsMe }) {
@@ -65,25 +43,22 @@ export function SyncChip({ me }: { me: DsMe }) {
   // A read answers only while no newer one has started.
   const reads = useRef(0);
   const load = useCallback(async () => {
-    if (!client || client.cache !== 'persistent') return;
+    if (!client) return;
     const mine = ++reads.current;
     try {
-      const entries = await readJournal({
-        tenantId: client.person.tenantId,
-        uid: client.person.uid,
-      });
-      const facts = await factsOf(client.db, entries);
-      if (mine === reads.current) setStatus(syncStatus(entries, facts, canSaveAsNew));
-    } catch {
-      // The journal did not answer: the chip keeps what it last said; the shell says "Reopen the
-      // app" when the storage was lost.
+      const entries = await readEntries(client);
+      if (mine === reads.current) setStatus(syncStatus(entries, canSaveAsNew));
+    } catch (error) {
+      // The journal did not answer: the chip keeps what it last said, and a storage connection lost
+      // twice goes to the shell, which says "Reopen the app".
+      journalFailed(client, error);
     }
   }, [client, canSaveAsNew]);
 
   // The gate opening (or closing) changes what a refusal's reason and the job's state read as.
   const online = field?.online ?? false;
   useEffect(() => {
-    if (!client || client.cache !== 'persistent') return;
+    if (!client) return;
     // Read after this render, as the job screens do.
     void Promise.resolve().then(load);
     const stop = watchJournal(
@@ -101,8 +76,13 @@ export function SyncChip({ me }: { me: DsMe }) {
     };
   }, [client, load, online]);
 
-  if (!client || client.cache !== 'persistent' || !status) return null;
-  const problems = status.kind === 'cant-save' || status.kind === 'changed' ? status.problems : [];
+  const problems = status?.problems ?? [];
+  // The sheet closes once its last problem has cleared.
+  useEffect(() => {
+    if (problems.length === 0 && sheet.current?.open) sheet.current.close();
+  }, [problems.length]);
+
+  if (!client || !status) return null;
   const text = chipText(status);
 
   return (
@@ -140,7 +120,11 @@ export function SyncChip({ me }: { me: DsMe }) {
               onLeave={() => sheet.current?.close()}
             />
           ))}
-          {problems.length === 0 ? <p className="text-base">Everything here is saved.</p> : null}
+          {status.waiting > 0 ? (
+            <p className="text-base">
+              {SAVED_ON_PHONE} ({status.waiting} waiting to send)
+            </p>
+          ) : null}
         </div>
         <form method="dialog" className="mt-4 flex flex-col">
           <Button variant="outline" value="">
@@ -172,6 +156,7 @@ function ProblemPanel({
   const words = REASONS[problem.reason];
   const client = field?.client;
   const count = problem.entries.length;
+  const label = jobLabel(problem);
 
   async function run(label: string, work: () => Promise<string | null>) {
     if (!client || busy) return;
@@ -179,7 +164,8 @@ function ProblemPanel({
     setError(null);
     try {
       setError(await work());
-    } catch {
+    } catch (error) {
+      journalFailed(client, error);
       setError('This phone could not do that just now. Try again.');
     } finally {
       setBusy(null);
@@ -191,7 +177,10 @@ function ProblemPanel({
       if (!online) return 'Needs a connection';
       const answer = await tryAgain(client!, problem.entries);
       if (answer === 'no-answer') return 'No answer from DryScope. Check the signal and try again.';
-      return answer === 'refused' ? 'Still can’t save: the reason above still holds.' : null;
+      if (answer === 'refused') return 'Still can’t save: the reason above still holds.';
+      // The job's open screen reads its draft again, as after a photo sent from a closed screen.
+      if (answer === 'sent' && problem.jobId) pending.draftChanged(problem.jobId);
+      return null;
     });
 
   const saveAsNew = () =>
@@ -225,8 +214,7 @@ function ProblemPanel({
         {words.text}
       </p>
       <p className="text-sm">
-        {count === 1 ? '1 change' : `${count} changes`} on this phone, the last made{' '}
-        {new Date(Math.max(...problem.entries.map((entry) => entry.at))).toLocaleString()}.
+        {label}: {count === 1 ? '1 change' : `${count} changes`} on this phone.
       </p>
       {problem.saveAsNew ? (
         <>
@@ -248,17 +236,6 @@ function ProblemPanel({
         >
           Go to Finish and review
         </a>
-      ) : null}
-      {problem.reason === 'changed' && problem.jobId ? (
-        <Button
-          variant="outline"
-          onClick={() => {
-            onLeave();
-            go({ view: 'scope', jobId: problem.jobId! });
-          }}
-        >
-          Open the job
-        </Button>
       ) : null}
       <Button
         variant="outline"
@@ -286,7 +263,7 @@ function ProblemPanel({
           {DISCARD_TITLE}
         </h2>
         <p id={`${textId}-confirm`} className="mt-3 text-base">
-          {count === 1 ? 'This change' : `These ${count} changes`} will be removed from this phone.
+          {count === 1 ? 'The change' : `The ${count} changes`} to {label} will be removed from this phone.
           DryScope never had {count === 1 ? 'it' : 'them'}, so this cannot be undone.
         </p>
         <form method="dialog" className="mt-4 flex flex-col gap-2">

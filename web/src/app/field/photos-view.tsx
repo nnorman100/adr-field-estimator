@@ -78,7 +78,7 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
     }
     update(item.id, { step: 'saving' });
     try {
-      const { acknowledged } = await journaledEdit(job.session.client, job.draftRef, photoRefWrites(job.draftRef, item.id, item.field));
+      const { acknowledged } = await journaledEdit(job.session.client, job.draftRef, photoRefWrites(job.draftRef, item.id, item.field), jobId);
       await acknowledged;
       // The screen that sent it may have closed since: then the open one is told to read the draft.
       if (live.current) await job.reloadDraft();

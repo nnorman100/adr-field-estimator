@@ -4,9 +4,10 @@
 // (S6-1 (b)). So each edit is written here first, then handed to Firestore, and the entry says what
 // became of it.
 //
-// An entry: the operation id, the (tenant, person) it belongs to, the draft, the document writes
-// (absolute values only), when it was made, the server update time of each document as the phone
-// held it, and its state:
+// An entry: the operation id, the (tenant, person) it belongs to, the draft and the job the screen
+// read it for, the document writes (absolute values only), when it was made, the server update time
+// of each document as the phone held it, what the phone held of what it writes (`before`), and its
+// state:
 // - pending: waiting for the server's answer;
 // - rejected: the rules refused it (`reason`); never sent again (step 6);
 // - refused: the server refused it but why is not known yet (the draft or the person's role could
@@ -16,6 +17,10 @@
 // An entry the server accepted is removed at once (pruned), so the journal holds only what is not
 // saved. Several companies share one origin and one phone can hold two companies' sign-ins, so every
 // read, change and removal here names its (tenant, person) and touches only their rows.
+//
+// An Online only client (a memory cache) keeps nothing on the phone: its entries are held in this
+// page's memory only (journalInMemory), so the sync chip still says what became of each edit, and
+// they go with the page.
 //
 // Opened only through ./idb.ts. A phone whose storage does not answer within WRITE_WITHIN_MS gets
 // JournalNotSaved for a new entry (ReopenTheApp when its connection was lost twice), and the edit
@@ -47,12 +52,13 @@ export type DocWrite =
   | { path: string; op: 'set'; data: Record<string, unknown> }
   | { path: string; op: 'delete' };
 
-// Why the rules refused: the draft is no longer being edited (finished, archived: "locked"),
+// Why the rules refused: the draft was finished ("locked": being finished or finished, also when
+// that job was archived after), the job was archived while its draft was being edited ("archived"),
 // another person now holds its field work, the person's role no longer edits field work (it can
 // still read the draft: office), or this person cannot read it at all. A refusal whose reason is not
 // known yet is the `refused` state, never a reason recorded from what could not be read (Firstmate
 // ruling R1, 2026-11-17).
-export type RejectReason = 'locked' | 'owner-changed' | 'role-changed' | 'no-access';
+export type RejectReason = 'locked' | 'archived' | 'owner-changed' | 'role-changed' | 'no-access';
 
 // The person's role check (GET /api/me) did not answer: where the role decides a refusal, it stays
 // unknown.
@@ -76,10 +82,24 @@ export type JournalEntry = {
   // the edit was made, null when it held none (a new room or photo). What the server holds after a
   // restart is judged against it (judge). Absent on a path: unknown.
   bases?: Record<string, number | null>;
+  // The job the screen that made the edit read (absent on an entry made before it was kept).
+  jobId?: string;
+  // Per document written, what the phone's cache held of what the edit writes when it was made
+  // (heldOf): Try again sends the edit only while the server still holds that. Absent: unknown.
+  before?: Record<string, Held>;
+  // Put into a new draft by Save as new draft (./new-draft.ts), whose copy is under way or made.
+  copied?: true;
   reason?: RejectReason;
 };
 
+// What one document holds of what a set of writes writes: the whole document where one of them sets
+// or deletes it, else the value of each key they update (null: none). null: no such document.
+export type Held = Record<string, unknown> | null;
+
 export type Owner = { tenantId: string; uid: string };
+
+// The job the entries were made on: the newest that names one.
+export const jobOf = (entries: readonly JournalEntry[]): string | null => [...entries].reverse().find((entry) => entry.jobId)?.jobId ?? null;
 
 export class JournalNotSaved extends Error {
   constructor() {
@@ -96,6 +116,15 @@ function within<T>(promise: Promise<T>, ms: number): Promise<T | 'timeout'> {
 }
 
 const ownerRange = (owner: Owner) => IDBKeyRange.only([owner.tenantId, owner.uid]);
+
+// Per (tenant, person) whose client keeps nothing on the phone: their entries on this page.
+const inMemory = new Map<string, JournalEntry[]>();
+let memorySeq = 0;
+
+// This (tenant, person)'s entries live in this page's memory from now on, never in IndexedDB.
+export function journalInMemory(owner: Owner): void {
+  if (!inMemory.has(ownerKey(owner))) inMemory.set(ownerKey(owner), []);
+}
 
 // Who to tell when a (tenant, person)'s entries changed on this page (the field screens' sync chip,
 // S6-4b). Told after the change committed; they read the journal again.
@@ -150,9 +179,16 @@ export async function appendEntry(
   draftPath: string,
   writes: DocWrite[],
   bases: Record<string, number | null> = {},
-  id: string = crypto.randomUUID(),
+  more: Pick<JournalEntry, 'jobId' | 'before'> = {},
 ): Promise<JournalEntry> {
-  const row: Omit<JournalEntry, 'seq'> = { id, tenantId: owner.tenantId, uid: owner.uid, draftPath, writes, at: Date.now(), state: 'pending', bases };
+  const row: Omit<JournalEntry, 'seq'> = { id: crypto.randomUUID(), tenantId: owner.tenantId, uid: owner.uid, draftPath, writes, at: Date.now(), state: 'pending', bases, ...more };
+  const memory = inMemory.get(ownerKey(owner));
+  if (memory) {
+    const entry = { ...row, seq: (memorySeq += 1) };
+    memory.push(entry);
+    changed(owner);
+    return entry;
+  }
   let abandoned = false;
   let active: IDBTransaction | undefined;
   const added = withDatabase(SPEC, (db) => {
@@ -188,6 +224,8 @@ export async function appendEntry(
 
 // This (tenant, person)'s entries, oldest first.
 export function readJournal(owner: Owner): Promise<JournalEntry[]> {
+  const memory = inMemory.get(ownerKey(owner));
+  if (memory) return Promise.resolve([...memory]);
   return withDatabase(SPEC, (db) =>
     transact(db, JOURNAL_STORE, 'readonly', (transaction) => {
       const request = transaction.objectStore(JOURNAL_STORE).index(JOURNAL_OWNER_INDEX).getAll(ownerRange(owner));
@@ -198,6 +236,17 @@ export function readJournal(owner: Owner): Promise<JournalEntry[]> {
 
 // Changes one entry of its own (tenant, person), if it is still there; a removed entry stays removed.
 function changeEntry(entry: Pick<JournalEntry, 'seq' | 'tenantId' | 'uid'>, change: (row: JournalEntry) => JournalEntry | null): Promise<void> {
+  const memory = inMemory.get(ownerKey(entry));
+  if (memory) {
+    const at = memory.findIndex((row) => row.seq === entry.seq);
+    if (at >= 0) {
+      const next = change(memory[at]!);
+      if (next === null) memory.splice(at, 1);
+      else memory[at] = next;
+    }
+    changed(entry);
+    return Promise.resolve();
+  }
   return withDatabase(SPEC, (db) =>
     transact(db, JOURNAL_STORE, 'readwrite', (transaction) => {
       const store = transaction.objectStore(JOURNAL_STORE);
@@ -225,9 +274,12 @@ export const rejectEntry = (entry: JournalEntry, reason: RejectReason): Promise<
 
 export const markChanged = (entry: JournalEntry): Promise<void> => changeEntry(entry, (row) => ({ ...row, state: 'changed' }));
 
+export const markCopied = (entry: JournalEntry): Promise<void> => changeEntry(entry, (row) => ({ ...row, copied: true }));
+
 // Removes every entry of this (tenant, person): their work was discarded from the phone. Another
 // company's or person's entries stay.
 export function forgetJournal(owner: Owner): Promise<void> {
+  inMemory.get(ownerKey(owner))?.splice(0);
   return withDatabase(SPEC, (db) =>
     transact(db, JOURNAL_STORE, 'readwrite', (transaction) => {
       const index = transaction.objectStore(JOURNAL_STORE).index(JOURNAL_OWNER_INDEX);
@@ -317,7 +369,9 @@ function holds(doc: ServerDoc, key: string, expected: unknown): boolean {
 export function draftRefusal(draft: ServerDoc, uid: string, role: RoleNow = null): RejectReason | null | 'unknown' {
   if ('missing' in draft) return 'no-access';
   if ('denied' in draft) return role === NO_ANSWER ? 'unknown' : role === 'estimator' ? 'owner-changed' : 'no-access';
-  if (draft.data.state !== 'editing') return 'locked';
+  // Archive keeps a finished draft's fence (src/lib/jobs/archive-store.ts), so a job finished and
+  // then archived is still finished: Back to editing, never a new draft (J4).
+  if (draft.data.state !== 'editing') return draft.data.state === 'archived' && draft.data.fence == null ? 'archived' : 'locked';
   if (draft.data.fieldOwnerUid !== uid) return 'owner-changed';
   if (role === NO_ANSWER) return 'unknown';
   if (role !== null && !EDIT_ROLES.has(role)) return 'role-changed';
@@ -393,4 +447,61 @@ export function judge(
     else outcomes.set(entry.seq, !overtaken && untouchedSince(entry, docs) ? { kind: 'reissue' } : { kind: 'changed' });
   }
   return outcomes;
+}
+
+// ---- Try again (S6-4b): whether the server still holds what the edits were made against ----
+
+function heldIn(writes: readonly DocWrite[], path: string, data: Record<string, unknown> | null): Held {
+  if (data === null) return null;
+  const mine = writes.filter((write) => write.path === path);
+  if (mine.some((write) => write.op !== 'update')) return { '': data };
+  const held: Record<string, unknown> = {};
+  for (const write of mine) if (write.op === 'update') for (const key of Object.keys(write.fields)) held[key] = valueAt(data, key) ?? null;
+  return held;
+}
+
+// What the phone held of each document `writes` write, given its copies of them (null: none).
+export function heldOf(writes: readonly DocWrite[], docs: ReadonlyMap<string, Record<string, unknown> | null>): Record<string, Held> {
+  return Object.fromEntries([...new Set(writes.map((write) => write.path))].map((path) => [path, heldIn(writes, path, docs.get(path) ?? null)]));
+}
+
+// A document after one write, as plain data (null: none).
+function written(data: Record<string, unknown> | null, write: DocWrite): Record<string, unknown> | null {
+  if (write.op === 'delete') return null;
+  if (write.op === 'set') return structuredClone(write.data);
+  const next: Record<string, unknown> = structuredClone(data ?? {});
+  for (const [key, value] of Object.entries(write.fields)) {
+    const parts = key.split('.');
+    const last = parts.pop()!;
+    let at = next;
+    for (const part of parts) {
+      const inner = at[part];
+      at = at[part] = inner !== null && typeof inner === 'object' && !Array.isArray(inner) ? (inner as Record<string, unknown>) : {};
+    }
+    if (value === null) delete at[last];
+    else at[last] = structuredClone(value);
+  }
+  return next;
+}
+
+// What Try again does with refused edits of one draft, given the server's documents (by path, null:
+// none): 'held' when the server already holds what they write (an earlier try landed), 'write' when
+// it holds what each was made against, in the order they were made (each made on top of the ones
+// before it), and 'changed' when anything else changed them since, or that cannot be told: sending
+// them would overwrite newer work.
+export function retryVerdict(entries: readonly JournalEntry[], server: ReadonlyMap<string, Record<string, unknown> | null>): 'held' | 'write' | 'changed' {
+  const ordered = [...entries].sort((a, b) => a.seq - b.seq);
+  const writes = ordered.flatMap((entry) => entry.writes);
+  const now = new Map([...new Set(writes.map((write) => write.path))].map((path) => [path, server.get(path) ?? null]));
+  const after = new Map(now);
+  for (const write of writes) after.set(write.path, written(after.get(write.path) ?? null, write));
+  if (same(heldOf(writes, now), heldOf(writes, after))) return 'held';
+  const docs = new Map(now);
+  for (const entry of ordered) {
+    const held = heldOf(entry.writes, docs);
+    const before = entry.before;
+    if (!before || Object.keys(held).some((path) => !Object.hasOwn(before, path) || !same(held[path], before[path]))) return 'changed';
+    for (const write of entry.writes) docs.set(write.path, written(docs.get(write.path) ?? null, write));
+  }
+  return 'write';
 }

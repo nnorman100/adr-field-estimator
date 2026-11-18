@@ -3,41 +3,39 @@
 // words for the phone's work: Saved (the server has it), Saved on this phone (waiting to send) and
 // Can't save (refused, with the reason and what to do). An edit the server holds other values for,
 // with no refusal, is "Changed on another device", never "Can't save".
-import type { JournalEntry, RejectReason } from './journal';
+import { jobOf, type JournalEntry, type RejectReason } from './journal';
 
-// What this phone's cache holds of a draft: its state and its job (null when not held).
-export type DraftFacts = { state: string | null; jobId: string | null };
-
-export type ProblemReason = 'finished' | 'archived' | Exclude<RejectReason, 'locked'> | 'unknown' | 'changed';
+export type ProblemReason = 'finished' | Exclude<RejectReason, 'locked'> | 'unknown' | 'changed';
 
 export type Problem = {
   draftPath: string;
   reason: ProblemReason;
+  // The job the edits were made on (journal.ts JournalEntry.jobId), when known.
   jobId: string | null;
   entries: JournalEntry[];
-  // Save as new draft: only for an archived job or field work that moved (owner decision J5), and
-  // never after the person's own Finish (that path is Back to editing, J4).
+  // Save as new draft: only for a job archived while it was being edited, or field work that moved
+  // (owner decision J5), and never after the person's own Finish, also when that job was archived
+  // after (that path is Back to editing, J4). The server is asked again before the copy is made.
   saveAsNew: boolean;
   // Try again: only where the reason can clear (a restore, the field work moved back, access or the
   // role given back, a reason not known yet).
   tryAgain: boolean;
 };
 
-export type SyncStatus =
-  | { kind: 'saved' }
-  | { kind: 'on-phone'; waiting: number }
-  | { kind: 'cant-save'; problems: Problem[] }
-  | { kind: 'changed'; problems: Problem[] };
+// `kind` is the chip's, the most urgent: Can't save, then Changed on another device, then waiting.
+// `problems` are every refused and every changed set of edits, each draft's own, for the sheet.
+export type SyncStatus = { kind: 'saved' | 'on-phone' | 'cant-save' | 'changed'; waiting: number; problems: Problem[] };
 
-function reasonOf(entries: readonly JournalEntry[], facts: DraftFacts | undefined): ProblemReason {
+// The reason the server gave for the newest refusal: it was read from the server's copy of the draft
+// when the edit was refused (journal-sync.ts), never from this phone's cache.
+function reasonOf(entries: readonly JournalEntry[]): ProblemReason {
   const newest = [...entries].reverse().find((entry) => entry.state === 'rejected' && entry.reason);
   if (!newest?.reason) return 'unknown';
-  if (newest.reason !== 'locked') return newest.reason;
-  return facts?.state === 'archived' ? 'archived' : 'finished';
+  return newest.reason === 'locked' ? 'finished' : newest.reason;
 }
 
 // `canSaveAsNew`: the person may start a job and does field work (jobs_create and scope).
-export function syncStatus(entries: readonly JournalEntry[], facts: ReadonlyMap<string, DraftFacts>, canSaveAsNew: boolean): SyncStatus {
+export function syncStatus(entries: readonly JournalEntry[], canSaveAsNew: boolean): SyncStatus {
   const refused = new Map<string, JournalEntry[]>();
   const changed = new Map<string, JournalEntry[]>();
   let waiting = 0;
@@ -51,16 +49,17 @@ export function syncStatus(entries: readonly JournalEntry[], facts: ReadonlyMap<
   const problem = (draftPath: string, group: JournalEntry[], reason: ProblemReason): Problem => ({
     draftPath,
     reason,
-    jobId: facts.get(draftPath)?.jobId ?? null,
+    jobId: jobOf(group),
     entries: group,
     saveAsNew: canSaveAsNew && (reason === 'archived' || reason === 'owner-changed'),
     tryAgain: reason !== 'finished' && reason !== 'changed',
   });
-  if (refused.size > 0) {
-    return { kind: 'cant-save', problems: [...refused].map(([path, group]) => problem(path, group, reasonOf(group, facts.get(path)))) };
-  }
-  if (changed.size > 0) return { kind: 'changed', problems: [...changed].map(([path, group]) => problem(path, group, 'changed')) };
-  return waiting > 0 ? { kind: 'on-phone', waiting } : { kind: 'saved' };
+  const problems = [
+    ...[...refused].map(([path, group]) => problem(path, group, reasonOf(group))),
+    ...[...changed].map(([path, group]) => problem(path, group, 'changed')),
+  ];
+  const kind = refused.size > 0 ? 'cant-save' : changed.size > 0 ? 'changed' : waiting > 0 ? 'on-phone' : 'saved';
+  return { kind, waiting, problems };
 }
 
 export const SAVED = 'Saved';
@@ -73,8 +72,9 @@ export function chipText(status: SyncStatus): string {
   if (status.kind === 'saved') return SAVED;
   if (status.kind === 'on-phone') return `${SAVED_ON_PHONE} (${status.waiting} waiting to send)`;
   if (status.kind === 'changed') return CHANGED_ELSEWHERE;
-  const [only] = status.problems;
-  return status.problems.length === 1 && only ? `${CANT_SAVE}: ${REASONS[only.reason].short}` : `${CANT_SAVE}: ${status.problems.length} jobs`;
+  const refused = status.problems.filter((problem) => problem.reason !== 'changed');
+  const [only] = refused;
+  return refused.length === 1 && only ? `${CANT_SAVE}: ${REASONS[only.reason].short}` : `${CANT_SAVE}: ${refused.length} jobs`;
 }
 
 // Per reason: the chip's few words, the sheet's title and what to do.
@@ -112,7 +112,7 @@ export const REASONS: Record<ProblemReason, { short: string; title: string; text
   changed: {
     short: 'changed on another device',
     title: CHANGED_ELSEWHERE,
-    text: 'This job was changed on another device after these changes were made here, so they were not sent and the other device’s version is kept. Open the job to see it, then make them again, or discard them.',
+    text: 'This job was changed on another device after these changes were made here, so they were not sent and the other device’s version is kept. Discard them, and make them again if they are still needed.',
   },
 };
 

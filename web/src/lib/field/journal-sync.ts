@@ -2,8 +2,9 @@
 // section 4, steps 1, 2 and 6).
 //
 // 1. Edit: the entry is saved first, with the server's update time of each document as the phone
-//    held it (its base), then the writes go to Firestore. With a memory cache (Online only, an
-//    iPhone browser tab, the fallback) nothing is kept on the phone, so nothing is journaled.
+//    held it (its base) and what it held of what the edit writes, then the writes go to Firestore.
+//    With a memory cache (Online only, an iPhone browser tab, the fallback) nothing is kept on the
+//    phone: the entry is held in this page's memory only (journal.ts journalInMemory).
 // 2. Acknowledge: while the page lives, the write's own promise answers. Accepted: the entry is
 //    pruned. Refused by the rules: rejected, with the reason the server's copy of the draft and the
 //    person's access now give. No answer (the client stopped): the entry stays pending.
@@ -24,6 +25,10 @@ import { fieldUser, settle, UnsentMarkNotSaved, type FieldClient } from '@/lib/f
 import { callApi } from '@/lib/firebase-client';
 import {
   appendEntry,
+  draftRefusal,
+  heldOf,
+  jobOf,
+  journalInMemory,
   markRefused,
   NO_ANSWER,
   refusalReason,
@@ -32,21 +37,30 @@ import {
   readJournal,
   rejectEntry,
   removeEntry,
+  retryVerdict,
   untouchedSince,
   whileAdding,
   type DocWrite,
   type JournalEntry,
+  type RejectReason,
   type Owner,
+  type Held,
   type RoleNow,
   type ServerDoc,
 } from './journal';
+import { readJob } from './api';
 import { ReopenTheApp } from './idb';
 import { queueFieldEdit } from './local-edit';
 import { applyWrites, draftPath, stageWrites, type DraftRef } from './store';
 import { ASK_WITHIN_MS, judgeMe } from './sync-gate';
 import { noteWrite } from './unsent';
 
-const ownerOf = (client: FieldClient): Owner => ({ tenantId: client.person.tenantId, uid: client.person.uid });
+// The person's journal owner; an Online only client's journal is held in this page's memory.
+const ownerOf = (client: FieldClient): Owner => {
+  const owner = { tenantId: client.person.tenantId, uid: client.person.uid };
+  if (client.cache !== 'persistent') journalInMemory(owner);
+  return owner;
+};
 const personKey = (owner: Owner) => `${owner.tenantId}/${owner.uid}`;
 
 // Per person, until judgedHere: the entries made on this page. Their write promise answers for
@@ -74,6 +88,14 @@ export function onJournalLost(client: FieldClient, handler: () => void): () => v
 function lose(person: string, error: unknown): void {
   if (error instanceof ReopenTheApp) lostHandlers.get(person)?.();
 }
+
+// A screen's read or change of the journal failed: a connection lost twice goes to the shell.
+export function journalFailed(client: FieldClient, error: unknown): void {
+  lose(personKey(ownerOf(client)), error);
+}
+
+// This person's entries, oldest first.
+export const readEntries = (client: FieldClient): Promise<JournalEntry[]> => readJournal(ownerOf(client));
 
 // The person's role now (GET /api/me), which tells why the rules refuse an edit (journal.ts
 // draftRefusal): null when the server did not let them in, NO_ANSWER when there was no answer
@@ -128,6 +150,21 @@ export async function basesOf(db: Firestore, writes: readonly DocWrite[]): Promi
   return bases;
 }
 
+// What the phone's cache holds of each document `writes` write (journal.ts heldOf); a document the
+// cache does not hold is none.
+async function beforeOf(db: Firestore, writes: readonly DocWrite[]): Promise<Record<string, Held>> {
+  const docs = new Map<string, Record<string, unknown> | null>();
+  for (const path of new Set(writes.map((write) => write.path))) {
+    try {
+      const snapshot = await getDocFromCache(doc(db, path));
+      docs.set(path, snapshot.exists() ? snapshot.data() : null);
+    } catch {
+      docs.set(path, null);
+    }
+  }
+  return heldOf(writes, docs);
+}
+
 // What a snapshot read from the server holds of its document.
 function serverDoc(snapshot: DocumentSnapshot): ServerDoc {
   if (!snapshot.exists()) return { missing: true };
@@ -161,7 +198,7 @@ async function refuse(client: FieldClient, entry: JournalEntry): Promise<boolean
 
 function follow(client: FieldClient, entry: JournalEntry, acknowledged: Promise<void>): void {
   const person = personKey(entry);
-  if (!judgedHere.has(person)) sentHere.set(person, [...(sentHere.get(person) ?? []), entry]);
+  if (client.cache === 'persistent' && !judgedHere.has(person)) sentHere.set(person, [...(sentHere.get(person) ?? []), entry]);
   acknowledged
     .then(
       async () => {
@@ -192,20 +229,24 @@ async function send(client: FieldClient, ref: DraftRef, entry: JournalEntry): Pr
   }
 }
 
-// A field edit from a screen: the unsent mark, then the journal entry with its bases (journal.ts
-// whileAdding, so the mark is not cleared before the entry is there), then the edit
-// (./local-edit.ts, which answers at the local receipt). Throws UnsentMarkNotSaved, JournalNotSaved
-// or ReopenTheApp, and makes nothing, when the mark or the entry could not be saved.
-export async function journaledEdit(client: FieldClient, ref: DraftRef, writes: DocWrite[]): Promise<{ acknowledged: Promise<void> }> {
-  if (client.cache !== 'persistent') return queueFieldEdit(client, ref, (db) => applyWrites(db, writes));
+// A field edit from a screen of the job `jobId`: the unsent mark, then the journal entry with its
+// bases and what the phone held (journal.ts whileAdding, so the mark is not cleared before the entry
+// is there), then the edit (./local-edit.ts, which answers at the local receipt). Throws
+// UnsentMarkNotSaved, JournalNotSaved or ReopenTheApp, and makes nothing, when the mark or the entry
+// could not be saved. An Online only client's entry is held in memory, with no mark.
+export async function journaledEdit(client: FieldClient, ref: DraftRef, writes: DocWrite[], jobId: string | null): Promise<{ acknowledged: Promise<void> }> {
   const owner = ownerOf(client);
   const person = personKey(owner);
-  const entry = await whileAdding(owner, async () => {
-    if (noteWrite(owner.tenantId, owner.uid) === null) throw new UnsentMarkNotSaved();
-    const added = await appendEntry(owner, draftPath(ref), writes, await basesOf(client.db, writes));
-    if (!judgedHere.has(person)) madeHere.set(person, (madeHere.get(person) ?? new Set<number>()).add(added.seq));
-    return added;
-  });
+  const more = { before: await beforeOf(client.db, writes), ...(jobId ? { jobId } : {}) };
+  const entry =
+    client.cache !== 'persistent'
+      ? await appendEntry(owner, draftPath(ref), writes, {}, more)
+      : await whileAdding(owner, async () => {
+          if (noteWrite(owner.tenantId, owner.uid) === null) throw new UnsentMarkNotSaved();
+          const added = await appendEntry(owner, draftPath(ref), writes, await basesOf(client.db, writes), more);
+          if (!judgedHere.has(person)) madeHere.set(person, (madeHere.get(person) ?? new Set<number>()).add(added.seq));
+          return added;
+        });
   const sent = await send(client, ref, entry);
   if ('acknowledged' in sent) return sent;
   // Never handed to Firestore: no entry.
@@ -311,29 +352,65 @@ export function reconcileJournal(client: FieldClient): Promise<void> {
 
 // ---- What the "Can't save" sheet does with a set of refused edits (S6-4b) ----
 
-const draftRefOf = (path: string): DraftRef | null => {
-  const match = /^companies\/([^/]+)\/drafts\/([^/]+)$/.exec(path);
-  return match ? { companyId: match[1]!, draftId: match[2]! } : null;
-};
-
-// Try again: asks the server whether it still refuses the draft. Still refused: each entry keeps
-// its reason, now as the server says it ('refused' while that is not known). Not any more (the job
-// was restored, the field work moved back, access came back): the edits are made again as one new
-// edit, in the order they were made, and the old entries go. 'no-answer' when the server or the
-// role check did not answer: nothing changes.
-export async function tryAgain(client: FieldClient, entries: readonly JournalEntry[]): Promise<'sent' | 'refused' | 'no-answer'> {
-  const first = entries[0];
-  const ref = first ? draftRefOf(first.draftPath) : null;
-  if (!first || !ref) return 'no-answer';
-  const [draft, role] = await Promise.all([readServer(client.db, first.draftPath), roleNow(client)]);
+// Why the server refuses this person's edits to the draft now: a fresh check of their access
+// (GET /api/me must let them in), the server's copy of the draft, and while the draft is still being
+// edited the job (`jobId`, or the one the draft names): a 410 is an archive the draft does not show
+// yet. null: it takes them now; 'no-answer' when one of those did not answer.
+export async function refusalNow(client: FieldClient, path: string, jobId: string | null): Promise<RejectReason | null | 'no-answer'> {
+  const [draft, role] = await Promise.all([readServer(client.db, path), roleNow(client)]);
   if (!draft || role === NO_ANSWER) return 'no-answer';
-  const reason = refusalReason(draft, first.uid, role);
+  if (role === null) return 'no-access';
+  const reason = draftRefusal(draft, client.person.uid, role);
+  if (reason === 'unknown') return 'no-answer';
+  if (reason) return reason;
+  const job = jobId ?? ('data' in draft && typeof draft.data.jobId === 'string' ? draft.data.jobId : null);
+  const user = fieldUser(client.person);
+  if (!job) return null;
+  if (!user) return 'no-answer';
+  const answer = await readJob(user, job);
+  if (answer.ok) return null;
+  if (answer.status === 410) return 'archived';
+  return answer.denied ? 'no-access' : 'no-answer';
+}
+
+// Try again for refused edits of one draft. Still refused: each entry keeps the reason the server
+// now gives ('refused'). Not any more: in one transaction that reads their documents from the server,
+// the edits are made again, in the order they were made, only while the server still holds what
+// they were made against ('sent'; 'sent' too when it already holds them). Anything else changed
+// since: they are kept as changed on another device ('changed'), never sent over newer work.
+// 'no-answer' when the server did not answer: nothing changes.
+export async function tryAgain(client: FieldClient, entries: readonly JournalEntry[]): Promise<'sent' | 'refused' | 'changed' | 'no-answer'> {
+  const first = entries[0];
+  if (!first) return 'no-answer';
+  const reason = await refusalNow(client, first.draftPath, jobOf(entries));
+  if (reason === 'no-answer') return 'no-answer';
   if (reason) {
     for (const entry of entries) await rejectEntry(entry, reason);
     return 'refused';
   }
-  const writes = [...entries].sort((a, b) => a.seq - b.seq).flatMap((entry) => entry.writes);
-  await journaledEdit(client, ref, writes);
+  let verdict: 'held' | 'write' | 'changed';
+  try {
+    verdict = await runTransaction(client.db, async (transaction) => {
+      const server = new Map<string, Record<string, unknown> | null>();
+      for (const path of new Set(entries.flatMap((entry) => entry.writes.map((write) => write.path)))) {
+        const snapshot = await transaction.get(doc(client.db, path));
+        server.set(path, snapshot.exists() ? snapshot.data() : null);
+      }
+      const found = retryVerdict(entries, server);
+      if (found === 'write') stageWrites(client.db, transaction, [...entries].sort((a, b) => a.seq - b.seq).flatMap((entry) => entry.writes));
+      return found;
+    });
+  } catch (error) {
+    if (!refused(error)) return 'no-answer';
+    const now = await refusalNow(client, first.draftPath, jobOf(entries));
+    if (now === null || now === 'no-answer') return 'no-answer';
+    for (const entry of entries) await rejectEntry(entry, now);
+    return 'refused';
+  }
+  if (verdict === 'changed') {
+    for (const entry of entries) await markChanged(entry);
+    return 'changed';
+  }
   for (const entry of entries) await removeEntry(entry);
   void settle(client).catch(() => undefined);
   return 'sent';

@@ -29,7 +29,12 @@ async function serveJob(lane: NetworkLane, world: Pick<World, 'companyId'>, jobI
 }
 
 // Signed in as the draft's estimator, the job open on Check Scope, its draft bound to the job.
-async function openJob(context: Parameters<typeof FieldPhone.open>[0], lane: NetworkLane, world: World): Promise<{ page: Page; jobId: string }> {
+async function openJob(
+  context: Parameters<typeof FieldPhone.open>[0],
+  lane: NetworkLane,
+  world: World,
+  keep: 'Keep jobs on this phone' | 'Online only' = 'Keep jobs on this phone',
+): Promise<{ page: Page; jobId: string }> {
   const phone = await FieldPhone.open(context, lane);
   const person = await phone.signIn(world, world.owner);
   const capabilities = ['scope', 'jobs_create', 'photos'];
@@ -40,7 +45,7 @@ async function openJob(context: Parameters<typeof FieldPhone.open>[0], lane: Net
   await serveJob(lane, world, jobId, world.draftId);
   const page = phone.page;
   await page.goto(`${lane.appUrl}/field?job=${jobId}`);
-  await page.getByRole('button', { name: 'Keep jobs on this phone' }).click();
+  await page.getByRole('button', { name: keep }).click();
   await expect(page.getByLabel('Year built')).toBeEditable();
   return { page, jobId };
 }
@@ -149,6 +154,57 @@ test('a write refused because the job was archived is sent by Try again once the
   await expect.poll(async () => (await readDraft(world)).field.yearBuilt, { timeout: SEND_MS }).toBe(1962);
   await expect(chip(page)).toHaveText('Saved', { timeout: SEND_MS });
   expect(await journal(page)).toEqual([]);
+});
+
+test('a job finished and then archived is still finished: Back to editing, never Save as new draft', async ({ context, lane }) => {
+  const world = await seedCompany();
+  const { page, jobId } = await openJob(context, lane, world);
+  await offline(page, lane);
+  await saveYear(page, '1962');
+  // Finished by the person, then archived (the archive keeps the fence), while the phone had no signal.
+  await adminDb().doc(world.draftPath).update({ state: 'archived', fence: { submissionId: 's1', epoch: 'e1', expiresAt: new Date() } });
+  await online(page, lane);
+  await expect(chip(page)).toHaveText('Can’t save: job finished', { timeout: SEND_MS });
+  await chip(page).getByRole('button').click();
+  const sheet = page.getByRole('dialog', { name: 'Changes not saved' });
+  await expect(sheet.getByRole('heading', { name: 'This job was finished' })).toBeVisible();
+  await expect(sheet.getByRole('link', { name: 'Go to Finish and review' })).toHaveAttribute('href', new RegExp(`/jobs/${jobId}/finish$`));
+  await expect(sheet.getByRole('button', { name: 'Save as new draft' })).toHaveCount(0);
+});
+
+test('Try again never sends an edit over a value saved since it was refused: it is Changed on another device', async ({ context, lane }) => {
+  const world = await seedCompany();
+  const { page } = await openJob(context, lane, world);
+  await offline(page, lane);
+  await saveYear(page, '1962');
+  await adminDb().doc(world.draftPath).update({ state: 'archived' });
+  await online(page, lane);
+  await expect(chip(page)).toHaveText('Can’t save: job archived', { timeout: SEND_MS });
+  // Restored, and another device saved its own year since.
+  await adminDb().doc(world.draftPath).update({ state: 'editing', 'field.yearBuilt': 1970 });
+  await chip(page).getByRole('button').click();
+  const sheet = page.getByRole('dialog', { name: 'Changes not saved' });
+  await sheet.getByRole('button', { name: 'Try again' }).click();
+  await expect(chip(page)).toHaveText('Changed on another device', { timeout: SEND_MS });
+  await expect(sheet.getByRole('heading', { name: 'Changed on another device' })).toBeVisible();
+  expect((await readDraft(world)).field.yearBuilt).toBe(1970);
+  expect(await journal(page)).toEqual([expect.objectContaining({ state: 'changed' })]);
+});
+
+test('with Online only, the chip says Saved once the server has an edit, and Can’t save with the reason when it refuses one', async ({ context, lane }) => {
+  const world = await seedCompany();
+  const { page } = await openJob(context, lane, world, 'Online only');
+  await expect(chip(page)).toHaveText('Saved');
+  await page.getByLabel('Year built').fill('1962');
+  await page.getByRole('button', { name: 'Save scope', exact: true }).click();
+  await expect.poll(async () => (await readDraft(world)).field.yearBuilt, { timeout: SEND_MS }).toBe(1962);
+  await expect(chip(page)).toHaveText('Saved', { timeout: SEND_MS });
+  // Archived on the server while the screen still shows the job open.
+  await adminDb().doc(world.draftPath).update({ state: 'archived' });
+  await page.getByLabel('Year built').fill('1970');
+  await page.getByRole('button', { name: 'Save scope', exact: true }).click();
+  await expect(chip(page)).toHaveText('Can’t save: job archived', { timeout: SEND_MS });
+  expect((await readDraft(world)).field.yearBuilt).toBe(1962);
 });
 
 test('Save as new draft of field work that moved makes one new job with the cached field work and the refused edit', async ({ context, lane }) => {
