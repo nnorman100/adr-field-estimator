@@ -148,17 +148,21 @@ function roomPercents(data: Inspection, policy: Policy): Map<string, Dec> {
   return percents;
 }
 
-type Ranked = { rows: AreaRow[]; totalArea: Dec; order: () => { row: AreaRow; index: number }[] };
+type Ranked = { rows: AreaRow[]; totalArea: () => Dec; order: () => { row: AreaRow; index: number }[] };
 
 /**
- * The rows with their total area and, on first use, their order dearest rate first (ties keep their line order).
+ * The rows with, on first use, their total area and their order dearest rate first (ties keep their line order).
  * The order does not depend on the band, so every band shares one rate per row and one sort.
  */
 function rankRows(rows: AreaRow[]): Ranked {
+  let total: Dec | null = null;
   let ordered: { row: AreaRow; index: number }[] | null = null;
   return {
     rows,
-    totalArea: sumDec(rows.map((row) => row.area), ZERO),
+    totalArea: () => {
+      total ??= sumDec(rows.map((row) => row.area), ZERO);
+      return total;
+    },
     order: () => {
       if (ordered) return ordered;
       const rated = rows.map((row, index) => ({ row, index, rate: row.total.div(row.area) }));
@@ -173,7 +177,7 @@ function rankRows(rows: AreaRow[]): Ranked {
 function topShares(ranked: Ranked, first: Dec): Map<number, Dec> {
   const shares = new Map<number, Dec>();
   const { rows } = ranked;
-  if (ranked.totalArea.cmp(first) <= 0) {
+  if (ranked.totalArea().cmp(first) <= 0) {
     rows.forEach((row, index) => shares.set(index, row.total));
     return shares;
   }
@@ -185,6 +189,42 @@ function topShares(ranked: Ranked, first: Dec): Map<number, Dec> {
     if (remaining.isZero()) break;
   }
   return shares;
+}
+
+/**
+ * Each row's allowance across the bands, by row index: what the row adds to its share of the dearest square feet at
+ * each band, at that band's percent. One walk down the rows dearest first; a row's share only changes at the bands
+ * whose limit falls within its own square feet, so the work grows with rows plus bands, not rows times bands.
+ */
+function bandAllowances(ranked: Ranked, bands: CushionBand[]): Dec[] {
+  const steps = bands.map((band) => {
+    const limit = band.up_to_sf === null ? null : Dec.fromInt(band.up_to_sf);
+    return { limit: limit !== null && ranked.totalArea().cmp(limit) > 0 ? limit : null, percent: Dec.parse(band.percent) };
+  });
+  const walk = steps.some((step) => step.limit !== null)
+    ? ranked.order()
+    : ranked.rows.map((row, index) => ({ row, index }));
+  const allowances = ranked.rows.map(() => ZERO);
+  let start = 0;
+  let before = ZERO;
+  for (const { row, index } of walk) {
+    const after = before.add(row.area);
+    for (let limit = steps[start]?.limit; limit && limit.cmp(before) <= 0; limit = steps[start]?.limit) start += 1;
+    let previous = ZERO;
+    let allowance = ZERO;
+    for (let band = start; band < steps.length; band += 1) {
+      const step = steps[band];
+      if (!step) break;
+      const share =
+        step.limit === null || step.limit.cmp(after) >= 0 ? row.total : row.total.mul(step.limit.sub(before)).div(row.area);
+      allowance = allowance.add(share.sub(previous).mul(step.percent).div(HUNDRED));
+      previous = share;
+      if (share === row.total) break;
+    }
+    allowances[index] = allowance;
+    before = after;
+  }
+  return allowances;
 }
 
 function cushionRows(lines: PriceLine[], policy: Policy): AreaRow[] {
@@ -233,19 +273,7 @@ function cushion(data: Inspection, policy: Policy, items: Item[], labor: PriceLi
       first,
     );
   }
-  let previousShares = new Map<number, Dec>();
-  const allowances = areaLines.map(() => ZERO);
-  for (const band of bands) {
-    const shares =
-      band.up_to_sf === null
-        ? new Map(areas.map((row, index) => [index, row.total]))
-        : topShares(ranked, Dec.fromInt(band.up_to_sf));
-    areas.forEach((_, index) => {
-      const added = (shares.get(index) ?? ZERO).sub(previousShares.get(index) ?? ZERO);
-      allowances[index] = (allowances[index] ?? ZERO).add(added.mul(Dec.parse(band.percent)).div(HUNDRED));
-    });
-    previousShares = shares;
-  }
+  const allowances = bandAllowances(ranked, bands);
   const firstPercent = Dec.parse(firstBand?.percent ?? '0').div(HUNDRED);
   return inPricedOrder(
     areaLines.map((line, index) => line.total.add(allowances[index] ?? ZERO)),

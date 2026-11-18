@@ -1,7 +1,8 @@
 // Security audit F3: the high end's cushion used to sort every area line again for each cushion band, two decimal
 // divisions per comparison, so one large owner price table kept the server busy for seconds. The order does not
-// depend on the band, so it is worked out once per pricing. The totals do not change; the cost now grows with the
-// number of lines, not with lines times bands.
+// depend on the band, so it is worked out once per pricing, and one walk down that order meets each band's limit in
+// turn: a line's share changes only at the bands whose limit falls within its own square feet. The totals do not
+// change; the cost now grows with lines plus bands, not with lines times bands.
 
 import { describe, expect, it } from 'vitest';
 
@@ -21,8 +22,8 @@ function many(itemCount: number, roomCount: number) {
   return { items, rooms };
 }
 
-describe('F3 the cushion sorts its area lines once, not once per band', () => {
-  it('C1 divisions per line stay far below the old per-band sort, and the totals are unchanged', () => {
+describe('F3 the cushion walks its area lines once, not once per band', () => {
+  it('C1 divisions per line do not grow with the bands, and the totals are unchanged', () => {
     const { items, rooms } = many(40, 15);
     const tableJson = table(items, { estimate_mode: 'range', range: { first_sf: 100, first_percent: '20', beyond_percent: '0', brackets: BANDS } });
     const divide = Dec.prototype.div;
@@ -39,9 +40,11 @@ describe('F3 the cushion sorts its area lines once, not once per band', () => {
     }
     const lines = estimate.lines.length;
     expect(lines).toBe(600);
-    // Before the fix this took about 300 to 400 divisions a line at 20 bands; after it, about 25.
-    expect(calls / lines).toBeLessThan(80);
-    expect(estimate.totals.high?.total).toMatch(/^\d+\.\d\d$/);
+    // At 20 bands this took about 215 divisions a line with a sort per band, and about 24 with one sort but every
+    // band visiting every line; one walk takes about 5.
+    expect(calls / lines).toBeLessThan(10);
+    expect(estimate.totals.low?.total).toBe('350460.00');
+    expect(estimate.totals.high?.total).toBe('356032.38');
   });
 
   it('C2 a large many-band table prices well inside a time bound', () => {
