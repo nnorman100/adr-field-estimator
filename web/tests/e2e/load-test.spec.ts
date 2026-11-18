@@ -14,9 +14,8 @@ import { PASSWORD } from './sign-in/seed';
 // Auth, Firestore and Storage emulators). The technician signs in through the kit's own password
 // sign-in against the Auth emulator; the office user's authenticator-app step, which the emulator
 // cannot do, is stood in for as the other browser tests do (second-step/fake-totp.ts). No browser
-// page is used, so it runs in one engine only.
+// page is used; it runs in both engines' projects like every other spec, each run in its own company.
 
-test.skip(({ browserName }) => browserName !== 'chromium', 'no page: one engine is enough');
 test.setTimeout(180_000);
 
 // A `load-` company with price books on, one published price and the profile its documents print.
