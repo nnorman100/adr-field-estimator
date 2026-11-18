@@ -64,7 +64,7 @@ describe('ci.yml', () => {
     expect(audit).not.toHaveProperty('if');
     for (const s of audit.steps) expect(s).not.toHaveProperty('if');
     expect(audit.steps.map((s: Data) => s.run).filter(Boolean)).toEqual([
-      'npm audit --audit-level=high',
+      'node scripts/audit-check.mjs',
     ]);
     expect(
       audit.steps.some((s: Data) => String(s.uses ?? '').startsWith('actions/setup-python@')),
