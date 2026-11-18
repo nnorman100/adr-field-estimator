@@ -48,6 +48,8 @@
 # (TF_VAR_api_image, TF_VAR_live_image and TF_VAR_alert_email at least; also
 # TF_VAR_workload_identity_principal_set and any other you set).
 set -euo pipefail
+# The Cloud SDK's own log files would keep tokens and your account name from these commands.
+export CLOUDSDK_CORE_DISABLE_FILE_LOGGING=1
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INFRA="$(cd "$HERE/.." && pwd)"
@@ -774,6 +776,8 @@ phase_checks() { # admit: 1 to apply the data root's admission and check the app
 phase_salvage() {
   phase 4 "backup salvage into $SALVAGE_REGION"
   local json name start op age
+  # A daily backup can predate the serving release's migrations: it is checked as a prefix only.
+  local RELEASE_COMMIT=""
   # Project-level list: works while the instance's region is down (backups.md).
   get json '[]' gcloud sql backups list --project="$PROJECT" --filter="instance=$SQL_SOURCE" --format=json
   if [ "$DRY" = 1 ]; then

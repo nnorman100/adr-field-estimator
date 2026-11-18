@@ -36,6 +36,7 @@ copy_session() {
        ME="\$(gcloud config get-value account --project=$PROJECT)" && D="\$(mktemp -d /tmp/rd.XXXXXX)" && C="" &&
          gcloud sql users create "\$ME" --instance=$SQL_COPY --type=cloud_iam_user --database-roles=$MIGRATE_DB_USER --project=$PROJECT && C=1
        [ "\$C" = 1 ] && { cloud-sql-proxy --auto-iam-authn --unix-socket="\$D" $PROJECT:$REGION:$SQL_COPY & P=\$!; }
+       [ "\$C" = 1 ] && while kill -0 "\$P" && [ ! -S "\$D/$PROJECT:$REGION:$SQL_COPY/.s.PGSQL.5432" ]; do sleep 1; done
        [ "\$C" = 1 ] && psql -X -v HISTFILE=/dev/null -h "\$D/$PROJECT:$REGION:$SQL_COPY" -U "\$ME" -d $SQL_DATABASE
 EOF
 }
@@ -62,14 +63,16 @@ $(copy_session)
 $(copy_session_end)
   2. Read the same rows on $SQL_SOURCE as the migrator itself (Service Account Token Creator on
      $MIGRATE_SA), the same way:
-       S="\$(mktemp -d /tmp/rd.XXXXXX)" &&
-         cloud-sql-proxy --auto-iam-authn --impersonate-service-account=$MIGRATE_SA --unix-socket="\$S" $source & Q=\$!
+       S="\$(mktemp -d /tmp/rd.XXXXXX)"
+       cloud-sql-proxy --auto-iam-authn --impersonate-service-account=$MIGRATE_SA --unix-socket="\$S" $source & Q=\$!
+       while kill -0 "\$Q" && [ ! -S "\$S/$source/.s.PGSQL.5432" ]; do sleep 1; done
        psql -X -v HISTFILE=/dev/null -h "\$S/$source" -U $MIGRATE_DB_USER -d $SQL_DATABASE
-         BEGIN; ALTER TABLE <table> NO FORCE ROW LEVEL SECURITY;
-         SELECT * FROM <table> WHERE (<primary key columns>) IN ((<a damaged row's key>), ...);
-         -- a row of a job (jobs, or a table with job_id): its job too, in this same transaction
+         BEGIN;
+         -- a row of a job (jobs, or a table with job_id): its job first, in this same transaction
          ALTER TABLE jobs NO FORCE ROW LEVEL SECURITY;
          SELECT status, revision FROM jobs WHERE (company_id, id) = (<company>, <job id>);
+         ALTER TABLE <table> NO FORCE ROW LEVEL SECURITY;
+         SELECT * FROM <table> WHERE (<primary key columns>) IN ((<a damaged row's key>), ...);
          ROLLBACK;
      The primary key is the table's full key, as \\d <table> shows it: on a company's table it
      includes company_id (company_id and id; job_customers and job_claims: company_id and job_id).
@@ -80,14 +83,17 @@ $(copy_session_end)
      row, by its full primary key, writing only while the whole row (every column, updated_at and
      revision too) is still exactly as read in step 2:
        BEGIN;
-       ALTER TABLE <table> NO FORCE ROW LEVEL SECURITY;
-       -- a row of a job: first lock its job and advance its revision, as a normal save does; a
-       -- submitted or signed job, or one changed since step 2, gives UPDATE 0: ROLLBACK; and stop.
+       -- a row of a job: first lock its job and advance its revision, as a normal save does (jobs
+       -- before the row, as the app locks them); a submitted or signed job, or one changed since
+       -- step 2, gives UPDATE 0: ROLLBACK; and stop.
        ALTER TABLE jobs NO FORCE ROW LEVEL SECURITY;
        UPDATE jobs SET revision = revision + 1, last_change_id = gen_random_uuid(), updated_at = now()
          WHERE (company_id, id) = (<company>, <job id>) AND status NOT IN ('submitted', 'signed')
            AND revision = <its revision as read in step 2>;
        -- (a damaged jobs row itself: set its columns in that same UPDATE, with no second one)
+       ALTER TABLE <table> NO FORCE ROW LEVEL SECURITY;
+       -- set only the damaged content columns: never copy access or state (a job's field owner,
+       -- status or archive columns, a member's role) from the copy, so no withdrawn access returns
        UPDATE <table> SET (<columns>) = (<values from the copy>)
          WHERE (<primary key columns>) = (<the row's key>)
            AND (<every column>) IS NOT DISTINCT FROM (<the whole row as read in step 2>);

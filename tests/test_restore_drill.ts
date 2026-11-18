@@ -62,6 +62,7 @@ function drill(
 }
 
 const PIT = '--point-in-time 2026-11-18T15:04:00Z';
+const LOST_ARGS = `--env live --recovery --lost-instance ${PIT}`;
 const MODES = {
   drill: '--env test --domain example.test --zone us-central1-b',
   'damaged rows': `--env live --recovery ${PIT}`,
@@ -231,6 +232,7 @@ case "$*" in *company=*) m="$FAKE_ORIGINAL_MARKERS"; [ -n "$m" ] || m='1|1'; ech
 copy=1; case "$u" in dryscope-migrate-*) copy="" ;; esac
 [ -z "$FAKE_CHECKS_FAIL" ] || [ -z "$copy" ] || exit 3
 files="$(ls "$MIGRATIONS"/*.sql)"; [ -z "$FAKE_LEDGER_DROP_LAST" ] || [ -z "$copy" ] || files="$(echo "$files" | sed '$d')"
+case "$*" in *-salvage-*) [ -z "$FAKE_SALVAGE_SHORT" ] || files="$(echo "$files" | sed '$d')" ;; esac
 [ -z "$FAKE_LEDGER_RECENT" ] || [ -n "$copy" ] || echo "recent|$(basename "$(echo "$files" | tail -n 1)" .sql)"
 for f in $files; do sum="$(sha256sum "$f" | cut -d' ' -f1)"; [ -z "$FAKE_LEDGER_BAD_SUM" ] || sum=bad; echo "ledger|$(basename "$f" .sql)|$sum"; done
 case "$*" in *before=*) echo 'marker_before|1'; echo 'marker_after|0'; echo 'marker_company|c0000000-0000-4000-8000-000000000001' ;; esac
@@ -399,14 +401,10 @@ describe('restore-drill.sh', { timeout: 300_000 }, () => {
   it.each([
     ['the drill without --zone', '--env test --domain example.test', /--zone is required/],
     ['the drill without --domain', '--env test --zone us-central1-b', /--domain is required/],
-    [
-      '--lost-instance without --zone',
-      `--env live --recovery --lost-instance ${PIT} --domain example.test`,
-      /--zone is required/,
-    ],
+    ['--lost-instance without --zone', `${LOST_ARGS} --domain example.test`, /--zone is required/],
     [
       '--lost-instance without --domain',
-      `--env live --recovery --lost-instance ${PIT} --zone us-central1-b`,
+      `${LOST_ARGS} --zone us-central1-b`,
       /--domain is required/,
     ],
   ])('refuses %s, before any command', (_case, args, message) => {
@@ -492,11 +490,7 @@ describe('restore-drill.sh', { timeout: 300_000 }, () => {
 
   it.each([
     ['damaged rows', `--env live --recovery ${PIT}`, 'live'],
-    [
-      'lost instance',
-      `--env live --recovery --lost-instance ${PIT} --zone us-central1-b --domain example.test`,
-      LOST,
-    ],
+    ['lost instance', MODES['lost instance'], LOST],
     ['salvage', '--env live --recovery --salvage', 'live'],
   ])(
     'runs an incident mode against the stubs, deletes nothing and removes its access (%s)',
@@ -931,6 +925,11 @@ describe('restore-drill.sh', { timeout: 300_000 }, () => {
     expect(read).toMatch(/jobs NO FORCE ROW LEVEL SECURITY;\n.*SELECT status, revision FROM jobs/);
     expect(text.match(/psql -X -v HISTFILE=\/dev\/null /g)).toHaveLength(2);
     expect(text).toContain('[ "$C" = 1 ] && gcloud sql users delete "$ME"');
+    // Only the proxy is backgrounded, so S stays set; jobs is locked before the row's table.
+    expect(text).toMatch(/S="\$\(mktemp -d \/tmp\/rd\.XXXXXX\)"\n\s+cloud-sql-proxy/);
+    const [jobs, row] = ['ALTER TABLE jobs NO FORCE', 'ALTER TABLE <table> NO FORCE'];
+    expect(write.indexOf(jobs)).toBeLessThan(write.indexOf(row));
+    expect(read.indexOf(jobs)).toBeLessThan(read.indexOf(row));
   });
 
   it('prints a zone recovery’s repoint only after access on the copy is reconciled', () => {
@@ -947,6 +946,11 @@ describe('restore-drill.sh', { timeout: 300_000 }, () => {
     expect(refused.result.stderr).toContain('is not reconciled with the changes made after');
     expect(refused.result.stdout).not.toContain('Repoint the app');
     expect(refused.result.stdout).toContain('result: fail');
+  });
+
+  it('accepts a salvage copy whose daily backup predates the serving release’s last migration', () => {
+    const { result } = fullRun(MODES.drill, DRILL_ANSWERS, { FAKE_SALVAGE_SHORT: '1' });
+    expect(result.status, result.stderr).toBe(0);
   });
 
   it('fails the soft-delete restore when the restored object kept its old generation', () => {
