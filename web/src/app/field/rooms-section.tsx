@@ -47,6 +47,7 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
   const readOnly = !job.editable;
   const full = draft.rooms.length >= MAX_ROOMS;
   const { user } = job.session;
+  const { checkAccess } = job;
   const jobId = job.jobId;
 
   function loadLists() {
@@ -54,9 +55,10 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
     void readScopeLists(user, jobId).then((answer) => {
       setLists(answer.ok ? answer.value : null);
       setListsError(answer.ok ? null : 'The room types, items and prep tasks could not be read. ' + answer.message);
+      if (!answer.ok && answer.status === 410) checkAccess(answer);
     });
   }
-  useEffect(loadLists, [user, jobId, job.session.online]);
+  useEffect(loadLists, [user, jobId, job.session.online, checkAccess]);
 
   // Adding and removing rooms write the whole room order, so one waits for the other's local
   // write and the draft read after it: each starts from the order the phone holds.

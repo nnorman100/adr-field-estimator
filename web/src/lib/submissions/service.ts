@@ -5,7 +5,7 @@ import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant
 import type { Capability } from '@/lib/access';
 import { manifestDigest, type FieldManifest } from '@/lib/field/canonical';
 import { roomFieldSchema } from '@/lib/field/schema';
-import { draftSubmitted, hasAny, jobAccess, JobError, lockedJob, type JobCaller, type JobRow } from '@/lib/jobs/access';
+import { claimDraft, hasAny, holdDraft, jobAccess, JobError, lockedJob, type JobCaller, type JobRow } from '@/lib/jobs/access';
 import { jobPriceTable, namesPriceIds, priceIdsKnown, PricesUnreadable } from '@/lib/scope-lists/version';
 import { readJobDetails } from './details';
 import { SubmissionError, type SubmissionErrorCode } from './errors';
@@ -422,6 +422,9 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
       const made = await inCompany(caller.companyId, async (tx) => {
         // A new draft version of the field work: the field owner's to make.
         const job = await jobAccess(tx, caller, jobId, SUBMIT, { lock: true, fieldWork: true });
+        // A next draft is never the draft it comes from (security audit F1): refused here, before any
+        // claim, so the refused id commits nothing.
+        if (input.draftId === input.fromDraftId) throw new SubmissionError('conflict');
         // The job's latest record: a new draft is made only from it.
         const [latest] = await tx
           .select()
@@ -441,12 +444,15 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
         if (job.currentDraftId === input.draftId) {
           // The same change again (its answer was lost): nothing more to change in Postgres.
           if (!source) throw new SubmissionError('conflict');
+          // A retry holds its draft id for the job in Postgres (security audit F1), in this transaction, which
+          // commits before the field database is touched: a draft the previous version made is stamped only
+          // once the claim is committed, so a lost answer from that stamp never leaves it unclaimed.
+          if (!(await holdDraft(tx, caller.companyId, jobId, input.draftId))) throw new SubmissionError('conflict');
         } else {
           if (job.status === 'signed') throw new SubmissionError('job_signed');
           // Only from the job's current draft: a second call with another new id is 409.
           if (job.currentDraftId !== input.fromDraftId) throw new SubmissionError('conflict');
           if (job.status !== 'submitted' || !source) throw new SubmissionError('not_submitted');
-          if (await draftSubmitted(tx, caller.companyId, input.draftId)) throw new SubmissionError('conflict');
           [next] = await tx
             .update(jobs)
             .set({
@@ -458,6 +464,10 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
             })
             .where(and(eq(jobs.companyId, caller.companyId), eq(jobs.id, jobId)))
             .returning();
+          if (!(await claimDraft(tx, caller.companyId, jobId, input.draftId))) throw new SubmissionError('conflict');
+          // A draft id claimed now was never this job's: a draft already under it was made for another
+          // job or from another submission.
+          if (await field(() => store.findDraft(caller.companyId, input.draftId))) throw new SubmissionError('conflict');
           await audit(tx, caller.companyId, caller.actorId, 'job_back_to_editing', jobId, { revision: next!.revision });
           changed = true;
         }
@@ -475,12 +485,14 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
       // copy may differ), with where it came from. A retry makes it if it is missing.
       await inCompany(caller.companyId, async (tx) => {
         await lockedJob(tx, caller.companyId, jobId, { live: true });
-        await field(() =>
-          store.createFrom(caller.companyId, input.draftId, made.ownerUid, snapshotManifest(made.source.snapshotBytes!), {
+        const result = await field(() =>
+          store.createFrom(caller.companyId, jobId, input.draftId, made.ownerUid, snapshotManifest(made.source.snapshotBytes!), {
             draftId: made.source.draftId,
             submissionId: made.source.id,
           }),
         );
+        // A draft made for another job or from another submission is never this one (security audit F1).
+        if (result === 'taken') throw new SubmissionError('conflict');
       });
       await field(() => store.projectJob(caller.companyId, jobId, {
         currentDraftId: made.job.currentDraftId, revision: made.job.revision,

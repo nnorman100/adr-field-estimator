@@ -24,6 +24,7 @@
     "platform:create-tenant": "tsx scripts/create-tenant.ts",
     "platform:add-operator": "tsx scripts/add-operator.ts",
     "platform:secure-tenants": "tsx scripts/secure-tenants.ts",
+    "platform:check-draft-states": "tsx scripts/check-draft-states.ts",
     "platform:recaptcha": "tsx scripts/recaptcha-mode.ts",
     "probe:live": "tsx scripts/probe-live.ts",
     "eval:ai": "tsx scripts/eval-ai.ts",

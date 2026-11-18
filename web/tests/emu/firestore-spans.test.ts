@@ -33,7 +33,7 @@ describe('Firestore spans', () => {
       }),
     );
     const [company, draft, uid] = [randomUUID(), randomUUID(), `uid-${randomUUID()}`];
-    await firestoreDraftStore(db).ensure(company, draft, uid);
+    await firestoreDraftStore(db).ensure(company, randomUUID(), draft, uid);
     await firestoreDraftStates(db).state(company, draft);
     const access = firestoreAccessStore(db);
     await access.grant({ companyId: company, authTenantId: 'tenant-x', uid, role: 'estimator', expiresAt: new Date(Date.now() + 1000), version: 1 });
