@@ -170,6 +170,10 @@ describe('Back to editing', () => {
     const stored = structuredClone(h.field.draft(h.seed.a, foreign));
     expect(await f.nextDraft(ESTIMATOR_A, jobId, { draftId: foreign, fromDraftId: second })).toMatchObject({ status: 409, body: { error: 'conflict' } });
     expect(h.field.draft(h.seed.a, foreign)).toEqual(stored);
+    expect(await f.job(jobId)).toEqual(before);
+    expect(await h.admin`SELECT job_id FROM job_drafts WHERE draft_id = ${foreign}`).toEqual([]);
+    // The job is still on its submitted draft, so a fresh id still goes back to editing.
+    expect((await f.nextDraft(ESTIMATOR_A, jobId, { draftId: randomUUID(), fromDraftId: second })).status).toBe(201);
   });
 
   // Security audit F1, across a release: the migration runs while the previous version still serves,

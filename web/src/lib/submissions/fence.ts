@@ -1,6 +1,6 @@
 import { FieldValue, Timestamp, type DocumentReference, type Firestore } from 'firebase-admin/firestore';
 import type { FieldDoc, FieldManifest } from '@/lib/field/canonical';
-import { draftOfOtherJob } from '@/lib/jobs/drafts';
+import { draftOfOtherJob, firestoreDraftLookup, type DraftLookup } from '@/lib/jobs/drafts';
 import { firestoreJobProjectionStore, type JobProjectionStore } from '@/lib/jobs/projection';
 import { MAX_PHOTO_REFS, MAX_ROOMS } from '@/lib/field/schema';
 import { firestoreSpan } from '@/lib/telemetry/spans';
@@ -37,7 +37,7 @@ export type FenceResult =
 
 export type Provenance = { draftId: string; submissionId: string };
 
-export type FenceStore = JobProjectionStore & {
+export type FenceStore = JobProjectionStore & DraftLookup & {
   // Closes the fence: `editing` becomes `submitting` with this fence. `replacing` names an epoch
   // whose submission is known to be aborted; a fence of exactly that epoch is replaced.
   fence(companyId: string, draftId: string, fence: Fence, replacing?: string): Promise<FenceResult>;
@@ -85,6 +85,7 @@ export function firestoreFenceStore(db: Firestore): FenceStore {
 
   return {
     ...firestoreJobProjectionStore(db),
+    ...firestoreDraftLookup(db),
     async fence(companyId, draftId, fence, replacing) {
       const ref = draftRef(companyId, draftId);
       return inTransaction<FenceResult>(async (tx) => {

@@ -180,8 +180,13 @@ describe('creating a job', () => {
     const key = `${h.seed.a}/${draftId}`;
     h.drafts.made.set(key, { fieldOwnerUid: 'estimator-a2' });
     h.drafts.jobOf.set(key, randomUUID());
-    expect(await create(ESTIMATOR_A, { id: randomUUID(), draftId })).toEqual({ status: 409, body: { error: 'conflict' } });
+    const before = await everything(h.admin);
+    const id = randomUUID();
+    expect(await create(ESTIMATOR_A, { id, draftId })).toEqual({ status: 409, body: { error: 'conflict' } });
     expect(h.drafts.made.get(key)).toEqual({ fieldOwnerUid: 'estimator-a2' });
+    // Nothing is committed in Postgres, so the same job id with a fresh draft id is a new job.
+    expect(await everything(h.admin)).toBe(before);
+    expect((await create(ESTIMATOR_A, { id, draftId: randomUUID() })).status).toBe(201);
   });
 
   it('makes the draft on a retry when the first attempt saved the job and lost the draft', async () => {

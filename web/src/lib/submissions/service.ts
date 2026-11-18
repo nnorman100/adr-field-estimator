@@ -458,6 +458,9 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
             .where(and(eq(jobs.companyId, caller.companyId), eq(jobs.id, jobId)))
             .returning();
           if (!(await claimDraft(tx, caller.companyId, jobId, input.draftId))) throw new SubmissionError('conflict');
+          // A draft id claimed now was never this job's: a draft already under it was made for another
+          // job or from another submission.
+          if (await field(() => store.findDraft(caller.companyId, input.draftId))) throw new SubmissionError('conflict');
           await audit(tx, caller.companyId, caller.actorId, 'job_back_to_editing', jobId, { revision: next!.revision });
           changed = true;
         }

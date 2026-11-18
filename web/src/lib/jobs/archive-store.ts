@@ -1,7 +1,7 @@
 import type { Firestore } from 'firebase-admin/firestore';
 import type { FieldManifest } from '@/lib/field/canonical';
 import { firestoreSpan } from '@/lib/telemetry/spans';
-import { draftOfOtherJob } from './drafts';
+import { draftOfOtherJob, firestoreDraftLookup, type DraftLookup } from './drafts';
 import { firestoreJobProjectionStore, type JobProjectionStore } from './projection';
 
 // The field database side of archive, restore and copy (S5b-2). Postgres decides; these follow it.
@@ -28,7 +28,7 @@ export type ArchiveResult =
   // to the phone after its job's archive.
   | 'missing';
 
-export type ArchiveStore = JobProjectionStore & {
+export type ArchiveStore = JobProjectionStore & DraftLookup & {
   // In one Firestore transaction: the draft becomes `archived` at this job revision.
   archiveDraft(companyId: string, draftId: string, revision: number): Promise<ArchiveResult>;
   // In one Firestore transaction: an `archived` draft becomes `state` at this job revision. A draft
@@ -72,6 +72,7 @@ export function firestoreArchiveStore(db: Firestore): ArchiveStore {
 
   return {
     ...firestoreJobProjectionStore(db),
+    ...firestoreDraftLookup(db),
     archiveDraft: (companyId, draftId, revision) => step(companyId, draftId, revision, () => ({ state: 'archived' })),
     restoreDraft: (companyId, draftId, state, revision) =>
       step(companyId, draftId, revision, (current) => (current === 'archived' ? { state } : {})),

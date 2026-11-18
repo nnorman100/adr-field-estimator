@@ -306,6 +306,21 @@ describe('copy', () => {
     expect(await everything(h.admin)).toBe(before);
     expect(h.field.draft(h.seed.a, earlier)).toEqual(stored);
   });
+
+  it('refuses a copy onto a draft the field database holds for another job, and commits nothing', async () => {
+    const { jobId: source } = await signedJob();
+    const foreign = randomUUID();
+    const key = `${h.seed.a}/${foreign}`;
+    h.drafts.made.set(key, { fieldOwnerUid: 'estimator-a2' });
+    h.drafts.jobOf.set(key, randomUUID());
+    const before = await everything(h.admin);
+    const stored = structuredClone(h.field.draft(h.seed.a, foreign));
+    const id = randomUUID();
+    expect(await copy(OWNER_A, source, { id, draftId: foreign })).toEqual({ status: 409, body: { error: 'conflict' } });
+    expect(await everything(h.admin)).toBe(before);
+    expect(h.field.draft(h.seed.a, foreign)).toEqual(stored);
+    expect((await copy(OWNER_A, source, { id, draftId: randomUUID() })).status).toBe(201);
+  });
 });
 
 // Holds the next call of a field method at its start until `open`, which may come before the call.

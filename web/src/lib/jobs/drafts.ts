@@ -29,7 +29,24 @@ export type FieldOwnerResult =
   // The draft was made for another job: nothing is changed.
   | 'taken';
 
-export type DraftStore = JobProjectionStore & {
+export type DraftLookup = {
+  // The draft under this id, with the job id written on it (undefined on a draft made before
+  // `jobId`), or null when there is none. Read before a request commits a draft id in Postgres, so a
+  // draft id the field database refuses is never committed.
+  findDraft(companyId: string, draftId: string): Promise<{ jobId: unknown } | null>;
+};
+
+export function firestoreDraftLookup(db: Firestore): DraftLookup {
+  return {
+    async findDraft(companyId, draftId) {
+      const draft = db.collection('companies').doc(companyId).collection('drafts').doc(draftId);
+      const found = await firestoreSpan('get', 'drafts', () => draft.get());
+      return found.exists ? { jobId: found.get('jobId') } : null;
+    },
+  };
+}
+
+export type DraftStore = JobProjectionStore & DraftLookup & {
   // Makes the job's draft if it is not there yet. 'exists' is the answer to a retry: nothing is
   // changed. 'taken' when the draft there was made for another job: nothing is changed either.
   // `fieldOwnerUid` is the owner's sign-in uid, or null while nobody owns the field work.
@@ -51,6 +68,7 @@ export function draftOfOtherJob(stamped: unknown, jobId: string): boolean {
 export function firestoreDraftStore(db: Firestore): DraftStore {
   return {
     ...firestoreJobProjectionStore(db),
+    ...firestoreDraftLookup(db),
     async ensure(companyId, jobId, draftId, fieldOwnerUid) {
       const draft = db.collection('companies').doc(companyId).collection('drafts').doc(draftId);
       try {

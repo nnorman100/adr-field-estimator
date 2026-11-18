@@ -31,6 +31,10 @@ export function fakeDrafts(): FakeDrafts {
       const key = `${companyId}/${jobId}`;
       if ((store.projected.get(key)?.revision ?? -1) < projection.revision) store.projected.set(key, { ...projection });
     },
+    async findDraft(companyId, draftId) {
+      const key = `${companyId}/${draftId}`;
+      return store.made.has(key) ? { jobId: store.jobOf.get(key) } : null;
+    },
     calls: [],
     ownerCalls: [],
     failNext: { on: false, afterWrite: false },

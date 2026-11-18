@@ -3,7 +3,7 @@ import { actors, auditEvents, jobAssignments, jobClaims, jobCustomers, jobs } fr
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
 import { canSeeJob, claimDraft, hasAny, isOwnJob, jobAccess, JobError, lockedJob, seesEveryJob, type JobCaller, type JobRow } from './access';
-import type { DraftStore } from './drafts';
+import type { DraftLookup, DraftStore } from './drafts';
 import { createDigest, type ClaimInput, type CreateJobInput, type CustomerInput, type ListQuery } from './schema';
 
 // The jobs of a company (S5a-3). Every function runs inside withCompany for the company of the
@@ -181,6 +181,17 @@ function decodeCursor(cursor: string): { time: string; id: string } {
   return { time, id };
 }
 
+// The field database's draft under this id, read before the request commits it (security audit F1).
+export async function findDraft(drafts: DraftLookup, companyId: string, draftId: string): Promise<{ jobId: unknown } | null> {
+  try {
+    return await drafts.findDraft(companyId, draftId);
+  } catch (error) {
+    // Fixed text only: the SDK's message may quote a path.
+    console.error('job draft unavailable', error instanceof Error ? error.name : 'unknown');
+    throw new JobError('draft_unavailable');
+  }
+}
+
 export function jobsService(db: Database, drafts: DraftStore): JobsService {
   async function inCompany<T>(companyId: string, run: (tx: CompanyTransaction) => Promise<T>): Promise<T> {
     try {
@@ -226,6 +237,8 @@ export function jobsService(db: Database, drafts: DraftStore): JobsService {
           row = existing;
         } else {
           if (!(await claimDraft(tx, caller.companyId, row.id, input.draftId))) throw new JobError('conflict');
+          // A draft id claimed now was never this job's: a draft already under it was made for another.
+          if (await findDraft(drafts, caller.companyId, input.draftId)) throw new JobError('conflict');
           await audit(tx, caller, 'job_created', row.id, { revision: row.revision });
         }
         let ownerUid: string | null = null;

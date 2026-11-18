@@ -462,6 +462,17 @@ describe('the first capture', () => {
     expect((await read(OWNER_A, id)).body.job.fieldOwnerActorId).toBeNull();
   });
 
+  it('refuses a first capture on a job whose current draft the field database holds for another job, and changes nothing', async () => {
+    const { id, draftId } = await officeJob();
+    await assign(OFFICE_A, id, h.seed.estimatorA.actor);
+    h.drafts.jobOf.set(`${h.seed.a}/${draftId}`, randomUUID());
+    const before = await everything(h.admin);
+    const stored = structuredClone(draftOf(draftId));
+    expect(await claim(ESTIMATOR_A, id)).toEqual({ status: 409, body: { error: 'conflict' } });
+    expect(draftOf(draftId)).toEqual(stored);
+    expect(await everything(h.admin)).toBe(before);
+  });
+
   it('never reaches the draft of another company that has the same id', async () => {
     const ids = { id: randomUUID(), draftId: randomUUID() };
     expect((await create(ESTIMATOR_A, ids)).status).toBe(201);

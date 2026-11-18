@@ -3,9 +3,9 @@ import { actors, jobAssignments, jobCoordination, jobDrafts, jobs, jobSubmission
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
 import { hasAny, jobAccess, JobError, recordDraft, type JobCaller, type JobRow } from './access';
-import type { DraftStore } from './drafts';
+import { draftOfOtherJob, type DraftStore } from './drafts';
 import { assignDigest, type AssignInput, type CoordinationInput, type TransferInput } from './schema';
-import { audit, CHECK_VIOLATION, detailOf, errorCode, type JobDetail } from './service';
+import { audit, CHECK_VIOLATION, detailOf, errorCode, findDraft, type JobDetail } from './service';
 
 // Office jobs, assignment and the field owner (S5b-1, docs/plans/S5.md; docs/spec.md 6.2). Every
 // function runs inside withCompany for the company of the verified sign-in and goes through the one
@@ -200,6 +200,15 @@ export function officeService(db: Database, drafts: DraftStore): OfficeService {
     }
   }
 
+  // The job's drafts (draftIdsOf), read before the commit: a current draft the field database holds
+  // for another job is never handed on, and the request changes nothing (security audit F1).
+  async function draftsToName(tx: CompanyTransaction, row: JobRow): Promise<string[]> {
+    const ids = await draftIdsOf(tx, row);
+    const found = await findDraft(drafts, row.companyId, row.currentDraftId);
+    if (found && draftOfOtherJob(found.jobId, row.id)) throw new JobError('conflict');
+    return ids;
+  }
+
   // The Firestore step: each of the job's drafts names its field owner as Postgres has it, at that
   // revision. A current draft that is not there yet (Back to editing makes its draft after its own
   // commit) or a Firestore that cannot be reached answers 503; the same request again sets it. A
@@ -321,7 +330,7 @@ export function officeService(db: Database, drafts: DraftStore): OfficeService {
         } else {
           revision = (await readCoordination(tx, row)).revision;
         }
-        return { claimed: next !== row, revision, draftIds: await draftIdsOf(tx, next), detail: await detailOf(tx, next) };
+        return { claimed: next !== row, revision, draftIds: await draftsToName(tx, next), detail: await detailOf(tx, next) };
       });
       await project(caller.companyId, jobId, made.draftIds, caller.uid, made.revision);
       return { claimed: made.claimed, detail: made.detail };
@@ -362,7 +371,7 @@ export function officeService(db: Database, drafts: DraftStore): OfficeService {
         }
         return {
           revision,
-          draftIds: await draftIdsOf(tx, next),
+          draftIds: await draftsToName(tx, next),
           uid: next.fieldOwnerActorId ? await uidOf(tx, caller.companyId, next.fieldOwnerActorId) : null,
           view: await viewOf(tx, next),
         };

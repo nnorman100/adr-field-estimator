@@ -131,6 +131,11 @@ export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts:
       const at = key(companyId, jobId);
       if ((fake.projected.get(at)?.revision ?? -1) < projection.revision) fake.projected.set(at, { ...projection });
     }),
+    findDraft: (companyId, draftId) =>
+      call('findDraft', (data) => {
+        const found = data[key(companyId, draftId)];
+        return found ? { jobId: found.jobId } : null;
+      }),
     data: () => load(),
     draft: (companyId, draftId) => load()[key(companyId, draftId)] ?? null,
     put(companyId, draftId, manifest, fieldOwnerUid = null) {
