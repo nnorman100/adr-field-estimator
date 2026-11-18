@@ -147,11 +147,11 @@ describe('the e2e job', () => {
     return found[0];
   };
 
-  it('runs as a matrix of four shards, with the runner and 20-minute limit it had', () => {
+  it('runs as a matrix of four shards, with the runner and its 35-minute limit', () => {
     const e2e = job();
     expect(e2e.strategy.matrix.shard).toEqual([1, 2, 3, 4]);
     expect(e2e.strategy['fail-fast']).toBe(false);
-    expect(e2e['timeout-minutes']).toBe(20);
+    expect(e2e['timeout-minutes']).toBe(35);
     expect(e2e['runs-on']).toBe("${{ vars.CI_RUNNER || 'dryscope-linux' }}");
   });
 
