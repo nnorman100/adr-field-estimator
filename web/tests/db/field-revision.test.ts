@@ -18,7 +18,8 @@ import { resetTeamDatabase, startTeamServer, type Harness } from './team-harness
 // The draft life-cycle redesign, slice 1 (migration 0018): a job's field revision rises by exactly one
 // on every input of its drafts' life cycle, and on nothing else; the sync's watermark; the copy
 // source; and the repair worker's lookup across companies. As the app's runtime role on a server set
-// up like a fresh Cloud SQL instance (team-harness.ts). No route reads or writes these columns yet.
+// up like a fresh Cloud SQL instance (team-harness.ts). Copy writes the copy source (archive-api.test.ts);
+// the sync that reads these columns comes in a later slice.
 const INVALID_PARAMETER = '22023';
 
 let base: Awaited<ReturnType<typeof startTeamServer>>;
@@ -228,6 +229,24 @@ describe('migration 0018: what the runtime may write', () => {
     expect(await h.admin`SELECT uid FROM actors WHERE id = ${h.seed.estimatorA.actor}`).toEqual([{ uid: 'estimator-a' }]);
     expect(await field(job.id)).toBe(0);
     expect(await unprotectedRelations(h.admin)).toEqual([]);
+  });
+});
+
+describe('migration 0018: the copy source holds no lock on its source before commit', () => {
+  it('checks the copy source at commit, so a copy’s transaction locks nothing on the signed job while it runs', async () => {
+    const source = await jobOf(h.seed.a);
+    const copy = randomUUID();
+    const probe = await as(h.seed.a, async (tx) => {
+      await tx.execute(
+        sql.raw(
+          `INSERT INTO jobs (id, company_id, created_by_actor_id, current_draft_id, request_digest, copied_from_job_id) VALUES ('${copy}', '${h.seed.a}', '${ownerOf(h, h.seed.a)}', gen_random_uuid(), '${'a'.repeat(64)}', '${source.id}')`,
+        ),
+      );
+      // As Copy then waits on the field database: another request can still take the source row.
+      return errorCode(h.admin.begin((sql) => sql`SELECT id FROM jobs WHERE id = ${source.id} FOR UPDATE NOWAIT`));
+    });
+    expect(probe).toBeUndefined();
+    expect(await h.admin`SELECT copied_from_job_id::text AS source FROM jobs WHERE id = ${copy}`).toEqual([{ source: source.id }]);
   });
 });
 

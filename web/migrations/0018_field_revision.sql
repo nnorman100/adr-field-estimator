@@ -2,7 +2,8 @@
 -- life cycle (the draft life-cycle redesign, Design 2, slice 1). This file only adds: three columns
 -- and their triggers, one more column for the repair pass, one lookup function, and the job revision
 -- guard of 0015 widened to let the new columns change alone. No table, row or policy of 0001 to 0017
--- is removed. Nothing reads or writes these columns yet: the sync that does comes in later slices.
+-- is removed. Only Copy writes one of them yet (the copy source, 4 below); the sync that reads them
+-- comes in later slices.
 --
 -- 1. jobs.field_revision: rises by exactly one, inside the database, every time an input of the
 --    drafts' life cycle changes: the job's status, current draft, field owner or copy source (a trigger
@@ -51,7 +52,11 @@ ALTER TABLE jobs
   ADD COLUMN field_synced_revision bigint NOT NULL DEFAULT 0 CHECK (field_synced_revision >= 0),
   ADD COLUMN field_changed_at timestamptz NOT NULL DEFAULT now(),
   ADD COLUMN copied_from_job_id uuid,
-  ADD CONSTRAINT jobs_copied_from_fkey FOREIGN KEY (company_id, copied_from_job_id) REFERENCES jobs (company_id, id);
+  -- Checked at commit, not at the write: Copy writes the source and then waits on the field database in
+  -- the same transaction, and an immediate check would hold a key-share lock on the signed source job
+  -- across that call, making a document link for it wait on the field database.
+  ADD CONSTRAINT jobs_copied_from_fkey FOREIGN KEY (company_id, copied_from_job_id) REFERENCES jobs (company_id, id)
+    DEFERRABLE INITIALLY DEFERRED;
 
 -- The repair pass's jobs: behind their sync, oldest change first.
 CREATE INDEX jobs_field_sync_due ON jobs (field_changed_at, company_id) WHERE field_synced_revision < field_revision;

@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { actors, agreements, jobs, jobSubmissions } from '@/db/schema';
 import { holdAcrossOutsideCall, withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
@@ -261,7 +261,7 @@ export function archiveService(db: Database, store: ArchiveStore): ArchiveServic
             await tx
               .update(jobs)
               .set({ copiedFromJobId: source.id })
-              .where(and(eq(jobs.companyId, caller.companyId), eq(jobs.id, existing.id), isNull(jobs.copiedFromJobId)));
+              .where(and(eq(jobs.companyId, caller.companyId), eq(jobs.id, existing.id)));
           }
           row = existing;
         } else {

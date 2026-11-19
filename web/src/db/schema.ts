@@ -370,6 +370,7 @@ export const jobs = pgTable(
   (t) => [
     primaryKey({ columns: [t.companyId, t.id] }),
     unique('jobs_company_current_draft_key').on(t.companyId, t.currentDraftId),
+    // DEFERRABLE INITIALLY DEFERRED in 0018 (checked at commit).
     foreignKey({
       name: 'jobs_copied_from_fkey',
       columns: [t.companyId, t.copiedFromJobId],
