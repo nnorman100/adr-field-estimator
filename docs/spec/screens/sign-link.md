@@ -7,7 +7,8 @@ Part of [Screen specs](README.md). Address: `/sign#token`. Built in: `web/src/ap
 
 The homeowner's page from a signing link the technician made on [Review](review.md): read the same
 documents the technician's phone shows (the proposal with the company's start-work authorization and
-payment terms, the itemized claim, the scope defense letter, the photo audit log), then sign once.
+payment terms, the itemized claim with the priced line items, the scope defense letter with the claim form's
+fields, the photo audit log), then sign once.
 After signing it shows the signed record and, once only, the links to the signed documents (both are
 made at signing, and their tokens are in the first successful signing answer only: if that answer does
 not reach the signer, a reload shows the record but not the links). The
@@ -30,10 +31,17 @@ see the job (`canSeeJob` and assignment in `web/src/lib/jobs/access.ts`: an esti
 made, own the field work of, or are assigned to). Losing any of these makes the link "This link is not
 available" before its end date: a removed member, a role without `sign`, prices switched off, or an
 estimator who made the link for a job they see only through assignment and is then unassigned. An
-estimator who made the job still sees it after being unassigned, so that link keeps working. A job no
-longer submitted, or whose estimate was replaced or changed after pricing, voids it (`stateOf`).
-[Review](review.md) lists the link by its stored state (and `stateOf`), which does not recheck the
-maker, so staff can see a pending link that the recipient is refused.
+estimator who made the job still sees it after being unassigned, so that link keeps working. While the link
+is pending, a job no longer submitted, or whose estimate was replaced or changed after pricing, voids
+it (`stateOf`). These job-status and estimate checks apply to pending links only: once the homeowner
+signs, the job moves from submitted to signed and the same used link still opens the signed
+agreement, read only, for 30 days while the maker keeps access (`web/src/lib/links/signing.ts`).
+While the company's prices are on, [Review](review.md) lists the link by its stored state (and
+`stateOf`), which does not recheck the maker, so staff can see a pending link that the recipient is
+refused (for example after the maker lost the job). With prices off, a fresh load of Review shows only
+"Prices are not switched on" and the staff link routes answer 404, so staff see no link there (a
+Review already open when prices are switched off keeps whatever link status or address it last
+loaded on screen, and cannot list or replace it).
 
 ## States
 
@@ -42,14 +50,15 @@ maker, so staff can see a pending link that the recipient is refused.
   have expired or been replaced. Ask your restoration company for a new link."; other refusals:
   updated after sending ("Ask your restoration company for a new link."), too many tries, not ready
   ("…has been asked to finish its settings; try again later.").
-- Pending: "Review and sign your estimate", "From {company}. This link works until {date}…", the
+- Pending (the job still submitted and its estimate unchanged; otherwise the link is void): "Review and sign your estimate", "From {company}. This link works until {date}…", the
   documents, then "Sign": the boxes "I reviewed the proposal, the separate totals and the attached
   evidence." and "I agree to sign electronically and to receive this signed record electronically.
   I can print or save a copy from this page.", "Your full name", the role (Homeowner, Adjuster,
   Other), and a signature pad. "Tick both boxes to sign." if one is missing.
 - Signed: "Your signed estimate", with the document links: "Each works for 30 days. Copy or share
   them now: they are shown only this once." Only the first successful signing answer carries them;
-  later reads of the signed record (30 days, while the maker still has access) show no links.
+  reopening the same used link later shows the signed agreement read only (30 days, while the maker
+  still has access; the job is now signed, which does not void a used link) with no document links.
 - No connection: "We could not reach DryScope. Check your connection, then try again."
 
 ## Key actions and server routes

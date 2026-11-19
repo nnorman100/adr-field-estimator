@@ -15,7 +15,7 @@ tag are then written to the job's field draft.
 | Role | Sees | Can do |
 |---|---|---|
 | Owner | the job's photos | take photos only once they own the job's field work and the draft is being edited |
-| Estimator | the photos of a job whose field work they own (the Photos tab lists the photos from the job's draft, which an estimator may read only while they own it); on a job another person owns, opened afresh, only "Another person owns this job's field work, so it is not shown here. The company owner can move it to you."; a phone that already held the draft when the field work moved keeps the photos it had loaded on screen, read only, under "This job's field work is no longer yours…" | take photos on jobs whose field work they own, while the draft is being edited |
+| Estimator | the photos of a job whose field work they own (the Photos tab lists the photos from the job's draft, which an estimator may read only while they own it); on a job another person owns, opened afresh, only "Another person owns this job's field work, so it is not shown here. The company owner can move it to you."; after the app records a move away, the open job keeps the photos it had loaded, read only, under "This job's field work is no longer yours…" (reopening the job in the same field shell remounts the thumbnails, which fetch the retained photo references again, so they show only while the person still has job access: an estimator who made the job keeps it, and one who was assigned and then unassigned has lost it and gets 404); a fresh page shows the ownership notice if they still have job access, or 404 if they lost it ([Check Scope](check-scope.md)) | take photos on jobs whose field work they own, while the draft is being edited |
 | Office | the job's photos, read only | nothing (no `photos`) |
 | Superadmin support | nothing | nothing |
 | Different-company user | nothing: 404 | nothing |
@@ -45,10 +45,11 @@ cap (`docs/access/photos.md`).
 | Save its room and tag | the field database draft, checked by `web/firestore.rules` | field owner |
 | Show a photo | `GET /api/jobs/{id}/photos/{photoId}?kind=photo` | `jobs_read` |
 
-"Start field work" can appear on this tab too: on a job nobody owns, or on a job that names this person but whose draft does not yet (the first Start, or an owner's move to this estimator, committed and its draft step did not finish; see [Check Scope](check-scope.md) and [Job coordination](job-coordination.md)).
+"Start field work" can appear on this tab too: on a job nobody owns, or as the recovery prompt on a job that names this person but whose current draft does not (the first Start or an owner's move, to this estimator or to the owner themself, committed and its draft step did not finish; or, for an estimator who owns the field work, a "Back to editing" answered 503 after the new draft ID was committed and the draft is missing; a company owner in that case gets no Start field work, a known gap). The recovery prompt also appears to an estimator named as field owner of a job whose first draft was never made, where Start answers 503 again: it can only rebuild from a last submission, so the repair is to send the original New job, Copy or Save as new draft again with its original IDs. A company owner named as field owner of such a job gets no prompt, only "The field work of this job is not there yet. Try again in a moment.". See [Check Scope](check-scope.md) for every trigger and what Start can repair.
 
 The photo-by-ID route uses job access (`jobs_read`), but the tab needs the draft's photo references, so
-it shows no photos to an estimator who cannot read the draft.
+it shows no photos to an estimator who cannot read the draft. The photos retained after a move are
+those the open job already loaded, or the retained photo references when the job is reopened in the same field shell (whose thumbnails are fetched again, 404 only for an estimator who lost job access, such as one unassigned from a job they did not make); a fresh page does not show them.
 
 Rules: `docs/access/photos.md`.
 

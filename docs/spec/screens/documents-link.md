@@ -11,7 +11,8 @@ Both sets open with the company's name, the signer's name and role (when given),
 the link's end date (`documents-screen.tsx`; the API also sends the signing method to both). There are
 two sets (`SET_NAMES`): "Homeowner's documents" (the signed proposal, the signature image, how it was
 signed, the proposal's SHA-256 and the photo log) and "Adjuster's documents" (the price, the itemized
-claim, the scope defense letter and a "Scope JSON" export; no signature image, no signing method shown
+claim of priced line items, the scope defense letter, which carries the claim form's filled-in fields (for example the claim number and
+adjuster contact, the carrier, policy number, dates and deductible), and a "Scope JSON" export of the priced line items; no signature image, no signing method shown
 and no photos). The scope JSON is built in the browser from the itemized claim rows (`ScopeJson`). The
 token is only in the address's
 fragment and goes to the link routes in a header. No sign-in, not indexed, no referrer, not kept for
@@ -30,8 +31,11 @@ The token is necessary but not enough. Every read acts as the person who made th
 now (`resolve` in `web/src/lib/links/documents.ts`): they must still be an active member holding
 `sign` or `delivery_resend`, the company must be active with prices on (`price_books`), and they must
 still see the job. Losing any of these makes the link "This link is not available" before its end
-date (for example an estimator who made the link and then lost the job, or the `sign` key; one who made
-the job keeps seeing it after being unassigned); the owner or office can replace it. [Review](review.md)
+date (for example an estimator who made the link and then lost the job, or lost both keys; a maker moved
+from estimator to office still holds `delivery_resend`, so losing `sign` alone does not end the link;
+one who made the job keeps seeing it after being unassigned). The owner or office can replace it
+while the company's prices are on; with prices off, a fresh load of Review stops at "Prices are not switched on" and
+the staff link routes answer 404 (a Review already open keeps what it last loaded, but listing and replacing are refused). [Review](review.md)
 lists a link as "active" by its stored state and expiry, which does not recheck the maker, so staff can
 see an active link that the recipient is refused.
 
@@ -48,7 +52,7 @@ see an active link that the recipient is refused.
 | Action | Route | Who |
 |---|---|---|
 | Read the set | `GET /api/documents` | the link |
-| Copy or download the scope JSON (adjuster's set only) | in the browser, from the itemized claim rows already read; no route | the link |
+| Copy or download the scope JSON (adjuster's set only) | in the browser, from the itemized claim's priced rows already read (no claim-form fields); no route | the link |
 | Show the signature (homeowner's set only) | `GET /api/documents/signature` | the link |
 | Show one photo (homeowner's set only) | `GET /api/documents/photos/{photoId}` | the link |
 
