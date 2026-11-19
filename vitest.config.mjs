@@ -22,6 +22,7 @@ export default defineConfig({
       'tests/test_web_release_drain.ts',
       'tests/test_web_images.ts',
       'tests/test_web_workflow.ts',
+      'tests/test_ci_terraform_job.ts',
       'tests/test_test_guard.ts',
       'tests/test_ai_evals_workflow.ts',
       'tests/test_stop_checks.ts',
