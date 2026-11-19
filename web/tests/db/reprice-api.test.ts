@@ -276,6 +276,19 @@ describe('the owner reprices a draft', () => {
     expect(await sign(ESTIMATOR_A, jobId, bodyFor(revised, late))).toMatchObject({ status: 409, body: { error: 'signature_missing' } });
   });
 
+  it('a signature keeps the proposal it was captured for: the same id with the same bytes for another proposal, or for none, is refused', async () => {
+    const { jobId, estimate, signatureId } = await readyToSign();
+    const bytes = image(`signature ${signatureId}`);
+    const before = await everything(h.admin);
+    expect(await putSignature(ESTIMATOR_A, jobId, signatureId, bytes, 'a'.repeat(64))).toMatchObject({ status: 409, body: { error: 'photo_conflict' } });
+    expect(await putSignature(ESTIMATOR_A, jobId, signatureId, bytes, 'not a hash')).toMatchObject({ status: 400, body: { error: 'invalid_request' } });
+    const bare = request(ESTIMATOR_A, `/api/jobs/${jobId}/photos/${signatureId}?kind=signature`, { method: 'PUT', body: bytes });
+    expect(await json(photoRoute.PUT(bare, params({ jobId, photoId: signatureId })))).toMatchObject({ status: 409, body: { error: 'photo_conflict' } });
+    expect(await everything(h.admin)).toBe(before);
+    expect(await putSignature(ESTIMATOR_A, jobId, signatureId, bytes, estimate.proposalSha256)).toMatchObject({ status: 200 });
+    expect(await everything(h.admin)).toBe(before);
+  });
+
   it('a job already priced from the reviewed prices is refused, with nothing written', async () => {
     const { jobId } = await readyToSign();
     const before = await everything(h.admin);
@@ -359,20 +372,36 @@ describe('what is refused, and writes nothing', () => {
     expect(await everything(h.admin)).toBe(before);
   });
 
+  it('a job back in editing is repriced, and Finish on that open draft still needs a fresh scope confirmation', async () => {
+    const { jobId, draftId, manifest } = await readyToSign();
+    const two = await publish(h.seed.a, '3.00');
+    const open = randomUUID();
+    expect((await f.nextDraft(ESTIMATOR_A, jobId, { draftId: open, fromDraftId: draftId })).status).toBe(201);
+    // The open draft carries the confirmation given at the old prices.
+    expect(h.field.draft(h.seed.a, open)?.field).toHaveProperty('scopeConfirmed', true);
+    expect(await reprice(OWNER_A, jobId)).toMatchObject({ status: 200, body: { job: { id: jobId, status: 'draft', currentDraftId: open }, pin: { sequence: 2, version: 2 } } });
+    expect((await pins(jobId)).map((pin) => pin.version_id)).toEqual([expect.any(String), two.id]);
+
+    // Finish on the same open draft is not priced: its confirmation predates the new prices.
+    expect((await f.submitShown(ESTIMATOR_A, jobId, open, manifest)).answer.status).toBe(201);
+    expect(await make(ESTIMATOR_A, jobId)).toMatchObject({ status: 409, body: { error: 'scope_not_confirmed' } });
+
+    // Back to editing starts unconfirmed, and a fresh confirmation is priced from the new prices.
+    const fresh = randomUUID();
+    expect((await f.nextDraft(ESTIMATOR_A, jobId, { draftId: fresh, fromDraftId: open })).status).toBe(201);
+    expect(h.field.draft(h.seed.a, fresh)?.field).not.toHaveProperty('scopeConfirmed');
+    h.field.put(h.seed.a, fresh, manifest);
+    expect((await f.submitShown(ESTIMATOR_A, jobId, fresh, manifest)).answer.status).toBe(201);
+    const revised = await make(ESTIMATOR_A, jobId);
+    expect(revised.status).toBe(201);
+    expect(revised.body.estimate).toMatchObject({ price: { pinSequence: 2, versionSequence: 2 } });
+  });
+
   it('a job never priced has no pin to move', async () => {
     await publish(h.seed.a, '2.00');
     const { jobId } = await submittedJob();
     const before = await everything(h.admin);
     expect(await reprice(OWNER_A, jobId)).toMatchObject({ status: 409, body: { error: 'not_priced' } });
-    expect(await everything(h.admin)).toBe(before);
-  });
-
-  it('a job being edited is not repriced', async () => {
-    const { jobId, draftId } = await readyToSign();
-    await publish(h.seed.a, '3.00');
-    expect((await f.nextDraft(ESTIMATOR_A, jobId, { draftId: randomUUID(), fromDraftId: draftId })).status).toBe(201);
-    const before = await everything(h.admin);
-    expect(await reprice(OWNER_A, jobId)).toMatchObject({ status: 409, body: { error: 'not_submitted' } });
     expect(await everything(h.admin)).toBe(before);
   });
 

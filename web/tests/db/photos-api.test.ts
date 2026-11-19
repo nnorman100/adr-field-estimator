@@ -401,6 +401,12 @@ describe('the full-size original', () => {
     expect((await rows()).map((row) => row.kind)).toEqual(['photo']);
   });
 
+  it('ignores a proposal header, which only a signature carries', async () => {
+    const { jobId, photoId, copyHash } = await registered();
+    const sent = await put(ESTIMATOR_A, jobId, photoId, 'original', image('original', JPEG), { 'X-Photo-Sha256': copyHash, 'X-Proposal-Sha256': 'not a hash' });
+    expect(sent.status).toBe(201);
+  });
+
   it('may arrive after the job was signed and its draft locked, and changes nothing in the job', async () => {
     const { jobId, draftId, photoId, copyHash } = await registered();
     await h.admin`UPDATE jobs SET status = 'signed', revision = revision + 1 WHERE id = ${jobId}`;

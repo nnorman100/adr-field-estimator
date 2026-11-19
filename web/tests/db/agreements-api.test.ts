@@ -279,7 +279,7 @@ describe('signing on the phone', () => {
 
   it('the same signature twice returns one receipt and one agreement', async () => {
     const { jobId, estimate, signatureId, signature } = await readyToSign();
-    const again = await putSignature(ESTIMATOR_A, jobId, signatureId, signature);
+    const again = await putSignature(ESTIMATOR_A, jobId, signatureId, signature, estimate.proposalSha256);
     expect(again).toMatchObject({ status: 200, body: { photoId: signatureId, kind: 'signature', sha256: sha256(signature) } });
     const body = bodyFor(estimate, signatureId);
     const first = await sign(ESTIMATOR_A, jobId, body);
@@ -287,7 +287,7 @@ describe('signing on the phone', () => {
     expect([first.status, second.status]).toEqual([201, 200]);
     expect(second.body.agreement).toEqual(first.body.agreement);
     // After signing, the same signature sent again (a lost answer) is still the same receipt.
-    expect((await putSignature(ESTIMATOR_A, jobId, signatureId, signature)).status).toBe(200);
+    expect((await putSignature(ESTIMATOR_A, jobId, signatureId, signature, estimate.proposalSha256)).status).toBe(200);
     expect(await agreementRows(jobId)).toHaveLength(1);
     expect(await signatureRows(jobId)).toEqual([{ object_id: signatureId, sha256: sha256(signature) }]);
     expect([...h.evidence.objects.keys()].filter((name) => name.includes('/signatures/'))).toEqual([`companies/${h.seed.a}/jobs/${jobId}/signatures/${signatureId}`]);

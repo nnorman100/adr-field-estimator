@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { isQueueTimeout } from '@/db/client';
-import { actors, auditEvents, evidenceObjects, jobPricePins, jobs, jobSubmissions } from '@/db/schema';
+import { actors, auditEvents, evidenceObjects, jobs, jobSubmissions } from '@/db/schema';
 import { holdAcrossOutsideCall, withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
+import { confirmationPredatesReprice } from '@/lib/estimates/service';
 import { manifestDigest, type FieldManifest } from '@/lib/field/canonical';
 import { roomFieldSchema } from '@/lib/field/schema';
 import { claimDraft, hasAny, holdDraft, jobAccess, JobError, lockedJob, type JobCaller, type JobRow } from '@/lib/jobs/access';
@@ -497,13 +498,7 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
         }
         // A reprice after the record clears its scope confirmation (pricing plan 3): the next draft starts
         // with scope unconfirmed, so Finish needs a fresh confirmation for the new prices.
-        const [pin] = await tx
-          .select({ reason: jobPricePins.reason, pinnedAt: jobPricePins.pinnedAt })
-          .from(jobPricePins)
-          .where(and(eq(jobPricePins.companyId, caller.companyId), eq(jobPricePins.jobId, jobId)))
-          .orderBy(desc(jobPricePins.sequence))
-          .limit(1);
-        const clearScope = pin?.reason === 'owner_reprice' && !(source!.decidedAt && source!.decidedAt > pin.pinnedAt);
+        const clearScope = await confirmationPredatesReprice(tx, caller.companyId, jobId, source!.draftId);
         return { job: next!, source: source!, changed, ownerUid, clearScope };
       });
       // The next draft version, from the submitted record (never from the old draft, whose phone

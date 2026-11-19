@@ -58,7 +58,7 @@ export async function putPhoto(request: Request, identity: Identity, context: Ro
     const photoSha256 = request.headers.get('x-photo-sha256');
     if (kind === 'original' && (photoSha256 === null || !HEX_SHA256.test(photoSha256))) throw new PhotoError('invalid_request');
     const proposalSha256 = request.headers.get('x-proposal-sha256');
-    if (proposalSha256 !== null && !HEX_SHA256.test(proposalSha256)) throw new PhotoError('invalid_request');
+    if (kind === 'signature' && proposalSha256 !== null && !HEX_SHA256.test(proposalSha256)) throw new PhotoError('invalid_request');
     const { created, receipt } = await photosServices().receive(identity, jobId, photoId, kind, {
       readBytes: async () => {
         try {

@@ -1,6 +1,6 @@
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { ZodError } from 'zod';
-import { auditEvents, jobEstimates, jobPricePins, jobSubmissions, memberships, priceTableVersions, priceTableWorkingCopies } from '@/db/schema';
+import { auditEvents, companies, jobEstimates, jobPricePins, jobSubmissions, memberships, priceTableVersions, priceTableWorkingCopies } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import { priceEstimate, type Estimate, type Json } from '@/engine/estimate';
 import { contentHash, ENGINE_VERSION, parseTable, type Table } from '@/engine/table';
@@ -63,14 +63,14 @@ export type EstimatesService = {
 
 const jobState = (row: JobRow): EstimateJobState => ({ id: row.id, status: row.status, currentDraftId: row.currentDraftId, revision: row.revision });
 
-export type SubmissionRow = { id: string; snapshotBytes: Buffer; snapshotSha256: string; decidedAt: Date | null };
-type PinRow = { id: string; sequence: number; versionId: string; reason: 'first_price' | 'owner_reprice'; pinnedAt: Date };
+export type SubmissionRow = { id: string; snapshotBytes: Buffer; snapshotSha256: string };
+type PinRow = { id: string; sequence: number; versionId: string; reason: 'first_price' | 'owner_reprice' };
 type VersionRow = { id: string; sequence: number; content: unknown; contentHash: string; engineVersion: string };
 
 // The committed record of the job's current draft (one per draft, migration 0011), or none.
 async function currentSubmission(tx: CompanyTransaction, companyId: string, job: JobRow): Promise<SubmissionRow | null> {
   const [row] = await tx
-    .select({ id: jobSubmissions.id, snapshotBytes: jobSubmissions.snapshotBytes, snapshotSha256: jobSubmissions.snapshotSha256, decidedAt: jobSubmissions.decidedAt })
+    .select({ id: jobSubmissions.id, snapshotBytes: jobSubmissions.snapshotBytes, snapshotSha256: jobSubmissions.snapshotSha256 })
     .from(jobSubmissions)
     .where(
       and(
@@ -81,7 +81,7 @@ async function currentSubmission(tx: CompanyTransaction, companyId: string, job:
       ),
     );
   if (!row || !row.snapshotBytes || !row.snapshotSha256) return null;
-  return { id: row.id, snapshotBytes: Buffer.from(row.snapshotBytes), snapshotSha256: row.snapshotSha256, decidedAt: row.decidedAt };
+  return { id: row.id, snapshotBytes: Buffer.from(row.snapshotBytes), snapshotSha256: row.snapshotSha256 };
 }
 
 // Whether the record states the job's property address, customer and claim as they are now: asked
@@ -94,7 +94,7 @@ async function detailsCurrent(tx: CompanyTransaction, companyId: string, job: Jo
 // The job's current pin: the highest sequence.
 async function currentPin(tx: CompanyTransaction, companyId: string, jobId: string): Promise<PinRow | null> {
   const [row] = await tx
-    .select({ id: jobPricePins.id, sequence: jobPricePins.sequence, versionId: jobPricePins.versionId, reason: jobPricePins.reason, pinnedAt: jobPricePins.pinnedAt })
+    .select({ id: jobPricePins.id, sequence: jobPricePins.sequence, versionId: jobPricePins.versionId, reason: jobPricePins.reason })
     .from(jobPricePins)
     .where(and(eq(jobPricePins.companyId, companyId), eq(jobPricePins.jobId, jobId)))
     .orderBy(desc(jobPricePins.sequence))
@@ -173,14 +173,40 @@ async function audit(tx: CompanyTransaction, caller: JobCaller, action: string, 
 }
 
 // The owner who reprices is still the company's active owner when it commits: the operator's owner
-// replacement locks the same membership row, so a replacement cannot slip between the check and the write.
+// replacement locks the company row and then the same membership row, so the company row is locked
+// first here too (the pin and audit rows need it anyway), and a replacement cannot slip between the
+// check and the write.
 async function lockActiveOwner(tx: CompanyTransaction, caller: JobCaller): Promise<void> {
+  await tx.select({ id: companies.id }).from(companies).where(eq(companies.id, caller.companyId)).for('no key update');
   const [owner] = await tx
     .select({ id: memberships.id })
     .from(memberships)
     .where(and(eq(memberships.companyId, caller.companyId), eq(memberships.actorId, caller.actorId), eq(memberships.role, 'owner'), eq(memberships.status, 'active')))
     .for('update');
   if (!owner) throw new JobError('not_allowed');
+}
+
+// A reprice clears the scope confirmation (pricing plan 3): a record of the draft that was the job's
+// current one when its pin was last moved by the owner states a confirmation given at the old prices,
+// whether the draft was already submitted or still open. Scope is confirmed again on a draft made
+// after the move, through Back to editing (which starts it unconfirmed) and Finish.
+export async function confirmationPredatesReprice(tx: CompanyTransaction, companyId: string, jobId: string, draftId: string): Promise<boolean> {
+  const pin = await currentPin(tx, companyId, jobId);
+  if (pin?.reason !== 'owner_reprice') return false;
+  const [moved] = await tx
+    .select({ id: auditEvents.id })
+    .from(auditEvents)
+    .where(
+      and(
+        eq(auditEvents.companyId, companyId),
+        eq(auditEvents.target, jobId),
+        eq(auditEvents.action, 'job_repriced'),
+        sql`${auditEvents.details}->>'sequence' = ${String(pin.sequence)}`,
+        sql`${auditEvents.details}->>'job_draft' = ${draftId}`,
+      ),
+    )
+    .limit(1);
+  return moved !== undefined;
 }
 
 // The company's document inputs; settings that do not read through their schema are never used.
@@ -299,10 +325,7 @@ export function estimatesService(db: Database): EstimatesService {
         const company = await companyDocuments(tx, caller.companyId);
         const input = inputOf(snapshot, company);
         if (!input.scopeConfirmed) throw new EstimateError('scope_not_confirmed');
-        // A reprice clears the scope confirmation (pricing plan 3): a record made before the pin was
-        // last moved states a confirmation given at the old prices, so scope is confirmed again on a
-        // record made after it, through Back to editing and Finish.
-        if (pin?.reason === 'owner_reprice' && !(submission.decidedAt && submission.decidedAt > pin.pinnedAt)) throw new EstimateError('scope_not_confirmed');
+        if (await confirmationPredatesReprice(tx, caller.companyId, jobId, job.currentDraftId)) throw new EstimateError('scope_not_confirmed');
         if (!input.summary.trim()) throw new EstimateError('summary_missing');
         const { estimate, table } = priceInput(input, version);
 
@@ -311,7 +334,7 @@ export function estimatesService(db: Database): EstimatesService {
           const [made] = await tx
             .insert(jobPricePins)
             .values({ companyId: caller.companyId, jobId, sequence: 1, versionId: version.id, reason: 'first_price', pinnedByActorId: caller.actorId })
-            .returning({ id: jobPricePins.id, sequence: jobPricePins.sequence, versionId: jobPricePins.versionId, reason: jobPricePins.reason, pinnedAt: jobPricePins.pinnedAt });
+            .returning({ id: jobPricePins.id, sequence: jobPricePins.sequence, versionId: jobPricePins.versionId, reason: jobPricePins.reason });
           pinned = made!;
           await audit(tx, caller, 'job_price_pinned', jobId, { sequence: pinned.sequence, version: version.sequence });
         }
@@ -358,13 +381,13 @@ export function estimatesService(db: Database): EstimatesService {
     // the job's row lock and the lock Publish takes, so the check and the write cannot interleave with
     // a publish. The estimate of the old pin is no longer the job's current one, so it cannot be
     // signed, and the next estimate is priced from the new pin once scope is confirmed again on a new
-    // record. The same change id again is answered as the first time with nothing written, and with
-    // another body is refused. A refusal writes nothing.
+    // draft; a job back in editing may be repriced too. The same change id again is answered as the
+    // first time with nothing written, and with another body is refused. A refusal writes nothing.
     async reprice(caller, jobId, input) {
       if (!hasAny(caller, REPRICE)) throw new JobError('not_allowed');
       return withCompany(db, caller.companyId, async (tx) => {
-        const job = await jobAccess(tx, caller, jobId, REPRICE, { lock: true });
         await lockActiveOwner(tx, caller);
+        const job = await jobAccess(tx, caller, jobId, REPRICE, { lock: true });
         const [done] = await tx
           .select({ details: auditEvents.details })
           .from(auditEvents)
@@ -382,7 +405,6 @@ export function estimatesService(db: Database): EstimatesService {
           return { job: { id: jobId, status: first.job_status, currentDraftId: first.job_draft, revision: first.job_revision }, pin: { sequence: first.sequence, version: first.version } };
         }
         if (job.status === 'signed') throw new EstimateError('job_signed');
-        if (job.status !== 'submitted') throw new EstimateError('not_submitted');
         if (job.revision !== input.revision) throw new JobError('stale_revision');
         const pin = await currentPin(tx, caller.companyId, jobId);
         if (!pin) throw new EstimateError('not_priced');

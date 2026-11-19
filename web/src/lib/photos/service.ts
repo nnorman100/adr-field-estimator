@@ -1,5 +1,5 @@
 import type { ReadableStream as WebReadableStream } from 'node:stream/web';
-import { and, count, eq, getTableColumns, inArray } from 'drizzle-orm';
+import { and, count, eq, getTableColumns, inArray, sql } from 'drizzle-orm';
 import { auditEvents, evidenceObjects } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import { MAX_PHOTO_REFS } from '@/lib/field/schema';
@@ -102,6 +102,23 @@ async function registryRows(tx: CompanyTransaction, caller: JobCaller, jobId: st
     );
 }
 
+// The proposal a registered signature was bound to when it was received, from its receipt's audit row.
+async function boundProposal(tx: CompanyTransaction, caller: JobCaller, jobId: string, photoId: string): Promise<string | undefined> {
+  const [row] = await tx
+    .select({ proposal: sql<string | null>`${auditEvents.details}->>'proposal_sha256'` })
+    .from(auditEvents)
+    .where(
+      and(
+        eq(auditEvents.companyId, caller.companyId),
+        eq(auditEvents.target, jobId),
+        eq(auditEvents.action, RECEIVED.signature),
+        sql`${auditEvents.details}->>'object' = ${photoId}`,
+      ),
+    )
+    .limit(1);
+  return row?.proposal ?? undefined;
+}
+
 // The photo row of one id and the photos the server holds for the job, read in one statement so
 // both come from one snapshot: an id seen as not registered is never then counted as registered.
 // The photos are counted from the registry, not from the phone's own reference documents, so a
@@ -169,7 +186,8 @@ export function photosService(db: Database, store: EvidenceStore, drafts: DraftS
         const rows = await registryRows(tx, caller, jobId, photoId);
         const same = rows.find((row) => row.kind === kind);
         if (kind === 'signature' && !same) await requireSignable(tx, caller, job, input.proposalSha256);
-        return { job, same, photo: rows.find((row) => row.kind === 'photo') };
+        const bound = kind === 'signature' && same ? await boundProposal(tx, caller, jobId, photoId) : undefined;
+        return { job, same, bound, photo: rows.find((row) => row.kind === 'photo') };
       });
 
       const bytes = await input.readBytes();
@@ -189,6 +207,7 @@ export function photosService(db: Database, store: EvidenceStore, drafts: DraftS
       // again), other bytes under the same id are a conflict.
       if (seen.same) {
         if (seen.same.sha256 !== sha256) throw new PhotoError('photo_conflict');
+        if (kind === 'signature' && seen.bound !== input.proposalSha256) throw new PhotoError('photo_conflict');
         return { created: false, receipt: receiptOf(seen.same) };
       }
 
@@ -256,6 +275,7 @@ export function photosService(db: Database, store: EvidenceStore, drafts: DraftS
         }
         const [existing] = (await registryRows(tx, caller, jobId, photoId)).filter((row) => row.kind === kind);
         if (!existing || existing.sha256 !== sha256) throw new PhotoError('photo_conflict');
+        if (kind === 'signature' && (await boundProposal(tx, caller, jobId, photoId)) !== input.proposalSha256) throw new PhotoError('photo_conflict');
         return { created: false, receipt: receiptOf(existing) };
       });
     },
