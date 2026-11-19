@@ -640,7 +640,6 @@ const ADJUSTMENT = z
   })
   .superRefine((adjustment, ctx) => {
     const value = Dec.parse(adjustment.value);
-    if (value.isZero()) ctx.addIssue({ code: 'custom', path: ['value'], message: 'must be above 0' });
     if (adjustment.kind === 'percent' && adjustment.direction === 'discount' && value.cmp(HUNDRED) > 0) {
       ctx.addIssue({ code: 'custom', path: ['value'], message: 'a percent discount must be at most 100' });
     }

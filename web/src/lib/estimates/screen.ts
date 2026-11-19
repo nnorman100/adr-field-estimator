@@ -1,5 +1,5 @@
 import type { ProposalEnd } from '@/engine/estimate';
-import { adjustmentLines, dollars } from '@/engine/values';
+import { dollars } from '@/engine/values';
 import type { EstimateView } from './result';
 
 // What the Review before signing screen decides in the browser, as pure functions so they are
@@ -57,10 +57,13 @@ export function pricePointLine(low: ProposalEnd, high: ProposalEnd | null): stri
   return `Price-point adjustment (not taxed): ${amount(low)} at the low end, ${amount(high)} at the high end`;
 }
 
-export { adjustmentLines };
-
 /** One end's charges in the order the engine adds them into its total: the subtotal, then each adjustment it charged. */
-export function chargeRows(end: ProposalEnd, afterHoursLabel: string, withPricePoint = true): Array<{ label: string; amount: string }> {
+export function chargeRows(
+  end: ProposalEnd,
+  afterHoursLabel: string,
+  withPricePoint = true,
+  withNamed = true,
+): Array<{ label: string; amount: string; spaced?: true }> {
   const adjustments = [
     { label: afterHoursLabel, amount: end.after_hours },
     ...end.trade_minimums.map((row) => ({ label: `${row.name} trade minimum`, amount: row.amount })),
@@ -71,11 +74,11 @@ export function chargeRows(end: ProposalEnd, afterHoursLabel: string, withPriceP
     { label: 'Price-point adjustment', amount: withPricePoint ? (end.price_point ?? '0.00') : '0.00' },
   ];
   // The named adjustment comes after rounding (S5b-7): a discount as a negative amount, and no row when it came to nothing.
-  const named = withPricePoint && end.adjustment && end.adjustment.amount !== '0.00' ? [end.adjustment] : [];
+  const named = withNamed && end.adjustment && end.adjustment.amount !== '0.00' ? [end.adjustment] : [];
   return [
     { label: 'Subtotal', amount: end.subtotal },
     ...adjustments.filter((row) => row.amount !== '0.00'),
-    ...named.map((row) => ({ label: row.name, amount: row.direction === 'discount' ? `-${row.amount}` : row.amount })),
+    ...named.map((row) => ({ label: row.name, amount: row.direction === 'discount' ? `-${row.amount}` : row.amount, spaced: true as const })),
   ];
 }
 

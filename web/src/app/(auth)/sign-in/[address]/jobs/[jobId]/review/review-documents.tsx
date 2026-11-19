@@ -1,7 +1,8 @@
 import { LinkPhoto } from '@/components/links/link-photo';
 import type { ProposalEnd, LetterLine, ProposalLetter } from '@/engine/estimate';
+import { adjustmentLines } from '@/engine/values';
 import type { EstimateView } from '@/lib/estimates/result';
-import { adjustmentLines, chargeRows, dollars, photoAlbums, priceLines, pricePointLine, quantityNoteLine, warningText } from '@/lib/estimates/screen';
+import { chargeRows, dollars, photoAlbums, priceLines, pricePointLine, quantityNoteLine, warningText } from '@/lib/estimates/screen';
 
 // The parts of Review before signing that show the stored estimate: the price, the four documents
 // and the staff-only notes. Every amount and sentence is the server's, shown as stored; the
@@ -15,10 +16,20 @@ function text(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
-function Charges({ end, afterHoursLabel, withPricePoint = true }: { end: ProposalEnd; afterHoursLabel: string; withPricePoint?: boolean }) {
-  return chargeRows(end, afterHoursLabel, withPricePoint).map((row, index) => (
+function Charges({
+  end,
+  afterHoursLabel,
+  withPricePoint = true,
+  withNamed = true,
+}: {
+  end: ProposalEnd;
+  afterHoursLabel: string;
+  withPricePoint?: boolean;
+  withNamed?: boolean;
+}) {
+  return chargeRows(end, afterHoursLabel, withPricePoint, withNamed).map((row, index) => (
     <li key={`${index}-${row.label}`} className={ROW}>
-      <span className="min-w-0 whitespace-pre-wrap break-words">{row.label}</span>
+      <span className={row.spaced ? 'min-w-0 break-words whitespace-pre-wrap' : 'min-w-0 break-words'}>{row.label}</span>
       <span className="shrink-0 tabular-nums">{dollars(row.amount)}</span>
     </li>
   ));
@@ -166,7 +177,7 @@ export function Proposal({ proposal }: { proposal: NonNullable<EstimateView['pro
           <List items={proposal.disclaimers} />
           {price.charge_rows ? (
             <ul className="flex flex-col gap-1">
-              <Charges end={price.low} afterHoursLabel={price.after_hours_label} withPricePoint={false} />
+              <Charges end={price.low} afterHoursLabel={price.after_hours_label} withPricePoint={false} withNamed={false} />
             </ul>
           ) : null}
           {priceLine}
@@ -181,7 +192,7 @@ export function Proposal({ proposal }: { proposal: NonNullable<EstimateView['pro
                   <span className="shrink-0 tabular-nums">{dollars(line.total)}</span>
                 </li>
               ))}
-              <Charges end={price.low} afterHoursLabel={price.after_hours_label} withPricePoint={false} />
+              <Charges end={price.low} afterHoursLabel={price.after_hours_label} withPricePoint={false} withNamed={false} />
             </ul>
           ) : null}
           {priceLine}

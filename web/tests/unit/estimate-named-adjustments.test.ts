@@ -9,7 +9,8 @@ import { NEUTRAL_LETTERHEAD, NEUTRAL_SETTINGS, type CompanyDocuments } from '../
 
 import { checkTable, priceEstimate } from '../../src/engine/estimate';
 import { contentHash, parseTable } from '../../src/engine/table';
-import { adjustmentLines, chargeRows } from '../../src/lib/estimates/screen';
+import { adjustmentLines } from '../../src/engine/values';
+import { chargeRows } from '../../src/lib/estimates/screen';
 import { COMPANY, documentJob, item, job, priced, room, table, type Obj } from './estimate-fixtures';
 
 const SENIOR: Obj = { adjustment_id: 'senior', name: 'Senior discount', kind: 'percent', direction: 'discount', value: '10' };
@@ -84,9 +85,9 @@ describe('named adjustment worked examples', () => {
 describe('printed arithmetic', () => {
   it('prints a discount with a minus and a charge with a plus', () => {
     const discount = priceWith(withAdjustments('2431.17', { price_point: { step: '100', ending: '99' } }), 'senior');
-    expect(adjustmentLines(discount.totals.low, null)).toEqual(['$2,499.00 − Senior discount $249.90 = $2,249.10']);
+    expect(adjustmentLines(discount.totals.low, null)).toEqual(['$2,499.00 − \u2068Senior discount\u2069 $249.90 = $2,249.10']);
     const extra = priceWith(withAdjustments('1000.00'), 'rush');
-    expect(adjustmentLines(extra.totals.low, null)).toEqual(['$1,000.00 + Weekend start $125.00 = $1,125.00']);
+    expect(adjustmentLines(extra.totals.low, null)).toEqual(['$1,000.00 + \u2068Weekend start\u2069 $125.00 = $1,125.00']);
   });
 
   it('names each end in a range', () => {
@@ -95,9 +96,26 @@ describe('printed arithmetic', () => {
       { ...job([room('Kitchen', { unfinished_sf: 600 })]), adjustment: 'loyal' },
     );
     expect(adjustmentLines(result.totals.low, result.totals.high)).toEqual([
-      'Low end: $1,200.00 − Returning customer $50.00 = $1,150.00',
-      'High end: $1,800.00 − Returning customer $50.00 = $1,750.00',
+      'Low end: $1,200.00 − \u2068Returning customer\u2069 $50.00 = $1,150.00',
+      'High end: $1,800.00 − \u2068Returning customer\u2069 $50.00 = $1,750.00',
     ]);
+  });
+
+  it('isolates the label so a right-to-left name keeps the amounts in order', () => {
+    const result = priceWith({ ...table([charge('1000.00')]), adjustments: [{ ...LOYAL, name: 'הנחת לקוח' }] }, 'loyal');
+    expect(adjustmentLines(result.totals.low, null)).toEqual(['$1,000.00 − \u2068הנחת לקוח\u2069 $50.00 = $950.00']);
+  });
+
+  it('the staff rows include the named adjustment; the proposal leaves it to the arithmetic line', () => {
+    const result = priceWith(withAdjustments('1000.00'), 'loyal');
+    expect(chargeRows(result.totals.low, 'After-hours adjustment', false).map((row) => row.amount)).toEqual(['1000.00', '-50.00']);
+    expect(chargeRows(result.totals.low, 'After-hours adjustment', false, false)).toEqual([{ label: 'Subtotal', amount: '1000.00' }]);
+  });
+
+  it('a zero-value adjustment prices unchanged and prints no charge row', () => {
+    const result = priceWith({ ...table([charge('1000.00')]), adjustments: [{ ...LOYAL, value: '0' }] }, 'loyal');
+    expect(result.totals.low.total).toBe('1000.00');
+    expect(chargeRows(result.totals.low, 'After-hours adjustment')).toEqual([{ label: 'Subtotal', amount: '1000.00' }]);
   });
 
   it('the charge rows still add up to the adjusted total', () => {
@@ -105,7 +123,7 @@ describe('printed arithmetic', () => {
     const rows = chargeRows(result.totals.low, 'After-hours adjustment');
     expect(rows).toEqual([
       { label: 'Subtotal', amount: '1000.00' },
-      { label: 'Returning customer', amount: '-50.00' },
+      { label: 'Returning customer', amount: '-50.00', spaced: true },
     ]);
     const cents = (amount: string) => Math.round(Number(amount) * 100);
     expect(rows.reduce((sum, row) => sum + cents(row.amount), 0)).toBe(cents(result.totals.low.total));
@@ -162,8 +180,8 @@ describe('adjustment schema', () => {
     expect(result.totals.low.total).toBe('126000.00');
   });
 
-  it('refuses a zero value, a percent discount above 100 and repeated ids; a percent charge may exceed 100, and the catalog has no ceiling', () => {
-    expect(check({ ...LOYAL, value: '0' }).ok).toBe(false);
+  it('takes a zero value, refuses a percent discount above 100 and repeated ids; a percent charge may exceed 100, and the catalog has no ceiling', () => {
+    expect(check({ ...LOYAL, value: '0' }).ok).toBe(true);
     expect(check({ ...SENIOR, value: '100.01' }).ok).toBe(false);
     expect(check({ ...SENIOR, value: '100' }).ok).toBe(true);
     expect(check({ ...SENIOR, direction: 'charge', value: '150' }).ok).toBe(true);
@@ -190,7 +208,7 @@ describe('the documents state the adjustment', () => {
     const result = run({ price_point: { step: '100', ending: '99' } }, 'senior');
     if (!result.ok) throw new Error(result.error);
     expect(result.documents?.letter).toContain(
-      'Itemized total: $2,249.10.\nPrice-point adjustment (not taxed): $67.83.\n$2,499.00 \u2212 Senior discount $249.90 = $2,249.10',
+      'Itemized total: $2,249.10.\nPrice-point adjustment (not taxed): $67.83.\n$2,499.00 \u2212 \u2068Senior discount\u2069 $249.90 = $2,249.10',
     );
   });
 
@@ -202,7 +220,7 @@ describe('the documents state the adjustment', () => {
     );
     if (!result.ok) throw new Error(result.error);
     const [line] = adjustmentLines(result.totals.low, null);
-    expect(line).toBe(`$1,000.00 − ${label} $50.00 = $950.00`);
+    expect(line).toBe(`$1,000.00 − \u2068${label}\u2069 $50.00 = $950.00`);
     expect(result.documents?.letter).toContain(line);
     expect(chargeRows(result.totals.low, 'After-hours adjustment')[1]?.label).toBe(label);
   });
@@ -211,7 +229,7 @@ describe('the documents state the adjustment', () => {
     const result = run({ estimate_mode: 'range', range: { first_sf: 1000, first_percent: '0', beyond_percent: '0' } }, 'loyal');
     if (!result.ok) throw new Error(result.error);
     expect(result.documents?.letter).toContain(
-      'Low end: $2,431.17 \u2212 Returning customer $50.00 = $2,381.17\nHigh end: $2,431.17 \u2212 Returning customer $50.00 = $2,381.17',
+      'Low end: $2,431.17 \u2212 \u2068Returning customer\u2069 $50.00 = $2,381.17\nHigh end: $2,431.17 \u2212 \u2068Returning customer\u2069 $50.00 = $2,381.17',
     );
   });
 
