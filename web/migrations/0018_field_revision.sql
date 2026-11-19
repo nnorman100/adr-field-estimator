@@ -5,7 +5,8 @@
 -- is removed. Nothing reads or writes these columns yet: the sync that does comes in later slices.
 --
 -- 1. jobs.field_revision: rises by exactly one, inside the database, every time an input of the
---    drafts' life cycle changes: the job's status, current draft or field owner (a trigger on jobs),
+--    drafts' life cycle changes: the job's status, current draft, field owner or copy source (a trigger
+--    on jobs; a copy's first draft is built from its source),
 --    its coordination row (inserted, or its revision moving), a submission (inserted, or its status
 --    moving), a draft id claimed for it (job_drafts), and the sign-in uid of its field owner
 --    (actors). Nothing else moves it: not the address, the job revision alone, office notes saved
@@ -49,8 +50,9 @@ ALTER TABLE jobs
 CREATE INDEX jobs_field_sync_due ON jobs (field_changed_at, company_id) WHERE field_synced_revision < field_revision;
 
 -- 1. A new job starts at field revision 0, synced at 0 (its draft claim bumps it). On an update, the
--- field revision rises by one when the status, current draft or field owner changes, or when the
--- statement asks for a bump (field_revision + 1, the triggers below); any other value is refused.
+-- field revision rises by one when the status, current draft, field owner or copy source changes, or
+-- when the statement asks for a bump (field_revision + 1, the triggers below); any other value is
+-- refused.
 -- Runs as the caller. Named to fire before jobs_guard_revision (triggers fire in name order), though
 -- the guard below does not depend on that order.
 CREATE FUNCTION jobs_field_revision() RETURNS trigger
@@ -87,6 +89,7 @@ CREATE TRIGGER jobs_field_revision_update
     NEW.status IS DISTINCT FROM OLD.status
     OR NEW.current_draft_id IS DISTINCT FROM OLD.current_draft_id
     OR NEW.field_owner_actor_id IS DISTINCT FROM OLD.field_owner_actor_id
+    OR NEW.copied_from_job_id IS DISTINCT FROM OLD.copied_from_job_id
     OR NEW.field_revision IS DISTINCT FROM OLD.field_revision
   )
   EXECUTE FUNCTION jobs_field_revision();
@@ -125,30 +128,6 @@ BEGIN
   RETURN NEW;
 END
 $$;
-
--- 4. The fill: each existing copy's source, from its job_copied audit row (details.copiedFrom, the
--- target being the copy's id), when that names a job of the same company. Row-level security is forced
--- on jobs and the audit log, which binds their owner (the migrator) too, and no policy is the
--- migrator's: the owner reads and fills them with it unforced, inside this file's one transaction, and
--- forces it again right after (as 0016 does). The fill changes no status, draft or owner, so it moves
--- no field revision, and the guard above lets it keep the job revision.
-ALTER TABLE jobs NO FORCE ROW LEVEL SECURITY;
-ALTER TABLE audit_events NO FORCE ROW LEVEL SECURITY;
-
-UPDATE jobs j
-SET copied_from_job_id = s.id
-FROM audit_events a
-JOIN jobs s ON s.company_id = a.company_id
-  AND (a.details ->> 'copiedFrom') ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-  AND s.id = (a.details ->> 'copiedFrom')::uuid
-WHERE a.action = 'job_copied'
-  AND a.company_id = j.company_id
-  AND a.target = j.id::text
-  AND s.id <> j.id
-  AND j.copied_from_job_id IS NULL;
-
-ALTER TABLE jobs FORCE ROW LEVEL SECURITY;
-ALTER TABLE audit_events FORCE ROW LEVEL SECURITY;
 
 -- The bump from another table: raises the field revision of the row's job, as the caller. Refused
 -- when the caller cannot update that job (the foreign keys guarantee it exists).
@@ -228,42 +207,6 @@ CREATE TRIGGER actors_field_revision
   WHEN (NEW.uid IS DISTINCT FROM OLD.uid AND NEW.company_id IS NOT NULL)
   EXECUTE FUNCTION actors_field_revision();
 
--- The copy source from the job_copied audit row that Copy writes in the copy's own transaction
--- (details.copiedFrom, the target being the copy's id), so the previous version's copies get it too.
--- Only while the copy has none, and only a job of the same company; an id that is not one, or a job the
--- caller cannot change, sets nothing and never fails the audit write. Runs as the caller.
-CREATE FUNCTION audit_events_copy_source() RETURNS trigger
-  LANGUAGE plpgsql
-  SET search_path = pg_catalog
-AS $$
-BEGIN
-  IF NEW.company_id IS NULL
-     OR NEW.details ->> 'copiedFrom' IS NULL
-     OR (NEW.details ->> 'copiedFrom') !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-     OR NEW.target IS NULL
-     OR NEW.target !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
-    RETURN NULL;
-  END IF;
-  UPDATE public.jobs j SET copied_from_job_id = s.id
-  FROM public.jobs s
-  WHERE j.company_id = NEW.company_id
-    AND j.id = NEW.target::uuid
-    AND j.copied_from_job_id IS NULL
-    AND s.company_id = NEW.company_id
-    AND s.id = (NEW.details ->> 'copiedFrom')::uuid
-    AND s.id <> j.id;
-  RETURN NULL;
-END
-$$;
-
-REVOKE ALL ON FUNCTION audit_events_copy_source() FROM PUBLIC;
-
-CREATE TRIGGER audit_events_copy_source
-  AFTER INSERT ON audit_events
-  FOR EACH ROW
-  WHEN (NEW.action = 'job_copied')
-  EXECUTE FUNCTION audit_events_copy_source();
-
 -- Table rights: the bump (field_revision, only ever by one, as the trigger above holds), the sync's
 -- watermark, and the copy source (set once, as the guard holds; inserting it is covered by the
 -- runtime's INSERT on jobs, 0010). No UPDATE of field_changed_at or of anything else is granted.
@@ -320,3 +263,67 @@ $$;
 -- Functions are executable by everyone by default. Only the runtime may call this one.
 REVOKE ALL ON FUNCTION job_field_sync_due_companies(integer, integer) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION job_field_sync_due_companies(integer, integer) TO dryscope_runtime;
+
+-- 4. The fill: each existing copy's source, from its job_copied audit row (details.copiedFrom, the
+-- target being the copy's id), when that names a job of the same company. Row-level security is forced
+-- on jobs and the audit log, which binds their owner (the migrator) too, and no policy is the
+-- migrator's: the owner reads and fills them with it unforced, inside this file's one transaction, and
+-- forces it again right after (as 0016 does). Setting a source raises that copy's field revision (it is
+-- a life-cycle input), so a copy whose first draft was never made is due for the repair pass; the guard
+-- above lets it keep the job revision. This and the audit trigger come last, so the audit log is locked
+-- after every other table this file changes, as a request writes its audit row last: a request that
+-- holds actors or a submission and is about to write its audit row never waits on this file while this
+-- file waits on it.
+ALTER TABLE jobs NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE audit_events NO FORCE ROW LEVEL SECURITY;
+
+UPDATE jobs j
+SET copied_from_job_id = s.id
+FROM audit_events a
+JOIN jobs s ON s.company_id = a.company_id
+  AND (a.details ->> 'copiedFrom') ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+  AND s.id = (a.details ->> 'copiedFrom')::uuid
+WHERE a.action = 'job_copied'
+  AND a.company_id = j.company_id
+  AND a.target = j.id::text
+  AND s.id <> j.id
+  AND j.copied_from_job_id IS NULL;
+
+ALTER TABLE jobs FORCE ROW LEVEL SECURITY;
+ALTER TABLE audit_events FORCE ROW LEVEL SECURITY;
+
+-- The copy source from the job_copied audit row that Copy writes in the copy's own transaction
+-- (details.copiedFrom, the target being the copy's id), so the previous version's copies get it too.
+-- Only while the copy has none, and only a job of the same company; an id that is not one, or a job the
+-- caller cannot change, sets nothing and never fails the audit write. Runs as the caller.
+CREATE FUNCTION audit_events_copy_source() RETURNS trigger
+  LANGUAGE plpgsql
+  SET search_path = pg_catalog
+AS $$
+BEGIN
+  IF NEW.company_id IS NULL
+     OR NEW.details ->> 'copiedFrom' IS NULL
+     OR (NEW.details ->> 'copiedFrom') !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+     OR NEW.target IS NULL
+     OR NEW.target !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+    RETURN NULL;
+  END IF;
+  UPDATE public.jobs j SET copied_from_job_id = s.id
+  FROM public.jobs s
+  WHERE j.company_id = NEW.company_id
+    AND j.id = NEW.target::uuid
+    AND j.copied_from_job_id IS NULL
+    AND s.company_id = NEW.company_id
+    AND s.id = (NEW.details ->> 'copiedFrom')::uuid
+    AND s.id <> j.id;
+  RETURN NULL;
+END
+$$;
+
+REVOKE ALL ON FUNCTION audit_events_copy_source() FROM PUBLIC;
+
+CREATE TRIGGER audit_events_copy_source
+  AFTER INSERT ON audit_events
+  FOR EACH ROW
+  WHEN (NEW.action = 'job_copied')
+  EXECUTE FUNCTION audit_events_copy_source();

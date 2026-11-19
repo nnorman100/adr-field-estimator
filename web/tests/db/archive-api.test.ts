@@ -288,8 +288,12 @@ describe('copy', () => {
       await sql`SET LOCAL session_replication_role = replica`;
       await sql`UPDATE jobs SET copied_from_job_id = NULL WHERE id = ${ids.id}`;
     });
+    const [before] = await h.admin<{ field: number }[]>`SELECT field_revision::int AS field FROM jobs WHERE id = ${ids.id}`;
     expect((await copy(ESTIMATOR_A, source, ids)).status).toBe(200);
-    expect(await h.admin`SELECT copied_from_job_id::text AS source, revision FROM jobs WHERE id = ${ids.id}`).toEqual([{ source, revision: 1 }]);
+    // Setting the source is a life-cycle input: the field revision rises, the job revision stays.
+    expect(await h.admin`SELECT copied_from_job_id::text AS source, revision, field_revision::int AS field FROM jobs WHERE id = ${ids.id}`).toEqual([
+      { source, revision: 1, field: before!.field + 1 },
+    ]);
   });
 
   it('refuses another body under the same id, and copies only a signed job', async () => {

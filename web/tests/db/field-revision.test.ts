@@ -188,11 +188,12 @@ describe('migration 0018: what the runtime may write', () => {
     expect(await state(job.id)).toMatchObject({ field: 1, revision: 1 });
     expect(await errorCode(exec(h.seed.a, `UPDATE jobs SET field_revision = 0 WHERE id = '${job.id}'`))).toBe(CHECK_VIOLATION);
     expect(await errorCode(exec(h.seed.a, `UPDATE jobs SET field_changed_at = now() WHERE id = '${job.id}'`))).toBe(INSUFFICIENT_PRIVILEGE);
-    // A copy source is set once, to a job of the same company, keeping both revisions; never changed or cleared.
+    // A copy source is set once, to a job of the same company, keeping the job revision; never changed or cleared.
     const [first, second] = [await jobOf(h.seed.a), await jobOf(h.seed.a)];
     expect(await errorCode(exec(h.seed.a, `UPDATE jobs SET copied_from_job_id = '${(await jobOf(h.seed.b)).id}' WHERE id = '${job.id}'`))).toBe(FOREIGN_KEY_VIOLATION);
     await exec(h.seed.a, `UPDATE jobs SET copied_from_job_id = '${first.id}' WHERE id = '${job.id}'`);
-    expect(await state(job.id)).toMatchObject({ field: 1, revision: 1 });
+    // The copy source is a life-cycle input: setting it raises the field revision, not the job revision.
+    expect(await state(job.id)).toMatchObject({ field: 2, revision: 1 });
     for (const set of [`copied_from_job_id = '${second.id}'`, 'copied_from_job_id = NULL']) {
       expect({ set, code: await errorCode(exec(h.seed.a, `UPDATE jobs SET ${set} WHERE id = '${job.id}'`)) }).toEqual({ set, code: CHECK_VIOLATION });
     }
@@ -239,14 +240,15 @@ describe('migration 0018: the copy source from the job_copied audit row', () => 
     );
   const sourceOf = async (job: string) => (await h.admin<{ source: string | null }[]>`SELECT copied_from_job_id::text AS source FROM jobs WHERE id = ${job}`)[0]!.source;
 
-  it('sets an empty copy source from the audit row, once, to a job of the same company, moving neither revision', async () => {
+  it('sets an empty copy source from the audit row, once, to a job of the same company, raising the field revision only', async () => {
     const [source, copy, later] = [await jobOf(h.seed.a), await jobOf(h.seed.a), await jobOf(h.seed.a)];
     await copied(h.seed.a, copy.id, source.id);
     expect(await sourceOf(copy.id)).toBe(source.id);
-    expect(await state(copy.id)).toMatchObject({ field: 0, revision: 1 });
-    // A second audit row never moves a source already set.
+    expect(await state(copy.id)).toMatchObject({ field: 1, synced: 0, revision: 1 });
+    // A second audit row never moves a source already set, nor the field revision.
     await copied(h.seed.a, copy.id, later.id);
     expect(await sourceOf(copy.id)).toBe(source.id);
+    expect((await state(copy.id)).field).toBe(1);
   });
 
   it('sets nothing for another company’s job, an id that is not one, or another action, and never fails the audit write', async () => {
@@ -259,6 +261,7 @@ describe('migration 0018: the copy source from the job_copied audit row', () => 
       `INSERT INTO audit_events (company_id, actor_id, action, target, details) VALUES ('${h.seed.a}', '${ownerOf(h, h.seed.a)}', 'job_archived', '${plain.id}', '${JSON.stringify({ copiedFrom: (await jobOf(h.seed.a)).id })}'::jsonb)`,
     );
     expect(await sourceOf(plain.id)).toBeNull();
+    expect((await state(plain.id)).field).toBe(0);
     expect(await h.admin`SELECT count(*)::int AS n FROM audit_events WHERE target IN (${plain.id}, 'not-a-job')`).toEqual([{ n: 4 }]);
   });
 });
@@ -343,7 +346,7 @@ describe('migration 0018: the copy source of existing copies', () => {
     await database?.drop();
   });
 
-  it('fills each copy’s source from its job_copied audit row, only for a job of the same company, and changes nothing else', async () => {
+  it('fills each copy’s source from its job_copied audit row, only for a job of the same company, and makes it due for repair', async () => {
     const shared = inject('dryscopeDatabases');
     database = await createDiscardDatabase(shared.rolesUrl);
     await emptyDiscardDatabase(database.databaseUrl);
@@ -397,7 +400,9 @@ describe('migration 0018: the copy source of existing copies', () => {
         [plain]: null,
         [other]: null,
       });
-      expect(filled.every((row) => row.field === 0)).toBe(true);
+      // A filled copy is due for the repair pass (behind its sync), so a copy whose first draft was never
+      // made gets it rebuilt; every other job is not.
+      expect(Object.fromEntries(filled.map((row) => [row.id, row.field]))).toEqual({ [source]: 0, [copy]: 1, [elsewhere]: 0, [malformed]: 0, [plain]: 0, [other]: 0 });
       expect(await admin`SELECT id, revision, status, updated_at FROM jobs ORDER BY id`).toEqual(before);
       expect(await admin`SELECT relname AS name, relforcerowsecurity AS forced FROM pg_class WHERE relname IN ('audit_events', 'jobs') ORDER BY 1`).toEqual([
         { name: 'audit_events', forced: true },

@@ -106,7 +106,7 @@ are the database part of the draft life-cycle redesign (Design 2): one sync step
 draft of a job from Postgres, guarded by one version number. No route reads or writes them yet.
 
 - `field_revision` (starts at 0) rises by exactly one, inside the database, every time an input of the
-  drafts' life cycle changes: the job's `status`, `current_draft_id` or `field_owner_actor_id`; its
+  drafts' life cycle changes: the job's `status`, `current_draft_id`, `field_owner_actor_id` or `copied_from_job_id`; its
   `job_coordination` row being made or its `revision` moving; a `job_submissions` row being made or its
   `status` moving; a draft id claimed in `job_drafts`; and the sign-in `uid` of the person who owns the
   field work (`actors`). Nothing else moves it: not the address, the job `revision` alone, office notes saved
