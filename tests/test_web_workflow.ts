@@ -1,6 +1,6 @@
 // The Web app workflow (.github/workflows/web.yml) starts every job on every pull request, with no
 // path filter, so `company-isolation` and `check` report on each one and can be required checks.
-// `check` still requires database, emulators and company-isolation to succeed. On a pull request
+// `check` still requires database, emulators, company-isolation, e2e and image to succeed. On a pull request
 // that changes nothing under the web paths, the other jobs skip their work and report success.
 // Run by vitest in the node CI job.
 import { execFileSync } from 'node:child_process';
@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { commands, evaluateStep, load, Shell, shlex, WEB, type Data } from './workflow_support.ts';
 
 const WEB_PATHS = ['web/**', 'live-relay-placeholder/**', '.github/workflows/web.yml'];
-const REQUIRED = ['database', 'emulators', 'company-isolation'];
+const REQUIRED = ['database', 'emulators', 'company-isolation', 'e2e', 'image'];
 
 const web = (): Data => load(WEB);
 
@@ -101,19 +101,21 @@ describe('web.yml triggers', () => {
 });
 
 describe('the check job', () => {
-  it('needs the three required jobs and reports even when they fail', () => {
+  it('needs every other job and reports even when they fail', () => {
     const job = web().jobs.check;
     expect(job.needs).toEqual(REQUIRED);
     expect(evaluateStep(job.if, {}, true)).toBe(true);
   });
 
-  it('passes when the three jobs succeed and runs every one of its own steps', () => {
+  it('passes when the jobs it needs succeed and runs every one of its own steps', () => {
     const { passed, ran } = runCheck(all('success'));
     expect(passed).toBe(true);
     for (const command of [
       'Require the database job',
       'Require the emulator job',
       'Require the company-isolation job',
+      'Require the browser test job',
+      'Require the image job',
       'npm ci',
       'npm run typecheck',
       'npm run lint',

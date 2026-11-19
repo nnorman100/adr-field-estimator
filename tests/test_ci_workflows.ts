@@ -47,6 +47,14 @@ describe('every workflow', () => {
       expect(config, `${name} job ${job}`).not.toHaveProperty('container');
     }
   });
+
+  // GitHub's default job limit is 360 minutes; on a pool of three runner places one hung job would
+  // hold a third of CI for six hours (Standard: "All with time limits").
+  it.each(WORKFLOW_FILES)('%s gives every job a time limit', (name) => {
+    for (const [job, config] of Object.entries(workflow(name).jobs as Record<string, Data>)) {
+      expect(config['timeout-minutes'], `${name} job ${job}`).toEqual(expect.any(Number));
+    }
+  });
 });
 
 describe('ci.yml', () => {
