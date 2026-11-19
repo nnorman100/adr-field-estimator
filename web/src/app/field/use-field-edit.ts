@@ -65,5 +65,6 @@ export function useFieldEdit(job: JobContext) {
     }
     return onPhone;
   }
-  return { busy, error, notice, setError, setNotice, save };
+  const open = () => live.current;
+  return { busy, error, notice, setError, setNotice, save, open };
 }

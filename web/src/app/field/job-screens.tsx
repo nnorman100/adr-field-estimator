@@ -109,6 +109,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     [jobId, session.actorId],
   );
   const draftChanges = usePending(() => pending.draftChanges(jobId));
+  const draftChangeSource = usePending(() => pending.draftChangeSource(jobId));
   const [locator, setLocator] = useState<JobProjection | null>(null);
   const [cachedError, setCachedError] = useState<string | null>(null);
   // A job whose field work moved away from this person, opened again on this page, starts from the
@@ -328,7 +329,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   // A photo that settled after an earlier screen of this job closed changed the draft: read it again.
   useEffect(() => {
     // Read after this render, as an answer to the change the store posted.
-    if (draftChanges > 0) void Promise.resolve().then(() => reloadDraft());
+    if (draftChanges > 0) void Promise.resolve().then(() => reloadDraft(undefined, draftChangeSource));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftChanges]);
 
