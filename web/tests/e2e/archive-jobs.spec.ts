@@ -617,3 +617,146 @@ test('a refused jobs list clears every property address, the Restore notice and 
   mineHeld();
   await expect(main(page).getByRole('list', { name: 'Not finished' })).toBeVisible();
 });
+
+// A small PNG, as a phone's camera would hand the page a picture.
+const PICTURE = {
+  name: 'photo.png',
+  mimeType: 'image/png',
+  buffer: Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAZ0lEQVR4nBWMQQ0AQAyDqmRKqgQlU1IlU1JFl+NJCBIaZARaFHSoSGKGMQOzTJhjykh4sDF4cfDhYokfm89C4KAgscP6y1027LFlJTLEP82SkCMlEjec/+CWC3dcOYkO9d92aejR0gf/sEsBLaIzfQAAAABJRU5ErkJggg==',
+    'base64',
+  ),
+};
+
+test('a refusal of one list read hides the rows already shown while a newer read is pending, until a list is answered again', async ({ page, request }) => {
+  test.setTimeout(150_000);
+  const company = await seedCompany('list-denied-rows', { owner: 'owner' });
+  const owner = company.people.owner!;
+  const ids = [await seedJob(request, company, owner, '61 Restored A Road'), await seedJob(request, company, owner, '62 Restored B Road'), await seedJob(request, company, owner, '63 Still Archived Road')];
+  for (const id of ids) {
+    const done = await request.post(`${JOBS_BASE_URL}/api/jobs/${id}/archive`, { headers: await bearer(company, owner), data: { revision: 1, changeId: randomUUID() } });
+    expect(done.status()).toBe(200);
+  }
+
+  await signIn(page, company, owner);
+  await main(page).getByRole('link', { name: 'Archived drafts' }).click();
+  const archived = main(page).getByRole('list', { name: 'Archived drafts' });
+  await expect(archived.getByRole('listitem')).toHaveCount(3);
+
+  // Two restores each read the list again: the first read is refused only after the second was asked.
+  let refuse: () => void = () => undefined;
+  const refusal = new Promise<void>((resolve) => (refuse = resolve));
+  let answer: () => void = () => undefined;
+  const answerHeld = new Promise<void>((resolve) => (answer = resolve));
+  let asked = 0;
+  await page.route(/\/api\/jobs\?/, async (route) => {
+    asked += 1;
+    if (asked === 1) {
+      await refusal;
+      return route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ error: 'forbidden' }) });
+    }
+    await answerHeld;
+    return route.continue();
+  });
+  await archived.getByRole('listitem').filter({ hasText: '61 Restored A Road' }).getByRole('button', { name: 'Restore' }).click();
+  await expect.poll(() => asked).toBeGreaterThanOrEqual(1);
+  await archived.getByRole('listitem').filter({ hasText: '62 Restored B Road' }).getByRole('button', { name: 'Restore' }).click();
+  await expect.poll(() => asked).toBeGreaterThanOrEqual(2);
+  await expect(archived.getByText('63 Still Archived Road')).toBeVisible();
+
+  refuse();
+  await expect(main(page).getByText('63 Still Archived Road')).toHaveCount(0);
+  await expect(main(page).getByText(/Restored: it is back/)).toHaveCount(0);
+
+  // A later answer that comes means access again: the list shows.
+  answer();
+  await expect(main(page).getByRole('list', { name: 'Archived drafts' }).getByText('63 Still Archived Road')).toBeVisible();
+});
+
+test('after a refused jobs list a job opened again by Back shows no address or customer from before, while its read is pending', async ({ page, request }) => {
+  test.setTimeout(150_000);
+  const company = await seedCompany('list-denied-back', { owner: 'owner' });
+  const owner = company.people.owner!;
+  const jobId = await seedJob(request, company, owner, '64 Cached Detail Lane');
+
+  await signIn(page, company, owner);
+  await openJob(page, '64 Cached Detail Lane');
+  await page.route(/\/api\/jobs\?/, (route) => route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ error: 'forbidden' }) }));
+  await main(page).getByRole('link', { name: 'Back to jobs' }).click();
+  await expect(main(page).getByRole('alert').filter({ hasText: /./ }).first()).toBeVisible();
+
+  let release: () => void = () => undefined;
+  const readHeld = new Promise<void>((resolve) => (release = resolve));
+  await page.route(`**/api/jobs/${jobId}`, async (route) => {
+    await readHeld;
+    return route.fallback();
+  });
+  await page.goBack();
+  await expect(page.getByRole('status').filter({ hasText: 'Opening the job' })).toBeVisible();
+  await expect(page.getByText('64 Cached Detail Lane')).toHaveCount(0);
+  release();
+});
+
+test('a photo answered after an archive answered 503 is not saved to the draft and is kept to send again; the estimator picker is read only too', async ({ page, request }) => {
+  test.setTimeout(150_000);
+  const company = await seedCompany('archive-photo-hold', { owner: 'owner', helper: 'estimator' });
+  const owner = company.people.owner!;
+  const jobId = await seedJob(request, company, owner, '65 Photo Hold Place');
+  await page.route(`**/api/jobs/${jobId}/archive`, (route) => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'jobs_unavailable' }) }));
+  let cutReads = false;
+  await page.route(`**/api/jobs/${jobId}`, (route) => (cutReads && route.request().method() === 'GET' ? route.abort() : route.fallback()));
+  // The server holds the bytes, but the answer waits until after the archive.
+  let release: () => void = () => undefined;
+  const answerHeld = new Promise<void>((resolve) => (release = resolve));
+  let registered = false;
+  await page.route(new RegExp(`/api/jobs/${jobId}/photos/[^/?]+`), async (route) => {
+    if (route.request().method() !== 'PUT') return route.fallback();
+    const real = await route.fetch();
+    registered = true;
+    await answerHeld;
+    return route.fulfill({ response: real });
+  });
+
+  await signIn(page, company, owner);
+  await openJob(page, '65 Photo Hold Place');
+  await page.getByRole('link', { name: 'Photos', exact: true }).click();
+  await page.getByLabel('Take photo').setInputFiles(PICTURE);
+  await expect.poll(() => registered).toBe(true);
+
+  cutReads = true;
+  await page.getByRole('button', { name: 'Archive job' }).click();
+  await page.getByRole('dialog', { name: 'Archive this job?' }).getByRole('button', { name: 'Archive job' }).click();
+  await expect(page.getByRole('button', { name: 'Try archiving again' })).toBeVisible();
+
+  release();
+  await expect(page.getByRole('alert').filter({ hasText: 'this job is being checked' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Send again' })).toBeDisabled();
+  const draft = await currentDraftOf(company.id, jobId);
+  expect((await adminDb().collection(`companies/${company.id}/drafts/${draft}/photos`).get()).size).toBe(0);
+
+  await main(page).getByRole('link', { name: 'Job coordination' }).click();
+  await expect(page.getByLabel('Estimator', { exact: true })).toBeDisabled();
+});
+
+test('a photo that is not available does not hold customer and claim read only while the job is read again', async ({ page, request }) => {
+  test.setTimeout(150_000);
+  const company = await seedCompany('missing-photo-open', { owner: 'owner' });
+  const owner = company.people.owner!;
+  const jobId = await seedJob(request, company, owner, '66 Missing Photo Way');
+  let cutReads = false;
+  await page.route(`**/api/jobs/${jobId}`, (route) => (cutReads && route.request().method() === 'GET' ? route.abort() : route.fallback()));
+  await page.route(new RegExp(`/api/jobs/${jobId}/photos/[^/?]+`), (route) =>
+    route.request().method() === 'GET' ? route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'not_found' }) }) : route.fallback(),
+  );
+
+  await signIn(page, company, owner);
+  await openJob(page, '66 Missing Photo Way');
+  await page.getByRole('link', { name: 'Photos', exact: true }).click();
+  cutReads = true;
+  await page.getByLabel('Take photo').setInputFiles(PICTURE);
+  await expect(page.getByText(/not available/)).toBeVisible();
+
+  await page.getByRole('link', { name: 'Customer and claim' }).click();
+  await expect(page.getByLabel('Customer name')).toBeEditable();
+  await expect(page.getByRole('button', { name: 'Save customer' })).toBeVisible();
+});

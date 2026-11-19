@@ -40,6 +40,7 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
   // read is answered again. Kept for the page (src/lib/field/pending.ts), so a list opened again
   // does not show them before its own answer.
   const denied = usePending(() => pending.listDenied());
+  const rows = denied ? null : jobs;
   // Only the newest request answers: a page asked for before the list was read again from its first
   // page is not added to it, and no page is asked for until that first page is back.
   const latest = useRef(0);
@@ -124,7 +125,7 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
         </nav>
       ) : null}
       {!session.online ? <p role="status">Needs a connection</p> : null}
-      {session.online && jobs === null && !error ? <p role="status">Loading jobs…</p> : null}
+      {session.online && rows === null && !error ? <p role="status">Loading jobs…</p> : null}
       {restored && !denied ? (
         <p role="status" className="text-sm">
           Restored: it is back in the job lists.{' '}
@@ -134,7 +135,7 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
       {seesArchived && !denied ? (
         <UnfinishedArchivals
           session={session}
-          shown={(jobId, kind) => archivedList && kind === 'restore' && (jobs ?? []).some((job) => job.id === jobId)}
+          shown={(jobId, kind) => archivedList && kind === 'restore' && (rows ?? []).some((job) => job.id === jobId)}
           onAnswered={(kind, answer) => {
             if (pending.listDenied()) return;
             setRefused(archivalDone(kind, answer) || answer.ok ? null : answer.message);
@@ -148,10 +149,10 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
           {refused}
         </p>
       ) : null}
-      {jobs !== null && jobs.length === 0 ? <p>{archivedList ? 'No archived drafts.' : 'No jobs yet.'}</p> : null}
-      {archivedList && jobs !== null && jobs.length > 0 ? (
+      {rows !== null && rows.length === 0 ? <p>{archivedList ? 'No archived drafts.' : 'No jobs yet.'}</p> : null}
+      {archivedList && rows !== null && rows.length > 0 ? (
         <ul className="flex flex-col gap-2" aria-label={TITLES.archived}>
-          {jobs.map((job) => (
+          {rows.map((job) => (
             <ArchivedRow
               key={job.id}
               session={session}
@@ -166,9 +167,9 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
           ))}
         </ul>
       ) : null}
-      {!archivedList && jobs !== null && jobs.length > 0 ? (
+      {!archivedList && rows !== null && rows.length > 0 ? (
         <ul className="flex flex-col gap-2" aria-label={TITLES[shown]}>
-          {jobs.map((job) => (
+          {rows.map((job) => (
             <li key={job.id} className="rounded-md border border-foreground/20 p-3">
               <FieldLink to={{ view: 'scope', jobId: job.id }} className="text-base font-medium">
                 {job.propertyAddress || 'No address yet'}
@@ -189,7 +190,7 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
           Try again
         </Button>
       ) : null}
-      {cursor && !error ? (
+      {cursor && !denied && !error ? (
         <Button variant="outline" onClick={() => more(cursor)} disabled={busy || !session.online}>
           Show more jobs
         </Button>

@@ -94,7 +94,10 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   const posted = usePending(() => pending.detail(jobId));
   const mark = usePending(() => pending.mark(jobId));
   const denial = usePending(() => pending.denial(jobId));
-  const detail = newerDetail(read !== null && read.mark >= mark ? read.detail : null, posted);
+  // A refused job list (a suspended company, a removed member) takes every cached copy of a job, with
+  // its address and customer, off screen until a list is answered again (src/lib/field/pending.ts).
+  const listDenied = usePending(() => pending.listDenied());
+  const detail = listDenied ? null : newerDetail(read !== null && read.mark >= mark ? read.detail : null, posted);
   const setDetail = useCallback(
     (next: JobDetail, sentAt: number) => {
       if (!pending.publishDetail(jobId, next, sentAt)) return;
@@ -139,6 +142,8 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   // A refusal waits for a read of the job to say what it meant (src/lib/field/pending.ts): nothing
   // is saved meanwhile.
   const verifying = usePending(() => pending.verifying(jobId));
+  // An archive with no sure answer is being checked: nothing of the job is sent from any section.
+  const archiveChecking = usePending(() => pending.archiveChecking(jobId));
 
   // The server refused the job to this person: every copy of it goes, unless their field work is on
   // this phone (owner decision J5, src/lib/field/pending.ts), when it stays, read only.
@@ -376,7 +381,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     session.capabilities.includes('scope') &&
     !moved &&
     !archived &&
-    verifying === null &&
+    !archiveChecking &&
     detail !== null &&
     ((fieldWork === 'nobody' && detail.job.status === 'draft') || (ownerUnset && fieldWork === 'mine'));
 
@@ -397,7 +402,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     editable:
       !moved && !archived && verifying === null && !ownerUnset && draftAt === currentDraftId && draft !== null && canEditDraft(draft, session.user.uid, session.capabilities) && (session.online || session.offlineCapture),
     archived,
-    held: archived || verifying !== null,
+    held: archived || archiveChecking,
     markUnsaved,
     stale: draft !== null && draftError !== null,
   };

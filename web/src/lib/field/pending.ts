@@ -107,6 +107,9 @@ type State = {
   archivalsDone: Record<string, number>;
   // By job: a refusal waits for a read of the job sent after the mark handed out last when it came.
   verifying: Record<string, number>;
+  // By job: an archive with no sure answer is being checked (a subset of `verifying`): nothing of the
+  // job is sent from any screen until the read that settles it.
+  archiveChecks: Record<string, true>;
   // By job: how many coordination writes were answered, so a screen that read before knows to read again.
   coordSettled: Record<string, number>;
   // The server refused a job list (a suspended company, a removed member): nothing that names a
@@ -136,6 +139,7 @@ const EMPTY = {
   archived: {},
   archivalsDone: {},
   verifying: {},
+  archiveChecks: {},
   coordSettled: {},
   listDenied: false,
   listAt: 0,
@@ -289,10 +293,11 @@ export const pending = {
   },
   // A refusal of a write or a read of the job that only a read of the job sent after now can explain
   // (a move, an archive, a missing photo): nothing of it is saved until such a read is answered.
-  verify(jobId: string) {
-    change({ verifying: { ...state.verifying, [jobId]: state.marked } });
+  verify(jobId: string, archive = false) {
+    change({ verifying: { ...state.verifying, [jobId]: state.marked }, archiveChecks: archive ? { ...state.archiveChecks, [jobId]: true } : state.archiveChecks });
   },
   verifying: (jobId: string): number | null => state.verifying[jobId] ?? null,
+  archiveChecking: (jobId: string): boolean => state.archiveChecks[jobId] === true,
   // A read of the job sent under `mark` came back, whether or not a screen of the job is still
   // open: one sent after a refusal to verify settles it; a refusal drops every copy of the job; the
   // job (archived or not, S5b-2) says whether it is archived, and an archived answer is newer than
@@ -306,7 +311,9 @@ export const pending = {
     if (verifying !== undefined && mark > verifying && (answer.ok || answer.denied || archivedAnswer)) {
       const next = { ...state.verifying };
       delete next[jobId];
-      change({ verifying: next });
+      const checks = { ...state.archiveChecks };
+      delete checks[jobId];
+      change({ verifying: next, archiveChecks: checks });
     }
     if (archivedAnswer) change({ archived: flagged(state.archived, jobId, true), marks: { ...state.marks, [jobId]: mark + 0.5 } });
     else if (answer.ok) change({ readAt: { ...state.readAt, [jobId]: mark }, archived: flagged(state.archived, jobId, false) });

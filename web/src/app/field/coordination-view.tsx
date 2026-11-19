@@ -283,7 +283,7 @@ function Coordination({ job, view, setView, reread }: { job: JobContext & { deta
                 value={heldAssign ? heldAssign.estimatorActorId : pickChoice!}
                 options={heldAssign ? [{ value: heldAssign.estimatorActorId, label: labelOf(heldAssign.estimatorActorId) }] : free.map((one) => ({ value: one.actorId, label: nameOf(one) }))}
                 onChange={setPick}
-                readOnly={heldAssign !== null}
+                readOnly={heldAssign !== null || archived}
               />
               <Button type="submit" disabled={waiting || archived || other('assign') || !session.online}>
                 {waiting && heldKind === 'assign' ? 'Assigning…' : heldKind === 'assign' ? 'Try again' : 'Assign estimator'}

@@ -49,7 +49,7 @@ async function sendArchival(
   // An archive with no answer, or one answered 5xx, may have committed in the job's record and left
   // only its field step: nothing of the job is saved until a read of it says which, and the same
   // request is kept to finish it.
-  else if (request.kind === 'archive' && !answer.ok && sendAgain(answer)) pending.verify(jobId);
+  else if (request.kind === 'archive' && !answer.ok && sendAgain(answer)) pending.verify(jobId, true);
   return answer;
 }
 

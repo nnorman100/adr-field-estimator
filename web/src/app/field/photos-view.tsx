@@ -81,10 +81,14 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
 
   const update = (id: string, change: Partial<PendingPhoto>) => unsent.updatePhoto(jobId, id, change);
 
+  // Whether the job is held now, not as it was when a capture or a send began: both await.
+  const heldNow = () => job.held || unsent.archiveChecking(jobId) || unsent.archived(jobId);
+  const heldMessage = () => (job.archived || unsent.archived(jobId) ? 'Not sent: this job is archived.' : 'Not sent: this job is being checked. Send it again in a moment.');
+
   async function finish(item: PendingPhoto) {
     const db = job.session.db;
     if (job.moved) return update(item.id, { step: 'send-failed', message: 'Not sent: another person now owns this job’s field work.' });
-    if (job.held) return update(item.id, { step: 'send-failed', message: job.archived ? 'Not sent: this job is archived.' : 'Not sent: this job is being checked. Send it again in a moment.' });
+    if (heldNow()) return update(item.id, { step: 'send-failed', message: heldMessage() });
     if (!db || !job.session.online) return update(item.id, { step: 'send-failed', message: 'Needs a connection. Send it again when connected.' });
     update(item.id, { step: 'sending', message: undefined });
     const sent = await sendPhoto(job.session.user, jobId, item.id, item.bytes);
@@ -92,6 +96,7 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
       update(item.id, { step: 'send-failed', message: sent.message });
       return job.checkAccess(sent);
     }
+    if (heldNow()) return update(item.id, { step: 'send-failed', message: heldMessage() });
     update(item.id, { step: 'saving' });
     const client = job.session.client;
     try {
@@ -119,7 +124,7 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
 
   async function take(file: File | undefined) {
     setError(null);
-    if (!file || job.moved || job.held) return;
+    if (!file || job.moved || heldNow()) return;
     const capturedAt = new Date().toISOString();
     const bytes = await preparePhoto(file);
     if (!bytes) return setError('This picture could not be read. Take the photo with the camera.');
