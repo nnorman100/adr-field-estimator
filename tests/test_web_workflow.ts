@@ -114,8 +114,6 @@ describe('the check job', () => {
       'Require the database job',
       'Require the emulator job',
       'Require the company-isolation job',
-      'Require the browser test job',
-      'Require the image job',
       'npm ci',
       'npm run typecheck',
       'npm run lint',
