@@ -166,28 +166,43 @@ function ConfiguredSession({ tenantId, config, children }: { tenantId: string; c
     });
   }, [check, config, refuse, showSignedOut, tenantId]);
 
+  // Every refusal the server gives to an operator request, JSON or image, passes here. The server
+  // stopped treating this sign-in as an operator's (turned off, a second step no longer present, or
+  // a sign-in that ran out or was revoked while reading): nothing more is drawn from it. A change
+  // refused for an old sign-in (15 minutes) keeps its own "Sign in again" step on the screen.
+  const applyRefusal = useCallback(
+    (result: { status: number; code: string }, reading: boolean) => {
+      const outcome = operatorCheck(result.status, result.code);
+      if (outcome.kind === 'not-operator') void refuse('This account is not a platform operator.');
+      else if (outcome.kind === 'sign-in-again' && reading) void refuse('Please sign in again.');
+      else if (outcome.kind === 'second-step') setPhase({ name: 'refused', reason: 'second-step' });
+      else if (outcome.kind === 'verify-email') setPhase({ name: 'refused', reason: 'verify-email' });
+    },
+    [refuse],
+  );
+
   const call = useCallback(
     async <T,>(path: string, request?: { method?: 'GET' | 'POST'; body?: unknown }): Promise<ApiResult<T>> => {
       const user = authRef.current?.currentUser ?? null;
       if (!user) return { ok: false, status: 401, code: 'invalid_token' };
       const result = await operatorCall<T>(user, path, request);
-      if (!result.ok) {
-        const outcome = operatorCheck(result.status, result.code);
-        // The server stopped treating this sign-in as an operator's (turned off, or a second step
-        // no longer present): nothing more is drawn from it.
-        if (outcome.kind === 'not-operator') void refuse('This account is not a platform operator.');
-        else if (outcome.kind === 'second-step') setPhase({ name: 'refused', reason: 'second-step' });
-        else if (outcome.kind === 'verify-email') setPhase({ name: 'refused', reason: 'verify-email' });
-      }
+      if (!result.ok) applyRefusal(result, (request?.method ?? 'GET') === 'GET');
       return result;
     },
-    [refuse],
+    [applyRefusal],
   );
 
-  const image = useCallback(async (path: string): Promise<string | null> => {
-    const user = authRef.current?.currentUser ?? null;
-    return user ? operatorImage(user, path) : null;
-  }, []);
+  const image = useCallback(
+    async (path: string): Promise<string | null> => {
+      const user = authRef.current?.currentUser ?? null;
+      if (!user) return null;
+      const result = await operatorImage(user, path);
+      if (result.ok) return result.body;
+      applyRefusal(result, true);
+      return null;
+    },
+    [applyRefusal],
+  );
 
   const applyCompany = useCallback((company: CompanyView) => {
     setCompanies((current) =>

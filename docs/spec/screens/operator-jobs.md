@@ -20,7 +20,7 @@ operator asks the company owner, who holds `jobs_archive`).
 | Role | Sees | Can do |
 |---|---|---|
 | Owner, estimator, office | the operator sign-in only (a malformed tenant id answers 404; for a well-formed one the operator API answers 403 `not_an_operator` and the sign-in is dropped) | nothing |
-| Superadmin support (platform operator) | Jobs: "{company}: jobs" ("Read-only support view. Company status: {status}. Opening this list, each job and each photo is recorded in the audit log. To archive or restore a job, ask the company’s owner."), each job's address (a link), customer and "{status} · started {date}"; one job: its address, Status, Revision, Started, Last changed, and the sections Customer, Claim, Signed agreement (who signed, when, how, the proposal hash, the proposal and its photo audit log, or "Not signed."), Evidence (each photo, original or signature with its type, size, time and SHA-256) | read only; "Show more jobs" for the next page; "Show photo {n}", "Show signature {n}" for one image |
+| Superadmin support (platform operator) | Jobs: "{company}: jobs" ("Read-only support view. Company status: {status}. Opening this list, each job and each photo is recorded in the audit log. To archive or restore a job, ask the company’s owner."), each job's address (a link), customer and "{status} · started {date}"; one job: its address, Status, Revision, Started, Last changed, and the sections Customer, Claim, Signed agreement (who signed, when, how, the proposal hash, the proposal and its photo audit log as read-only lines, or "Not signed."), Evidence (each photo, original or signature with its type, size, time and SHA-256) | read only; "Show more jobs" for the next page; "Show photo {n}", "Show full-size original {n}", "Show signature {n}" for one image, in the Evidence list only |
 | Different-company user | the same as a company role | nothing |
 
 The server writes one audit row for each page of the list, each job opened and each image shown, so
@@ -32,6 +32,11 @@ each page is read once per opening, the next page only on "Show more jobs", and 
 - Unknown company or job id (not an id): "Company not found" or "Job not found".
 - Loading: "Loading the jobs…", "Loading the job…"; refused: the server's reason, "That job was not
   found in this company.", or "Sign in again to view these jobs." / "… this job."
+- Online only: "These views need a connection." on both screens, and "Needs a connection" while the
+  phone cannot reach the app; a read with no answer says "Needs a connection. Check the signal, then
+  open this page again."
+- A read or an image the server refuses because the sign-in ended or the operator's access was
+  turned off signs the operator out and draws no company data.
 - Empty: "No jobs yet.", "No photos or signature.", an empty detail reads "Not entered".
 - An image that cannot be read: "The photo could not be opened. Try again in a minute."
 

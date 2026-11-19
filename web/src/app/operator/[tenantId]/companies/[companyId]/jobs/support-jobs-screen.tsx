@@ -4,7 +4,9 @@ import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { platformPaths, type SupportJobsAnswer } from '@/lib/operator/client';
-import { isSignInAgainCode, JOB_STATUS_LABELS, operatorErrorMessage, STATUS_LABELS, supportDate } from '@/lib/operator/screens';
+import { JOB_STATUS_LABELS } from '@/lib/jobs/status-labels';
+import { STATUS_LABELS, supportDate, supportReadMessage } from '@/lib/operator/screens';
+import { ConnectionNotice } from '../../../connection-notice';
 import { useOperator } from '../../../operator-session';
 import { ErrorMessage } from '../../../ui';
 
@@ -30,7 +32,7 @@ export function SupportJobsScreen({ companyId }: { companyId: string }) {
     void (async () => {
       const result = await call<SupportJobsAnswer>(first);
       if (!result.ok) {
-        setError(messageFor(result.code));
+        setError(supportReadMessage(result.status, result.code, 'these jobs'));
         return;
       }
       setLoaded({ company: result.body.company, jobs: result.body.jobs, nextCursor: result.body.nextCursor });
@@ -42,10 +44,12 @@ export function SupportJobsScreen({ companyId }: { companyId: string }) {
     setMore({ busy: true, error: null });
     const result = await call<SupportJobsAnswer>(platformPaths.supportJobs(companyId, loaded.nextCursor));
     if (!result.ok) {
-      setMore({ busy: false, error: messageFor(result.code) });
+      setMore({ busy: false, error: supportReadMessage(result.status, result.code, 'these jobs') });
       return;
     }
-    setLoaded((current) => (current ? { ...current, jobs: [...current.jobs, ...result.body.jobs], nextCursor: result.body.nextCursor } : current));
+    setLoaded((current) =>
+      current ? { company: result.body.company, jobs: [...current.jobs, ...result.body.jobs], nextCursor: result.body.nextCursor } : current,
+    );
     setMore({ busy: false, error: null });
   }
 
@@ -72,6 +76,7 @@ export function SupportJobsScreen({ companyId }: { companyId: string }) {
     return (
       <>
         <h1 className="text-2xl font-semibold leading-tight">Jobs</h1>
+        <ConnectionNotice />
         {error ? <ErrorMessage text={error} /> : <p role="status">Loading the jobs…</p>}
         {back}
       </>
@@ -86,18 +91,19 @@ export function SupportJobsScreen({ companyId }: { companyId: string }) {
         Read-only support view. Company status: {STATUS_LABELS[company.status].toLowerCase()}. Opening this list, each
         job and each photo is recorded in the audit log. To archive or restore a job, ask the company’s owner.
       </p>
+      <ConnectionNotice />
       {jobs.length === 0 ? (
         <p>No jobs yet.</p>
       ) : (
         <ul className="flex flex-col gap-3">
           {jobs.map((job) => (
             <li key={job.id} className="flex flex-col gap-1 rounded-md border p-3">
-              <Link href={`/operator/${tenantId}/companies/${companyId}/jobs/${job.id}`} className="w-fit font-medium underline underline-offset-4">
+              <Link href={`/operator/${tenantId}/companies/${companyId}/jobs/${job.id}`} className="w-fit font-medium underline underline-offset-4 [overflow-wrap:anywhere]">
                 {job.propertyAddress || 'No address yet'}
               </Link>
-              {job.customerName ? <p className="text-sm">{job.customerName}</p> : null}
+              {job.customerName ? <p className="text-sm [overflow-wrap:anywhere]">{job.customerName}</p> : null}
               <p className="text-sm">
-                {JOB_STATUS_LABELS[job.status] ?? job.status} · started {supportDate(job.createdAt)}
+                {JOB_STATUS_LABELS[job.status]} · started {supportDate(job.createdAt)}
               </p>
             </li>
           ))}
@@ -114,10 +120,6 @@ export function SupportJobsScreen({ companyId }: { companyId: string }) {
       {back}
     </>
   );
-}
-
-function messageFor(code: string): string {
-  return isSignInAgainCode(code) ? 'Sign in again to view these jobs.' : operatorErrorMessage(code);
 }
 
 function firstPath(companyId: string): string | null {

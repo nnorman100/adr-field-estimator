@@ -21,7 +21,7 @@ The owner and office start on "Company jobs"; an estimator on "My jobs" (`defaul
 | Superadmin support | nothing (no company sign-in) | nothing |
 | Different-company user | never this company's jobs: the list is read for the company of the caller's sign-in | nothing here |
 
-Status labels (`STATUS_NAMES` in `jobs-view.tsx`): "In progress" (draft), "Submitted", "Signed",
+Status labels (`JOB_STATUS_LABELS` in `src/lib/jobs/status-labels.ts`): "In progress" (draft), "Submitted", "Signed",
 "Archived".
 
 ## States

@@ -6,7 +6,9 @@ import { PhotoLog, Proposal } from '@/app/(auth)/sign-in/[address]/jobs/[jobId]/
 import { LinkPhoto } from '@/components/links/link-photo';
 import { signedBy, signedHow, signedWhen } from '@/lib/agreements/screen';
 import { platformPaths, type SupportJobAnswer } from '@/lib/operator/client';
-import { isSignInAgainCode, JOB_STATUS_LABELS, operatorErrorMessage, STATUS_LABELS, supportDate } from '@/lib/operator/screens';
+import { JOB_STATUS_LABELS } from '@/lib/jobs/status-labels';
+import { STATUS_LABELS, supportDate, supportReadMessage } from '@/lib/operator/screens';
+import { ConnectionNotice } from '../../../../connection-notice';
 import { useOperator } from '../../../../operator-session';
 import { ErrorMessage, Section } from '../../../../ui';
 
@@ -33,11 +35,7 @@ export function SupportJobScreen({ companyId, jobId }: { companyId: string; jobI
       const result = await call<SupportJobAnswer>(path);
       if (!result.ok) {
         setError(
-          isSignInAgainCode(result.code)
-            ? 'Sign in again to view this job.'
-            : result.code === 'not_found'
-              ? 'That job was not found in this company.'
-              : operatorErrorMessage(result.code),
+          result.code === 'not_found' ? 'That job was not found in this company.' : supportReadMessage(result.status, result.code, 'this job'),
         );
         return;
       }
@@ -68,6 +66,7 @@ export function SupportJobScreen({ companyId, jobId }: { companyId: string; jobI
     return (
       <>
         <h1 className="text-2xl font-semibold leading-tight">Job</h1>
+        <ConnectionNotice />
         {error ? <ErrorMessage text={error} /> : <p role="status">Loading the job…</p>}
         {back}
       </>
@@ -78,14 +77,15 @@ export function SupportJobScreen({ companyId, jobId }: { companyId: string; jobI
   const load = (photoId: string, kind: keyof typeof KIND_NAMES) => image(platformPaths.supportPhoto(companyId, jobId, photoId, kind));
   return (
     <>
-      <h1 className="text-2xl font-semibold leading-tight break-words">{job.propertyAddress || 'No address yet'}</h1>
+      <h1 className="text-2xl font-semibold leading-tight [overflow-wrap:anywhere]">{job.propertyAddress || 'No address yet'}</h1>
       <p className="text-sm">
         {company.name}, read-only support view. Company status: {STATUS_LABELS[company.status].toLowerCase()}. Opening
         this job and each image is recorded in the audit log. To archive or restore it, ask the company’s owner.
       </p>
-      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+      <ConnectionNotice />
+      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-sm">
         <dt className="font-medium">Status</dt>
-        <dd>{JOB_STATUS_LABELS[job.status] ?? job.status}</dd>
+        <dd>{JOB_STATUS_LABELS[job.status]}</dd>
         <dt className="font-medium">Revision</dt>
         <dd>{job.revision}</dd>
         <dt className="font-medium">Started</dt>
@@ -119,7 +119,7 @@ export function SupportJobScreen({ companyId, jobId }: { companyId: string; jobI
       </Section>
       <Section title="Signed agreement">
         {agreement ? (
-          <>
+          <div className="flex flex-col gap-3 [overflow-wrap:anywhere]">
             <p>{signedBy(agreement.record.signer)}</p>
             <p>{signedWhen(agreement.signedAt)}</p>
             <p>{signedHow(agreement.record)}</p>
@@ -128,8 +128,8 @@ export function SupportJobScreen({ companyId, jobId }: { companyId: string; jobI
               <Proposal proposal={agreement.record.proposal} />
             </div>
             <h3 className="font-semibold">Photo audit log</h3>
-            <PhotoLog photos={agreement.record.documents.photo_log} loadPhoto={(photoId) => load(photoId, 'photo')} />
-          </>
+            <PhotoLog photos={agreement.record.documents.photo_log} />
+          </div>
         ) : (
           <p>Not signed.</p>
         )}
@@ -140,7 +140,7 @@ export function SupportJobScreen({ companyId, jobId }: { companyId: string; jobI
         ) : (
           <ul className="flex flex-col gap-3">
             {evidence.map((item, index) => (
-              <li key={`${item.kind}-${item.photoId}`} className="flex flex-col gap-1 rounded-md border p-3">
+              <li key={`${item.kind}-${item.photoId}`} className="flex flex-col gap-1 rounded-md border p-3 [overflow-wrap:anywhere]">
                 <p className="font-medium">
                   {KIND_NAMES[item.kind]} {index + 1}
                 </p>
@@ -162,11 +162,11 @@ export function SupportJobScreen({ companyId, jobId }: { companyId: string; jobI
 // Label and value pairs; an empty value reads "Not entered".
 function Details({ rows }: { rows: [string, string][] }) {
   return (
-    <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+    <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-sm">
       {rows.map(([label, value]) => (
         <div key={label} className="contents">
           <dt className="font-medium">{label}</dt>
-          <dd className="break-words">{value || 'Not entered'}</dd>
+          <dd className="min-w-0 [overflow-wrap:anywhere]">{value || 'Not entered'}</dd>
         </div>
       ))}
     </dl>

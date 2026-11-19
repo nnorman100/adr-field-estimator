@@ -36,8 +36,12 @@ export async function operatorCall<T>(user: Pick<User, 'getIdToken'>, path: stri
     // An answer with no JSON is judged on its status alone.
   }
   if (response.ok) return body === null ? { ok: false, status: response.status, code: 'unavailable' } : { ok: true, status: response.status, body: body as T };
+  return { ok: false, status: response.status, code: refusalCode(body) };
+}
+
+function refusalCode(body: unknown): string {
   const code = body !== null && typeof body === 'object' ? (body as Record<string, unknown>).error : undefined;
-  return { ok: false, status: response.status, code: typeof code === 'string' ? code : 'unavailable' };
+  return typeof code === 'string' ? code : 'unavailable';
 }
 
 // A path segment is one uuid; anything else never reaches the address.
@@ -77,16 +81,25 @@ export type SupportTeamAnswer = { company: CompanyView; team: TeamView };
 export type SupportJobsAnswer = { company: CompanyView; jobs: SupportJobListItem[]; nextCursor: string | null };
 export type SupportJobAnswer = SupportJobView;
 
-// One image of a job through the operator's photo route, as a local blob address for an <img>, or
-// null when it cannot be read now. Each read is audited on the server, so it is made only when asked.
-export async function operatorImage(user: Pick<User, 'getIdToken'>, path: string): Promise<string | null> {
+// One image of a job through the operator's photo route: a local blob address for an <img>, or the
+// route's refusal, so the session can act on it as on any other operator answer. Each read is audited
+// on the server, so it is made only when asked.
+export async function operatorImage(user: Pick<User, 'getIdToken'>, path: string): Promise<ApiResult<string>> {
   try {
     const token = await user.getIdToken();
     const response = await fetch(path, { headers: { Authorization: `Bearer ${token}`, ...(await appCheckHeaders()) }, cache: 'no-store' });
-    if (!response.ok) return null;
-    return URL.createObjectURL(await response.blob());
+    if (!response.ok) {
+      let body: unknown = null;
+      try {
+        body = await response.json();
+      } catch {
+        // A refusal with no JSON is judged on its status alone.
+      }
+      return { ok: false, status: response.status, code: refusalCode(body) };
+    }
+    return { ok: true, status: response.status, body: URL.createObjectURL(await response.blob()) };
   } catch {
-    return null;
+    return { ok: false, status: 0, code: 'unavailable' };
   }
 }
 

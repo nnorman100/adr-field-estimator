@@ -6,15 +6,9 @@ import { Button } from '@/components/ui/button';
 import { listJobs, type JobListItem } from '@/lib/field/api';
 import type { FieldSession } from '@/lib/field/session';
 import { defaultList, type JobsList } from '@/lib/field/views';
+import { JOB_STATUS_LABELS } from '@/lib/jobs/status-labels';
 import { archivalDone, ArchivedRow, UnfinishedArchivals } from './job-actions';
 import { FieldLink } from './ui';
-
-const STATUS_NAMES: Record<string, string> = {
-  draft: 'In progress',
-  submitted: 'Submitted',
-  signed: 'Signed',
-  archived: 'Archived',
-};
 
 const TITLES: Record<JobsList, string> = { company: 'Company jobs', mine: 'My jobs', archived: 'Archived drafts' };
 
@@ -176,7 +170,7 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
               </FieldLink>
               <p className="text-sm">
                 {job.customerName ? `${job.customerName} · ` : ''}
-                {STATUS_NAMES[job.status] ?? job.status} · started {new Date(job.createdAt).toLocaleDateString()}
+                {JOB_STATUS_LABELS[job.status]} · started {new Date(job.createdAt).toLocaleDateString()}
               </p>
             </li>
           ))}

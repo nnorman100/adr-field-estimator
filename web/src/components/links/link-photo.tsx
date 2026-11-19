@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 
 // One photo of a link's photo log (S5a-11b), opened on request: each image is a request against the
@@ -8,6 +8,15 @@ import { Button } from '@/components/ui/button';
 // the stored bytes, released when the row goes away.
 export function LinkPhoto({ label, load }: { label: string; load: () => Promise<string | null> }) {
   const [state, setState] = useState<{ name: 'closed' } | { name: 'loading' } | { name: 'shown'; address: string } | { name: 'failed' }>({ name: 'closed' });
+
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -18,6 +27,10 @@ export function LinkPhoto({ label, load }: { label: string; load: () => Promise<
   async function open() {
     setState({ name: 'loading' });
     const address = await load();
+    if (!mounted.current) {
+      if (address) URL.revokeObjectURL(address);
+      return;
+    }
     setState(address ? { name: 'shown', address } : { name: 'failed' });
   }
 

@@ -94,14 +94,6 @@ export const STATUS_LABELS: Record<CompanyStatus, string> = {
   archived: 'Archived',
 };
 
-// A job's status in the operator's support view of a company's jobs (S5b-5), in the field screens' words.
-export const JOB_STATUS_LABELS: Record<string, string> = {
-  draft: 'In progress',
-  submitted: 'Submitted',
-  signed: 'Signed',
-  archived: 'Archived',
-};
-
 // A date of a job or a record in the support view, in the phone's own time zone.
 export function supportDate(iso: string): string {
   const when = new Date(iso);
@@ -143,6 +135,14 @@ export function operatorErrorMessage(code: string | null): string {
     default:
       return 'That did not work. Try again.';
   }
+}
+
+// What a failed read of the support view says: with no answer at all, that it needs a connection;
+// otherwise the words for the server's code. `what` is "these jobs" or "this job".
+export function supportReadMessage(status: number, code: string, what: string): string {
+  if (status === 0) return 'Needs a connection. Check the signal, then open this page again.';
+  if (isSignInAgainCode(code)) return `Sign in again to view ${what}.`;
+  return operatorErrorMessage(code);
 }
 
 // A refusal that only a new sign-in clears: the sign-in is too old for a change to a team or a
