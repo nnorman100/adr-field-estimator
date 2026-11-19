@@ -5,6 +5,7 @@ import type { Capability } from '@/lib/access';
 import type { FenceStore } from '@/lib/submissions/fence';
 import { snapshotManifest } from '@/lib/submissions/snapshot';
 import { hasAny, holdDraft, jobAccess, JobError, type JobCaller, type JobRow } from './access';
+import type { ArchiveStore } from './archive-store';
 import { draftOfOtherJob, type DraftStore } from './drafts';
 import { assignDigest, type AssignInput, type CoordinationInput, type TransferInput } from './schema';
 import { audit, CHECK_VIOLATION, detailOf, errorCode, findDraft, type JobDetail } from './service';
@@ -194,9 +195,10 @@ async function draftIdsOf(tx: CompanyTransaction, row: JobRow): Promise<string[]
   return [...[...held].filter((id) => id !== row.currentDraftId), row.currentDraftId];
 }
 
-// The one field-database step of Back to editing a move or Start field work may repeat
-// (remakeCurrentDraft): making the job's current draft from its latest record.
-export type DraftRemaker = Pick<FenceStore, 'createFrom'>;
+// The field-database steps of Back to editing a move or Start field work may repeat
+// (remakeCurrentDraft): making the job's current draft from its latest record, and closing it when
+// the job was archived while it was made.
+export type DraftRemaker = Pick<FenceStore, 'createFrom'> & Pick<ArchiveStore, 'archiveDraft'>;
 
 export function officeService(db: Database, drafts: DraftStore, remaker: DraftRemaker): OfficeService {
   async function inCompany<T>(companyId: string, run: (tx: CompanyTransaction) => Promise<T>): Promise<T> {
@@ -262,15 +264,33 @@ export function officeService(db: Database, drafts: DraftStore, remaker: DraftRe
   // phone that sent it is gone, nobody else knows the submitted draft id its retry needs. So the job's
   // field owner step makes the current draft itself, exactly as Back to editing's retry does
   // (submissions/service.ts backToEditing): from the latest record, never from the old draft, with
-  // where it came from, naming the field owner. A draft already there with the same provenance (Back
-  // to editing's own retry won) is left as it is; one made for another job or from another record is
-  // refused (409, security audit F1). False when there is no record to make it from.
-  async function remakeCurrentDraft(companyId: string, jobId: string, draftId: string, uid: string): Promise<boolean> {
+  // where it came from. A draft already there with the same provenance (Back to editing's own retry
+  // won) is left as it is; one made for another job or from another record is refused (409, security
+  // audit F1). False when there is no record to make it from.
+  //
+  // No transaction or lock is held across the field database (security audit F5), so the draft is made
+  // naming nobody: no phone reads or writes it until project() names the field owner at its revision,
+  // which a newer owner already on the draft refuses to a slower request. And an archive that found no
+  // draft to close while this one was being made is caught here: the job is read again once the draft
+  // is there, and a job archived by then has the draft closed by this request (archiveDraft, guarded by
+  // the job revision, so it never undoes a later restore). An archive that commits after that read finds
+  // the draft and closes it itself.
+  async function remakeCurrentDraft(companyId: string, jobId: string, draftId: string): Promise<boolean> {
     const record = await recordOfCurrentDraft(companyId, jobId, draftId);
     if (!record) return false;
     const manifest = snapshotManifest(record.snapshotBytes);
-    const result = await field(() => remaker.createFrom(companyId, jobId, draftId, uid, manifest, record.previous));
+    const result = await field(() => remaker.createFrom(companyId, jobId, draftId, null, manifest, record.previous));
     if (result === 'taken') throw new JobError('conflict');
+    const now = await inCompany(companyId, async (tx) => {
+      const [row] = await tx
+        .select({ status: jobs.status, currentDraftId: jobs.currentDraftId, revision: jobs.revision })
+        .from(jobs)
+        .where(and(eq(jobs.companyId, companyId), eq(jobs.id, jobId)));
+      return row;
+    });
+    if (now?.status === 'archived' && now.currentDraftId === draftId) {
+      await field(() => remaker.archiveDraft(companyId, draftId, now.revision));
+    }
     return true;
   }
 
@@ -284,7 +304,7 @@ export function officeService(db: Database, drafts: DraftStore, remaker: DraftRe
     for (const [index, draftId] of draftIds.entries()) {
       const last = index === draftIds.length - 1;
       let result = await field(() => drafts.setFieldOwner(companyId, jobId, draftId, uid, revision));
-      if (result === 'missing' && last && (await remakeCurrentDraft(companyId, jobId, draftId, uid))) {
+      if (result === 'missing' && last && (await remakeCurrentDraft(companyId, jobId, draftId))) {
         result = await field(() => drafts.setFieldOwner(companyId, jobId, draftId, uid, revision));
       }
       if (result === 'missing' && last) throw new JobError('draft_unavailable');
