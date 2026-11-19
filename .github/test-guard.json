@@ -4,6 +4,7 @@
   "workflows": [".github/workflows/*.yml", ".github/workflows/*.yaml"],
   "protected": [
     ".github/**",
+    "**/.gitattributes",
     "scripts/readiness_eval.py",
     "scripts/verify_*.py",
     "playwright.config.js",
