@@ -574,6 +574,20 @@ const ASSIST = z.strictObject({
     .default({ '1': '0', '2': '0', '3': '0' }),
 });
 
+/**
+ * Price-point rounding (S4-4e): the customer price rounds up to the next amount ending in `ending`
+ * within each `step`, in whole dollars. Absent means off, so an older table keeps its hash.
+ */
+const PRICE_POINT = z
+  .strictObject({
+    step: decimal({ min: '10', max: '10000', places: 0 }),
+    ending: decimal({ max: '9999', places: 0 }),
+  })
+  .refine((rule) => Dec.parse(rule.ending).lt(Dec.parse(rule.step)), {
+    path: ['ending'],
+    message: 'must be below the step',
+  });
+
 const POLICY = z.strictObject({
   estimate_mode: z.enum(['range', 'single']).default('range'),
   area_basis: z.enum(['demolition', 'demolition_with_waste', 'wet_floor']).default('demolition'),
@@ -600,6 +614,7 @@ const POLICY = z.strictObject({
   room_type_pricing: z.boolean().default(false),
   size_tiers: SIZE_TIER_LIMITS.default(BLANK_TIERS),
   room_types: z.array(ROOM_TYPE).max(MAX_ROOM_TYPES).default([]),
+  price_point: PRICE_POINT.optional(),
 });
 
 const TRADE = z.strictObject({

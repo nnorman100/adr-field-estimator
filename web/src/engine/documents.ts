@@ -321,10 +321,25 @@ function addressee(claim: Claim | null): string {
     .join('\n');
 }
 
-function estimateSentence(total: Dec, low: Dec, high: Dec | null, explanation: string | null, single: boolean): string {
-  if (single) return `Itemized total: $${total.format(',.2f')}.`;
+function pricePointSentence(low: Dec, high: Dec | null): string {
+  const amount = (value: Dec): string => `$${value.format(',.2f')}`;
+  if (high === null) return low.isZero() ? '' : `Price-point adjustment (not taxed): ${amount(low)}.`;
+  if (low.isZero() && high.isZero()) return '';
+  return `Price-point adjustment (not taxed): ${amount(low)} at the low end and ${amount(high)} at the high end.`;
+}
+
+function estimateSentence(
+  total: Dec,
+  low: Dec,
+  high: Dec | null,
+  explanation: string | null,
+  single: boolean,
+  adjustment: string,
+): string {
+  const own = adjustment ? `\n${adjustment}` : '';
+  if (single) return `Itemized total: $${total.format(',.2f')}.${own}`;
   const sentence = `Itemized total: $${total.format(',.2f')}. Customer estimate range: $${low.format(',.2f')} to $${(high ?? low).format(',.2f')}.`;
-  return explanation ? `${sentence} ${explanation}` : sentence;
+  return `${explanation ? `${sentence} ${explanation}` : sentence}${own}`;
 }
 
 function letterhead(parts: string[]): string {
@@ -428,7 +443,17 @@ export function makeDocuments(input: {
     ...(sizing ? [sizing] : []),
     `Scope:\n${recommendations.join('\n')}`,
     clauses.join('\n'),
-    estimateSentence(total, low, high, explanation, single),
+    estimateSentence(
+      total,
+      low,
+      high,
+      explanation,
+      single,
+      pricePointSentence(
+        money(priced.totals.low.pricePoint),
+        priced.totals.mode === 'range' && priced.totals.high ? money(priced.totals.high.pricePoint) : null,
+      ),
+    ),
     ['Sincerely,', identity?.signoff ?? '', companyName].filter((line) => line.trim()).join('\n'),
   ].join('\n\n');
   const proposal: JObj = {

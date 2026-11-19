@@ -57,6 +57,8 @@ export type EstimateEnd = {
   minimum_charge: string;
   overhead_profit: string;
   tax: string;
+  /** "Price-point adjustment": what rounding up to the company's price point added; only when it added any. */
+  price_point?: string;
   total: string;
 };
 
@@ -152,7 +154,7 @@ function lineOf(line: PriceLine): EstimateLine {
 }
 
 function endOf(end: End): EstimateEnd {
-  return {
+  const body: EstimateEnd = {
     subtotal: cents(end.subtotal),
     after_hours: cents(end.afterHours),
     trade_minimums: end.tradeMinimums.map((row) => ({ trade_id: row.tradeId, name: row.name, amount: cents(row.amount) })),
@@ -161,6 +163,8 @@ function endOf(end: End): EstimateEnd {
     tax: cents(end.tax),
     total: cents(end.total),
   };
+  if (!end.pricePoint.isZero()) body.price_point = cents(end.pricePoint);
+  return body;
 }
 
 function strings(value: Json | undefined): string[] {

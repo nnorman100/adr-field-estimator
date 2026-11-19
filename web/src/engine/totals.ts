@@ -45,6 +45,8 @@ export type End = {
   minimumCharge: Dec;
   overheadProfit: Dec;
   tax: Dec;
+  /** What price-point rounding added, untaxed and outside every bucket; zero when off or already a price point. */
+  pricePoint: Dec;
   total: Dec;
 };
 
@@ -354,6 +356,7 @@ export function computeTotals(data: Inspection, lines: PriceLine[], policy: Poli
         minimumCharge: floor,
         overheadProfit,
         tax,
+        pricePoint: ZERO,
         total: subtotal.add(adjustment).add(topUps).add(floor).add(overheadProfit).add(tax),
       },
     };
@@ -377,8 +380,8 @@ export function computeTotals(data: Inspection, lines: PriceLine[], policy: Poli
   }
   return {
     mode: policy.estimate_mode,
-    low,
-    high,
+    low: roundToPricePoint(low, policy),
+    high: high ? roundToPricePoint(high, policy) : null,
     laborMaterialLow: lowLabor,
     laborMaterialHigh: highLaborAmount,
     afterHoursLabel: policy.after_hours.label,
@@ -387,6 +390,24 @@ export function computeTotals(data: Inspection, lines: PriceLine[], policy: Poli
     rangeExplanation: rangeExplanation(policy, data),
     uncertainty: uncertainEnd ? uncertaintyJson(data, policy) : null,
   };
+}
+
+/**
+ * The smallest amount at or above `total` that is `ending` plus a whole number of `steps` (S4-4e).
+ * It never rounds down, so an end is never quoted below its priced total.
+ */
+export function pricePointOf(total: Dec, step: Dec, ending: Dec): Dec {
+  return ending.add(total.sub(ending).div(step).toIntegral('CEILING').mul(step));
+}
+
+/**
+ * Price-point rounding applies last, after the minimums, overhead and profit, and tax, to each end's own total.
+ */
+function roundToPricePoint(end: End, policy: Policy): End {
+  const rule = policy.price_point;
+  if (!rule) return end;
+  const total = money(pricePointOf(end.total, Dec.parse(rule.step), Dec.parse(rule.ending)));
+  return { ...end, pricePoint: total.sub(end.total), total };
 }
 
 function equipmentClause(data: Inspection, policy: Policy): string {
