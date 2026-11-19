@@ -170,8 +170,19 @@ function sameValues<T extends Record<string, unknown>>(stored: T, input: Record<
 // The list's cursor is the last row's creation time as the database wrote it (microseconds, which
 // a JavaScript Date would round) and its id: a keyset, so a page never repeats or skips a row that
 // is added meanwhile.
-const CURSOR_TIME = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d{1,6})?[+-]\d{2}(:\d{2})?$/;
+const CURSOR_TIME = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})(?:\.\d{1,6})?[+-](\d{2})(?::(\d{2}))?$/;
 const CURSOR_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+// A real calendar date and clock time and a usable offset, so the database never rejects a cursor
+// that got past here.
+function isTimestamp(time: string): boolean {
+  const found = CURSOR_TIME.exec(time);
+  if (!found) return false;
+  const [year, month, day, hour, minute, second, offsetHour, offsetMinute] = found.slice(1).map((part) => Number(part ?? 0)) as [number, number, number, number, number, number, number, number];
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  return year >= 1 && date.getUTCMonth() === month - 1 && date.getUTCDate() === day && hour <= 23 && minute <= 59 && second <= 59 && offsetHour <= 15 && offsetMinute <= 59;
+}
 
 export function encodeCursor(time: string, id: string): string {
   return Buffer.from(`${time}|${id}`).toString('base64url');
@@ -179,8 +190,56 @@ export function encodeCursor(time: string, id: string): string {
 
 export function decodeCursor(cursor: string): { time: string; id: string } {
   const [time, id, ...rest] = Buffer.from(cursor, 'base64url').toString().split('|');
-  if (rest.length > 0 || !time || !id || !CURSOR_TIME.test(time) || !CURSOR_ID.test(id)) throw new JobError('invalid_request');
+  if (rest.length > 0 || !time || !id || !isTimestamp(time) || !CURSOR_ID.test(id)) throw new JobError('invalid_request');
   return { time, id };
+}
+
+// One keyset page of jobs, newest first: the caller's scope filters in `scope`, the cursor decoded by
+// `decodeCursor`. Each entry is the row and its list item; the list's callers add what is theirs.
+export async function jobPage(
+  tx: CompanyTransaction,
+  scope: SQL[],
+  after: { time: string; id: string } | null,
+  limit: number,
+): Promise<{ entries: { job: JobRow; item: Omit<JobListItem, 'mine'> }[]; nextCursor: string | null }> {
+  const where = [...scope];
+  if (after) {
+    where.push(
+      or(
+        sql`${jobs.createdAt} < ${after.time}::timestamptz`,
+        and(sql`${jobs.createdAt} = ${after.time}::timestamptz`, sql`${jobs.id} > ${after.id}::uuid`),
+      )!,
+    );
+  }
+  const rows = await tx
+    .select({
+      job: jobs,
+      // As the database wrote it, so the next page starts exactly after this row.
+      createdKey: sql<string>`${jobs.createdAt}::text`,
+      customerName: jobCustomers.name,
+    })
+    .from(jobs)
+    .leftJoin(jobCustomers, and(eq(jobCustomers.companyId, jobs.companyId), eq(jobCustomers.jobId, jobs.id)))
+    .where(and(...where))
+    .orderBy(desc(jobs.createdAt), asc(jobs.id))
+    .limit(limit + 1);
+  const page = rows.slice(0, limit);
+  const last = page[page.length - 1];
+  return {
+    entries: page.map(({ job, customerName }) => ({
+      job,
+      item: {
+        id: job.id,
+        status: job.status,
+        propertyAddress: job.propertyAddress,
+        revision: job.revision,
+        createdAt: job.createdAt.toISOString(),
+        updatedAt: job.updatedAt.toISOString(),
+        customerName: customerName ?? '',
+      },
+    })),
+    nextCursor: rows.length > limit && last ? encodeCursor(last.createdKey, last.job.id) : null,
+  };
 }
 
 // The field database's draft under this id, read before the request commits it (security audit F1).
@@ -336,42 +395,12 @@ export function jobsService(db: Database, drafts: DraftStore): JobsService {
         )`;
         const where: SQL[] = [eq(jobs.companyId, caller.companyId), archived ? eq(jobs.status, 'archived') : ne(jobs.status, 'archived')];
         if (!company) where.push(or(eq(jobs.createdByActorId, caller.actorId), eq(jobs.fieldOwnerActorId, caller.actorId), assigned)!);
-        if (after) {
-          where.push(
-            or(
-              sql`${jobs.createdAt} < ${after.time}::timestamptz`,
-              and(sql`${jobs.createdAt} = ${after.time}::timestamptz`, sql`${jobs.id} > ${after.id}::uuid`),
-            )!,
-          );
-        }
-        const rows = await tx
-          .select({
-            job: jobs,
-            // As the database wrote it, so the next page starts exactly after this row.
-            createdKey: sql<string>`${jobs.createdAt}::text`,
-            customerName: jobCustomers.name,
-          })
-          .from(jobs)
-          .leftJoin(jobCustomers, and(eq(jobCustomers.companyId, jobs.companyId), eq(jobCustomers.jobId, jobs.id)))
-          .where(and(...where))
-          .orderBy(desc(jobs.createdAt), asc(jobs.id))
-          .limit(query.limit + 1);
-        const page = rows.slice(0, query.limit);
-        const last = page[page.length - 1];
+        const { entries, nextCursor } = await jobPage(tx, where, after, query.limit);
         return {
-          jobs: page.map(({ job, customerName }) => ({
-            id: job.id,
-            status: job.status,
-            propertyAddress: job.propertyAddress,
-            revision: job.revision,
-            createdAt: job.createdAt.toISOString(),
-            updatedAt: job.updatedAt.toISOString(),
-            customerName: customerName ?? '',
-            // Every row of a caller's own list is theirs (made, owned in the field or assigned); in the
-            // company list only an estimator is ever assigned, and they never get that list.
-            mine: !company || isOwnJob(caller, job),
-          })),
-          nextCursor: rows.length > query.limit && last ? encodeCursor(last.createdKey, last.job.id) : null,
+          // Every row of a caller's own list is theirs (made, owned in the field or assigned); in the
+          // company list only an estimator is ever assigned, and they never get that list.
+          jobs: entries.map(({ job, item }) => ({ ...item, mine: !company || isOwnJob(caller, job) })),
+          nextCursor,
         };
       });
     },

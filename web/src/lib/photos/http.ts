@@ -41,7 +41,7 @@ async function ids(context: RouteContext): Promise<{ jobId: string; photoId: str
   return { jobId: jobId.toLowerCase(), photoId: photoId.toLowerCase() };
 }
 
-function kindOf(request: Request, fallback: PhotoKind | null): PhotoKind {
+export function kindOf(request: Request, fallback: PhotoKind | null): PhotoKind {
   const kind = new URL(request.url).searchParams.getAll('kind');
   if (kind.length === 0 && fallback) return fallback;
   if (kind.length === 1 && (kind[0] === 'photo' || kind[0] === 'original' || kind[0] === 'signature')) return kind[0];

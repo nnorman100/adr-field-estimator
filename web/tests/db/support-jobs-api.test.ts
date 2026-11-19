@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { withCompany } from '@/db/tenant';
@@ -7,7 +7,7 @@ import { PROPOSAL_FORMAT, type Proposal } from '@/lib/estimates/proposal';
 import { canonicalJson } from '@/lib/field/canonical';
 import { APP_DIR, handlersOf, routeModules } from './isolation-matrix';
 import { newEvidence, newJob, photoName, seedEvidence, seedJob } from './job-harness';
-import { agreementOf, bytesOf, insertAgreement, newSubmission, seedCommitted, seedEstimate, seedPin, seedSignature, seedVersion } from './submission-harness';
+import { agreementOf, bytesOf, insertAgreement, newSubmission, seedCommitted, seedEstimate, seedPin, seedVersion } from './submission-harness';
 import { json } from './submission-flow';
 import type { FakeClaims, Harness } from './team-harness';
 
@@ -37,7 +37,13 @@ let h: Harness;
 
 const OWNER_A: FakeClaims = { tenant: 'tenant-a', uid: 'owner-a' };
 const OPERATOR = operatorClaims();
-const BYTES = new TextEncoder().encode('synthetic photo bytes');
+// A 1x1 JPEG and a 1x1 PNG: real images, so the registry's hash, size and type are those of the bytes.
+const BYTES = Buffer.from(
+  '/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=',
+  'base64',
+);
+const SIGNATURE_BYTES = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+const sha256 = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
 
 beforeAll(async () => {
   base = await startTeamServer();
@@ -88,13 +94,16 @@ async function jobIn(company: string, actor: string, status: 'draft' | 'archived
 
 // A signature object as the receipt route leaves it: a registry row and its bytes in the bucket.
 async function storedSignature(jobId: string, actor: string) {
-  const id = await seedSignature(h.admin, h.seed.a, jobId, actor);
-  const [row] = await h.admin<{ object_id: string; object_name: string; sha256: string; generation: string }[]>`
-    SELECT object_id::text, object_name, sha256, generation::text FROM evidence_objects WHERE id = ${id}::uuid
+  const objectId = randomUUID();
+  const name = photoName(h.seed.a, jobId, objectId, 'signatures');
+  const digest = sha256(SIGNATURE_BYTES);
+  const [row] = await h.admin<{ id: string }[]>`
+    INSERT INTO evidence_objects (company_id, job_id, object_id, kind, object_name, generation, sha256, size_bytes, content_type, created_by_actor_id)
+    VALUES (${h.seed.a}, ${jobId}, ${objectId}, 'signature', ${name}, 1731400000000000, ${digest}, ${SIGNATURE_BYTES.length}, 'image/png', ${actor})
+    RETURNING id::text
   `;
-  const bytes = new TextEncoder().encode(`synthetic signature ${row!.object_id}`);
-  h.evidence.objects.set(row!.object_name, { bytes, contentType: 'image/png', sha256: row!.sha256, generation: BigInt(row!.generation) });
-  return { id, objectId: row!.object_id, sha256: row!.sha256, bytes };
+  h.evidence.objects.set(name, { bytes: SIGNATURE_BYTES, contentType: 'image/png', sha256: digest, generation: 1731400000000000n });
+  return { id: row!.id, objectId, sha256: digest, bytes: SIGNATURE_BYTES };
 }
 
 async function signedJob(address = '12 Synthetic Way') {
@@ -102,9 +111,9 @@ async function signedJob(address = '12 Synthetic Way') {
   const job = await jobIn(h.seed.a, actor, 'draft', address);
   await h.admin`INSERT INTO job_customers (company_id, job_id, name, phone, email) VALUES (${h.seed.a}, ${job.id}, 'Pat Customer', '555-0100', 'pat@example.test')`;
   await h.admin`INSERT INTO job_claims (company_id, job_id, carrier, claim_number, date_of_loss) VALUES (${h.seed.a}, ${job.id}, 'Carrier Co', 'CLM-1', '2026-11-01')`;
-  const shot = newEvidence(h.seed.a, job.id, actor, { generation: 1_731_400_000_000_001, size: BYTES.length });
+  const shot = newEvidence(h.seed.a, job.id, actor, { generation: 1_731_400_000_000_001, size: BYTES.length, sha: sha256(BYTES), type: 'image/jpeg' });
   await seedEvidence(h.admin, shot);
-  h.evidence.objects.set(photoName(h.seed.a, job.id, shot.objectId), { bytes: BYTES, contentType: 'image/jpeg', sha256: 'x', generation: 1_731_400_000_000_001n });
+  h.evidence.objects.set(photoName(h.seed.a, job.id, shot.objectId), { bytes: BYTES, contentType: 'image/jpeg', sha256: sha256(BYTES), generation: 1_731_400_000_000_001n });
 
   const proposal = { format: PROPOSAL_FORMAT, heading: 'Synthetic proposal' } as unknown as Proposal;
   const proposalBytes = bytesOf(canonicalJson(proposal));
@@ -190,7 +199,7 @@ describe('the operator’s support view of a company’s jobs', () => {
     expect(answer.headers.get('content-type')).toBe('image/jpeg');
     expect(answer.headers.get('content-security-policy')).toBe("default-src 'none'; sandbox");
     expect(answer.headers.get('cache-control')).toBe('no-store');
-    expect(new Uint8Array(await answer.arrayBuffer())).toEqual(BYTES);
+    expect(new Uint8Array(await answer.arrayBuffer())).toEqual(new Uint8Array(BYTES));
     expect(await supportRows()).toEqual([
       { company_id: h.seed.a, actor_id: null, operator_actor_id: h.seed.operator, action: 'support_photo_viewed', target: jobId, details: { photoId, kind: 'photo' } },
     ]);
@@ -203,7 +212,7 @@ describe('the operator’s support view of a company’s jobs', () => {
     const answer = await photo(OPERATOR, h.seed.a, jobId, named, '?kind=signature');
     expect(answer.status).toBe(200);
     expect(answer.headers.get('content-type')).toBe('image/png');
-    expect(new TextDecoder().decode(await answer.arrayBuffer())).toBe(`synthetic signature ${named}`);
+    expect(new Uint8Array(await answer.arrayBuffer())).toEqual(new Uint8Array(SIGNATURE_BYTES));
     expect((await supportRows()).filter((row) => row.action === 'support_photo_viewed')).toEqual([
       { company_id: h.seed.a, actor_id: null, operator_actor_id: h.seed.operator, action: 'support_photo_viewed', target: jobId, details: { photoId: named, kind: 'signature' } },
     ]);
@@ -227,6 +236,39 @@ describe('the operator’s support view of a company’s jobs', () => {
     } finally {
       h.evidence.open = open;
     }
+    expect(await supportRows()).toEqual([]);
+  });
+
+  it('answers 503 and writes no audit row when the bytes disagree with the registered size or hash', async () => {
+    const { jobId, photoId } = await signedJob();
+    const [registered] = await h.admin<{ object_name: string }[]>`SELECT object_name FROM evidence_objects WHERE object_id = ${photoId}`;
+    const held = h.evidence.objects.get(registered!.object_name)!;
+    for (const bytes of [BYTES.subarray(0, BYTES.length - 1), Buffer.concat([BYTES, Buffer.from([0])]), Buffer.from(BYTES.map((byte, at) => (at === BYTES.length - 1 ? byte ^ 1 : byte)))].map((bytes) => new Uint8Array(bytes))) {
+      h.evidence.objects.set(registered!.object_name, { ...held, bytes });
+      expect((await photo(OPERATOR, h.seed.a, jobId, photoId, '?kind=photo')).status).toBe(503);
+    }
+    h.evidence.objects.set(registered!.object_name, { ...held, bytes: new Uint8Array(0) });
+    expect((await photo(OPERATOR, h.seed.a, jobId, photoId, '?kind=photo')).status).toBe(503);
+    expect(await supportRows()).toEqual([]);
+  });
+
+  it('answers 400 and writes no audit row for a cursor with an impossible date', async () => {
+    const cursor = Buffer.from(`2026-02-30 12:00:00+00|${randomUUID()}`).toString('base64url');
+    const answer = await list(OPERATOR, h.seed.a, `?cursor=${cursor}`);
+    expect(answer.status).toBe(400);
+    expect(await supportRows()).toEqual([]);
+  });
+
+  it('refuses HEAD on all three routes with 405 and writes no audit row', async () => {
+    const { jobId, photoId } = await signedJob();
+    const head = (path: string, ids: Record<string, string>, handler: typeof listRoute.GET) =>
+      handler(request(OPERATOR, path, { method: 'HEAD' }), params(ids));
+    const answers = [
+      await head(`${PLATFORM}/${h.seed.a}/jobs`, { companyId: h.seed.a }, listRoute.GET),
+      await head(`${PLATFORM}/${h.seed.a}/jobs/${jobId}`, { companyId: h.seed.a, jobId }, jobRoute.GET),
+      await head(`${PLATFORM}/${h.seed.a}/jobs/${jobId}/photos/${photoId}?kind=photo`, { companyId: h.seed.a, jobId, photoId }, photoRoute.GET),
+    ];
+    expect(answers.map((answer) => answer.status)).toEqual([405, 405, 405]);
     expect(await supportRows()).toEqual([]);
   });
 

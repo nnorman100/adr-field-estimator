@@ -1,11 +1,13 @@
-import { and, asc, desc, eq, ne, or, sql, type SQL } from 'drizzle-orm';
-import { auditEvents, evidenceObjects, jobCustomers, jobs } from '@/db/schema';
+import type { ReadableStream as WebReadableStream } from 'node:stream/web';
+import { and, asc, eq, ne, or, sql, type SQL } from 'drizzle-orm';
+import { auditEvents, evidenceObjects, jobs } from '@/db/schema';
 import { withOperator, type CompanyTransaction, type Database } from '@/db/tenant';
 import { originalAgreementView, type AgreementView } from '@/lib/agreements/service';
-import { decodeCursor, detailOf, encodeCursor, type ClaimView, type CustomerView, type JobListItem, type JobView } from '@/lib/jobs/service';
+import { decodeCursor, detailOf, jobPage, type ClaimView, type CustomerView, type JobListItem, type JobView } from '@/lib/jobs/service';
+import { sha256Of, sniffImageType } from '@/lib/photos/image';
 import type { PhotoKind } from '@/lib/photos/service';
 import type { EvidenceStore } from '@/lib/photos/store';
-import { PlatformError, type CompanyStatus, type CompanyView } from './service';
+import { PlatformError, readCompany, type CompanyView } from './service';
 
 // The platform operator's read-only support view of a company's jobs (S5b-5; owner decision J8:
 // platform operator only, read-only, audited). Three views: the company's jobs, one job (its header,
@@ -37,23 +39,6 @@ export type SupportJobsService = {
   job(operatorId: string, companyId: string, jobId: string): Promise<SupportJobView>;
   photo(operatorId: string, companyId: string, jobId: string, photoId: string, kind: PhotoKind): Promise<SupportPhoto>;
 };
-
-type CompanyRow = { id: string; name: string; sign_in_slug: string | null; status: CompanyStatus; auth_tenant_id: string | null; created_at: string };
-
-async function companyOf(tx: CompanyTransaction, companyId: string): Promise<CompanyView> {
-  const [row] = (await tx.execute(sql`
-    SELECT id::text, name, sign_in_slug, status, auth_tenant_id, created_at FROM companies WHERE id = ${companyId}::uuid
-  `)) as unknown as CompanyRow[];
-  if (!row) throw new PlatformError('not_found');
-  return {
-    id: row.id,
-    name: row.name,
-    signInSlug: row.sign_in_slug,
-    status: row.status,
-    tenantBound: row.auth_tenant_id !== null,
-    createdAt: new Date(row.created_at).toISOString(),
-  };
-}
 
 // A signature image is the support view's only when a committed agreement of the job names it: a
 // signature received for an agreement that never committed stays hidden from the list and the download.
@@ -94,38 +79,9 @@ export function supportJobsService(db: Database, openStore: () => EvidenceStore)
         operatorId,
         companyId,
         async (tx) => {
-          const company = await companyOf(tx, companyId);
-          const where: SQL[] = [eq(jobs.companyId, companyId)];
-          if (after) {
-            where.push(
-              or(
-                sql`${jobs.createdAt} < ${after.time}::timestamptz`,
-                and(sql`${jobs.createdAt} = ${after.time}::timestamptz`, sql`${jobs.id} > ${after.id}::uuid`),
-              )!,
-            );
-          }
-          const rows = await tx
-            .select({ job: jobs, createdKey: sql<string>`${jobs.createdAt}::text`, customerName: jobCustomers.name })
-            .from(jobs)
-            .leftJoin(jobCustomers, and(eq(jobCustomers.companyId, jobs.companyId), eq(jobCustomers.jobId, jobs.id)))
-            .where(and(...where))
-            .orderBy(desc(jobs.createdAt), asc(jobs.id))
-            .limit(page.limit + 1);
-          const shown = rows.slice(0, page.limit);
-          const last = shown[shown.length - 1];
-          return {
-            company,
-            jobs: shown.map(({ job, customerName }) => ({
-              id: job.id,
-              status: job.status,
-              propertyAddress: job.propertyAddress,
-              revision: job.revision,
-              createdAt: job.createdAt.toISOString(),
-              updatedAt: job.updatedAt.toISOString(),
-              customerName: customerName ?? '',
-            })),
-            nextCursor: rows.length > page.limit && last ? encodeCursor(last.createdKey, last.job.id) : null,
-          };
+          const company = await readCompany(tx, companyId);
+          const { entries, nextCursor } = await jobPage(tx, [eq(jobs.companyId, companyId)], after, page.limit);
+          return { company, jobs: entries.map(({ item }) => item), nextCursor };
         },
         'support_jobs_viewed',
         companyId,
@@ -139,7 +95,7 @@ export function supportJobsService(db: Database, openStore: () => EvidenceStore)
         operatorId,
         companyId,
         async (tx) => {
-          const company = await companyOf(tx, companyId);
+          const company = await readCompany(tx, companyId);
           const [row] = await tx.select().from(jobs).where(and(eq(jobs.companyId, companyId), eq(jobs.id, jobId)));
           if (!row) throw new PlatformError('not_found');
           const detail = await detailOf(tx, row);
@@ -167,16 +123,23 @@ export function supportJobsService(db: Database, openStore: () => EvidenceStore)
       );
     },
 
-    // One registered object's bytes. The bucket is read to the end before the audit row is written, so
-    // a missing or unreadable object writes none; the bytes are answered only once the row committed.
+    // One registered object's bytes. The bucket is read, within the registered size, and the bytes
+    // checked against the registry's size, SHA-256 and image type before the audit row is written, so
+    // a missing, unreadable or altered object writes none; the bytes are answered only once the row
+    // committed.
     async photo(operatorId, companyId, jobId, photoId, kind) {
       const row = await withOperator(
         db,
         operatorId,
         async (tx) => {
-          await companyOf(tx, companyId);
           const [found] = await tx
-            .select({ objectName: evidenceObjects.objectName, generation: evidenceObjects.generation, contentType: evidenceObjects.contentType })
+            .select({
+              objectName: evidenceObjects.objectName,
+              generation: evidenceObjects.generation,
+              contentType: evidenceObjects.contentType,
+              sha256: evidenceObjects.sha256,
+              sizeBytes: evidenceObjects.sizeBytes,
+            })
             .from(evidenceObjects)
             .where(and(eq(evidenceObjects.companyId, companyId), eq(evidenceObjects.jobId, jobId), eq(evidenceObjects.objectId, photoId), eq(evidenceObjects.kind, kind), visibleEvidence(companyId, jobId)));
           return found;
@@ -187,11 +150,31 @@ export function supportJobsService(db: Database, openStore: () => EvidenceStore)
       const body = await openStore().open(row.objectName, row.generation);
       // A registered object that is not in the bucket is a fault, not a missing photo.
       if (!body) throw new SupportUnavailable();
-      const bytes = new Uint8Array(await new Response(body as BodyInit).arrayBuffer());
+      const bytes = await readUpTo(body, row.sizeBytes);
+      if (bytes.length !== row.sizeBytes || sha256Of(bytes) !== row.sha256 || sniffImageType(bytes) !== row.contentType) throw new SupportUnavailable();
       await audit(operatorId, companyId, 'support_photo_viewed', jobId, { photoId, kind });
       return { bytes, contentType: row.contentType };
     },
   };
+}
+
+// The stream's bytes, stopping at one byte past `limit` so an object larger than registered is never
+// read whole.
+async function readUpTo(body: WebReadableStream<Uint8Array>, limit: number): Promise<Uint8Array> {
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (total <= limit) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      total += value.byteLength;
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+  return Buffer.concat(chunks, total);
 }
 
 export class SupportUnavailable extends Error {
