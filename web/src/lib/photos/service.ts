@@ -1,5 +1,5 @@
 import type { ReadableStream as WebReadableStream } from 'node:stream/web';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, count, eq, getTableColumns, inArray } from 'drizzle-orm';
 import { auditEvents, evidenceObjects } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import { MAX_PHOTO_REFS } from '@/lib/field/schema';
@@ -99,6 +99,24 @@ async function registryRows(tx: CompanyTransaction, caller: JobCaller, jobId: st
     );
 }
 
+// The photo row of one id and the photos the server holds for the job, read in one statement so
+// both come from one snapshot: an id seen as not registered is never then counted as registered.
+// The photos are counted from the registry, not from the phone's own reference documents, so a
+// caller that never writes a reference still meets the limit.
+async function registryView(tx: CompanyTransaction, caller: JobCaller, jobId: string, photoId: string): Promise<{ photo: EvidenceRow | undefined; photos: number }> {
+  const ofJob = and(eq(evidenceObjects.companyId, caller.companyId), eq(evidenceObjects.jobId, jobId), eq(evidenceObjects.kind, 'photo'));
+  const stored = tx
+    .select({ total: count().as('total') })
+    .from(evidenceObjects)
+    .where(ofJob)
+    .as('stored');
+  const [found] = await tx
+    .select({ photos: stored.total, row: getTableColumns(evidenceObjects) })
+    .from(stored)
+    .leftJoin(evidenceObjects, and(ofJob, eq(evidenceObjects.objectId, photoId)));
+  return { photo: found?.row ?? undefined, photos: Number(found?.photos ?? 0) };
+}
+
 export function photosService(db: Database, store: EvidenceStore, drafts: DraftStates): PhotosService {
   // A new photo needs a job still on its draft, and a draft still being edited that holds fewer than
   // MAX_PHOTO_REFS photo references (Submit refuses more, should two phones race past the count).
@@ -136,6 +154,12 @@ export function photosService(db: Database, store: EvidenceStore, drafts: DraftS
         // A new photo adds to the field work: only its field owner adds one, whatever their role (an
         // original or a signature does not need it).
         const job = await jobAccess(tx, caller, jobId, sendNeeds(kind), { fieldWork: kind === 'photo' });
+        if (kind === 'photo') {
+          // A new photo is refused at the limit before its body is read.
+          const { photo, photos } = await registryView(tx, caller, jobId, photoId);
+          if (!photo && photos >= MAX_PHOTO_REFS) throw new PhotoError('photo_limit');
+          return { job, same: photo, photo };
+        }
         const rows = await registryRows(tx, caller, jobId, photoId);
         const same = rows.find((row) => row.kind === kind);
         if (kind === 'signature' && !same) await requireSignable(tx, caller, job);
@@ -182,6 +206,18 @@ export function photosService(db: Database, store: EvidenceStore, drafts: DraftS
       return withCompany(db, caller.companyId, async (tx) => {
         const job = await jobAccess(tx, caller, jobId, sendNeeds(kind), { lock: true, fieldWork: kind === 'photo' });
         if (kind === 'photo' && job.status !== 'draft') throw new PhotoError('draft_locked');
+        // Counted again under the job's row lock, because two requests may pass the first count
+        // together. A photo id already registered is not new and is settled below. The registry stops
+        // at 300, but the bucket can hold more: an object no row registers is left only by an upload
+        // that passed the first count before the count reached 300, so the overflow is bounded by the
+        // uploads in flight when the limit is reached, and once 300 are registered every new upload
+        // is refused before anything is written. The runtime cannot delete bucket objects, so
+        // cleaning up such an object needs a delete permission or a bucket lifecycle rule, which is
+        // the owner's decision.
+        if (kind === 'photo') {
+          const now = await registryView(tx, caller, jobId, photoId);
+          if (!now.photo && now.photos >= MAX_PHOTO_REFS) throw new PhotoError('photo_limit');
+        }
         if (kind === 'signature') {
           const [there] = (await registryRows(tx, caller, jobId, photoId)).filter((row) => row.kind === kind);
           if (!there) await requireSignable(tx, caller, job);
