@@ -386,7 +386,12 @@ export function makeDocuments(input: {
   const age = before
     ? `Due to property age (${data.yearBuilt}), California State Law requires third-party lead and asbestos testing prior to destructive demolition.`
     : `The home was built in ${data.yearBuilt}. Therefore, no lead or asbestos testing is required prior to the start of work.`;
-  const clauses = [...(before ? [PRETEST] : []), EXCLUSIONS.replaceAll('{company}', clauseCompany), REPRICE, VALIDITY];
+  const clauses = [
+    ...(before ? [PRETEST] : []),
+    EXCLUSIONS.replaceAll('{company}', () => clauseCompany),
+    REPRICE,
+    VALIDITY,
+  ];
   const observations = [age];
   if (data.technicianNotes.trim()) observations.push(`Technician observations: ${data.technicianNotes.trim()}`);
   const statement = technicianStatement(data.technicianTranscript);
@@ -398,7 +403,10 @@ export function makeDocuments(input: {
       observations.push(`Photo ${index + 1} (${photo.room}) — supporting photo; no verified meter reading.`);
     }
   });
-  const mandated = [...(before ? [TESTING] : []), PROTECTION.replaceAll('{company}', clauseCompany)];
+  const mandated = [
+    ...(before ? [TESTING] : []),
+    PROTECTION.replaceAll('{company}', () => clauseCompany),
+  ];
   const recommendations = [...mandated, ...items.filter((item) => item.group !== 'job_charges').map((item) => item.description), ADDITIONAL];
   const words = roomWordsFor(data.rooms, roomWords);
   const customer = input.customerName.trim();
