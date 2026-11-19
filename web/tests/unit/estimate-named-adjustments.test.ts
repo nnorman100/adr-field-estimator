@@ -145,6 +145,23 @@ describe('adjustment schema', () => {
     expect(parseTable({ ...table([charge('10.00')]), adjustments: [{ ...SENIOR, name: ' Padded ' }] }).adjustments?.[0]?.name).toBe(' Padded ');
   });
 
+  it('takes any Unicode label and refuses only control characters', () => {
+    expect(check({ ...SENIOR, name: 'Remise fidélité' }).ok).toBe(true);
+    expect(check({ ...SENIOR, name: 'Returning  customer' }).ok).toBe(true);
+    expect(check({ ...SENIOR, name: 'éè 常連客 \u{1f3e0}' }).ok).toBe(true);
+    expect(check({ ...SENIOR, name: 'Two\nlines' }).ok).toBe(false);
+    expect(check({ ...SENIOR, name: 'Tab\there' }).ok).toBe(false);
+    expect(check({ ...SENIOR, name: 'Bell\u0007' }).ok).toBe(false);
+  });
+
+  it('has no ceiling on a fixed amount or a percent charge', () => {
+    expect(check({ ...RUSH, value: '125000.00' }).ok).toBe(true);
+    expect(check({ ...RUSH, kind: 'percent', value: '1000' }).ok).toBe(true);
+    expect(check({ ...RUSH, value: '12.345' }).ok).toBe(false);
+    const result = priceWith({ ...table([charge('1000.00')]), adjustments: [{ ...RUSH, value: '125000.00' }] }, 'rush');
+    expect(result.totals.low.total).toBe('126000.00');
+  });
+
   it('refuses a zero value, a percent discount above 100 and repeated ids; a percent charge may exceed 100, and the catalog has no ceiling', () => {
     expect(check({ ...LOYAL, value: '0' }).ok).toBe(false);
     expect(check({ ...SENIOR, value: '100.01' }).ok).toBe(false);
@@ -175,6 +192,19 @@ describe('the documents state the adjustment', () => {
     expect(result.documents?.letter).toContain(
       'Itemized total: $2,249.10.\nPrice-point adjustment (not taxed): $67.83.\n$2,499.00 \u2212 Senior discount $249.90 = $2,249.10',
     );
+  });
+
+  it('the letter and the proposal print the same arithmetic, with the label exactly as stored', () => {
+    const label = 'Remise fidélité  (2×)';
+    const result = priceEstimate(
+      { ...table([charge('1000.00')]), adjustments: [{ ...LOYAL, name: label }] },
+      { ...documentJob([room('Kitchen')], { emergency_calls: 1 }), adjustment: 'loyal' },
+    );
+    if (!result.ok) throw new Error(result.error);
+    const [line] = adjustmentLines(result.totals.low, null);
+    expect(line).toBe(`$1,000.00 − ${label} $50.00 = $950.00`);
+    expect(result.documents?.letter).toContain(line);
+    expect(chargeRows(result.totals.low, 'After-hours adjustment')[1]?.label).toBe(label);
   });
 
   it('the letter prints each end of a range', () => {

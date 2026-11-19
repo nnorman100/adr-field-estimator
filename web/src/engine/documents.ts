@@ -11,7 +11,7 @@ import { letterParagraph, equipmentSizing } from './sizing';
 import type { Table } from './table';
 import { aiNote, plain, technicianStatement } from './text';
 import { priceAndRange, type End, type Totals } from './totals';
-import { chars, collapse, lineJson, oneLine, type PriceLine } from './values';
+import { adjustmentLines, chars, collapse, lineJson, oneLine, type AdjustmentText, type PriceLine } from './values';
 
 
 const PHOTO_LOCATION_PRIVACY =
@@ -329,12 +329,13 @@ function pricePointSentence(low: Dec, high: Dec | null): string {
 }
 
 function adjustmentSentence(low: End, high: End | null): string {
-  const amount = (value: Dec): string => `$${value.format(',.2f')}`;
-  const line = (end: End, prefix: string): string => {
+  const text = (end: End): { adjustment?: AdjustmentText } => {
     const row = end.adjustment;
-    return row ? `${prefix}${amount(row.before)} ${row.direction === 'discount' ? '−' : '+'} ${row.name} ${amount(row.amount)} = ${amount(row.after)}` : '';
+    return row
+      ? { adjustment: { name: row.name, direction: row.direction, before: row.before.format('.2f'), amount: row.amount.format('.2f'), after: row.after.format('.2f') } }
+      : {};
   };
-  return (high ? [line(low, 'Low end: '), line(high, 'High end: ')] : [line(low, '')]).filter((text) => text).join('\n');
+  return adjustmentLines(text(low), high && text(high)).join('\n');
 }
 
 function estimateSentence(

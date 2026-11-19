@@ -126,7 +126,7 @@ function knownSource(text: string): boolean {
   }
 }
 
-type DecimalRule = { min?: string; max: string; places: number; cents?: boolean; blank?: boolean };
+type DecimalRule = { min?: string; max?: string; places: number; cents?: boolean; blank?: boolean };
 
 /**
  * A Decimal string within the rule's range and places, kept as money (2 places) or normalized.
@@ -134,7 +134,7 @@ type DecimalRule = { min?: string; max: string; places: number; cents?: boolean;
  */
 function decimal(rule: DecimalRule) {
   const low = Dec.parse(rule.min ?? '0');
-  const high = Dec.parse(rule.max);
+  const high = rule.max === undefined ? null : Dec.parse(rule.max);
   return z.string().transform((raw, ctx) => {
     const text = raw.trim();
     if (rule.blank && text === '') return '';
@@ -142,8 +142,8 @@ function decimal(rule: DecimalRule) {
       ? 'must be a decimal number written as text, such as "12.50"'
       : (text.split('.')[1] ?? '').length > rule.places
         ? `must have at most ${rule.places} decimal places`
-        : Dec.parse(text).cmp(low) < 0 || Dec.parse(text).cmp(high) > 0
-          ? `must be from ${rule.min ?? '0'} to ${rule.max}`
+        : Dec.parse(text).cmp(low) < 0 || (high !== null && Dec.parse(text).cmp(high) > 0)
+          ? `must be from ${rule.min ?? '0'}${rule.max === undefined ? ' up' : ` to ${rule.max}`}`
           : null;
     if (problem) {
       ctx.addIssue({ code: 'custom', message: problem });
@@ -633,10 +633,10 @@ const ADJUSTMENT = z
     name: z
       .string()
       .refine((value) => chars(value) >= 1 && chars(value) <= 60, { message: 'must be 1 to 60 characters' })
-      .refine((value) => printable(value), { message: 'must be printable text on one line' }),
+      .refine((value) => !/\p{Cc}/u.test(value), { message: 'must not contain control characters' }),
     kind: z.enum(['percent', 'amount']),
     direction: z.enum(['discount', 'charge']),
-    value: decimal({ max: '100000', places: 2 }),
+    value: decimal({ places: 2 }),
   })
   .superRefine((adjustment, ctx) => {
     const value = Dec.parse(adjustment.value);

@@ -1,4 +1,5 @@
 import type { ProposalEnd } from '@/engine/estimate';
+import { adjustmentLines, dollars } from '@/engine/values';
 import type { EstimateView } from './result';
 
 // What the Review before signing screen decides in the browser, as pure functions so they are
@@ -39,12 +40,7 @@ export function reviewAnswerOf(body: unknown): ReviewAnswer | null {
 }
 
 /** A money string from the server ("1234.50") as the documents print it ("$1,234.50"). No arithmetic. */
-export function dollars(amount: string): string {
-  const match = /^(-?)(\d+)\.(\d{2})$/.exec(amount);
-  if (!match) return amount;
-  const [, sign, whole, cents] = match;
-  return `${sign}$${whole!.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${cents}`;
-}
+export { dollars };
 
 /** The customer price, and the itemized total beside it (ARCHITECTURE.md, Product rules §2). */
 export function priceLines(totals: EstimateView['totals']): { customer: string; itemized: string } {
@@ -61,20 +57,7 @@ export function pricePointLine(low: ProposalEnd, high: ProposalEnd | null): stri
   return `Price-point adjustment (not taxed): ${amount(low)} at the low end, ${amount(high)} at the high end`;
 }
 
-/**
- * The approved named adjustment as arithmetic (S5b-7): a discount "{price before} \u2212 {name} {amount} = {price}",
- * a charge with "+". In a range each end's lines say which end they are. None when no adjustment applies.
- */
-export function adjustmentLines(low: ProposalEnd, high: ProposalEnd | null): string[] {
-  const lines = (end: ProposalEnd, prefix: string): string[] =>
-    end.adjustment
-      ? [
-          `${prefix}${dollars(end.adjustment.before)} ${end.adjustment.direction === 'discount' ? '\u2212' : '+'} ${end.adjustment.name} ${dollars(end.adjustment.amount)} = ${dollars(end.adjustment.after)}`,
-        ]
-      : [];
-  if (!high) return lines(low, '');
-  return [...lines(low, 'Low end: '), ...lines(high, 'High end: ')];
-}
+export { adjustmentLines };
 
 /** One end's charges in the order the engine adds them into its total: the subtotal, then each adjustment it charged. */
 export function chargeRows(end: ProposalEnd, afterHoursLabel: string, withPricePoint = true): Array<{ label: string; amount: string }> {

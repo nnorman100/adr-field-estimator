@@ -18,7 +18,7 @@ function text(value: unknown): string {
 function Charges({ end, afterHoursLabel, withPricePoint = true }: { end: ProposalEnd; afterHoursLabel: string; withPricePoint?: boolean }) {
   return chargeRows(end, afterHoursLabel, withPricePoint).map((row, index) => (
     <li key={`${index}-${row.label}`} className={ROW}>
-      <span className="min-w-0 break-words">{row.label}</span>
+      <span className="min-w-0 whitespace-pre-wrap break-words">{row.label}</span>
       <span className="shrink-0 tabular-nums">{dollars(row.amount)}</span>
     </li>
   ));
@@ -145,7 +145,7 @@ export function Proposal({ proposal }: { proposal: NonNullable<EstimateView['pro
       </p>
       {adjustment ? <p>{adjustment}</p> : null}
       {named.map((line, index) => (
-        <p key={index} className="tabular-nums" data-testid="named-adjustment">
+        <p key={index} className="whitespace-pre-wrap break-words tabular-nums" data-testid="named-adjustment">
           {line}
         </p>
       ))}

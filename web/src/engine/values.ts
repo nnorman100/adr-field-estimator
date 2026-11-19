@@ -73,6 +73,29 @@ export function oneLine(value: string): string {
   return value.split(/\s+/u).filter(Boolean).join(' ');
 }
 
+/** "1234.50" as `$1,234.50`, a negative amount with its minus sign before the dollar sign; anything else is left as it is. */
+export function dollars(amount: string): string {
+  const match = /^(-?)(\d+)\.(\d{2})$/.exec(amount);
+  if (!match) return amount;
+  const [, sign, whole, cents] = match;
+  return `${sign}$${whole!.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${cents}`;
+}
+
+export type AdjustmentText = { name: string; direction: 'discount' | 'charge'; before: string; amount: string; after: string };
+
+/**
+ * The approved named adjustment as arithmetic (S5b-7), one definition for the proposal and the scope defense letter:
+ * a discount "{price before} − {name} {amount} = {price}", a charge with "+". The name prints exactly as stored.
+ * In a range each end's line says which end it is. None when no adjustment applies.
+ */
+export function adjustmentLines(low: { adjustment?: AdjustmentText }, high: { adjustment?: AdjustmentText } | null): string[] {
+  const line = (adjustment: AdjustmentText | undefined, prefix: string): string[] =>
+    adjustment
+      ? [`${prefix}${dollars(adjustment.before)} ${adjustment.direction === 'discount' ? '−' : '+'} ${adjustment.name} ${dollars(adjustment.amount)} = ${dollars(adjustment.after)}`]
+      : [];
+  return high ? [...line(low.adjustment, 'Low end: '), ...line(high.adjustment, 'High end: ')] : line(low.adjustment, '');
+}
+
 /** The key two room names share when they differ only in spacing or letter case. */
 export function collapse(value: string): string {
   return oneLine(value).toLowerCase();
