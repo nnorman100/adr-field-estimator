@@ -214,7 +214,7 @@ describe('sign-in lookup (migration 0004)', () => {
     `;
     expect(fn).toEqual({
       definer: true,
-      config: ['search_path=pg_catalog'],
+      config: ['search_path=pg_catalog, pg_temp'],
       owner: MIGRATOR,
       volatile: 'v',
       strict: true,
@@ -348,7 +348,7 @@ describe('sign-in address lookup (migration 0007)', () => {
              proisstrict AS strict, proretset AS sets
       FROM pg_proc WHERE oid = 'sign_in_company_page(text)'::regprocedure
     `;
-    expect(fn).toEqual({ definer: true, config: ['search_path=pg_catalog'], owner: MIGRATOR, strict: true, sets: true });
+    expect(fn).toEqual({ definer: true, config: ['search_path=pg_catalog, pg_temp'], owner: MIGRATOR, strict: true, sets: true });
 
     // 0007 adds no policy: the page lookup reads through 0004's SELECT-only policy.
     const policies = await admin<{ name: string }[]>`SELECT polname AS name FROM pg_policy WHERE polrelid = 'companies'::regclass`;

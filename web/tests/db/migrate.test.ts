@@ -15,7 +15,7 @@ import { emptyDiscardDatabase, startDisposablePostgres, type DisposablePostgres 
 const exec = promisify(execFile);
 const webRoot = fileURLToPath(new URL('../..', import.meta.url));
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const SHIPPED = ['0001_foundation', '0002_identity', '0003_runtime_role', '0004_sign_in_lookup', '0005_access_projection', '0006_platform_operator', '0007_sign_in_address', '0008_feature_flag_writes', '0009_price_tables', '0010_core_job_tables', '0011_submissions_agreements', '0012_ai_live_tables', '0013_company_documents', '0014_signing_links', '0015_office_jobs', '0016_job_drafts'];
+const SHIPPED = ['0001_foundation', '0002_identity', '0003_runtime_role', '0004_sign_in_lookup', '0005_access_projection', '0006_platform_operator', '0007_sign_in_address', '0008_feature_flag_writes', '0009_price_tables', '0010_core_job_tables', '0011_submissions_agreements', '0012_ai_live_tables', '0013_company_documents', '0014_signing_links', '0015_office_jobs', '0016_job_drafts', '0017_definer_search_path'];
 const SHIPPED_TABLES = [
   'access_projection_outbox',
   'actors',
