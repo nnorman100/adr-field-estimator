@@ -40,7 +40,7 @@ const claimOf = (detail: JobDetail): Values => ({ ...detail.claim, dateOfLoss: d
 export function CustomerView({ job }: { job: CustomerJob }) {
   // Read only once the field work moved away from this person (J5), or the job is archived (S5b-2):
   // what they typed stays, unsaved.
-  const canSave = job.session.capabilities.some((key) => key === 'scope' || key === 'coordination') && !job.moved && !job.archived;
+  const canSave = job.session.capabilities.some((key) => key === 'scope' || key === 'coordination') && !job.moved && !job.held;
   return (
     <div className="flex flex-col gap-4">
       <h3 className="sr-only">Customer and claim</h3>

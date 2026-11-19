@@ -187,6 +187,51 @@ test('a job found archived after an offline Remove of a prep task keeps the room
   await expect(page.getByLabel('Year built')).not.toBeEditable();
 });
 
+test('a job found archived after only a new room name was typed keeps the form and the name, read only', async ({ context, lane }) => {
+  const world = await seedCompany();
+  const phone = await signedIn(context, lane, world);
+  const jobId = randomUUID();
+  await openJob(phone.page, lane, world, jobId);
+  const page = phone.page;
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  lane.cut();
+  await page.reload();
+  await expect(page.getByLabel('Year built')).toBeEditable();
+  await page.getByLabel('New room name').fill('Basement');
+  lane.serve(`/api/jobs/${jobId}`, { type: 'application/json', body: JSON.stringify({ error: 'archived' }), status: 410 });
+  lane.restore();
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await expect(page.getByRole('heading', { name: 'This job is archived' })).toBeVisible();
+  await expect(page.getByLabel('New room name')).toHaveValue('Basement');
+  await expect(page.getByLabel('New room name')).not.toBeEditable();
+  await expect(page.getByRole('button', { name: 'Add room', exact: true })).toHaveCount(0);
+});
+
+test('a job found archived after only an own prep task was typed keeps the room form and the text, read only', async ({ context, lane }) => {
+  const world = await seedCompany();
+  const phone = await signedIn(context, lane, world);
+  const jobId = randomUUID();
+  await openJob(phone.page, lane, world, jobId);
+  const page = phone.page;
+  await page.getByLabel('New room name').fill('Kitchen');
+  await page.getByRole('button', { name: 'Add room', exact: true }).click();
+  const room = page.getByRole('form', { name: 'Kitchen', exact: true });
+  await expect(room).toBeVisible();
+  await expect.poll(async () => (await adminDb().collection(`${world.draftPath}/rooms`).get()).size).toBe(1);
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  lane.cut();
+  await page.reload();
+  await expect(page.getByLabel('Year built')).toBeEditable();
+  // Typed, not added with its button, and the room not saved.
+  await page.getByRole('form', { name: 'Kitchen', exact: true }).getByLabel('Your own prep task').fill('Cover the floor');
+  lane.serve(`/api/jobs/${jobId}`, { type: 'application/json', body: JSON.stringify({ error: 'archived' }), status: 410 });
+  lane.restore();
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await expect(page.getByRole('heading', { name: 'This job is archived' })).toBeVisible();
+  await expect(page.getByRole('form', { name: 'Kitchen', exact: true }).getByLabel('Your own prep task')).toHaveValue('Cover the floor');
+  await expect(page.getByRole('form', { name: 'Kitchen', exact: true }).getByLabel('Your own prep task')).not.toBeEditable();
+});
+
 test('a photo taken while the camera hid the page is kept to send again', async ({ context, lane }) => {
   const world = await seedCompany();
   const phone = await signedIn(context, lane, world);

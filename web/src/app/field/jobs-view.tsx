@@ -51,7 +51,6 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
       // A refusal to list jobs drops the ones already shown, and with them the restored job and the
       // unfinished archives, which name properties too.
       if (answer.denied) {
-        pending.setListDenied(true);
         setJobs(null);
         setCursor(null);
         setRestored(null);
@@ -59,7 +58,6 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
       }
       return;
     }
-    pending.setListDenied(false);
     setError(null);
     setJobs((current) => (from === null ? answer.value.jobs : [...(current ?? []), ...answer.value.jobs]));
     setCursor(answer.value.nextCursor);
@@ -68,7 +66,9 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
   async function load(from: string | null) {
     if (!session.online) return;
     const mine = ++latest.current;
+    const sent = pending.listSend();
     const answer = await listJobs(session.user, shown, from);
+    if (answer.ok || answer.denied) pending.listAnswered(sent, !answer.ok);
     if (mine === latest.current) apply(answer, from);
   }
 

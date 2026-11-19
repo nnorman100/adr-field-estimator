@@ -18,6 +18,12 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
   const [lists, setLists] = useState<ScopeLists | null>(null);
   const [listsError, setListsError] = useState<string | null>(null);
   const [name, setName] = useState('');
+  const { markUnsaved } = job;
+  const nameTyped = name !== '';
+  useEffect(() => {
+    markUnsaved('new-room', nameTyped);
+    return () => markUnsaved('new-room', false);
+  }, [markUnsaved, nameTyped]);
   // Rooms with changes typed and not saved, and rooms the draft no longer lists that had some when
   // the field work moved to someone else: they stay on screen, read only, as last read (J5).
   const [dirty, setDirty] = useState<Record<string, true>>({});

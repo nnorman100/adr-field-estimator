@@ -103,7 +103,8 @@ export function RoomCard({
   const [edits, setEdits] = useState<FormValues>({});
   const [listEdits, setListEdits] = useState<RoomLists>({});
   const values = withEdits(ROOM_FIELDS, stored, edits);
-  const dirty = Object.keys(edits).length > 0 || Object.keys(listEdits).length > 0;
+  const [ownTyped, setOwnTyped] = useState(false);
+  const dirty = Object.keys(edits).length > 0 || Object.keys(listEdits).length > 0 || ownTyped;
   useEffect(() => {
     onDirty?.(roomId, dirty);
   }, [onDirty, roomId, dirty]);
@@ -207,6 +208,7 @@ export function RoomCard({
         readOnly={readOnly}
       />
       <RoomPrepTasks
+        onTyped={setOwnTyped}
         id={id('prep')}
         stored={stored.prepTasks ?? []}
         edited={listEdits.prepTasks}

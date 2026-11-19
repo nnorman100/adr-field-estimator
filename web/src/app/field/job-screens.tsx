@@ -70,6 +70,9 @@ export type JobContext = {
   editable: boolean;
   // The job is archived (S5b-2): nothing of it is sent, and what is on screen stays, read only.
   archived: boolean;
+  // Nothing of the job is sent: it is archived, or a read of it must say first whether an archive or
+  // another refusal changed it. What was typed stays, read only.
+  held: boolean;
   // A form of the job tells whether it holds changes not saved; the screen keeps such a form when the
   // job turns out archived.
   markUnsaved: (form: string, unsaved: boolean) => void;
@@ -373,6 +376,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     session.capabilities.includes('scope') &&
     !moved &&
     !archived &&
+    verifying === null &&
     detail !== null &&
     ((fieldWork === 'nobody' && detail.job.status === 'draft') || (ownerUnset && fieldWork === 'mine'));
 
@@ -393,6 +397,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     editable:
       !moved && !archived && verifying === null && !ownerUnset && draftAt === currentDraftId && draft !== null && canEditDraft(draft, session.user.uid, session.capabilities) && (session.online || session.offlineCapture),
     archived,
+    held: archived || verifying !== null,
     markUnsaved,
     stale: draft !== null && draftError !== null,
   };

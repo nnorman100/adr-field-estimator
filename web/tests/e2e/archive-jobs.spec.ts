@@ -224,6 +224,7 @@ test('an estimator has no Archive, sees an archived job’s old link as archived
   // snapshot. Only the first answer is dropped, after the server made the copy.
   const sent: { id: string; draftId: string }[] = [];
   const statuses: number[] = [];
+  const answered: { id: string; currentDraftId: string }[] = [];
   let lost = true;
   const draftsOf = async () => (await adminDb().collection(`companies/${company.id}/drafts`).get()).size;
   const draftsBefore = await draftsOf();
@@ -231,6 +232,8 @@ test('an estimator has no Archive, sees an archived job’s old link as archived
     sent.push(JSON.parse(route.request().postData() ?? '{}') as { id: string; draftId: string });
     const real = await route.fetch();
     statuses.push(real.status());
+    const body = (await real.json()) as { job: { id: string; currentDraftId: string } };
+    answered.push({ id: body.job.id, currentDraftId: body.job.currentDraftId });
     if (lost) return route.abort();
     return route.fulfill({ response: real });
   });
@@ -261,6 +264,11 @@ test('an estimator has no Archive, sees an archived job’s old link as archived
   expect(sent[1]).toEqual(sent[0]);
   // The retry was answered as a replay (200, not a second 201), and no second draft was made.
   expect(statuses).toEqual([201, 200]);
+  // Both answers name the job and draft the phone asked for.
+  expect(answered).toEqual([
+    { id: sent[0]!.id, currentDraftId: sent[0]!.draftId },
+    { id: sent[0]!.id, currentDraftId: sent[0]!.draftId },
+  ]);
   expect(await draftsOf()).toBe(draftsBefore + 1);
   const jobs = await adminSql()<{ id: string }[]>`SELECT id::text FROM jobs WHERE company_id = ${company.id}::uuid`;
   const copies = jobs.map((row) => row.id).filter((id) => ![draft, filed, signed].includes(id));
@@ -452,6 +460,59 @@ for (const code of ['draft_unavailable', 'jobs_unavailable']) {
   });
 }
 
+test('while the read of the job after an archive answered 503 has no answer, every editable section is read only and the archive is kept', async ({ page, request }) => {
+  test.setTimeout(150_000);
+  const company = await seedCompany('archive-recheck-hold', { owner: 'owner' });
+  const owner = company.people.owner!;
+  const jobId = await seedJob(request, company, owner, '14 Held Court');
+  const sent: { revision: number; changeId: string }[] = [];
+  await page.route(`**/api/jobs/${jobId}/archive`, (route) => {
+    sent.push(JSON.parse(route.request().postData() ?? '{}') as { revision: number; changeId: string });
+    return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'jobs_unavailable' }) });
+  });
+  let cutReads = false;
+  await page.route(`**/api/jobs/${jobId}`, (route) => (cutReads && route.request().method() === 'GET' ? route.abort() : route.fallback()));
+
+  await signIn(page, company, owner);
+  await openJob(page, '14 Held Court');
+  await page.getByRole('button', { name: 'Archive job' }).click();
+  cutReads = true;
+  await page.getByRole('dialog', { name: 'Archive this job?' }).getByRole('button', { name: 'Archive job' }).click();
+
+  // The read that would say whether the archive committed gets no answer: nothing is saved from any section.
+  await expect(page.getByRole('button', { name: 'Try archiving again' })).toBeVisible();
+  await expect(page.getByLabel('Year built')).not.toBeEditable();
+  await page.getByRole('link', { name: 'Customer and claim' }).click();
+  await expect(page.getByLabel('Customer name')).not.toBeEditable();
+  await expect(page.getByRole('button', { name: 'Save customer' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Save claim' })).toHaveCount(0);
+  await main(page).getByRole('link', { name: 'Job coordination' }).click();
+  await expect(page.getByRole('textbox', { name: 'Office notes' })).not.toBeEditable();
+  await expect(page.getByRole('button', { name: 'Save notes' })).toBeDisabled();
+  await page.getByRole('link', { name: 'Photos', exact: true }).click();
+  await expect(page.getByLabel('Take photo')).toHaveCount(0);
+  expect(sent).toHaveLength(1);
+});
+
+test('a job read answered 410 with no body after an archive answered 503 shows the job archived', async ({ page, request }) => {
+  test.setTimeout(150_000);
+  const company = await seedCompany('archive-recheck-410', { owner: 'owner' });
+  const owner = company.people.owner!;
+  const jobId = await seedJob(request, company, owner, '15 Bodyless Court');
+  await page.route(`**/api/jobs/${jobId}/archive`, (route) => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'jobs_unavailable' }) }));
+  let gone = false;
+  await page.route(`**/api/jobs/${jobId}`, (route) => (gone && route.request().method() === 'GET' ? route.fulfill({ status: 410, body: '' }) : route.fallback()));
+
+  await signIn(page, company, owner);
+  await openJob(page, '15 Bodyless Court');
+  await page.getByRole('button', { name: 'Archive job' }).click();
+  gone = true;
+  await page.getByRole('dialog', { name: 'Archive this job?' }).getByRole('button', { name: 'Archive job' }).click();
+
+  await expect(page.getByRole('heading', { name: 'This job is archived' })).toBeVisible();
+  await expect(page.getByLabel('Year built')).not.toBeEditable();
+});
+
 test('an archive answered 503 that did not commit is held read only until the job is read, then editable again with the same archive kept', async ({ page, request }) => {
   test.setTimeout(150_000);
   const company = await seedCompany('archive-uncommitted', { owner: 'owner' });
@@ -527,5 +588,32 @@ test('a refused jobs list clears every property address, the Restore notice and 
 
   // Once a list is answered again, the unfinished archive is shown.
   release();
+  await expect(main(page).getByRole('list', { name: 'Not finished' })).toBeVisible();
+
+  // A refusal that arrives after the list that asked was left is recorded all the same: Company jobs is
+  // opened, My jobs follows before the refusal, and no address shows once it comes.
+  let lateRefusal: () => void = () => undefined;
+  const refusalHeld = new Promise<void>((resolve) => (lateRefusal = resolve));
+  let mineHeld: () => void = () => undefined;
+  const mineWaits = new Promise<void>((resolve) => (mineHeld = resolve));
+  let asked = 0;
+  await page.route(/\/api\/jobs\?/, async (route) => {
+    asked += 1;
+    if (asked === 1) {
+      await refusalHeld;
+      return route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ error: 'forbidden' }) });
+    }
+    await mineWaits;
+    return route.continue();
+  });
+  await main(page).getByRole('link', { name: 'Company jobs' }).click();
+  await expect.poll(() => asked).toBe(1);
+  await main(page).getByRole('link', { name: 'My jobs' }).click();
+  await expect.poll(() => asked).toBe(2);
+  lateRefusal();
+  await expect(main(page).getByRole('status').filter({ hasText: 'Loading jobs' })).toBeVisible();
+  await expect(main(page).getByText('52 Unfinished Second Street')).toHaveCount(0);
+  await expect(main(page).getByText('51 Restored First Street')).toHaveCount(0);
+  mineHeld();
   await expect(main(page).getByRole('list', { name: 'Not finished' })).toBeVisible();
 });
