@@ -222,3 +222,37 @@ Status: accepted (owner, Nov 14, 2026, option 1).
 Context: three review rounds of the S6-3 follow-up each found another sign-in-again path that skipped the retention cleanup of offline work.
 Decision: offline retention is redesigned from scratch as one central routine with a small explicit state machine for refusal and retention, instead of patching each path. Every entry point calls it.
 Consequences: built in PR #388 (`web/src/lib/field/retention.ts`), with a property-based test over random sequences of sign-outs, refusals, storage failures and day changes.
+
+### Departures recorded after the standards audit of Nov 19, 2026: D-036 to D-039
+
+The build-practice audit against the Technology Standard (Nov 19, 2026) found four departures that were decided or known but not written here, as the Standard's "Exceptions" rule asks. The owner answered its decisions on Nov 19, 2026 ("1a 2a 3a 4a"); D-036 and D-037 carry answers 3a and 4a, and D-038 and D-039 record earlier owner decisions and a known gap. Each stays until the condition named in its own entry is met or the owner changes it.
+
+### D-036: Terraform plan and apply stay hand-run by the owner until the organization exists (Nov 19, 2026, option 3a)
+
+Status: accepted (owner, Nov 19, 2026, option 3a). A recorded exception to the Standard's Core release path.
+Context: the Standard says "Terraform: the plan is shown on the pull request; the owner approves; a manual workflow applies it". DryScope has neither: the owner runs plan and apply by hand ("an agent never runs plan or apply against the project", `docs/runbook/terraform-apply.md:3`, step 1). No workflow runs Terraform (the only `terraform` in a workflow is an error message, `.github/workflows/web-release.yml:354`), and the runner image has no Terraform (`docs/runbook/ci.md`, "CI runners"). CI checks the plan checker only against stored fixture plans (`vitest.config.mjs:10-16`, `tests/test_terraform_plan_check.js:6-15`); `infra/dryscope/scripts/check.sh` (format, validate, mocked `terraform test` and the fresh-plan check) runs by hand.
+Options: (a) record the hand-run plan and apply as an exception until the organization exists, and run the offline `check.sh` in CI as a separate change; (b) also build a plan on each pull request now with a read-only keyless identity (large; adds a cloud identity).
+Decision: (a). The owner keeps running plan and apply by hand, with the plan check, until the Google Cloud organization exists. Running the offline `check.sh` in CI is a separate pull request (it needs a workflow change and the owner's approval) and does not end this exception.
+Consequences: until then a pull request that changes a `.tf` file without regenerating the fixture plans can pass CI; the owner's hand-run `check.sh` regenerates and checks fresh mocked plans for both roots, but compares them with the committed fixture plans for the `app` root only (`infra/dryscope/scripts/check.sh:31-39`), so a valid `data` root plan change can pass with an old fixture. The check that covers an apply is the one the runbook requires on the saved real plan before each apply (`docs/runbook/terraform-apply.md`, steps 3 onward), not the fixture comparison. Plan-on-pull-request and the manual apply workflow are reconsidered when the organization exists.
+
+### D-037: CodeQL runs on pushes to master and weekly, not on pull requests (Nov 18, 2026; kept Nov 19, 2026, option 4a)
+
+Status: accepted (owner, Nov 18, 2026, to save runner minutes; kept on Nov 19, 2026, option 4a). A recorded exception to the Standard's Core operations scanning rule as GitHub applies it to pull requests.
+Context: `.github/workflows/codeql.yml:3-8` runs on pushes to `master` and every Monday at 09:23 UTC, not on `pull_request`, to save about 6.3 runner-minutes per push on the self-hosted pool (`docs/runbook/ci.md`, the `audit, Analyze, Test guard` row). Code scanning is not enabled, so the job uploads nothing (`upload: never`, `.github/workflows/codeql.yml:40-51`) and its findings appear only in the job summary. GitHub's guidance is that the `pull_request` event gives "more efficient and accurate results", and that `on: push` results are mapped to open pull requests only when code scanning is enabled and the results are uploaded (https://docs.github.com/en/code-security/reference/code-scanning/workflow-configuration-options, "Scanning pull requests").
+Options: (a) keep pushes only and record it; (b) enable code scanning and upload the results, and also scan the relevant pull request heads (the workflow now scans `master` only, so a finding introduced on a branch has nothing to compare against); (c) run CodeQL on pull requests that touch `web/` only.
+Decision: (a). CodeQL stays on pushes to `master` and the weekly run. It is not a required check.
+Consequences: a CodeQL finding shows only after the merge, in the job summary of the `master` run. The owner can revisit (b) or (c) when runner capacity grows.
+
+### D-038: The pipeline runs no unattended review-fix rounds (Nov 17, 2026)
+
+Status: accepted (owner, Nov 17, 2026). A recorded exception to the Standard's validation gate, which allows "auto-fix limited to two rounds".
+Context: `.no-mistakes.yaml` sets `auto_fix: review: 0` (`.no-mistakes.yaml:41-42`; `docs/runbook/ci.md`, the `.no-mistakes.yaml` paragraph).
+Decision: zero unattended review-fix rounds. A review finding is not fixed automatically on its own; it waits for a selection by a person (or the supervising agent), who may direct a fix round or send it to the worker as an ordinary commit.
+Consequences: no review fix lands without a selection, but a selected fix round can still produce a pipeline-authored commit, so the author of a review fix is not always the worker; protected paths still guard every automatic commit. The three-round cap on review fix rounds per pull request is unchanged.
+
+### D-039: The release smoke check is thinner than the Standard until it covers the deployed checks (Nov 19, 2026)
+
+Status: accepted (recorded at the owner's direction, Nov 19, 2026). A tracked, dated exception to the Standard's Core release path.
+Context: the Standard asks for smoke tests on the test copy after every release: "site loads, sign-in works, a fake record is created and submitted, a file uploads, an AI feature answers within its limit." `web/scripts/smoke-release.ts:1-14` checks health (commit, version, database) and that signed-out probes are refused. The gap is already noted in `docs/plans/TC.md:20`.
+Decision: the release keeps the current smoke check until the release smoke check itself covers the deployed checks: sign-in, creating and submitting a fake record, a file upload and, once an AI feature is switched on, an answer within its limit.
+Consequences: until then a release can pass with sign-in, record saving, uploads or AI broken on the test copy; the browser tests (Playwright) run on pull requests that change `web/`, `live-relay-placeholder/` or `.github/workflows/web.yml` and skip their suite on other pull requests (`.github/workflows/web.yml:226-236`, `:269-270`); they exercise the app flows locally and against a local build, not the deployed copy, and do not check that an AI feature answers within its limit. Deployed sign-in, record submission, upload and a real AI answer stay open: the real-model checks run only from the separate manual `.github/workflows/ai-evals.yml:3-11`. This exception ends when the release smoke check covers those deployed checks. Live keeps read-only checks only (S8-17).
