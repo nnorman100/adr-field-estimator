@@ -661,6 +661,54 @@ describe('moving the field work (owner decision J5)', () => {
     expect(draftOf(draftId)).toEqual({ fieldOwnerUid: 'estimator-a2', fieldOwnerRevision: revision + 1 });
   });
 
+  // Back to editing commits in Postgres, but its field draft is never made (the field database
+  // failed), and the phone that knew the submitted draft id is gone. The move, and the new owner's
+  // Start field work, make the job's current draft from its latest record, with where it came from,
+  // as Back to editing's retry does, instead of answering 503 every time.
+  async function draftNeverMade() {
+    const made = await claimedJob();
+    h.field.put(h.seed.a, made.draftId, MANIFEST);
+    expect((await submitDraft(ESTIMATOR_A, made.id, { id: randomUUID(), draftId: made.draftId, digest: await manifestDigest(MANIFEST) })).status).toBe(201);
+    const later = randomUUID();
+    h.field.failNext.createFrom = true;
+    expect(await nextDraft(ESTIMATOR_A, made.id, { draftId: later, fromDraftId: made.draftId })).toEqual({
+      status: 503,
+      body: { error: 'submissions_unavailable' },
+    });
+    expect((await read(OWNER_A, made.id)).body.job).toMatchObject({ status: 'draft', currentDraftId: later });
+    expect(h.field.draft(h.seed.a, later)).toBeNull();
+    const [record] = await h.admin<{ id: string }[]>`SELECT id::text AS id FROM job_submissions WHERE job_id = ${made.id} AND status = 'committed'`;
+    return { ...made, later, submissionId: record!.id };
+  }
+
+  it('makes the current draft Back to editing never made when the field work moves, from the job’s latest record', async () => {
+    const { id, draftId, later, submissionId } = await draftNeverMade();
+    const { revision } = (await coordination(OWNER_A, id)).body;
+    expect((await transfer(OWNER_A, id, { revision, changeId: randomUUID(), toActorId: estimatorA2 })).status).toBe(200);
+    expect(h.field.draft(h.seed.a, later)).toMatchObject({
+      jobId: id,
+      state: 'editing',
+      field: MANIFEST.draft,
+      rooms: { kitchen: { name: 'Kitchen' } },
+      previous: { draftId, submissionId },
+    });
+    expect(draftOf(later)).toEqual({ fieldOwnerUid: 'estimator-a2', fieldOwnerRevision: revision + 1 });
+    expect(draftOf(draftId)).toEqual({ fieldOwnerUid: 'estimator-a2', fieldOwnerRevision: revision + 1 });
+    expect((await claim(ESTIMATOR_A2, id)).status).toBe(200);
+    // The first phone's own retry is refused now: the field work moved.
+    expect((await nextDraft(ESTIMATOR_A, id, { draftId: later, fromDraftId: draftId })).body.error).toBe('not_field_owner');
+  });
+
+  it('makes the current draft Back to editing never made when its field owner starts the field work again', async () => {
+    const { id, draftId, later, submissionId } = await draftNeverMade();
+    const { revision } = (await coordination(OWNER_A, id)).body;
+    expect((await claim(ESTIMATOR_A, id)).status).toBe(200);
+    expect(h.field.draft(h.seed.a, later)).toMatchObject({ jobId: id, state: 'editing', previous: { draftId, submissionId } });
+    expect(draftOf(later)).toEqual({ fieldOwnerUid: 'estimator-a', fieldOwnerRevision: revision });
+    // Back to editing sent again by the first phone finds the same draft: made once, from one record.
+    expect((await nextDraft(ESTIMATOR_A, id, { draftId: later, fromDraftId: draftId })).status).toBe(200);
+  });
+
   it('refuses the company owner field work they do not own, until they move it to themself', async () => {
     const { id, draftId } = await claimedJob();
     h.field.put(h.seed.a, draftId, MANIFEST);
