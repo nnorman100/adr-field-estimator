@@ -227,6 +227,7 @@ function endJson(end: End): JObj {
     tax: money(end.tax).toString(),
     total: money(end.total).toString(),
   };
+  if (!end.pricePoint.isZero()) body.price_point = money(end.pricePoint).toString();
   if (end.tradeMinimums.length) {
     body.trade_minimums = end.tradeMinimums.map((row) => ({
       amount: money(row.amount).toString(),

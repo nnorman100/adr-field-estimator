@@ -211,6 +211,28 @@ export function SettingsSection({ table, onChange, published }: Edit & { publish
         checked={policy.show_line_breakdown}
         onChange={(show_line_breakdown) => set({ show_line_breakdown })}
       />
+      <CheckField
+        label="Round the customer price up to a price point"
+        checked={policy.price_point !== undefined}
+        hint="Off by default. Example: with steps of $100 ending in $99, $2,431.17 becomes $2,499. The difference prints as its own line, untaxed; a price is never rounded down."
+        onChange={(on) => set({ price_point: on ? { step: '100', ending: '99' } : undefined })}
+      />
+      {policy.price_point ? (
+        <>
+          <DecimalField
+            label="Price point step ($, whole dollars, 10 to 10,000)"
+            prefix="$"
+            value={policy.price_point.step}
+            onChange={(step) => set({ price_point: { ...policy.price_point!, step } })}
+          />
+          <DecimalField
+            label="Price point ending ($, whole dollars, below the step)"
+            prefix="$"
+            value={policy.price_point.ending}
+            onChange={(ending) => set({ price_point: { ...policy.price_point!, ending } })}
+          />
+        </>
+      ) : null}
       <AdvancedSettings table={table} onChange={onChange} />
     </Section>
   );

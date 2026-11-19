@@ -84,6 +84,15 @@ describe('the review screen', () => {
     expect(chargeRows(every, 'Night work').reduce((sum, row) => sum + cents(row.amount), 0)).toBe(cents(every.total));
   });
 
+  it('prints the price-point adjustment last, so the rows add up to the rounded total (S4-4e)', () => {
+    const rounded = { ...END, tax: '10.00', price_point: '54.50', total: '1299.00' };
+    expect(chargeRows(rounded, 'After-hours adjustment')).toEqual([
+      { label: 'Subtotal', amount: '1234.50' },
+      { label: 'Sales tax', amount: '10.00' },
+      { label: 'Price-point adjustment', amount: '54.50' },
+    ]);
+  });
+
   it('names the after-hours adjustment as the company’s price table does', () => {
     // Demolition 100 sf x $2.00 = $200.00, flagged after-hours; multiplier 1.5: a $100.00 adjustment.
     const result = priced(

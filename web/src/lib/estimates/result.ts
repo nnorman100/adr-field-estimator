@@ -24,6 +24,7 @@ const endSchema = z.strictObject({
   minimum_charge: money,
   overhead_profit: money,
   tax: money,
+  price_point: money.optional(),
   total: money,
 }) satisfies z.ZodType<EstimateEnd>;
 

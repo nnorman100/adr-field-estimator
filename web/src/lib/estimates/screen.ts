@@ -61,6 +61,8 @@ export function chargeRows(end: EstimateEnd, afterHoursLabel: string): Array<{ l
     { label: 'Minimum job charge', amount: end.minimum_charge },
     { label: 'Overhead and profit', amount: end.overhead_profit },
     { label: 'Sales tax', amount: end.tax },
+    // Rounding up to the company's price point comes last, outside every bucket and untaxed (S4-4e).
+    { label: 'Price-point adjustment', amount: end.price_point ?? '0.00' },
   ];
   return [{ label: 'Subtotal', amount: end.subtotal }, ...adjustments.filter((row) => row.amount !== '0.00')];
 }
