@@ -100,6 +100,18 @@ async function transfer(request: APIRequestContext, company: Company, jobId: str
   expect(moved.status()).toBe(200);
 }
 
+// Waits until the server holds the room named `name` in the job's current draft: a room shown on the
+// phone is first only in its local cache, and a move of the field work fences what is not yet sent.
+async function roomOnServer(company: Company, jobId: string, name: string) {
+  await expect
+    .poll(async () => {
+      const draftId = await currentDraftOf(company.id, jobId);
+      const rooms = await adminDb().collection(`companies/${company.id}/drafts/${draftId}/rooms`).get();
+      return rooms.docs.some((room) => room.get('field.name') === name);
+    })
+    .toBe(true);
+}
+
 // The field owner finishes the job and goes back to editing through the API: the job's current draft
 // is then a new one (S5b-1b), made from the submitted record.
 async function finishAndReopen(request: APIRequestContext, company: Company, who: Person, jobId: string) {
@@ -442,6 +454,7 @@ test('text typed in a room and not added stays on screen, read only, after the f
   await page.getByRole('button', { name: 'Add room' }).click();
   const den = page.getByRole('form', { name: 'Den' });
   await expect(den).toBeVisible();
+  await roomOnServer(company, jobId, 'Den');
   await den.getByLabel('Your own prep task').fill('Tape the vent');
   await page.getByLabel('New room name').fill('Attic');
   await transfer(request, company, jobId, actorOf(company.people.first!));
@@ -468,6 +481,7 @@ test('a prep task typed and not added stays on screen, read only, when the new o
     await page.getByLabel('New room name').fill(room);
     await page.getByRole('button', { name: 'Add room' }).click();
     await expect(page.getByRole('form', { name: room })).toBeVisible();
+    await roomOnServer(company, jobId, room);
   }
   const den = page.getByRole('form', { name: 'Den' });
   const attic = page.getByRole('form', { name: 'Attic' });
@@ -493,6 +507,7 @@ test('a prep task typed and not added stays on screen, read only, when the new o
   await page.getByRole('button', { name: 'Save notes' }).click();
   // The move changed the job since this page read it: the first save shows what changed, the second saves.
   await expect(page.getByText('Someone else changed this job.')).toBeVisible();
+  await expect(page.getByText('owner owns the field work.')).toBeVisible();
   await page.getByRole('button', { name: 'Save notes' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Notes saved.' })).toBeVisible();
   await main(page).getByRole('link', { name: 'Check Scope' }).click();
@@ -516,6 +531,7 @@ test('a prep task and a room name typed and not added come back, read only, when
   await page.getByRole('button', { name: 'Add room' }).click();
   const den = page.getByRole('form', { name: 'Den' });
   await expect(den).toBeVisible();
+  await roomOnServer(company, jobId, 'Den');
   await den.getByLabel('Your own prep task').fill('Tape the vent');
   await page.getByLabel('New room name').fill('Attic');
   await transfer(request, company, jobId, actorOf(company.people.first!));

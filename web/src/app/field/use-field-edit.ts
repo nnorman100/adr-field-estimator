@@ -23,7 +23,7 @@ export function useFieldEdit(job: JobContext) {
   }, []);
 
   // Answers whether the change was saved on the phone, also when the form is gone by then.
-  async function save(writes: DocWrite[], saved: string, locallySaved: () => void = () => undefined): Promise<boolean> {
+  async function save(writes: DocWrite[], saved: string, locallySaved: () => void = () => undefined, acknowledgedBy: () => void = () => undefined): Promise<boolean> {
     if (!job.editable || job.stale) return false;
     let onPhone = false;
     const mine = ++latest.current;
@@ -53,6 +53,7 @@ export function useFieldEdit(job: JobContext) {
       }
       void acknowledged.then(
         () => {
+          acknowledgedBy();
           if (current()) setNotice(saved);
         },
         refused,

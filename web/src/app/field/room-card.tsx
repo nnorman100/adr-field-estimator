@@ -114,7 +114,7 @@ export function RoomCard({
   const earlierTasks = typedBefore(drafts, draftId).rooms[roomId]?.tasks ?? [];
   const setOwnTask = (text: string) => pending.typeTask(jobId, draftId, roomId, text, { field: stored, number });
   const values = withEdits(ROOM_FIELDS, stored, edits);
-  const dirty = Object.keys(edits).length > 0 || Object.keys(listEdits).length > 0 || ownTask !== '';
+  const dirty = Object.keys(edits).length > 0 || Object.keys(listEdits).length > 0;
   useEffect(() => {
     onDirty?.(roomId, dirty);
   }, [onDirty, roomId, dirty]);

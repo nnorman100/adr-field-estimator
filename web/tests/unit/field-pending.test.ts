@@ -362,24 +362,58 @@ describe('text typed and not added', () => {
     pending.openFor('company-a/user-typed-5');
     pending.typeRoomName('job-w', 'd1', 'Den');
     pending.typeRoomName('job-w', 'd2', 'Den');
-    pending.settleRoomName('job-w', 'd1', 'Den');
+    pending.settleRoomName('job-w', 'd1', pending.typed('job-w').d1!.nameAt);
     expect(pending.typed('job-w').d1).toBeUndefined();
     expect(pending.typed('job-w').d2!.roomName).toBe('Den');
+    const sent = pending.typed('job-w').d2!.nameAt;
     pending.typeRoomName('job-w', 'd2', 'Den and more');
-    pending.settleRoomName('job-w', 'd2', 'Den');
+    pending.settleRoomName('job-w', 'd2', sent);
     expect(pending.typed('job-w').d2!.roomName).toBe('Den and more');
   });
 
-  it('is settled when its room is removed: the text goes on every draft, apart from newer typing on the draft it was sent on', () => {
+  it('keeps a room name erased and typed again with the same words while its add was settling', () => {
+    pending.openFor('company-a/user-typed-7');
+    pending.typeRoomName('job-y', 'd1', 'Den');
+    const sent = pending.typed('job-y').d1!.nameAt;
+    pending.typeRoomName('job-y', 'd1', '');
+    pending.typeRoomName('job-y', 'd1', 'Den');
+    pending.settleRoomName('job-y', 'd1', sent);
+    expect(pending.typed('job-y').d1!.roomName).toBe('Den');
+  });
+
+  it('is settled when its room is removed: only the task that was sent, only on the draft it was sent on', () => {
     pending.openFor('company-a/user-typed-6');
     pending.typeTask('job-x', 'd1', 'room-1', 'Tape the vent', room);
     pending.typeTask('job-x', 'd2', 'room-1', 'Seal the duct', room);
     pending.typeTask('job-x', 'd2', 'room-2', 'Other room', { field: { name: 'Attic' }, number: 2 });
-    pending.settleRoomRemoved('job-x', 'd2', 'room-1', 'Seal the duct');
-    expect(pending.typed('job-x').d1).toBeUndefined();
+    const sent = pending.typed('job-x').d2!.rooms['room-1']!.at;
+    pending.settleRoomRemoved('job-x', 'd2', 'room-1', sent);
+    expect(pending.typed('job-x').d1!.rooms['room-1']!.task).toBe('Tape the vent');
     expect(Object.keys(pending.typed('job-x').d2!.rooms)).toEqual(['room-2']);
-    pending.typeTask('job-x', 'd2', 'room-1', 'Seal the duct again', room);
-    pending.settleRoomRemoved('job-x', 'd2', 'room-1', 'Seal the duct');
-    expect(pending.typed('job-x').d2!.rooms['room-1']!.task).toBe('Seal the duct again');
+  });
+
+  it('does not clear a draft that had no text on the removed room, nor a task typed again with the same words', () => {
+    pending.openFor('company-a/user-typed-8');
+    pending.typeTask('job-z', 'd1', 'room-1', 'Tape the vent', room);
+    pending.settleRoomRemoved('job-z', 'd2', 'room-1', 0);
+    expect(pending.typed('job-z').d1!.rooms['room-1']!.task).toBe('Tape the vent');
+    const sent = pending.typed('job-z').d1!.rooms['room-1']!.at;
+    pending.typeTask('job-z', 'd1', 'room-1', '', room);
+    pending.typeTask('job-z', 'd1', 'room-1', 'Tape the vent', room);
+    pending.settleRoomRemoved('job-z', 'd1', 'room-1', sent);
+    expect(pending.typed('job-z').d1!.rooms['room-1']!.task).toBe('Tape the vent');
+  });
+
+  it('lets one room-order write at a time through for a draft, until it ends, and ends with the sign-in', () => {
+    pending.openFor('company-a/user-typed-9');
+    expect(pending.startRoomWrite('job-r', 'd1')).toBe(true);
+    expect(pending.startRoomWrite('job-r', 'd1')).toBe(false);
+    expect(pending.startRoomWrite('job-r', 'd2')).toBe(true);
+    expect(pending.roomWriting('job-r', 'd1')).toBe(true);
+    pending.endRoomWrite('job-r', 'd1');
+    expect(pending.roomWriting('job-r', 'd1')).toBe(false);
+    expect(pending.startRoomWrite('job-r', 'd1')).toBe(true);
+    pending.openFor('company-a/user-typed-10');
+    expect(pending.roomWriting('job-r', 'd1')).toBe(false);
   });
 });

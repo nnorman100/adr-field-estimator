@@ -52,6 +52,7 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
     setKept([...still, ...gone]);
   }
   const { busy, error, notice, setError, save: saveEdit } = useFieldEdit(job);
+  const writing = usePending(() => pending.roomWriting(jobId, draftId));
   const readOnly = !job.editable;
   const full = draft.rooms.length >= MAX_ROOMS;
   const { user } = job.session;
@@ -70,17 +71,29 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
   // Adding and removing rooms write the whole room order, so one waits for the other's local
   // write and the draft read after it: each starts from the order the phone holds.
   async function remove(roomId: string, label: string) {
-    if (busy || !window.confirm(`Remove ${label} from this job?`)) return;
-    const sent = typed.rooms[roomId]?.task ?? '';
-    if (await saveEdit(removeRoomWrites(job.draftRef, roomId, draft.field.roomOrder ?? []), `${label} removed.`)) pending.settleRoomRemoved(jobId, draftId, roomId, sent);
+    if (writing || !window.confirm(`Remove ${label} from this job?`) || !pending.startRoomWrite(jobId, draftId)) return;
+    const sent = typed.rooms[roomId]?.at ?? 0;
+    try {
+      await saveEdit(removeRoomWrites(job.draftRef, roomId, draft.field.roomOrder ?? []), `${label} removed.`, undefined, () =>
+        pending.settleRoomRemoved(jobId, draftId, roomId, sent),
+      );
+    } finally {
+      pending.endRoomWrite(jobId, draftId);
+    }
   }
 
   async function add() {
-    if (busy) return;
+    if (writing) return;
     const checked = roomName(name);
     if (!checked) return setError('Give the room a name.');
+    if (!pending.startRoomWrite(jobId, draftId)) return;
     const roomId = crypto.randomUUID();
-    if (await saveEdit(addRoomWrites(job.draftRef, roomId, checked, draft.field.roomOrder ?? []), `${checked} added.`)) pending.settleRoomName(jobId, draftId, name);
+    const sent = typed.nameAt;
+    try {
+      if (await saveEdit(addRoomWrites(job.draftRef, roomId, checked, draft.field.roomOrder ?? []), `${checked} added.`)) pending.settleRoomName(jobId, draftId, sent);
+    } finally {
+      pending.endRoomWrite(jobId, draftId);
+    }
   }
 
   // Rooms the draft does not list that still hold text typed and not added (on this draft or an
@@ -116,7 +129,7 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
               number={room.number}
               lists={lists}
               listed={room.listed}
-              removing={busy}
+              removing={busy || writing}
               onRemove={room.listed ? () => remove(room.id, room.field.name ?? `Room ${room.number}`) : undefined}
               onDirty={onDirty}
             />
@@ -139,7 +152,7 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
           }}
         >
           <Box id="new-room-name" label="New room name" value={name} onChange={setName} readOnly={full} />
-          <Button type="submit" variant="outline" disabled={busy || full || job.stale}>
+          <Button type="submit" variant="outline" disabled={busy || writing || full || job.stale}>
             {busy ? 'Adding…' : 'Add room'}
           </Button>
           {full ? <p className="text-sm">A job holds at most {MAX_ROOMS} rooms.</p> : null}
