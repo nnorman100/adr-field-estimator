@@ -209,7 +209,13 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   // which the state of this render does not hold yet.
   const openDraft = useCallback(
     async (job?: JobDetail) => {
-      if (job) pending.setMissingDraft(jobId, job.draftMissing && fieldWorkOf(session, job) === 'mine' && !pending.moved(jobId) ? job.job.currentDraftId : null);
+      // A job read that says nothing of a missing draft (the lookup may not have got through) keeps what
+      // an earlier read said of this same draft; Start field work, or another draft, clears it.
+      if (job) {
+        const mine = fieldWorkOf(session, job) === 'mine' && !pending.moved(jobId);
+        const kept = pending.missingDraft(jobId) === job.job.currentDraftId;
+        pending.setMissingDraft(jobId, mine && (job.draftMissing || kept) ? job.job.currentDraftId : null);
+      }
       if (!mayReadDraft(job ?? detail)) {
         setDraftError(null);
         return;
@@ -224,11 +230,13 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
         // The API populated this server-owned locator, including for jobs made before S6. Read
         // the document itself to warm the person cache; never cache the API response.
         const head = await loadJobProjection(session.db, session.companyId, jobId);
+        if (pending.missingDraft(jobId)) return;
         if (!head) throw new Error('Job locator unavailable');
         setLocator(head);
         setCachedError(null);
         await reloadDraft(head.currentDraftId, undefined, job ?? detail ?? undefined);
       } catch (error) {
+        if (pending.missingDraft(jobId)) return;
         const refusal = fieldRefusal(error);
         if (refusal) refuseDraft(refusal, job ?? detail);
         else setDraftError('The field work could not be opened. Try again when connected.');

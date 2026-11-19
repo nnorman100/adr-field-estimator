@@ -743,6 +743,18 @@ describe('moving the field work (owner decision J5)', () => {
     expect((await read(ESTIMATOR_A, id)).body.draftMissing).toBe(true);
   });
 
+  it('does not look for the draft of a job that is not being edited', async () => {
+    const { id } = await draftNeverMade();
+    await h.admin`UPDATE jobs SET status = 'signed', revision = revision + 1 WHERE id = ${id}`;
+    const lookup = vi.spyOn(h.drafts, 'findDraft');
+    const signed = await read(ESTIMATOR_A, id);
+    const looked = lookup.mock.calls.length;
+    lookup.mockRestore();
+    expect(signed.status).toBe(200);
+    expect(signed.body.draftMissing).toBeUndefined();
+    expect(looked).toBe(0);
+  });
+
   // No transaction or lock waits on the field database, so a draft made here is made closed, naming
   // nobody, and is named only with the owner, revision and status Postgres holds just before.
   async function pausedRemake<T>(start: () => Promise<T>) {

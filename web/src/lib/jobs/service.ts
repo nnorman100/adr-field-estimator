@@ -229,7 +229,7 @@ export function jobsService(db: Database, drafts: DraftStore): JobsService {
   // caller learns whether a draft exists), the field database holds none, and a committed record is there
   // to make it from. A lookup that does not get through says nothing; it never fails the read.
   async function draftMissing(caller: JobCaller, detail: JobDetail): Promise<boolean> {
-    if (!ownsFieldWork(caller, detail.job)) return false;
+    if (detail.job.status !== 'draft' || !ownsFieldWork(caller, detail.job)) return false;
     try {
       if (await drafts.findDraft(caller.companyId, detail.job.currentDraftId)) return false;
       const record = await inCompany(caller.companyId, (tx) => rebuildableRecord(tx, caller.companyId, detail.job.id, detail.job.currentDraftId));
