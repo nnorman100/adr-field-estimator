@@ -1,6 +1,6 @@
 # Status
 
-One table of truth for each feature, split by stage into the files under `docs/status/`: **Built** (merged), **On** (enabled in production), **Phone-checked** (observed on a real phone by the owner). Last built from `docs/roadmap.md` and `RELEASES.md` on 2026-10-28; PRs merged from #314 to #471 (2026-11-11 to 2026-11-19) added on 2026-11-19 from their PR descriptions. The old app's releases are recorded in `RELEASES.md` (it is off since 2026-11-10); the rebuilt app's test releases are GitHub Releases marked `(test)` (see [S2 test release path](status/s2-release-path.md)). Recheck those records, do not copy from here.
+One table of truth for each feature, split by stage into the files under `docs/status/`: **Built** (merged), **On** (enabled in production), **Phone-checked** (observed on a real phone by the owner). Last built from `docs/roadmap.md` and `RELEASES.md` on 2026-10-28; PRs merged from #314 to #471 (2026-11-11 to 2026-11-19) added on 2026-11-19 from their PR descriptions. The old app (off since 2026-11-10) records hand releases in `RELEASES.md` and automatic deploys in the Actions job summary; the rebuilt app's test releases are GitHub Releases marked `(test)` (see [S2 test release path](status/s2-release-path.md)). Recheck those records, do not copy from here.
 
 Legend: yes · no · partial · flag off. "no" under Phone-checked means no phone check is recorded in the repo; the roadmap says releases since Oct 19 were checked signed-out only.
 
