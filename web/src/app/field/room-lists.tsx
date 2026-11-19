@@ -160,6 +160,7 @@ export function RoomPrepTasks({
   readOnly,
   own,
   setOwn,
+  earlier,
 }: {
   id: string;
   stored: string[];
@@ -172,6 +173,8 @@ export function RoomPrepTasks({
   // not saved, and the card stays on screen with it after a move (owner decision J5).
   own: string;
   setOwn: (text: string) => void;
+  // Prep tasks typed and not added on an earlier draft of the job: shown read only, never added here.
+  earlier: string[];
 }) {
   const [pick, setPick] = useState('');
   const tasks = edited ?? stored;
@@ -202,6 +205,9 @@ export function RoomPrepTasks({
           </li>
         ))}
       </ol>
+      {earlier.map((text, at) => (
+        <Box key={at} id={`${id}-earlier-${at}`} label="Your earlier prep task" value={text} onChange={() => undefined} readOnly />
+      ))}
       {/* Typed and not added when the field work moved away: shown, read only (owner decision J5). */}
       {readOnly && own ? <Box id={`${id}-own`} label="Your own prep task" value={own} onChange={() => undefined} readOnly /> : null}
       {readOnly || full ? null : (

@@ -6,7 +6,7 @@ import type { ScopeLists } from '@/lib/field/api';
 import { editsAfterSave, roomChanges, roomTypeChoice, ROOM_FIELDS, withEdits, type FormValues, type RoomLists } from '@/lib/field/forms';
 import { MAX_FINDINGS, type RoomField } from '@/lib/field/schema';
 import { roomFieldWrites } from '@/lib/field/store';
-import { pending, usePending } from '@/lib/field/pending';
+import { NO_TYPED, pending, typedBefore, usePending } from '@/lib/field/pending';
 import type { JobContext } from './job-screens';
 import { RoomItems, RoomPrepTasks } from './room-lists';
 import { Box, Choice, Outcome, READ_AGAIN } from './ui';
@@ -84,7 +84,7 @@ export function RoomCard({
   stored,
   number,
   lists,
-  listed = true,
+  listed,
   removing = false,
   onRemove,
   onDirty,
@@ -95,7 +95,7 @@ export function RoomCard({
   number: number;
   lists: ScopeLists | null;
   // The draft still lists the room; one it no longer lists stays on screen read only, never saved.
-  listed?: boolean;
+  listed: boolean;
   // Another room is being added or removed.
   removing?: boolean;
   onRemove?: () => Promise<void>;
@@ -109,7 +109,9 @@ export function RoomCard({
   // A prep task typed and not added yet (RoomPrepTasks), kept on the page (src/lib/field/pending.ts).
   const { jobId } = job;
   const { draftId } = job.draftRef;
-  const ownTask = usePending(() => pending.typed(jobId, draftId, job.moved)).rooms[roomId]?.task ?? '';
+  const drafts = usePending(() => pending.typed(jobId));
+  const ownTask = (drafts[draftId] ?? NO_TYPED).rooms[roomId]?.task ?? '';
+  const earlierTasks = typedBefore(drafts, draftId).rooms[roomId]?.tasks ?? [];
   const setOwnTask = (text: string) => pending.typeTask(jobId, draftId, roomId, text, { field: stored, number });
   const values = withEdits(ROOM_FIELDS, stored, edits);
   const dirty = Object.keys(edits).length > 0 || Object.keys(listEdits).length > 0 || ownTask !== '';
@@ -220,6 +222,7 @@ export function RoomCard({
         readOnly={readOnly}
         own={ownTask}
         setOwn={setOwnTask}
+        earlier={earlierTasks}
       />
       <div className="flex flex-col gap-1">
         <label htmlFor={id('findings')} className="text-sm font-medium">

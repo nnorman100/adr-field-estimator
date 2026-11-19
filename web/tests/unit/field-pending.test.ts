@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { newerDetail, pending, type PendingRecord } from '@/lib/field/pending';
+import { newerDetail, pending, typedBefore, type PendingRecord } from '@/lib/field/pending';
 import type { JobDetail } from '@/lib/jobs/service';
 import type { Answer } from '@/lib/field/api';
 
@@ -323,30 +323,63 @@ describe('archive and restore done on this page (S5b-2)', () => {
 describe('text typed and not added', () => {
   const room = { field: { name: 'Den' }, number: 1 };
 
-  it('shows for the draft it was typed on, for a later draft only once the field work moved, and ends with the sign-in', () => {
+  it('is kept per draft, shown read only on the job\'s other drafts, and ends with the sign-in', () => {
     pending.openFor('company-a/user-typed-1');
     pending.typeRoomName('job-t', 'd1', 'Attic');
     pending.typeTask('job-t', 'd1', 'room-1', 'Tape the vent', room);
-    expect(pending.typed('job-t', 'd1', false)).toMatchObject({ roomName: 'Attic', rooms: { 'room-1': { task: 'Tape the vent', ...room } } });
-    expect(pending.typed('job-t', 'd2', false).roomName).toBe('');
-    expect(pending.typed('job-t', 'd2', false).rooms).toEqual({});
-    expect(pending.typed('job-t', 'd2', true).roomName).toBe('Attic');
-    expect(pending.typed('job-t', 'd1', false)).toBe(pending.typed('job-t', 'd1', false));
+    const drafts = pending.typed('job-t');
+    expect(drafts.d1).toMatchObject({ roomName: 'Attic', rooms: { 'room-1': { task: 'Tape the vent', ...room } } });
+    expect(drafts.d2).toBeUndefined();
+    expect(typedBefore(drafts, 'd1')).toEqual({ roomNames: [], rooms: {} });
+    expect(typedBefore(drafts, 'd2')).toEqual({ roomNames: ['Attic'], rooms: { 'room-1': { tasks: ['Tape the vent'], ...room } } });
+    expect(pending.typed('job-t')).toBe(drafts);
     pending.openFor('company-a/user-typed-2');
-    expect(pending.typed('job-t', 'd1', true).roomName).toBe('');
+    expect(pending.typed('job-t')).toEqual({});
   });
 
-  it('is dropped when emptied or when its room is taken out, and typing on another draft starts over', () => {
+  it('typing on one draft never changes what was typed on another', () => {
     pending.openFor('company-a/user-typed-3');
-    pending.typeTask('job-u', 'd1', 'room-1', 'Tape the vent', room);
-    pending.typeTask('job-u', 'd1', 'room-1', '', room);
-    expect(pending.typed('job-u', 'd1', true).rooms).toEqual({});
-    pending.typeTask('job-u', 'd1', 'room-1', 'Tape the vent', room);
-    pending.dropTypedRoom('job-u', 'd1', 'room-1');
-    expect(pending.typed('job-u', 'd1', true).rooms).toEqual({});
     pending.typeRoomName('job-u', 'd1', 'Attic');
+    pending.typeTask('job-u', 'd1', 'room-1', 'Tape the vent', room);
     pending.typeRoomName('job-u', 'd2', 'Loft');
-    expect(pending.typed('job-u', 'd2', false).roomName).toBe('Loft');
-    expect(pending.typed('job-u', 'd1', false).roomName).toBe('');
+    pending.typeTask('job-u', 'd2', 'room-1', 'Seal the duct', room);
+    const drafts = pending.typed('job-u');
+    expect(drafts.d1).toMatchObject({ roomName: 'Attic', rooms: { 'room-1': { task: 'Tape the vent' } } });
+    expect(drafts.d2).toMatchObject({ roomName: 'Loft', rooms: { 'room-1': { task: 'Seal the duct' } } });
+    expect(typedBefore(drafts, 'd2')).toEqual({ roomNames: ['Attic'], rooms: { 'room-1': { tasks: ['Tape the vent'], ...room } } });
+    expect(typedBefore(drafts, 'd3').roomNames).toEqual(['Attic', 'Loft']);
+    expect(typedBefore(drafts, 'd3').rooms['room-1']!.tasks).toEqual(['Tape the vent', 'Seal the duct']);
+  });
+
+  it('is dropped when emptied', () => {
+    pending.openFor('company-a/user-typed-4');
+    pending.typeTask('job-v', 'd1', 'room-1', 'Tape the vent', room);
+    pending.typeTask('job-v', 'd1', 'room-1', '', room);
+    expect(pending.typed('job-v')).toEqual({});
+  });
+
+  it('is settled for the draft it was sent on once its room name is added: only the text that was sent goes', () => {
+    pending.openFor('company-a/user-typed-5');
+    pending.typeRoomName('job-w', 'd1', 'Den');
+    pending.typeRoomName('job-w', 'd2', 'Den');
+    pending.settleRoomName('job-w', 'd1', 'Den');
+    expect(pending.typed('job-w').d1).toBeUndefined();
+    expect(pending.typed('job-w').d2!.roomName).toBe('Den');
+    pending.typeRoomName('job-w', 'd2', 'Den and more');
+    pending.settleRoomName('job-w', 'd2', 'Den');
+    expect(pending.typed('job-w').d2!.roomName).toBe('Den and more');
+  });
+
+  it('is settled when its room is removed: the text goes on every draft, apart from newer typing on the draft it was sent on', () => {
+    pending.openFor('company-a/user-typed-6');
+    pending.typeTask('job-x', 'd1', 'room-1', 'Tape the vent', room);
+    pending.typeTask('job-x', 'd2', 'room-1', 'Seal the duct', room);
+    pending.typeTask('job-x', 'd2', 'room-2', 'Other room', { field: { name: 'Attic' }, number: 2 });
+    pending.settleRoomRemoved('job-x', 'd2', 'room-1', 'Seal the duct');
+    expect(pending.typed('job-x').d1).toBeUndefined();
+    expect(Object.keys(pending.typed('job-x').d2!.rooms)).toEqual(['room-2']);
+    pending.typeTask('job-x', 'd2', 'room-1', 'Seal the duct again', room);
+    pending.settleRoomRemoved('job-x', 'd2', 'room-1', 'Seal the duct');
+    expect(pending.typed('job-x').d2!.rooms['room-1']!.task).toBe('Seal the duct again');
   });
 });
