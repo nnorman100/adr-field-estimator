@@ -49,6 +49,22 @@ describe('every workflow', () => {
   });
 });
 
+// GitHub's default job limit is 360 minutes; on a pool of three runner places one hung job would
+// hold a third of CI for six hours.
+describe('job time limits', () => {
+  it.each([
+    ['ci.yml', 'node'],
+    ['ci.yml', 'audit'],
+    ['test-guard.yml', 'test-guard'],
+  ])('%s job %s has a time limit', (name, job) => {
+    // A whole number of minutes below GitHub's 360-minute default.
+    const limit = workflow(name).jobs[job]['timeout-minutes'];
+    expect(Number.isInteger(limit)).toBe(true);
+    expect(limit).toBeGreaterThan(0);
+    expect(limit).toBeLessThan(360);
+  });
+});
+
 describe('ci.yml', () => {
   it.each(['python', 'browser', 'firestore-emulator'])('has no legacy %s job', (job) => {
     // The legacy suites are removed, not faked: the owner drops these names from the ruleset.

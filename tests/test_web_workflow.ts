@@ -1,6 +1,6 @@
 // The Web app workflow (.github/workflows/web.yml) starts every job on every pull request, with no
 // path filter, so `company-isolation` and `check` report on each one and can be required checks.
-// `check` still requires database, emulators and company-isolation to succeed. On a pull request
+// `check` still requires database, emulators, company-isolation, e2e and image to succeed. On a pull request
 // that changes nothing under the web paths, the other jobs skip their work and report success.
 // Run by vitest in the node CI job.
 import { execFileSync } from 'node:child_process';
@@ -10,11 +10,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { commands, evaluateStep, load, Shell, shlex, WEB, type Data } from './workflow_support.ts';
 
 const WEB_PATHS = ['web/**', 'live-relay-placeholder/**', '.github/workflows/web.yml'];
-const REQUIRED = ['database', 'emulators', 'company-isolation'];
+const REQUIRED = ['database', 'emulators', 'company-isolation', 'e2e', 'image'];
 
 const web = (): Data => load(WEB);
 
-type Needs = Record<string, { result: string }>;
+type Needs = Record<string, { result: string; outputs?: Record<string, string> }>;
 
 const shells: Shell[] = [];
 afterEach(() => {
@@ -31,12 +31,13 @@ function workDir(job: Data, step: Data): string {
   );
 }
 
-/** `${{ needs.<job>.result }}`, as Actions fills it in. */
+/** `${{ needs.<job>.result }}` and `${{ needs.<job>.outputs.<name> }}`, as Actions fills them in. */
 function expand(run: string, needs: Needs): string {
   return run.replace(/\$\{\{\s*([^}]*?)\s*\}\}/g, (_, expr: string) => {
-    const match = /^needs\.([\w-]+)\.result$/.exec(expr);
+    const match = /^needs\.([\w-]+)\.(?:(result)|outputs\.(\w+))$/.exec(expr);
     if (!match) throw new Error(`unexpected expression ${expr}`);
-    return needs[match[1]]?.result ?? '';
+    const need = needs[match[1]];
+    return (match[2] ? need?.result : need?.outputs?.[match[3]]) ?? '';
   });
 }
 
@@ -70,8 +71,18 @@ function runCheck(needs: Needs): { passed: boolean; ran: string[] } {
   return { passed: !failed, ran };
 }
 
-const all = (result: string): Needs =>
-  Object.fromEntries(REQUIRED.map((name) => [name, { result }]));
+const SHARDS = [1, 2, 3, 4];
+const shardOutputs = (value: string): Record<string, string> =>
+  Object.fromEntries(SHARDS.map((n) => [`shard${n}`, value]));
+
+/** Every needed job succeeded, and every e2e shard reported. */
+const allSuccess = (): Needs =>
+  Object.fromEntries(
+    REQUIRED.map((name) => [
+      name,
+      { result: 'success', outputs: name === 'e2e' ? shardOutputs('done') : {} },
+    ]),
+  );
 
 describe('web.yml triggers', () => {
   it('runs on every pull request, and on master pushes only when web files change', () => {
@@ -101,14 +112,14 @@ describe('web.yml triggers', () => {
 });
 
 describe('the check job', () => {
-  it('needs the three required jobs and reports even when they fail', () => {
+  it('needs every other job and reports even when they fail', () => {
     const job = web().jobs.check;
     expect(job.needs).toEqual(REQUIRED);
     expect(evaluateStep(job.if, {}, true)).toBe(true);
   });
 
-  it('passes when the three jobs succeed and runs every one of its own steps', () => {
-    const { passed, ran } = runCheck(all('success'));
+  it('passes when the jobs it needs succeed and runs every one of its own steps', () => {
+    const { passed, ran } = runCheck(allSuccess());
     expect(passed).toBe(true);
     for (const command of [
       'Require the database job',
@@ -127,13 +138,21 @@ describe('the check job', () => {
   it.each(REQUIRED.flatMap((name) => ['failure', 'cancelled', 'skipped'].map((r) => [name, r])))(
     'fails when %s is %s',
     (name, result) => {
-      const needs = all('success');
-      needs[name] = { result };
+      const needs = allSuccess();
+      needs[name] = { result, outputs: needs[name].outputs };
       const { passed, ran } = runCheck(needs);
       expect(passed).toBe(false);
       expect(ran).not.toContain('npm run build');
     },
   );
+
+  it.each(SHARDS)('fails when e2e succeeds but shard %i never reported', (shard) => {
+    const needs = allSuccess();
+    needs.e2e.outputs = { ...shardOutputs('done'), [`shard${shard}`]: '' };
+    const { passed, ran } = runCheck(needs);
+    expect(passed).toBe(false);
+    expect(ran).not.toContain('npm run build');
+  });
 });
 
 describe('the e2e job', () => {
@@ -174,6 +193,40 @@ describe('the e2e job', () => {
         .map((line) => line.trim())
         .filter(Boolean),
     ).toEqual(['web/test-results', 'web/playwright-report']);
+  });
+
+  it('reports one output per shard, and every shard reports its own even when it skipped its work', () => {
+    const e2e = job();
+    expect(Object.keys(e2e.outputs).sort()).toEqual(
+      e2e.strategy.matrix.shard.map((n: number) => `shard${n}`).sort(),
+    );
+    const done = (e2e.steps as Data[]).find((s) => s.id === 'done');
+    expect(done).not.toHaveProperty('if');
+    // Each leg fills in the job's output mappings from its own step outputs; as GitHub does, the
+    // legs' non-empty values combine (workflow syntax, "Using Job Outputs in a Matrix Job").
+    const combined: Record<string, string> = {};
+    for (const n of e2e.strategy.matrix.shard) {
+      const sh = new Shell();
+      shells.push(sh);
+      const run = sh.run(done.run.replace('${{ matrix.shard }}', String(n)));
+      expect(run.status).toBe(0);
+      const stepOutputs = sh.outputs();
+      expect(stepOutputs).toEqual({ [`shard${n}`]: 'done' });
+      const published: Record<string, string> = {};
+      for (const [name, mapping] of Object.entries(e2e.outputs as Record<string, string>)) {
+        const match = /^\$\{\{\s*steps\.done\.outputs\.(\w+)\s*\}\}$/.exec(mapping);
+        expect(match, name).not.toBeNull();
+        const value = stepOutputs[match![1]] ?? '';
+        if (value !== '') published[name] = value;
+      }
+      // A leg that filled another shard's output would hide that shard going missing.
+      expect(published).toEqual({ [`shard${n}`]: 'done' });
+      Object.assign(combined, published);
+    }
+    // The outputs the four legs really publish are what check needs to pass.
+    const needs = allSuccess();
+    needs.e2e.outputs = combined;
+    expect(runCheck(needs).passed).toBe(true);
   });
 
   it('keeps the setup steps it had, in order, before the browser tests', () => {
@@ -236,6 +289,8 @@ describe('pull requests that change nothing under the web paths', { timeout: 30_
       const label = `${name}: ${s.name ?? s.uses ?? s.run}`;
       // The failure-only upload never runs when the work was skipped.
       if (s.if === 'failure()') continue;
+      // The shard's own report runs even when the work was skipped (the e2e describe covers it).
+      if (name === 'e2e' && s.id === 'done') continue;
       expect(s.if, label).toBe(WHEN_WEB);
     }
   });

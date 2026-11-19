@@ -16,6 +16,8 @@ permissions:
 jobs:
   node:
     runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
+    # About 1.5 minutes in recent runs; the limit leaves room for a loaded host.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -33,6 +35,7 @@ jobs:
 
   audit:
     runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
