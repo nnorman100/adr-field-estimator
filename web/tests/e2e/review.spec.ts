@@ -853,3 +853,54 @@ test('after replacing a document link with the list unreadable, Revoke reaches t
   await expect(panel.getByText("Homeowner's documents: revoked.")).toHaveCount(2);
   expect(deleted).toEqual([links.find((one) => one.id !== first.id)!.id]);
 });
+
+test('the owner sees the before/after preview, reprices the draft, and the revised estimate shows its Revised line', async ({ page }) => {
+  const job = { id: randomUUID(), status: 'submitted', currentDraftId: randomUUID(), revision: 3 };
+  const first = estimateFor(team, job.id, job.currentDraftId, 'owner');
+  const answers: Answers = { estimate: first };
+  await playApi(page, job, answers);
+  const preview = {
+    job,
+    reprice: { pinned: { sequence: 1, version: 1, price: '$240.00' }, newest: { versionId: randomUUID(), version: 2, price: '$360.00', refused: null } },
+  };
+  const sentReprice: unknown[] = [];
+  // Registered after playApi, so it answers the reprice route first.
+  await page.route(`**/api/jobs/${job.id}/reprice`, async (route: Route, request: Request) => {
+    if (request.method() === 'GET') return route.fulfill({ json: answers.estimate === first ? preview : { job, reprice: null } });
+    sentReprice.push(request.postDataJSON());
+    // The reprice voids the old estimate; once priced again on a new record, the proposal is revised.
+    answers.estimate = { ...first, proposal: { ...first.proposal!, revised: 'Revised November 19, 2026: was $240.00' } };
+    return route.fulfill({ json: { job: { ...job, revision: 4 }, pin: { sequence: 2, version: 2 } } });
+  });
+  await signInTo(page, team.owner);
+  await page.goto(`/sign-in/${team.address}/jobs/${job.id}/review`);
+  const main = page.getByRole('main');
+
+  const banner = main.getByRole('region', { name: 'Newer prices are published' });
+  await expect(banner).toBeVisible();
+  await expect(banner.getByText('Now, at prices version 1: $240.00')).toBeVisible();
+  await expect(banner.getByText('At prices version 2: $360.00')).toBeVisible();
+  await expectNoAxeViolations(page);
+  await expectNoSideways(page);
+  await banner.getByRole('button', { name: 'Reprice this draft' }).click();
+
+  await expect(main.getByRole('region', { name: 'Newer prices are published' })).toHaveCount(0);
+  expect(sentReprice).toEqual([{ revision: 3, changeId: expect.any(String), versionId: preview.reprice.newest.versionId }]);
+  await main.getByText('Proposal', { exact: true }).click();
+  await expect(main.getByText('Revised November 19, 2026: was $240.00')).toBeVisible();
+});
+
+test('an estimator never sees the Reprice banner, and the screen does not ask for it', async ({ page }) => {
+  const job = { id: randomUUID(), status: 'submitted', currentDraftId: randomUUID(), revision: 3 };
+  await playApi(page, job, { estimate: estimateFor(team, job.id, job.currentDraftId, 'estimator') });
+  let asked = 0;
+  await page.route(`**/api/jobs/${job.id}/reprice`, (route: Route) => {
+    asked += 1;
+    return route.fulfill({ status: 403, json: { error: 'not_allowed' } });
+  });
+  await signInTo(page, team.estimator);
+  await page.goto(`/sign-in/${team.address}/jobs/${job.id}/review`);
+  await expect(page.getByRole('main').getByRole('heading', { name: 'Review before signing' })).toBeVisible();
+  await expect(page.getByRole('main').getByRole('region', { name: 'Newer prices are published' })).toHaveCount(0);
+  expect(asked).toBe(0);
+});

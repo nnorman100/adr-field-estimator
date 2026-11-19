@@ -46,7 +46,14 @@ export type DocumentSettings = {
   photoLogGrouping: PhotoLogGrouping;
 };
 
-export type CompanyDocuments = { identity: CompanyIdentity; letterhead: Letterhead; settings: DocumentSettings; signing: SigningTexts };
+export type CompanyDocuments = {
+  identity: CompanyIdentity;
+  letterhead: Letterhead;
+  settings: DocumentSettings;
+  signing: SigningTexts;
+  // S5b-6: a revised estimate's heading names the previous price before signing (off unless set).
+  showPreviousPrice?: boolean;
+};
 
 export const NEUTRAL_LETTERHEAD: Letterhead = Object.freeze({ emergencyPhone: '', fax: '', website: '', tagline: '', mailingAddress: '' });
 
@@ -84,5 +91,6 @@ export async function readCompanyDocuments(tx: CompanyTransaction, companyId: st
     letterhead: { emergencyPhone, fax, website, tagline, mailingAddress },
     settings: { proposalLayout: settings.proposal_layout, companyClauses: settings.company_clauses, photoLogGrouping: settings.photo_log_grouping },
     signing: { authorizationText: settings.authorization_text, paymentTermsText: settings.payment_terms_text },
+    showPreviousPrice: settings.show_previous_price,
   };
 }

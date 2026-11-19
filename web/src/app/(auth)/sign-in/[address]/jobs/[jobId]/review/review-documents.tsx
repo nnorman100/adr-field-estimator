@@ -146,6 +146,7 @@ export function Proposal({ proposal }: { proposal: NonNullable<EstimateView['pro
   return (
     <div className="flex flex-col gap-2" data-layout={proposal.letter ? 'letter' : 'itemized'}>
       <p className="font-semibold">{proposal.heading}</p>
+      {proposal.revised ? <p className="font-semibold">{proposal.revised}</p> : null}
       <p className="text-sm break-words">{proposal.letterhead.join(' · ')}</p>
       {proposal.customer_name ? <p>Customer: {proposal.customer_name}</p> : null}
       <p className="break-words">Property: {proposal.property_address}</p>

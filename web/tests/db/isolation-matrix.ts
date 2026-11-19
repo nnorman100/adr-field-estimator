@@ -153,6 +153,8 @@ export const MATRIX: readonly MatrixRow[] = [
   row('api/jobs/[jobId]/estimate', 'GET', 'company', { own: 'cross' }),
   // S5b-6: Reprice names the revision, change and price version; another company's job is 404 to every role.
   row('api/jobs/[jobId]/reprice', 'POST', 'company', { body: JOB_REPRICE, own: 'cross' }),
+  // S5b-6: the owner's before/after preview; another company's job is 404 to every role.
+  row('api/jobs/[jobId]/reprice', 'GET', 'company', { own: 'cross' }),
   // S5a-11: signing names the phone's own agreement, estimate and signature ids; another company's
   // job is 404 to every role, and no agreement is made.
   row('api/jobs/[jobId]/agreements', 'POST', 'company', { body: JOB_SIGN, own: 'cross' }),

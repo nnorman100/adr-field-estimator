@@ -3,8 +3,9 @@
 Part of [Screen specs](README.md). Address: `/sign-in/{address}/jobs/{id}/review`. Built in:
 `web/src/app/(auth)/sign-in/[address]/jobs/[jobId]/review/` (`review-screen.tsx`,
 `review-documents.tsx`, `signing.tsx`, `signature-pad.tsx`, `send-link.tsx`,
-`document-links.tsx`), `web/src/lib/estimates/screen.ts`, `web/src/lib/links/screen.ts`. Stages
-S5a-9, S5a-11, S5a-11b.
+`document-links.tsx`, `reprice-banner.tsx`), `web/src/lib/estimates/screen.ts`,
+`web/src/lib/estimates/reprice-screen.ts`, `web/src/lib/links/screen.ts`. Stages S5a-9, S5a-11,
+S5a-11b, S5b-6.
 
 ## Purpose
 
@@ -90,9 +91,22 @@ The screen decides by keys from `GET /api/me`: pricing by `audit`, signing and s
 
 Rules: `docs/access/estimate.md`, `docs/access/signing.md`, `docs/access/signing-links.md`.
 
+## Reprice this draft (owner, S5b-6)
+
+With the owner's `job_reprice` key, on a job that is not signed, the screen reads
+`GET /api/jobs/{id}/reprice`. When newer prices are published than the ones the job is pinned to, a
+"Newer prices are published" banner shows the job's last record priced now and at the newest
+prices (or that the newest prices cannot price it), and a "Reprice this draft" button. The button
+sends the version and job revision the preview was read at, with a change id kept for a retry; a
+refusal for a changed basis shows its message and reads the preview again. After a reprice the job
+reloads: the old estimate is gone, and the scope must be confirmed again through Back to editing and
+Finish. The revised estimate's proposal shows its "Revised {date}" line under the heading (with the
+previous price when the company's "Show the previous price on a revised estimate" is on), and it
+needs a new signature. Estimator and office never see the banner.
+
 ## Not built yet
 
-- Reprice (owner) and named adjustments (S5b-6, S5b-7).
+- Named adjustments (S5b-7).
 - Corrections and change orders after signing (S5b-4, S5b-9).
 - "Email me a copy" and emailing documents: hidden until email arrives (J7, S9).
 
