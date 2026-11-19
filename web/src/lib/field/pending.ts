@@ -31,12 +31,17 @@
 // the refusal is kept as `moved` instead of dropping the job (`refused`), together with the draft as
 // last read, for the screen of that job opened again on this page. Server access stays revoked: the
 // screens ask nothing more about a moved job. Save as new draft is S6.
+// What a person typed in a room's "Your own prep task" box or the "New room name" box and did not add
+// is kept per job and per draft (`typed`), so a screen of the job opened again, or a newer draft read,
+// still shows it: on the draft it was typed on as that draft's own text, and on every other draft of
+// the job read only (`typedBefore`), never as something to save into it. Typing on one draft never
+// changes what was typed on another.
 // All of it belongs to one signed-in person of one company (`openFor`): another sign-in on the same
 // page starts empty.
 import { useSyncExternalStore } from 'react';
 import type { JobDetail } from '@/lib/jobs/service';
 import type { Answer } from './api';
-import type { PhotoField } from './schema';
+import type { PhotoField, RoomField } from './schema';
 import type { FieldDraft } from './store';
 
 export type PendingJob = { id: string; draftId: string; propertyAddress: string; sending: boolean };
@@ -65,6 +70,16 @@ export type PendingCoord = { key: string; at: string; done: string; request: Coo
 export type PendingCopy = { id: string; draftId: string; sending: boolean };
 export type ArchivalKind = 'archive' | 'restore';
 export type PendingArchival = { kind: ArchivalKind; address: string; revision: number; changeId: string; sending: boolean };
+// A prep task typed and not added in a room, with the room as last read, so its card can be shown
+// again when the draft no longer lists the room.
+// `at` / `nameAt` number each time the text was typed, so a save that sent text can tell it from the
+// same words typed again afterwards.
+export type TypedRoom = { task: string; field: RoomField; number: number; at: number };
+export type TypedText = { roomName: string; nameAt: number; rooms: Record<string, TypedRoom> };
+// By draft: what was typed on each draft of one job.
+export type TypedDrafts = Record<string, TypedText>;
+// What was typed on the other drafts of a job, for a draft to show read only.
+export type TypedBefore = { roomNames: string[]; rooms: Record<string, { tasks: string[]; field: RoomField; number: number }> };
 export type PendingPhoto = {
   id: string;
   bytes: Blob;
@@ -98,6 +113,10 @@ type State = {
   // job is still readable (the owner, office) but the field work is another person's.
   moved: Record<string, { draft: FieldDraft | null; draftId: string | null; revoked: boolean }>;
   coord: Record<string, PendingCoord>;
+  // By job and draft: text typed and not added.
+  typed: Record<string, TypedDrafts>;
+  // By job and draft: a write of the room order (Add room, Remove room) is on its way.
+  roomWrites: Record<string, true>;
   // By signed job: its copy sent and not answered yet.
   copies: Record<string, PendingCopy>;
   // By job: its archive or restore not settled yet.
@@ -126,6 +145,8 @@ const EMPTY = {
   held: {},
   moved: {},
   coord: {},
+  typed: {},
+  roomWrites: {},
   copies: {},
   archivals: {},
   archived: {},
@@ -147,6 +168,38 @@ function subscribe(listener: () => void): () => void {
 }
 
 const NO_PHOTOS: PendingPhoto[] = [];
+export const NO_TYPED: TypedText = { roomName: '', nameAt: 0, rooms: {} };
+let typedCount = 0;
+const NO_DRAFTS: TypedDrafts = {};
+
+// Keeps `drafts` as the job's typed text, without the drafts that hold none.
+function putTyped(jobId: string, drafts: TypedDrafts) {
+  const kept = Object.fromEntries(Object.entries(drafts).filter(([, typed]) => typed.roomName !== '' || Object.keys(typed.rooms).length > 0));
+  const typed = { ...state.typed };
+  if (Object.keys(kept).length === 0) delete typed[jobId];
+  else typed[jobId] = kept;
+  change({ typed });
+}
+
+// Changes what is typed for the job on `draftId`, and nothing typed on its other drafts.
+function retype(jobId: string, draftId: string, edit: (typed: TypedText) => TypedText) {
+  const drafts = state.typed[jobId] ?? NO_DRAFTS;
+  putTyped(jobId, { ...drafts, [draftId]: edit(drafts[draftId] ?? NO_TYPED) });
+}
+
+// What was typed on the drafts of a job other than `draftId`, oldest first.
+export function typedBefore(drafts: TypedDrafts, draftId: string): TypedBefore {
+  const before: TypedBefore = { roomNames: [], rooms: {} };
+  for (const [id, typed] of Object.entries(drafts)) {
+    if (id === draftId) continue;
+    if (typed.roomName !== '') before.roomNames.push(typed.roomName);
+    for (const [roomId, room] of Object.entries(typed.rooms)) {
+      const known = before.rooms[roomId];
+      before.rooms[roomId] = { tasks: [...(known?.tasks ?? []), room.task], field: room.field, number: room.number };
+    }
+  }
+  return before;
+}
 
 export const pending = {
   // Keeps the unsent work only while `owner` (company and person) stays the one signed in.
@@ -266,6 +319,46 @@ export const pending = {
     if (!state.moved[jobId]) change({ moved: { ...state.moved, [jobId]: { draft: null, draftId: null, revoked: false } } });
   },
   held: (jobId: string): boolean => Boolean(state.held[jobId]),
+  // What was typed and not added on each draft of the job; the same object until it changes.
+  typed: (jobId: string): TypedDrafts => state.typed[jobId] ?? NO_DRAFTS,
+  typeRoomName(jobId: string, draftId: string, text: string) {
+    retype(jobId, draftId, (typed) => ({ ...typed, roomName: text, nameAt: ++typedCount }));
+  },
+  typeTask(jobId: string, draftId: string, roomId: string, text: string, room: { field: RoomField; number: number }) {
+    retype(jobId, draftId, (typed) => {
+      const rooms = { ...typed.rooms };
+      if (text === '') delete rooms[roomId];
+      else rooms[roomId] = { task: text, ...room, at: ++typedCount };
+      return { ...typed, rooms };
+    });
+  },
+  // The room name sent with Add room (typed as `at`, see `TypedText.nameAt`) was saved on the phone: it
+  // is not left typed on `draftId`, unless it was typed again since.
+  settleRoomName(jobId: string, draftId: string, at: number) {
+    if (at !== 0 && state.typed[jobId]?.[draftId]?.nameAt === at) pending.typeRoomName(jobId, draftId, '');
+  },
+  // The server acknowledged the removal of a room by this person, which sent its typed task (typed as
+  // `at`): that text goes with the room, from `draftId` only, unless it was typed again since.
+  settleRoomRemoved(jobId: string, draftId: string, roomId: string, at: number) {
+    const drafts = state.typed[jobId] ?? NO_DRAFTS;
+    const typed = drafts[draftId];
+    if (at === 0 || typed?.rooms[roomId]?.at !== at) return;
+    putTyped(jobId, { ...drafts, [draftId]: { ...typed, rooms: Object.fromEntries(Object.entries(typed.rooms).filter(([one]) => one !== roomId)) } });
+  },
+  // Adding or removing a room writes the whole room order, so only one such write is on its way for a
+  // draft, also when its screen is closed and opened again. Answers whether this one took the turn.
+  startRoomWrite(jobId: string, draftId: string): boolean {
+    const key = `${jobId}/${draftId}`;
+    if (state.roomWrites[key]) return false;
+    change({ roomWrites: { ...state.roomWrites, [key]: true } });
+    return true;
+  },
+  endRoomWrite(jobId: string, draftId: string) {
+    const roomWrites = { ...state.roomWrites };
+    delete roomWrites[`${jobId}/${draftId}`];
+    change({ roomWrites });
+  },
+  roomWriting: (jobId: string, draftId: string): boolean => Boolean(state.roomWrites[`${jobId}/${draftId}`]),
   // The draft as last read, kept with a moved job for a screen of it opened again on this page.
   keepDraft(jobId: string, draft: FieldDraft, draftId: string) {
     const moved = state.moved[jobId];
