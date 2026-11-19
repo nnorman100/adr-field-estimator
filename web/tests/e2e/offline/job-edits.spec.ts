@@ -154,6 +154,39 @@ test('a job found archived after an offline edit keeps the open forms and the un
   await expect(page.getByLabel('Year built')).not.toBeEditable();
 });
 
+test('a job found archived after an offline Remove of a prep task keeps the room form and the removal, read only', async ({ context, lane }) => {
+  const world = await seedCompany();
+  const phone = await signedIn(context, lane, world);
+  const jobId = randomUUID();
+  await openJob(phone.page, lane, world, jobId);
+  const page = phone.page;
+  // A room with a prep task, saved while online.
+  await page.getByLabel('New room name').fill('Kitchen');
+  await page.getByRole('button', { name: 'Add room', exact: true }).click();
+  const room = page.getByRole('form', { name: 'Kitchen', exact: true });
+  await expect(room).toBeVisible();
+  await room.getByLabel('Your own prep task').fill('Protect contents');
+  await room.getByRole('button', { name: 'Add own task', exact: true }).click();
+  await room.getByRole('button', { name: 'Save room', exact: true }).click();
+  await expect.poll(async () => (await adminDb().collection(`${world.draftPath}/rooms`).get()).docs.map((item) => item.data().field.prepTasks)).toEqual([['Protect contents']]);
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  lane.cut();
+  await page.reload();
+  await expect(page.getByLabel('Year built')).toBeEditable();
+  // A button, not a typed box: the task is removed and the room is not saved.
+  await page.getByRole('button', { name: 'Remove prep task 1' }).click();
+  await expect(page.getByText('Protect contents')).toHaveCount(0);
+  // The owner archived the job meanwhile: the first job read after the signal returns answers 410.
+  lane.serve(`/api/jobs/${jobId}`, { type: 'application/json', body: JSON.stringify({ error: 'archived' }), status: 410 });
+  lane.restore();
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await expect(page.getByRole('heading', { name: 'This job is archived' })).toBeVisible();
+  await expect(page.getByRole('form', { name: 'Kitchen', exact: true })).toBeVisible();
+  await expect(page.getByText('No prep tasks for this room.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save room', exact: true })).toHaveCount(0);
+  await expect(page.getByLabel('Year built')).not.toBeEditable();
+});
+
 test('a photo taken while the camera hid the page is kept to send again', async ({ context, lane }) => {
   const world = await seedCompany();
   const phone = await signedIn(context, lane, world);

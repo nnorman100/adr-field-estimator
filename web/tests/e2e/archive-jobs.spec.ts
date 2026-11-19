@@ -223,10 +223,14 @@ test('an estimator has no Archive, sees an archived job’s old link as archived
   // Copy through the real route: the phone's ids go to POST /api/jobs/{id}/copy, which reads the signed
   // snapshot. Only the first answer is dropped, after the server made the copy.
   const sent: { id: string; draftId: string }[] = [];
+  const statuses: number[] = [];
   let lost = true;
+  const draftsOf = async () => (await adminDb().collection(`companies/${company.id}/drafts`).get()).size;
+  const draftsBefore = await draftsOf();
   await page.route(`**/api/jobs/${signed}/copy`, async (route) => {
     sent.push(JSON.parse(route.request().postData() ?? '{}') as { id: string; draftId: string });
     const real = await route.fetch();
+    statuses.push(real.status());
     if (lost) return route.abort();
     return route.fulfill({ response: real });
   });
@@ -234,6 +238,10 @@ test('an estimator has no Archive, sees an archived job’s old link as archived
   await openJob(page, '5 Signed Avenue');
   await page.getByRole('button', { name: 'Copy to a new draft' }).click();
   await expect(page.getByRole('button', { name: 'Try copying again' })).toBeVisible();
+  // The dropped first answer was the server's 201: it made the copy's draft before the answer was lost.
+  expect(statuses).toEqual([201]);
+  expect((await adminDb().doc(`companies/${company.id}/drafts/${sent[0]!.draftId}`).get()).exists).toBe(true);
+  expect(await draftsOf()).toBe(draftsBefore + 1);
   // Leaving the job and opening it again keeps the ids. (The lost answer's draft, made by the server,
   // is in the list too, with the same address: the signed row is the one opened.)
   await main(page).getByRole('link', { name: 'Back to jobs' }).click();
@@ -251,6 +259,9 @@ test('an estimator has no Archive, sees an archived job’s old link as archived
   await expect(page.getByRole('link', { name: 'Check Scope' })).toBeVisible();
   expect(sent).toHaveLength(2);
   expect(sent[1]).toEqual(sent[0]);
+  // The retry was answered as a replay (200, not a second 201), and no second draft was made.
+  expect(statuses).toEqual([201, 200]);
+  expect(await draftsOf()).toBe(draftsBefore + 1);
   const jobs = await adminSql()<{ id: string }[]>`SELECT id::text FROM jobs WHERE company_id = ${company.id}::uuid`;
   const copies = jobs.map((row) => row.id).filter((id) => ![draft, filed, signed].includes(id));
   expect(copies).toEqual([sent[0]!.id]);
@@ -397,73 +408,124 @@ test('the owner who moves the field work to an estimator still sees Archive, and
   await expect(page.getByRole('button', { name: 'Archive job' })).toHaveCount(0);
 });
 
-test('an archive that committed but answered 503 draft_unavailable leaves the screen read only, with the same archive kept to send again', async ({ page, request }) => {
-  test.setTimeout(150_000);
-  const company = await seedCompany('archive-partial', { owner: 'owner' });
-  const owner = company.people.owner!;
-  const jobId = await seedJob(request, company, owner, '12 Half Archived Court');
+for (const code of ['draft_unavailable', 'jobs_unavailable']) {
+  test(`an archive that committed but answered 503 ${code} leaves the screen read only, with the same archive kept to send again`, async ({ page, request }) => {
+    test.setTimeout(150_000);
+    const company = await seedCompany(`archive-partial-${code.slice(0, 4)}`, { owner: 'owner' });
+    const owner = company.people.owner!;
+    const jobId = await seedJob(request, company, owner, '12 Half Archived Court');
 
-  // The first archive commits on the server, but its field step does not get through: the draft is
-  // still being edited and the answer is 503 draft_unavailable.
+    // The first archive commits on the server, but the answer is 503 and the draft is still being edited.
+    const sent: { revision: number; changeId: string }[] = [];
+    let failing = true;
+    await page.route(`**/api/jobs/${jobId}/archive`, async (route) => {
+      sent.push(JSON.parse(route.request().postData() ?? '{}') as { revision: number; changeId: string });
+      if (!failing) return route.continue();
+      const draft = adminDb().doc(`companies/${company.id}/drafts/${await currentDraftOf(company.id, jobId)}`);
+      const before = (await draft.get()).data()!;
+      await route.fetch();
+      await draft.update({ state: before.state, archiveRevision: before.archiveRevision ?? FieldValue.delete() });
+      return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: code }) });
+    });
+
+    await signIn(page, company, owner);
+    await openJob(page, '12 Half Archived Court');
+    await page.getByLabel('Year built').fill('1971');
+    await page.getByRole('button', { name: 'Archive job' }).click();
+    await page.getByRole('dialog', { name: 'Archive this job?' }).getByRole('button', { name: 'Archive job' }).click();
+
+    // The job row is archived and the draft is not: nothing of it may be saved from this screen.
+    await expect(page.getByRole('heading', { name: 'This job is archived' })).toBeVisible();
+    expect(await statusOf(jobId)).toBe('archived');
+    expect(await draftStateOf(company, jobId)).toBe('editing');
+    await expect(page.getByLabel('Year built')).toHaveValue('1971');
+    await expect(page.getByLabel('Year built')).not.toBeEditable();
+    await expect(page.getByRole('button', { name: 'Save scope', exact: true })).toHaveCount(0);
+
+    // The archive is still kept: Try archiving again sends the same change and finishes the draft.
+    failing = false;
+    await page.getByRole('button', { name: 'Try archiving again' }).click();
+    await expect.poll(() => draftStateOf(company, jobId)).toBe('archived');
+    expect(sent).toHaveLength(2);
+    expect(sent[1]).toEqual(sent[0]);
+    await expect(page.getByRole('button', { name: 'Try archiving again' })).toHaveCount(0);
+  });
+}
+
+test('an archive answered 503 that did not commit is held read only until the job is read, then editable again with the same archive kept', async ({ page, request }) => {
+  test.setTimeout(150_000);
+  const company = await seedCompany('archive-uncommitted', { owner: 'owner' });
+  const owner = company.people.owner!;
+  const jobId = await seedJob(request, company, owner, '13 Not Archived Court');
   const sent: { revision: number; changeId: string }[] = [];
-  let failing = true;
-  await page.route(`**/api/jobs/${jobId}/archive`, async (route) => {
+  await page.route(`**/api/jobs/${jobId}/archive`, (route) => {
     sent.push(JSON.parse(route.request().postData() ?? '{}') as { revision: number; changeId: string });
-    if (!failing) return route.continue();
-    const draft = adminDb().doc(`companies/${company.id}/drafts/${await currentDraftOf(company.id, jobId)}`);
-    const before = (await draft.get()).data()!;
-    await route.fetch();
-    await draft.update({ state: before.state, archiveRevision: before.archiveRevision ?? FieldValue.delete() });
-    return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'draft_unavailable' }) });
+    return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'jobs_unavailable' }) });
   });
 
   await signIn(page, company, owner);
-  await openJob(page, '12 Half Archived Court');
-  await page.getByLabel('Year built').fill('1971');
+  await openJob(page, '13 Not Archived Court');
   await page.getByRole('button', { name: 'Archive job' }).click();
   await page.getByRole('dialog', { name: 'Archive this job?' }).getByRole('button', { name: 'Archive job' }).click();
 
-  // The job row is archived and the draft is not: nothing of it may be saved from this screen.
-  await expect(page.getByRole('heading', { name: 'This job is archived' })).toBeVisible();
-  expect(await statusOf(jobId)).toBe('archived');
-  expect(await draftStateOf(company, jobId)).toBe('editing');
-  await expect(page.getByLabel('Year built')).toHaveValue('1971');
-  await expect(page.getByLabel('Year built')).not.toBeEditable();
-  await expect(page.getByRole('button', { name: 'Save scope', exact: true })).toHaveCount(0);
-
-  // The archive is still kept: Try archiving again sends the same change and finishes the draft.
-  failing = false;
-  await page.getByRole('button', { name: 'Try archiving again' }).click();
-  await expect.poll(() => draftStateOf(company, jobId)).toBe('archived');
-  expect(sent).toHaveLength(2);
-  expect(sent[1]).toEqual(sent[0]);
-  await expect(page.getByRole('button', { name: 'Try archiving again' })).toHaveCount(0);
+  // The read of the job finds it not archived: the screen is not locked for good, and the kept archive
+  // is offered again, as the same change.
+  await expect(page.getByRole('button', { name: 'Try archiving again' })).toBeVisible();
+  await expect(page.getByLabel('Year built')).toBeEditable();
+  expect(await statusOf(jobId)).toBe('draft');
+  expect(sent).toHaveLength(1);
 });
 
-test('a refused jobs list clears every property address from the screen, the Restore notice and the unfinished archives included', async ({ page, request }) => {
+test('a refused jobs list clears every property address, the Restore notice and the unfinished archives included, also on the list opened next', async ({ page, request }) => {
   test.setTimeout(150_000);
   const company = await seedCompany('list-denied', { owner: 'owner' });
   const owner = company.people.owner!;
   const first = await seedJob(request, company, owner, '51 Restored First Street');
-  const second = await seedJob(request, company, owner, '52 Restored Second Street');
-  for (const jobId of [first, second]) {
-    const done = await request.post(`${JOBS_BASE_URL}/api/jobs/${jobId}/archive`, { headers: await bearer(company, owner), data: { revision: 1, changeId: randomUUID() } });
-    expect(done.status()).toBe(200);
-  }
+  await seedJob(request, company, owner, '52 Unfinished Second Street');
+  const done = await request.post(`${JOBS_BASE_URL}/api/jobs/${first}/archive`, { headers: await bearer(company, owner), data: { revision: 1, changeId: randomUUID() } });
+  expect(done.status()).toBe(200);
 
   await signIn(page, company, owner);
+  // An archive of the second job is left unfinished: its answer never came.
+  await openJob(page, '52 Unfinished Second Street');
+  await page.route(/\/api\/jobs\/[^/?]+\/archive$/, (route) => route.abort());
+  await page.getByRole('button', { name: 'Archive job' }).click();
+  await page.getByRole('dialog', { name: 'Archive this job?' }).getByRole('button', { name: 'Archive job' }).click();
+  await expect(page.getByRole('button', { name: 'Try archiving again' })).toBeVisible();
+
+  await main(page).getByRole('link', { name: 'Back to jobs' }).click();
   await main(page).getByRole('link', { name: 'Archived drafts' }).click();
-  const archived = page.getByRole('list', { name: 'Archived drafts' });
-  await archived.getByRole('listitem').filter({ hasText: '51 Restored First Street' }).getByRole('button', { name: 'Restore' }).click();
+  const unfinished = main(page).getByRole('list', { name: 'Not finished' });
+  await expect(unfinished.getByText('52 Unfinished Second Street')).toBeVisible();
+  await main(page).getByRole('list', { name: 'Archived drafts' }).getByRole('listitem').filter({ hasText: '51 Restored First Street' }).getByRole('button', { name: 'Restore' }).click();
   await expect(main(page).getByRole('link', { name: 'Open 51 Restored First Street' })).toBeVisible();
 
-  // The company is suspended: the list read that follows the next restore is refused (403), while the
-  // field shell still holds its last successful membership check.
-  await page.route(/\/api\/jobs\?/, (route) => route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ error: 'forbidden' }) }));
-  await archived.getByRole('listitem').filter({ hasText: '52 Restored Second Street' }).getByRole('button', { name: 'Restore' }).click();
-
+  // The company is suspended: the next list read is refused (403). The one after that is held back, so
+  // what a list shows before its own answer is seen.
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  let refused = 0;
+  await page.route(/\/api\/jobs\?/, async (route) => {
+    if (refused === 0) {
+      refused += 1;
+      return route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ error: 'forbidden' }) });
+    }
+    await held;
+    return route.continue();
+  });
+  await main(page).getByRole('link', { name: 'Company jobs' }).click();
   await expect(main(page).getByRole('alert').filter({ hasText: /./ }).first()).toBeVisible();
   await expect(main(page).getByText('51 Restored First Street')).toHaveCount(0);
-  await expect(main(page).getByText('52 Restored Second Street')).toHaveCount(0);
+  await expect(main(page).getByText('52 Unfinished Second Street')).toHaveCount(0);
   await expect(main(page).getByRole('status').filter({ hasText: 'Restored' })).toHaveCount(0);
+
+  // A list opened next shows no address while its own answer is pending.
+  await main(page).getByRole('link', { name: 'My jobs' }).click();
+  await expect(main(page).getByRole('status').filter({ hasText: 'Loading jobs' })).toBeVisible();
+  await expect(main(page).getByText('52 Unfinished Second Street')).toHaveCount(0);
+  await expect(main(page).getByText('51 Restored First Street')).toHaveCount(0);
+
+  // Once a list is answered again, the unfinished archive is shown.
+  release();
+  await expect(main(page).getByRole('list', { name: 'Not finished' })).toBeVisible();
 });

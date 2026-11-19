@@ -109,6 +109,9 @@ type State = {
   verifying: Record<string, number>;
   // By job: how many coordination writes were answered, so a screen that read before knows to read again.
   coordSettled: Record<string, number>;
+  // The server refused a job list (a suspended company, a removed member): nothing that names a
+  // property stays on screen from the saved lists and unfinished archives until a list is answered again.
+  listDenied: boolean;
 };
 
 const EMPTY = {
@@ -132,6 +135,7 @@ const EMPTY = {
   archivalsDone: {},
   verifying: {},
   coordSettled: {},
+  listDenied: false,
 };
 let state: State = { owner: null, ...EMPTY };
 const listeners = new Set<() => void>();
@@ -304,6 +308,10 @@ export const pending = {
     return true;
   },
   coordSettled: (jobId: string): number => state.coordSettled[jobId] ?? 0,
+  listDenied: (): boolean => state.listDenied,
+  setListDenied(denied: boolean) {
+    if (state.listDenied !== denied) change({ listDenied: denied });
+  },
   coordWrite: (jobId: string): PendingCoord | null => state.coord[jobId] ?? null,
   setCoordWrite(jobId: string, write: PendingCoord) {
     change({ coord: { ...state.coord, [jobId]: write } });

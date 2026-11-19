@@ -107,6 +107,11 @@ export function RoomCard({
   useEffect(() => {
     onDirty?.(roomId, dirty);
   }, [onDirty, roomId, dirty]);
+  const { markUnsaved } = job;
+  useEffect(() => {
+    markUnsaved(`room/${roomId}`, dirty);
+    return () => markUnsaved(`room/${roomId}`, false);
+  }, [markUnsaved, roomId, dirty]);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const { busy, error, notice, setError, setNotice, save: saveEdit } = useFieldEdit(job);
   const readOnly = !job.editable;

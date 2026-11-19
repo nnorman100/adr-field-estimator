@@ -70,6 +70,9 @@ export type JobContext = {
   editable: boolean;
   // The job is archived (S5b-2): nothing of it is sent, and what is on screen stays, read only.
   archived: boolean;
+  // A form of the job tells whether it holds changes not saved; the screen keeps such a form when the
+  // job turns out archived.
+  markUnsaved: (form: string, unsaved: boolean) => void;
   // The last read of the draft did not get through, so the draft on screen may be older than what is
   // stored: boxes stay open, but nothing is saved over it until it is read again.
   stale: boolean;
@@ -117,9 +120,18 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   const archivalsDone = usePending(() => pending.archivalsDone(jobId));
   const [archivalsSeen] = useState(archivalsDone);
   const [draftError, setDraftError] = useState<string | null>(null);
-  // Something was typed into a form of this job on this screen. Set after the event, so the box being
-  // typed into is not drawn again before its own change is taken.
-  const [typed, setTyped] = useState(false);
+  // The forms of this job on this screen that hold changes not saved (told by each form).
+  const [unsavedForms, setUnsavedForms] = useState<Record<string, true>>({});
+  const markUnsaved = useCallback((form: string, unsaved: boolean) => {
+    setUnsavedForms((current) => {
+      if (Boolean(current[form]) === unsaved) return current;
+      const next = { ...current };
+      if (unsaved) next[form] = true;
+      else delete next[form];
+      return next;
+    });
+  }, []);
+  const unsaved = Object.keys(unsavedForms).length > 0;
   const [readDraft] = useState(draftReads);
   // A refusal waits for a read of the job to say what it meant (src/lib/field/pending.ts): nothing
   // is saved meanwhile.
@@ -327,9 +339,9 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   // An archived job (an old link, or archived here) shows that it is archived: every job route answers
   // it 410, and the field rules refuse every write to its draft. Screens of the job as read here stay,
   // read only, with whatever the person changed and did not save. A job opened from this phone's saved
-  // field work (no job read yet) whose forms have had input keeps them mounted, read only, so what was
-  // typed and not saved is not lost; a job nobody typed into is the notice alone.
-  if (archived && !detail && !(draft && typed)) {
+  // field work (no job read yet) whose forms hold changes not saved keeps them mounted, read only, so
+  // they are not lost; a job with none is the notice alone.
+  if (archived && !detail && !(draft && unsaved)) {
     return (
       <div className="flex flex-col gap-3">
         <FieldLink to={{ view: 'jobs', list: null }}>Back to jobs</FieldLink>
@@ -381,12 +393,13 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     editable:
       !moved && !archived && verifying === null && !ownerUnset && draftAt === currentDraftId && draft !== null && canEditDraft(draft, session.user.uid, session.capabilities) && (session.online || session.offlineCapture),
     archived,
+    markUnsaved,
     stale: draft !== null && draftError !== null,
   };
   const onDraftViews = view === 'scope' || view === 'photos';
 
   return (
-    <div className="flex flex-col gap-4" onInputCapture={() => void setTimeout(() => setTyped(true), 0)}>
+    <div className="flex flex-col gap-4">
       <FieldLink to={{ view: 'jobs', list: null }}>Back to jobs</FieldLink>
       <h2 className="text-xl font-semibold break-words">{detail ? detail.job.propertyAddress || 'No address yet' : 'Saved field work'}</h2>
       <nav aria-label="Job" className="flex flex-wrap gap-x-4">
