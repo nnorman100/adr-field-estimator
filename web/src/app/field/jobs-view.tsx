@@ -35,6 +35,12 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
   const [cursor, setCursor] = useState<string | null>(null);
   const [error, setError] = useState<{ message: string; from: string | null } | null>(null);
   const [busy, setBusy] = useState(false);
+  // The server refused a list (a suspended company, a removed member): nothing with a property
+  // address stays on screen, and archive answers that arrive meanwhile are not shown, until a list
+  // read is answered again. Kept for the page (src/lib/field/pending.ts), so a list opened again
+  // does not show them before its own answer.
+  const denied = usePending(() => pending.listDenied());
+  const rows = denied ? null : jobs;
   // Only the newest request answers: a page asked for before the list was read again from its first
   // page is not added to it, and no page is asked for until that first page is back.
   const latest = useRef(0);
@@ -43,10 +49,13 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
     setBusy(false);
     if (!answer.ok) {
       setError({ message: answer.message, from: answer.denied ? null : from });
-      // A refusal to list jobs drops the ones already shown.
+      // A refusal to list jobs drops the ones already shown, and with them the restored job and the
+      // unfinished archives, which name properties too.
       if (answer.denied) {
         setJobs(null);
         setCursor(null);
+        setRestored(null);
+        setRefused(null);
       }
       return;
     }
@@ -58,7 +67,9 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
   async function load(from: string | null) {
     if (!session.online) return;
     const mine = ++latest.current;
+    const sent = pending.listSend();
     const answer = await listJobs(session.user, shown, from);
+    if (answer.ok || answer.denied) pending.listAnswered(sent, !answer.ok);
     if (mine === latest.current) apply(answer, from);
   }
 
@@ -114,18 +125,19 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
         </nav>
       ) : null}
       {!session.online ? <p role="status">Needs a connection</p> : null}
-      {session.online && jobs === null && !error ? <p role="status">Loading jobs…</p> : null}
-      {restored ? (
+      {session.online && rows === null && !error ? <p role="status">Loading jobs…</p> : null}
+      {restored && !denied ? (
         <p role="status" className="text-sm">
           Restored: it is back in the job lists.{' '}
           <FieldLink to={{ view: 'scope', jobId: restored.id }}>Open {restored.address}</FieldLink>
         </p>
       ) : null}
-      {seesArchived ? (
+      {seesArchived && !denied ? (
         <UnfinishedArchivals
           session={session}
-          shown={(jobId, kind) => archivedList && kind === 'restore' && (jobs ?? []).some((job) => job.id === jobId)}
+          shown={(jobId, kind) => archivedList && kind === 'restore' && (rows ?? []).some((job) => job.id === jobId)}
           onAnswered={(kind, answer) => {
+            if (pending.listDenied()) return;
             setRefused(archivalDone(kind, answer) || answer.ok ? null : answer.message);
             if (kind === 'restore' && answer.ok) setRestored({ id: answer.value.job.id, address: answer.value.job.propertyAddress || 'No address yet' });
             if (!archivalDone(kind, answer)) more(null);
@@ -137,15 +149,16 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
           {refused}
         </p>
       ) : null}
-      {jobs !== null && jobs.length === 0 ? <p>{archivedList ? 'No archived drafts.' : 'No jobs yet.'}</p> : null}
-      {archivedList && jobs !== null && jobs.length > 0 ? (
+      {rows !== null && rows.length === 0 ? <p>{archivedList ? 'No archived drafts.' : 'No jobs yet.'}</p> : null}
+      {archivedList && rows !== null && rows.length > 0 ? (
         <ul className="flex flex-col gap-2" aria-label={TITLES.archived}>
-          {jobs.map((job) => (
+          {rows.map((job) => (
             <ArchivedRow
               key={job.id}
               session={session}
               job={job}
               onRestored={(back) => {
+                if (pending.listDenied()) return;
                 setJobs((current) => (current ?? []).filter((one) => one.id !== job.id));
                 setRestored(back ? { id: back.id, address: back.propertyAddress || 'No address yet' } : null);
               }}
@@ -154,9 +167,9 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
           ))}
         </ul>
       ) : null}
-      {!archivedList && jobs !== null && jobs.length > 0 ? (
+      {!archivedList && rows !== null && rows.length > 0 ? (
         <ul className="flex flex-col gap-2" aria-label={TITLES[shown]}>
-          {jobs.map((job) => (
+          {rows.map((job) => (
             <li key={job.id} className="rounded-md border border-foreground/20 p-3">
               <FieldLink to={{ view: 'scope', jobId: job.id }} className="text-base font-medium">
                 {job.propertyAddress || 'No address yet'}
@@ -177,7 +190,7 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
           Try again
         </Button>
       ) : null}
-      {cursor && !error ? (
+      {cursor && !denied && !error ? (
         <Button variant="outline" onClick={() => more(cursor)} disabled={busy || !session.online}>
           Show more jobs
         </Button>

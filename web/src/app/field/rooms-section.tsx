@@ -26,6 +26,13 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
   const earlier = typedBefore(drafts, draftId);
   const name = typed.roomName;
   const setName = (text: string) => pending.typeRoomName(jobId, draftId, text);
+  // A name typed and not added counts as unsaved input once the job is archived.
+  const { markUnsaved } = job;
+  const nameTyped = name !== '';
+  useEffect(() => {
+    markUnsaved('new-room', nameTyped);
+    return () => markUnsaved('new-room', false);
+  }, [markUnsaved, nameTyped]);
   // Rooms with changes typed and not saved, and rooms the draft no longer lists that had some when
   // the field work moved to someone else: they stay on screen, read only, as last read (J5).
   const [dirty, setDirty] = useState<Record<string, true>>({});

@@ -70,6 +70,12 @@ export type JobContext = {
   editable: boolean;
   // The job is archived (S5b-2): nothing of it is sent, and what is on screen stays, read only.
   archived: boolean;
+  // Nothing of the job is sent: it is archived, or a read of it must say first whether an archive or
+  // another refusal changed it. What was typed stays, read only.
+  held: boolean;
+  // A form of the job tells whether it holds changes not saved; the screen keeps such a form when the
+  // job turns out archived.
+  markUnsaved: (form: string, unsaved: boolean) => void;
   // The last read of the draft did not get through, so the draft on screen may be older than what is
   // stored: boxes stay open, but nothing is saved over it until it is read again.
   stale: boolean;
@@ -88,7 +94,10 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   const posted = usePending(() => pending.detail(jobId));
   const mark = usePending(() => pending.mark(jobId));
   const denial = usePending(() => pending.denial(jobId));
-  const detail = newerDetail(read !== null && read.mark >= mark ? read.detail : null, posted);
+  // A refused job list (a suspended company, a removed member) takes every cached copy of a job, with
+  // its address and customer, off screen until a list is answered again (src/lib/field/pending.ts).
+  const listDenied = usePending(() => pending.listDenied());
+  const detail = listDenied ? null : newerDetail(read !== null && read.mark >= mark ? read.detail : null, posted);
   const setDetail = useCallback(
     (next: JobDetail, sentAt: number) => {
       if (!pending.publishDetail(jobId, next, sentAt)) return;
@@ -117,10 +126,24 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   const archivalsDone = usePending(() => pending.archivalsDone(jobId));
   const [archivalsSeen] = useState(archivalsDone);
   const [draftError, setDraftError] = useState<string | null>(null);
+  // The forms of this job on this screen that hold changes not saved (told by each form).
+  const [unsavedForms, setUnsavedForms] = useState<Record<string, true>>({});
+  const markUnsaved = useCallback((form: string, unsaved: boolean) => {
+    setUnsavedForms((current) => {
+      if (Boolean(current[form]) === unsaved) return current;
+      const next = { ...current };
+      if (unsaved) next[form] = true;
+      else delete next[form];
+      return next;
+    });
+  }, []);
+  const unsaved = Object.keys(unsavedForms).length > 0;
   const [readDraft] = useState(draftReads);
   // A refusal waits for a read of the job to say what it meant (src/lib/field/pending.ts): nothing
   // is saved meanwhile.
   const verifying = usePending(() => pending.verifying(jobId));
+  // An archive with no sure answer is being checked: nothing of the job is sent from any section.
+  const archiveChecking = usePending(() => pending.archiveChecking(jobId));
 
   // The server refused the job to this person: every copy of it goes, unless their field work is on
   // this phone (owner decision J5, src/lib/field/pending.ts), when it stays, read only.
@@ -323,8 +346,10 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
 
   // An archived job (an old link, or archived here) shows that it is archived: every job route answers
   // it 410, and the field rules refuse every write to its draft. Screens of the job as read here stay,
-  // read only, with whatever the person changed and did not save.
-  if (archived && !detail) {
+  // read only, with whatever the person changed and did not save. A job opened from this phone's saved
+  // field work (no job read yet) whose forms hold changes not saved keeps them mounted, read only, so
+  // they are not lost; a job with none is the notice alone.
+  if (archived && !detail && !(draft && unsaved)) {
     return (
       <div className="flex flex-col gap-3">
         <FieldLink to={{ view: 'jobs', list: null }}>Back to jobs</FieldLink>
@@ -356,6 +381,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     session.capabilities.includes('scope') &&
     !moved &&
     !archived &&
+    !archiveChecking &&
     detail !== null &&
     ((fieldWork === 'nobody' && detail.job.status === 'draft') || (ownerUnset && fieldWork === 'mine'));
 
@@ -376,6 +402,8 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     editable:
       !moved && !archived && verifying === null && !ownerUnset && draftAt === currentDraftId && draft !== null && canEditDraft(draft, session.user.uid, session.capabilities) && (session.online || session.offlineCapture),
     archived,
+    held: archived || archiveChecking,
+    markUnsaved,
     stale: draft !== null && draftError !== null,
   };
   const onDraftViews = view === 'scope' || view === 'photos';

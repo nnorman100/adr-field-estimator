@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   CHARGE_FIELDS,
@@ -36,6 +36,12 @@ export function ScopeView({ job, draft }: { job: JobContext; draft: FieldDraft }
   const [errors, setErrors] = useState<Record<string, string>>({});
   const { busy, error, notice, setError, setNotice, save: saveEdit } = useFieldEdit(job);
   const readOnly = !job.editable;
+  const { markUnsaved } = job;
+  const unsaved = Object.keys(edits).length > 0;
+  useEffect(() => {
+    markUnsaved('scope', unsaved);
+    return () => markUnsaved('scope', false);
+  }, [markUnsaved, unsaved]);
   const set = (key: string) => (value: string | boolean) => {
     setEdits((current) => ({ ...current, [key]: value }));
     setNotice(null);

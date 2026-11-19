@@ -24,7 +24,7 @@ const sendAgain = (answer: { status: number; code?: string }) => answer.status =
 
 // The job is as the archive or restore asked, by it or by another one.
 export const archivalDone = (kind: ArchivalKind, answer: Answer<ArchivedJob>) =>
-  answer.ok || answer.code === (kind === 'archive' ? 'archived' : 'not_archived');
+  answer.ok || (kind === 'archive' ? answer.code === 'archived' || answer.status === 410 : answer.code === 'not_archived');
 
 export type ArchivalAnswered = (kind: ArchivalKind, answer: Answer<ArchivedJob>) => void;
 
@@ -46,6 +46,10 @@ async function sendArchival(
   const answer = await send(session.user, jobId, { revision: request.revision, changeId: request.changeId });
   if (!pending.settleArchival(jobId, request.changeId, !answer.ok && sendAgain(answer) ? 'unanswered' : 'answered')) return null;
   if (archivalDone(request.kind, answer)) pending.archivalDone(jobId, request.kind === 'archive', answer.ok ? answer.value.job.revision : undefined);
+  // An archive with no answer, or one answered 5xx, may have committed in the job's record and left
+  // only its field step: nothing of the job is saved until a read of it says which, and the same
+  // request is kept to finish it.
+  else if (request.kind === 'archive' && !answer.ok && sendAgain(answer)) pending.verify(jobId, true);
   return answer;
 }
 
@@ -154,7 +158,7 @@ function ArchiveAction({ job }: { job: JobContext & { detail: JobDetail } }) {
     const answer = await sendArchival(session, detail.job.id, { kind: 'archive', address: detail.job.propertyAddress, revision: detail.job.revision });
     if (!answer) return;
     // Archived, by this request or an earlier one: the screens follow it.
-    if (answer.ok || answer.code === 'archived') return;
+    if (answer.ok || archivalDone('archive', answer)) return;
     if (sendAgain(answer)) return setError(answer.message);
     if (answer.denied) return job.refuse({ status: answer.status, message: answer.message });
     if (answer.stale) {

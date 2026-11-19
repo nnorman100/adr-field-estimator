@@ -126,8 +126,16 @@ type State = {
   archivalsDone: Record<string, number>;
   // By job: a refusal waits for a read of the job sent after the mark handed out last when it came.
   verifying: Record<string, number>;
+  // By job: an archive with no sure answer is being checked (a subset of `verifying`): nothing of the
+  // job is sent from any screen until the read that settles it.
+  archiveChecks: Record<string, true>;
   // By job: how many coordination writes were answered, so a screen that read before knows to read again.
   coordSettled: Record<string, number>;
+  // The server refused a job list (a suspended company, a removed member): nothing that names a
+  // property stays on screen from the saved lists and unfinished archives until a list is answered again.
+  listDenied: boolean;
+  // The newest list request whose answer counted (see listAnswered).
+  listAt: number;
 };
 
 const EMPTY = {
@@ -152,8 +160,13 @@ const EMPTY = {
   archived: {},
   archivalsDone: {},
   verifying: {},
+  archiveChecks: {},
   coordSettled: {},
+  listDenied: false,
+  listAt: 0,
 };
+// Numbers of list requests never repeat, so an answer to one sent for an earlier sign-in is ignored.
+let listsSent = 0;
 let state: State = { owner: null, ...EMPTY };
 const listeners = new Set<() => void>();
 
@@ -204,7 +217,7 @@ export function typedBefore(drafts: TypedDrafts, draftId: string): TypedBefore {
 export const pending = {
   // Keeps the unsent work only while `owner` (company and person) stays the one signed in.
   openFor(owner: string) {
-    if (state.owner !== owner) change({ owner, ...EMPTY });
+    if (state.owner !== owner) change({ owner, ...EMPTY, listAt: listsSent });
   },
   job: () => state.job,
   setJob(job: PendingJob) {
@@ -373,10 +386,11 @@ export const pending = {
   },
   // A refusal of a write or a read of the job that only a read of the job sent after now can explain
   // (a move, an archive, a missing photo): nothing of it is saved until such a read is answered.
-  verify(jobId: string) {
-    change({ verifying: { ...state.verifying, [jobId]: state.marked } });
+  verify(jobId: string, archive = false) {
+    change({ verifying: { ...state.verifying, [jobId]: state.marked }, archiveChecks: archive ? { ...state.archiveChecks, [jobId]: true } : state.archiveChecks });
   },
   verifying: (jobId: string): number | null => state.verifying[jobId] ?? null,
+  archiveChecking: (jobId: string): boolean => state.archiveChecks[jobId] === true,
   // A read of the job sent under `mark` came back, whether or not a screen of the job is still
   // open: one sent after a refusal to verify settles it; a refusal drops every copy of the job; the
   // job (archived or not, S5b-2) says whether it is archived, and an archived answer is newer than
@@ -385,18 +399,34 @@ export const pending = {
   // A read sent before the newest read that showed the job no longer counts either.
   readAnswered(jobId: string, answer: Answer<unknown>, mark: number): boolean {
     if (mark < pending.mark(jobId) || mark < (state.readAt[jobId] ?? 0)) return false;
+    const archivedAnswer = !answer.ok && (answer.code === 'archived' || answer.status === 410);
     const verifying = state.verifying[jobId];
-    if (verifying !== undefined && mark > verifying && (answer.ok || answer.denied || answer.code === 'archived')) {
+    if (verifying !== undefined && mark > verifying && (answer.ok || answer.denied || archivedAnswer)) {
       const next = { ...state.verifying };
       delete next[jobId];
-      change({ verifying: next });
+      const checks = { ...state.archiveChecks };
+      delete checks[jobId];
+      change({ verifying: next, archiveChecks: checks });
     }
-    if (!answer.ok && answer.code === 'archived') change({ archived: flagged(state.archived, jobId, true), marks: { ...state.marks, [jobId]: mark + 0.5 } });
+    if (archivedAnswer) change({ archived: flagged(state.archived, jobId, true), marks: { ...state.marks, [jobId]: mark + 0.5 } });
     else if (answer.ok) change({ readAt: { ...state.readAt, [jobId]: mark }, archived: flagged(state.archived, jobId, false) });
     if (!answer.ok && answer.denied) pending.refused(jobId, answer.message, answer.status);
     return true;
   },
   coordSettled: (jobId: string): number => state.coordSettled[jobId] ?? 0,
+  listDenied: (): boolean => state.listDenied,
+  // A job list is asked for: the number to give back with its answer.
+  listSend(): number {
+    listsSent += 1;
+    return listsSent;
+  },
+  // A list was answered, whether or not the view that asked is still open: a refusal records that the
+  // server denied this person the jobs, an answer that came means access again. An answer to an
+  // earlier request than the newest one counted is ignored.
+  listAnswered(sent: number, denied: boolean) {
+    if (sent <= state.listAt) return;
+    change({ listAt: sent, listDenied: denied });
+  },
   coordWrite: (jobId: string): PendingCoord | null => state.coord[jobId] ?? null,
   setCoordWrite(jobId: string, write: PendingCoord) {
     change({ coord: { ...state.coord, [jobId]: write } });

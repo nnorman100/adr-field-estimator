@@ -114,10 +114,16 @@ export function RoomCard({
   const earlierTasks = typedBefore(drafts, draftId).rooms[roomId]?.tasks ?? [];
   const setOwnTask = (text: string) => pending.typeTask(jobId, draftId, roomId, text, { field: stored, number });
   const values = withEdits(ROOM_FIELDS, stored, edits);
-  const dirty = Object.keys(edits).length > 0 || Object.keys(listEdits).length > 0;
+  const [ownTyped, setOwnTyped] = useState(false);
+  const dirty = Object.keys(edits).length > 0 || Object.keys(listEdits).length > 0 || ownTyped;
   useEffect(() => {
     onDirty?.(roomId, dirty);
   }, [onDirty, roomId, dirty]);
+  const { markUnsaved } = job;
+  useEffect(() => {
+    markUnsaved(`room/${roomId}`, dirty);
+    return () => markUnsaved(`room/${roomId}`, false);
+  }, [markUnsaved, roomId, dirty]);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const { busy, error, notice, setError, setNotice, save: saveEdit } = useFieldEdit(job);
   const readOnly = !job.editable || !listed;
@@ -213,6 +219,7 @@ export function RoomCard({
         readOnly={readOnly}
       />
       <RoomPrepTasks
+        onTyped={setOwnTyped}
         id={id('prep')}
         stored={stored.prepTasks ?? []}
         edited={listEdits.prepTasks}

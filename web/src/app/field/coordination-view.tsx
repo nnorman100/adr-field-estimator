@@ -176,8 +176,9 @@ function Coordination({ job, view, setView, reread }: { job: JobContext & { deta
   const typedNotes = held?.request.kind === 'notes' ? held.request.notes : (notes ?? view.notes);
   const errorAt = (at: string) => (error?.at === at ? error.message : null);
   const noticeAt = (at: string) => (notice?.at === at ? notice.message : null);
-  // Nothing is sent once the job is archived (S5b-2): what was typed stays, read only.
-  const archived = job.archived;
+  // Nothing is sent once the job is archived (S5b-2), or while a read of it is awaited: what was typed
+  // stays, read only.
+  const archived = job.held;
   const mayMove = caps.includes('field_owner_transfer') && view.status !== 'signed' && view.status !== 'archived' && !archived && (targets.length > 0 || heldMove !== null);
   const notesHeld = held?.request.kind === 'notes';
 
@@ -282,7 +283,7 @@ function Coordination({ job, view, setView, reread }: { job: JobContext & { deta
                 value={heldAssign ? heldAssign.estimatorActorId : pickChoice!}
                 options={heldAssign ? [{ value: heldAssign.estimatorActorId, label: labelOf(heldAssign.estimatorActorId) }] : free.map((one) => ({ value: one.actorId, label: nameOf(one) }))}
                 onChange={setPick}
-                readOnly={heldAssign !== null}
+                readOnly={heldAssign !== null || archived}
               />
               <Button type="submit" disabled={waiting || archived || other('assign') || !session.online}>
                 {waiting && heldKind === 'assign' ? 'Assigning…' : heldKind === 'assign' ? 'Try again' : 'Assign estimator'}

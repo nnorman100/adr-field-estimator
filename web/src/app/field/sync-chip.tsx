@@ -8,7 +8,7 @@ import type { DsMe } from '@/lib/field/ds-me';
 import { watchJournal, type JournalEntry } from '@/lib/field/journal';
 import { discardEntries, journalFailed, readEntries, tryAgain } from '@/lib/field/journal-sync';
 import { saveAsNewDraft } from '@/lib/field/new-draft';
-import { pending } from '@/lib/field/pending';
+import { pending, usePending } from '@/lib/field/pending';
 import { byDraft, changedFields, chipText, keptText, PHOTOS_STAY, REASONS, RESTORE_FIRST, syncStatus, type Problem, type SyncStatus } from '@/lib/field/sync-status';
 import { useFieldClient } from './field-store';
 import { photoReferenceDone } from './photos-view';
@@ -29,9 +29,9 @@ export const SAVE_AS_ANOTHER = 'Save as another new draft';
 
 // How a panel names its job: the address this page last read for it, else the start of its id; none
 // once the server refused this person the job (no access), so nothing of it is shown.
-function jobLabel(problem: Problem): string | null {
+function jobLabel(problem: Problem, listDenied: boolean): string | null {
   if (problem.reason === 'no-access') return null;
-  const address = problem.jobId ? pending.detail(problem.jobId)?.job.propertyAddress : '';
+  const address = problem.jobId && !listDenied ? pending.detail(problem.jobId)?.job.propertyAddress : '';
   if (address) return address;
   return problem.jobId ? `Job ${problem.jobId.slice(0, 8)}` : `Draft ${problem.draftPath.split('/').at(-1)?.slice(0, 8) ?? ''}`;
 }
@@ -165,7 +165,8 @@ function ProblemPanel({
   const words = REASONS[problem.reason];
   const client = field?.client;
   const count = problem.entries.length;
-  const label = jobLabel(problem);
+  const listDenied = usePending(() => pending.listDenied());
+  const label = jobLabel(problem, listDenied);
   // Once the new draft for these edits holds other work: they can go into another one of their own.
   const [another, setAnother] = useState(false);
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import type { ScopeLists } from '@/lib/field/api';
 import { MAX_PREP_TASK, MAX_PREP_TASKS, MAX_ROOM_ITEMS } from '@/lib/field/schema';
@@ -158,6 +158,7 @@ export function RoomPrepTasks({
   templates,
   error,
   readOnly,
+  onTyped,
   own,
   setOwn,
   earlier,
@@ -169,6 +170,8 @@ export function RoomPrepTasks({
   templates: string[];
   error: string | undefined;
   readOnly: boolean;
+  // Told whether a task of their own is typed and not added.
+  onTyped: (typed: boolean) => void;
   // The prep task typed and not added yet, held on the page (src/lib/field/pending.ts) so the room's
   // card stays on screen with it after a move (owner decision J5).
   own: string;
@@ -177,6 +180,9 @@ export function RoomPrepTasks({
   earlier: string[];
 }) {
   const [pick, setPick] = useState('');
+  useEffect(() => {
+    onTyped(own !== '');
+  }, [onTyped, own]);
   const tasks = edited ?? stored;
   const full = tasks.length >= MAX_PREP_TASKS;
   // A template's words are copied into the room when picked, so the record keeps them as they were.
