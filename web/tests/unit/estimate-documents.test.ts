@@ -115,6 +115,18 @@ describe('mandatory clauses', () => {
     expect(docs.letter).not.toContain('Example Restoration');
   });
 
+  it("a company name with $$, $&, $' or $` prints exactly as entered in both clauses", () => {
+    for (const name of ['Cash$$ Dry', 'Dry $& Co', "Bob$'s Drying", 'Dry$`Out']) {
+      const docs = documents(
+        documentJob(KITCHEN, { year_built: 1977 }, { company: { ...COMPANY, name } }),
+      );
+      expect(docs.proposal.disclaimers).toContain(exclusions(name));
+      expect(docs.proposal.recommendations).toContain(protection(name));
+      expect(docs.compliance_notes).toContain(exclusions(name));
+      expect(docs.letter).not.toContain('{company}');
+    }
+  });
+
   it('the proposal lists the priced scope between the protective-equipment and additional-materials sentences', () => {
     const docs = documents(documentJob(KITCHEN));
     expect(docs.proposal.recommendations).toEqual([
