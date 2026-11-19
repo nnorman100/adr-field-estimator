@@ -1,5 +1,4 @@
-import type { ReadableStream as WebReadableStream } from 'node:stream/web';
-import { and, asc, desc, eq, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, ne, or, sql, type SQL } from 'drizzle-orm';
 import { auditEvents, evidenceObjects, jobCustomers, jobs } from '@/db/schema';
 import { withOperator, type CompanyTransaction, type Database } from '@/db/tenant';
 import { originalAgreementView, type AgreementView } from '@/lib/agreements/service';
@@ -31,7 +30,7 @@ export type SupportJobView = {
   evidence: EvidenceView[];
 };
 
-export type SupportPhoto = { body: WebReadableStream<Uint8Array>; contentType: string; sizeBytes: number };
+export type SupportPhoto = { bytes: Uint8Array; contentType: string };
 
 export type SupportJobsService = {
   jobs(operatorId: string, companyId: string, page: { limit: number; cursor: string | null }): Promise<{ company: CompanyView; jobs: SupportJobListItem[]; nextCursor: string | null }>;
@@ -56,7 +55,17 @@ async function companyOf(tx: CompanyTransaction, companyId: string): Promise<Com
   };
 }
 
-export function supportJobsService(db: Database, store: EvidenceStore): SupportJobsService {
+// A signature image is the support view's only when a committed agreement of the job names it: a
+// signature received for an agreement that never committed stays hidden from the list and the download.
+const visibleEvidence = (companyId: string, jobId: string): SQL =>
+  or(
+    ne(evidenceObjects.kind, 'signature'),
+    sql`${evidenceObjects.id} IN (SELECT signature_evidence_id FROM agreements WHERE company_id = ${companyId}::uuid AND job_id = ${jobId}::uuid)`,
+  )!;
+
+// `openStore` is called only when a photo's bytes are opened, so the views that read the database
+// alone need no evidence bucket.
+export function supportJobsService(db: Database, openStore: () => EvidenceStore): SupportJobsService {
   // One audit row naming the operator, ids only, in its own transaction.
   async function audit(operatorId: string, companyId: string, action: string, target: string, details: Record<string, string> = {}): Promise<void> {
     await withOperator(
@@ -144,7 +153,7 @@ export function supportJobsService(db: Database, store: EvidenceStore): SupportJ
               createdAt: evidenceObjects.createdAt,
             })
             .from(evidenceObjects)
-            .where(and(eq(evidenceObjects.companyId, companyId), eq(evidenceObjects.jobId, jobId)))
+            .where(and(eq(evidenceObjects.companyId, companyId), eq(evidenceObjects.jobId, jobId), visibleEvidence(companyId, jobId)))
             .orderBy(asc(evidenceObjects.createdAt), asc(evidenceObjects.id));
           return {
             company,
@@ -158,8 +167,8 @@ export function supportJobsService(db: Database, store: EvidenceStore): SupportJ
       );
     },
 
-    // One registered object's bytes. The bucket is opened before the audit row is written, so a
-    // missing object writes none; the bytes are answered only once the row committed.
+    // One registered object's bytes. The bucket is read to the end before the audit row is written, so
+    // a missing or unreadable object writes none; the bytes are answered only once the row committed.
     async photo(operatorId, companyId, jobId, photoId, kind) {
       const row = await withOperator(
         db,
@@ -167,24 +176,20 @@ export function supportJobsService(db: Database, store: EvidenceStore): SupportJ
         async (tx) => {
           await companyOf(tx, companyId);
           const [found] = await tx
-            .select({ objectName: evidenceObjects.objectName, generation: evidenceObjects.generation, contentType: evidenceObjects.contentType, sizeBytes: evidenceObjects.sizeBytes })
+            .select({ objectName: evidenceObjects.objectName, generation: evidenceObjects.generation, contentType: evidenceObjects.contentType })
             .from(evidenceObjects)
-            .where(and(eq(evidenceObjects.companyId, companyId), eq(evidenceObjects.jobId, jobId), eq(evidenceObjects.objectId, photoId), eq(evidenceObjects.kind, kind)));
+            .where(and(eq(evidenceObjects.companyId, companyId), eq(evidenceObjects.jobId, jobId), eq(evidenceObjects.objectId, photoId), eq(evidenceObjects.kind, kind), visibleEvidence(companyId, jobId)));
           return found;
         },
         { companyId, readOnly: true },
       );
       if (!row) throw new PlatformError('not_found');
-      const body = await store.open(row.objectName, row.generation);
+      const body = await openStore().open(row.objectName, row.generation);
       // A registered object that is not in the bucket is a fault, not a missing photo.
       if (!body) throw new SupportUnavailable();
-      try {
-        await audit(operatorId, companyId, 'support_photo_viewed', jobId, { photoId, kind });
-      } catch (error) {
-        await body.cancel().catch(() => {});
-        throw error;
-      }
-      return { body, contentType: row.contentType, sizeBytes: row.sizeBytes };
+      const bytes = new Uint8Array(await new Response(body as BodyInit).arrayBuffer());
+      await audit(operatorId, companyId, 'support_photo_viewed', jobId, { photoId, kind });
+      return { bytes, contentType: row.contentType };
     },
   };
 }

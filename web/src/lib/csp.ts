@@ -42,7 +42,7 @@ export function cspReportOnly(env: {
 
 export function addCspReportOnly(response: Response, pathname: string): void {
   // Keep photo/original/signature downloads' own default-src 'none'; sandbox policy untouched.
-  if (/^\/api\/jobs\/[^/]+\/photos\/[^/]+\/?$/.test(pathname)) return;
+  if (/^\/api\/(?:jobs|platform\/companies\/[^/]+\/jobs)\/[^/]+\/photos\/[^/]+\/?$/.test(pathname)) return;
   response.headers.set(
     'Content-Security-Policy-Report-Only',
     cspReportOnly({

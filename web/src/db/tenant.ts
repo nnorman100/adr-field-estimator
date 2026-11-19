@@ -62,7 +62,8 @@ export type OperatorContext = {
   // The company the operator acts on, set for this transaction as withCompany would set it, so the
   // company's own rows (actors, memberships, invitations, outbox) are reachable too.
   companyId?: string;
-  // A read-only transaction: any write in it fails.
+  // A read-only transaction: any write in it fails. It reads one snapshot (repeatable read), so
+  // several queries in it never see a commit made between them.
   readOnly?: boolean;
 };
 
@@ -93,6 +94,6 @@ export async function withOperator<T>(
       if (row?.active !== true) throw new OperatorContextError('not an active platform operator');
       return run(tx);
     },
-    context.readOnly === true ? { accessMode: 'read only' } : undefined,
+    context.readOnly === true ? { accessMode: 'read only', isolationLevel: 'repeatable read' } : undefined,
   );
 }

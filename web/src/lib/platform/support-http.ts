@@ -65,21 +65,21 @@ export async function supportJob(_request: Request, operator: Operator, context:
 }
 
 // GET /api/platform/companies/{companyId}/jobs/{jobId}/photos/{photoId}?kind=photo|original|signature
-// (the photo when no kind is given), as the image it is.
+// (exactly one kind, as the job view lists it), as the image it is.
 export async function supportPhoto(request: Request, operator: Operator, context: RouteContext): Promise<Response> {
   return respond(async () => {
     const companyId = await pathId(context, 'companyId');
     const jobId = await pathId(context, 'jobId');
     const photoId = await pathId(context, 'photoId');
     const kinds = new URL(request.url).searchParams.getAll('kind');
-    const kind = kinds.length === 0 ? 'photo' : kinds.length === 1 ? KINDS.find((one) => one === kinds[0]) : undefined;
+    const kind = kinds.length === 1 ? KINDS.find((one) => one === kinds[0]) : undefined;
     if (!kind) throw new BadRequest();
     const found = await supportJobsServices().photo(operator.operatorId, companyId, jobId, photoId, kind);
-    return new Response(found.body as ReadableStream<Uint8Array>, {
+    return new Response(found.bytes as BodyInit, {
       headers: {
         ...NO_STORE,
         'Content-Type': found.contentType,
-        'Content-Length': String(found.sizeBytes),
+        'Content-Length': String(found.bytes.length),
         // The bytes are only ever shown as the image they are.
         'X-Content-Type-Options': 'nosniff',
         'Content-Security-Policy': "default-src 'none'; sandbox",

@@ -23,13 +23,14 @@ vi.mock('@/lib/auth/services', () => ({
 }));
 vi.mock('@/lib/platform/support-services', async () => {
   const { supportJobsService } = await import('@/lib/platform/support-jobs');
-  return { supportJobsServices: () => supportJobsService(live.harness!.handle.db, live.harness!.evidence) };
+  return { supportJobsServices: () => supportJobsService(live.harness!.handle.db, () => live.harness!.evidence) };
 });
 
 const listRoute = await import('@/app/api/platform/companies/[companyId]/jobs/route');
 const jobRoute = await import('@/app/api/platform/companies/[companyId]/jobs/[jobId]/route');
 const photoRoute = await import('@/app/api/platform/companies/[companyId]/jobs/[jobId]/photos/[photoId]/route');
 const { everything, operatorClaims, params, request, resetTeamDatabase, startTeamServer } = await import('./team-harness');
+const { supportJobsService } = await import('@/lib/platform/support-jobs');
 
 let base: Awaited<ReturnType<typeof startTeamServer>>;
 let h: Harness;
@@ -85,6 +86,17 @@ async function jobIn(company: string, actor: string, status: 'draft' | 'archived
   return job;
 }
 
+// A signature object as the receipt route leaves it: a registry row and its bytes in the bucket.
+async function storedSignature(jobId: string, actor: string) {
+  const id = await seedSignature(h.admin, h.seed.a, jobId, actor);
+  const [row] = await h.admin<{ object_id: string; object_name: string; sha256: string; generation: string }[]>`
+    SELECT object_id::text, object_name, sha256, generation::text FROM evidence_objects WHERE id = ${id}::uuid
+  `;
+  const bytes = new TextEncoder().encode(`synthetic signature ${row!.object_id}`);
+  h.evidence.objects.set(row!.object_name, { bytes, contentType: 'image/png', sha256: row!.sha256, generation: BigInt(row!.generation) });
+  return { id, objectId: row!.object_id, sha256: row!.sha256, bytes };
+}
+
 async function signedJob(address = '12 Synthetic Way') {
   const actor = h.seed.ownerA.actor;
   const job = await jobIn(h.seed.a, actor, 'draft', address);
@@ -100,7 +112,8 @@ async function signedJob(address = '12 Synthetic Way') {
   const submission = await seedCommitted(h.admin, newSubmission(h.seed.a, job.id, actor));
   const pin = await seedPin(h.admin, { company: h.seed.a, job: job.id, version: version.id, actor });
   const estimate = await seedEstimate(h.admin, { company: h.seed.a, job: job.id, submission: submission.id, pin, actor, hash: version.hash, proposal: proposalBytes });
-  const signature = await seedSignature(h.admin, h.seed.a, job.id, actor);
+  const signature = await storedSignature(job.id, actor);
+  const orphan = await storedSignature(job.id, actor);
   const agreementId = randomUUID();
   const record: SignedRecord = {
     format: SIGNED_FORMAT,
@@ -110,16 +123,16 @@ async function signedJob(address = '12 Synthetic Way') {
     signed_at: new Date().toISOString(),
     signer: { name: 'Pat Customer' },
     signed_with: { kind: 'device', presented_by: { actor_id: actor, name: 'Owner A' } },
-    signature: { id: signature, sha256: 'a'.repeat(64), content_type: 'image/png' },
+    signature: { id: signature.objectId, sha256: signature.sha256, content_type: 'image/png' },
     proposal_sha256: proposalBytes.sha,
     proposal,
     documents: { itemized_claim: [], letter: 'Synthetic letter.', photo_log: [], claim: {}, compliance_notes: [] },
     basis: { estimate_id: estimate.id, submission_id: submission.id },
   };
-  const chain = { company: h.seed.a, actor, job, version, submission, pin, estimate, signature };
+  const chain = { company: h.seed.a, actor, job, version, submission, pin, estimate, signature: signature.id };
   await withCompany(h.handle.db, h.seed.a, (tx) => insertAgreement(tx, agreementOf(chain, { id: agreementId, documents: signedRecordBytes(record) })));
   await h.admin`UPDATE jobs SET status = 'signed', revision = revision + 1 WHERE id = ${job.id}`;
-  return { jobId: job.id, photoId: shot.objectId, agreementId, address };
+  return { jobId: job.id, photoId: shot.objectId, agreementId, address, signature, orphan };
 }
 
 describe('the operator’s support view of a company’s jobs', () => {
@@ -146,7 +159,7 @@ describe('the operator’s support view of a company’s jobs', () => {
   });
 
   it('shows one job with its customer, claim, signed agreement and evidence, never an object path, with one audit row', async () => {
-    const { jobId, photoId, agreementId, address } = await signedJob();
+    const { jobId, photoId, agreementId, address, signature, orphan } = await signedJob();
     const answer = await view(OPERATOR, h.seed.a, jobId);
     expect(answer.status).toBe(200);
     expect(answer.body).toMatchObject({
@@ -154,13 +167,16 @@ describe('the operator’s support view of a company’s jobs', () => {
       job: { id: jobId, status: 'signed', propertyAddress: address },
       customer: { name: 'Pat Customer', phone: '555-0100', email: 'pat@example.test' },
       claim: { carrier: 'Carrier Co', claimNumber: 'CLM-1' },
-      agreement: { id: agreementId, jobId, record: { agreement_id: agreementId, signer: { name: 'Pat Customer' } } },
+      agreement: { id: agreementId, jobId, record: { agreement_id: agreementId, signer: { name: 'Pat Customer' }, signature: { id: signature.objectId, sha256: signature.sha256 } } },
     });
-    const evidence = answer.body.evidence as { photoId: string; kind: string }[];
-    expect(evidence.map((found) => [found.kind, found.photoId === photoId])).toEqual([
-      ['photo', true],
-      ['signature', false],
+    // The signature of the committed agreement is listed; one received for no agreement is not.
+    const evidence = answer.body.evidence as { photoId: string; kind: string; sha256: string }[];
+    expect(evidence.map((found) => [found.kind, found.photoId])).toEqual([
+      ['photo', photoId],
+      ['signature', signature.objectId],
     ]);
+    expect(evidence[1]!.sha256).toBe(signature.sha256);
+    expect(JSON.stringify(answer.body)).not.toContain(orphan.objectId);
     expect(JSON.stringify(answer.body)).not.toContain('companies/');
     expect(await supportRows()).toEqual([
       { company_id: h.seed.a, actor_id: null, operator_actor_id: h.seed.operator, action: 'support_job_viewed', target: jobId, details: {} },
@@ -169,14 +185,58 @@ describe('the operator’s support view of a company’s jobs', () => {
 
   it('answers a photo’s bytes as the image they are, with one audit row naming the photo', async () => {
     const { jobId, photoId } = await signedJob();
-    const answer = await photo(OPERATOR, h.seed.a, jobId, photoId);
+    const answer = await photo(OPERATOR, h.seed.a, jobId, photoId, '?kind=photo');
     expect(answer.status).toBe(200);
     expect(answer.headers.get('content-type')).toBe('image/jpeg');
+    expect(answer.headers.get('content-security-policy')).toBe("default-src 'none'; sandbox");
     expect(answer.headers.get('cache-control')).toBe('no-store');
     expect(new Uint8Array(await answer.arrayBuffer())).toEqual(BYTES);
     expect(await supportRows()).toEqual([
       { company_id: h.seed.a, actor_id: null, operator_actor_id: h.seed.operator, action: 'support_photo_viewed', target: jobId, details: { photoId, kind: 'photo' } },
     ]);
+  });
+
+  it('answers the signature the signed agreement names, with one audit row, and hides one no agreement names', async () => {
+    const { jobId, orphan } = await signedJob();
+    const shown = await view(OPERATOR, h.seed.a, jobId);
+    const named = (shown.body.agreement as { record: { signature: { id: string } } }).record.signature.id;
+    const answer = await photo(OPERATOR, h.seed.a, jobId, named, '?kind=signature');
+    expect(answer.status).toBe(200);
+    expect(answer.headers.get('content-type')).toBe('image/png');
+    expect(new TextDecoder().decode(await answer.arrayBuffer())).toBe(`synthetic signature ${named}`);
+    expect((await supportRows()).filter((row) => row.action === 'support_photo_viewed')).toEqual([
+      { company_id: h.seed.a, actor_id: null, operator_actor_id: h.seed.operator, action: 'support_photo_viewed', target: jobId, details: { photoId: named, kind: 'signature' } },
+    ]);
+
+    const before = (await supportRows()).length;
+    expect((await photo(OPERATOR, h.seed.a, jobId, orphan.objectId, '?kind=signature')).status).toBe(404);
+    expect(await supportRows()).toHaveLength(before);
+  });
+
+  it('writes no audit row when the bucket fails while the bytes are read', async () => {
+    const { jobId, photoId } = await signedJob();
+    const open = h.evidence.open;
+    h.evidence.open = async () =>
+      new ReadableStream<Uint8Array>({
+        pull(controller) {
+          controller.error(new Error('media request failed'));
+        },
+      }) as never;
+    try {
+      expect((await photo(OPERATOR, h.seed.a, jobId, photoId, '?kind=photo')).status).toBe(503);
+    } finally {
+      h.evidence.open = open;
+    }
+    expect(await supportRows()).toEqual([]);
+  });
+
+  it('needs no evidence bucket for the list or the job view', async () => {
+    const { jobId } = await signedJob();
+    const noBucket = supportJobsService(h.handle.db, () => {
+      throw new Error('no evidence bucket');
+    });
+    expect((await noBucket.jobs(h.seed.operator, h.seed.a, { limit: 10, cursor: null })).jobs).toHaveLength(1);
+    expect((await noBucket.job(h.seed.operator, h.seed.a, jobId)).job.id).toBe(jobId);
   });
 
   it('writes no audit row and changes nothing for a refused request', async () => {
@@ -189,18 +249,20 @@ describe('the operator’s support view of a company’s jobs', () => {
     // Not an operator: no sign-in, then the company's own owner.
     await record('list, no sign-in', await list(null, h.seed.a));
     await record('job, owner', await view(OWNER_A, h.seed.a, jobId));
-    await record('photo, owner', photo(OWNER_A, h.seed.a, jobId, photoId));
+    await record('photo, owner', photo(OWNER_A, h.seed.a, jobId, photoId, '?kind=photo'));
     // Not this company's record, or no record at all.
     await record('list, unknown company', await list(OPERATOR, unknown));
     await record('job of company B under company A', await view(OPERATOR, h.seed.a, otherJob.id));
     await record('job of company A under company B', await view(OPERATOR, h.seed.b, jobId));
-    await record('photo under company B', photo(OPERATOR, h.seed.b, jobId, photoId));
-    await record('unregistered photo', photo(OPERATOR, h.seed.a, jobId, unknown));
+    await record('photo under company B', photo(OPERATOR, h.seed.b, jobId, photoId, '?kind=photo'));
+    await record('unregistered photo', photo(OPERATOR, h.seed.a, jobId, unknown, '?kind=photo'));
     await record('photo as an original it is not', photo(OPERATOR, h.seed.a, jobId, photoId, '?kind=original'));
     // A bad request.
     await record('list with a scope', await list(OPERATOR, h.seed.a, '?scope=archived'));
     await record('list with a forged cursor', await list(OPERATOR, h.seed.a, '?cursor=bm90LWEtY3Vyc29y'));
     await record('photo of an unknown kind', photo(OPERATOR, h.seed.a, jobId, photoId, '?kind=thumbnail'));
+    await record('photo with no kind', photo(OPERATOR, h.seed.a, jobId, photoId));
+    await record('photo with two kinds', photo(OPERATOR, h.seed.a, jobId, photoId, '?kind=photo&kind=original'));
     expect(refused).toEqual([
       ['list, no sign-in', 401],
       ['job, owner', 403],
@@ -214,10 +276,12 @@ describe('the operator’s support view of a company’s jobs', () => {
       ['list with a scope', 400],
       ['list with a forged cursor', 400],
       ['photo of an unknown kind', 400],
+      ['photo with no kind', 400],
+      ['photo with two kinds', 400],
     ]);
     // A registered photo the bucket does not hold is a fault, and writes no audit row either.
     h.evidence.objects.clear();
-    expect((await photo(OPERATOR, h.seed.a, jobId, photoId)).status).toBe(503);
+    expect((await photo(OPERATOR, h.seed.a, jobId, photoId, '?kind=photo')).status).toBe(503);
     expect(await everything(h.admin)).toBe(before);
   });
 
@@ -228,7 +292,7 @@ describe('the operator’s support view of a company’s jobs', () => {
     const before = await allButAudit();
     expect((await list(OPERATOR, h.seed.a)).status).toBe(200);
     expect((await view(OPERATOR, h.seed.a, jobId)).status).toBe(200);
-    expect((await photo(OPERATOR, h.seed.a, jobId, photoId)).status).toBe(200);
+    expect((await photo(OPERATOR, h.seed.a, jobId, photoId, '?kind=photo')).status).toBe(200);
     expect(await allButAudit()).toBe(before);
   });
 });
