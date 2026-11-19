@@ -133,6 +133,10 @@ function CompanyClauses({ clauses }: { clauses: Array<{ title: string; text: str
   ));
 }
 
+function showsLinePrices(letter: ProposalLetter): boolean {
+  return [...letter.job_work, ...letter.room_work.flatMap((room) => room.lines)].some((line) => line.total !== undefined);
+}
+
 /** The proposal, shown from its stored bytes: on the review, and on the signed page (S5a-11). */
 export function Proposal({ proposal }: { proposal: NonNullable<EstimateView['proposal']> }) {
   const price = proposal.price;
@@ -158,6 +162,11 @@ export function Proposal({ proposal }: { proposal: NonNullable<EstimateView['pro
           <Letter letter={proposal.letter} />
           {clauses}
           <List items={proposal.disclaimers} />
+          {showsLinePrices(proposal.letter) ? (
+            <ul className="flex flex-col gap-1">
+              <Charges end={price.low} afterHoursLabel={price.after_hours_label} withPricePoint={false} />
+            </ul>
+          ) : null}
           {priceLine}
         </>
       ) : (

@@ -17,8 +17,8 @@ function charge(amount: string): Obj {
   return item('service_call', { group: 'job_charges', unit: 'each', quantity_source: 'field:emergency_calls', unit_price: amount });
 }
 
-function totalFor(amount: string, changes: Obj = {}) {
-  return priced(table([charge(amount)], { price_point: POINT, ...changes }), job([room('Kitchen')], { emergency_calls: 1 }));
+function totalFor(amount: string) {
+  return priced(table([charge(amount)], { price_point: POINT }), job([room('Kitchen')], { emergency_calls: 1 }));
 }
 
 describe('price-point rounding worked examples', () => {
@@ -178,6 +178,24 @@ describe('price-point rounding of a high end that is already a price point', () 
     expect(result.totals.high?.total).toBe('11.00');
     expect(result.totals.high?.price_point).toBeUndefined();
     expect(result.totals.low).toMatchObject({ subtotal: '10.01', price_point: '0.99', total: '11.00' });
+  });
+});
+
+describe('price-point rounding of a high end that is the first price point', () => {
+  it('keeps a $1.00 high end with no line, step 10 ending 1', () => {
+    // One labor line of $0.91 with a 9.90% cushion grows to $1.00009, which settles at $1.00: already the
+    // first price point (1 + 0 x 10), so the high end keeps $1.00 and prints no adjustment. The low end $0.91 rounds up to $1.00.
+    const result = priced(
+      table([item('labor_a', { group: 'labor', unit: 'hour', quantity_source: 'field:labor_hours', unit_price: '0.91' })], {
+        estimate_mode: 'range',
+        range: { first_sf: 1000, first_percent: '9.9', beyond_percent: '9.9' },
+        price_point: { step: '10', ending: '1' },
+      }),
+      job([room('Kitchen', { unfinished_sf: 100 })], { labor_hours: 1 }),
+    );
+    expect(result.totals.high?.total).toBe('1.00');
+    expect(result.totals.high?.price_point).toBeUndefined();
+    expect(result.totals.low).toMatchObject({ subtotal: '0.91', price_point: '0.09', total: '1.00' });
   });
 });
 

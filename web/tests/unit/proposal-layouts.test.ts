@@ -1,4 +1,7 @@
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
+import { Proposal as ProposalView } from '@/app/(auth)/sign-in/[address]/jobs/[jobId]/review/review-documents';
 import { priceEstimate, type Estimate, type Json } from '@/engine/estimate';
 import { estimateInput } from '@/lib/estimates/inputs';
 import { proposalBytes, proposalOf, type Proposal } from '@/lib/estimates/proposal';
@@ -283,5 +286,33 @@ describe('one company’s settings never reach another company’s documents', (
     expect(text).toContain('Emergency: 555-0911');
     expect(proposalBytes(proposal()).sha256).toBe('faa73989cb799153a85a4586a5eb9c7d9475b0729619df9a60bf7bd613286661');
     expect(NEUTRAL_SETTINGS).toEqual({ proposalLayout: 'itemized', companyClauses: [], photoLogGrouping: 'room' });
+  });
+});
+
+describe('the letter proposal with a price-point adjustment (S4-4e)', () => {
+  // Work $240.00 + $37.50 + $150.00 = $427.50; 10% tax = $42.75; $470.25 rounds up to $499.00 (step 100, ending 99): $28.75.
+  function rounded(showLineBreakdown: boolean): { proposal: Proposal; html: string } {
+    const base = table(showLineBreakdown) as { items: Array<Record<string, Json>>; policy: Record<string, Json> };
+    const priceTable = { ...base, items: base.items.map((row) => ({ ...row, taxable: true })), policy: { ...base.policy, sales_tax: { enabled: true, percent: '10' }, price_point: { step: '100', ending: '99' } } };
+    const result = priceEstimate(priceTable as Json, estimateInput(snapshot(1990), LETTER).job);
+    if (!result.ok) expect.fail(`refused at ${result.stage}: ${result.error}`);
+    const letter = proposalOf({ estimate: result, company: LETTER, showLineBreakdown, ...BASIS });
+    return { proposal: letter, html: renderToStaticMarkup(createElement(ProposalView, { proposal: letter as never })) };
+  }
+
+  it('with line prices shown, prints the stored charge rows so the lines add up to the total', () => {
+    const { proposal: letter, html } = rounded(true);
+    expect(letter.price.low).toMatchObject({ subtotal: '427.50', tax: '42.75', price_point: '28.75', total: '499.00' });
+    expect(html).toContain('Subtotal');
+    expect(html).toContain('Sales tax');
+    expect(html).toContain('$42.75');
+    expect(html).toContain('Price-point adjustment (not taxed): $28.75');
+    expect(html).toContain('Price: $499.00');
+  });
+
+  it('with line prices hidden, prints the price and the adjustment without charge rows', () => {
+    const { html } = rounded(false);
+    expect(html).not.toContain('Sales tax');
+    expect(html).toContain('Price-point adjustment (not taxed): $28.75');
   });
 });
