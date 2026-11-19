@@ -180,7 +180,7 @@ const f = {
     const id = `op${(counter += 1)}`;
     const [, companyId, , draftId] = path.split('/');
     try {
-      const { acknowledged } = await journaledEdit(get(person).client, { companyId: companyId!, draftId: draftId! }, [{ path, op: 'update', fields }]);
+      const { acknowledged } = await journaledEdit(get(person).client, { companyId: companyId!, draftId: draftId! }, [{ path, op: 'update', fields }], null, new Map());
       ops.set(id, { state: 'pending' });
       acknowledged.then(
         () => ops.set(id, { state: 'acked' }),

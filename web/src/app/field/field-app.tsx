@@ -10,6 +10,7 @@ import { placeOf } from '@/lib/field/views';
 import { JobScreens } from './job-screens';
 import { JobsView } from './jobs-view';
 import { NewJobView } from './new-job-view';
+import { SyncChip } from './sync-chip';
 import { useFieldClient } from './field-store';
 
 // Identity and cache come from FieldStore's gate, including its saved offline facts.
@@ -55,7 +56,17 @@ export function FieldApp({ me }: { me: DsMe }) {
     );
   }
   if (opened !== `${session.companyId}/${session.user.uid}`) return <p role="status">Opening your jobs…</p>;
-  if (place.view === 'jobs') return <JobsView key={place.list ?? 'default'} session={session} list={place.list} />;
-  if (place.view === 'new-job') return <NewJobView session={session} />;
-  return <JobScreens key={place.jobId} session={session} jobId={place.jobId} view={place.view} />;
+  // The sync chip and its sheet show the signed-in person's journal only while their screens do.
+  return (
+    <>
+      <SyncChip me={me} />
+      {place.view === 'jobs' ? (
+        <JobsView key={place.list ?? 'default'} session={session} list={place.list} />
+      ) : place.view === 'new-job' ? (
+        <NewJobView session={session} />
+      ) : (
+        <JobScreens key={place.jobId} session={session} jobId={place.jobId} view={place.view} />
+      )}
+    </>
+  );
 }

@@ -3,15 +3,23 @@
 import { useEffect, useRef, useState } from 'react';
 import { notePhoto, photoSent } from '@/lib/field/unsent';
 import { settle } from '@/lib/field-db';
-import { journaledEdit } from '@/lib/field/journal-sync';
+import { journaledEdit, readEntries, tryAgain } from '@/lib/field/journal-sync';
 import { Button } from '@/components/ui/button';
 import { photoAddress, sendPhoto, SHOT_NAMES } from '@/lib/field/api';
 import { pending as unsent, usePending, type PendingPhoto } from '@/lib/field/pending';
 import { preparePhoto } from '@/lib/field/photo';
 import { MAX_PHOTO_REFS, SHOT_TAGS, type PhotoField } from '@/lib/field/schema';
-import { fieldRefusal, photoRefWrites, type FieldDraft } from '@/lib/field/store';
+import { draftDocs, draftPath, fieldRefusal, photoRefWrites, type FieldDraft } from '@/lib/field/store';
+import type { FieldClient } from '@/lib/field-db';
 import type { JobContext } from './job-screens';
 import { Choice, Outcome, Section } from './ui';
+
+// Send again of a reference the server refused before, when it is still not saved.
+const RETRY_ANSWERS = {
+  refused: 'The photo is stored but its room and tag were not saved: see Can’t save.',
+  changed: 'The photo is stored but its room and tag were changed on another device: see Changed on another device.',
+  'no-answer': 'The photo is stored but its room and tag were not saved. No answer from DryScope: save again.',
+} as const;
 
 const SHOT_OPTIONS = [{ value: '', label: 'Not tagged' }, ...SHOT_TAGS.map((tag) => ({ value: tag, label: SHOT_NAMES[tag] }))];
 
@@ -21,6 +29,14 @@ function fieldOf(roomId: string, shotTag: string, capturedAt: string): PhotoFiel
     ...(shotTag ? { shotTag: shotTag as PhotoField['shotTag'] & string } : {}),
     capturedAt,
   };
+}
+
+// A photo's reference is saved (its own send, or Try again from the sync chip's sheet) or discarded
+// (the sheet's Discard): it leaves the photos being sent, and no longer holds the unsent mark.
+export function photoReferenceDone(client: FieldClient, jobId: string, photoId: string): void {
+  unsent.removePhoto(jobId, photoId);
+  photoSent(client.person.tenantId, client.person.uid, photoId);
+  void settle(client).catch(() => undefined);
 }
 
 // Photos (S5a-6): the camera, a room and a shot tag for each photo, and the job's photos. A photo's
@@ -77,15 +93,24 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
       return job.checkAccess(sent);
     }
     update(item.id, { step: 'saving' });
+    const client = job.session.client;
     try {
-      const { acknowledged } = await journaledEdit(job.session.client, job.draftRef, photoRefWrites(job.draftRef, item.id, item.field));
-      await acknowledged;
+      // A reference the server refused before is sent again from its own journal entry, as the sync
+      // chip's Try again sends it: never as a second entry.
+      const path = `${draftPath(job.draftRef)}/photos/${item.id}`;
+      const kept = (await readEntries(client)).find((entry) => entry.state !== 'pending' && entry.writes.some((write) => write.op === 'set' && write.path === path));
+      if (kept) {
+        const answer = await tryAgain(client, [kept]);
+        if (answer !== 'sent') return update(item.id, { step: 'save-failed', message: RETRY_ANSWERS[answer] });
+      } else {
+        const writes = photoRefWrites(job.draftRef, item.id, item.field);
+        const { acknowledged } = await journaledEdit(client, job.draftRef, writes, jobId, draftDocs(job.draftRef, draft));
+        await acknowledged;
+      }
       // The screen that sent it may have closed since: then the open one is told to read the draft.
       if (live.current) await job.reloadDraft();
       else unsent.draftChanged(jobId);
-      unsent.removePhoto(jobId, item.id);
-      photoSent(job.session.client.person.tenantId, job.session.user.uid, item.id);
-      void settle(job.session.client).catch(() => undefined);
+      photoReferenceDone(client, jobId, item.id);
     } catch (error) {
       update(item.id, { step: 'save-failed', message: 'The photo is stored but its room and tag were not saved. Save again.' });
       job.checkAccess(fieldRefusal(error));

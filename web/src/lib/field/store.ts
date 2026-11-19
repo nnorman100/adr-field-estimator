@@ -23,7 +23,7 @@ import {
 } from 'firebase/firestore';
 import { answerMessage, type Refusal } from './api';
 import type { FieldChanges } from './forms';
-import type { DocWrite } from './journal';
+import type { DocWrite, Docs } from './journal';
 import { draftFieldSchema, photoFieldSchema, roomFieldSchema, type DraftField, type PhotoField, type RoomField } from './schema';
 
 export type DraftRef = { companyId: string; draftId: string };
@@ -38,6 +38,17 @@ export type FieldDraft = {
 };
 
 export const draftPath = ({ companyId, draftId }: DraftRef) => `companies/${companyId}/drafts/${draftId}`;
+
+// The draft's documents as a screen holds them (null: none), so an edit records what it was built on.
+export function draftDocs(ref: DraftRef, draft: FieldDraft | null): Docs {
+  const path = draftPath(ref);
+  if (!draft) return new Map();
+  return new Map<string, Record<string, unknown>>([
+    [path, { field: draft.field }],
+    ...draft.rooms.map((room) => [`${path}/rooms/${room.id}`, { field: room.field }] as [string, Record<string, unknown>]),
+    ...draft.photos.map((photo) => [`${path}/photos/${photo.id}`, { field: photo.field }] as [string, Record<string, unknown>]),
+  ]);
+}
 
 // A stored map that does not follow the field map (./schema.ts). The draft is not shown at all
 // rather than shown as empty or partial work.
