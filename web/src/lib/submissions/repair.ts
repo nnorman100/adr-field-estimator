@@ -2,6 +2,7 @@ import { and, eq, or, sql } from 'drizzle-orm';
 import { isLockTimeout } from '@/db/client';
 import { auditEvents, jobSubmissions } from '@/db/schema';
 import { withCompany, type Database } from '@/db/tenant';
+import { lockedJob } from '@/lib/jobs/access';
 import type { FenceStore } from './fence';
 import { abortPending, writeMarker, type DecidedRow } from './service';
 
@@ -18,8 +19,9 @@ import { abortPending, writeMarker, type DecidedRow } from './service';
 // - An aborted row whose marker is written and whose expiry passed within the last REOPEN_SECONDS
 //   has its release written again, so a draft still fenced by that epoch goes back to `editing`.
 //   Only companies the lookup returns for other work are visited for this.
-// - A pending row whose lock another transaction still holds past the lock limit (a fence call in
-//   progress) is left for the next pass and counted as failed; the pass goes on with the rest.
+// - A pending row whose lock, or whose job's, another transaction still holds past the lock limit
+//   (a fence call in progress) is left for the next pass and counted as failed; the pass goes on
+//   with the rest. The job row is locked before the submission row, as in every request.
 //
 // Only finding the companies with work crosses companies, through job_submission_due_companies
 // (migration 0011), which returns company ids and nothing else. Every row is read and changed inside
@@ -78,6 +80,11 @@ export async function runSubmissionRepair(
       let row: DecidedRow = found;
       if (row.status === 'pending') {
         const decided = await withCompany(db, companyId, async (tx) => {
+          // The job row first, as every request takes it, before the submission row, so a request
+          // holding the job never waits on a submission row the worker holds while the worker waits
+          // on the job (the draft life-cycle redesign's field-revision trigger will lock the job row
+          // whenever a submission's status moves).
+          await lockedJob(tx, companyId, row.jobId);
           const aborted = await abortPending(tx, companyId, row.id);
           if (aborted) {
             await tx

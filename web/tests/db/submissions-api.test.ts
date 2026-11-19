@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import postgres from 'postgres';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { canonicalManifest, manifestDigest } from '@/lib/field/canonical';
 import type { FenceStore } from '@/lib/submissions/fence';
@@ -500,6 +501,54 @@ describe('the worker', () => {
     expect(h.field.draft(h.seed.a, free.draftId)?.state).toBe('editing');
     expect(await runSubmissionRepair(h.handle.db, h.field, { markerGraceSeconds: 0 })).toEqual({ aborted: 1, marked: 1, failed: 0 });
     expect(await f.expectOneOutcome(h.seed.a, locked.jobId, locked.draftId)).toBe('aborted');
+  });
+
+  // The worker locks a job row before an expired attempt's submission row, in the order every request
+  // takes them, so a request holding the job never waits on a submission row the worker holds while
+  // the worker waits on the job (a deadlock once moving a submission's status also locks its job).
+  it('waits for the job row before it aborts an expired attempt, in the order a request takes them', async () => {
+    live.service = shortWindow();
+    const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
+    h.field.gate.read = () => new Promise<void>(() => {});
+    void f.submitShown(ESTIMATOR_A, jobId, draftId, manifest);
+    await until(() => h.field.draft(h.seed.a, draftId)?.state === 'submitting', 'the fence');
+    await expire();
+
+    // The request holding the job, on a connection of its own (h.admin has one).
+    const holder = postgres(h.server.databaseUrl, { max: 1, connect_timeout: 10, onnotice: () => {} });
+    const release = latch();
+    let pid: number | null = null;
+    const request = holder.begin(async (sql) => {
+      const [own] = await sql<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+      await sql`SELECT id FROM jobs WHERE id = ${jobId} FOR UPDATE`;
+      pid = own!.pid;
+      await release.wait;
+      // Still holding the job, the request takes the attempt's row as Submit would: the worker,
+      // waiting for the job, holds none of it.
+      return (await sql`SELECT id FROM job_submissions WHERE job_id = ${jobId} FOR UPDATE NOWAIT`).length;
+    });
+    let worker: ReturnType<typeof runSubmissionRepair> | undefined;
+    // Both are settled below on every path; until then a rejection is held, not unhandled.
+    request.catch(() => {});
+    try {
+      await until(() => pid !== null, 'the job lock');
+      worker = runSubmissionRepair(h.handle.db, h.field, { markerGraceSeconds: 0 });
+      worker.catch(() => {});
+      // PostgreSQL shows the worker waiting on the request.
+      await until(
+        async () => (await h.admin<{ n: number }[]>`SELECT count(*)::int AS n FROM pg_stat_activity WHERE ${pid}::int = ANY(pg_blocking_pids(pid))`)[0]!.n > 0,
+        'the worker waiting for the job',
+      );
+      expect((await f.submissions(jobId)).map((row) => row.status)).toEqual(['pending']);
+    } finally {
+      release.open();
+      await Promise.allSettled([request, worker]);
+      await holder.end({ timeout: 5 });
+    }
+    expect(await request).toBe(1);
+    expect(await worker).toEqual({ aborted: 1, marked: 1, failed: 0 });
+    expect(await f.expectOneOutcome(h.seed.a, jobId, draftId)).toBe('aborted');
+    expect(h.field.draft(h.seed.a, draftId)?.state).toBe('editing');
   });
 
   it('writes a submitted marker the request could not, after the grace', async () => {
