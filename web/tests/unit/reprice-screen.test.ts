@@ -68,14 +68,13 @@ describe('the Reprice banner', () => {
   it('reads the job again when the job was signed or changed elsewhere, or is no longer reachable', () => {
     expect(screenOutOfDate(409, { error: 'stale_revision' })).toBe(true);
     expect(screenOutOfDate(409, { error: 'job_signed' })).toBe(true);
-    for (const status of [403, 404, 410]) expect(screenOutOfDate(status, { error: 'x' })).toBe(true);
+    for (const status of [401, 403, 404, 410]) expect(screenOutOfDate(status, { error: 'x' })).toBe(true);
     expect(screenOutOfDate(409, { error: 'prices_superseded' })).toBe(false);
     expect(screenOutOfDate(503, null)).toBe(false);
   });
-  it('words each refusal from its code, and a lost connection as such', () => {
-    expect(repriceOutcomeOf(409, { error: 'prices_superseded' })).toMatch(/Newer prices were published/);
-    expect(repriceOutcomeOf(409, { error: 'conflict' })).toMatch(/already sent with different details/);
-    expect(repriceOutcomeOf(0, null)).toMatch(/could not reach DryScope/);
-    expect(repriceOutcomeOf(400, { error: 'other' })).toBe('Something went wrong. Reload the job.');
+  it('words each refusal from its code', () => {
+    expect(repriceOutcomeOf({ error: 'prices_superseded' })).toMatch(/Newer prices were published/);
+    expect(repriceOutcomeOf({ error: 'prices_unreadable' })).toMatch(/cannot be read/);
+    expect(repriceOutcomeOf({ error: 'other' })).toBe('Something went wrong. Reload the job.');
   });
 });

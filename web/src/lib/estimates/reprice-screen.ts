@@ -51,26 +51,24 @@ export function repriceLines(preview: NonNullable<RepricePreview['reprice']>): {
 
 /**
  * Whether a refusal says the screen is out of date or the person's access to the job is gone: the
- * job was signed or changed elsewhere, or is no longer theirs to see. Review then reads the job and
+ * job was signed or changed elsewhere, the sign-in is no longer accepted, or the job is no longer
+ * theirs to see. Review then reads the job and
  * its estimate again instead of keeping what it shows.
  */
 export function screenOutOfDate(status: number, body: unknown): boolean {
   const code = field(body, 'error');
-  return code === 'stale_revision' || code === 'job_signed' || status === 403 || status === 404 || status === 410;
+  return code === 'stale_revision' || code === 'job_signed' || status === 401 || status === 403 || status === 404 || status === 410;
 }
 
 const OUTCOMES: Record<string, string> = {
   prices_superseded: 'Newer prices were published while you were looking. The preview shows them now; check it again.',
-  prices_unchanged: 'This job already uses the newest prices.',
-  conflict: 'This reprice was already sent with different details. Reload the job.',
-  not_priced: 'This job has not been priced yet, so it has no prices to change.',
   prices_unreadable: 'The newest prices cannot be read. Check the Prices page.',
 };
 
 /** The message for a refused reprice, by the server's code. */
-export function repriceOutcomeOf(status: number, body: unknown): string {
+export function repriceOutcomeOf(body: unknown): string {
   const code = field(body, 'error');
   const known = typeof code === 'string' ? OUTCOMES[code] : undefined;
   if (known) return known;
-  return status === 0 || status >= 500 ? 'We could not reach DryScope. Check your connection, then try again.' : 'Something went wrong. Reload the job.';
+  return 'Something went wrong. Reload the job.';
 }

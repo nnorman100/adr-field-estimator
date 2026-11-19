@@ -68,6 +68,7 @@ function estimateOfSnapshot(
   photoLogGrouping: 'room' | 'shot_tag' | null = null,
   layout: Layout = { letter: false },
   revised: string | null = null,
+  made: { versionSequence: number; pinSequence: number; unitPrice: string; jobRevision: number } = { versionSequence: 1, pinSequence: 1, unitPrice: '2.00', jobRevision: 1 },
 ): EstimateView {
   const company: CompanyDocuments = {
     identity: { companyId: team.companyId, name: team.companyName, address: '1 Synthetic Way, Testville', phone: '555-0100', email: 'office@example.invalid', license: '000001', signoff: 'Pat Example' },
@@ -81,7 +82,7 @@ function estimateOfSnapshot(
     signing: { authorizationText: 'Synthetic start-work authorization.', paymentTermsText: 'Synthetic payment terms.' },
   };
   const table = {
-    items: [{ item_id: 'extraction', group: 'treatment', name: 'Extraction', unit: 'sf', quantity_source: 'room:wet_floor', unit_price: '2.00' }],
+    items: [{ item_id: 'extraction', group: 'treatment', name: 'Extraction', unit: 'sf', quantity_source: 'room:wet_floor', unit_price: made.unitPrice }],
     policy: {
       estimate_mode: 'single',
       range: { first_sf: 1000, first_percent: '0', beyond_percent: '0' },
@@ -95,18 +96,18 @@ function estimateOfSnapshot(
   const priced = priceEstimate(table, estimateInput(snapshot, company).job);
   if (!priced.ok) throw new Error(priced.error);
   const { bytes, sha256 } = proposalBytes(
-    proposalOf({ estimate: priced, company, showLineBreakdown: layout.letter, submission: { id: snapshot.submissionId, snapshotSha256: 'e'.repeat(64) }, version: { sequence: 1 }, revised }),
+    proposalOf({ estimate: priced, company, showLineBreakdown: layout.letter, submission: { id: snapshot.submissionId, snapshotSha256: 'e'.repeat(64) }, version: { sequence: made.versionSequence }, revised }),
   );
   return estimateView(
     {
       id: randomUUID(),
       jobId: snapshot.jobId,
       submissionId: snapshot.submissionId,
-      pinSequence: 1,
-      versionSequence: 1,
+      pinSequence: made.pinSequence,
+      versionSequence: made.versionSequence,
       tableHash: priced.table_sha256,
       engineVersion: priced.engine_version,
-      pricedResult: JSON.parse(JSON.stringify({ ...priced, job_revision: 1 })),
+      pricedResult: JSON.parse(JSON.stringify({ ...priced, job_revision: made.jobRevision })),
       proposalBytes: bytes,
       proposalSha256: sha256,
       createdAt: new Date(),
@@ -856,10 +857,10 @@ test('after replacing a document link with the list unreadable, Revoke reaches t
 });
 
 // The Reprice route, after playApi: GET is the preview until a POST is answered, then nothing to reprice; `post` decides that answer.
-async function playReprice(page: Page, jobId: string, preview: unknown, post: (request: Request) => [number, unknown]) {
+async function playReprice(page: Page, job: Job, preview: unknown, post: (request: Request) => [number, unknown]) {
   let moved = false;
-  await page.route(`**/api/jobs/${jobId}/reprice`, (route: Route, request: Request) => {
-    if (request.method() === 'GET') return route.fulfill({ json: moved ? { job: { revision: 4 }, reprice: null } : preview });
+  await page.route(`**/api/jobs/${job.id}/reprice`, (route: Route, request: Request) => {
+    if (request.method() === 'GET') return route.fulfill({ json: moved ? { job: { revision: job.revision }, reprice: null } : preview });
     moved = true;
     const [status, json] = post(request);
     return route.fulfill({ status, json });
@@ -877,14 +878,20 @@ test('the owner reads the before/after preview in a dialog, cancels, then confir
   const first = estimateFor(team, job.id, job.currentDraftId, 'owner');
   // The revised estimate is a new record on the new draft (a fresh Finish), headed "Revised {date}".
   const finishedDraftId = randomUUID();
-  const revised = estimateOfSnapshot(team, record(job.id, finishedDraftId), 'owner', null, { letter: false }, 'Revised November 19, 2026: was $240.00');
+  // On prices version 2 (pin 2, $3.00 a square foot) and the job revision the fresh Finish leaves.
+  const revised = estimateOfSnapshot(team, record(job.id, finishedDraftId), 'owner', null, { letter: false }, 'Revised November 19, 2026: was $240.00', {
+    versionSequence: 2,
+    pinSequence: 2,
+    unitPrice: '3.00',
+    jobRevision: 5,
+  });
   expect([revised.proposalSha256, revised.submissionId]).not.toEqual([first.proposalSha256, first.submissionId]);
   let finished = false;
   const answers: Answers = { estimate: first, make: () => (finished ? [201, { job, estimate: revised }] : [409, { error: 'scope_not_confirmed' }]) };
   await playApi(page, job, answers);
   const preview = previewAt();
   const sentReprice: unknown[] = [];
-  await playReprice(page, job.id, preview, (request) => {
+  await playReprice(page, job, preview, (request) => {
     sentReprice.push(request.postDataJSON());
     job.revision = 4;
     answers.estimate = null;
@@ -931,17 +938,48 @@ test('the owner reads the before/after preview in a dialog, cancels, then confir
   // After the fresh Finish the revised estimate is a new record and proposal, headed "Revised {date}".
   finished = true;
   job.currentDraftId = finishedDraftId;
+  job.revision = 5;
   await main.getByRole('button', { name: 'Price this job' }).click();
   await expect(main.getByRole('heading', { name: 'Review before signing' })).toBeVisible();
+  await expect(main.getByRole('region', { name: 'Price' }).getByText('Price: $360.00', { exact: true })).toBeVisible();
   await main.getByText('Proposal', { exact: true }).click();
   await expect(main.getByText('Revised November 19, 2026: was $240.00')).toBeVisible();
+});
+
+test('pricing a job reads the Reprice preview again at the job revision the estimate was made at', async ({ page }) => {
+  const job = { id: randomUUID(), status: 'submitted', currentDraftId: randomUUID(), revision: 3 };
+  const made = estimateFor(team, job.id, job.currentDraftId, 'owner');
+  const answers: Answers = {
+    estimate: null,
+    make: () => {
+      job.revision = 5;
+      return [201, { job, estimate: made }];
+    },
+  };
+  await playApi(page, job, answers);
+  const asked: number[] = [];
+  const newest = randomUUID();
+  await page.route(`**/api/jobs/${job.id}/reprice`, (route: Route) => {
+    asked.push(job.revision);
+    return route.fulfill({
+      json: { job: { revision: job.revision }, reprice: { pinned: { version: 1, price: '$240.00', refused: null }, newest: { versionId: newest, version: job.revision === 3 ? 2 : 3, price: '$360.00', refused: null } } },
+    });
+  });
+  await signInTo(page, team.owner);
+  await page.goto(`/sign-in/${team.address}/jobs/${job.id}/review`);
+  const main = page.getByRole('main');
+  await expect(main.getByText('You can reprice it with your newest prices, version 2.')).toBeVisible();
+  await main.getByRole('button', { name: 'Price this job' }).click();
+  await expect(main.getByRole('heading', { name: 'Review before signing' })).toBeVisible();
+  await expect(main.getByText('You can reprice it with your newest prices, version 3.')).toBeVisible();
+  expect(asked).toEqual([3, 5]);
 });
 
 test('a reprice refused because the job moved on reloads the job instead of leaving a superseded estimate', async ({ page }) => {
   const job = { id: randomUUID(), status: 'submitted', currentDraftId: randomUUID(), revision: 3 };
   const answers: Answers = { estimate: estimateFor(team, job.id, job.currentDraftId, 'owner') };
   await playApi(page, job, answers);
-  await playReprice(page, job.id, previewAt(), () => {
+  await playReprice(page, job, previewAt(), () => {
     job.revision = 4;
     answers.estimate = null;
     return [409, { error: 'stale_revision' }];
@@ -959,7 +997,7 @@ test('a job signed elsewhere while the owner has Review open is read again, not 
   const job = { id: randomUUID(), status: 'submitted', currentDraftId: randomUUID(), revision: 3 };
   const answers: Answers = { estimate: estimateFor(team, job.id, job.currentDraftId, 'owner') };
   const sent = await playApi(page, job, answers);
-  await playReprice(page, job.id, previewAt(), () => {
+  await playReprice(page, job, previewAt(), () => {
     job.status = 'signed';
     job.revision = 4;
     return [409, { error: 'job_signed' }];

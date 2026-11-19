@@ -14,9 +14,9 @@ import { callApi } from '@/lib/firebase-client';
 // sends exactly that preview's version and job revision; the action stays unavailable until a
 // refusal's refreshed preview is in, so a dialog is never opened on a preview about to be replaced.
 // A reprice voids the current estimate and its scope confirmation, and a job that was signed,
-// changed or made unreachable elsewhere is no longer what this screen shows, so in those cases, and
-// when the preview's job revision is not the one Review loaded, Review reads the job and its
-// estimate again. The preview adds no rule of its own: when it cannot price, it says why and the
+// changed or made unreachable elsewhere, or a sign-in the server no longer accepts, is no longer what
+// this screen shows, so in those cases, after an answer to a reprice that was lost, and when the
+// preview's job revision is not the one Review loaded, Review reads the job and its estimate again. The preview adds no rule of its own: when it cannot price, it says why and the
 // action stays, and the server decides.
 export const REPRICE_OPEN = 'Review and reprice';
 export const REPRICE_TITLE = 'Reprice this draft?';
@@ -94,8 +94,10 @@ export function RepriceBanner({ user, jobId, revision, onChanged }: { user: User
       method: 'POST',
       json: { revision: basis.revision, changeId: change.current.id, versionId: basis.versionId },
     });
-    if (answer.status === 200 || screenOutOfDate(answer.status, answer.body)) return changed.current();
-    setProblem(repriceOutcomeOf(answer.status, answer.body));
+    // After a lost or failed answer the reprice may have been committed, so Review reads the job
+    // again rather than keep an estimate that may be void.
+    if (answer.status === 200 || answer.status === 0 || answer.status >= 500 || screenOutOfDate(answer.status, answer.body)) return changed.current();
+    setProblem(repriceOutcomeOf(answer.body));
     // A refusal for a changed basis shows the preview as it is now.
     if (answer.status === 409) setRead(await load());
     setBusy(false);

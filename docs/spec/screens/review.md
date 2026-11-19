@@ -101,13 +101,14 @@ scope priced at the pinned prices and at the newest, either of which may instead
 cannot be priced from it (the action stays and the server decides), and what a reprice does.
 Nothing is sent until "Reprice this draft" in the dialog; Cancel and Esc send nothing. The dialog
 shows one preview, taken when it was opened, and its confirmation sends exactly that preview's
-version and job revision, with a change id kept for a retry; the action is unavailable until a
+version and job revision, with its own change id; the action is unavailable until a
 refusal for a changed basis has shown its message and read the preview again. Review reads the job
 and its estimate again, rather than keep what it shows, when the preview's job revision is not the
 one Review loaded, when a reprice or the preview answers that the job moved (`stale_revision`),
-was signed (`job_signed`) or is no longer reachable (403, 404, 410), and after a reprice: the old
+was signed (`job_signed`) or is no longer reachable (401, 403, 404, 410), and after a reprice, including one whose answer
+was lost (a connection failure or a 5xx, which may have been committed): the old
 estimate, its proposal and its signing actions are gone, and the scope must be confirmed again
-through Back to editing and Finish. When the preview cannot be read, the screen says so (a status
+through Back to editing and Finish. When pricing the job makes an estimate, the preview is read again at the job revision that answer states. When the preview cannot be read, the screen says so (a status
 note). The revised estimate's proposal shows its "Revised {date}" line under the heading (with the previous
 price when the company's "Show the previous price on a revised estimate" was on when it was made),
 and it needs a new signature. Estimator and office never see the banner.

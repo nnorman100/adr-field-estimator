@@ -75,6 +75,7 @@ function Review({ address, companyName, tenantId, jobId, config }: ReviewScreenP
   const load = useCallback(
     async (user: User) => {
       const stale = () => authRef.current?.currentUser !== user;
+      if (stale()) return;
       setPhase({ name: 'checking' });
       // The sign-in this check is for, kept as the request goes.
       const auth = authRef.current!;
@@ -182,8 +183,11 @@ function Review({ address, companyName, tenantId, jobId, config }: ReviewScreenP
   }
 }
 
-function ReviewBody({ user, reviewer, links, canReprice, revision, job, estimate: first, agreement: signedFirst, finishHref, reload }: Ready & { finishHref: string; reload: () => void }) {
-  const [estimate, setEstimate] = useState<EstimateView | null>(first);
+function ReviewBody({ user, reviewer, links, canReprice, revision: firstRevision, job, estimate: first, agreement: signedFirst, finishHref, reload }: Ready & { finishHref: string; reload: () => void }) {
+  // The estimate and the job revision it was read at, changed together: the Reprice banner's preview
+  // is only good for the revision it was taken at.
+  const [read, setRead] = useState<{ estimate: EstimateView | null; revision: number }>({ estimate: first, revision: firstRevision });
+  const { estimate, revision } = read;
   const [agreement, setAgreement] = useState<SignedAgreement | null>(signedFirst);
   const [issued, setIssued] = useState<{ tokens: IssuedLink[]; listed: DocumentLinkView[] }>({ tokens: [], listed: [] });
   const signatureId = agreement?.record.signature.id ?? null;
@@ -199,7 +203,10 @@ function ReviewBody({ user, reviewer, links, canReprice, revision, job, estimate
     const answer = await callApi(user, `/api/jobs/${encodeURIComponent(job.id)}/estimate`, { method: 'POST' });
     setBusy(false);
     const made = answer.status === 200 || answer.status === 201 ? reviewAnswerOf(answer.body) : null;
-    if (made?.estimate) return setEstimate(made.estimate);
+    if (made?.estimate) {
+      const now = revisionOf(answer.body);
+      return now === null ? reload() : setRead({ estimate: made.estimate, revision: now });
+    }
     setProblem(outcomeOf(answer.status, answer.body));
   }
 
@@ -218,7 +225,7 @@ function ReviewBody({ user, reviewer, links, canReprice, revision, job, estimate
     );
   }
 
-  const repriceBanner = canReprice ? <RepriceBanner user={user} jobId={job.id} revision={revision} onChanged={reload} /> : null;
+  const repriceBanner = canReprice ? <RepriceBanner key={`${revision}/${estimate?.id ?? ''}`} user={user} jobId={job.id} revision={revision} onChanged={reload} /> : null;
 
   if (!estimate) {
     return (

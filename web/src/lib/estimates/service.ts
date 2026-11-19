@@ -292,16 +292,9 @@ function proposalFor(estimate: Estimate, company: CompanyDocuments, table: Table
 // The revised line of a new estimate (S5b-6, D6), made once, here, and kept in the proposal's bytes:
 // a job that already had an estimate (before a reprice, or for an earlier record before Back to
 // editing) gets "Revised {date}", with the previous estimate's price when the company's setting, read
-// now, shows it. A signed parent's price, when the caller has one, is named always, whatever the
-// setting (the revision workflow for signed jobs is S5b-9, and `make` refuses a signed job before
-// this). A job's first estimate gets none.
-export async function revisedFor(
-  tx: CompanyTransaction,
-  companyId: string,
-  jobId: string,
-  company: CompanyDocuments,
-  options: { made?: Date; signed?: string | null } = {},
-): Promise<string | null> {
+// now, shows it. A job's first estimate gets none. (`make` refuses a signed job, so a signed parent's
+// price, which `revisedLine` always names, is supplied by the signed-job workflow, S5b-9.)
+async function revisedFor(tx: CompanyTransaction, companyId: string, jobId: string, company: CompanyDocuments): Promise<string | null> {
   const [previous] = await tx
     .select({ pricedResult: jobEstimates.pricedResult })
     .from(jobEstimates)
@@ -309,9 +302,9 @@ export async function revisedFor(
     .orderBy(desc(jobEstimates.createdAt), desc(jobEstimates.id))
     .limit(1);
   if (!previous) return null;
-  return revisedLine(options.made ?? new Date(), {
+  return revisedLine(new Date(), {
     previous: priceText(readStoredEstimate(previous.pricedResult).totals),
-    signed: options.signed ?? null,
+    signed: null,
     showPrevious: company.showPreviousPrice === true,
   });
 }

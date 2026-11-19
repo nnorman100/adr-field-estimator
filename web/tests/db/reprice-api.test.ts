@@ -33,9 +33,8 @@ const estimateRoute = await import('@/app/api/jobs/[jobId]/estimate/route');
 const agreementsRoute = await import('@/app/api/jobs/[jobId]/agreements/route');
 const repriceRoute = await import('@/app/api/jobs/[jobId]/reprice/route');
 const { contentHash, ENGINE_VERSION, parseTable } = await import('@/engine/table');
-const { withCompany } = await import('@/db/tenant');
-const { readCompanyDocuments } = await import('@/lib/profile/documents');
-const { estimatesService, revisedFor } = await import('@/lib/estimates/service');
+const { revisedLine } = await import('@/lib/estimates/proposal');
+const { estimatesService } = await import('@/lib/estimates/service');
 const { readStoredEstimate } = await import('@/lib/estimates/result');
 const { priceText } = await import('@/lib/estimates/screen');
 const { everything, params, request, resetTeamDatabase, startTeamServer } = await import('./team-harness');
@@ -476,16 +475,12 @@ describe('the revised estimate heading (D6)', () => {
   it('a job with a signed agreement is headed with the agreement’s stored price, whatever the setting', async () => {
     const { jobId, estimate, signatureId } = await readyToSign();
     expect((await sign(ESTIMATOR_A, jobId, bodyFor(estimate, signatureId))).status).toBe(201);
+    const [agreement] = await h.admin<{ priced_result: unknown }[]>`SELECT priced_result FROM agreements WHERE job_id = ${jobId}`;
+    const signed = priceText(readStoredEstimate(agreement!.priced_result).totals);
     const made = new Date('2026-11-19T12:00:00Z');
-    const lineWith = (show: boolean) =>
-      withCompany(h.handle.db, h.seed.a, async (tx) => {
-        const company = (await readCompanyDocuments(tx, h.seed.a))!;
-        const [agreement] = await h.admin<{ priced_result: unknown }[]>`SELECT priced_result FROM agreements WHERE job_id = ${jobId}`;
-        const signed = priceText(readStoredEstimate(agreement!.priced_result).totals);
-        return revisedFor(tx, h.seed.a, jobId, { ...company, showPreviousPrice: show }, { made, signed });
-      });
-    expect(await lineWith(false)).toBe('Revised November 19, 2026: was $240.00');
-    expect(await lineWith(true)).toBe('Revised November 19, 2026: was $240.00');
+    const lineWith = (showPrevious: boolean) => revisedLine(made, { previous: '$999.00', signed, showPrevious });
+    expect(lineWith(false)).toBe('Revised November 19, 2026: was $240.00');
+    expect(lineWith(true)).toBe('Revised November 19, 2026: was $240.00');
   });
 
   it('a signed proposal is unchanged: the agreement keeps the bytes it was signed with, with no revised line', async () => {
