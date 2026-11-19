@@ -15,7 +15,7 @@ tag are then written to the job's field draft.
 | Role | Sees | Can do |
 |---|---|---|
 | Owner | the job's photos | take photos only once they own the job's field work and the draft is being edited |
-| Estimator | the photos of a job whose field work they own (the Photos tab lists the photos from the job's draft, which an estimator may read only while they own it); on a job another person owns, opened afresh, only "Another person owns this job's field work, so it is not shown here. The company owner can move it to you."; a phone that already held the draft when the field work moved keeps the photos it had loaded on screen, read only, under "This job's field work is no longer yours…" | take photos on jobs whose field work they own, while the draft is being edited |
+| Estimator | the photos of a job whose field work they own (the Photos tab lists the photos from the job's draft, which an estimator may read only while they own it); on a job another person owns, opened afresh, only "Another person owns this job's field work, so it is not shown here. The company owner can move it to you."; after the app records a move away, the same field shell keeps the photos it had loaded, read only, under "This job's field work is no longer yours…"; a fresh page shows the ownership notice if they still have job access, or 404 if they lost it ([Check Scope](check-scope.md)) | take photos on jobs whose field work they own, while the draft is being edited |
 | Office | the job's photos, read only | nothing (no `photos`) |
 | Superadmin support | nothing | nothing |
 | Different-company user | nothing: 404 | nothing |
@@ -45,10 +45,11 @@ cap (`docs/access/photos.md`).
 | Save its room and tag | the field database draft, checked by `web/firestore.rules` | field owner |
 | Show a photo | `GET /api/jobs/{id}/photos/{photoId}?kind=photo` | `jobs_read` |
 
-"Start field work" can appear on this tab too: on a job nobody owns, or on a job that names this person but whose draft does not yet (the first Start, or an owner's move to this estimator, committed and its draft step did not finish; see [Check Scope](check-scope.md) and [Job coordination](job-coordination.md)).
+"Start field work" can appear on this tab too: on a job nobody owns, or as the recovery prompt on a job that names this person but whose current draft does not (the first Start or an owner's move, to this estimator or to the owner themself, committed and its draft step did not finish; or a "Back to editing" answered 503 after the new draft ID was committed and the draft is missing). See [Check Scope](check-scope.md) for every trigger.
 
 The photo-by-ID route uses job access (`jobs_read`), but the tab needs the draft's photo references, so
-it shows no photos to an estimator who cannot read the draft.
+it shows no photos to an estimator who cannot read the draft. The photos retained after a move are
+those the same field shell already loaded; a fresh page does not show them.
 
 Rules: `docs/access/photos.md`.
 

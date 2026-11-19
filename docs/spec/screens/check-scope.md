@@ -22,19 +22,26 @@ Only the person who owns the job's field work edits it, and only while the draft
 
 | Role | Sees | Can do |
 |---|---|---|
-| Owner | every job's draft | edit only once the field work is theirs (Start field work on a job nobody owns, or a move to themself in [Job coordination](job-coordination.md)) |
+| Owner | every job's draft | edit only once the field work is theirs (Start field work on a job nobody owns, or a move to themself in [Job coordination](job-coordination.md)); if that move leaves the existing draft still naming the former owner, the owner gets the Start field work recovery prompt (see Key actions) |
 | Estimator | the job's header, tabs and Customer and claim on jobs they made or are assigned to; the draft (rooms, scope, photos) only while they own the job's field work (`draftReadable` in `job-screens.tsx`; `canRead` in `web/firestore.rules`) | Start field work on a job nobody owns, or again on a job that names them but whose draft does not yet (see Key actions); edit the jobs whose field work they own |
 | Office | every job's draft, read only | nothing: no `scope`; no Start field work |
 | Superadmin support | nothing | nothing |
 | Different-company user | nothing: the job answers 404 and the field rules refuse the draft | nothing |
 
-On a job another person owns, an estimator who opens it afresh sees the job header and tabs but no
-draft: Check Scope and [Photos](photos.md) show only "Another person owns this job's field work, so it
-is not shown here. The company owner can move it to you.". An estimator whose phone already held the
-draft when the field work moved away (or when they were also unassigned) keeps what that page loaded:
-the scope form with what they typed, and the photos already shown, read only, under "This job's field
-work is no longer yours…" (`moved` in `job-screens.tsx`); opening the job again on a fresh page gives
-the first case.
+On a job another person owns, an estimator who opens it on a fresh page sees the job header and
+tabs but no draft: Check Scope and [Photos](photos.md) show only "Another person owns this job's field
+work, so it is not shown here. The company owner can move it to you.". Once the app has recorded a
+move away from an estimator who held the draft (`pending.moved` in `web/src/lib/field/pending.ts`),
+there are three cases:
+
+- Reopening the job inside the same field shell (no page reload) still shows the retained draft and
+  the customer and claim forms, read only, under "This job's field work is no longer yours…"
+  (`moved` in `job-screens.tsx`).
+- A fresh online page shows the ownership notice above if the estimator still has job access (they
+  made the job or are still assigned), or answers 404 if they lost it (unassigned from a job they did
+  not make).
+- An estimator who was assigned but never held the field work keeps no draft; they lose the forms on
+  the next refused read.
 
 Read-only texts: "Read only. Only the estimator who owns this job's field work changes it, while the
 job is being edited."; for an estimator when another owns it, "Another person owns this job's field
@@ -60,7 +67,7 @@ job's field work is no longer yours…" (unsent changes stay on the phone, read 
 |---|---|---|
 | Read the job | `GET /api/jobs/{id}` | `jobs_read` |
 | Read the room types, items and prep tasks | `GET /api/jobs/{id}/scope-lists` | `jobs_read` |
-| Start field work (become field owner) | `POST /api/jobs/{id}/field-owner` ("Nobody has started this job's field work yet. Whoever starts it owns it…"). Also shown, as "This job's field work is yours, but this phone cannot open it yet. Start field work again to finish.", when the job already names this person but its draft does not. Two ways to get there: the first Start request committed the owner and did not update the draft; or the owner moved the field work to this estimator in [Job coordination](job-coordination.md), the move committed and answered 503 before the draft named them. Starting again finishes either. Offered on Check Scope and on [Photos](photos.md) (`startable` in `job-screens.tsx`, `start-field-work.tsx`) | `scope` |
+| Start field work (become field owner) | `POST /api/jobs/{id}/field-owner` ("Nobody has started this job's field work yet. Whoever starts it owns it…"). Also shown, as "This job's field work is yours, but this phone cannot open it yet. Start field work again to finish.", when the job already names this person but its draft does not. Ways to get there: the first Start request committed the owner and did not update the draft; the owner moved the field work to this estimator (or to themself) in [Job coordination](job-coordination.md), the move committed and the existing draft still names the former owner (for example a 503 before the draft named them); or the field owner used "Back to editing" on [Finish](finish.md), got a 503 after Postgres committed the new draft ID, and the new draft is missing (Start rebuilds it from the last submission, `remakeCurrentDraft` in `web/src/lib/jobs/office.ts`). Starting again finishes each (`ownerUnset` in `job-screens.tsx`). Offered on Check Scope and on [Photos](photos.md) (`startable` in `job-screens.tsx`, `start-field-work.tsx`) | `scope` |
 | Save rooms, scope, counts, notes | the field database draft (`draftFieldWrites`), checked by `web/firestore.rules`; no server route | field owner with `scope` |
 
 Rules: `docs/access/jobs.md` (field owner), `docs/access/scope-lists.md`; draft lock while

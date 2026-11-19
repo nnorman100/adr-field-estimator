@@ -1,7 +1,8 @@
 # Screen specs (rebuilt app, `web/`)
 
-One spec per screen of the rebuilt app, written from the code as it is built today. This slice covers
-the jobs and field-work screens; the screens marked "not written yet" in the inventory follow in later slices. This is the
+One spec per screen of the rebuilt app, written from the code as it is built today. Every page under
+`web/src/app/` has a spec: the jobs and field-work screens (first slice), the office and team
+screens (second slice) and the platform and settings screens (third slice). This is the
 per-screen companion to [docs/spec.md](../../spec.md), the approved feature spec, which describes the
 retired app's screens and the rebuild's accepted target (its section 6). Where this folder and the
 code disagree, the code wins and the spec is fixed. Where a screen and the access rules disagree,
@@ -10,8 +11,8 @@ the spec flags it under "Mismatches to check" and the code is left alone.
 Sources used for every spec: the screen's files under `web/src/app/`, the role table in
 `web/src/lib/access/roles.ts`, the access matrix in [docs/ACCESS.md](../../ACCESS.md) and its
 files under `docs/access/`, and for "not built yet" [docs/STATUS.md](../../STATUS.md) and the
-stage plans in `docs/plans/` (STATUS.md's files track the retired app and the S1 to S4 stages; the
-web app's screens are tracked by step in `docs/plans/S5.md`, `S6.md`, `S7.md` and `S8.md`).
+stage plans in `docs/plans/` (STATUS.md's files track both apps; the web app's screens are also tracked
+by step in `docs/plans/S3.md`, `S5.md`, `S6.md`, `S7.md` and `S8.md`).
 
 ## Roles used in every spec
 
@@ -45,15 +46,15 @@ one page, `/field`, whose views are picked by the address (`web/src/lib/field/vi
 | Jobs and field work | Review before signing (signing on the phone, signing link, document links) | `/sign-in/{address}/jobs/{id}/review` | [review.md](review.md) |
 | Jobs and field work | Review and sign your estimate (homeowner link) | `/sign#token` | [sign-link.md](sign-link.md) |
 | Jobs and field work | Signed estimate documents (document link) | `/documents#token` | [documents-link.md](documents-link.md) |
-| Office and team | Team and invitations | `/sign-in/{address}/team` | not written yet (second slice) |
-| Office and team | Accept invitation | `/sign-in/{address}/invitations/{invitationId}` | not written yet (second slice) |
-| Platform and settings | Start page | `/` | not written yet (third slice) |
-| Platform and settings | Company sign-in, second step and dashboard | `/sign-in/{address}` | not written yet (third slice) |
-| Platform and settings | Company settings | `/sign-in/{address}/company` | not written yet (third slice) |
-| Platform and settings | Prices | `/sign-in/{address}/prices` | not written yet (third slice) |
-| Platform and settings | Operator: companies | `/operator/{tenantId}` | not written yet (third slice) |
-| Platform and settings | Operator: one company | `/operator/{tenantId}/companies/{companyId}` | not written yet (third slice) |
-| Platform and settings | Operator: a company's team | `/operator/{tenantId}/companies/{companyId}/team` | not written yet (third slice) |
+| Office and team | Team and invitations | `/sign-in/{address}/team` | [team.md](team.md) |
+| Office and team | Accept invitation | `/sign-in/{address}/invitations/{invitationId}` | [invitation.md](invitation.md) |
+| Platform and settings | Start page | `/` | [start-page.md](start-page.md) |
+| Platform and settings | Company sign-in, second step and dashboard | `/sign-in/{address}` | [sign-in.md](sign-in.md) |
+| Platform and settings | Company settings | `/sign-in/{address}/company` | [company-settings.md](company-settings.md) |
+| Platform and settings | Prices | `/sign-in/{address}/prices` | [prices.md](prices.md) |
+| Platform and settings | Operator: companies (and operator sign-in) | `/operator/{tenantId}` | [operator-companies.md](operator-companies.md) |
+| Platform and settings | Operator: one company | `/operator/{tenantId}/companies/{companyId}` | [operator-company.md](operator-company.md) |
+| Platform and settings | Operator: a company's team | `/operator/{tenantId}/companies/{companyId}/team` | [operator-team.md](operator-team.md) |
 
 ## Each spec's sections
 
@@ -61,7 +62,7 @@ Purpose; Who may see it and do what (one row per role above); States (empty, loa
 offline where relevant); Key actions and the server route each calls; Not built yet; Mismatches to
 check. Wording in quotes is the screen's own text.
 
-## Mismatches found in this slice
+## Mismatches found
 
 Each is flagged for the owner or a later fix; no code was changed.
 
@@ -80,11 +81,15 @@ Each is flagged for the owner or a later fix; no code was changed.
 4. `docs/access/superadmin.md` describes read-only support access to any company's jobs,
    documents and photos. In the web app no operator route reads a job (`web/src/app/api/platform/`);
    that is step S5b-5 (`docs/plans/S5/S5b-5.md`), not built.
-5. [docs/STATUS.md](../../STATUS.md) has no row for the web app's job screens (it was last built on
-   2026-10-28); their state is only in the stage plans.
+5. Resolved: [docs/STATUS.md](../../STATUS.md) now has rows for the web app's screens (PRs #314 to
+   #471 were added on 2026-11-19, for example "Job screens on the phone (S5a-6)" in
+   `docs/status/s5-core-workflows.md`).
 6. No field screen edits the draft's summary of findings, which Finish checks (S5 decision J1). Notes
    on Check Scope is a different key. An empty summary blocks pricing (`summary_missing`: Review says
    go back and write it, and nothing in the field app can). See [check-scope.md](check-scope.md),
    [finish.md](finish.md) and [review.md](review.md).
 7. The signed documents' links are shown only in the first successful signing answer. A signer who
    misses it cannot recover the addresses; see [review.md](review.md).
+8. Estimators and office hold `prices_read` while the company's prices are on, but no screen links
+   to Prices for them: the only link is on Company settings, which only the owner opens. They must
+   type `/sign-in/{address}/prices`. See [prices.md](prices.md) and [sign-in.md](sign-in.md).

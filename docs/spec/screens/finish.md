@@ -41,6 +41,9 @@ button can show and its request still be refused with 403 `not_field_owner`.
   estimator alike, refused unless the caller owns the field work).
 - Signed: "This job is signed".
 - Errors: the server's message with "Try again" (same request) or "Reload the job".
+- Back to editing answered 503 after Postgres committed the new draft ID: the new draft may be
+  missing. Opening Check Scope or Photos then offers the "Start field work" recovery, which rebuilds
+  the missing draft from the last submission ([Check Scope](check-scope.md)).
 
 ## Key actions and server routes
 

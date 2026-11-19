@@ -8,8 +8,10 @@ Part of [Screen specs](README.md). Address: `/field?job={id}&view=customer`. Bui
 Two forms: Customer (customer name, customer phone, customer email, property address) and Claim (insurance carrier, claim number, policy number, date of loss, cause of loss,
 adjuster name, email and phone, deductible). The documents print the customer's name and the property
 address; the customer's phone and email are stored in the submitted record but the estimate builder
-does not carry them into the documents (`web/src/lib/estimates/inputs.ts`). The claim's fields go to
-the claim document. They are stored on the server (Postgres), not in the
+does not carry them into the documents (`web/src/lib/estimates/inputs.ts`). The claim's fields (claim
+number, policy number, date and cause of loss, adjuster contact) print in the scope defense letter's
+addressee and reference block (`claimReference` and the letter in `web/src/engine/documents.ts`); the
+itemized claim and its Scope JSON export carry the priced line items, not these fields. They are stored on the server (Postgres), not in the
 field draft, so they need a connection. Each save carries the job's revision and a change id made
 on the phone, so a retry after a lost answer is the same save.
 
@@ -18,13 +20,14 @@ on the phone, so a retry after a lost answer is the same save.
 | Role | Sees | Can do |
 |---|---|---|
 | Owner | both forms | save both while the job is unsigned (`scope` or `coordination`) |
-| Estimator | both forms, on jobs they made, own or are assigned to; a phone that already held the job when the field work moved away or the estimator was unassigned keeps the forms it had loaded, with what was typed, read only, not saved (`moved`) | save both only while they own the job's field work and the job is unsigned (`scope`; the server refuses others with `not_field_owner`) |
+| Estimator | both forms, on jobs they made, own or are assigned to; after the app records a move of field work they held, reopening the job in the same field shell keeps the forms it had loaded, with what was typed, read only, not saved (`moved`); an estimator who was assigned but never held the field work loses the forms on the next refused read | save both only while they own the job's field work and the job is unsigned (`scope`; the server refuses others with `not_field_owner`) |
 | Office | both forms | save both while the job is unsigned (`coordination`) |
 | Superadmin support | nothing | nothing |
 | Different-company user | nothing: 404 | nothing |
 
-A person the job is refused to (404, for example an estimator unassigned from a job they did not make)
-for a fresh read gets no forms; only the page that already held the job keeps them read only.
+On a fresh online page, an estimator who still has job access sees the forms; one who lost it (404,
+for example unassigned from a job they did not make) gets no forms. Only the same field shell that
+recorded a move of field work they held keeps the forms read only ([Check Scope](check-scope.md)).
 
 The screen shows the forms read only after a move away (J5) or while the job is archived or being
 checked (`canSave` in `customer-view.tsx`). It does not check whether the job is signed; the server

@@ -39,6 +39,12 @@ job views) with a sync chip for changes not yet saved.
   "No signal: jobs are not kept on this phone, so you need signal to work."; in a Safari tab, "No
   signal: in Safari, DryScope works online only. Save it to your Home Screen to work with no
   signal."
+- Home Screen setup (iPhone or iPad browser tab only, `surface === 'ios-tab'` in `field-shell.tsx`;
+  `home-screen-sheet.tsx`, `home-screen-text.ts`): on first use the sheet "Save DryScope to your Home
+  Screen" opens by itself once per phone, with the steps (Share, Add to Home Screen, Add, open
+  DryScope from the new icon and sign in there) and "The icon keeps its own saved data, so DryScope
+  opened from it starts signed out."; "Got it" closes it. Afterwards the shell shows "With no signal,
+  DryScope works only from your Home Screen." and a button of the same title that reopens the sheet.
 - Other gates (`field-store-text.ts`): open in another window ("Open DryScope in one window"), a
   browser without the locks needed ("This browser can't keep work offline"), sign-in too old for
   offline work ("Open the app once online to continue"), access off, company not active, sign in
@@ -48,10 +54,15 @@ job views) with a sync chip for changes not yet saved.
   `sync-chip.tsx`). Each panel offers:
   - "Discard" (then "Discard changes" or "Keep them"): always.
   - "Try again": unless the job was finished or the edits were changed on another device.
-  - "Save as new draft" ("Save as another new draft" once one exists): only when the job is known
-    and was archived during editing, or its field work moved to someone else while the job is still
-    being edited on that draft and the person can still read the job, and only for a role with
-    `jobs_create` and `scope`. An estimator who did not create the job and is also unassigned after the
+  - "Save as new draft" ("Save as another new draft" once one exists): the button shows when the
+    recorded refusal is `archived` or `owner-changed` for a known job and the role holds `jobs_create`
+    and `scope` (`saveAsNew` in `web/src/lib/field/sync-status.ts`). Showing it is not eligibility: it
+    reads the refusal as recorded, not the person's current access. The copy is allowed only for a job
+    archived during editing, or whose field work moved to someone else while the job is still being
+    edited on that draft and the person can still read the job. For example, an estimator whose edit
+    was refused as `owner-changed` while still assigned, and who is then unassigned, still sees the
+    button; pressing it rechecks access, refuses the copy and records `no-access`
+    (`saveAsNewDraft` in `web/src/lib/field/new-draft.ts`). An estimator who did not create the job and is also unassigned after the
     move is refused both the draft and the job, so the panel reads "You no longer have access to this
     job" (`no-access`) and offers only Discard and Try again (`refusalOf` in `web/src/lib/field/journal.ts`). A write refused after Finish never offers it. Pressing it asks the server
     again and can still refuse: "This job takes these changes again now: use Try again." when the
@@ -73,8 +84,9 @@ job views) with a sync chip for changes not yet saved.
 | Learn who is signed in and their keys | `GET /api/me` (`web/src/lib/field/field-sync.ts`, `journal-sync.ts`) |
 | Keep or not keep jobs on the phone | the phone's Firestore cache and journal only, no server route |
 | Try again a refused change | the field database (Firestore) write again |
-| Save as new draft (unsaved changes on a job archived during editing or whose field work moved and that the person can still read, not after they lost the job; the new job has a blank address and no customer, claim or photos) | `POST /api/jobs` with a new job and draft id and an empty address, then the field database |
+| Save as new draft (shown for a recorded `archived` or `owner-changed` refusal; the server rechecks access when pressed and copies only for a job archived during editing or whose field work moved and that the person can still read, never after they lost the job; the new job has a blank address and no customer, claim or photos) | `POST /api/jobs` with a new job and draft id and an empty address, then the field database |
 | Read a job named by an unsaved change | `GET /api/jobs/{id}` |
+| Reopen the Home Screen setup sheet (iPhone or iPad browser tab) | on the phone only, no server route |
 
 ## Not built yet
 
