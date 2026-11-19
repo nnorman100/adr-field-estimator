@@ -3,9 +3,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { UnsentMarkNotSaved } from '@/lib/field-db';
 import { ReopenTheApp } from '@/lib/field/idb';
-import { JournalNotSaved, type DocWrite } from '@/lib/field/journal';
+import { JournalNotSaved, type DocWrite, type Docs } from '@/lib/field/journal';
 import { journaledEdit } from '@/lib/field/journal-sync';
-import { draftDocs, fieldRefusal, type FieldDraft } from '@/lib/field/store';
+import { draftDocs, fieldRefusal } from '@/lib/field/store';
 import type { JobContext } from './job-screens';
 
 // A form waits for local persistence, so the technician can keep working with no signal.
@@ -23,7 +23,7 @@ export function useFieldEdit(job: JobContext) {
   }, []);
 
   // Answers whether the change was saved on the phone, also when the form is gone by then.
-  async function save(writes: DocWrite[], saved: string, locallySaved: () => void = () => undefined, acknowledgedBy: () => void = () => undefined, base: FieldDraft | null = job.draft): Promise<boolean> {
+  async function save(writes: DocWrite[], saved: string, locallySaved: () => void = () => undefined, acknowledgedBy: () => void = () => undefined, held: Docs = draftDocs(job.draftRef, job.draft)): Promise<boolean> {
     if (!job.editable || job.stale) return false;
     let onPhone = false;
     const mine = ++latest.current;
@@ -41,7 +41,7 @@ export function useFieldEdit(job: JobContext) {
       job.checkAccess(fieldRefusal(error));
     };
     try {
-      const { acknowledged } = await journaledEdit(job.session.client, job.draftRef, writes, job.jobId, draftDocs(job.draftRef, base));
+      const { acknowledged } = await journaledEdit(job.session.client, job.draftRef, writes, job.jobId, held);
       // The SDK's local transaction is finished; update the draft before clearing the form's edits.
       await job.reloadDraft('cache');
       onPhone = true;
