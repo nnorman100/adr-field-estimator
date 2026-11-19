@@ -179,7 +179,7 @@ describe('migration 0018: the sync’s watermark and the change time', () => {
 });
 
 describe('migration 0018: what the runtime may write', () => {
-  it('raises the field revision only by one, never sets the change time or the copy source after insert, and starts a job at 0', async () => {
+  it('raises the field revision only by one, never sets the change time, sets a copy source once, and starts a job at 0', async () => {
     const job = await jobOf(h.seed.a);
     for (const set of ['field_revision = field_revision + 2', 'field_revision = 7']) {
       expect({ set, code: await errorCode(exec(h.seed.a, `UPDATE jobs SET ${set} WHERE id = '${job.id}'`)) }).toEqual({ set, code: CHECK_VIOLATION });
@@ -187,9 +187,16 @@ describe('migration 0018: what the runtime may write', () => {
     await exec(h.seed.a, `UPDATE jobs SET field_revision = field_revision + 1 WHERE id = '${job.id}'`);
     expect(await state(job.id)).toMatchObject({ field: 1, revision: 1 });
     expect(await errorCode(exec(h.seed.a, `UPDATE jobs SET field_revision = 0 WHERE id = '${job.id}'`))).toBe(CHECK_VIOLATION);
-    for (const set of ['field_changed_at = now()', `copied_from_job_id = '${job.id}'`]) {
-      expect({ set, code: await errorCode(exec(h.seed.a, `UPDATE jobs SET ${set} WHERE id = '${job.id}'`)) }).toEqual({ set, code: INSUFFICIENT_PRIVILEGE });
+    expect(await errorCode(exec(h.seed.a, `UPDATE jobs SET field_changed_at = now() WHERE id = '${job.id}'`))).toBe(INSUFFICIENT_PRIVILEGE);
+    // A copy source is set once, to a job of the same company, keeping both revisions; never changed or cleared.
+    const [first, second] = [await jobOf(h.seed.a), await jobOf(h.seed.a)];
+    expect(await errorCode(exec(h.seed.a, `UPDATE jobs SET copied_from_job_id = '${(await jobOf(h.seed.b)).id}' WHERE id = '${job.id}'`))).toBe(FOREIGN_KEY_VIOLATION);
+    await exec(h.seed.a, `UPDATE jobs SET copied_from_job_id = '${first.id}' WHERE id = '${job.id}'`);
+    expect(await state(job.id)).toMatchObject({ field: 1, revision: 1 });
+    for (const set of [`copied_from_job_id = '${second.id}'`, 'copied_from_job_id = NULL']) {
+      expect({ set, code: await errorCode(exec(h.seed.a, `UPDATE jobs SET ${set} WHERE id = '${job.id}'`)) }).toEqual({ set, code: CHECK_VIOLATION });
     }
+    expect(await h.admin`SELECT copied_from_job_id::text AS source FROM jobs WHERE id = ${job.id}`).toEqual([{ source: first.id }]);
 
     const insert = (extra: string, values: string) =>
       exec(
@@ -220,6 +227,39 @@ describe('migration 0018: what the runtime may write', () => {
     expect(await h.admin`SELECT uid FROM actors WHERE id = ${h.seed.estimatorA.actor}`).toEqual([{ uid: 'estimator-a' }]);
     expect(await field(job.id)).toBe(0);
     expect(await unprotectedRelations(h.admin)).toEqual([]);
+  });
+});
+
+describe('migration 0018: the copy source from the job_copied audit row', () => {
+  // As Copy writes it, in the copy's transaction: the previous version writes only this.
+  const copied = (company: string, copy: string, from: string) =>
+    exec(
+      company,
+      `INSERT INTO audit_events (company_id, actor_id, action, target, details) VALUES ('${company}', '${ownerOf(h, company)}', 'job_copied', '${copy}', '${JSON.stringify({ revision: 1, copiedFrom: from })}'::jsonb)`,
+    );
+  const sourceOf = async (job: string) => (await h.admin<{ source: string | null }[]>`SELECT copied_from_job_id::text AS source FROM jobs WHERE id = ${job}`)[0]!.source;
+
+  it('sets an empty copy source from the audit row, once, to a job of the same company, moving neither revision', async () => {
+    const [source, copy, later] = [await jobOf(h.seed.a), await jobOf(h.seed.a), await jobOf(h.seed.a)];
+    await copied(h.seed.a, copy.id, source.id);
+    expect(await sourceOf(copy.id)).toBe(source.id);
+    expect(await state(copy.id)).toMatchObject({ field: 0, revision: 1 });
+    // A second audit row never moves a source already set.
+    await copied(h.seed.a, copy.id, later.id);
+    expect(await sourceOf(copy.id)).toBe(source.id);
+  });
+
+  it('sets nothing for another company’s job, an id that is not one, or another action, and never fails the audit write', async () => {
+    const [plain, other] = [await jobOf(h.seed.a), await jobOf(h.seed.b)];
+    await copied(h.seed.a, plain.id, other.id);
+    await copied(h.seed.a, plain.id, 'not-a-job');
+    await copied(h.seed.a, 'not-a-job', plain.id);
+    await exec(
+      h.seed.a,
+      `INSERT INTO audit_events (company_id, actor_id, action, target, details) VALUES ('${h.seed.a}', '${ownerOf(h, h.seed.a)}', 'job_archived', '${plain.id}', '${JSON.stringify({ copiedFrom: (await jobOf(h.seed.a)).id })}'::jsonb)`,
+    );
+    expect(await sourceOf(plain.id)).toBeNull();
+    expect(await h.admin`SELECT count(*)::int AS n FROM audit_events WHERE target IN (${plain.id}, 'not-a-job')`).toEqual([{ n: 4 }]);
   });
 });
 

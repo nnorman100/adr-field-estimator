@@ -118,9 +118,11 @@ draft of a job from Postgres, guarded by one version number. No route reads or w
 - `field_synced_revision` (starts at 0): the highest field revision the sync has written to Firestore. The
   runtime may set it.
 - `field_changed_at`: when the field revision last rose (the clock at the bump), set by the trigger only.
-- `copied_from_job_id`: the job a copy was made from, in the same company (a foreign key), set by Copy when
-  it inserts the copy and never changed by the runtime. 0018 fills it for existing copies from their
-  `job_copied` audit rows (`details.copiedFrom`).
+- `copied_from_job_id`: the job a copy was made from, in the same company (a foreign key), set once and
+  never changed or cleared. Copy sets it when it inserts the copy, or on a retry while it is empty. A
+  trigger on the `job_copied` audit row (`details.copiedFrom`, written in the copy's transaction) sets it
+  too while it is empty, so copies the previous version makes during a rollout or after an allowed
+  rollback get it. 0018 fills it for existing copies from those audit rows.
 - `job_field_sync_due_companies(max, grace)` returns, on the 0005 pattern, the ids of companies with a job
   whose `field_synced_revision` is behind its `field_revision` and whose last change is more than `grace`
   seconds old, the one waiting longest first. The repair worker will use it.

@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { actors, agreements, jobs, jobSubmissions } from '@/db/schema';
 import { holdAcrossOutsideCall, withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
@@ -256,6 +256,13 @@ export function archiveService(db: Database, store: ArchiveStore): ArchiveServic
           // commits before the field database is touched: a draft the previous version made is stamped only
           // once the claim is committed, so a lost answer from that stamp never leaves it unclaimed.
           if (!(await holdDraft(tx, caller.companyId, existing.id, input.draftId))) throw new JobError('conflict');
+          // The same digest is the same source: a copy without it (made before 0018) gets it now.
+          if (existing.copiedFromJobId === null) {
+            await tx
+              .update(jobs)
+              .set({ copiedFromJobId: source.id })
+              .where(and(eq(jobs.companyId, caller.companyId), eq(jobs.id, existing.id), isNull(jobs.copiedFromJobId)));
+          }
           row = existing;
         } else {
           if (!(await claimDraft(tx, caller.companyId, row.id, input.draftId))) throw new JobError('conflict');

@@ -17,9 +17,11 @@
 --    the bump (not the transaction's start, which a wait for the job lock can make look older), so the
 --    repair pass leaves a job alone for a short grace while the request that changed it is still
 --    syncing it.
--- 4. jobs.copied_from_job_id: the job a copy was made from (in the same company), set by Copy when it
---    inserts the copy and never changed by the runtime, so a copy's first draft can be built from its
---    source's signed record. Existing copies are filled from their job_copied audit rows (below).
+-- 4. jobs.copied_from_job_id: the job a copy was made from (in the same company), so a copy's first
+--    draft can be built from its source's signed record. Copy sets it when it inserts the copy, or on a
+--    retry while it is empty; a trigger on the job_copied audit row sets it too, so a copy the previous
+--    version makes (while a release rolls out, or after a rollback the runbook allows) gets it in its
+--    own transaction; existing copies are filled from those audit rows (below). Set once, never changed.
 -- 5. job_field_sync_due_companies(max, grace): the repair worker's one lookup across companies, on the
 --    0005 pattern: company ids only.
 --
@@ -91,8 +93,8 @@ CREATE TRIGGER jobs_field_revision_update
 
 -- The job revision guard of 0015, the same but for the field columns: an update that changes nothing
 -- but the field owner, the field revision, the synced revision or the copy source (with the change time
--- the trigger above sets) keeps the job revision. The runtime cannot change the copy source (no grant);
--- the fill below can. An update that changes nothing at all is still refused, as in 0010: the sync's
+-- the trigger above sets) keeps the job revision. A copy's source is set once: from empty to a job, never
+-- changed or cleared after. An update that changes nothing at all is still refused, as in 0010: the sync's
 -- acknowledgement writes only a newer watermark (WHERE field_synced_revision < v). Every other rule of
 -- 0010 and 0015 is unchanged.
 CREATE OR REPLACE FUNCTION jobs_guard_revision() RETURNS trigger
@@ -107,6 +109,8 @@ BEGIN
     IF NEW.status <> 'draft' THEN
       RAISE EXCEPTION 'a new job starts as a draft' USING ERRCODE = '23514';
     END IF;
+  ELSIF OLD.copied_from_job_id IS NOT NULL AND NEW.copied_from_job_id IS DISTINCT FROM OLD.copied_from_job_id THEN
+    RAISE EXCEPTION 'a copy''s source is set once' USING ERRCODE = '23514';
   ELSIF NEW.revision = OLD.revision
      AND (NEW.field_owner_actor_id IS DISTINCT FROM OLD.field_owner_actor_id
           OR NEW.field_revision IS DISTINCT FROM OLD.field_revision
@@ -224,10 +228,46 @@ CREATE TRIGGER actors_field_revision
   WHEN (NEW.uid IS DISTINCT FROM OLD.uid AND NEW.company_id IS NOT NULL)
   EXECUTE FUNCTION actors_field_revision();
 
--- Table rights: the bump (field_revision, only ever by one, as the trigger above holds) and the sync's
--- watermark. Inserting the copy source is covered by the runtime's INSERT on jobs (0010); no UPDATE of
--- it, of field_changed_at, or of anything else is granted.
-GRANT UPDATE (field_revision, field_synced_revision) ON jobs TO dryscope_runtime;
+-- The copy source from the job_copied audit row that Copy writes in the copy's own transaction
+-- (details.copiedFrom, the target being the copy's id), so the previous version's copies get it too.
+-- Only while the copy has none, and only a job of the same company; an id that is not one, or a job the
+-- caller cannot change, sets nothing and never fails the audit write. Runs as the caller.
+CREATE FUNCTION audit_events_copy_source() RETURNS trigger
+  LANGUAGE plpgsql
+  SET search_path = pg_catalog
+AS $$
+BEGIN
+  IF NEW.company_id IS NULL
+     OR NEW.details ->> 'copiedFrom' IS NULL
+     OR (NEW.details ->> 'copiedFrom') !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+     OR NEW.target IS NULL
+     OR NEW.target !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+    RETURN NULL;
+  END IF;
+  UPDATE public.jobs j SET copied_from_job_id = s.id
+  FROM public.jobs s
+  WHERE j.company_id = NEW.company_id
+    AND j.id = NEW.target::uuid
+    AND j.copied_from_job_id IS NULL
+    AND s.company_id = NEW.company_id
+    AND s.id = (NEW.details ->> 'copiedFrom')::uuid
+    AND s.id <> j.id;
+  RETURN NULL;
+END
+$$;
+
+REVOKE ALL ON FUNCTION audit_events_copy_source() FROM PUBLIC;
+
+CREATE TRIGGER audit_events_copy_source
+  AFTER INSERT ON audit_events
+  FOR EACH ROW
+  WHEN (NEW.action = 'job_copied')
+  EXECUTE FUNCTION audit_events_copy_source();
+
+-- Table rights: the bump (field_revision, only ever by one, as the trigger above holds), the sync's
+-- watermark, and the copy source (set once, as the guard holds; inserting it is covered by the
+-- runtime's INSERT on jobs, 0010). No UPDATE of field_changed_at or of anything else is granted.
+GRANT UPDATE (field_revision, field_synced_revision, copied_from_job_id) ON jobs TO dryscope_runtime;
 
 -- 5. The repair worker's one lookup across companies (the 0005 pattern). It finds companies with a
 -- job whose drafts are behind its field revision, changed more than grace_seconds ago so the request

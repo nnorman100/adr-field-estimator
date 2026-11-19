@@ -279,6 +279,19 @@ describe('copy', () => {
     expect((await f.submitShown(ESTIMATOR_A, ids.id, ids.draftId, copied)).answer.status).toBe(201);
   });
 
+  it('gives a copy made before 0018 its source when the same copy is sent again', async () => {
+    const { jobId: source } = await signedJob();
+    const ids = { id: randomUUID(), draftId: randomUUID() };
+    expect((await copy(ESTIMATOR_A, source, ids)).status).toBe(201);
+    // As the previous version left it: no source on the row (set aside without the triggers).
+    await h.admin.begin(async (sql) => {
+      await sql`SET LOCAL session_replication_role = replica`;
+      await sql`UPDATE jobs SET copied_from_job_id = NULL WHERE id = ${ids.id}`;
+    });
+    expect((await copy(ESTIMATOR_A, source, ids)).status).toBe(200);
+    expect(await h.admin`SELECT copied_from_job_id::text AS source, revision FROM jobs WHERE id = ${ids.id}`).toEqual([{ source, revision: 1 }]);
+  });
+
   it('refuses another body under the same id, and copies only a signed job', async () => {
     const { jobId: source } = await signedJob();
     const ids = { id: randomUUID(), draftId: randomUUID() };
