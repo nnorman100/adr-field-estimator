@@ -4,6 +4,7 @@ import { isQueueTimeout } from '@/db/client';
 import { actors, auditEvents, evidenceObjects, jobs, jobSubmissions } from '@/db/schema';
 import { holdAcrossOutsideCall, withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
+import { confirmationPredatesReprice } from '@/lib/estimates/service';
 import { manifestDigest, type FieldManifest } from '@/lib/field/canonical';
 import { roomFieldSchema } from '@/lib/field/schema';
 import { claimDraft, hasAny, holdDraft, jobAccess, JobError, lockedJob, type JobCaller, type JobRow } from '@/lib/jobs/access';
@@ -495,15 +496,22 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
             .where(and(eq(actors.companyId, caller.companyId), eq(actors.id, next!.fieldOwnerActorId)));
           ownerUid = actor?.uid ?? null;
         }
-        return { job: next!, source: source!, changed, ownerUid };
+        // A reprice after the record clears its scope confirmation (pricing plan 3): the next draft starts
+        // with scope unconfirmed, so Finish needs a fresh confirmation for the new prices.
+        const clearScope = await confirmationPredatesReprice(tx, caller.companyId, jobId, source!.draftId);
+        return { job: next!, source: source!, changed, ownerUid, clearScope };
       });
       // The next draft version, from the submitted record (never from the old draft, whose phone
       // copy may differ), with where it came from. A retry makes it if it is missing.
       await inCompany(caller.companyId, async (tx) => {
         await lockedJob(tx, caller.companyId, jobId, { live: true });
         await holdAcrossOutsideCall(tx);
+        const manifest = snapshotManifest(made.source.snapshotBytes!);
+        if (made.clearScope) {
+          manifest.draft = Object.fromEntries(Object.entries((manifest.draft ?? {}) as Record<string, unknown>).filter(([key]) => key !== 'scopeConfirmed'));
+        }
         const result = await field(() =>
-          store.createFrom(caller.companyId, jobId, input.draftId, made.ownerUid, snapshotManifest(made.source.snapshotBytes!), {
+          store.createFrom(caller.companyId, jobId, input.draftId, made.ownerUid, manifest, {
             draftId: made.source.draftId,
             submissionId: made.source.id,
           }),

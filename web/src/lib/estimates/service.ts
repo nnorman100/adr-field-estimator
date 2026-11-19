@@ -1,13 +1,14 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { ZodError } from 'zod';
-import { auditEvents, jobEstimates, jobPricePins, jobSubmissions, priceTableVersions } from '@/db/schema';
+import { auditEvents, companies, jobEstimates, jobPricePins, jobSubmissions, memberships, priceTableVersions, priceTableWorkingCopies } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import { priceEstimate, type Estimate, type Json } from '@/engine/estimate';
-import { contentHash, parseTable, type Table } from '@/engine/table';
+import { contentHash, ENGINE_VERSION, parseTable, type Table } from '@/engine/table';
 import type { Capability } from '@/lib/access';
 import { canonicalJson } from '@/lib/field/canonical';
 import { FieldMapError } from '@/lib/field/inspection';
 import { hasAny, jobAccess, JobError, type JobCaller, type JobRow } from '@/lib/jobs/access';
+import { advance } from '@/lib/jobs/service';
 import { readCompanyDocuments, type CompanyDocuments } from '@/lib/profile/documents';
 import { readJobDetails, type JobDetails } from '@/lib/submissions/details';
 import type { Snapshot } from '@/lib/submissions/snapshot';
@@ -15,6 +16,7 @@ import { EstimateError } from './errors';
 import { estimateInput, readSnapshot, SnapshotError, type EstimateInput } from './inputs';
 import { proposalBytes, proposalOf, type Proposal } from './proposal';
 import { estimateView, readStoredEstimate, type EstimateRecord, type EstimateView } from './result';
+import type { RepriceInput } from './schema';
 
 // The estimate (docs/plans/S5.md S5a-9; pricing plan S5a-2): the job's submitted record priced from
 // the job's pinned price version, with the four documents built from the record and the company's
@@ -43,18 +45,26 @@ import { estimateView, readStoredEstimate, type EstimateRecord, type EstimateVie
 // Making an estimate is the audit (owner, estimator); reading it is any job reader (docs/spec.md 2.3).
 const MAKE: readonly Capability[] = ['audit'];
 const READ: readonly Capability[] = ['jobs_read'];
+// Reprice this draft (S5b-6; pricing plan S5b-1) is the owner's alone.
+const REPRICE: readonly Capability[] = ['job_reprice'];
+
+// The job and its pin after a reprice: the pin's sequence and the sequence of the price version it names.
+type RepriceResult = { job: EstimateJobState; pin: { sequence: number; version: number } };
+// What the reprice's audit row keeps of its answer, so the same change id again is answered as the first time.
+type RepriceAnswer = { sequence: number; version: number; job_status: JobRow['status']; job_draft: string; job_revision: number };
 
 export type EstimateJobState = { id: string; status: JobRow['status']; currentDraftId: string; revision: number };
 
 export type EstimatesService = {
   make(caller: JobCaller, jobId: string): Promise<{ created: boolean; job: EstimateJobState; estimate: EstimateView }>;
   read(caller: JobCaller, jobId: string): Promise<{ job: EstimateJobState; estimate: EstimateView | null }>;
+  reprice(caller: JobCaller, jobId: string, input: RepriceInput): Promise<RepriceResult>;
 };
 
 const jobState = (row: JobRow): EstimateJobState => ({ id: row.id, status: row.status, currentDraftId: row.currentDraftId, revision: row.revision });
 
 export type SubmissionRow = { id: string; snapshotBytes: Buffer; snapshotSha256: string };
-type PinRow = { id: string; sequence: number; versionId: string };
+type PinRow = { id: string; sequence: number; versionId: string; reason: 'first_price' | 'owner_reprice' };
 type VersionRow = { id: string; sequence: number; content: unknown; contentHash: string; engineVersion: string };
 
 // The committed record of the job's current draft (one per draft, migration 0011), or none.
@@ -84,7 +94,7 @@ async function detailsCurrent(tx: CompanyTransaction, companyId: string, job: Jo
 // The job's current pin: the highest sequence.
 async function currentPin(tx: CompanyTransaction, companyId: string, jobId: string): Promise<PinRow | null> {
   const [row] = await tx
-    .select({ id: jobPricePins.id, sequence: jobPricePins.sequence, versionId: jobPricePins.versionId })
+    .select({ id: jobPricePins.id, sequence: jobPricePins.sequence, versionId: jobPricePins.versionId, reason: jobPricePins.reason })
     .from(jobPricePins)
     .where(and(eq(jobPricePins.companyId, companyId), eq(jobPricePins.jobId, jobId)))
     .orderBy(desc(jobPricePins.sequence))
@@ -158,8 +168,45 @@ function versionTable(version: VersionRow): Table {
   return table;
 }
 
-async function audit(tx: CompanyTransaction, caller: JobCaller, action: string, jobId: string, details: Record<string, number>): Promise<void> {
+async function audit(tx: CompanyTransaction, caller: JobCaller, action: string, jobId: string, details: Record<string, number | string>): Promise<void> {
   await tx.insert(auditEvents).values({ companyId: caller.companyId, actorId: caller.actorId, action, target: jobId, details });
+}
+
+// The owner who reprices is still the company's active owner when it commits: the operator's owner
+// replacement locks the company row and then the same membership row, so the company row is locked
+// first here too (the pin and audit rows need it anyway), and a replacement cannot slip between the
+// check and the write.
+async function lockActiveOwner(tx: CompanyTransaction, caller: JobCaller): Promise<void> {
+  await tx.select({ id: companies.id }).from(companies).where(eq(companies.id, caller.companyId)).for('no key update');
+  const [owner] = await tx
+    .select({ id: memberships.id })
+    .from(memberships)
+    .where(and(eq(memberships.companyId, caller.companyId), eq(memberships.actorId, caller.actorId), eq(memberships.role, 'owner'), eq(memberships.status, 'active')))
+    .for('update');
+  if (!owner) throw new JobError('not_allowed');
+}
+
+// A reprice clears the scope confirmation (pricing plan 3): a record of the draft that was the job's
+// current one when its pin was last moved by the owner states a confirmation given at the old prices,
+// whether the draft was already submitted or still open. Scope is confirmed again on a draft made
+// after the move, through Back to editing (which starts it unconfirmed) and Finish.
+export async function confirmationPredatesReprice(tx: CompanyTransaction, companyId: string, jobId: string, draftId: string): Promise<boolean> {
+  const pin = await currentPin(tx, companyId, jobId);
+  if (pin?.reason !== 'owner_reprice') return false;
+  const [moved] = await tx
+    .select({ id: auditEvents.id })
+    .from(auditEvents)
+    .where(
+      and(
+        eq(auditEvents.companyId, companyId),
+        eq(auditEvents.target, jobId),
+        eq(auditEvents.action, 'job_repriced'),
+        sql`${auditEvents.details}->>'sequence' = ${String(pin.sequence)}`,
+        sql`${auditEvents.details}->>'job_draft' = ${draftId}`,
+      ),
+    )
+    .limit(1);
+  return moved !== undefined;
 }
 
 // The company's document inputs; settings that do not read through their schema are never used.
@@ -278,6 +325,7 @@ export function estimatesService(db: Database): EstimatesService {
         const company = await companyDocuments(tx, caller.companyId);
         const input = inputOf(snapshot, company);
         if (!input.scopeConfirmed) throw new EstimateError('scope_not_confirmed');
+        if (await confirmationPredatesReprice(tx, caller.companyId, jobId, job.currentDraftId)) throw new EstimateError('scope_not_confirmed');
         if (!input.summary.trim()) throw new EstimateError('summary_missing');
         const { estimate, table } = priceInput(input, version);
 
@@ -286,7 +334,7 @@ export function estimatesService(db: Database): EstimatesService {
           const [made] = await tx
             .insert(jobPricePins)
             .values({ companyId: caller.companyId, jobId, sequence: 1, versionId: version.id, reason: 'first_price', pinnedByActorId: caller.actorId })
-            .returning({ id: jobPricePins.id, sequence: jobPricePins.sequence, versionId: jobPricePins.versionId });
+            .returning({ id: jobPricePins.id, sequence: jobPricePins.sequence, versionId: jobPricePins.versionId, reason: jobPricePins.reason });
           pinned = made!;
           await audit(tx, caller, 'job_price_pinned', jobId, { sequence: pinned.sequence, version: version.sequence });
         }
@@ -324,6 +372,67 @@ export function estimatesService(db: Database): EstimatesService {
           createdAt: stored!.createdAt,
         };
         return { created: true, job: jobState(job), estimate: await present(tx, caller, job, row, submission) };
+      });
+    },
+
+    // Moves the job's pin to the version the owner reviewed, which must still be the company's newest
+    // published one and the job's revision the one they saw: one new pin row, reason owner_reprice, the
+    // job's next revision, and one audit row carrying the change id, the request and the answer, under
+    // the job's row lock and the lock Publish takes, so the check and the write cannot interleave with
+    // a publish. The estimate of the old pin is no longer the job's current one, so it cannot be
+    // signed, and the next estimate is priced from the new pin once scope is confirmed again on a new
+    // draft; a job back in editing may be repriced too. The same change id again is answered as the
+    // first time with nothing written, and with another body is refused. A refusal writes nothing.
+    async reprice(caller, jobId, input) {
+      if (!hasAny(caller, REPRICE)) throw new JobError('not_allowed');
+      return withCompany(db, caller.companyId, async (tx) => {
+        await lockActiveOwner(tx, caller);
+        const job = await jobAccess(tx, caller, jobId, REPRICE, { lock: true });
+        const [done] = await tx
+          .select({ details: auditEvents.details })
+          .from(auditEvents)
+          .where(
+            and(
+              eq(auditEvents.companyId, caller.companyId),
+              eq(auditEvents.target, jobId),
+              eq(auditEvents.action, 'job_repriced'),
+              sql`${auditEvents.details}->>'change_id' = ${input.changeId}`,
+            ),
+          );
+        if (done) {
+          const first = done.details as RepriceAnswer & { request_revision: number; request_version_id: string };
+          if (first.request_revision !== input.revision || first.request_version_id !== input.versionId) throw new JobError('conflict');
+          return { job: { id: jobId, status: first.job_status, currentDraftId: first.job_draft, revision: first.job_revision }, pin: { sequence: first.sequence, version: first.version } };
+        }
+        if (job.status === 'signed') throw new EstimateError('job_signed');
+        if (job.revision !== input.revision) throw new JobError('stale_revision');
+        const pin = await currentPin(tx, caller.companyId, jobId);
+        if (!pin) throw new EstimateError('not_priced');
+        await tx.select({ id: priceTableWorkingCopies.companyId }).from(priceTableWorkingCopies).where(eq(priceTableWorkingCopies.companyId, caller.companyId)).for('update');
+        const version = (await latestVersion(tx, caller.companyId))!;
+        if (version.id !== input.versionId) throw new EstimateError('prices_superseded');
+        if (version.id === pin.versionId) throw new EstimateError('prices_unchanged');
+        // A version this server cannot price is never pinned.
+        versionTable(version);
+        if (version.engineVersion !== ENGINE_VERSION) throw new EstimateError('prices_unreadable');
+        const previous = (await versionById(tx, caller.companyId, pin.versionId))!;
+        const [made] = await tx
+          .insert(jobPricePins)
+          .values({ companyId: caller.companyId, jobId, sequence: pin.sequence + 1, versionId: version.id, reason: 'owner_reprice', pinnedByActorId: caller.actorId })
+          .returning({ sequence: jobPricePins.sequence });
+        const next = await advance(tx, job, input.changeId);
+        await audit(tx, caller, 'job_repriced', jobId, {
+          sequence: made!.sequence,
+          from_version: previous.sequence,
+          version: version.sequence,
+          change_id: input.changeId,
+          request_revision: input.revision,
+          request_version_id: input.versionId,
+          job_status: next.status,
+          job_draft: next.currentDraftId,
+          job_revision: next.revision,
+        });
+        return { job: jobState(next), pin: { sequence: made!.sequence, version: version.sequence } };
       });
     },
 

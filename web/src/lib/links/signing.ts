@@ -355,7 +355,15 @@ export function signingLinksService(db: Database, photos: PhotosService): Signin
       if (row.status === 'voided') throw new LinkError('link_voided');
       if (row.status !== 'pending') throw new LinkError('link_unavailable');
       const { caller } = await requirePending(row);
-      return photos.receive(caller, row.jobId, signatureId, 'signature', input);
+      const proposalSha256 = await withCompany(db, row.companyId, async (tx) => {
+        const [estimate] = await tx
+          .select({ proposalSha256: jobEstimates.proposalSha256 })
+          .from(jobEstimates)
+          .where(and(eq(jobEstimates.companyId, row.companyId), eq(jobEstimates.id, row.estimateId)));
+        if (!estimate) throw new LinkError('link_unavailable');
+        return estimate.proposalSha256;
+      });
+      return photos.receive(caller, row.jobId, signatureId, 'signature', { ...input, proposalSha256 });
     },
 
     async openSignature(tokenSha256) {

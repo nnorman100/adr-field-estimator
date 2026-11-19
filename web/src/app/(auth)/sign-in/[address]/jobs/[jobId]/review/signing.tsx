@@ -86,7 +86,7 @@ export function SigningForm({
     }
     attempt.current = sending;
 
-    const receipt = await sendSignature(user, jobId, sending.signatureId, sending.png);
+    const receipt = await sendSignature(user, jobId, sending.signatureId, sending.png, estimate.proposalSha256 ?? '');
     if (receipt.status !== 200 && receipt.status !== 201) {
       setBusy(false);
       return refused(signOutcomeOf(receipt.status, receipt.body));

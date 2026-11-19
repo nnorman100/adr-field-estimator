@@ -15,7 +15,7 @@ The sections of this document, one file per area (each keeps its original headin
 - [Jobs routes](access/jobs.md): Jobs routes (rebuilt app, S5a-3); Office jobs routes (rebuilt app, S5b-1): coordination, assignment, the field owner and its move; Field database job locators (S6 follow-up); Archive, restore and copy (rebuilt app, S5b-2).
 - [Photo routes](access/photos.md): Photo routes (rebuilt app, S5a-5).
 - [Submit and Back to editing](access/submit.md): Submit and Back to editing (rebuilt app, S5a-8).
-- [Estimate and review](access/estimate.md): Estimate and review (rebuilt app, S5a-9).
+- [Estimate and review](access/estimate.md): Estimate and review (rebuilt app, S5a-9); Reprice this draft (S5b-6).
 - [Signing on the phone](access/signing.md): Signing on the phone (rebuilt app, S5a-11).
 - [Check Scope lists](access/scope-lists.md): Check Scope lists (rebuilt app, S5a-10).
 - [Signing links and document links](access/signing-links.md): Signing links and document links (rebuilt app, S5a-11b), including "Homeowner signing link".

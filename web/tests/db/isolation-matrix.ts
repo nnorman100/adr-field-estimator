@@ -69,6 +69,7 @@ const JOB_CLAIM = { revision: 1, changeId: '8d2f4a90-61b3-4c7e-a5d8-0e9b3c1f7a24
 // Submit and Back to editing bodies (S5a-8): the suite's own ids, and a digest of nothing.
 const JOB_SUBMIT = { id: '6f1d9c34-2a7e-4b80-9c15-3e8a0d7b5f42', draftId: 'c4e8a2d6-7b19-4f53-8a0e-1d6b9f3c2e75', digest: '0'.repeat(64) };
 const JOB_NEXT_DRAFT = { draftId: '9a3b5c7d-1e2f-4a6b-8c9d-0e1f2a3b4c5d', fromDraftId: 'c4e8a2d6-7b19-4f53-8a0e-1d6b9f3c2e75' };
+const JOB_REPRICE = { revision: 1, changeId: '4d8b2f60-9c1e-4a73-8b05-2e7a6c1d9f38', versionId: '9b1e5c37-2d84-4f06-a3c9-6e0d8b4a1f52' };
 const JOB_SIGN = {
   id: '2d7f4a91-6c3b-4e85-9a12-7b5c8e0f3d64',
   estimateId: '5b8e1c47-3f2a-4d96-8e01-4c7a9b2d6f15',
@@ -150,6 +151,8 @@ export const MATRIX: readonly MatrixRow[] = [
   // S5a-9: the estimate takes no body; another company's job is 404 to every role.
   row('api/jobs/[jobId]/estimate', 'POST', 'company', { own: 'cross' }),
   row('api/jobs/[jobId]/estimate', 'GET', 'company', { own: 'cross' }),
+  // S5b-6: Reprice names the revision, change and price version; another company's job is 404 to every role.
+  row('api/jobs/[jobId]/reprice', 'POST', 'company', { body: JOB_REPRICE, own: 'cross' }),
   // S5a-11: signing names the phone's own agreement, estimate and signature ids; another company's
   // job is 404 to every role, and no agreement is made.
   row('api/jobs/[jobId]/agreements', 'POST', 'company', { body: JOB_SIGN, own: 'cross' }),
