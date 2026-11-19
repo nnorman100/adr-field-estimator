@@ -1,8 +1,8 @@
 import { and, asc, desc, eq, ne, or, sql, type SQL } from 'drizzle-orm';
-import { actors, auditEvents, jobAssignments, jobClaims, jobCustomers, jobs } from '@/db/schema';
+import { actors, auditEvents, jobAssignments, jobClaims, jobCustomers, jobs, jobSubmissions } from '@/db/schema';
 import { holdAcrossOutsideCall, withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
-import { canSeeJob, claimDraft, hasAny, holdDraft, isOwnJob, jobAccess, JobError, lockedJob, seesEveryJob, type JobCaller, type JobRow } from './access';
+import { canSeeJob, claimDraft, hasAny, holdDraft, isOwnJob, jobAccess, JobError, lockedJob, ownsFieldWork, seesEveryJob, type JobCaller, type JobRow } from './access';
 import type { DraftLookup, DraftStore } from './drafts';
 import { createDigest, type ClaimInput, type CreateJobInput, type CustomerInput, type ListQuery } from './schema';
 
@@ -194,6 +194,27 @@ export async function findDraft(drafts: DraftLookup, companyId: string, draftId:
   }
 }
 
+// The record a missing current draft is made from: the job's latest committed submission, while the
+// job is being edited (`draft`) on this draft. Back to editing put the job on this draft from that
+// record and claimed it in the same commit; nothing is submitted since, or the job would not be
+// `draft`. Null when the draft is not one Back to editing made (a new job's first draft): Start field
+// work answers 503 then, and the job read does not offer it.
+export async function rebuildableRecord(tx: CompanyTransaction, companyId: string, jobId: string, draftId: string) {
+  const [row] = await tx
+    .select({ status: jobs.status, currentDraftId: jobs.currentDraftId })
+    .from(jobs)
+    .where(and(eq(jobs.companyId, companyId), eq(jobs.id, jobId)));
+  if (row?.status !== 'draft' || row.currentDraftId !== draftId) return null;
+  const [latest] = await tx
+    .select({ id: jobSubmissions.id, draftId: jobSubmissions.draftId, snapshotBytes: jobSubmissions.snapshotBytes })
+    .from(jobSubmissions)
+    .where(and(eq(jobSubmissions.companyId, companyId), eq(jobSubmissions.jobId, jobId), eq(jobSubmissions.status, 'committed')))
+    .orderBy(desc(jobSubmissions.createdAt))
+    .limit(1);
+  if (!latest?.snapshotBytes || latest.draftId === draftId) return null;
+  return { snapshotBytes: latest.snapshotBytes, previous: { draftId: latest.draftId, submissionId: latest.id } };
+}
+
 export function jobsService(db: Database, drafts: DraftStore): JobsService {
   async function inCompany<T>(companyId: string, run: (tx: CompanyTransaction) => Promise<T>): Promise<T> {
     try {
@@ -201,6 +222,21 @@ export function jobsService(db: Database, drafts: DraftStore): JobsService {
     } catch (error) {
       if (errorCode(error) === CHECK_VIOLATION) throw new JobError('invalid_request');
       throw error;
+    }
+  }
+
+  // Whether Start field work can make this job's current draft: the caller owns the field work (no other
+  // caller learns whether a draft exists), the field database holds none, and a committed record is there
+  // to make it from. A lookup that does not get through says nothing; it never fails the read.
+  async function draftMissing(caller: JobCaller, detail: JobDetail): Promise<boolean> {
+    if (!ownsFieldWork(caller, detail.job)) return false;
+    try {
+      if (await drafts.findDraft(caller.companyId, detail.job.currentDraftId)) return false;
+      const record = await inCompany(caller.companyId, (tx) => rebuildableRecord(tx, caller.companyId, detail.job.id, detail.job.currentDraftId));
+      return record !== null;
+    } catch (error) {
+      console.error('job draft unavailable', error instanceof Error ? error.name : 'unknown');
+      return false;
     }
   }
 
@@ -349,8 +385,7 @@ export function jobsService(db: Database, drafts: DraftStore): JobsService {
         console.error('job projection unavailable', error instanceof Error ? error.name : 'unknown');
         throw new JobError('draft_unavailable');
       }
-      const found = await findDraft(drafts, caller.companyId, detail.job.currentDraftId);
-      return found ? detail : { ...detail, draftMissing: true };
+      return (await draftMissing(caller, detail)) ? { ...detail, draftMissing: true } : detail;
     },
 
     async saveCustomer(caller, jobId, input) {

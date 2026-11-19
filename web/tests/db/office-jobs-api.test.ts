@@ -74,6 +74,7 @@ type Person = { actorId: string; displayName: string | null; email: string };
 type Body = {
   job: { id: string; status: string; currentDraftId: string; fieldOwnerActorId: string | null; revision: number };
   customer: { name: string };
+  draftMissing?: true;
   jobs: { id: string; mine: boolean }[];
   jobId: string;
   revision: number;
@@ -710,6 +711,36 @@ describe('moving the field work (owner decision J5)', () => {
     expect(draftOf(later)).toEqual({ fieldOwnerUid: 'estimator-a', fieldOwnerRevision: revision });
     // Back to editing sent again by the first phone finds the same draft: made once, from one record.
     expect((await nextDraft(ESTIMATOR_A, id, { draftId: later, fromDraftId: draftId })).status).toBe(200);
+  });
+
+  it('tells only the field owner that the current draft is missing and Start field work can make it, and stops telling once it has', async () => {
+    const { id, later } = await draftNeverMade();
+    expect((await read(ESTIMATOR_A, id)).body.draftMissing).toBe(true);
+    // Nobody else learns whether the draft exists: not another assigned estimator, not the company owner.
+    expect((await read(ESTIMATOR_A2, id)).body.draftMissing).toBeUndefined();
+    expect((await read(OWNER_A, id)).body.draftMissing).toBeUndefined();
+    expect((await claim(ESTIMATOR_A, id)).status).toBe(200);
+    expect(h.field.draft(h.seed.a, later)).not.toBeNull();
+    expect((await read(ESTIMATOR_A, id)).body.draftMissing).toBeUndefined();
+  });
+
+  it('does not tell of a missing first draft, which Start field work has no record to make', async () => {
+    const { id, draftId } = await claimedJob();
+    h.drafts.made.delete(`${h.seed.a}/${draftId}`);
+    const lost = await read(ESTIMATOR_A, id);
+    expect(lost.status).toBe(200);
+    expect(lost.body.draftMissing).toBeUndefined();
+  });
+
+  it('keeps the job read when the draft lookup does not get through, and says nothing of the draft', async () => {
+    const { id } = await draftNeverMade();
+    const lookup = vi.spyOn(h.drafts, 'findDraft').mockRejectedValueOnce(new Error('field database unreachable'));
+    const unsure = await read(ESTIMATOR_A, id);
+    lookup.mockRestore();
+    expect(unsure.status).toBe(200);
+    expect(unsure.body.job.id).toBe(id);
+    expect(unsure.body.draftMissing).toBeUndefined();
+    expect((await read(ESTIMATOR_A, id)).body.draftMissing).toBe(true);
   });
 
   // No transaction or lock waits on the field database, so a draft made here is made closed, naming

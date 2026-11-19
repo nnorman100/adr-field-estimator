@@ -108,6 +108,10 @@ type State = {
   denials: Record<string, string>;
   // By job: the field work is on this phone as this person's (or its job says it is theirs).
   held: Record<string, true>;
+  // By job: the current draft id the newest accepted job read says is not in the field database (Back to
+  // editing committed it but its field step failed). While it is set no draft read says anything about
+  // the job, an older one still in flight included, and Start field work makes the draft.
+  missingDraft: Record<string, string>;
   // By job: the field work moved away from this person; the draft as last read stays on screen.
   // `revoked`: the server refused the job to this person (nothing more is asked of it); otherwise the
   // job is still readable (the owner, office) but the field work is another person's.
@@ -151,6 +155,7 @@ const EMPTY = {
   readAt: {},
   denials: {},
   held: {},
+  missingDraft: {},
   moved: {},
   coord: {},
   typed: {},
@@ -312,6 +317,14 @@ export const pending = {
     if (holding) held[jobId] = true;
     else delete held[jobId];
     change({ held });
+  },
+  missingDraft: (jobId: string): string | null => state.missingDraft[jobId] ?? null,
+  setMissingDraft(jobId: string, draftId: string | null) {
+    if ((state.missingDraft[jobId] ?? null) === draftId) return;
+    const missingDraft = { ...state.missingDraft };
+    if (draftId === null) delete missingDraft[jobId];
+    else missingDraft[jobId] = draftId;
+    change({ missingDraft });
   },
   // A refusal of the job to this person. While their field work is on the phone, the job and the
   // field work stay (kept as moved; answers true), otherwise it is a refusal to show the job and

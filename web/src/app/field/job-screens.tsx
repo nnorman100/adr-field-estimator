@@ -175,20 +175,19 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   const reloadDraft = useCallback(
     async (currentDraftId?: string, source?: 'cache', job?: JobDetail) => {
       const draftId = currentDraftId ?? locator?.currentDraftId ?? detail?.job.currentDraftId;
-      if (!draftId || !session.db || !mayReadDraft(job ?? detail)) return;
+      if (!draftId || !session.db || !mayReadDraft(job ?? detail) || pending.missingDraft(jobId)) return;
       try {
         const found = await readDraft(session.db, { companyId: session.companyId, draftId }, source);
-        if (found === SUPERSEDED) return;
+        if (found === SUPERSEDED || pending.missingDraft(jobId)) return;
         setDraftAt(draftId);
         setDraft(found);
-        // The job names this person but the draft read (an owner reads every draft) names someone else,
-        // or is not there at all (Back to editing committed its id but its field step failed): the
-        // server's draft step did not get through, and Start field work finishes it.
+        // The job names this person but the draft read (an owner reads every draft) names someone else:
+        // the server's draft step did not get through, and Start field work finishes it.
         const named = job ?? detail;
-        const unset = named !== null && fieldWorkOf(session, named) === 'mine' && (found === null || found.fieldOwnerUid !== session.user.uid);
-        setOwnerUnset(unset);
-        setDraftError(found || unset ? null : 'The field work of this job is not there yet. Try again in a moment.');
+        setOwnerUnset(found !== null && named !== null && fieldWorkOf(session, named) === 'mine' && found.fieldOwnerUid !== session.user.uid);
+        setDraftError(found ? null : 'The field work of this job is not there yet. Try again in a moment.');
       } catch (error) {
+        if (pending.missingDraft(jobId)) return;
         const refusal = fieldRefusal(error);
         if (refusal) return refuseDraft(refusal, job ?? detail);
         // A read that did not get through keeps the draft as last read on screen, and with it any
@@ -203,20 +202,21 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
         );
       }
     },
-    [detail, locator, session, refuseDraft, readDraft, mayReadDraft],
+    [detail, locator, session, refuseDraft, readDraft, mayReadDraft, jobId],
   );
 
   // The locator first, then the draft it names; trying again repeats both. `job` is the job just read,
   // which the state of this render does not hold yet.
   const openDraft = useCallback(
     async (job?: JobDetail) => {
+      if (job) pending.setMissingDraft(jobId, job.draftMissing && fieldWorkOf(session, job) === 'mine' && !pending.moved(jobId) ? job.job.currentDraftId : null);
       if (!mayReadDraft(job ?? detail)) {
         setDraftError(null);
         return;
       }
       // The job read says the current draft is not in the field database: no locator or draft read can
       // get through (the rules dereference the draft), and Start field work makes it again.
-      if (job?.draftMissing && fieldWorkOf(session, job) === 'mine' && !pending.moved(jobId)) {
+      if (pending.missingDraft(jobId)) {
         setDraftError(null);
         return setOwnerUnset(true);
       }
