@@ -16,14 +16,15 @@ screen edits it, see [Check Scope](check-scope.md)). Online only: it is not part
 
 | Role | Sees | Can do |
 |---|---|---|
-| Owner | the job's state and summary | Finish (once they own the field work) and Back to editing (`scope`) |
-| Estimator | the job's state on jobs they can see; while the job is still being edited the screen also reads its draft, which an estimator may read only while they own the field work, so on another person's job they get "We could not open this job" (`finish-screen.tsx`) | Finish and Back to editing on jobs whose field work they own |
+| Owner | the job's state and summary, on any job (they read every draft) | the buttons Finish and Back to editing show for `scope`, whoever owns the field work; the server accepts them only from the field owner (`not_field_owner`, `jobAccess` with `fieldWork`), so on a job an estimator owns the owner's tap is refused |
+| Estimator | the job's state on jobs they can see; while the job is still being edited the screen also reads its draft, which an estimator may read only while they own the field work, so on another person's job they get "We could not open this job" (`finish-screen.tsx`) | the buttons show as for the owner (`scope`); the server accepts only the field owner, so a visible estimator who does not own the field work is refused too |
 | Office | the job's state; "Only the owner or the estimator on this job can finish it." | open the review of a finished job; nothing else (`scope` missing, the routes answer 403) |
 | Superadmin support | nothing (the page checks the company sign-in) | nothing |
 | Different-company user | signed out of this company's page (the sign-in must belong to this company's tenant), or "This job could not be found" | nothing |
 
-The screen decides by `scope` (`finisherOf`); the server also needs the caller to own the field
-work (`docs/access/submit.md`).
+The screen decides by `scope` (`finisherOf`), which controls the buttons; field ownership controls
+the write: the server also needs the caller to own the field work (`docs/access/submit.md`), so a
+button can show and its request still be refused with 403 `not_field_owner`.
 
 ## States
 
@@ -33,9 +34,11 @@ work (`docs/access/submit.md`).
   or it was archived.").
 - No connection or unreadable: "We could not open this job" ("Finish and review needs a
   connection…") with "Try again".
-- Being edited: the summary and "Finish and review"; a newer draft appeared: "Show the new draft".
+- Being edited: the summary and, for `scope`, "Finish and review" (refused unless the caller owns the
+  field work); a newer draft appeared: "Show the new draft".
 - Finished: "Finished", "This draft is recorded and locked. Nobody can change it.", "Review the
-  estimate" and, for `scope`, "Back to editing".
+  estimate" and, for `scope`, "Back to editing" (shown to the owner and to a visible non-owning
+  estimator alike, refused unless the caller owns the field work).
 - Signed: "This job is signed".
 - Errors: the server's message with "Try again" (same request) or "Reload the job".
 
@@ -57,10 +60,15 @@ Rules: `docs/access/submit.md`.
 
 ## Mismatches to check
 
-- No Check Scope action opens this screen. It is reached from the sync chip's "Changes not saved"
-  sheet ("Go to Finish and review", only for a write refused because the draft was finished, with a
-  signal and once the job reads: `web/src/app/field/sync-chip.tsx`) and from [Review](review.md)'s
-  "Not finished yet" link; an archived or ownership-refused write does not offer it. Otherwise the
-  address must be typed. A technician walking a loss has no button from Check Scope to Finish.
+- No Check Scope action opens this screen. It is reached from two places. The sync chip's "Changes not
+  saved" sheet offers "Go to Finish and review" only for a write refused because the draft was locked
+  (the draft was being finished, or finished, before the write; this can be before any submission
+  commits), with a signal and once the job reads (`web/src/app/field/sync-chip.tsx`,
+  `web/src/lib/field/journal.ts`); an archived or ownership-refused write does not offer it. [Review](review.md)
+  offers "Back to Finish and review" on a job not yet finished ("Not finished yet"), on a finished,
+  unpriced job ("Price this job") and on a priced unsigned job, not once signed. Otherwise the address
+  must be typed. A technician walking a loss has no button from Check Scope to Finish.
 - The summary check reads `draft.summary`, which no field screen can write (see
-  [Check Scope](check-scope.md)), so "No summary of findings yet" stays until another source sets it.
+  [Check Scope](check-scope.md)), so "No summary of findings yet" stays until another source sets it. The check does not stop Finish,
+  but pricing does: "Price this job" is refused with `summary_missing` ("Go back to editing, write it,
+  then finish again") when the summary is empty, and Check Scope has no editor for it.

@@ -7,10 +7,13 @@ S5a-11b.
 ## Purpose
 
 A read-only page of one signed job's documents, for 30 days or until the company revokes the link.
-There are two sets (`SET_NAMES`): "Homeowner's documents" (the signed proposal, who signed, their role
-when given, when and how, the signature and the photo log) and "Adjuster's documents" (the price, the
-itemized claim, the scope defense letter and a "Scope JSON" export, with no photos). The scope JSON is
-built in the browser from the itemized claim rows (`ScopeJson` in `documents-screen.tsx`). The token is only in the address's
+Both sets open with the company's name, the signer's name and role (when given), the signing date and
+the link's end date (`documents-screen.tsx`; the API also sends the signing method to both). There are
+two sets (`SET_NAMES`): "Homeowner's documents" (the signed proposal, the signature image, how it was
+signed, the proposal's SHA-256 and the photo log) and "Adjuster's documents" (the price, the itemized
+claim, the scope defense letter and a "Scope JSON" export; no signature image, no signing method shown
+and no photos). The scope JSON is built in the browser from the itemized claim rows (`ScopeJson`). The
+token is only in the address's
 fragment and goes to the link routes in a header. No sign-in, not indexed, no referrer, not kept for
 offline use.
 
@@ -18,7 +21,7 @@ offline use.
 
 | Role | Sees | Can do |
 |---|---|---|
-| Holder of the link (homeowner or adjuster) | that link's set | read it; adjuster: also copy ("Copy the scope JSON") or download ("Download the scope JSON", `scope.json`) the scope JSON |
+| Holder of the link (homeowner or adjuster) | that link's set, under the shared signer header | read it; adjuster: also copy ("Copy the scope JSON") or download ("Download the scope JSON", `scope.json`) the scope JSON |
 | Owner, estimator, office | the same as any holder; links are made and revoked on [Review](review.md) | read it |
 | Superadmin support | the same as any holder | read it |
 | Different-company user | the same as any holder: no company sign-in is used | read it |
@@ -27,7 +30,10 @@ The token is necessary but not enough. Every read acts as the person who made th
 now (`resolve` in `web/src/lib/links/documents.ts`): they must still be an active member holding
 `sign` or `delivery_resend`, the company must be active with prices on (`price_books`), and they must
 still see the job. Losing any of these makes the link "This link is not available" before its end
-date; the owner or office can replace it.
+date (for example an estimator who made the link and then lost the job, or the `sign` key; one who made
+the job keeps seeing it after being unassigned); the owner or office can replace it. [Review](review.md)
+lists a link as "active" by its stored state and expiry, which does not recheck the maker, so staff can
+see an active link that the recipient is refused.
 
 ## States
 

@@ -5,9 +5,11 @@ Part of [Screen specs](README.md). Address: `/field?job={id}&view=customer`. Bui
 
 ## Purpose
 
-Two forms the documents print: Customer (customer name, customer phone, customer email, property
-address) and Claim (insurance carrier, claim number, policy number, date of loss, cause of loss,
-adjuster name, email and phone, deductible). They are stored on the server (Postgres), not in the
+Two forms: Customer (customer name, customer phone, customer email, property address) and Claim (insurance carrier, claim number, policy number, date of loss, cause of loss,
+adjuster name, email and phone, deductible). The documents print the customer's name and the property
+address; the customer's phone and email are stored in the submitted record but the estimate builder
+does not carry them into the documents (`web/src/lib/estimates/inputs.ts`). The claim's fields go to
+the claim document. They are stored on the server (Postgres), not in the
 field draft, so they need a connection. Each save carries the job's revision and a change id made
 on the phone, so a retry after a lost answer is the same save.
 
@@ -16,10 +18,13 @@ on the phone, so a retry after a lost answer is the same save.
 | Role | Sees | Can do |
 |---|---|---|
 | Owner | both forms | save both while the job is unsigned (`scope` or `coordination`) |
-| Estimator | both forms, on jobs they made, own or are assigned to | save both only while they own the job's field work and the job is unsigned (`scope`; the server refuses others with `not_field_owner`) |
+| Estimator | both forms, on jobs they made, own or are assigned to; a phone that already held the job when the field work moved away or the estimator was unassigned keeps the forms it had loaded, with what was typed, read only, not saved (`moved`) | save both only while they own the job's field work and the job is unsigned (`scope`; the server refuses others with `not_field_owner`) |
 | Office | both forms | save both while the job is unsigned (`coordination`) |
 | Superadmin support | nothing | nothing |
 | Different-company user | nothing: 404 | nothing |
+
+A person the job is refused to (404, for example an estimator unassigned from a job they did not make)
+for a fresh read gets no forms; only the page that already held the job keeps them read only.
 
 The screen shows the forms read only after a move away (J5) or while the job is archived or being
 checked (`canSave` in `customer-view.tsx`). It does not check whether the job is signed; the server

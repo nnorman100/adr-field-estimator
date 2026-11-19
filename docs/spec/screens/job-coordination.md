@@ -35,7 +35,11 @@ from here (no Unassign button for them).
 - No assignment: "No estimator is assigned yet."; every active estimator assigned: "Every active
   estimator is assigned to this job."
 - Unanswered write: "A move of the field work / Assigning an estimator / Unassigning an estimator /
-  Saving the notes was…" with "Send the unanswered change again".
+  Saving the notes was…" with "Send the unanswered change again". A move can also answer 503 ("Saved,
+  but the field work could not be updated just now. Try again."): the move is committed on the server
+  but the draft does not name the new owner yet. The owner can send the same move again, or the
+  estimator moved to can open Check Scope or Photos and use "Start field work" to finish it
+  ([Check Scope](check-scope.md)).
 - Done: "The field work was moved.", "The estimator was assigned.", "Notes saved.".
 
 ## Key actions and server routes
@@ -46,7 +50,7 @@ from here (no Unassign button for them).
 | Save the office notes | `PUT /api/jobs/{id}/coordination` | `coordination` |
 | Assign an estimator | `POST /api/jobs/{id}/assignments` | `assignment` |
 | Unassign an estimator | `DELETE /api/jobs/{id}/assignments/{assignmentId}` | `assignment` |
-| Move field work | `POST /api/jobs/{id}/field-owner/transfer` | `field_owner_transfer` |
+| Move field work (a 503 after the move is saved is finished by sending it again, or by the new owner's Start field work) | `POST /api/jobs/{id}/field-owner/transfer` | `field_owner_transfer` |
 
 Rules: `docs/access/jobs.md` ("Office jobs routes"), owner decision J5 (`docs/plans/S5.md`).
 

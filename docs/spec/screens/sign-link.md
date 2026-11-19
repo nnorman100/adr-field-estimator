@@ -26,9 +26,14 @@ the page sends it in a header. No sign-in, not indexed, no referrer, not kept fo
 The token is necessary but not enough. Every read and the signing act as the person who made the
 link, as they are now (`actingFor` in `web/src/lib/links/signing.ts`): they must still be an active
 member holding `sign`, the company must be active with prices on (`price_books`), and they must still
-see the job. An estimator who made a link and is then unassigned, or a removed member, makes it
-"This link is not available" even before its end date. A job no longer submitted, or whose estimate was
-replaced or changed after pricing, voids it (`stateOf`).
+see the job (`canSeeJob` and assignment in `web/src/lib/jobs/access.ts`: an estimator sees a job they
+made, own the field work of, or are assigned to). Losing any of these makes the link "This link is not
+available" before its end date: a removed member, a role without `sign`, prices switched off, or an
+estimator who made the link for a job they see only through assignment and is then unassigned. An
+estimator who made the job still sees it after being unassigned, so that link keeps working. A job no
+longer submitted, or whose estimate was replaced or changed after pricing, voids it (`stateOf`).
+[Review](review.md) lists the link by its stored state (and `stateOf`), which does not recheck the
+maker, so staff can see a pending link that the recipient is refused.
 
 ## States
 

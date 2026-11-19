@@ -66,9 +66,10 @@ check. Wording in quotes is the screen's own text.
 Each is flagged for the owner or a later fix; no code was changed.
 
 1. No Check Scope action opens Finish and review. It is reached from the sync chip's "Changes not
-   saved" sheet (only for a write refused because the draft was finished, online, once the job
-   reads: `web/src/app/field/sync-chip.tsx`) and from Review's "Not finished yet" link; otherwise a
-   technician must type `/sign-in/{address}/jobs/{id}/finish`. See [finish.md](finish.md).
+   saved" sheet (only for a write refused because the draft was locked, being finished or finished,
+   online, once the job reads: `web/src/app/field/sync-chip.tsx`) and from Review's "Back to Finish
+   and review" button (before pricing and on a priced unsigned job); otherwise a technician must type
+   `/sign-in/{address}/jobs/{id}/finish`. See [finish.md](finish.md).
 2. Customer and claim: the screen offers Save to every estimator who can open the job, but the
    server (rightly, owner decision J3) lets an estimator save only while they own the job's field
    work, so an assigned estimator who does not own it fills the form and is refused. See
@@ -82,6 +83,8 @@ Each is flagged for the owner or a later fix; no code was changed.
 5. [docs/STATUS.md](../../STATUS.md) has no row for the web app's job screens (it was last built on
    2026-10-28); their state is only in the stage plans.
 6. No field screen edits the draft's summary of findings, which Finish checks (S5 decision J1). Notes
-   on Check Scope is a different key. See [check-scope.md](check-scope.md) and [finish.md](finish.md).
+   on Check Scope is a different key. An empty summary blocks pricing (`summary_missing`: Review says
+   go back and write it, and nothing in the field app can). See [check-scope.md](check-scope.md),
+   [finish.md](finish.md) and [review.md](review.md).
 7. The signed documents' links are shown only in the first successful signing answer. A signer who
    misses it cannot recover the addresses; see [review.md](review.md).
