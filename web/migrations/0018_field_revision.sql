@@ -301,6 +301,10 @@ WHERE a.action = 'job_copied'
   AND s.id <> j.id
   AND j.copied_from_job_id IS NULL;
 
+-- The source key is checked at commit (1 to 4), which would leave the fill's checks pending, and a table
+-- with pending checks cannot be altered: check them now, inside this file.
+SET CONSTRAINTS jobs_copied_from_fkey IMMEDIATE;
+
 ALTER TABLE jobs FORCE ROW LEVEL SECURITY;
 ALTER TABLE audit_events FORCE ROW LEVEL SECURITY;
 
