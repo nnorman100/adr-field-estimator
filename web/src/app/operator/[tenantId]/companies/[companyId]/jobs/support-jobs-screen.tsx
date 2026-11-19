@@ -86,7 +86,7 @@ export function SupportJobsScreen({ companyId }: { companyId: string }) {
   const { company, jobs, nextCursor } = loaded;
   return (
     <>
-      <h1 className="text-2xl font-semibold leading-tight">{company.name}: jobs</h1>
+      <h1 className="text-2xl font-semibold leading-tight [overflow-wrap:anywhere]">{company.name}: jobs</h1>
       <p className="text-sm">
         Read-only support view. Company status: {STATUS_LABELS[company.status].toLowerCase()}. Opening this list, each
         job and each photo is recorded in the audit log. To archive or restore a job, ask the company’s owner.

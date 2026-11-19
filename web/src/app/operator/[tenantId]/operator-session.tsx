@@ -17,7 +17,7 @@ import {
   type SecondStepChallenge,
 } from '@/lib/firebase-client';
 import { operatorCall, operatorImage, platformPaths, type ApiResult, type CompaniesAnswer, type CompanyView } from '@/lib/operator/client';
-import { endsOperatorSession, operatorCheck, operatorSignInErrorMessage } from '@/lib/operator/screens';
+import { endsOperatorSession, operatorCheck, operatorSignInErrorMessage, PHOTO_OFFLINE_MESSAGE } from '@/lib/operator/screens';
 import { errorCode } from '@/lib/sign-in/outcome';
 import { FocusedPanel } from '../../(auth)/focused-panel';
 import { Panel } from '../../(auth)/panel';
@@ -37,8 +37,9 @@ export type OperatorApi = {
   // Puts a company the server just returned (created or changed) into the list the screens draw.
   applyCompany: (company: CompanyView) => void;
   call: <T>(path: string, request?: { method?: 'GET' | 'POST'; body?: unknown }) => Promise<ApiResult<T>>;
-  // One image through the operator's photo route, as a local blob address, or null (S5b-5).
-  image: (path: string) => Promise<string | null>;
+  // One image through the operator's photo route, as a local blob address, or null; with no
+  // connection, the words to show instead (S5b-5).
+  image: (path: string) => Promise<string | { message: string } | null>;
   // A change to a team or a second step needs a sign-in under 15 minutes old: sign out, then sign in.
   signInAgain: () => Promise<void>;
 };
@@ -108,6 +109,9 @@ function ConfiguredSession({ tenantId, config, children }: { tenantId: string; c
 
   const refuse = useCallback(
     async (message: string) => {
+      // Nothing of the company is drawn from this moment, whether or not the sign-out finishes.
+      setCompanies([]);
+      setPhase({ name: 'checking' });
       try {
         await endSession(message);
       } catch {
@@ -171,7 +175,9 @@ function ConfiguredSession({ tenantId, config, children }: { tenantId: string; c
   // a sign-in that ran out or was revoked while reading): nothing more is drawn from it. A change
   // refused for an old sign-in (15 minutes) keeps its own "Sign in again" step on the screen.
   const applyRefusal = useCallback(
-    (result: { status: number; code: string }, reading: boolean) => {
+    (user: User, result: { status: number; code: string }, reading: boolean) => {
+      // An answer to an earlier sign-in says nothing about the one signed in now.
+      if (authRef.current?.currentUser !== user) return;
       const outcome = operatorCheck(result.status, result.code);
       if (outcome.kind === 'not-operator') void refuse('This account is not a platform operator.');
       else if (outcome.kind === 'sign-in-again' && reading) void refuse('Please sign in again.');
@@ -186,20 +192,20 @@ function ConfiguredSession({ tenantId, config, children }: { tenantId: string; c
       const user = authRef.current?.currentUser ?? null;
       if (!user) return { ok: false, status: 401, code: 'invalid_token' };
       const result = await operatorCall<T>(user, path, request);
-      if (!result.ok) applyRefusal(result, (request?.method ?? 'GET') === 'GET');
+      if (!result.ok) applyRefusal(user, result, (request?.method ?? 'GET') === 'GET');
       return result;
     },
     [applyRefusal],
   );
 
   const image = useCallback(
-    async (path: string): Promise<string | null> => {
+    async (path: string): Promise<string | { message: string } | null> => {
       const user = authRef.current?.currentUser ?? null;
       if (!user) return null;
       const result = await operatorImage(user, path);
       if (result.ok) return result.body;
-      applyRefusal(result, true);
-      return null;
+      applyRefusal(user, result, true);
+      return result.status === 0 ? { message: PHOTO_OFFLINE_MESSAGE } : null;
     },
     [applyRefusal],
   );

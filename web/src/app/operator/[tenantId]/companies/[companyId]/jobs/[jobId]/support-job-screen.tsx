@@ -2,17 +2,15 @@
 
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
-import { PhotoLog, Proposal } from '@/app/(auth)/sign-in/[address]/jobs/[jobId]/review/review-documents';
+import { ItemizedClaim, PhotoLog, Proposal } from '@/app/(auth)/sign-in/[address]/jobs/[jobId]/review/review-documents';
 import { LinkPhoto } from '@/components/links/link-photo';
 import { signedBy, signedHow, signedWhen } from '@/lib/agreements/screen';
 import { platformPaths, type SupportJobAnswer } from '@/lib/operator/client';
 import { JOB_STATUS_LABELS } from '@/lib/jobs/status-labels';
-import { STATUS_LABELS, supportDate, supportReadMessage } from '@/lib/operator/screens';
+import { evidenceLabel, signedPhotoNumbers, STATUS_LABELS, supportDate, supportReadMessage } from '@/lib/operator/screens';
 import { ConnectionNotice } from '../../../../connection-notice';
 import { useOperator } from '../../../../operator-session';
 import { ErrorMessage, Section } from '../../../../ui';
-
-const KIND_NAMES = { photo: 'Photo', original: 'Full-size original', signature: 'Signature' } as const;
 
 // The read-only support view of one job (S5b-5; owner decision J8): its record, customer and claim,
 // its signed agreement as stored, and its evidence (photos, originals and the signature of a committed
@@ -35,7 +33,9 @@ export function SupportJobScreen({ companyId, jobId }: { companyId: string; jobI
       const result = await call<SupportJobAnswer>(path);
       if (!result.ok) {
         setError(
-          result.code === 'not_found' ? 'That job was not found in this company.' : supportReadMessage(result.status, result.code, 'this job'),
+          result.code === 'not_found'
+            ? 'That job was not found in this company.'
+            : supportReadMessage(result.status, result.code, 'this job'),
         );
         return;
       }
@@ -74,13 +74,15 @@ export function SupportJobScreen({ companyId, jobId }: { companyId: string; jobI
   }
 
   const { company, job, customer, claim, agreement, evidence } = loaded;
-  const load = (photoId: string, kind: keyof typeof KIND_NAMES) => image(platformPaths.supportPhoto(companyId, jobId, photoId, kind));
+  const signedNumbers = signedPhotoNumbers(agreement?.record.documents.photo_log ?? []);
+  const load = (photoId: string, kind: SupportJobAnswer['evidence'][number]['kind']) =>
+    image(platformPaths.supportPhoto(companyId, jobId, photoId, kind));
   return (
     <>
       <h1 className="text-2xl font-semibold leading-tight [overflow-wrap:anywhere]">{job.propertyAddress || 'No address yet'}</h1>
-      <p className="text-sm">
-        {company.name}, read-only support view. Company status: {STATUS_LABELS[company.status].toLowerCase()}. Opening
-        this job and each image is recorded in the audit log. To archive or restore it, ask the company’s owner.
+      <p className="text-sm [overflow-wrap:anywhere]">
+        {company.name}, read-only support view. Company status: {STATUS_LABELS[company.status].toLowerCase()}. Opening this job and each
+        image is recorded in the audit log. To archive or restore it, ask the company’s owner.
       </p>
       <ConnectionNotice />
       <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-sm">
@@ -127,6 +129,14 @@ export function SupportJobScreen({ companyId, jobId }: { companyId: string; jobI
             <div className="rounded-md border p-3">
               <Proposal proposal={agreement.record.proposal} />
             </div>
+            <h3 className="font-semibold">Itemized claim</h3>
+            <ItemizedClaim
+              rows={agreement.record.documents.itemized_claim}
+              end={agreement.record.proposal.price.low}
+              afterHoursLabel={agreement.record.proposal.price.after_hours_label}
+            />
+            <h3 className="font-semibold">Scope defense letter</h3>
+            <p className="whitespace-pre-wrap">{agreement.record.documents.letter}</p>
             <h3 className="font-semibold">Photo audit log</h3>
             <PhotoLog photos={agreement.record.documents.photo_log} />
           </div>
@@ -139,18 +149,19 @@ export function SupportJobScreen({ companyId, jobId }: { companyId: string; jobI
           <p>No photos or signature.</p>
         ) : (
           <ul className="flex flex-col gap-3">
-            {evidence.map((item, index) => (
-              <li key={`${item.kind}-${item.photoId}`} className="flex flex-col gap-1 rounded-md border p-3 [overflow-wrap:anywhere]">
-                <p className="font-medium">
-                  {KIND_NAMES[item.kind]} {index + 1}
-                </p>
-                <p className="text-sm">
-                  {item.contentType} · {Math.max(1, Math.round(item.sizeBytes / 1024))} KB · received {supportDate(item.createdAt)}
-                </p>
-                <p className="text-sm break-all">SHA-256 {item.sha256}</p>
-                <LinkPhoto label={`${KIND_NAMES[item.kind]} ${index + 1}`} load={() => load(item.photoId, item.kind)} />
-              </li>
-            ))}
+            {evidence.map((item, index) => {
+              const label = evidenceLabel(item, signedNumbers, index);
+              return (
+                <li key={`${item.kind}-${item.photoId}`} className="flex flex-col gap-1 rounded-md border p-3 [overflow-wrap:anywhere]">
+                  <p className="font-medium">{label}</p>
+                  <p className="text-sm">
+                    {item.contentType} · {Math.max(1, Math.round(item.sizeBytes / 1024))} KB · received {supportDate(item.createdAt)}
+                  </p>
+                  <p className="text-sm break-all">SHA-256 {item.sha256}</p>
+                  <LinkPhoto label={label} load={() => load(item.photoId, item.kind)} />
+                </li>
+              );
+            })}
           </ul>
         )}
       </Section>
