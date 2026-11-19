@@ -22,7 +22,7 @@ server (`web/src/engine/`); this screen never computes a price. Online only.
 |---|---|---|
 | Owner | price, documents, staff notes (with the quantity-override note) | price ("Price this job"), confirm and sign on the phone, make or revoke a signing link, make, replace or revoke document links |
 | Estimator | the same without the quantity-override note, on jobs they can see | price, sign on the phone, make or revoke a signing link, make a document link for a set that has no "active" link (by stored state, see Mismatches) |
-| Office | the estimate once priced, and a signed job's record | make, replace or revoke document links (`delivery_resend`); no pricing (403) and no signing |
+| Office | the estimate once priced, with the same staff-only notes as an estimator (summary of findings, suggestions, work with no price, pricing checks; no quantity-override note) and the "Not ready to sign" reasons, and a signed job's record | make, replace or revoke document links (`delivery_resend`); no pricing (403) and no signing |
 | Superadmin support | nothing | nothing |
 | Different-company user | signed out of this company's page, or "This job could not be found" | nothing |
 

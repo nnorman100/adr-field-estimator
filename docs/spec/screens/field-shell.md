@@ -49,8 +49,11 @@ job views) with a sync chip for changes not yet saved.
   - "Discard" (then "Discard changes" or "Keep them"): always.
   - "Try again": unless the job was finished or the edits were changed on another device.
   - "Save as new draft" ("Save as another new draft" once one exists): only when the job is known
-    and was archived during editing or its field work moved to someone else, and only for a role with
-    `jobs_create` and `scope`. A write refused after Finish never offers it. Pressing it asks the server
+    and was archived during editing, or its field work moved to someone else while the job is still
+    being edited on that draft and the person can still read the job, and only for a role with
+    `jobs_create` and `scope`. An estimator who did not create the job and is also unassigned after the
+    move is refused both the draft and the job, so the panel reads "You no longer have access to this
+    job" (`no-access`) and offers only Discard and Try again (`refusalOf` in `web/src/lib/field/journal.ts`). A write refused after Finish never offers it. Pressing it asks the server
     again and can still refuse: "This job takes these changes again now: use Try again." when the
     refusal no longer holds, "These changes cannot be saved as a new draft: the reason above changed."
     when the reason changed to another, or "This job's field work is not kept on this phone, so there
@@ -70,7 +73,7 @@ job views) with a sync chip for changes not yet saved.
 | Learn who is signed in and their keys | `GET /api/me` (`web/src/lib/field/field-sync.ts`, `journal-sync.ts`) |
 | Keep or not keep jobs on the phone | the phone's Firestore cache and journal only, no server route |
 | Try again a refused change | the field database (Firestore) write again |
-| Save as new draft (unsaved changes on a job archived during editing or whose field work moved; the new job has a blank address and no customer, claim or photos) | `POST /api/jobs` with a new job and draft id and an empty address, then the field database |
+| Save as new draft (unsaved changes on a job archived during editing or whose field work moved and that the person can still read, not after they lost the job; the new job has a blank address and no customer, claim or photos) | `POST /api/jobs` with a new job and draft id and an empty address, then the field database |
 | Read a job named by an unsaved change | `GET /api/jobs/{id}` |
 
 ## Not built yet
