@@ -46,7 +46,9 @@ export type ClaimView = {
   deductible: string;
 };
 
-export type JobDetail = { job: JobView; customer: CustomerView; claim: ClaimView };
+// `draftMissing` is set by the job read alone, when the field database holds no draft under the job's
+// current draft id (Back to editing committed the id but its field step failed): Start field work makes it.
+export type JobDetail = { job: JobView; customer: CustomerView; claim: ClaimView; draftMissing?: true };
 
 export type JobListItem = Pick<JobView, 'id' | 'status' | 'propertyAddress' | 'revision' | 'createdAt' | 'updatedAt'> & {
   customerName: string;
@@ -347,7 +349,8 @@ export function jobsService(db: Database, drafts: DraftStore): JobsService {
         console.error('job projection unavailable', error instanceof Error ? error.name : 'unknown');
         throw new JobError('draft_unavailable');
       }
-      return detail;
+      const found = await findDraft(drafts, caller.companyId, detail.job.currentDraftId);
+      return found ? detail : { ...detail, draftMissing: true };
     },
 
     async saveCustomer(caller, jobId, input) {

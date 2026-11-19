@@ -214,6 +214,12 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
         setDraftError(null);
         return;
       }
+      // The job read says the current draft is not in the field database: no locator or draft read can
+      // get through (the rules dereference the draft), and Start field work makes it again.
+      if (job?.draftMissing && fieldWorkOf(session, job) === 'mine' && !pending.moved(jobId)) {
+        setDraftError(null);
+        return setOwnerUnset(true);
+      }
       try {
         // The API populated this server-owned locator, including for jobs made before S6. Read
         // the document itself to warm the person cache; never cache the API response.
