@@ -1,5 +1,5 @@
 import type { JobProjection } from '@/lib/field/job-projection';
-import { draftOfOtherJob, type DraftStore } from '@/lib/jobs/drafts';
+import { draftOfOtherJob, placeholderRefusal, type DraftStore, type Placeholder } from '@/lib/jobs/drafts';
 
 // A stand-in for the field database's drafts: what the jobs service writes, kept in memory, with a
 // switch to make the next write fail as if Firestore were unreachable. tests/emu/ checks the real
@@ -18,7 +18,7 @@ export type FakeDrafts = DraftStore & {
   archived: Set<string>;
   // The placeholders an archive or restore left where a draft is missing, by "company/draft" (kept by
   // tests/submissions/field-fake.ts): ensure consumes a restored job's one and refuses an archived job's.
-  placeholders: Map<string, { jobId: unknown; archived: boolean }>;
+  placeholders: Map<string, Placeholder>;
   // Every call to ensure, in order, including the ones that found the draft there.
   calls: { companyId: string; draftId: string; fieldOwnerUid: string | null }[];
   // Every call to setFieldOwner, in order (S5b-1).
@@ -56,8 +56,8 @@ export function fakeDrafts(): FakeDrafts {
       }
       const left = store.placeholders.get(key);
       if (left) {
-        if (draftOfOtherJob(left.jobId, jobId)) return 'taken';
-        if (left.archived) return 'archived';
+        const refused = placeholderRefusal(left, jobId);
+        if (refused) return refused;
         store.placeholders.delete(key);
       }
       const existed = store.made.has(key);

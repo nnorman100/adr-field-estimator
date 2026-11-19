@@ -3,7 +3,7 @@ import type { JobProjection } from '@/lib/field/job-projection';
 import type { FieldManifest } from '@/lib/field/canonical';
 import { MAX_PHOTO_REFS, MAX_ROOMS } from '@/lib/field/schema';
 import type { ArchiveResult, ArchiveStore } from '@/lib/jobs/archive-store';
-import { draftOfOtherJob, type DraftMade } from '@/lib/jobs/drafts';
+import { placeholderRefusal as refusalOf, draftOfOtherJob, type DraftMade } from '@/lib/jobs/drafts';
 import type { FenceResult, FenceStore, Provenance } from '@/lib/submissions/fence';
 import type { FakeDrafts } from '../db/draft-fake';
 import type { FakeDraftStates } from '../db/evidence-fake';
@@ -115,7 +115,7 @@ export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts:
       linked.states.set.set(at, draft.state);
       // A placeholder is no draft to the jobs service (src/lib/jobs/drafts.ts): nobody is named on it.
       if (draft.placeholder) {
-        linked.drafts.placeholders.set(at, { jobId: draft.jobId, archived: draft.state === 'archived' });
+        linked.drafts.placeholders.set(at, { jobId: draft.jobId, state: draft.state, archiveRevision: draft.archiveRevision ?? null });
         continue;
       }
       linked.drafts.placeholders.delete(at);
@@ -296,11 +296,10 @@ export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts:
   return fake;
 }
 
-// As the real writers: a draft is never made for another job's placeholder, nor over an archived one;
-// a restored job's placeholder (null here) gives way to the draft.
+// As the real writers (src/lib/jobs/drafts.ts): only a restored placeholder of this job that holds its
+// revision gives way to the draft.
 function placeholderRefusal(found: FakeDraft, jobId: string): 'taken' | 'archived' | null {
-  if (draftOfOtherJob(found.jobId, jobId)) return 'taken';
-  return found.state === 'archived' ? 'archived' : null;
+  return refusalOf({ jobId: found.jobId, state: found.state, archiveRevision: found.archiveRevision ?? null }, jobId);
 }
 
 // An archive or restore of the draft at this job revision: only a newer one changes it, and a
