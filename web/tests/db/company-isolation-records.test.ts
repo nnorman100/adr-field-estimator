@@ -491,7 +491,7 @@ const NOT_FILLED: Record<string, string> = {
 // What a copied row needs to look new, so a table's own insert guard (which runs before the row
 // policy) lets it through to the policy: a planted row is then refused by the policy itself.
 const FRESH: Record<string, Record<string, unknown>> = {
-  jobs: { revision: 1, status: 'draft', last_change_id: null, field_revision: 0, field_synced_revision: 0 },
+  jobs: { revision: 1, status: 'draft', last_change_id: null },
   job_submissions: { status: 'pending', snapshot_bytes: null, snapshot_sha256: null, decided_at: null, marker_state: 'pending' },
   price_table_versions: { sequence: 1 },
 };

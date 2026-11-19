@@ -15,7 +15,7 @@ import { emptyDiscardDatabase, startDisposablePostgres, type DisposablePostgres 
 const exec = promisify(execFile);
 const webRoot = fileURLToPath(new URL('../..', import.meta.url));
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const SHIPPED = ['0001_foundation', '0002_identity', '0003_runtime_role', '0004_sign_in_lookup', '0005_access_projection', '0006_platform_operator', '0007_sign_in_address', '0008_feature_flag_writes', '0009_price_tables', '0010_core_job_tables', '0011_submissions_agreements', '0012_ai_live_tables', '0013_company_documents', '0014_signing_links', '0015_office_jobs', '0016_job_drafts', '0017_definer_search_path', '0018_field_revision'];
+const SHIPPED = ['0001_foundation', '0002_identity', '0003_runtime_role', '0004_sign_in_lookup', '0005_access_projection', '0006_platform_operator', '0007_sign_in_address', '0008_feature_flag_writes', '0009_price_tables', '0010_core_job_tables', '0011_submissions_agreements', '0012_ai_live_tables', '0013_company_documents', '0014_signing_links', '0015_office_jobs', '0016_job_drafts', '0017_definer_search_path'];
 const SHIPPED_TABLES = [
   'access_projection_outbox',
   'actors',
@@ -63,11 +63,6 @@ const TABLES_TO_0013 = TABLES_TO_0014.filter((table) => table !== 'document_link
 // planted while a later file (0013) adds columns of its own.
 const COMPANY_COLUMNS_TO_0012 =
   'id, created_at, name, sign_in_slug, status, auth_tenant_id, auth_tenant_kind, updated_at, profile_address, profile_phone, profile_email, profile_license, profile_signoff';
-
-// Every column of jobs from 0010 to 0017, so a test of an earlier file compares the jobs it planted
-// while a later file (0018) adds columns of its own.
-const JOB_COLUMNS_TO_0017 =
-  'id, company_id, created_by_actor_id, field_owner_actor_id, status, current_draft_id, property_address, archived_at, archived_by_actor_id, revision, last_change_id, request_digest, created_at, updated_at';
 
 let disposable: DisposablePostgres;
 
@@ -391,7 +386,7 @@ describe('numbered migration ledger', () => {
           companies: await sql`SELECT ${sql.unsafe(COMPANY_COLUMNS_TO_0012)} FROM companies ORDER BY id`,
           actors: await sql`SELECT * FROM actors ORDER BY id`,
           versions: await sql`SELECT id, company_id, sequence, content_hash FROM price_table_versions ORDER BY id`,
-          jobs: await sql`SELECT ${sql.unsafe(JOB_COLUMNS_TO_0017)} FROM jobs ORDER BY id`,
+          jobs: await sql`SELECT * FROM jobs ORDER BY id`,
           evidence: await sql`SELECT id, company_id, job_id, kind, object_name FROM evidence_objects ORDER BY id`,
           tables: await tableNames(),
         }));
@@ -445,7 +440,7 @@ describe('numbered migration ledger', () => {
         withSql(async (sql) => ({
           companies: await sql`SELECT ${sql.unsafe(COMPANY_COLUMNS_TO_0012)} FROM companies ORDER BY id`,
           actors: await sql`SELECT * FROM actors ORDER BY id`,
-          jobs: await sql`SELECT ${sql.unsafe(JOB_COLUMNS_TO_0017)} FROM jobs ORDER BY id`,
+          jobs: await sql`SELECT * FROM jobs ORDER BY id`,
           submissions: await sql`SELECT id, company_id, job_id, status FROM job_submissions ORDER BY id`,
           tables: await tableNames(),
         }));

@@ -224,17 +224,14 @@ describe('migration 0016: the fill of existing jobs', () => {
       const fresh = await job(other);
       const jobs = await admin`SELECT * FROM jobs ORDER BY id`;
 
-      expect((await applyMigrations(migratorUrl, migrationsDirectory)).applied).toEqual(['0016_job_drafts', '0017_definer_search_path', '0018_field_revision']);
+      expect((await applyMigrations(migratorUrl, migrationsDirectory)).applied).toEqual(['0016_job_drafts', '0017_definer_search_path']);
       expect(await admin`SELECT company_id::text AS company, draft_id::text AS draft, job_id::text AS job FROM job_drafts ORDER BY job_id, draft_id`).toEqual(
         [
           ...[earlier, first].sort().map((draft) => ({ company, draft, job: moved })),
           { company, draft: other, job: fresh },
         ].sort((x, y) => x.job.localeCompare(y.job) || x.draft.localeCompare(y.draft)),
       );
-      // 0018 adds the field columns at their starting values; nothing else of a job changes.
-      expect(await admin`SELECT * FROM jobs ORDER BY id`).toEqual(
-        jobs.map((row) => ({ ...row, field_revision: '0', field_synced_revision: '0', field_changed_at: expect.any(Date), copied_from_job_id: null })),
-      );
+      expect(await admin`SELECT * FROM jobs ORDER BY id`).toEqual(jobs);
       expect(await admin`SELECT relname AS name, relforcerowsecurity AS forced FROM pg_class WHERE relname IN ('jobs', 'job_submissions', 'job_drafts') ORDER BY 1`).toEqual([
         { name: 'job_drafts', forced: true },
         { name: 'job_submissions', forced: true },

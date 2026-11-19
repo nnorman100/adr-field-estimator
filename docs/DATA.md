@@ -13,7 +13,7 @@ The sections of this document, one file per area (each keeps its original headin
 - [Rebuilt app Postgres: backups, ledger and identity tables](data/postgres-ledger-and-identity.md): Rebuilt app Postgres (not deployed): Cloud SQL backups, the migration ledger, `0001` and `0002_identity`.
 - [Rebuilt app Postgres: runtime role, row-level security, lookups and the platform operator](data/postgres-rls-and-operator.md): `0003_runtime_role` to `0008_feature_flag_writes`, and `0017_definer_search_path` (the caller's temporary schema searched last in every `SECURITY DEFINER` function).
 - [Rebuilt app Postgres: price tables](data/postgres-prices.md): `0009_price_tables`.
-- [Rebuilt app Postgres: core job tables](data/postgres-jobs.md): `0010_core_job_tables`, `0015_office_jobs` (assignments, office notes, corrections after signing), `0016_job_drafts` (each field draft id claimed once for one job), and `0018_field_revision` (each job's field revision and the repair worker's lookup).
+- [Rebuilt app Postgres: core job tables](data/postgres-jobs.md): `0010_core_job_tables`, `0015_office_jobs` (assignments, office notes, corrections after signing), and `0016_job_drafts` (each field draft id claimed once for one job).
 - [Rebuilt app Postgres: submissions, estimates and agreements](data/postgres-submissions.md): `0011_submissions_agreements`.
 - [Rebuilt app Postgres: AI and Live tables](data/postgres-ai-live.md): `0012_ai_live_tables`.
 - [Rebuilt app Postgres: company documents, signing links and document links](data/postgres-documents-and-links.md): `0013_company_documents` and `0014_signing_links`.

@@ -80,8 +80,10 @@ export async function runSubmissionRepair(
       let row: DecidedRow = found;
       if (row.status === 'pending') {
         const decided = await withCompany(db, companyId, async (tx) => {
-          // The job row first, as every request takes it, before the submission row (0018's trigger
-          // raises the job's field revision when the status moves), so the two never deadlock.
+          // The job row first, as every request takes it, before the submission row, so a request
+          // holding the job never waits on a submission row the worker holds while the worker waits
+          // on the job (the draft life-cycle redesign's field-revision trigger will lock the job row
+          // whenever a submission's status moves).
           await lockedJob(tx, companyId, row.jobId);
           const aborted = await abortPending(tx, companyId, row.id);
           if (aborted) {

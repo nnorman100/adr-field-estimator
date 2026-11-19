@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import postgres from 'postgres';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { canonicalManifest, manifestDigest } from '@/lib/field/canonical';
 import type { FenceStore } from '@/lib/submissions/fence';
@@ -502,10 +503,10 @@ describe('the worker', () => {
     expect(await f.expectOneOutcome(h.seed.a, locked.jobId, locked.draftId)).toBe('aborted');
   });
 
-  // Migration 0018: a submission's status moving raises its job's field revision, which locks the job
-  // row. The worker locks the job row before the submission row, as a request does, so a request that
-  // holds the job and decides the expired attempt meanwhile finishes, and no one is cancelled.
-  it('locks the job before aborting an expired attempt, so a request holding the job decides it without a deadlock', async () => {
+  // The worker locks a job row before an expired attempt's submission row, in the order every request
+  // takes them, so a request holding the job never waits on a submission row the worker holds while
+  // the worker waits on the job (a deadlock once moving a submission's status also locks its job).
+  it('waits for the job row before it aborts an expired attempt, in the order a request takes them', async () => {
     live.service = shortWindow();
     const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
     h.field.gate.read = () => new Promise<void>(() => {});
@@ -513,20 +514,28 @@ describe('the worker', () => {
     await until(() => h.field.draft(h.seed.a, draftId)?.state === 'submitting', 'the fence');
     await expire();
 
+    // The request holding the job, on a connection of its own (h.admin has one).
+    const holder = postgres(h.server.databaseUrl, { max: 1, connect_timeout: 10, onnotice: () => {} });
     const release = latch();
     let held = false;
-    const request = h.admin.begin(async (sql) => {
+    const request = holder.begin(async (sql) => {
       await sql`SELECT id FROM jobs WHERE id = ${jobId} FOR UPDATE`;
       held = true;
       await release.wait;
-      await sql`UPDATE job_submissions SET status = 'aborted' WHERE job_id = ${jobId} AND status = 'pending'`;
     });
-    await until(() => held, 'the job lock');
-    const worker = runSubmissionRepair(h.handle.db, h.field, { markerGraceSeconds: 0 });
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    release.open();
-    await request;
-    expect(await worker).toEqual({ aborted: 0, marked: 1, failed: 0 });
+    let worker: ReturnType<typeof runSubmissionRepair> | undefined;
+    try {
+      await until(() => held, 'the job lock');
+      worker = runSubmissionRepair(h.handle.db, h.field, { markerGraceSeconds: 0 });
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      // While the request holds the job, the worker has not touched the expired attempt.
+      expect((await f.submissions(jobId)).map((row) => row.status)).toEqual(['pending']);
+    } finally {
+      release.open();
+      await request;
+      await holder.end({ timeout: 5 });
+    }
+    expect(await worker).toEqual({ aborted: 1, marked: 1, failed: 0 });
     expect(await f.expectOneOutcome(h.seed.a, jobId, draftId)).toBe('aborted');
     expect(h.field.draft(h.seed.a, draftId)?.state).toBe('editing');
   });
