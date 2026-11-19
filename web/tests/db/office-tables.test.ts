@@ -9,7 +9,7 @@ import { resetTeamDatabase, startTeamServer, type Harness } from './team-harness
 
 // S5b-1: migration 0015's three tables (job_assignments, job_coordination, agreement_corrections) as
 // the app's runtime role on a server set up like a fresh Cloud SQL instance (team-harness.ts). The
-// routes over the first two are in office-jobs-api.test.ts; the corrections' routes come with S5b-4.
+// routes over the first two are in office-jobs-api.test.ts and office-jobs-field-owner.test.ts; the corrections' routes come with S5b-4.
 const TABLES = ['agreement_corrections', 'job_assignments', 'job_coordination'];
 
 let base: Awaited<ReturnType<typeof startTeamServer>>;
