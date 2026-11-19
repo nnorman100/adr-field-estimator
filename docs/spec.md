@@ -9,6 +9,8 @@
 > Feature state (built, on, phone-checked) is in [STATUS.md](STATUS.md); who may do what is in
 > [ACCESS.md](ACCESS.md); data is in [DATA.md](DATA.md); AI is in [AI.md](AI.md); physical phone and
 > device acceptance procedures are in [phone-acceptance.md](phone-acceptance.md).
+> The rebuilt app's screens, one spec per screen as built today, are in
+> [spec/screens/](spec/screens/README.md).
 
 Each acceptance check is written so a browser test can prove it, with the Playwright suite's fake
 cloud adapters or a Firestore emulator. "Flag" names the switch that must be on
