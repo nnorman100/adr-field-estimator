@@ -61,6 +61,19 @@ export function pricePointLine(low: EstimateEnd, high: EstimateEnd | null): stri
   return `Price-point adjustment (not taxed): ${amount(low)} at the low end, ${amount(high)} at the high end`;
 }
 
+/**
+ * Each approved named adjustment as arithmetic (S5b-7): a discount "{price before} \u2212 {name} {amount} = {price}",
+ * a charge with "+". In a range each end's lines say which end they are. None when no adjustment applies.
+ */
+export function adjustmentLines(low: EstimateEnd, high: EstimateEnd | null): string[] {
+  const lines = (end: EstimateEnd, prefix: string): string[] =>
+    (end.adjustments ?? []).map(
+      (row) => `${prefix}${dollars(row.before)} ${row.direction === 'discount' ? '\u2212' : '+'} ${row.name} ${dollars(row.amount)} = ${dollars(row.after)}`,
+    );
+  if (!high) return lines(low, '');
+  return [...lines(low, 'Low end: '), ...lines(high, 'High end: ')];
+}
+
 /** One end's charges in the order the engine adds them into its total: the subtotal, then each adjustment it charged. */
 export function chargeRows(end: EstimateEnd, afterHoursLabel: string, withPricePoint = true): Array<{ label: string; amount: string }> {
   const adjustments = [
@@ -71,6 +84,11 @@ export function chargeRows(end: EstimateEnd, afterHoursLabel: string, withPriceP
     { label: 'Sales tax', amount: end.tax },
     // Rounding up to the company's price point comes last, outside every bucket and untaxed (S4-4e).
     { label: 'Price-point adjustment', amount: withPricePoint ? (end.price_point ?? '0.00') : '0.00' },
+    // Named adjustments come after rounding (S5b-7): a discount as a negative amount.
+    ...(withPricePoint ? (end.adjustments ?? []) : []).map((row) => ({
+      label: row.name,
+      amount: row.direction === 'discount' ? `-${row.amount}` : row.amount,
+    })),
   ];
   return [{ label: 'Subtotal', amount: end.subtotal }, ...adjustments.filter((row) => row.amount !== '0.00')];
 }

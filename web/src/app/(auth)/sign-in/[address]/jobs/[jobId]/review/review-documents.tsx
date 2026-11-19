@@ -1,7 +1,7 @@
 import { LinkPhoto } from '@/components/links/link-photo';
 import type { EstimateEnd, LetterLine, ProposalLetter } from '@/engine/estimate';
 import type { EstimateView } from '@/lib/estimates/result';
-import { chargeRows, dollars, photoAlbums, priceLines, pricePointLine, quantityNoteLine, warningText } from '@/lib/estimates/screen';
+import { adjustmentLines, chargeRows, dollars, photoAlbums, priceLines, pricePointLine, quantityNoteLine, warningText } from '@/lib/estimates/screen';
 
 // The parts of Review before signing that show the stored estimate: the price, the four documents
 // and the staff-only notes. Every amount and sentence is the server's, shown as stored; the
@@ -27,6 +27,7 @@ function Charges({ end, afterHoursLabel, withPricePoint = true }: { end: Estimat
 export function EstimatePrice({ estimate }: { estimate: EstimateView }) {
   const price = priceLines(estimate.totals);
   const adjustment = pricePointLine(estimate.totals.low, estimate.totals.mode === 'range' ? estimate.totals.high : null);
+  const named = adjustmentLines(estimate.totals.low, estimate.totals.mode === 'range' ? estimate.totals.high : null);
   return (
     <section aria-labelledby="review-price" className={SECTION}>
       <h2 id="review-price" className={HEADING}>
@@ -35,6 +36,11 @@ export function EstimatePrice({ estimate }: { estimate: EstimateView }) {
       <p className="text-xl font-semibold">{price.customer}</p>
       <p>{price.itemized}</p>
       {adjustment ? <p>{adjustment}</p> : null}
+      {named.map((line, index) => (
+        <p key={index} className="tabular-nums" data-testid="named-adjustment">
+          {line}
+        </p>
+      ))}
       {estimate.totals.mode === 'range' && estimate.totals.range_explanation ? <p className="text-sm">{estimate.totals.range_explanation}</p> : null}
       <p className="text-sm">Priced from your company&apos;s price version {estimate.price.versionSequence}.</p>
       <h3 className="font-semibold">Lines</h3>
@@ -137,12 +143,18 @@ function CompanyClauses({ clauses }: { clauses: Array<{ title: string; text: str
 export function Proposal({ proposal }: { proposal: NonNullable<EstimateView['proposal']> }) {
   const price = proposal.price;
   const adjustment = pricePointLine(price.low, price.mode === 'range' ? price.high : null);
+  const named = adjustmentLines(price.low, price.mode === 'range' ? price.high : null);
   const priceLine = (
     <>
       <p className="font-semibold">
         {price.mode === 'range' && price.high ? `Customer estimate range: ${dollars(price.low.total)} to ${dollars(price.high.total)}` : `Price: ${dollars(price.low.total)}`}
       </p>
       {adjustment ? <p>{adjustment}</p> : null}
+      {named.map((line, index) => (
+        <p key={index} className="tabular-nums" data-testid="named-adjustment">
+          {line}
+        </p>
+      ))}
       {price.explanation ? <p className="text-sm">{price.explanation}</p> : null}
     </>
   );

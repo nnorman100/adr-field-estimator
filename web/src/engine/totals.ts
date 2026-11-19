@@ -23,6 +23,7 @@ import {
   hasCushionBrackets,
   type CushionBand,
   type Item,
+  type NamedAdjustment,
   type Policy,
   type Table,
   type Trade,
@@ -47,7 +48,20 @@ export type End = {
   tax: Dec;
   /** What price-point rounding added, untaxed and outside every bucket; zero when off or already a price point. */
   pricePoint: Dec;
+  /** The price: the lines and charges above, then each approved named adjustment in turn. */
   total: Dec;
+  /** Approved named adjustments, in the order applied; absent when none applies (S5b-7). */
+  adjustments?: AppliedAdjustment[];
+};
+
+/** One named adjustment applied to an end's price: `before` ∓ `amount` = `after`. */
+export type AppliedAdjustment = {
+  adjustmentId: string;
+  name: string;
+  direction: 'discount' | 'charge';
+  before: Dec;
+  amount: Dec;
+  after: Dec;
 };
 
 export type Totals = {
@@ -559,8 +573,51 @@ export function explanation(policy: Policy, data: Inspection, items: Item[]): st
 }
 
 /** Price a saved draft from a parsed table with the dryscope-v3 formulas. */
-export function priceAndRange(data: Inspection, table: Table): Priced {
+/**
+ * Named adjustments (S5b-7): each approved one, in the order given, changes each end's price after price-point
+ * rounding; the result is not rounded again. A percent is of the price before it, rounded to cents once; a
+ * discount larger than the price is refused rather than quoting below zero. An id the table does not have, or one
+ * given twice, is refused. Only adjustments approved on the job are passed in (S5b-8); none by default.
+ */
+export function applyAdjustments(totals: Totals, defined: NamedAdjustment[], approved: readonly string[]): Totals {
+  if (!approved.length) return totals;
+  if (new Set(approved).size !== approved.length) throw new Error('An adjustment is approved twice.');
+  const chosen = approved.map((id) => {
+    const found = defined.find((adjustment) => adjustment.adjustment_id === id);
+    if (!found) throw new Error('An approved adjustment is not in the price table.');
+    return found;
+  });
+  const adjust = (end: End): End => {
+    let price = end.total;
+    const applied: AppliedAdjustment[] = chosen.map((adjustment) => {
+      const value = Dec.parse(adjustment.value);
+      const amount = adjustment.kind === 'percent' ? money(price.mul(value).div(HUNDRED)) : money(value);
+      const discount = adjustment.direction === 'discount';
+      if (discount && amount.cmp(price) > 0) throw new Error(`The discount "${adjustment.name}" is larger than the price.`);
+      const after = discount ? price.sub(amount) : price.add(amount);
+      const row: AppliedAdjustment = {
+        adjustmentId: adjustment.adjustment_id,
+        name: adjustment.name,
+        direction: adjustment.direction,
+        before: price,
+        amount,
+        after,
+      };
+      price = after;
+      return row;
+    });
+    return { ...end, total: price, adjustments: applied };
+  };
+  return { ...totals, low: adjust(totals.low), high: totals.high ? adjust(totals.high) : null };
+}
+
+/** `approved`: the ids of the named adjustments approved on this job, applied in that order (S5b-7). */
+export function priceAndRange(data: Inspection, table: Table, approved: readonly string[] = []): Priced {
   const scoped = priceScopeV2(data, table.items, table.policy);
-  const totals = computeTotals(data, scoped.lines, table.policy, table.items, table.trades ?? []);
+  const totals = applyAdjustments(
+    computeTotals(data, scoped.lines, table.policy, table.items, table.trades ?? []),
+    table.adjustments ?? [],
+    approved,
+  );
   return { lines: scoped.lines, totals, warnings: scoped.warnings, calculationVersion: ENGINE_VERSION };
 }

@@ -361,6 +361,8 @@ export function makeDocuments(input: {
   settings?: Json;
   /** Each room's findings note and prep tasks, in the record's room order (S5a-10); absent means none. */
   rooms?: Json[];
+  /** The named adjustments approved on the job, applied after price-point rounding (S5b-7). */
+  adjustments?: readonly string[];
 }): JObj {
   const ai = parse(AI, input.ai, 'ai');
   const settings = parse(LAYOUT_SETTINGS, input.settings, 'settings');
@@ -381,7 +383,7 @@ export function makeDocuments(input: {
   }
   if (data.packagePrice !== null) fail('Update the app and clear the old package-tier selection before auditing.');
   const before = data.yearBuilt < 1978;
-  const priced = priceAndRange(data, input.table);
+  const priced = priceAndRange(data, input.table, input.adjustments ?? []);
   const estimate = estimateOf(priced.totals, input.table);
   const items = priced.lines.map((line) => ({ ...line }));
   const total = money(priced.totals.low.total);

@@ -4,8 +4,8 @@
 
 import { z } from 'zod';
 
-import { Dec } from './decimal';
-import { canonical, sha256, type Json } from './json';
+import { Dec, HUNDRED } from './decimal';
+import { canonical, sha256, type JObj, type Json } from './json';
 import {
   AFFECTED_BANDS,
   CATEGORIES,
@@ -26,6 +26,7 @@ import {
 export const ENGINE_VERSION = 'dryscope-v3';
 const MAX_ITEMS = 150;
 const MAX_TRADES = 30;
+const MAX_ADJUSTMENTS = 30;
 const MAX_BRACKETS = 20;
 const MAX_SF = 100000;
 const MAX_ROOM_TYPES = 30;
@@ -623,10 +624,42 @@ const TRADE = z.strictObject({
   minimum_charge: decimal({ max: '100000', places: 2 }).default('0'),
 });
 
-type TableBody = { items: ParsedItem[]; trades?: ParsedTrade[]; policy: z.output<typeof POLICY> };
+/**
+ * A company's named adjustment (S5b-7): a discount or a charge, a percent of the price or a fixed
+ * amount. None are seeded; the engine applies one only when it is approved on the job.
+ */
+const ADJUSTMENT = z
+  .strictObject({
+    adjustment_id: z.string().regex(ITEM_ID, 'must be 2 to 40 lowercase letters, digits or _'),
+    name: text(1, 60),
+    kind: z.enum(['percent', 'amount']),
+    direction: z.enum(['discount', 'charge']),
+    value: decimal({ max: '100000', places: 2 }),
+  })
+  .superRefine((adjustment, ctx) => {
+    const value = Dec.parse(adjustment.value);
+    if (value.isZero()) ctx.addIssue({ code: 'custom', path: ['value'], message: 'must be above 0' });
+    if (adjustment.kind === 'percent' && value.cmp(HUNDRED) > 0) {
+      ctx.addIssue({ code: 'custom', path: ['value'], message: 'a percent must be at most 100' });
+    }
+  });
+
+export type NamedAdjustment = z.output<typeof ADJUSTMENT>;
+
+type TableBody = {
+  items: ParsedItem[];
+  trades?: ParsedTrade[];
+  adjustments?: NamedAdjustment[];
+  policy: z.output<typeof POLICY>;
+};
 
 export const PriceTableV3 = z
-  .strictObject({ items: z.array(ITEM).max(MAX_ITEMS), trades: z.array(TRADE).max(MAX_TRADES).optional(), policy: POLICY })
+  .strictObject({
+    items: z.array(ITEM).max(MAX_ITEMS),
+    trades: z.array(TRADE).max(MAX_TRADES).optional(),
+    adjustments: z.array(ADJUSTMENT).max(MAX_ADJUSTMENTS).optional(),
+    policy: POLICY,
+  })
   .superRefine((table, ctx) => {
     const ids = new Set<string>();
     const codes = new Set<string>();
@@ -653,12 +686,24 @@ export const PriceTableV3 = z
         ctx.addIssue({ code: 'custom', path: ['items', index, 'trade'], message: 'names no trade heading' });
       }
     });
+    const adjustments = new Set<string>();
+    (table.adjustments ?? []).forEach((adjustment, index) => {
+      if (adjustments.has(adjustment.adjustment_id)) {
+        ctx.addIssue({ code: 'custom', path: ['adjustments', index], message: 'repeats an adjustment id' });
+      }
+      adjustments.add(adjustment.adjustment_id);
+    });
   })
   .transform((table): TableBody => {
     const body: TableBody = { items: table.items, policy: table.policy };
     if (table.trades?.length) {
       body.trades = [...table.trades].sort((left, right) =>
         left.trade_id < right.trade_id ? -1 : left.trade_id > right.trade_id ? 1 : 0,
+      );
+    }
+    if (table.adjustments?.length) {
+      body.adjustments = [...table.adjustments].sort((left, right) =>
+        left.adjustment_id < right.adjustment_id ? -1 : left.adjustment_id > right.adjustment_id ? 1 : 0,
       );
     }
     return body;
@@ -811,6 +856,9 @@ export function hasCushionBrackets(policy: Policy): boolean {
 /** SHA-256 of the canonical JSON of the parsed table, items in id order. */
 export function contentHash(table: Table): string {
   const items = [...table.items].sort((a, b) => (a.item_id < b.item_id ? -1 : a.item_id > b.item_id ? 1 : 0));
-  const body = table.trades ? { items, trades: table.trades, policy: table.policy } : { items, policy: table.policy };
+  // Optional keys stay out of the hash when absent, so an older table keeps its hash.
+  const body: JObj = { items: items as unknown as Json, policy: table.policy as unknown as Json };
+  if (table.trades) body.trades = table.trades as unknown as Json;
+  if (table.adjustments) body.adjustments = table.adjustments as unknown as Json;
   return sha256(canonical(body as unknown as Json));
 }

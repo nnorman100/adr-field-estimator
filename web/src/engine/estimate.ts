@@ -20,6 +20,8 @@ export { suggestedItems } from './table';
 /** A saved draft to price. `documents` is optional: without it only lines and totals are built. */
 export type EstimateJob = {
   inspection: Json;
+  /** The ids of the named adjustments approved on this job, in the order to apply them (S5b-7, S5b-8); none by default. */
+  adjustments?: string[];
   documents?: {
     company?: Json;
     claim?: Json;
@@ -60,6 +62,17 @@ export type EstimateEnd = {
   /** "Price-point adjustment": what rounding up to the company's price point added; only when it added any. */
   price_point?: string;
   total: string;
+  /** Each approved named adjustment, in order: `before` minus or plus `amount` is `after`; absent when none (S5b-7). */
+  adjustments?: EstimateAdjustment[];
+};
+
+export type EstimateAdjustment = {
+  adjustment_id: string;
+  name: string;
+  direction: 'discount' | 'charge';
+  before: string;
+  amount: string;
+  after: string;
 };
 
 export type EstimateDocuments = {
@@ -164,6 +177,16 @@ function endOf(end: End): EstimateEnd {
     total: cents(end.total),
   };
   if (!end.pricePoint.isZero()) body.price_point = cents(end.pricePoint);
+  if (end.adjustments?.length) {
+    body.adjustments = end.adjustments.map((row) => ({
+      adjustment_id: row.adjustmentId,
+      name: row.name,
+      direction: row.direction,
+      before: cents(row.before),
+      amount: cents(row.amount),
+      after: cents(row.after),
+    }));
+  }
   return body;
 }
 
@@ -260,7 +283,7 @@ export function priceEstimate(table: Json, job: EstimateJob): Estimate | Refusal
   let priced: Priced;
   let advisory: JObj[];
   try {
-    priced = priceAndRange(data, used);
+    priced = priceAndRange(data, used, job.adjustments ?? []);
     advisory = advisoryWarnings(data, used, priced, null);
   } catch (error) {
     return { ok: false, stage: 'pricing', error: message(error) };
@@ -281,6 +304,7 @@ export function priceEstimate(table: Json, job: EstimateJob): Estimate | Refusal
           table: used,
           settings: input.settings,
           rooms: input.rooms,
+          adjustments: job.adjustments ?? [],
         }),
       );
     } catch (error) {
