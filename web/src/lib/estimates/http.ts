@@ -1,12 +1,13 @@
 import { IdentityRefusal, type Identity } from '@/lib/auth';
 import { JobError } from '@/lib/jobs/access';
 import { EstimateError } from './errors';
+import { repriceBody } from './schema';
 import { estimatesServices } from './services';
 
 // The estimate routes (src/app/api/jobs/[jobId]/estimate). Each is wrapped there in
 // requireFlag('price_books', ...), so a company without price books gets 404 before anything here
 // runs; these add the job and estimate rules. The company comes only from the verified sign-in: no
-// path or body names one, and the request has no body to read.
+// path or body names one; only Reprice reads a body.
 
 type RouteContext = { params: Promise<Record<string, string | string[] | undefined>> };
 
@@ -59,12 +60,22 @@ export async function readEstimate(_request: Request, identity: Identity, contex
   });
 }
 
-// POST /api/jobs/{jobId}/reprice
-// The owner's Reprice this draft (S5b-6): moves the job's pin to the company's current prices.
-// `repriced` is false when it was already there (nothing written).
-export async function repriceJob(_request: Request, identity: Identity, context: RouteContext): Promise<Response> {
+// POST /api/jobs/{jobId}/reprice  { revision, changeId, versionId }
+// The owner's Reprice this draft (S5b-6): moves the job's pin to the price version the owner
+// reviewed, which must still be the company's newest, for the job revision they saw. `repriced` is
+// false when the job was already on it (nothing written); the same changeId again is answered as the
+// first time.
+export async function repriceJob(request: Request, identity: Identity, context: RouteContext): Promise<Response> {
   return respond(async () => {
     const id = await jobId(context);
-    return json(await estimatesServices().reprice(identity, id));
+    let raw: unknown;
+    try {
+      raw = await request.json();
+    } catch {
+      throw new EstimateError('invalid_request');
+    }
+    const parsed = repriceBody.safeParse(raw);
+    if (!parsed.success) throw new EstimateError('invalid_request');
+    return json(await estimatesServices().reprice(identity, id, parsed.data));
   });
 }

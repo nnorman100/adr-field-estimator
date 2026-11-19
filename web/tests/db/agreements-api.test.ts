@@ -408,7 +408,12 @@ describe('what signing refuses, writing nothing', () => {
     expect(await sign(ESTIMATOR_A, jobId, bodyFor(old, signatureId))).toMatchObject({ status: 409, body: { error: 'estimate_superseded' } });
     expect(await sign(ESTIMATOR_A, jobId, bodyFor(revised, signatureId, { proposalSha256: old.proposalSha256 }))).toMatchObject({ status: 409, body: { error: 'proposal_changed' } });
     expect(await everything(h.admin)).toBe(before);
-    const signed = await sign(ESTIMATOR_A, jobId, bodyFor(revised, signatureId));
+    // A revised estimate always needs a new signature (S5b-6): the one captured for the old estimate is refused.
+    expect(await sign(ESTIMATOR_A, jobId, bodyFor(revised, signatureId))).toMatchObject({ status: 409, body: { error: 'signature_missing' } });
+    expect(await everything(h.admin)).toBe(before);
+    const fresh = randomUUID();
+    expect((await putSignature(ESTIMATOR_A, jobId, fresh, image(`signature ${fresh}`))).status).toBe(201);
+    const signed = await sign(ESTIMATOR_A, jobId, bodyFor(revised, fresh));
     expect(signed.status).toBe(201);
     expect(signed.body.agreement.record.basis.estimate_id).toBe(revised.id);
   });

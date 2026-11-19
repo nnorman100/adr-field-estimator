@@ -27,7 +27,7 @@ import type { SignerRole } from './screen';
 //    at its current pin (so a new record or a reprice voids an older estimate for signing), the
 //    proposal hash is the stored one, the estimate does not need review, and its documents are
 //    signable with both texts inside the proposal bytes the hash binds.
-// 4. The signature was received for this job.
+// 4. The signature was received for this job, after this estimate was made.
 // 5. The agreement row is inserted (insert-only; migration 0011's trigger checks it restates the
 //    estimate and that the pin has not moved) with the signed record's bytes, and the job becomes
 //    `signed`. One audit row. The agreement's two document links (the homeowner's set and the
@@ -104,7 +104,7 @@ async function originalOf(tx: CompanyTransaction, companyId: string, jobId: stri
 
 async function signatureOf(tx: CompanyTransaction, companyId: string, jobId: string, objectId: string) {
   const [row] = await tx
-    .select({ id: evidenceObjects.id, sha256: evidenceObjects.sha256, contentType: evidenceObjects.contentType })
+    .select({ id: evidenceObjects.id, sha256: evidenceObjects.sha256, contentType: evidenceObjects.contentType, createdAt: evidenceObjects.createdAt })
     .from(evidenceObjects)
     .where(
       and(
@@ -199,6 +199,9 @@ export async function signInTransaction(
   // 4. The signature.
   const signature = await signatureOf(tx, caller.companyId, jobId, input.signatureId);
   if (!signature) throw new AgreementError('signature_missing');
+  // A signature binds to the estimate it was captured for: one received before this estimate was made
+  // is for an earlier one, so a revised estimate always needs a new signature.
+  if (signature.createdAt < estimate.createdAt) throw new AgreementError('signature_missing');
 
   // 5. The agreement, and the job signed.
   const signedAt = await serverTime(tx);

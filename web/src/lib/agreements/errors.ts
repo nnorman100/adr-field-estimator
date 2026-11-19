@@ -23,7 +23,8 @@ export const AGREEMENT_ERRORS = {
   // setup check needed was empty when it was priced, or a proposal made before the signed page's
   // texts existed): go back to editing, then finish and price again.
   not_signable: 409,
-  // The signature named was not received for this job (send it through the receipt route first).
+  // The signature named was not received for this job, or was received before this estimate was made
+  // (a revised estimate needs a new one): send it through the receipt route first.
   signature_missing: 409,
   // The database could not be reached; the same request again is safe.
   agreements_unavailable: 503,

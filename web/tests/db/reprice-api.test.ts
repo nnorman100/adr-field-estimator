@@ -167,55 +167,88 @@ async function readyToSign(claims: FakeClaims = ESTIMATOR_A) {
   return { ...job, version, estimate, signatureId };
 }
 
-const reprice = (claims: FakeClaims | null, jobId: string): Promise<Reply> =>
-  json(repriceRoute.POST(request(claims, `/api/jobs/${jobId}/reprice`, { method: 'POST' }), params({ jobId })));
+const send = (claims: FakeClaims | null, jobId: string, body: unknown): Promise<Reply> =>
+  json(repriceRoute.POST(request(claims, `/api/jobs/${jobId}/reprice`, { method: 'POST', body }), params({ jobId })));
+// The owner's confirmation as the screen sends it: the job revision it saw, a change id of its own and
+// the version it showed (the newest unless the test names another).
+async function reprice(claims: FakeClaims | null, jobId: string, extra: Record<string, unknown> = {}): Promise<Reply> {
+  const [newest] = await h.admin<{ id: string }[]>`SELECT id::text FROM price_table_versions WHERE company_id = ${h.seed.a} ORDER BY sequence DESC LIMIT 1`;
+  return send(claims, jobId, { revision: (await f.job(jobId)).revision, changeId: randomUUID(), versionId: newest!.id, ...extra });
+}
 const read = (claims: FakeClaims | null, jobId: string): Promise<Reply> =>
   json(estimateRoute.GET(request(claims, `/api/jobs/${jobId}/estimate`), params({ jobId })));
 const pins = (jobId: string) =>
   h.admin<{ sequence: number; version_id: string; reason: string }[]>`SELECT sequence, version_id::text, reason FROM job_price_pins WHERE job_id = ${jobId} ORDER BY sequence`;
+const repriceAudits = (jobId: string) =>
+  h.admin<{ details: Record<string, number | string> }[]>`SELECT details FROM audit_events WHERE target = ${jobId} AND action = 'job_repriced' ORDER BY id`;
+
+// Back to editing, then Finish and review again with the scope confirmed once more: a new record.
+async function finishAgain(claims: FakeClaims, jobId: string, draftId: string, manifest: FieldManifest) {
+  const next = randomUUID();
+  expect((await f.nextDraft(claims, jobId, { draftId: next, fromDraftId: draftId })).status).toBe(201);
+  h.field.put(h.seed.a, next, manifest);
+  expect((await f.submitShown(claims, jobId, next, manifest)).answer.status).toBe(201);
+}
 
 describe('the owner reprices a draft', () => {
-  it('moves the pin to the current prices; the old estimate cannot be signed and the next one is priced from the new prices', async () => {
-    const { jobId, version: one, estimate: old, signatureId } = await readyToSign();
+  it('moves the pin to the reviewed prices; the old estimate cannot be signed, scope is confirmed again, and the revised estimate needs a new signature', async () => {
+    const { jobId, draftId, manifest, version: one, estimate: old, signatureId } = await readyToSign();
     expect(old.totals.low.total).toBe('240.00');
     const two = await publish(h.seed.a, '3.00');
 
-    const answer = await reprice(OWNER_A, jobId);
+    const changeId = randomUUID();
+    const answer = await reprice(OWNER_A, jobId, { changeId });
     expect(answer).toMatchObject({ status: 200, body: { repriced: true, job: { id: jobId, status: 'submitted' }, pin: { sequence: 2, version: 2 } } });
     expect(await pins(jobId)).toEqual([
       { sequence: 1, version_id: one.id, reason: 'first_price' },
       { sequence: 2, version_id: two.id, reason: 'owner_reprice' },
     ]);
-    const [audit] = await h.admin<{ details: Record<string, number> }[]>`SELECT details FROM audit_events WHERE target = ${jobId} AND action = 'job_repriced'`;
-    expect(audit!.details).toEqual({ sequence: 2, from_version: 1, version: 2 });
+    expect((await repriceAudits(jobId)).map((row) => row.details)).toEqual([{ sequence: 2, from_version: 1, version: 2, change_id: changeId }]);
 
     // The old estimate is no longer the job's current one: nothing to read, and it cannot be signed.
     expect((await read(ESTIMATOR_A, jobId)).body.estimate).toBeNull();
-    const before = await everything(h.admin);
+    let before = await everything(h.admin);
     expect(await sign(ESTIMATOR_A, jobId, bodyFor(old, signatureId))).toMatchObject({ status: 409 });
+    // The scope confirmation was cleared: the record made before the reprice is not priced on the new pin.
+    expect(await make(ESTIMATOR_A, jobId)).toMatchObject({ status: 409, body: { error: 'scope_not_confirmed' } });
     expect(await everything(h.admin)).toBe(before);
 
-    // The next estimate is priced from version 2: $3.00 x 120 sq ft, and that one signs.
+    // Scope confirmed again on a new record: priced from version 2, $3.00 x 120 sq ft.
+    await finishAgain(ESTIMATOR_A, jobId, draftId, manifest);
     const revised = await make(ESTIMATOR_A, jobId);
     expect(revised.status).toBe(201);
     expect(revised.body.estimate).toMatchObject({ price: { pinSequence: 2, versionSequence: 2, tableHash: two.hash } });
     expect(revised.body.estimate.totals.low.total).toBe('360.00');
-    expect((await sign(ESTIMATOR_A, jobId, bodyFor(revised.body.estimate, signatureId))).status).toBe(201);
+
+    // The signature received for the old estimate does not sign the revised one; a new one does.
+    before = await everything(h.admin);
+    expect(await sign(ESTIMATOR_A, jobId, bodyFor(revised.body.estimate, signatureId))).toMatchObject({ status: 409, body: { error: 'signature_missing' } });
+    expect(await everything(h.admin)).toBe(before);
+    const fresh = randomUUID();
+    expect((await putSignature(ESTIMATOR_A, jobId, fresh, image(`signature ${fresh}`))).status).toBe(201);
+    expect((await sign(ESTIMATOR_A, jobId, bodyFor(revised.body.estimate, fresh))).status).toBe(201);
   });
 
-  it('a job already on the current prices is answered as it is, with nothing written', async () => {
+  it('a job already on the reviewed prices is answered as it is, with nothing written', async () => {
     const { jobId } = await readyToSign();
     const before = await everything(h.admin);
     expect(await reprice(OWNER_A, jobId)).toMatchObject({ status: 200, body: { repriced: false, pin: { sequence: 1, version: 1 } } });
     expect(await everything(h.admin)).toBe(before);
   });
 
-  it('the same reprice sent twice makes one pin', async () => {
+  it('the same change sent twice, even after newer prices are published, makes one pin and one audit row and is answered the same', async () => {
     const { jobId } = await readyToSign();
     await publish(h.seed.a, '3.00');
-    const both = await Promise.all([reprice(OWNER_A, jobId), reprice(OWNER_A, jobId)]);
-    expect(both.map((answer) => answer.body.repriced).sort()).toEqual([false, true]);
+    const change = { revision: (await f.job(jobId)).revision, changeId: randomUUID(), versionId: (await h.admin<{ id: string }[]>`SELECT id::text FROM price_table_versions WHERE company_id = ${h.seed.a} AND sequence = 2`)[0]!.id };
+    const first = await send(OWNER_A, jobId, change);
+    expect(first).toMatchObject({ status: 200, body: { repriced: true, pin: { sequence: 2, version: 2 } } });
+    await publish(h.seed.a, '4.00');
+    expect(await send(OWNER_A, jobId, change)).toEqual(first);
+    const [again, together] = await Promise.all([send(OWNER_A, jobId, change), send(OWNER_A, jobId, change)]);
+    expect(again).toEqual(first);
+    expect(together).toEqual(first);
     expect((await pins(jobId)).map((pin) => pin.sequence)).toEqual([1, 2]);
+    expect(await repriceAudits(jobId)).toHaveLength(1);
   });
 });
 
@@ -228,6 +261,28 @@ describe('what is refused, and writes nothing', () => {
     expect(await reprice(OFFICE_A, jobId)).toMatchObject({ status: 403 });
     expect(await reprice(OWNER_B, jobId)).toMatchObject({ status: 404 });
     expect((await reprice(null, jobId)).status).toBe(401);
+    expect(await everything(h.admin)).toBe(before);
+  });
+
+  it('prices the owner did not review are not applied: a newer version is 409, a stale job revision is 409', async () => {
+    const { jobId } = await readyToSign();
+    const two = await publish(h.seed.a, '3.00');
+    await publish(h.seed.a, '4.00');
+    const before = await everything(h.admin);
+    expect(await reprice(OWNER_A, jobId, { versionId: two.id })).toMatchObject({ status: 409, body: { error: 'prices_superseded' } });
+    expect(await reprice(OWNER_A, jobId, { versionId: randomUUID() })).toMatchObject({ status: 409, body: { error: 'prices_superseded' } });
+    expect(await reprice(OWNER_A, jobId, { revision: (await f.job(jobId)).revision + 1 })).toMatchObject({ status: 409, body: { error: 'stale_revision' } });
+    expect(await everything(h.admin)).toBe(before);
+  });
+
+  it('a body that is not the three fields is 400', async () => {
+    const { jobId } = await readyToSign();
+    await publish(h.seed.a, '3.00');
+    const before = await everything(h.admin);
+    const good = { revision: 1, changeId: randomUUID(), versionId: randomUUID() };
+    for (const body of [{}, { ...good, revision: 0 }, { ...good, changeId: 'x' }, { ...good, versionId: 'x' }, { ...good, extra: true }, { changeId: good.changeId, versionId: good.versionId }]) {
+      expect(await send(OWNER_A, jobId, body)).toMatchObject({ status: 400, body: { error: 'invalid_request' } });
+    }
     expect(await everything(h.admin)).toBe(before);
   });
 
