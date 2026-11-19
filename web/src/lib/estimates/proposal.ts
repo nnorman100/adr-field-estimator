@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto';
 import type { Estimate, EstimateEnd, ProposalLetter } from '@/engine/estimate';
 import { canonicalJson } from '@/lib/field/canonical';
 import type { CompanyDocuments } from '@/lib/profile/documents';
-import { dollars } from './screen';
 
 // The proposal as the customer is shown it and signs it (docs/plans/S5.md, S5a-9): one canonical
 // JSON text built from the engine's priced result and the company's own document inputs. Its bytes
@@ -148,11 +147,6 @@ export function proposalOf(input: ProposalInput): Proposal {
       engine_version: estimate.engine_version,
     },
   };
-}
-
-/** An estimate's price as the proposal states it: one price, or the range from low to high. */
-export function priceText(totals: { mode: 'range' | 'single'; low: { total: string }; high: { total: string } | null }): string {
-  return totals.mode === 'range' && totals.high ? `${dollars(totals.low.total)} to ${dollars(totals.high.total)}` : dollars(totals.low.total);
 }
 
 /**

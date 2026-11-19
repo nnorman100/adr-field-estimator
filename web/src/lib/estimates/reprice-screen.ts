@@ -1,5 +1,5 @@
 import { refusedText } from './screen';
-import type { RepricePreview } from './service';
+import type { PricedSide, RepricePreview } from './service';
 
 // What the owner's Reprice banner on Review before signing decides in the browser (S5b-6), as pure
 // functions so they are unit-tested. Every price comes from the server's preview; the browser never
@@ -15,7 +15,13 @@ export function canRepriceOf(me: unknown): boolean {
   return Array.isArray(capabilities) && capabilities.includes('job_reprice');
 }
 
-const priceOrNull = (value: unknown): value is string | null => value === null || typeof value === 'string';
+// A priced side: a price, or the engine's refusal stage, never both and never neither.
+function sideOf(value: unknown): boolean {
+  const price = field(value, 'price');
+  const refused = field(value, 'refused');
+  if (typeof price === 'string') return refused === null;
+  return price === null && typeof field(refused, 'stage') === 'string';
+}
 
 /** The preview answer, checked enough to show it; null for anything else. */
 export function repricePreviewOf(body: unknown): RepricePreview | null {
@@ -24,10 +30,13 @@ export function repricePreviewOf(body: unknown): RepricePreview | null {
   if (reprice === null) return body as RepricePreview;
   const pinned = field(reprice, 'pinned');
   const newest = field(reprice, 'newest');
-  if (typeof field(pinned, 'version') !== 'number' || !priceOrNull(field(pinned, 'price'))) return null;
-  if (typeof field(newest, 'versionId') !== 'string' || typeof field(newest, 'version') !== 'number' || !priceOrNull(field(newest, 'price'))) return null;
+  if (typeof field(pinned, 'version') !== 'number' || !sideOf(pinned)) return null;
+  if (typeof field(newest, 'versionId') !== 'string' || typeof field(newest, 'version') !== 'number' || !sideOf(newest)) return null;
   return body as RepricePreview;
 }
+
+const side = (version: number, priced: PricedSide): string =>
+  `Last submitted scope at prices version ${version}: ${priced.refused ? `cannot be priced. ${refusedText(priced.refused.stage)}` : priced.price}`;
 
 /**
  * The before and after lines of the preview, in plain words. Both amounts are the job's last
@@ -37,23 +46,25 @@ export function repriceLines(preview: NonNullable<RepricePreview['reprice']>): {
   before: string;
   after: string;
 } {
-  const before = `Last submitted scope at prices version ${preview.pinned.version}: ${preview.pinned.price ?? 'cannot be priced now'}`;
-  const after = preview.newest.refused
-    ? `Last submitted scope at prices version ${preview.newest.version}: cannot be priced. ${refusedText(preview.newest.refused.stage)}`
-    : `Last submitted scope at prices version ${preview.newest.version}: ${preview.newest.price ?? 'cannot be priced now'}`;
-  return { before, after };
+  return { before: side(preview.pinned.version, preview.pinned), after: side(preview.newest.version, preview.newest) };
+}
+
+/**
+ * Whether a refusal says the screen is out of date or the person's access to the job is gone: the
+ * job was signed or changed elsewhere, or is no longer theirs to see. Review then reads the job and
+ * its estimate again instead of keeping what it shows.
+ */
+export function screenOutOfDate(status: number, body: unknown): boolean {
+  const code = field(body, 'error');
+  return code === 'stale_revision' || code === 'job_signed' || status === 403 || status === 404 || status === 410;
 }
 
 const OUTCOMES: Record<string, string> = {
   prices_superseded: 'Newer prices were published while you were looking. The preview shows them now; check it again.',
   prices_unchanged: 'This job already uses the newest prices.',
   conflict: 'This reprice was already sent with different details. Reload the job.',
-  job_signed: 'This job is signed. A signed job keeps its prices.',
   not_priced: 'This job has not been priced yet, so it has no prices to change.',
   prices_unreadable: 'The newest prices cannot be read. Check the Prices page.',
-  not_allowed: 'Only the owner can reprice a job.',
-  not_found: 'This job could not be found.',
-  archived: 'This job is archived.',
 };
 
 /** The message for a refused reprice, by the server's code. */

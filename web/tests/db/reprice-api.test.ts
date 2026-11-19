@@ -36,6 +36,8 @@ const { contentHash, ENGINE_VERSION, parseTable } = await import('@/engine/table
 const { withCompany } = await import('@/db/tenant');
 const { readCompanyDocuments } = await import('@/lib/profile/documents');
 const { estimatesService, revisedFor } = await import('@/lib/estimates/service');
+const { readStoredEstimate } = await import('@/lib/estimates/result');
+const { priceText } = await import('@/lib/estimates/screen');
 const { everything, params, request, resetTeamDatabase, startTeamServer } = await import('./team-harness');
 
 let base: Awaited<ReturnType<typeof startTeamServer>>;
@@ -471,14 +473,16 @@ describe('the revised estimate heading (D6)', () => {
     expect((await make(ESTIMATOR_A, jobId)).body.estimate.proposal.revised).toBe(`Revised ${today()}: was $240.00`);
   });
 
-  it('a job with a signed agreement is headed with the signed price, whatever the setting', async () => {
+  it('a job with a signed agreement is headed with the agreement’s stored price, whatever the setting', async () => {
     const { jobId, estimate, signatureId } = await readyToSign();
     expect((await sign(ESTIMATOR_A, jobId, bodyFor(estimate, signatureId))).status).toBe(201);
     const made = new Date('2026-11-19T12:00:00Z');
     const lineWith = (show: boolean) =>
       withCompany(h.handle.db, h.seed.a, async (tx) => {
         const company = (await readCompanyDocuments(tx, h.seed.a))!;
-        return revisedFor(tx, h.seed.a, jobId, { ...company, showPreviousPrice: show }, made);
+        const [agreement] = await h.admin<{ priced_result: unknown }[]>`SELECT priced_result FROM agreements WHERE job_id = ${jobId}`;
+        const signed = priceText(readStoredEstimate(agreement!.priced_result).totals);
+        return revisedFor(tx, h.seed.a, jobId, { ...company, showPreviousPrice: show }, { made, signed });
       });
     expect(await lineWith(false)).toBe('Revised November 19, 2026: was $240.00');
     expect(await lineWith(true)).toBe('Revised November 19, 2026: was $240.00');
@@ -506,9 +510,18 @@ describe('the before/after preview', () => {
     expect(answer.status).toBe(200);
     expect(answer.body).toEqual({
       job: { revision: (await f.job(jobId)).revision },
-      reprice: { pinned: { version: 1, price: '$240.00' }, newest: { versionId: two.id, version: 2, price: '$360.00', refused: null } },
+      reprice: { pinned: { version: 1, price: '$240.00', refused: null }, newest: { versionId: two.id, version: 2, price: '$360.00', refused: null } },
     });
     expect(await everything(h.admin)).toBe(before);
+  });
+
+  it('prices only the two totals: company settings the documents cannot be built from do not stop it', async () => {
+    const { jobId } = await readyToSign();
+    const two = await publish(h.seed.a, '3.00');
+    await h.admin`UPDATE companies SET profile_documents = profile_documents || '{"photo_log_grouping": "by_colour"}'::jsonb WHERE id = ${h.seed.a}`;
+    const answer = await preview(OWNER_A, jobId);
+    expect(answer.status).toBe(200);
+    expect(answer.body.reprice).toMatchObject({ pinned: { price: '$240.00' }, newest: { versionId: two.id, price: '$360.00' } });
   });
 
   it('while the job is back in editing, previews its last record', async () => {

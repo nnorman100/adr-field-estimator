@@ -1,8 +1,8 @@
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { ZodError } from 'zod';
-import { agreements, auditEvents, companies, jobEstimates, jobPricePins, jobSubmissions, memberships, priceTableVersions, priceTableWorkingCopies } from '@/db/schema';
+import { auditEvents, companies, jobEstimates, jobPricePins, jobSubmissions, memberships, priceTableVersions, priceTableWorkingCopies } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
-import { priceEstimate, type Estimate, type Json } from '@/engine/estimate';
+import { priceEstimate, type Estimate, type EstimateJob, type Json } from '@/engine/estimate';
 import { contentHash, ENGINE_VERSION, parseTable, type Table } from '@/engine/table';
 import type { Capability } from '@/lib/access';
 import { canonicalJson } from '@/lib/field/canonical';
@@ -13,10 +13,11 @@ import { readCompanyDocuments, type CompanyDocuments } from '@/lib/profile/docum
 import { readJobDetails, type JobDetails } from '@/lib/submissions/details';
 import type { Snapshot } from '@/lib/submissions/snapshot';
 import { EstimateError } from './errors';
-import { estimateInput, readSnapshot, SnapshotError, type EstimateInput } from './inputs';
-import { priceText, proposalBytes, proposalOf, revisedLine, type Proposal } from './proposal';
+import { estimateInput, pricingJob, readSnapshot, SnapshotError, type EstimateInput } from './inputs';
+import { proposalBytes, proposalOf, revisedLine, type Proposal } from './proposal';
 import { estimateView, readStoredEstimate, readStoredProposal, type EstimateRecord, type EstimateView } from './result';
 import type { RepriceInput } from './schema';
+import { priceText } from './screen';
 
 // The estimate (docs/plans/S5.md S5a-9; pricing plan S5a-2): the job's submitted record priced from
 // the job's pinned price version, with the four documents built from the record and the company's
@@ -51,15 +52,17 @@ const REPRICE: readonly Capability[] = ['job_reprice'];
 // What the owner's Reprice banner shows (S5b-6, pricing plan S5b-1 "before/after preview"): the
 // job's pinned version and the company's newest one, and the job's last submitted record priced from
 // each (the scope as last submitted, which may differ from a draft being edited now), with the job
-// revision a reprice must name. `reprice` is null when there is nothing to reprice: a signed job, a
-// job never priced, or a job already on the newest prices. `newest.refused` is the engine's refusal
-// (its stage) when the newest prices cannot price the record; it informs the owner and
-// does not stop the reprice, which the server alone decides. Nothing is written.
+// revision a reprice must name. Only the two totals are priced: no documents, no company profile.
+// `reprice` is null when there is nothing to reprice: a signed job, a job never priced, or a job
+// already on the newest prices. A version that cannot price the record has no price and carries
+// the engine's refusal (its stage); it informs the owner and does not stop the reprice, which the
+// server alone decides. Nothing is written.
+export type PricedSide = { price: string | null; refused: { stage: string } | null };
 export type RepricePreview = {
   job: { revision: number };
   reprice: null | {
-    pinned: { version: number; price: string | null };
-    newest: { versionId: string; version: number; price: string | null; refused: { stage: string } | null };
+    pinned: { version: number } & PricedSide;
+    newest: { versionId: string; version: number } & PricedSide;
   };
 };
 
@@ -259,10 +262,10 @@ function inputOf(snapshot: Snapshot, company: CompanyDocuments): EstimateInput {
   }
 }
 
-// The input priced from a version with the four documents, refused as the routes answer it.
-function priceInput(input: EstimateInput, version: VersionRow): { estimate: Estimate; table: Table } {
+// The job priced from a version (with the four documents when the job carries their inputs), refused as the routes answer it.
+function priceInput(job: EstimateJob, version: VersionRow): { estimate: Estimate; table: Table } {
   const table = versionTable(version);
-  const estimate = priceEstimate(version.content as Json, input.job);
+  const estimate = priceEstimate(version.content as Json, job);
   if (!estimate.ok) {
     if (estimate.stage === 'table') throw new EstimateError('prices_unreadable');
     throw new EstimateError('estimate_refused', { stage: estimate.stage, message: estimate.error });
@@ -289,10 +292,16 @@ function proposalFor(estimate: Estimate, company: CompanyDocuments, table: Table
 // The revised line of a new estimate (S5b-6, D6), made once, here, and kept in the proposal's bytes:
 // a job that already had an estimate (before a reprice, or for an earlier record before Back to
 // editing) gets "Revised {date}", with the previous estimate's price when the company's setting, read
-// now, shows it. A job with a signed agreement is headed with the agreement's stored price whatever
-// the setting (the revision workflow for signed jobs is S5b-9, and `make` refuses a signed job before
+// now, shows it. A signed parent's price, when the caller has one, is named always, whatever the
+// setting (the revision workflow for signed jobs is S5b-9, and `make` refuses a signed job before
 // this). A job's first estimate gets none.
-export async function revisedFor(tx: CompanyTransaction, companyId: string, jobId: string, company: CompanyDocuments, made: Date = new Date()): Promise<string | null> {
+export async function revisedFor(
+  tx: CompanyTransaction,
+  companyId: string,
+  jobId: string,
+  company: CompanyDocuments,
+  options: { made?: Date; signed?: string | null } = {},
+): Promise<string | null> {
   const [previous] = await tx
     .select({ pricedResult: jobEstimates.pricedResult })
     .from(jobEstimates)
@@ -300,15 +309,9 @@ export async function revisedFor(tx: CompanyTransaction, companyId: string, jobI
     .orderBy(desc(jobEstimates.createdAt), desc(jobEstimates.id))
     .limit(1);
   if (!previous) return null;
-  const [signed] = await tx
-    .select({ pricedResult: agreements.pricedResult })
-    .from(agreements)
-    .where(and(eq(agreements.companyId, companyId), eq(agreements.jobId, jobId)))
-    .orderBy(desc(agreements.signedAt), desc(agreements.id))
-    .limit(1);
-  return revisedLine(made, {
+  return revisedLine(options.made ?? new Date(), {
     previous: priceText(readStoredEstimate(previous.pricedResult).totals),
-    signed: signed ? priceText(readStoredEstimate(signed.pricedResult).totals) : null,
+    signed: options.signed ?? null,
     showPrevious: company.showPreviousPrice === true,
   });
 }
@@ -347,7 +350,7 @@ async function present(tx: CompanyTransaction, caller: JobCaller, job: JobRow, r
   const version = await versionById(tx, caller.companyId, row.versionId);
   if (!version) throw new EstimateError('prices_unreadable');
   const company = await companyDocuments(tx, caller.companyId);
-  const { estimate, table } = priceInput(inputOf({ ...readSnapshot(submission.snapshotBytes), ...details }, company), version);
+  const { estimate, table } = priceInput(inputOf({ ...readSnapshot(submission.snapshotBytes), ...details }, company).job, version);
   const proposal = proposalFor(estimate, company, table, submission, version, readStoredProposal(row.proposalBytes).revised ?? null);
   return estimateView(row, caller.capabilities, { documents: estimate.documents!, proposal, proposalSha256: proposalBytes(proposal).sha256 });
 }
@@ -382,7 +385,7 @@ export function estimatesService(db: Database): EstimatesService {
         if (!input.scopeConfirmed) throw new EstimateError('scope_not_confirmed');
         if (await confirmationPredatesReprice(tx, caller.companyId, jobId, job.currentDraftId)) throw new EstimateError('scope_not_confirmed');
         if (!input.summary.trim()) throw new EstimateError('summary_missing');
-        const { estimate, table } = priceInput(input, version);
+        const { estimate, table } = priceInput(input.job, version);
 
         let pinned = pin;
         if (!pinned) {
@@ -492,11 +495,14 @@ export function estimatesService(db: Database): EstimatesService {
       });
     },
 
+    // The job row is locked, so the revision and the last committed record are read as one: Finish
+    // commits a record under the same lock, and the revision the owner confirms is the one whose
+    // record was priced.
     async repricePreview(caller, jobId) {
       if (!hasAny(caller, REPRICE)) throw new JobError('not_allowed');
       return withCompany(db, caller.companyId, async (tx) => {
         await lockActiveOwner(tx, caller);
-        const job = await jobAccess(tx, caller, jobId, REPRICE);
+        const job = await jobAccess(tx, caller, jobId, REPRICE, { lock: true });
         const none: RepricePreview = { job: { revision: job.revision }, reprice: null };
         if (job.status === 'signed') return none;
         const pin = await currentPin(tx, caller.companyId, jobId);
@@ -507,17 +513,16 @@ export function estimatesService(db: Database): EstimatesService {
         // A pinned job always has a committed record: its first price is made with one. It is the
         // current draft's while submitted, the one before Back to editing while a new draft is open.
         const record = (await lastSubmission(tx, caller.companyId, jobId))!;
-        let snapshot: Snapshot;
+        let pricing: EstimateJob;
         try {
-          snapshot = readSnapshot(record.snapshotBytes);
+          pricing = pricingJob(readSnapshot(record.snapshotBytes));
         } catch (error) {
-          if (error instanceof SnapshotError) throw new EstimateError('record_unreadable');
+          if (error instanceof SnapshotError || error instanceof FieldMapError || error instanceof ZodError) throw new EstimateError('record_unreadable');
           throw error;
         }
-        const input = inputOf(snapshot, await companyDocuments(tx, caller.companyId));
-        const priced = (version: VersionRow): { price: string | null; refused: { stage: string } | null } => {
+        const priced = (version: VersionRow): PricedSide => {
           try {
-            return { price: priceText(priceInput(input, version).estimate.totals), refused: null };
+            return { price: priceText(priceInput(pricing, version).estimate.totals), refused: null };
           } catch (error) {
             if (error instanceof EstimateError && error.code === 'estimate_refused') return { price: null, refused: { stage: error.extra.stage ?? '' } };
             throw error;
@@ -526,7 +531,7 @@ export function estimatesService(db: Database): EstimatesService {
         return {
           job: { revision: job.revision },
           reprice: {
-            pinned: { version: pinned.sequence, price: priced(pinned).price },
+            pinned: { version: pinned.sequence, ...priced(pinned) },
             newest: { versionId: newest.id, version: newest.sequence, ...priced(newest) },
           },
         };

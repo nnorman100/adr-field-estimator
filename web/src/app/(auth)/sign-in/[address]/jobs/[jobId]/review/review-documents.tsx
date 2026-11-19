@@ -1,7 +1,7 @@
 import { LinkPhoto } from '@/components/links/link-photo';
 import type { EstimateEnd, LetterLine, ProposalLetter } from '@/engine/estimate';
 import type { EstimateView } from '@/lib/estimates/result';
-import { chargeRows, dollars, photoAlbums, priceLines, pricePointLine, quantityNoteLine, warningText } from '@/lib/estimates/screen';
+import { chargeRows, customerPriceLine, dollars, photoAlbums, priceLines, pricePointLine, quantityNoteLine, warningText } from '@/lib/estimates/screen';
 
 // The parts of Review before signing that show the stored estimate: the price, the four documents
 // and the staff-only notes. Every amount and sentence is the server's, shown as stored; the
@@ -140,7 +140,7 @@ export function Proposal({ proposal }: { proposal: NonNullable<EstimateView['pro
   const priceLine = (
     <>
       <p className="font-semibold">
-        {price.mode === 'range' && price.high ? `Customer estimate range: ${dollars(price.low.total)} to ${dollars(price.high.total)}` : `Price: ${dollars(price.low.total)}`}
+        {customerPriceLine(price)}
       </p>
       {adjustment ? <p>{adjustment}</p> : null}
       {price.explanation ? <p className="text-sm">{price.explanation}</p> : null}

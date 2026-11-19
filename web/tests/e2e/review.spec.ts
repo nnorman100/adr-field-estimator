@@ -67,6 +67,7 @@ function estimateOfSnapshot(
   role: 'owner' | 'estimator' | 'office',
   photoLogGrouping: 'room' | 'shot_tag' | null = null,
   layout: Layout = { letter: false },
+  revised: string | null = null,
 ): EstimateView {
   const company: CompanyDocuments = {
     identity: { companyId: team.companyId, name: team.companyName, address: '1 Synthetic Way, Testville', phone: '555-0100', email: 'office@example.invalid', license: '000001', signoff: 'Pat Example' },
@@ -94,7 +95,7 @@ function estimateOfSnapshot(
   const priced = priceEstimate(table, estimateInput(snapshot, company).job);
   if (!priced.ok) throw new Error(priced.error);
   const { bytes, sha256 } = proposalBytes(
-    proposalOf({ estimate: priced, company, showLineBreakdown: layout.letter, submission: { id: snapshot.submissionId, snapshotSha256: 'e'.repeat(64) }, version: { sequence: 1 } }),
+    proposalOf({ estimate: priced, company, showLineBreakdown: layout.letter, submission: { id: snapshot.submissionId, snapshotSha256: 'e'.repeat(64) }, version: { sequence: 1 }, revised }),
   );
   return estimateView(
     {
@@ -854,26 +855,40 @@ test('after replacing a document link with the list unreadable, Revoke reaches t
   expect(deleted).toEqual([links.find((one) => one.id !== first.id)!.id]);
 });
 
-test('the owner reads the before/after preview in a dialog, cancels, then confirms the reprice; the old proposal is gone until the revised estimate is made', async ({ page }) => {
+// The Reprice route, after playApi: GET is the preview until a POST is answered, then nothing to reprice; `post` decides that answer.
+async function playReprice(page: Page, jobId: string, preview: unknown, post: (request: Request) => [number, unknown]) {
+  let moved = false;
+  await page.route(`**/api/jobs/${jobId}/reprice`, (route: Route, request: Request) => {
+    if (request.method() === 'GET') return route.fulfill({ json: moved ? { job: { revision: 4 }, reprice: null } : preview });
+    moved = true;
+    const [status, json] = post(request);
+    return route.fulfill({ status, json });
+  });
+}
+
+// The server's Reprice preview at job revision 3: version 1 at $240.00, the newest, version 2, at $360.00.
+const previewAt = () => ({
+  job: { revision: 3 },
+  reprice: { pinned: { version: 1, price: '$240.00', refused: null }, newest: { versionId: randomUUID(), version: 2, price: '$360.00', refused: null } },
+});
+
+test('the owner reads the before/after preview in a dialog, cancels, then confirms the reprice; nothing can be signed until scope is confirmed again and the revised estimate is made', async ({ page }) => {
   const job = { id: randomUUID(), status: 'submitted', currentDraftId: randomUUID(), revision: 3 };
   const first = estimateFor(team, job.id, job.currentDraftId, 'owner');
-  const revised = { ...first, id: randomUUID(), proposal: { ...first.proposal!, revised: 'Revised November 19, 2026: was $240.00' } };
-  const answers: Answers = { estimate: first, make: () => [201, { job, estimate: revised }] };
+  // The revised estimate is a new record on the new draft (a fresh Finish), headed "Revised {date}".
+  const finishedDraftId = randomUUID();
+  const revised = estimateOfSnapshot(team, record(job.id, finishedDraftId), 'owner', null, { letter: false }, 'Revised November 19, 2026: was $240.00');
+  expect([revised.proposalSha256, revised.submissionId]).not.toEqual([first.proposalSha256, first.submissionId]);
+  let finished = false;
+  const answers: Answers = { estimate: first, make: () => (finished ? [201, { job, estimate: revised }] : [409, { error: 'scope_not_confirmed' }]) };
   await playApi(page, job, answers);
-  const preview = {
-    job: { revision: 3 },
-    reprice: { pinned: { version: 1, price: '$240.00' }, newest: { versionId: randomUUID(), version: 2, price: '$360.00', refused: null } },
-  };
+  const preview = previewAt();
   const sentReprice: unknown[] = [];
-  let repriced = false;
-  // Registered after playApi, so it answers the reprice route first.
-  await page.route(`**/api/jobs/${job.id}/reprice`, async (route: Route, request: Request) => {
-    if (request.method() === 'GET') return route.fulfill({ json: repriced ? { job: { revision: 4 }, reprice: null } : preview });
+  await playReprice(page, job.id, preview, (request) => {
     sentReprice.push(request.postDataJSON());
-    // The reprice voids the old estimate: the job has none until it is priced again.
-    repriced = true;
+    job.revision = 4;
     answers.estimate = null;
-    return route.fulfill({ json: { job: { ...job, revision: 4 }, pin: { sequence: 2, version: 2 } } });
+    return [200, { job: { ...job }, pin: { sequence: 2, version: 2 } }];
   });
   await signInTo(page, team.owner);
   await page.goto(`/sign-in/${team.address}/jobs/${job.id}/review`);
@@ -908,8 +923,14 @@ test('the owner reads the before/after preview in a dialog, cancels, then confir
   await expect(main.getByRole('checkbox', { name: /I reviewed the proposal/ })).toHaveCount(0);
   await expect(main.getByRole('region', { name: 'Newer prices are published' })).toHaveCount(0);
 
-  // The revised estimate is a separate estimate, made afterwards, headed "Revised {date}".
-  answers.estimate = revised;
+  // Pricing again at once is refused: the scope must be confirmed again on a new draft first.
+  await main.getByRole('button', { name: 'Price this job' }).click();
+  await expect(main.getByRole('alert').filter({ hasText: 'The scope was not confirmed' })).toBeVisible();
+  await expect(main.getByRole('heading', { name: 'Review before signing' })).toHaveCount(0);
+
+  // After the fresh Finish the revised estimate is a new record and proposal, headed "Revised {date}".
+  finished = true;
+  job.currentDraftId = finishedDraftId;
   await main.getByRole('button', { name: 'Price this job' }).click();
   await expect(main.getByRole('heading', { name: 'Review before signing' })).toBeVisible();
   await main.getByText('Proposal', { exact: true }).click();
@@ -920,17 +941,10 @@ test('a reprice refused because the job moved on reloads the job instead of leav
   const job = { id: randomUUID(), status: 'submitted', currentDraftId: randomUUID(), revision: 3 };
   const answers: Answers = { estimate: estimateFor(team, job.id, job.currentDraftId, 'owner') };
   await playApi(page, job, answers);
-  const preview = {
-    job: { revision: 3 },
-    reprice: { pinned: { version: 1, price: '$240.00' }, newest: { versionId: randomUUID(), version: 2, price: '$360.00', refused: null } },
-  };
-  let moved = false;
-  await page.route(`**/api/jobs/${job.id}/reprice`, async (route: Route, request: Request) => {
-    if (request.method() === 'GET') return route.fulfill({ json: moved ? { job: { revision: 4 }, reprice: null } : preview });
-    // Another device repriced first: this job has no current estimate now.
-    moved = true;
+  await playReprice(page, job.id, previewAt(), () => {
+    job.revision = 4;
     answers.estimate = null;
-    return route.fulfill({ status: 409, json: { error: 'stale_revision' } });
+    return [409, { error: 'stale_revision' }];
   });
   await signInTo(page, team.owner);
   await page.goto(`/sign-in/${team.address}/jobs/${job.id}/review`);
@@ -938,6 +952,24 @@ test('a reprice refused because the job moved on reloads the job instead of leav
   await main.getByRole('button', { name: 'Review and reprice' }).click();
   await page.getByRole('dialog', { name: 'Reprice this draft?' }).getByRole('button', { name: 'Reprice this draft' }).click();
   await expect(main.getByRole('heading', { name: 'Price this job' })).toBeVisible();
+  await expect(main.getByRole('heading', { name: 'Review before signing' })).toHaveCount(0);
+});
+
+test('a job signed elsewhere while the owner has Review open is read again, not left with its old signing controls', async ({ page }) => {
+  const job = { id: randomUUID(), status: 'submitted', currentDraftId: randomUUID(), revision: 3 };
+  const answers: Answers = { estimate: estimateFor(team, job.id, job.currentDraftId, 'owner') };
+  const sent = await playApi(page, job, answers);
+  await playReprice(page, job.id, previewAt(), () => {
+    job.status = 'signed';
+    job.revision = 4;
+    return [409, { error: 'job_signed' }];
+  });
+  await signInTo(page, team.owner);
+  await page.goto(`/sign-in/${team.address}/jobs/${job.id}/review`);
+  const main = page.getByRole('main');
+  await main.getByRole('button', { name: 'Review and reprice' }).click();
+  await page.getByRole('dialog', { name: 'Reprice this draft?' }).getByRole('button', { name: 'Reprice this draft' }).click();
+  await expect.poll(() => sent).toContain(`GET /api/jobs/${job.id}/agreements`);
   await expect(main.getByRole('heading', { name: 'Review before signing' })).toHaveCount(0);
 });
 

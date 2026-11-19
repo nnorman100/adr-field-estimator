@@ -10,7 +10,7 @@ import { agreementAnswerOf, type SignedAgreement } from '@/lib/agreements/screen
 import type { BrowserSignInConfig } from '@/lib/config';
 import { canRepriceOf } from '@/lib/estimates/reprice-screen';
 import type { EstimateView } from '@/lib/estimates/result';
-import { notReadyReasons, outcomeOf, reviewAnswerOf, reviewerOf, type Next, type ReviewJob, type Reviewer } from '@/lib/estimates/screen';
+import { notReadyReasons, outcomeOf, reviewAnswerOf, reviewerOf, revisionOf, type Next, type ReviewJob, type Reviewer } from '@/lib/estimates/screen';
 import { signInOf, signOutOnRefusal, signOutOrShow, type FailedSignOut } from '@/lib/field/sign-out';
 import { belongsTo, callApi, companyAuth } from '@/lib/firebase-client';
 import { linkRightsOf, type DocumentLinkView } from '@/lib/links/screen';
@@ -41,6 +41,8 @@ type Ready = {
   // The owner's Reprice this draft (S5b-6, `job_reprice`).
   canReprice: boolean;
   job: ReviewJob;
+  // The job's revision as this screen read it; the Reprice banner checks its preview against it.
+  revision: number;
   estimate: EstimateView | null;
   agreement: SignedAgreement | null;
 };
@@ -98,7 +100,8 @@ function Review({ address, companyName, tenantId, jobId, config }: ReviewScreenP
       // The job is there, so a 404 here is the company's prices being switched off.
       if (answer.status === 404) return setPhase({ name: 'prices-off' });
       const read = answer.status === 200 ? reviewAnswerOf(answer.body) : null;
-      if (!read) return setPhase({ name: 'unavailable' });
+      const revision = answer.status === 200 ? revisionOf(answer.body) : null;
+      if (!read || revision === null) return setPhase({ name: 'unavailable' });
       // A signed job opens read-only, from the agreement's stored bytes (S5a-11).
       let agreement: SignedAgreement | null = null;
       if (read.job.status === 'signed') {
@@ -108,7 +111,7 @@ function Review({ address, companyName, tenantId, jobId, config }: ReviewScreenP
         if (!parsed?.agreement) return setPhase({ name: 'unavailable' });
         agreement = parsed.agreement;
       }
-      setPhase({ name: 'ready', user, reviewer, links: linkRightsOf(me.body), canReprice: canRepriceOf(me.body), ...read, agreement });
+      setPhase({ name: 'ready', user, reviewer, links: linkRightsOf(me.body), canReprice: canRepriceOf(me.body), revision, ...read, agreement });
     },
     [config, jobId, tenantId],
   );
@@ -179,7 +182,7 @@ function Review({ address, companyName, tenantId, jobId, config }: ReviewScreenP
   }
 }
 
-function ReviewBody({ user, reviewer, links, canReprice, job, estimate: first, agreement: signedFirst, finishHref, reload }: Ready & { finishHref: string; reload: () => void }) {
+function ReviewBody({ user, reviewer, links, canReprice, revision, job, estimate: first, agreement: signedFirst, finishHref, reload }: Ready & { finishHref: string; reload: () => void }) {
   const [estimate, setEstimate] = useState<EstimateView | null>(first);
   const [agreement, setAgreement] = useState<SignedAgreement | null>(signedFirst);
   const [issued, setIssued] = useState<{ tokens: IssuedLink[]; listed: DocumentLinkView[] }>({ tokens: [], listed: [] });
@@ -215,7 +218,7 @@ function ReviewBody({ user, reviewer, links, canReprice, job, estimate: first, a
     );
   }
 
-  const repriceBanner = canReprice ? <RepriceBanner user={user} jobId={job.id} onChanged={reload} /> : null;
+  const repriceBanner = canReprice ? <RepriceBanner user={user} jobId={job.id} revision={revision} onChanged={reload} /> : null;
 
   if (!estimate) {
     return (

@@ -20,6 +20,12 @@ export function reviewerOf(body: unknown): Reviewer | null {
   return { canPrice: capabilities.includes('audit'), canSign: capabilities.includes('sign') };
 }
 
+/** The job's revision in an estimate route's answer, which the Reprice banner checks its preview against; null for an answer without one. */
+export function revisionOf(body: unknown): number | null {
+  const revision = field(field(body, 'job'), 'revision');
+  return typeof revision === 'number' ? revision : null;
+}
+
 export type ReviewJob = { id: string; status: string; currentDraftId: string };
 
 export type ReviewAnswer = { job: ReviewJob; estimate: EstimateView | null };
@@ -46,11 +52,21 @@ export function dollars(amount: string): string {
   return `${sign}$${whole!.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${cents}`;
 }
 
+type Priced = { mode: 'range' | 'single'; low: { total: string }; high: { total: string } | null };
+
+/** A price as the proposal states it: one amount, or the range from low to high. */
+export function priceText(totals: Priced): string {
+  return totals.mode === 'range' && totals.high ? `${dollars(totals.low.total)} to ${dollars(totals.high.total)}` : dollars(totals.low.total);
+}
+
+/** The customer price line the review and the proposal print. */
+export function customerPriceLine(totals: Priced): string {
+  return totals.mode === 'range' && totals.high ? `Customer estimate range: ${priceText(totals)}` : `Price: ${priceText(totals)}`;
+}
+
 /** The customer price, and the itemized total beside it (ARCHITECTURE.md, Product rules §2). */
 export function priceLines(totals: EstimateView['totals']): { customer: string; itemized: string } {
-  const itemized = `Itemized total: ${dollars(totals.low.total)}`;
-  if (totals.mode === 'single' || !totals.high) return { customer: `Price: ${dollars(totals.low.total)}`, itemized };
-  return { customer: `Customer estimate range: ${dollars(totals.low.total)} to ${dollars(totals.high.total)}`, itemized };
+  return { customer: customerPriceLine(totals), itemized: `Itemized total: ${dollars(totals.low.total)}` };
 }
 
 /** The price-point adjustment of each end the customer price shows, untaxed (S4-4e); null when neither end has one. */

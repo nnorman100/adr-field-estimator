@@ -4,37 +4,57 @@ import type { User } from 'firebase/auth';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import type { RepricePreview } from '@/lib/estimates/service';
-import { repriceLines, repriceOutcomeOf, repricePreviewOf } from '@/lib/estimates/reprice-screen';
+import { repriceLines, repriceOutcomeOf, repricePreviewOf, screenOutOfDate } from '@/lib/estimates/reprice-screen';
 import { callApi } from '@/lib/firebase-client';
 
 // The owner's Reprice this draft banner (S5b-6, pricing plan S5b-1): shown on Review before signing
 // only when newer prices are published than the ones the job is pinned to. The banner opens a dialog
 // with the server's before/after preview; nothing is sent until the owner confirms in it, and Cancel
-// (or Esc) sends nothing. The confirmation sends the preview's version and the job revision it was
-// read at. A reprice voids the current estimate and its scope confirmation, and a job that changed
-// under the preview is no longer what this screen shows, so in both cases the job and its estimate
-// are read again. The preview adds no rule of its own: when it cannot price, it says why and the
+// (or Esc) sends nothing. The dialog shows one preview, taken when it was opened, and its Confirm
+// sends exactly that preview's version and job revision; the action stays unavailable until a
+// refusal's refreshed preview is in, so a dialog is never opened on a preview about to be replaced.
+// A reprice voids the current estimate and its scope confirmation, and a job that was signed,
+// changed or made unreachable elsewhere is no longer what this screen shows, so in those cases, and
+// when the preview's job revision is not the one Review loaded, Review reads the job and its
+// estimate again. The preview adds no rule of its own: when it cannot price, it says why and the
 // action stays, and the server decides.
 export const REPRICE_OPEN = 'Review and reprice';
 export const REPRICE_TITLE = 'Reprice this draft?';
 export const REPRICE_CONFIRM = 'Reprice this draft';
 
 type Read = { name: 'loading' } | { name: 'unavailable' } | { name: 'ready'; preview: RepricePreview };
+// The one dialog instance: what it shows and what its Confirm sends.
+type Shown = { versionId: string; revision: number; lines: { before: string; after: string } };
 
-export function RepriceBanner({ user, jobId, onChanged }: { user: User; jobId: string; onChanged: () => void }) {
+export function RepriceBanner({ user, jobId, revision, onChanged }: { user: User; jobId: string; revision: number; onChanged: () => void }) {
   const [read, setRead] = useState<Read>({ name: 'loading' });
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  const [shown, setShown] = useState<Shown | null>(null);
   const dialog = useRef<HTMLDialogElement>(null);
   // One change id per confirmation basis, kept for a retry after a lost answer.
   const change = useRef<{ key: string; id: string } | null>(null);
   const path = `/api/jobs/${encodeURIComponent(jobId)}/reprice`;
+  const changed = useRef(onChanged);
+  useEffect(() => {
+    changed.current = onChanged;
+  });
 
+  // The preview as it is now, or Review read again when it shows the screen is out of date.
   const load = useCallback(async (): Promise<Read> => {
     const answer = await callApi(user, path);
+    if (screenOutOfDate(answer.status, answer.body)) {
+      changed.current();
+      return { name: 'loading' };
+    }
     const preview = answer.status === 200 ? repricePreviewOf(answer.body) : null;
-    return preview ? { name: 'ready', preview } : { name: 'unavailable' };
-  }, [user, path]);
+    if (!preview) return { name: 'unavailable' };
+    if (preview.job.revision !== revision) {
+      changed.current();
+      return { name: 'loading' };
+    }
+    return { name: 'ready', preview };
+  }, [user, path, revision]);
 
   useEffect(() => {
     let live = true;
@@ -45,6 +65,10 @@ export function RepriceBanner({ user, jobId, onChanged }: { user: User; jobId: s
       live = false;
     };
   }, [load]);
+
+  useEffect(() => {
+    if (shown && !dialog.current?.open) dialog.current?.showModal();
+  }, [shown]);
 
   if (read.name === 'loading') return null;
   if (read.name === 'unavailable') {
@@ -57,26 +81,24 @@ export function RepriceBanner({ user, jobId, onChanged }: { user: User; jobId: s
   const { preview } = read;
   const reprice = preview.reprice;
   if (!reprice) return null;
-  const lines = repriceLines(reprice);
+  const open = () => {
+    setProblem(null);
+    setShown({ versionId: reprice.newest.versionId, revision: preview.job.revision, lines: repriceLines(reprice) });
+  };
 
-  async function confirm(basis: { versionId: string; revision: number }) {
+  async function confirm(basis: Shown) {
     const key = `${basis.versionId}/${basis.revision}`;
     if (change.current?.key !== key) change.current = { key, id: crypto.randomUUID() };
     setBusy(true);
-    setProblem(null);
     const answer = await callApi(user, path, {
       method: 'POST',
       json: { revision: basis.revision, changeId: change.current.id, versionId: basis.versionId },
     });
-    setBusy(false);
-    if (answer.status === 200) return onChanged();
-    const code = answer.body !== null && typeof answer.body === 'object' ? (answer.body as { error?: unknown }).error : undefined;
-    // The job moved on since it was opened (another device repriced, or it was edited): what this
-    // screen shows is out of date, so the job and its estimate are read again.
-    if (code === 'stale_revision') return onChanged();
+    if (answer.status === 200 || screenOutOfDate(answer.status, answer.body)) return changed.current();
     setProblem(repriceOutcomeOf(answer.status, answer.body));
     // A refusal for a changed basis shows the preview as it is now.
     if (answer.status === 409) setRead(await load());
+    setBusy(false);
   }
 
   return (
@@ -93,7 +115,7 @@ export function RepriceBanner({ user, jobId, onChanged }: { user: User; jobId: s
       <p role="status" className="text-sm">
         {busy ? 'Repricing…' : ''}
       </p>
-      <Button disabled={busy} onClick={() => dialog.current?.showModal()}>
+      <Button disabled={busy} onClick={open}>
         {REPRICE_OPEN}
       </Button>
       <dialog
@@ -103,7 +125,9 @@ export function RepriceBanner({ user, jobId, onChanged }: { user: User; jobId: s
         onClose={(event) => {
           const value = event.currentTarget.returnValue;
           event.currentTarget.returnValue = '';
-          if (value === 'reprice') void confirm({ versionId: reprice.newest.versionId, revision: preview.job.revision });
+          const basis = shown;
+          setShown(null);
+          if (value === 'reprice' && basis) void confirm(basis);
         }}
         className="m-auto w-[calc(100%-2rem)] max-w-md overscroll-contain rounded-2xl border border-input bg-background p-6 text-foreground backdrop:overflow-hidden backdrop:overscroll-contain backdrop:bg-black/40"
       >
@@ -111,8 +135,8 @@ export function RepriceBanner({ user, jobId, onChanged }: { user: User; jobId: s
           {REPRICE_TITLE}
         </h2>
         <ul id="reprice-text" className="mt-3 list-disc pl-5">
-          <li>{lines.before}</li>
-          <li>{lines.after}</li>
+          <li>{shown?.lines.before}</li>
+          <li>{shown?.lines.after}</li>
         </ul>
         <p className="mt-3 text-sm">
           Repricing replaces this job&apos;s estimate. The scope must then be confirmed again: go back to editing, confirm it, then finish and review. The revised

@@ -97,15 +97,18 @@ With the owner's `job_reprice` key, on a job that is not signed, the screen read
 `GET /api/jobs/{id}/reprice`. When newer prices are published than the ones the job is pinned to, a
 "Newer prices are published" banner says which prices version the job is priced from and offers
 "Review and reprice". That opens a dialog, "Reprice this draft?", with the job's last submitted
-scope priced at the pinned prices and at the newest (or why the newest prices cannot price it: the
-action stays and the server decides), and what a reprice does. Nothing is sent until "Reprice this
-draft" in the dialog; Cancel and Esc send nothing. The confirmation sends the version and job
-revision the preview was read at, with a change id kept for a retry; a refusal for a changed basis
-shows its message and reads the preview again, and a job that changed since it was opened (another
-device repriced it, or it was edited) reloads the job and its estimate. When the preview cannot be
-read, the screen says so. After a reprice the job reloads: the old estimate, its proposal and its
-signing actions are gone, and the scope must be confirmed again through Back to editing and Finish.
-The revised estimate's proposal shows its "Revised {date}" line under the heading (with the previous
+scope priced at the pinned prices and at the newest, either of which may instead say why the record
+cannot be priced from it (the action stays and the server decides), and what a reprice does.
+Nothing is sent until "Reprice this draft" in the dialog; Cancel and Esc send nothing. The dialog
+shows one preview, taken when it was opened, and its confirmation sends exactly that preview's
+version and job revision, with a change id kept for a retry; the action is unavailable until a
+refusal for a changed basis has shown its message and read the preview again. Review reads the job
+and its estimate again, rather than keep what it shows, when the preview's job revision is not the
+one Review loaded, when a reprice or the preview answers that the job moved (`stale_revision`),
+was signed (`job_signed`) or is no longer reachable (403, 404, 410), and after a reprice: the old
+estimate, its proposal and its signing actions are gone, and the scope must be confirmed again
+through Back to editing and Finish. When the preview cannot be read, the screen says so (a status
+note). The revised estimate's proposal shows its "Revised {date}" line under the heading (with the previous
 price when the company's "Show the previous price on a revised estimate" was on when it was made),
 and it needs a new signature. Estimator and office never see the banner.
 
