@@ -373,6 +373,11 @@ test('no screen shows or edits customer data', async ({ page }) => {
   const jobs = page.getByRole('main').getByRole('region', { name: 'Jobs' });
   await expect(jobs.getByRole('link')).toHaveText(['Open the jobs view']);
   await expect(jobs.getByRole('button')).toHaveCount(0);
+  // The section holds none of the company's job data, and nothing of it is read before the link
+  // is followed (the fake holds a signed job with this address, customer and email).
+  const seeded = fake.detail!;
+  for (const value of [seeded.job.propertyAddress, seeded.customer.name, seeded.customer.email]) await expect(jobs).not.toContainText(value);
+  expect(fake.made('GET', /\/jobs/)).toEqual([]);
   expect(
     await page.getByRole('main').evaluate((main) => {
       const copy = main.cloneNode(true) as HTMLElement;

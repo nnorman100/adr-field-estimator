@@ -85,11 +85,19 @@ test('the operator opens a signed job with its customer, claim, agreement and ev
   await expect(agreement.getByText('Signed by Pat Customer')).toBeVisible();
   await expect(agreement.getByText('Signed on the technician\'s phone, presented by Eddie Estimator.')).toBeVisible();
   await expect(agreement.getByText('Price: $240.00', { exact: true })).toBeVisible();
+  // Every signed document as stored: the proposal above, the itemized claim, the letter and the
+  // photo log, whose rows have no image button (images open from Evidence only).
+  await expect(agreement.getByRole('heading', { name: 'Itemized claim' })).toBeVisible();
+  await expect(agreement.getByText('Synthetic scope defense letter.')).toBeVisible();
+  await expect(agreement.getByText(/^Photo 1 · Kitchen · shot: Overview/)).toBeVisible();
+  await expect(agreement.getByRole('button')).toHaveCount(0);
+  // The photo of the signed log keeps the log's number in Evidence; the signature is named apart.
   const evidence = main.getByRole('region', { name: 'Evidence' });
   await expect(evidence.getByText('Photo 1', { exact: true })).toBeVisible();
-  await expect(evidence.getByText('Signature 2', { exact: true })).toBeVisible();
+  await expect(evidence.getByText('Signature (received 2)', { exact: true })).toBeVisible();
+  await expect(main.getByText('These views need a connection.')).toBeVisible();
   await expectAccessible(page);
-  await expectReadOnly(page, fake, ['Sign out', 'Show photo 1', 'Show signature 2']);
+  await expectReadOnly(page, fake, ['Sign out', 'Show photo 1', 'Show signature (received 2)']);
   // One read for opening the job, and no image fetched until one is asked for.
   expect(fake.made('GET', /\/jobs\/[^/]+$/)).toHaveLength(1);
   expect(fake.made('GET', /\/photos\//)).toEqual([]);
@@ -114,4 +122,35 @@ test('a job of another company, or no job at all, is not shown', async ({ page }
   // An address that is not a job id never reaches the server.
   await page.goto(`/operator/${seed.tenantOperators}/companies/${companyC.id}/jobs/not-a-job`);
   await expect(page.getByRole('heading', { name: 'Job not found', level: 1 })).toBeVisible();
+});
+
+async function openSignedJob(page: Page, fake: FakePlatform) {
+  await openAsOperator(page, fake);
+  await page.getByRole('link', { name: 'Manage Company A Restoration' }).click();
+  await page.getByRole('link', { name: 'Open the jobs view' }).click();
+  await page.getByRole('link', { name: '12 Synthetic Way' }).click();
+  await expect(page.getByRole('heading', { name: '12 Synthetic Way', level: 1 })).toBeVisible();
+}
+
+test('an image refused because the account is no longer an operator takes the job off the screen', async ({ page }) => {
+  const fake = new FakePlatform();
+  await openSignedJob(page, fake);
+  await expect(page.getByText('pat@example.com')).toBeVisible();
+  fake.images = 'not-an-operator';
+  await page.getByRole('main').getByRole('region', { name: 'Evidence' }).getByRole('button', { name: 'Show photo 1' }).click();
+  await expect(page.getByText('This account is not a platform operator.')).toBeVisible();
+  // Nothing of the job stays: address, customer, claim and signed record are gone.
+  for (const text of ['12 Synthetic Way', 'Pat Customer', 'pat@example.com', 'CLM-1']) await expect(page.getByText(text)).toHaveCount(0);
+});
+
+test('an image that fails for want of a connection says so', async ({ page }) => {
+  const fake = new FakePlatform();
+  await openSignedJob(page, fake);
+  fake.images = 'no-connection';
+  const evidence = page.getByRole('main').getByRole('region', { name: 'Evidence' });
+  await evidence.getByRole('button', { name: 'Show photo 1' }).click();
+  await expect(evidence.getByRole('alert')).toHaveText('Needs a connection. Check the signal, then try again.');
+  // The job stays on screen and the image can be asked for again.
+  await expect(page.getByText('pat@example.com')).toBeVisible();
+  await expect(evidence.getByRole('button', { name: 'Show photo 1' })).toBeEnabled();
 });

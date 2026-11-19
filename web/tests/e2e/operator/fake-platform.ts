@@ -23,6 +23,8 @@ export class FakePlatform {
   stale = false;
   // While set, reading the company list fails as the server being unavailable.
   listUnavailable = false;
+  // While set, an image read is refused as for an operator turned off, or fails as a dropped connection.
+  images: 'answer' | 'not-an-operator' | 'no-connection' = 'answer';
   // Company A's jobs for the support view (S5b-5): two, so a page of one leaves a second to show.
   jobs: SupportJobListItem[] = [];
   // The signed job's detail, with one photo and its signature, and the bytes the photo route sends.
@@ -133,6 +135,8 @@ export class FakePlatform {
     if (kinds.length !== 1) return json(400, { error: 'invalid_request' });
     const item = detail.evidence.find((candidate) => candidate.photoId === photoId && candidate.kind === kinds[0]);
     if (!item) return json(404, { error: 'not_found' });
+    if (this.images === 'not-an-operator') return json(403, { error: 'not_an_operator' });
+    if (this.images === 'no-connection') return route.abort('internetdisconnected');
     return route.fulfill({ status: 200, contentType: item.contentType, headers: { 'cache-control': 'no-store' }, body: this.photoBytes });
   }
 }
@@ -181,7 +185,7 @@ function signedDetail(job: SupportJobListItem): Omit<SupportJobView, 'company'> 
           price: { mode: 'single', itemized_total: '240.00', low: end, high: null, explanation: null, after_hours_label: 'After hours' },
           basis: { submission_id: randomUUID(), snapshot_sha256: 'd'.repeat(64), price_version: 1, content_sha256: 'e'.repeat(64), engine_version: 'dryscope-v3' },
         },
-        documents: { itemized_claim: [], letter: '', photo_log: [], claim: {}, compliance_notes: [] },
+        documents: { itemized_claim: [], letter: 'Synthetic scope defense letter.', photo_log: [{ id: photoId, room: 'Kitchen', shot_tag: 'Overview', sha256: 'f'.repeat(64) }], claim: {}, compliance_notes: [] },
         basis: { estimate_id: randomUUID(), submission_id: randomUUID() },
       },
     },
