@@ -102,8 +102,10 @@ export function RoomCard({
   // Only the boxes the person changed; the rest always show the room as last read.
   const [edits, setEdits] = useState<FormValues>({});
   const [listEdits, setListEdits] = useState<RoomLists>({});
+  // A prep task typed and not added yet (RoomPrepTasks).
+  const [ownTask, setOwnTask] = useState('');
   const values = withEdits(ROOM_FIELDS, stored, edits);
-  const dirty = Object.keys(edits).length > 0 || Object.keys(listEdits).length > 0;
+  const dirty = Object.keys(edits).length > 0 || Object.keys(listEdits).length > 0 || ownTask !== '';
   useEffect(() => {
     onDirty?.(roomId, dirty);
   }, [onDirty, roomId, dirty]);
@@ -209,6 +211,8 @@ export function RoomCard({
         templates={lists?.prepTasks ?? []}
         error={errors.prepTasks}
         readOnly={readOnly}
+        own={ownTask}
+        setOwn={setOwnTask}
       />
       <div className="flex flex-col gap-1">
         <label htmlFor={id('findings')} className="text-sm font-medium">

@@ -436,6 +436,32 @@ test('text typed in a room and not added stays on screen, read only, after the f
   await expect(page.getByLabel('New room name')).not.toBeEditable();
 });
 
+test('a prep task typed and not added stays on screen, read only, when the new owner removes its room', async ({ page, request }) => {
+  test.setTimeout(120_000);
+  const company = await seedCompany('owner-keeps-prep', { owner: 'owner', first: 'estimator' });
+  const { jobId, actorOf } = await seedJob(request, company, company.people.owner!, '97 Prep Row', [company.people.first!]);
+
+  await signIn(page, company, company.people.owner!);
+  await openJob(page, '97 Prep Row');
+  await page.getByLabel('New room name').fill('Den');
+  await page.getByRole('button', { name: 'Add room' }).click();
+  const den = page.getByRole('form', { name: 'Den' });
+  await expect(den).toBeVisible();
+  // Only the prep-task box is typed in: nothing else of the room is changed.
+  await den.getByLabel('Your own prep task').fill('Tape the vent');
+  await transfer(request, company, jobId, actorOf(company.people.first!));
+  await adminDb().doc(`companies/${company.id}/drafts/${await currentDraftOf(company.id, jobId)}`).update({ 'field.roomOrder': [] });
+  await main(page).getByRole('link', { name: 'Job coordination' }).click();
+  await page.getByRole('textbox', { name: 'Office notes' }).fill('Checked');
+  await page.getByRole('button', { name: 'Save notes' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Notes saved.' })).toBeVisible();
+  await main(page).getByRole('link', { name: 'Check Scope' }).click();
+  await expect(page.getByText(MOVED)).toBeVisible();
+  await expect(page.getByText('No rooms yet.')).toBeVisible();
+  await expect(den.getByLabel('Your own prep task')).toHaveValue('Tape the vent');
+  await expect(den.getByLabel('Your own prep task')).not.toBeEditable();
+});
+
 test('after the field work moves, the old phone shows its unsent photo read only and neither takes nor resends photos', async ({ page, request }) => {
   test.setTimeout(120_000);
   const company = await seedCompany('keep-photo', { owner: 'owner', office: 'office', first: 'estimator', second: 'estimator' });

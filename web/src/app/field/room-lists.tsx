@@ -158,6 +158,8 @@ export function RoomPrepTasks({
   templates,
   error,
   readOnly,
+  own,
+  setOwn,
 }: {
   id: string;
   stored: string[];
@@ -166,9 +168,12 @@ export function RoomPrepTasks({
   templates: string[];
   error: string | undefined;
   readOnly: boolean;
+  // The prep task typed and not added yet, held by the room card so it counts as a change typed and
+  // not saved, and the card stays on screen with it after a move (owner decision J5).
+  own: string;
+  setOwn: (text: string) => void;
 }) {
   const [pick, setPick] = useState('');
-  const [own, setOwn] = useState('');
   const tasks = edited ?? stored;
   const full = tasks.length >= MAX_PREP_TASKS;
   // A template's words are copied into the room when picked, so the record keeps them as they were.
