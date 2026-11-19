@@ -27,7 +27,7 @@ const ledger = `CREATE TABLE migration_ledger (
 describe('migration files', () => {
   it('loads the shipped migrations in order and nothing else', async () => {
     const files = await readMigrations(migrationsDirectory);
-    expect(files.map((file) => file.id)).toEqual(['0001_foundation', '0002_identity', '0003_runtime_role', '0004_sign_in_lookup', '0005_access_projection', '0006_platform_operator', '0007_sign_in_address', '0008_feature_flag_writes', '0009_price_tables', '0010_core_job_tables', '0011_submissions_agreements', '0012_ai_live_tables', '0013_company_documents', '0014_signing_links', '0015_office_jobs', '0016_job_drafts', '0017_definer_search_path']);
+    expect(files.map((file) => file.id)).toEqual(['0001_foundation', '0002_identity', '0003_runtime_role', '0004_sign_in_lookup', '0005_access_projection', '0006_platform_operator', '0007_sign_in_address', '0008_feature_flag_writes', '0009_price_tables', '0010_core_job_tables', '0011_submissions_agreements', '0012_ai_live_tables', '0013_company_documents', '0014_signing_links', '0015_office_jobs', '0016_job_drafts', '0017_definer_search_path', '0018_field_revision']);
     for (const file of files) expect(file.checksum).toMatch(/^[a-f0-9]{64}$/);
   });
 

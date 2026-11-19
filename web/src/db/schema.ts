@@ -359,10 +359,22 @@ export const jobs = pgTable(
     requestDigest: text('request_digest').notNull(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
+    // The drafts' life-cycle version (0018): raised by one by triggers on every life-cycle input, the
+    // highest one the sync has written to Firestore, and when it last rose (set by the trigger).
+    fieldRevision: bigint('field_revision', { mode: 'number' }).notNull().default(0),
+    fieldSyncedRevision: bigint('field_synced_revision', { mode: 'number' }).notNull().default(0),
+    fieldChangedAt: timestamp('field_changed_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    // The job a copy was made from, set when the copy is inserted (0018).
+    copiedFromJobId: uuid('copied_from_job_id'),
   },
   (t) => [
     primaryKey({ columns: [t.companyId, t.id] }),
     unique('jobs_company_current_draft_key').on(t.companyId, t.currentDraftId),
+    foreignKey({
+      name: 'jobs_copied_from_fkey',
+      columns: [t.companyId, t.copiedFromJobId],
+      foreignColumns: [t.companyId, t.id],
+    }),
     foreignKey({
       name: 'jobs_created_by_fkey',
       columns: [t.companyId, t.createdByActorId],

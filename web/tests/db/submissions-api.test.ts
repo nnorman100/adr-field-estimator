@@ -502,6 +502,35 @@ describe('the worker', () => {
     expect(await f.expectOneOutcome(h.seed.a, locked.jobId, locked.draftId)).toBe('aborted');
   });
 
+  // Migration 0018: a submission's status moving raises its job's field revision, which locks the job
+  // row. The worker locks the job row before the submission row, as a request does, so a request that
+  // holds the job and decides the expired attempt meanwhile finishes, and no one is cancelled.
+  it('locks the job before aborting an expired attempt, so a request holding the job decides it without a deadlock', async () => {
+    live.service = shortWindow();
+    const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
+    h.field.gate.read = () => new Promise<void>(() => {});
+    void f.submitShown(ESTIMATOR_A, jobId, draftId, manifest);
+    await until(() => h.field.draft(h.seed.a, draftId)?.state === 'submitting', 'the fence');
+    await expire();
+
+    const release = latch();
+    let held = false;
+    const request = h.admin.begin(async (sql) => {
+      await sql`SELECT id FROM jobs WHERE id = ${jobId} FOR UPDATE`;
+      held = true;
+      await release.wait;
+      await sql`UPDATE job_submissions SET status = 'aborted' WHERE job_id = ${jobId} AND status = 'pending'`;
+    });
+    await until(() => held, 'the job lock');
+    const worker = runSubmissionRepair(h.handle.db, h.field, { markerGraceSeconds: 0 });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    release.open();
+    await request;
+    expect(await worker).toEqual({ aborted: 0, marked: 1, failed: 0 });
+    expect(await f.expectOneOutcome(h.seed.a, jobId, draftId)).toBe('aborted');
+    expect(h.field.draft(h.seed.a, draftId)?.state).toBe('editing');
+  });
+
   it('writes a submitted marker the request could not, after the grace', async () => {
     const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
     h.field.failNext.markSubmitted = true;
