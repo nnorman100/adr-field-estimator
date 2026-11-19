@@ -13,6 +13,9 @@ export type FakeDrafts = DraftStore & {
   // The job each draft was made for, by "company/draft" (`jobId`, security audit F1); a draft with
   // none was made before that key.
   jobOf: Map<string, string>;
+  // The drafts that are archived, by "company/draft" (kept by tests/submissions/field-fake.ts): no
+  // field owner is named on one (src/lib/jobs/drafts.ts).
+  archived: Set<string>;
   // Every call to ensure, in order, including the ones that found the draft there.
   calls: { companyId: string; draftId: string; fieldOwnerUid: string | null }[];
   // Every call to setFieldOwner, in order (S5b-1).
@@ -26,6 +29,7 @@ export function fakeDrafts(): FakeDrafts {
   const store: FakeDrafts = {
     made: new Map(),
     jobOf: new Map(),
+    archived: new Set(),
     projected: new Map(),
     async projectJob(companyId, jobId, projection) {
       const key = `${companyId}/${jobId}`;
@@ -71,6 +75,7 @@ export function fakeDrafts(): FakeDrafts {
       const draft = store.made.get(key);
       if (!draft) return 'missing';
       if (draftOfOtherJob(store.jobOf.get(key), jobId)) return 'taken';
+      if (store.archived.has(key)) return 'archived';
       const stored = draft.fieldOwnerRevision ?? 0;
       let result: 'set' | 'same' | 'newer' = 'set';
       if (stored > revision) result = 'newer';

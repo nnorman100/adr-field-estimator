@@ -94,7 +94,7 @@ describe('an archived draft', () => {
     // Asked again at the same revision, nothing changes.
     expect(await store.archiveDraft(a.id, a.job, a.draft, 4)).toBe('same');
 
-    expect(await store.restoreDraft(a.id, a.draft, 'editing', 5)).toBe('set');
+    expect(await store.restoreDraft(a.id, a.job, a.draft, 'editing', 5)).toBe('set');
     expect((await db.doc(a.at).get()).data()).toMatchObject({ state: 'editing', archiveRevision: 5 });
     expect(await updateDoc(a.estimator.caller, a.at, { field: { notes: 'back at work', roomOrder: ['kitchen'] } })).toBe(200);
     // The slower archive request that read the job before the restore changes nothing.
@@ -109,7 +109,7 @@ describe('an archived draft', () => {
     const fence = { submissionId: randomUUID(), epoch: 'epoch-1' };
     await db.doc(path(company, submitted)).create({ fieldOwnerUid: 'uid-1', state: 'submitted', fence, field: { notes: 'as submitted' } });
     expect(await store.archiveDraft(company, job, submitted, 3)).toBe('set');
-    expect(await store.restoreDraft(company, submitted, 'submitted', 4)).toBe('set');
+    expect(await store.restoreDraft(company, job, submitted, 'submitted', 4)).toBe('set');
     expect((await db.doc(path(company, submitted)).get()).data()).toEqual({
       fieldOwnerUid: 'uid-1',
       state: 'submitted',
@@ -121,7 +121,7 @@ describe('an archived draft', () => {
     // fence on it now is untouched and that archive can no longer land.
     const fenced = randomUUID();
     await db.doc(path(company, fenced)).create({ fieldOwnerUid: 'uid-1', state: 'submitting', fence, field: {} });
-    expect(await store.restoreDraft(company, fenced, 'editing', 6)).toBe('set');
+    expect(await store.restoreDraft(company, job, fenced, 'editing', 6)).toBe('set');
     expect((await db.doc(path(company, fenced)).get()).data()).toMatchObject({ state: 'submitting', fence, archiveRevision: 6 });
     expect(await store.archiveDraft(company, job, fenced, 5)).toBe('newer');
     // A draft that is not there: the archive leaves its placeholder (below).
@@ -150,9 +150,10 @@ describe('an archived draft', () => {
   });
 });
 
-// The fence where the draft is missing: an archive that finds no draft leaves a placeholder under its
-// id, so a draft made later without the job's lock (src/lib/jobs/office.ts remakeCurrentDraft) is not
-// made over it and nobody is named on it; the restore takes it away, and the draft is made then.
+// The fence where the draft is missing: an archive or restore that finds no draft leaves a placeholder
+// under its id that keeps the job revision, so a draft made later without the job's lock
+// (src/lib/jobs/office.ts remakeCurrentDraft) is not made over an archived job's, nobody is named on
+// it, and an older archive or restore never lands after a newer one.
 describe('a missing draft of an archived job', () => {
   it('holds the archive’s placeholder, which nothing is made over and nobody is named on, until the restore', async () => {
     const a = await company('archive-missing');
@@ -166,7 +167,10 @@ describe('a missing draft of an archived job', () => {
     // Asked again at the same revision, nothing changes.
     expect(await store.archiveDraft(a.id, a.job, draft, 3)).toBe('same');
 
-    expect(await firestoreFenceStore(db).createFrom(a.id, a.job, draft, null, manifest, previous)).toBe('exists');
+    // No creation reports a draft that is not there, and none is made over the placeholder.
+    expect(await firestoreFenceStore(db).createFrom(a.id, a.job, draft, null, manifest, previous)).toBe('archived');
+    expect(await firestoreDraftStore(db).ensure(a.id, a.job, draft, a.estimator.uid)).toBe('archived');
+    expect(await store.createCopy(a.id, a.job, draft, a.estimator.uid, manifest)).toBe('archived');
     expect(await firestoreDraftStore(db).setFieldOwner(a.id, a.job, draft, a.estimator.uid, 9)).toBe('missing');
     expect(await firestoreFenceStore(db).createFrom(a.id, randomUUID(), draft, null, manifest, previous)).toBe('taken');
     expect((await db.doc(at).get()).data()).toEqual(placeholder);
@@ -175,11 +179,49 @@ describe('a missing draft of an archived job', () => {
     for (const who of [a.estimator, a.owner, a.office]) expect(await writes(who.caller, at)).toEqual([403, 403, 403, 403, 403, 403, 403]);
 
     // A slower restore that read the job before this archive changes nothing.
-    expect(await store.restoreDraft(a.id, draft, 'editing', 2)).toBe('newer');
-    expect(await store.restoreDraft(a.id, draft, 'editing', 4)).toBe('set');
-    expect((await db.doc(at).get()).exists).toBe(false);
+    expect(await store.restoreDraft(a.id, a.job, draft, 'editing', 2)).toBe('newer');
+    // The restore keeps the revision where there is still no draft, so the archive it follows, delayed
+    // in the field database, cannot land after it and bring the placeholder back.
+    expect(await store.restoreDraft(a.id, a.job, draft, 'editing', 4)).toBe('set');
+    expect((await db.doc(at).get()).data()).toEqual({ jobId: a.job, state: 'absent', placeholder: true, archiveRevision: 4 });
+    expect(await store.archiveDraft(a.id, a.job, draft, 3)).toBe('newer');
+    expect(await firestoreDraftStore(db).setFieldOwner(a.id, a.job, draft, a.estimator.uid, 9)).toBe('missing');
+
+    // The draft is made over the restored job's placeholder and carries the revision forward.
     expect(await firestoreFenceStore(db).createFrom(a.id, a.job, draft, null, manifest, previous)).toBe('created');
-    expect((await db.doc(at).get()).data()).toMatchObject({ jobId: a.job, state: 'editing', field: manifest.draft, previous });
+    expect((await db.doc(at).get()).data()).toEqual({
+      jobId: a.job,
+      state: 'editing',
+      field: manifest.draft,
+      previous,
+      archiveRevision: 4,
+    });
+    expect((await db.collection(`${at}/rooms`).get()).size).toBe(1);
+    expect(await store.archiveDraft(a.id, a.job, draft, 3)).toBe('newer');
+    expect((await db.doc(at).get()).get('state')).toBe('editing');
+
+    // A stamp already on its way when the job is archived again names nobody on the archived draft.
+    expect(await store.archiveDraft(a.id, a.job, draft, 5)).toBe('set');
+    expect(await firestoreDraftStore(db).setFieldOwner(a.id, a.job, draft, a.estimator.uid, 9)).toBe('archived');
+    expect((await db.doc(at).get()).get('fieldOwnerUid')).toBeUndefined();
+    expect(await getDoc(a.estimator.caller, at)).toBe(403);
+  });
+
+  it('keeps the revision of a restore that found no draft, and a draft made then is the restored job’s', async () => {
+    const a = await company('restore-missing');
+    const draft = randomUUID();
+    const at = path(a.id, draft);
+    expect(await store.restoreDraft(a.id, a.job, draft, 'editing', 6)).toBe('set');
+    expect(await store.archiveDraft(a.id, a.job, draft, 5)).toBe('newer');
+    expect(await firestoreDraftStore(db).ensure(a.id, a.job, draft, a.estimator.uid)).toBe('created');
+    expect((await db.doc(at).get()).data()).toEqual({
+      jobId: a.job,
+      fieldOwnerUid: a.estimator.uid,
+      state: 'editing',
+      field: {},
+      archiveRevision: 6,
+    });
+    expect(await updateDoc(a.estimator.caller, at, { field: { notes: 'mine' } })).toBe(200);
   });
 });
 
