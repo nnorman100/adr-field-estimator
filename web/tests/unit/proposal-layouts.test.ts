@@ -291,9 +291,10 @@ describe('one company’s settings never reach another company’s documents', (
 
 describe('the letter proposal with a price-point adjustment (S4-4e)', () => {
   // Work $240.00 + $37.50 + $150.00 = $427.50; 10% tax = $42.75; $470.25 rounds up to $499.00 (step 100, ending 99): $28.75.
-  function rounded(showLineBreakdown: boolean): { proposal: Proposal; html: string } {
+  function rounded(showLineBreakdown: boolean, pricePoint = true): { proposal: Proposal; html: string } {
     const base = table(showLineBreakdown) as { items: Array<Record<string, Json>>; policy: Record<string, Json> };
-    const priceTable = { ...base, items: base.items.map((row) => ({ ...row, taxable: true })), policy: { ...base.policy, sales_tax: { enabled: true, percent: '10' }, price_point: { step: '100', ending: '99' } } };
+    const policy = { ...base.policy, sales_tax: { enabled: true, percent: '10' }, ...(pricePoint ? { price_point: { step: '100', ending: '99' } } : {}) };
+    const priceTable = { ...base, items: base.items.map((row) => ({ ...row, taxable: true })), policy };
     const result = priceEstimate(priceTable as Json, estimateInput(snapshot(1990), LETTER).job);
     if (!result.ok) expect.fail(`refused at ${result.stage}: ${result.error}`);
     const letter = proposalOf({ estimate: result, company: LETTER, showLineBreakdown, ...BASIS });
@@ -314,5 +315,15 @@ describe('the letter proposal with a price-point adjustment (S4-4e)', () => {
     const { html } = rounded(false);
     expect(html).not.toContain('Sales tax');
     expect(html).toContain('Price-point adjustment (not taxed): $28.75');
+  });
+
+  it('a letter proposal made before price points, with line prices shown, prints as it was signed: no charge rows', () => {
+    const { proposal: letter, html } = rounded(true, false);
+    expect(letter.price.low.price_point).toBeUndefined();
+    expect(letter.price.low).toMatchObject({ subtotal: '427.50', tax: '42.75', total: '470.25' });
+    expect(html).not.toContain('Subtotal');
+    expect(html).not.toContain('Sales tax');
+    expect(html).not.toContain('Price-point adjustment');
+    expect(html).toContain('Price: $470.25');
   });
 });
