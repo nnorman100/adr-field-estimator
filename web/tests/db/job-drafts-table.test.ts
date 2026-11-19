@@ -224,7 +224,7 @@ describe('migration 0016: the fill of existing jobs', () => {
       const fresh = await job(other);
       const jobs = await admin`SELECT * FROM jobs ORDER BY id`;
 
-      expect((await applyMigrations(migratorUrl, migrationsDirectory)).applied).toEqual(['0016_job_drafts']);
+      expect((await applyMigrations(migratorUrl, migrationsDirectory)).applied).toEqual(['0016_job_drafts', '0017_definer_search_path']);
       expect(await admin`SELECT company_id::text AS company, draft_id::text AS draft, job_id::text AS job FROM job_drafts ORDER BY job_id, draft_id`).toEqual(
         [
           ...[earlier, first].sort().map((draft) => ({ company, draft, job: moved })),
