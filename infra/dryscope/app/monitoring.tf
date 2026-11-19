@@ -152,9 +152,12 @@ resource "google_monitoring_alert_policy" "api_down" {
 # uses). It is a log alert on the Service Health event log, so it needs the Service Health API,
 # which the data root switches on (documents/docs.cloud.google.com/service-health/docs/
 # configure-alerts-terraform and .../example-alerting-policies). Service Health events belong to
-# the project, so while test and live share project dryscope, applying both roots sends each event
-# twice. A log alert sends at most 20 notifications a day, hence the five-minute rate limit.
+# the project, and test and live share project dryscope, so with both roots applying it each event
+# would be sent twice; only live has it (owner decision, 2026-11-19). A log alert sends at most 20
+# notifications a day, hence the five-minute rate limit.
 resource "google_monitoring_alert_policy" "service_health" {
+  count = var.environment == "live" ? 1 : 0
+
   project               = var.project_id
   display_name          = "DryScope ${var.environment}: Google Cloud incident"
   combiner              = "OR"

@@ -922,7 +922,7 @@
    }
   },
   {
-   "address": "google_monitoring_alert_policy.service_health",
+   "address": "google_monitoring_alert_policy.service_health[0]",
    "type": "google_monitoring_alert_policy",
    "change": {
     "actions": [

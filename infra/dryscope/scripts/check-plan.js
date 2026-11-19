@@ -420,10 +420,14 @@ function expectedPlan(root, env) {
       'google_monitoring_notification_channel.email',
     );
     others.push('google_monitoring_alert_policy.api_latency');
-    // Optional only because the captured real S7-2 plan (fixtures/app-test.s7-2-reapply.plan.json)
-    // predates this alert; the mocked plans hold it and app/tests/app.tftest.hcl requires it.
-    others.push('google_monitoring_alert_policy.service_health');
-    optional.add('google_monitoring_alert_policy.service_health');
+    // Only live has the Google Cloud incident alert (app/monitoring.tf), so a project shared by test
+    // and live is not emailed twice. It is optional on live only because the captured real S7-2 plan
+    // (fixtures/app-test.s7-2-reapply.plan.json) predates it; the mocked plans hold it and
+    // app/tests/app.tftest.hcl requires it.
+    if (env === 'live') {
+      others.push('google_monitoring_alert_policy.service_health[0]');
+      optional.add('google_monitoring_alert_policy.service_health[0]');
+    }
     others.push(
       'google_monitoring_alert_policy.sql["cpu"]',
       'google_monitoring_alert_policy.sql["disk"]',

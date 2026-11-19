@@ -181,23 +181,27 @@ run "alerts_exist_and_only_live_probes_health" {
   }
 }
 
-run "a_google_cloud_incident_emails_the_alert_channel" {
+run "a_google_cloud_incident_emails_the_alert_channel_on_live_only" {
   command = plan
 
   assert {
-    condition     = google_monitoring_alert_policy.service_health.conditions[0].condition_matched_log[0].filter == "resource.type = \"servicehealth.googleapis.com/Event\" AND jsonPayload.category = \"INCIDENT\" AND jsonPayload.@type = \"type.googleapis.com/google.cloud.servicehealth.logging.v1.EventLog\""
+    condition     = length(google_monitoring_alert_policy.service_health) == (var.environment == "live" ? 1 : 0)
+    error_message = "Only live has the Google Cloud incident alert, so a project shared by test and live is not emailed twice."
+  }
+  assert {
+    condition     = alltrue([for p in google_monitoring_alert_policy.service_health : p.conditions[0].condition_matched_log[0].filter == "resource.type = \"servicehealth.googleapis.com/Event\" AND jsonPayload.category = \"INCIDENT\" AND jsonPayload.@type = \"type.googleapis.com/google.cloud.servicehealth.logging.v1.EventLog\""])
     error_message = "The alert matches Personalized Service Health incident events."
   }
   assert {
-    condition     = length(google_monitoring_alert_policy.service_health.conditions) == 1 && google_monitoring_alert_policy.service_health.combiner == "OR"
+    condition     = alltrue([for p in google_monitoring_alert_policy.service_health : length(p.conditions) == 1 && p.combiner == "OR"])
     error_message = "A log alert has one condition and the OR combiner."
   }
   assert {
-    condition     = google_monitoring_alert_policy.service_health.alert_strategy[0].notification_rate_limit[0].period == "300s" && google_monitoring_alert_policy.service_health.alert_strategy[0].auto_close == "1800s"
+    condition     = alltrue([for p in google_monitoring_alert_policy.service_health : p.alert_strategy[0].notification_rate_limit[0].period == "300s" && p.alert_strategy[0].auto_close == "1800s"])
     error_message = "Notifications are rate limited to one per five minutes, and the alert closes after 30 minutes."
   }
   assert {
-    condition     = length(google_monitoring_alert_policy.service_health.notification_channels) == 1
+    condition     = alltrue([for p in google_monitoring_alert_policy.service_health : length(p.notification_channels) == 1])
     error_message = "It notifies the environment's one email channel."
   }
 }
