@@ -6,12 +6,17 @@ Part of [Status](../STATUS.md).
 Arbitrary company workbook upload (ADR's workbook is never used for another company; the owner-filled template is the price editor row above); AI-suggested prices (not wanted for now); crew calendar and reminders; per-visit reading dispatch; homeowner photo upload through the link; walkthrough recording stored with the signed agreement; recipient texting; anonymized cross-company price comparison; support role and owner-visible access log.
 
 ## Open items for the owner
+Items 1 to 6 below were written for the old app, switched off on 2026-11-10 and retired in S8; they are historical, not current work. Current owner work is the S8 owner steps in `docs/plans/S8.md`.
+
 1. Phone test 2 on a real phone (iPhone if possible) — roadmap Phase 0 item 1; script in `docs/phone-acceptance.md`.
 2. ADR company profile and logo — Phase 0 item 2.
 3. Invitation check to a Google and an Outlook address — Phase 0 item 3.
 4. Local SMTP timeout test on Windows — Phase 0 item 6.
 5. Before onboarding a second company: for the current app, add isolated test resources (D-006; the rebuild's `test` environment is in project `dryscope`, see `docs/DECISIONS.md`) and switch email to Resend with a company sending domain (D-007).
 6. Decide which flag-off features to switch on, one at a time, each as one reviewed PR with a phone check (`docs/firebase-isolation.md#turning-a-feature-on-or-off`).
+
+## Plans and decisions merged since 2026-11-11
+Stage plans: S6 (#336), TC (#343), S7 (#348, #349), estimates review corrections (#375), S8 (#425), billing (#428), sign-in review go-live gates (#462). Decisions and standards: agent instructions in AGENTS.md and D-009 standing approval (#330), Technology Standard 2.9 and D-018 to D-028 (#350), Standard 2.10 and D-029 (#360, #379), A2UI trigger reworded (#371). Multi-company wording: #374, #444. Docs housekeeping: #442.
 
 ## Next steps for an agent
 Work only the first item the owner approves, as one small PR. Do not turn on flags or run a hand release; the owner-only exceptions are listed in `HANDOFF.md` ("Rules that decide what you may do").

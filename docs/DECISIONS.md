@@ -169,11 +169,12 @@ Decision: no current GA Gemini Flash model is served from `us-central1`, so text
 Status: accepted (owner, Nov 12, 2026).
 Decision: no agent is built in S7. The first agent will be ADK TypeScript 2.x on Cloud Run, with its own service and account, fixed actions, an audit log, human approval, and Model Armor on its model calls. Agent Gateway and Agent Identity are not relied on, because they need the Google Cloud organization, which does not exist yet. A2UI is not adopted until an agent answers with screens and the A2UI React renderer is at 1.0 or later and supports spec 1.0. Trigger reworded 2026-11-13 (owner): React renderer at 1.0 or later supporting spec 1.0. Detail: `docs/plans/S7.md` (decision V10).
 
-### D-029: Pipeline reviewer is ChatGPT (GPT-6 Astra); builders are Claude only (Nov 13, 2026, Standard 2.10)
+### D-029: Pipeline reviewer is ChatGPT (GPT-6 Astra); builder family rule amended by Standard 2.11 (Nov 13, 2026, Standard 2.10)
 
 Status: accepted (owner, Nov 13, 2026, choice "A"). Supersedes D-015.
 Decision: the pipeline review agent is ChatGPT (GPT-6 Astra), with no Grok or Gemini fallback. Builders are Claude only, so the reviewer is always a different model family from the builder. Technology Standard 2.10 records the same change; the Standard is now at 2.10.
 Update 2026-11-14 (owner): the reviewer is now ChatGPT GPT-6.1 Sol, replacing GPT-6 Astra, to conserve tokens; OpenAI lists it as near-Astra performance at a lower cost. Builders stay Claude only, so the reviewer is still a different model family. The rest of this decision is unchanged.
+Update 2026-11-19 (owner approved Nov 14, 2026; Technology Standard 2.11): builders are no longer Claude only. The builder's model family is chosen by which family has the most allowance left, and the pipeline reviewer is always the other family, never the builder's own. The rule that the reviewer is a different family from the builder is unchanged.
 
 ### D-030: Stronger company sign-in after the sign-in security review (Nov 14, 2026)
 
@@ -184,3 +185,40 @@ Decision:
 2. Email enumeration protection is on for every tenant. The tenant command (`npm run platform:create-tenant`) sets both settings on a new tenant; the owner-run `npm run platform:secure-tenants` brings existing tenants up to them (read-only unless `--apply`).
 3. The operator's sign-in must be under 15 minutes old (D7) for company status, tenant binding, feature switches and AI limits as well as team and second-step changes. Reads and creating a new company keep the 12-hour sign-in.
 Consequences: an office user with no authenticator app is asked to set one up at their next sign-in, and an office invitation is accepted only after it is set up. Existing tenants keep their old settings until the owner runs the update command.
+
+### Owner decisions of Nov 14, 2026: D-031 to D-035
+
+The owner approved these on Nov 14, 2026. The pull requests named below carried them out; the decisions are recorded here in one batch.
+
+### D-031: The three TC-9 grants stay without IAM conditions (Nov 14, 2026, option A)
+
+Status: accepted (owner, Nov 14, 2026, option A).
+Context: the TC plan asked for every new TC-9 grant to name one account and one condition. Three grants cannot usefully carry one.
+Decision: these three grants each name one account and carry no IAM condition: `roles/telemetry.tracesWriter` for `dryscope-api-<env>` (Telemetry and Cloud Trace do not report a resource that a condition can scope, so a condition would silently drop every span); `roles/logging.logWriter` for `dryscope-deploy-test`, test only (a log entry has no IAM resource of its own); and `roles/secretmanager.secretAccessor` for `dryscope-synthetic-test`, granted on the one secret `dryscope-test-synthetic-password` itself.
+Consequences: the plan check (`infra/dryscope/scripts/check-plan-tc.js`) holds exactly these three grants with no condition. Built in PR #383; recorded in `docs/plans/TC.md` (section 13) and `infra/dryscope/README.md` ("Accepted risks"). The owner applies the Terraform.
+
+### D-032: The browser tests run as parallel shards (Nov 14, 2026)
+
+Status: accepted (owner, Nov 14, 2026).
+Context: the CI browser test job took 19 to 20 minutes under server load and was cancelled at its 20-minute limit with no verdict.
+Decision: the `e2e` job in `.github/workflows/web.yml` is split into two Playwright shards that run in parallel, with the time limit unchanged.
+Consequences: built in PR #384. Raised later to four shards with two workers each in PR #420 (Nov 17, 2026). Local runs stay unsharded.
+
+### D-033: The old app's CI checks are removed; the old app is retired in S8 (Nov 14, 2026, option A)
+
+Status: accepted (owner, Nov 14, 2026, option A).
+Decision: the old app's Python dependency audit and Python CodeQL check are removed, and its Deploy workflow runs by hand only. The npm audit and every required check name stay. The old app's files stay in the repository until S8 retires and removes them (S8-23 in `docs/plans/S8.md`).
+Consequences: built in PR #395; `docs/runbook/ci.md` ("Legacy CI retired").
+
+### D-034: Fixed browser security headers now; the full content security policy later (Nov 14, 2026)
+
+Status: accepted (owner, Nov 14, 2026, "all recommended" on the sign-in and company-separation security review, finding F7).
+Decision: every page and API answer now carries fixed security headers: a framing ban, `nosniff`, a referrer policy, HTTPS-only and a small enforced content security policy. The one exception is the photo-item path (`/api/jobs/{jobId}/photos/{photoId}`), which takes the headers but not the small policy; a successful image read sets its own stricter `default-src 'none'; sandbox` policy, while upload receipts and JSON errors on that path carry none. A full script and connect content security policy comes later: first in report-only mode, enforced only after its reports show it blocks nothing the app needs, after the owner's phone check on the test copy (`docs/security-csp.md`) and a separate owner approval; clean reports alone are not enough.
+Consequences: fixed headers built in PR #385; the full policy in report-only mode built in PR #403 (`docs/security-csp.md`). Nothing enforces the full policy yet; the phone check is still pending.
+
+### D-035: Offline retention redesigned as one routine (Nov 14, 2026, option 1)
+
+Status: accepted (owner, Nov 14, 2026, option 1).
+Context: three review rounds of the S6-3 follow-up each found another sign-in-again path that skipped the retention cleanup of offline work.
+Decision: offline retention is redesigned from scratch as one central routine with a small explicit state machine for refusal and retention, instead of patching each path. Every entry point calls it.
+Consequences: built in PR #388 (`web/src/lib/field/retention.ts`), with a property-based test over random sequences of sign-outs, refusals, storage failures and day changes.
