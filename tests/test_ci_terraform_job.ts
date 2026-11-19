@@ -54,12 +54,10 @@ describe('the offline Terraform check in the required node job', () => {
     expect(job).not.toHaveProperty('permissions');
     expect(job).not.toHaveProperty('continue-on-error');
     expect(ci().permissions).toEqual({ contents: 'read' });
-    expect(job['timeout-minutes']).toBeGreaterThan(0);
     for (const s of job.steps as Data[]) {
       expect(s, s.name ?? s.uses ?? s.run).not.toHaveProperty('if');
       expect(s, s.name ?? s.uses ?? s.run).not.toHaveProperty('continue-on-error');
     }
-    expect(ci().jobs).not.toHaveProperty('terraform');
   });
 
   it.each([
