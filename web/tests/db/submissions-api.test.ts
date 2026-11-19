@@ -518,7 +518,6 @@ describe('the worker', () => {
     const holder = postgres(h.server.databaseUrl, { max: 1, connect_timeout: 10, onnotice: () => {} });
     const release = latch();
     let pid: number | null = null;
-    let locked = 0;
     const request = holder.begin(async (sql) => {
       const [own] = await sql<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
       await sql`SELECT id FROM jobs WHERE id = ${jobId} FOR UPDATE`;
@@ -526,12 +525,15 @@ describe('the worker', () => {
       await release.wait;
       // Still holding the job, the request takes the attempt's row as Submit would: the worker,
       // waiting for the job, holds none of it.
-      locked = (await sql`SELECT id FROM job_submissions WHERE job_id = ${jobId} FOR UPDATE NOWAIT`).length;
+      return (await sql`SELECT id FROM job_submissions WHERE job_id = ${jobId} FOR UPDATE NOWAIT`).length;
     });
     let worker: ReturnType<typeof runSubmissionRepair> | undefined;
+    // Both are settled below on every path; until then a rejection is held, not unhandled.
+    request.catch(() => {});
     try {
       await until(() => pid !== null, 'the job lock');
       worker = runSubmissionRepair(h.handle.db, h.field, { markerGraceSeconds: 0 });
+      worker.catch(() => {});
       // PostgreSQL shows the worker waiting on the request.
       await until(
         async () => (await h.admin<{ n: number }[]>`SELECT count(*)::int AS n FROM pg_stat_activity WHERE ${pid}::int = ANY(pg_blocking_pids(pid))`)[0]!.n > 0,
@@ -540,10 +542,10 @@ describe('the worker', () => {
       expect((await f.submissions(jobId)).map((row) => row.status)).toEqual(['pending']);
     } finally {
       release.open();
-      await request;
+      await Promise.allSettled([request, worker]);
       await holder.end({ timeout: 5 });
     }
-    expect(locked).toBe(1);
+    expect(await request).toBe(1);
     expect(await worker).toEqual({ aborted: 1, marked: 1, failed: 0 });
     expect(await f.expectOneOutcome(h.seed.a, jobId, draftId)).toBe('aborted');
     expect(h.field.draft(h.seed.a, draftId)?.state).toBe('editing');
