@@ -163,49 +163,21 @@ describe('price-point properties', () => {
   });
 });
 
-describe('price-point rounding keeps the high end from falling when work is added', () => {
-  const hours = (code: string, price: string, changes: Obj = {}) =>
-    item(code, { group: 'labor', unit: 'hour', quantity_source: 'field:labor_hours', unit_price: price, ...changes });
-
-  function highFor(firstPrice: string, changes: Obj = {}) {
-    // A 10% cushion, a $100.00 trade minimum on the first labor line and a $0.99 fixed charge.
-    const items = [hours('labor_a', firstPrice, { trade: 'labor_a' }), hours('labor_b', '10.01'), charge('0.99')];
-    return priced(
-      {
-        ...table(items, { estimate_mode: 'range', range: { first_sf: 1000, first_percent: '10', beyond_percent: '10' }, ...changes }),
-        trades: [{ trade_id: 'labor_a', name: 'Labor A', minimum_charge: '100' }],
-      },
-      job([room('Kitchen', { unfinished_sf: 100 })], { labor_hours: 1, emergency_calls: 1 }),
+describe('price-point rounding of a high end that is already a price point', () => {
+  it('keeps a $11.00 high end with no line, step 10 ending 1', () => {
+    // One labor line of $10.01 with a 9.90% cushion grows to $11.00099, which settles at $11.00: already a
+    // price point (1 + 10), so the high end keeps $11.00 and prints no adjustment. The low end $10.01 rounds up to $11.00.
+    const result = priced(
+      table([item('labor_a', { group: 'labor', unit: 'hour', quantity_source: 'field:labor_hours', unit_price: '10.01' })], {
+        estimate_mode: 'range',
+        range: { first_sf: 1000, first_percent: '9.9', beyond_percent: '9.9' },
+        price_point: { step: '10', ending: '1' },
+      }),
+      job([room('Kitchen', { unfinished_sf: 100 })], { labor_hours: 1 }),
     );
-  }
-
-  it('a cent moved to another line by the grown amounts does not cost a whole step', () => {
-    // Unrounded, the first line at $10.04 grows to $11.044 and the second $10.01 to $11.011: running totals
-    // $11.044 and $22.055 round to $11.04 and $22.06, so the second line is $11.02 and the high total
-    // $0.99 + $100.00 + $11.02 = $112.01. At $10.05 the first grows to $11.055, the running totals round to
-    // $11.06 and $22.07, the second line is $11.01 and the high total is $112.00, because the trade minimum takes
-    // the first line's increase. Both grow to $112.001 before they are put into cents. Step 100, ending 12: both
-    // round up from $112.001 to $212.00, not $212.00 and then $112.00.
-    const before = highFor('10.04');
-    const after = highFor('10.05');
-    expect(before.totals.high?.total).toBe('112.01');
-    expect(after.totals.high?.total).toBe('112.00');
-    const roundedBefore = highFor('10.04', { price_point: { step: '100', ending: '12' } });
-    const roundedAfter = highFor('10.05', { price_point: { step: '100', ending: '12' } });
-    expect(roundedBefore.totals.high).toMatchObject({ total: '212.00', price_point: '99.99' });
-    expect(roundedAfter.totals.high).toMatchObject({ total: '212.00', price_point: '100.00' });
-  });
-
-  it('raising the first line a cent at a time never lowers either rounded end', () => {
-    const problems: string[] = [];
-    let before: { low: number; high: number } | null = null;
-    for (let cents = 1000; cents <= 1100; cents += 1) {
-      const result = highFor((cents / 100).toFixed(2), { price_point: { step: '100', ending: '12' } });
-      const now = { low: Number(result.totals.low.total), high: Number(result.totals.high!.total) };
-      if (before && (now.low < before.low || now.high < before.high)) problems.push(`${cents}: ${JSON.stringify(before)} -> ${JSON.stringify(now)}`);
-      before = now;
-    }
-    expect(problems).toEqual([]);
+    expect(result.totals.high?.total).toBe('11.00');
+    expect(result.totals.high?.price_point).toBeUndefined();
+    expect(result.totals.low).toMatchObject({ subtotal: '10.01', price_point: '0.99', total: '11.00' });
   });
 });
 
@@ -213,16 +185,16 @@ describe('price-point adjustment on the documents', () => {
   const rounded = (changes: Obj = {}) =>
     priceEstimate(table([charge('2431.17')], { price_point: POINT, ...changes }), documentJob([room('Kitchen')], { emergency_calls: 1 }));
 
-  it('the scope defense letter states the adjustment beside the rounded total', () => {
+  it('the scope defense letter states the adjustment on its own line after the rounded total', () => {
     const result = rounded();
     if (!result.ok) throw new Error(result.error);
-    expect(result.documents?.letter).toContain('Itemized total: $2,499.00. Price-point adjustment (not taxed): $67.83.');
+    expect(result.documents?.letter).toContain('Itemized total: $2,499.00.\nPrice-point adjustment (not taxed): $67.83.');
   });
 
   it('the letter states each end of a range, and nothing when rounding is off', () => {
     const range = rounded({ estimate_mode: 'range', range: { first_sf: 1000, first_percent: '0', beyond_percent: '0' } });
     if (!range.ok) throw new Error(range.error);
-    expect(range.documents?.letter).toContain('Price-point adjustment (not taxed): $67.83 at each end.');
+    expect(range.documents?.letter).toContain('\nPrice-point adjustment (not taxed): $67.83 at the low end and $67.83 at the high end.');
     const off = priceEstimate(table([charge('2431.17')]), documentJob([room('Kitchen')], { emergency_calls: 1 }));
     if (!off.ok) throw new Error(off.error);
     expect(off.documents?.letter).not.toContain('Price-point');

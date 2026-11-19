@@ -588,8 +588,6 @@ const PRICE_POINT = z
     message: 'must be below the step',
   });
 
-export type PricePoint = z.output<typeof PRICE_POINT>;
-
 const POLICY = z.strictObject({
   estimate_mode: z.enum(['range', 'single']).default('range'),
   area_basis: z.enum(['demolition', 'demolition_with_waste', 'wet_floor']).default('demolition'),
