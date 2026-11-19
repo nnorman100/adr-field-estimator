@@ -13,5 +13,8 @@ Arbitrary company workbook upload (ADR's workbook is never used for another comp
 5. Before onboarding a second company: for the current app, add isolated test resources (D-006; the rebuild's `test` environment is in project `dryscope`, see `docs/DECISIONS.md`) and switch email to Resend with a company sending domain (D-007).
 6. Decide which flag-off features to switch on, one at a time, each as one reviewed PR with a phone check (`docs/firebase-isolation.md#turning-a-feature-on-or-off`).
 
+## Plans and decisions merged since 2026-11-11
+Stage plans: S6 (#336), TC (#343), S7 (#348, #349), estimates review corrections (#375), S8 (#425), billing (#428), sign-in review go-live gates (#462). Decisions and standards: agent instructions in AGENTS.md and D-009 standing approval (#330), Technology Standard 2.9 and D-018 to D-028 (#350), Standard 2.10 and D-029 (#360, #379), A2UI trigger reworded (#371). Multi-company wording: #374, #444. Docs housekeeping: #442.
+
 ## Next steps for an agent
 Work only the first item the owner approves, as one small PR. Do not turn on flags or run a hand release; the owner-only exceptions are listed in `HANDOFF.md` ("Rules that decide what you may do").

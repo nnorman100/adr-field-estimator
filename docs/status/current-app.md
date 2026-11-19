@@ -2,6 +2,8 @@
 
 Part of [Status](../STATUS.md): one table of truth per feature. **Built** (merged), **On** (enabled in production), **Phone-checked** (observed on a real phone by the owner). Legend: yes · no · partial · flag off.
 
+The old app was switched off reversibly on 2026-11-10 (`docs/plans/S8.md`, section 2), so no row below is serving now; the On column records the state before that. Its CI checks were removed on 2026-11-15 (#395, D-033) and S8-23 removes it from the repository.
+
 | Feature | Built | On | Phone-checked | Notes |
 |---|---|---|---|---|
 | Walkthrough-first flow, Live, offline notes | yes | yes | partial | Owner's staged field workflow passed Oct 14; physical iPhone checks still open |
