@@ -18,6 +18,12 @@ jobs:
     runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
     # About 1.5 minutes in recent runs; the limit leaves room for a loaded host.
     timeout-minutes: 15
+    env:
+      TF_VERSION: 1.12.2
+      # SHA-256 of terraform_1.12.2_linux_amd64.zip, from HashiCorp's signed
+      # terraform_1.12.2_SHA256SUMS (https://releases.hashicorp.com/terraform/1.12.2/). Pinned here so a
+      # changed download fails instead of trusting a checksum file fetched from the same server.
+      TF_SHA256: 1eaed12ca41fcfe094da3d76a7e9aa0639ad3409c43be0103ee9f5a1ff4b7437
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -32,6 +38,23 @@ jobs:
       # The vitest suite holds the rebuild's Terraform plan check. The legacy unit tests that the
       # rest of `npm test` runs are retired from CI.
       - run: npx vitest run
+      # Offline Terraform checks for infra/dryscope (owner decision 3a, 2026-11-19): check.sh runs
+      # terraform fmt and validate, the mocked `terraform test` suites, the plan check and the destroy
+      # guards, and compares a fresh export of each root's first mocked plan with the committed fixtures
+      # in infra/dryscope/fixtures/. Mock providers and `init -backend=false`: no cloud credentials, no
+      # real plan or apply. Limit: a change seen only in a later test plan or in an output is not in
+      # the fixtures, so it passes unless a mocked test asserts it (docs/runbook/ci.md).
+      - name: Install Terraform with a pinned checksum
+        run: |
+          zip="terraform_${TF_VERSION}_linux_amd64.zip"
+          cd "$RUNNER_TEMP"
+          curl -fsSL --retry 3 -o "$zip" "https://releases.hashicorp.com/terraform/${TF_VERSION}/${zip}"
+          echo "${TF_SHA256}  ${zip}" | sha256sum --check --strict
+          mkdir -p tf-bin
+          unzip -o -q "$zip" -d tf-bin
+          echo "TERRAFORM=$RUNNER_TEMP/tf-bin/terraform" >> "$GITHUB_ENV"
+      - name: Offline Terraform checks
+        run: infra/dryscope/scripts/check.sh
 
   audit:
     runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
