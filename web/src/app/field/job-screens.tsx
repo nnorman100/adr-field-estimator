@@ -181,11 +181,13 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
         if (found === SUPERSEDED) return;
         setDraftAt(draftId);
         setDraft(found);
-        // The job names this person but the draft read (an owner reads every draft) names someone else:
-        // the server's draft step did not get through, and Start field work finishes it.
+        // The job names this person but the draft read (an owner reads every draft) names someone else,
+        // or is not there at all (Back to editing committed its id but its field step failed): the
+        // server's draft step did not get through, and Start field work finishes it.
         const named = job ?? detail;
-        setOwnerUnset(found !== null && named !== null && fieldWorkOf(session, named) === 'mine' && found.fieldOwnerUid !== session.user.uid);
-        setDraftError(found ? null : 'The field work of this job is not there yet. Try again in a moment.');
+        const unset = named !== null && fieldWorkOf(session, named) === 'mine' && (found === null || found.fieldOwnerUid !== session.user.uid);
+        setOwnerUnset(unset);
+        setDraftError(found || unset ? null : 'The field work of this job is not there yet. Try again in a moment.');
       } catch (error) {
         const refusal = fieldRefusal(error);
         if (refusal) return refuseDraft(refusal, job ?? detail);

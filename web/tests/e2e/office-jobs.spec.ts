@@ -310,6 +310,23 @@ test('an estimator whose draft does not name them starts the field work again an
   await expect(page.getByRole('button', { name: 'Start field work' })).toHaveCount(0);
 });
 
+test('the company owner whose field work has lost its current draft starts the field work again and edits it', async ({ page, request }) => {
+  test.setTimeout(120_000);
+  const company = await seedCompany('owner-no-draft', { owner: 'owner' });
+  const { jobId } = await seedJob(request, company, company.people.owner!, '61 Lost Draft Way', []);
+  // The owner who made the job owns its field work. Back to editing committed the new draft id, but its field step did not get through (it answered
+  // 503): the field database has no draft by that id.
+  const { after } = await finishAndReopen(request, company, company.people.owner!, jobId);
+  await adminDb().recursiveDelete(adminDb().doc(`companies/${company.id}/drafts/${after}`));
+
+  await signIn(page, company, company.people.owner!);
+  await openJob(page, '61 Lost Draft Way');
+  await expect(page.getByText('This job’s field work is yours, but this phone cannot open it yet.', { exact: false })).toBeVisible();
+  await page.getByRole('button', { name: 'Start field work' }).click();
+  await expect(page.getByLabel('Year built')).toBeEditable();
+  await expect(page.getByRole('button', { name: 'Start field work' })).toHaveCount(0);
+});
+
 test('the company owner keeps an unsaved room change on screen after moving the field work, whatever happens to the room', async ({ page, request }) => {
   test.setTimeout(120_000);
   const company = await seedCompany('owner-keeps-room', { owner: 'owner', first: 'estimator' });
