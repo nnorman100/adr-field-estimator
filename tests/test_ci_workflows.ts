@@ -71,8 +71,8 @@ describe('ci.yml', () => {
     expect(Object.keys(ci().jobs)).not.toContain(job);
   });
 
-  it('keeps node and audit, and nothing in CI, Test guard or Web app is scoped', () => {
-    expect(Object.keys(ci().jobs).sort()).toEqual(['audit', 'node']);
+  it('keeps node, audit and terraform, and nothing in CI, Test guard or Web app is scoped', () => {
+    expect(Object.keys(ci().jobs).sort()).toEqual(['audit', 'node', 'terraform']);
     for (const name of ['ci.yml', 'test-guard.yml', 'web.yml']) {
       expect(scopeGatedParts(workflow(name)), `${name} must not use the scope step`).toEqual([]);
     }
