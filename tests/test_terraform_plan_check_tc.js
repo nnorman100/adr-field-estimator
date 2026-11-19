@@ -245,6 +245,43 @@ describe.each(['test', 'live'])('data root, %s: the TC-9 bundle', (environment) 
     expect(edit(SQL, (a) => (retention(a).retention_unit = 'DAYS'))).toHaveLength(1);
   });
 
+  test('Cloud SQL keeps its backups after deletion and takes a final one kept at most 35 days', () => {
+    const settings = (a) => a.settings[0];
+    expect(settings(find(plan(), SQL).change.after)).toMatchObject({
+      retain_backups_on_delete: true,
+      final_backup_config: [{ enabled: true, retention_days: expect.any(Number) }],
+    });
+    const final = (a) => settings(a).final_backup_config[0];
+    expect(edit(SQL, (a) => (final(a).retention_days = 35))).toEqual([]);
+    expect(edit(SQL, (a) => (final(a).retention_days = 36))).toHaveLength(1);
+    expect(edit(SQL, (a) => (final(a).retention_days = 365))).toHaveLength(1);
+    expect(edit(SQL, (a) => (final(a).enabled = false))).toHaveLength(1);
+    expect(edit(SQL, (a) => (settings(a).retain_backups_on_delete = false))).toHaveLength(1);
+    expect(edit(SQL, (a) => (settings(a).final_backup_config = []))).not.toEqual([]);
+  });
+
+  test('an applied instance may be updated in place to add exactly those two settings', () => {
+    const moved = (mutate = () => {}) => {
+      const changed = structuredClone(plan());
+      const rc = find(changed, SQL);
+      rc.change.actions = ['update'];
+      rc.change.before = structuredClone(rc.change.after);
+      delete rc.change.before.settings[0].final_backup_config;
+      rc.change.before.settings[0].retain_backups_on_delete = false;
+      mutate(rc.change);
+      return check(changed, environment);
+    };
+    expect(moved()).toEqual([]);
+    expect(moved((c) => (c.before.settings[0].tier = 'db-g1-small'))).not.toEqual([]);
+  });
+
+  test('the Service Health API is enabled for the incident alert', () => {
+    expect(TC_APIS).toContain('servicehealth.googleapis.com');
+    expect(
+      find(plan(), 'google_project_service.apis["servicehealth.googleapis.com"]'),
+    ).toBeTruthy();
+  });
+
   test('the field database is backed up daily and kept 14 days', () => {
     expect(find(plan(), SCHEDULE).change.after).toMatchObject({
       project: 'dryscope',

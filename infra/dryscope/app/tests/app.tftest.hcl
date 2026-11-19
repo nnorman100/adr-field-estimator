@@ -181,6 +181,27 @@ run "alerts_exist_and_only_live_probes_health" {
   }
 }
 
+run "a_google_cloud_incident_emails_the_alert_channel" {
+  command = plan
+
+  assert {
+    condition     = google_monitoring_alert_policy.service_health.conditions[0].condition_matched_log[0].filter == "resource.type = \"servicehealth.googleapis.com/Event\" AND jsonPayload.category = \"INCIDENT\" AND jsonPayload.@type = \"type.googleapis.com/google.cloud.servicehealth.logging.v1.EventLog\""
+    error_message = "The alert matches Personalized Service Health incident events."
+  }
+  assert {
+    condition     = length(google_monitoring_alert_policy.service_health.conditions) == 1 && google_monitoring_alert_policy.service_health.combiner == "OR"
+    error_message = "A log alert has one condition and the OR combiner."
+  }
+  assert {
+    condition     = google_monitoring_alert_policy.service_health.alert_strategy[0].notification_rate_limit[0].period == "300s" && google_monitoring_alert_policy.service_health.alert_strategy[0].auto_close == "1800s"
+    error_message = "Notifications are rate limited to one per five minutes, and the alert closes after 30 minutes."
+  }
+  assert {
+    condition     = length(google_monitoring_alert_policy.service_health.notification_channels) == 1
+    error_message = "It notifies the environment's one email channel."
+  }
+}
+
 run "budget_is_a_stub_until_a_billing_account_is_given" {
   command = plan
 

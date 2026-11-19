@@ -146,3 +146,43 @@ resource "google_monitoring_alert_policy" "api_down" {
     }
   }
 }
+
+# Personalized Service Health: an email when Google reports an incident, or updates one, that
+# affects this project (the events are already limited to the products and locations the project
+# uses). It is a log alert on the Service Health event log, so it needs the Service Health API,
+# which the data root switches on (documents/docs.cloud.google.com/service-health/docs/
+# configure-alerts-terraform and .../example-alerting-policies). Service Health events belong to
+# the project, so while test and live share project dryscope, applying both roots sends each event
+# twice. A log alert sends at most 20 notifications a day, hence the five-minute rate limit.
+resource "google_monitoring_alert_policy" "service_health" {
+  project               = var.project_id
+  display_name          = "DryScope ${var.environment}: Google Cloud incident"
+  combiner              = "OR"
+  notification_channels = [google_monitoring_notification_channel.email.id]
+  user_labels           = local.labels
+
+  conditions {
+    display_name = "A Google Cloud incident is posted or updated"
+    condition_matched_log {
+      filter = "resource.type = \"servicehealth.googleapis.com/Event\" AND jsonPayload.category = \"INCIDENT\" AND jsonPayload.@type = \"type.googleapis.com/google.cloud.servicehealth.logging.v1.EventLog\""
+      label_extractors = {
+        title             = "EXTRACT(jsonPayload.title)"
+        state             = "EXTRACT(jsonPayload.state)"
+        impactedProducts  = "EXTRACT(jsonPayload.impactedProducts)"
+        impactedLocations = "EXTRACT(jsonPayload.impactedLocations)"
+      }
+    }
+  }
+
+  alert_strategy {
+    notification_rate_limit {
+      period = "300s"
+    }
+    auto_close = "1800s"
+  }
+
+  documentation {
+    mime_type = "text/markdown"
+    content   = "### $${log.extracted_label.title}\nGoogle reports an incident that may affect DryScope. State: $${log.extracted_label.state}. Products: $${log.extracted_label.impactedProducts}. Locations: $${log.extracted_label.impactedLocations}. Open the [Service Health dashboard](https://console.cloud.google.com/servicehealth/incidentDetails/projects%2F$${resource.labels.resource_container}%2Flocations%2F$${resource.labels.location}%2Fevents%2F$${resource.labels.event_id}?project=$${resource.labels.resource_container}) for details."
+  }
+}

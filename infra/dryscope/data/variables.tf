@@ -73,6 +73,16 @@ variable "sql_pitr_log_days" {
   }
 }
 
+variable "sql_final_backup_days" {
+  type        = number
+  description = "Days the final backup Cloud SQL takes when the instance is deleted is kept: 1 to 35 (D-023: deleted data leaves every backup within 35 days). Google's default is 30."
+
+  validation {
+    condition     = var.sql_final_backup_days >= 1 && var.sql_final_backup_days <= 35
+    error_message = "sql_final_backup_days must be between 1 and 35 (D-023, the 35-day backup window)."
+  }
+}
+
 variable "evidence_soft_delete_days" {
   type        = number
   description = "Days a deleted evidence object stays recoverable: 7 in every environment (D-023: 28 days as a noncurrent version plus 7 of soft delete keeps the window at 35 days)."

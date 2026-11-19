@@ -922,6 +922,72 @@
    }
   },
   {
+   "address": "google_monitoring_alert_policy.service_health",
+   "type": "google_monitoring_alert_policy",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "alert_strategy": [
+      {
+       "auto_close": "1800s",
+       "notification_channel_strategy": [],
+       "notification_prompts": null,
+       "notification_rate_limit": [
+        {
+         "period": "300s"
+        }
+       ]
+      }
+     ],
+     "combiner": "OR",
+     "conditions": [
+      {
+       "condition_absent": [],
+       "condition_matched_log": [
+        {
+         "filter": "resource.type = \"servicehealth.googleapis.com/Event\" AND jsonPayload.category = \"INCIDENT\" AND jsonPayload.@type = \"type.googleapis.com/google.cloud.servicehealth.logging.v1.EventLog\"",
+         "label_extractors": {
+          "impactedLocations": "EXTRACT(jsonPayload.impactedLocations)",
+          "impactedProducts": "EXTRACT(jsonPayload.impactedProducts)",
+          "state": "EXTRACT(jsonPayload.state)",
+          "title": "EXTRACT(jsonPayload.title)"
+         }
+        }
+       ],
+       "condition_monitoring_query_language": [],
+       "condition_prometheus_query_language": [],
+       "condition_sql": [],
+       "condition_threshold": [],
+       "display_name": "A Google Cloud incident is posted or updated"
+      }
+     ],
+     "display_name": "DryScope live: Google Cloud incident",
+     "documentation": [
+      {
+       "content": "### ${log.extracted_label.title}\nGoogle reports an incident that may affect DryScope. State: ${log.extracted_label.state}. Products: ${log.extracted_label.impactedProducts}. Locations: ${log.extracted_label.impactedLocations}. Open the [Service Health dashboard](https://console.cloud.google.com/servicehealth/incidentDetails/projects%2F${resource.labels.resource_container}%2Flocations%2F${resource.labels.location}%2Fevents%2F${resource.labels.event_id}?project=${resource.labels.resource_container}) for details.",
+       "links": [],
+       "mime_type": "text/markdown",
+       "subject": null
+      }
+     ],
+     "enabled": null,
+     "notification_channels": [
+      null
+     ],
+     "project": "dryscope",
+     "severity": null,
+     "timeouts": null,
+     "user_labels": {
+      "app": "dryscope",
+      "environment": "live",
+      "managed_by": "terraform"
+     }
+    }
+   }
+  },
+  {
    "address": "google_monitoring_alert_policy.sql[\"cpu\"]",
    "type": "google_monitoring_alert_policy",
    "change": {

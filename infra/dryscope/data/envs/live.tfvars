@@ -6,6 +6,7 @@ environment = "live"
 sql_tier                  = "db-custom-1-3840"
 sql_disk_size_gb          = 20
 sql_backup_retained_count = 14
+sql_final_backup_days     = 30
 sql_pitr_log_days         = 7
 
 evidence_soft_delete_days = 7
