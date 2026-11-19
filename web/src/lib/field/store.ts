@@ -168,6 +168,16 @@ export function addRoomWrites(ref: DraftRef, roomId: string, name: string, order
   ];
 }
 
+// The room order to build an Add or Remove batch from, read from the phone's cache while the
+// page-level room-write guard is held (./pending.ts startRoomWrite), never the order a screen last
+// rendered: a screen that remounted between another room write's journal record and its local batch
+// can still show the old order, and building from it would drop that room. Null when the cache has
+// no such draft.
+export async function cachedRoomOrder(db: Firestore, ref: DraftRef): Promise<string[] | null> {
+  const draft = await loadDraft(db, ref, 'cache');
+  return draft ? [...(draft.field.roomOrder ?? [])] : null;
+}
+
 // Removes a room: its document and its place in the room order, in one batch (the rules let only
 // the field owner delete a room, while the draft is editing). A photo tagged to it shows untagged.
 export function removeRoomWrites(ref: DraftRef, roomId: string, order: readonly string[]): DocWrite[] {
