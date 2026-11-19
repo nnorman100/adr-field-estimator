@@ -99,7 +99,13 @@ const emptyDraft = (fieldOwnerUid: string | null, jobId?: string): FakeDraft => 
 export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts: FakeDrafts; states: FakeDraftStates }): FakeField {
   function load(): FieldData {
     const data = backing.load();
-    for (const [made, { fieldOwnerUid }] of linked?.drafts.made ?? []) data[made] ??= emptyDraft(fieldOwnerUid, linked?.drafts.jobOf.get(made));
+    for (const [made, { fieldOwnerUid }] of linked?.drafts.made ?? []) {
+      const left = data[made];
+      // As the real writer: the jobs service made the draft over a restored job's placeholder, which keeps its revision.
+      if (!left || (left.placeholder && !linked?.drafts.placeholders.has(made))) {
+        data[made] = { ...emptyDraft(fieldOwnerUid, linked?.drafts.jobOf.get(made)), ...(left ? { archiveRevision: left.archiveRevision } : {}) };
+      }
+    }
     return data;
   }
   function save(data: FieldData): void {
@@ -108,7 +114,11 @@ export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts:
     for (const [at, draft] of Object.entries(data)) {
       linked.states.set.set(at, draft.state);
       // A placeholder is no draft to the jobs service (src/lib/jobs/drafts.ts): nobody is named on it.
-      if (draft.placeholder) continue;
+      if (draft.placeholder) {
+        linked.drafts.placeholders.set(at, { jobId: draft.jobId, archived: draft.state === 'archived' });
+        continue;
+      }
+      linked.drafts.placeholders.delete(at);
       if (draft.state === 'archived') linked.drafts.archived.add(at);
       else linked.drafts.archived.delete(at);
       linked.states.refs.set(at, Object.keys(draft.photos).length);

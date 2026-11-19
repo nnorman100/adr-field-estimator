@@ -851,7 +851,7 @@ describe('moving the field work (owner decision J5)', () => {
     expect(await restore(OWNER_A, id, once)).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
     expect(await nextDraft(ESTIMATOR_A, id, { draftId: later, fromDraftId: draftId })).toEqual({
       status: 503,
-      body: { error: 'submissions_unavailable' },
+      body: { error: 'draft_unavailable' },
     });
     expect(h.field.draft(h.seed.a, later)).toMatchObject({ state: 'archived', placeholder: true, rooms: {} });
     expect((await restore(OWNER_A, id, once)).status).toBe(200);
@@ -862,6 +862,26 @@ describe('moving the field work (owner decision J5)', () => {
       rooms: { kitchen: { name: 'Kitchen' } },
       previous: { draftId, submissionId },
     });
+  });
+
+  // New job's draft was never made (the field database failed), then the job was archived and restored:
+  // the same create again makes the draft over the placeholder, in the one record, keeping its revision.
+  it('makes the draft of a New job retry over the placeholder an archive and restore left, keeping its revision', async () => {
+    const ids = { id: randomUUID(), draftId: randomUUID() };
+    h.drafts.failNext = { on: true, afterWrite: false };
+    expect((await create(OFFICE_A, { ...ids, propertyAddress: '40 Office Road' })).status).toBe(503);
+    const { revision } = (await read(OWNER_A, ids.id)).body.job as { revision: number };
+    expect((await archive(OWNER_A, ids.id, { revision, changeId: randomUUID() })).status).toBe(200);
+    expect(h.field.draft(h.seed.a, ids.draftId)).toMatchObject({ state: 'archived', placeholder: true });
+    // While the job is archived, the same create again is answered archived and makes nothing.
+    expect((await create(OFFICE_A, { ...ids, propertyAddress: '40 Office Road' })).status).toBe(410);
+    expect(h.field.draft(h.seed.a, ids.draftId)).toMatchObject({ state: 'archived', placeholder: true });
+    expect((await restore(OWNER_A, ids.id, { revision: revision + 1, changeId: randomUUID() })).status).toBe(200);
+    expect((await create(OFFICE_A, { ...ids, propertyAddress: '40 Office Road' })).status).toBe(200);
+    const made = h.field.draft(h.seed.a, ids.draftId);
+    expect(made).toMatchObject({ jobId: ids.id, state: 'editing', archiveRevision: revision + 2 });
+    expect(made?.placeholder).toBeUndefined();
+    expect(draftOf(ids.draftId)).toBeDefined();
   });
 
   // A stamp that reaches a draft the job's archive closed names nobody on it, though Postgres has

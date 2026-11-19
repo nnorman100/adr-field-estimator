@@ -16,6 +16,9 @@ export type FakeDrafts = DraftStore & {
   // The drafts that are archived, by "company/draft" (kept by tests/submissions/field-fake.ts): no
   // field owner is named on one (src/lib/jobs/drafts.ts).
   archived: Set<string>;
+  // The placeholders an archive or restore left where a draft is missing, by "company/draft" (kept by
+  // tests/submissions/field-fake.ts): ensure consumes a restored job's one and refuses an archived job's.
+  placeholders: Map<string, { jobId: unknown; archived: boolean }>;
   // Every call to ensure, in order, including the ones that found the draft there.
   calls: { companyId: string; draftId: string; fieldOwnerUid: string | null }[];
   // Every call to setFieldOwner, in order (S5b-1).
@@ -30,6 +33,7 @@ export function fakeDrafts(): FakeDrafts {
     made: new Map(),
     jobOf: new Map(),
     archived: new Set(),
+    placeholders: new Map(),
     projected: new Map(),
     async projectJob(companyId, jobId, projection) {
       const key = `${companyId}/${jobId}`;
@@ -49,6 +53,12 @@ export function fakeDrafts(): FakeDrafts {
       if (fail.on && !fail.afterWrite) {
         fail.on = false;
         throw new Error('field database unreachable');
+      }
+      const left = store.placeholders.get(key);
+      if (left) {
+        if (draftOfOtherJob(left.jobId, jobId)) return 'taken';
+        if (left.archived) return 'archived';
+        store.placeholders.delete(key);
       }
       const existed = store.made.has(key);
       if (existed && draftOfOtherJob(store.jobOf.get(key), jobId)) return 'taken';
