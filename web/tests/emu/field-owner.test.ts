@@ -12,7 +12,7 @@ import { createDoc, getDoc, updateDoc } from './rules/firestore-rest';
 // phone will, under web/firestore.rules with real Auth emulator tokens. The first capture on an
 // office job makes the first estimator its field owner and a second estimator is refused (docs/spec.md
 // 6.2); a move (owner decision J5) refuses the phone that held it. The routes and the job rows are in
-// tests/db/office-jobs-api.test.ts.
+// tests/db/office-jobs-api.test.ts and tests/db/office-jobs-field-owner.test.ts.
 
 let db: Firestore;
 let drafts: DraftStore;
