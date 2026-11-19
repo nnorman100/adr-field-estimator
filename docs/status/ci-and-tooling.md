@@ -11,7 +11,7 @@ Part of [Status](../STATUS.md). These changes affect how the project is built an
 | Modern Web Guidance skill; Google Stitch skills (hidden in #454) | yes (#328, #410, #454) | |
 | Browser tests against a production build, routes compiled first | yes (#331, #332, #366) | |
 | Database tests in parallel on one shared Postgres | yes (#347) | |
-| Web app workflow on every pull request; web jobs skip work when nothing under `web/` changed | yes (#357, #450) | |
+| Web app workflow on every pull request; the five scoped jobs skip work when nothing changed | yes (#357, #450) | On a pull request the database, emulators, company-isolation, e2e and image jobs skip their steps and still report success when nothing changed under `web/`, `live-relay-placeholder/` or `.github/workflows/web.yml`; the `check` job always runs in full |
 | Browser tests as parallel shards (D-032) | yes (#384, #420) | Four shards with two workers |
 | Old app's CI checks removed (D-033) | yes (#395) | Old app files stay until S8-23 |
 | Route-rules access test split per route file | yes (#408) | |

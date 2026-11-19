@@ -213,8 +213,8 @@ Consequences: built in PR #395; `docs/runbook/ci.md` ("Legacy CI retired").
 ### D-034: Fixed browser security headers now; the full content security policy later (Nov 14, 2026)
 
 Status: accepted (owner, Nov 14, 2026, "all recommended" on the sign-in and company-separation security review, finding F7).
-Decision: every page and API answer now carries fixed security headers: a framing ban, `nosniff`, a referrer policy, HTTPS-only and a small enforced content security policy. A full script and connect content security policy comes later: first in report-only mode, enforced only after its reports show it blocks nothing the app needs.
-Consequences: fixed headers built in PR #385; the full policy in report-only mode built in PR #403 (`docs/security-csp.md`). Nothing enforces the full policy yet.
+Decision: every page and API answer now carries fixed security headers: a framing ban, `nosniff`, a referrer policy, HTTPS-only and a small enforced content security policy. The one exception is the photo-item path (`/api/jobs/{jobId}/photos/{photoId}`), which takes the headers but not the small policy; a successful image read sets its own stricter `default-src 'none'; sandbox` policy, while upload receipts and JSON errors on that path carry none. A full script and connect content security policy comes later: first in report-only mode, enforced only after its reports show it blocks nothing the app needs, after the owner's phone check on the test copy (`docs/security-csp.md`) and a separate owner approval; clean reports alone are not enough.
+Consequences: fixed headers built in PR #385; the full policy in report-only mode built in PR #403 (`docs/security-csp.md`). Nothing enforces the full policy yet; the phone check is still pending.
 
 ### D-035: Offline retention redesigned as one routine (Nov 14, 2026, option 1)
 

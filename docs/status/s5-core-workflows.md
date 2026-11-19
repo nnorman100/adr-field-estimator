@@ -7,6 +7,7 @@ Nothing here is deployed to production: no live project exists yet (D-018). S5a 
 | Feature | Built | On | Phone-checked | Notes |
 |---|---|---|---|---|
 | Core job tables and company profile columns | yes (#338) | no (rebuild not live) | n/a | Migration `0010_core_job_tables` |
+| Jobs API and the shared job-access function (S5a-3) | yes (#341) | no (rebuild not live) | n/a | Job access is decided by one shared function |
 | Submission, estimate, price pin and agreement tables | yes (#346) | no (rebuild not live) | n/a | Migration `0011_submissions_agreements` |
 | Photo receipt and photo read routes (S5a-5) | yes (#351, #400, #458) | no (rebuild not live) | no | Capture time recorded and the photo log ordered by it (#400); the 300-photo limit counts the photos the server stored (#458) |
 | Company profile API and Company settings screen (S5a-4) | yes (#365) | no (rebuild not live) | no | Owner only |
