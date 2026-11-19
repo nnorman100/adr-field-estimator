@@ -1,13 +1,13 @@
-// The `terraform` job in .github/workflows/ci.yml (owner decision 3a, 2026-11-19) runs the offline
-// infra/dryscope/scripts/check.sh with Terraform downloaded against a pinned SHA-256, and the
-// required `node` job fails when it does. These tests run the jobs' real step scripts.
+// The required `node` job in .github/workflows/ci.yml (owner decision 3a, 2026-11-19) also runs the
+// offline infra/dryscope/scripts/check.sh with Terraform downloaded against a pinned SHA-256, so a
+// failing check fails a required check. These tests run the job's real step scripts.
 // Run by vitest in the node CI job.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { evaluateStep, load, Shell, WORKFLOWS, type Data } from './workflow_support.ts';
+import { load, Shell, WORKFLOWS, type Data } from './workflow_support.ts';
 
 const ci = (): Data => load(path.join(WORKFLOWS, 'ci.yml'));
 const step = (job: string, name: string): Data => {
@@ -38,8 +38,8 @@ function install(zip: string, sha256: string): { status: number | null; sh: Shel
   const temp = path.join(sh.tmp, 'runner-temp');
   mkdirSync(temp);
   const env = path.join(sh.tmp, 'env');
-  const result = sh.run(step('terraform', INSTALL).run, {
-    ...ci().jobs.terraform.env,
+  const result = sh.run(step('node', INSTALL).run, {
+    ...ci().jobs.node.env,
     TF_SHA256: sha256,
     RUNNER_TEMP: temp,
     GITHUB_ENV: env,
@@ -47,15 +47,34 @@ function install(zip: string, sha256: string): { status: number | null; sh: Shel
   return { status: result.status, sh, env };
 }
 
-describe('the terraform job', () => {
-  it('runs on every CI event, with a time limit and read-only permissions', () => {
-    const job = ci().jobs.terraform;
+describe('the offline Terraform check in the required node job', () => {
+  it('runs on every CI event with read-only permissions, and never ignores a failure', () => {
+    const job = ci().jobs.node;
     expect(job).not.toHaveProperty('if');
     expect(job).not.toHaveProperty('permissions');
+    expect(job).not.toHaveProperty('continue-on-error');
     expect(ci().permissions).toEqual({ contents: 'read' });
     expect(job['timeout-minutes']).toBeGreaterThan(0);
-    for (const s of job.steps as Data[]) expect(s, s.name ?? s.uses).not.toHaveProperty('if');
-    expect(job.steps.at(-1).run).toBe('infra/dryscope/scripts/check.sh');
+    for (const s of job.steps as Data[]) {
+      expect(s, s.name ?? s.uses ?? s.run).not.toHaveProperty('if');
+      expect(s, s.name ?? s.uses ?? s.run).not.toHaveProperty('continue-on-error');
+    }
+    expect(ci().jobs).not.toHaveProperty('terraform');
+  });
+
+  it.each([
+    [0, 0],
+    [1, 1],
+  ])('the check step exits %i when check.sh exits %i', (code, expected) => {
+    // A stand-in check.sh at the path the step runs, so the step's own exit status is observed.
+    const sh = shell();
+    const script = path.join(sh.tmp, 'infra', 'dryscope', 'scripts', 'check.sh');
+    mkdirSync(path.dirname(script), { recursive: true });
+    writeFileSync(script, `#!/bin/bash\necho ran >> '${sh.log}'\nexit ${code}\n`);
+    chmodSync(script, 0o755);
+    const result = sh.run(step('node', 'Offline Terraform checks').run);
+    expect(result.status).toBe(expected);
+    expect(existsSync(sh.log)).toBe(true);
   });
 
   it('installs a download whose checksum matches and puts it on TERRAFORM', () => {
@@ -73,34 +92,16 @@ describe('the terraform job', () => {
     const sh = shell();
     const zip = path.join(sh.tmp, 'download.zip');
     execFileSync('bash', ['-c', `printf 'tampered' > '${zip}'`]);
-    const run = install(zip, ci().jobs.terraform.env.TF_SHA256);
+    const run = install(zip, ci().jobs.node.env.TF_SHA256);
     expect(run.status).not.toBe(0);
     expect(run.sh.calls('curl')).toHaveLength(1);
     expect(run.sh.calls('unzip')).toEqual([]);
     expect(existsSync(run.env)).toBe(false);
   });
-});
 
-describe('the required node job', () => {
-  it('waits for terraform and still reports when terraform fails', () => {
-    const job = ci().jobs.node;
-    expect(job.needs).toEqual(['terraform']);
-    expect(evaluateStep(job.if, {}, true)).toBe(true);
-  });
-
-  const requireTerraform = (result: string): number | null => {
-    const run = String(step('node', 'Require the terraform job').run).replace(
-      /\$\{\{\s*needs\.terraform\.result\s*\}\}/,
-      result,
-    );
-    return shell().run(run).status;
-  };
-
-  it('passes when terraform succeeds', () => {
-    expect(requireTerraform('success')).toBe(0);
-  });
-
-  it.each(['failure', 'cancelled', 'skipped'])('fails when terraform is %s', (result) => {
-    expect(requireTerraform(result)).not.toBe(0);
+  it('installs Terraform before running the check', () => {
+    const names = (ci().jobs.node.steps as Data[]).map((s) => s.name);
+    expect(names.indexOf(INSTALL)).toBeGreaterThanOrEqual(0);
+    expect(names.indexOf(INSTALL)).toBeLessThan(names.indexOf('Offline Terraform checks'));
   });
 });

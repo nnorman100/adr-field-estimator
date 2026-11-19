@@ -71,8 +71,8 @@ describe('ci.yml', () => {
     expect(Object.keys(ci().jobs)).not.toContain(job);
   });
 
-  it('keeps node, audit and terraform, and nothing in CI, Test guard or Web app is scoped', () => {
-    expect(Object.keys(ci().jobs).sort()).toEqual(['audit', 'node', 'terraform']);
+  it('keeps node and audit, and nothing in CI, Test guard or Web app is scoped', () => {
+    expect(Object.keys(ci().jobs).sort()).toEqual(['audit', 'node']);
     for (const name of ['ci.yml', 'test-guard.yml', 'web.yml']) {
       expect(scopeGatedParts(workflow(name)), `${name} must not use the scope step`).toEqual([]);
     }
@@ -89,8 +89,7 @@ describe('ci.yml', () => {
 
   it("keeps the node job's rebuild checks on every pull request", () => {
     const job = ci().jobs.node;
-    // Its only condition keeps it running (and failing) when the terraform job it needs fails.
-    expect(evaluateStep(job.if, {}, true)).toBe(true);
+    expect(job).not.toHaveProperty('if');
     for (const s of job.steps) expect(s).not.toHaveProperty('if');
     const runs = job.steps.map((s: Data) => s.run ?? '');
     for (const command of ['npm ci', 'npm run format:check', 'npm run lint', 'npx vitest run']) {

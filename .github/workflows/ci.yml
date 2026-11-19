@@ -14,14 +14,16 @@ permissions:
 # them off the master ruleset's required checks. node keeps the repo-wide lint, format and vitest
 # checks the rebuild depends on. See docs/runbook/ci.md, "Legacy CI retired".
 jobs:
-  # node is a required check, so it also requires the terraform job below: it waits for it, still
-  # reports when terraform fails, and fails then (the same pattern as `check` in web.yml).
   node:
-    needs: [terraform]
-    if: always() && !cancelled()
     runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
     # About 1.5 minutes in recent runs; the limit leaves room for a loaded host.
     timeout-minutes: 15
+    env:
+      TF_VERSION: 1.12.2
+      # SHA-256 of terraform_1.12.2_linux_amd64.zip, from HashiCorp's signed
+      # terraform_1.12.2_SHA256SUMS (https://releases.hashicorp.com/terraform/1.12.2/). Pinned here so a
+      # changed download fails instead of trusting a checksum file fetched from the same server.
+      TF_SHA256: 1eaed12ca41fcfe094da3d76a7e9aa0639ad3409c43be0103ee9f5a1ff4b7437
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -36,8 +38,23 @@ jobs:
       # The vitest suite holds the rebuild's Terraform plan check. The legacy unit tests that the
       # rest of `npm test` runs are retired from CI.
       - run: npx vitest run
-      - name: Require the terraform job
-        run: test "${{ needs.terraform.result }}" = "success"
+      # Offline Terraform checks for infra/dryscope (owner decision 3a, 2026-11-19): check.sh runs
+      # terraform fmt and validate, the mocked `terraform test` suites, the plan check and the destroy
+      # guards, and compares a fresh export of each root's first mocked plan with the committed fixtures
+      # in infra/dryscope/fixtures/. Mock providers and `init -backend=false`: no cloud credentials, no
+      # real plan or apply. Limit: a change seen only in a later test plan or in an output is not in
+      # the fixtures, so it passes unless a mocked test asserts it (docs/runbook/ci.md).
+      - name: Install Terraform with a pinned checksum
+        run: |
+          zip="terraform_${TF_VERSION}_linux_amd64.zip"
+          cd "$RUNNER_TEMP"
+          curl -fsSL --retry 3 -o "$zip" "https://releases.hashicorp.com/terraform/${TF_VERSION}/${zip}"
+          echo "${TF_SHA256}  ${zip}" | sha256sum --check --strict
+          mkdir -p tf-bin
+          unzip -o -q "$zip" -d tf-bin
+          echo "TERRAFORM=$RUNNER_TEMP/tf-bin/terraform" >> "$GITHUB_ENV"
+      - name: Offline Terraform checks
+        run: infra/dryscope/scripts/check.sh
 
   audit:
     runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
@@ -50,34 +67,3 @@ jobs:
       # Fails on any high or critical advisory except the owner-approved ones in
       # .github/audit-exceptions.json, and prints every one it skips.
       - run: node scripts/audit-check.mjs
-
-  # Offline Terraform checks for infra/dryscope (owner decision 3a, 2026-11-19): infra/dryscope/scripts/check.sh
-  # runs terraform fmt and validate, the mocked `terraform test` suites, the plan check over every mocked
-  # plan and the destroy guards, and fails when a fresh plan of either root differs from the committed
-  # fixtures in infra/dryscope/fixtures/. It uses mock providers and `init -backend=false`: no cloud
-  # credentials, no real plan or apply. The required node job above fails when this job does.
-  terraform:
-    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
-    timeout-minutes: 20
-    env:
-      TF_VERSION: 1.12.2
-      # SHA-256 of terraform_1.12.2_linux_amd64.zip, from HashiCorp's signed
-      # terraform_1.12.2_SHA256SUMS (https://releases.hashicorp.com/terraform/1.12.2/). Pinned here so a
-      # changed download fails instead of trusting a checksum file fetched from the same server.
-      TF_SHA256: 1eaed12ca41fcfe094da3d76a7e9aa0639ad3409c43be0103ee9f5a1ff4b7437
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: lts/*
-      - name: Install Terraform with a pinned checksum
-        run: |
-          zip="terraform_${TF_VERSION}_linux_amd64.zip"
-          cd "$RUNNER_TEMP"
-          curl -fsSL --retry 3 -o "$zip" "https://releases.hashicorp.com/terraform/${TF_VERSION}/${zip}"
-          echo "${TF_SHA256}  ${zip}" | sha256sum --check --strict
-          mkdir -p tf-bin
-          unzip -o -q "$zip" -d tf-bin
-          echo "TERRAFORM=$RUNNER_TEMP/tf-bin/terraform" >> "$GITHUB_ENV"
-      - name: Offline Terraform checks
-        run: infra/dryscope/scripts/check.sh
