@@ -25,6 +25,7 @@ const jobRoute = await import('@/app/api/jobs/[jobId]/route');
 const customerRoute = await import('@/app/api/jobs/[jobId]/customer/route');
 const claimRoute = await import('@/app/api/jobs/[jobId]/claim/route');
 const archiveRoute = await import('@/app/api/jobs/[jobId]/archive/route');
+const restoreRoute = await import('@/app/api/jobs/[jobId]/restore/route');
 const draftsRoute = await import('@/app/api/jobs/[jobId]/drafts/route');
 const coordinationRoute = await import('@/app/api/jobs/[jobId]/coordination/route');
 const assignmentsRoute = await import('@/app/api/jobs/[jobId]/assignments/route');
@@ -140,6 +141,8 @@ const unassign = (claims: FakeClaims, jobId: string, assignmentId: string) =>
   );
 const archive = (claims: FakeClaims, jobId: string, body: unknown) =>
   answer(archiveRoute.POST(request(claims, `/api/jobs/${jobId}/archive`, { method: 'POST', body }), job(jobId)));
+const restore = (claims: FakeClaims, jobId: string, body: unknown) =>
+  answer(restoreRoute.POST(request(claims, `/api/jobs/${jobId}/restore`, { method: 'POST', body }), job(jobId)));
 const claim = (claims: FakeClaims, jobId: string) => answer(fieldOwnerRoute.POST(request(claims, `/api/jobs/${jobId}/field-owner`, { method: 'POST' }), job(jobId)));
 const transfer = (claims: FakeClaims, jobId: string, body: unknown) =>
   answer(transferRoute.POST(request(claims, `/api/jobs/${jobId}/field-owner/transfer`, { method: 'POST', body }), job(jobId)));
@@ -766,15 +769,18 @@ describe('moving the field work (owner decision J5)', () => {
     return { running, resume: hold.open };
   }
 
-  it('closes the draft it made when the job was archived while the draft was being made, and names nobody on it', async () => {
+  it('leaves the current draft closed when the job was archived while the draft was being made, and names nobody on it', async () => {
     const { id, later } = await draftNeverMade();
     const paused = await pausedRemake(() => claim(ESTIMATOR_A, id));
     const { revision } = (await read(OWNER_A, id)).body.job as { revision: number };
     expect((await archive(OWNER_A, id, { revision, changeId: randomUUID() })).status).toBe(200);
-    expect(h.field.draft(h.seed.a, later)).toBeNull();
+    // The archive found no draft and left its placeholder there, which nothing is made over.
+    expect(h.field.draft(h.seed.a, later)).toMatchObject({ jobId: id, state: 'archived', placeholder: true, field: {}, rooms: {} });
     paused.resume();
-    expect(await paused.running).toEqual({ status: 410, body: { error: 'archived' } });
-    expect(h.field.draft(h.seed.a, later)).toMatchObject({ jobId: id, state: 'archived', fieldOwnerUid: null });
+    // Nothing is made over the placeholder, so no draft exists to report: the same request again.
+    expect(await paused.running).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
+    expect(h.field.draft(h.seed.a, later)).toMatchObject({ jobId: id, state: 'archived', placeholder: true, fieldOwnerUid: null });
+    expect(await claim(ESTIMATOR_A, id)).toEqual({ status: 410, body: { error: 'archived' } });
   });
 
   // A second Start field work, let in before the archive, reaches the current draft only after the
@@ -799,13 +805,145 @@ describe('moving the field work (owner decision J5)', () => {
       const { revision } = (await read(OWNER_A, id)).body.job as { revision: number };
       expect((await archive(OWNER_A, id, { revision, changeId: randomUUID() })).status).toBe(200);
       first.resume();
-      expect(await first.running).toEqual({ status: 410, body: { error: 'archived' } });
+      expect(await first.running).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
       hold.open();
       expect(await second).toEqual({ status: 410, body: { error: 'archived' } });
     } finally {
       h.drafts.setFieldOwner = named;
     }
-    expect(h.field.draft(h.seed.a, later)).toMatchObject({ state: 'archived', fieldOwnerUid: null });
+    expect(h.field.draft(h.seed.a, later)).toMatchObject({ state: 'archived', placeholder: true, fieldOwnerUid: null });
+  });
+
+  // The archive finds no draft and answers 200; the draft is then made, but the answer that it was is
+  // lost, and a second Start field work let in before the archive names its estimator on it. The
+  // archive leaves a closed placeholder where the draft is missing, so nothing is made over it and
+  // nobody is named on it: the archived job's field work stays closed.
+  it('never makes or opens the current draft after an archive that found it missing', async () => {
+    const { id, later } = await draftNeverMade();
+    const first = await pausedRemake(() => claim(ESTIMATOR_A, id));
+    const hold = latch();
+    const named = h.drafts.setFieldOwner;
+    let reached = false;
+    h.drafts.setFieldOwner = async (companyId, jobId, at, uid, revision) => {
+      if (at === later && !reached) {
+        reached = true;
+        await hold.wait;
+      }
+      return named(companyId, jobId, at, uid, revision);
+    };
+    try {
+      const second = claim(ESTIMATOR_A, id);
+      await until(() => reached, 'the second request at the current draft');
+      const { revision } = (await read(OWNER_A, id)).body.job as { revision: number };
+      expect((await archive(OWNER_A, id, { revision, changeId: randomUUID() })).status).toBe(200);
+      h.field.loseNext.createFrom = true;
+      first.resume();
+      expect(await first.running).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
+      hold.open();
+      // Its stamp finds only the placeholder: no draft to name anyone on, so try again (then 410).
+      expect(await second).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
+    } finally {
+      h.drafts.setFieldOwner = named;
+    }
+    expect(h.field.draft(h.seed.a, later)).toMatchObject({ jobId: id, state: 'archived', field: {}, rooms: {} });
+    expect(draftOf(later)?.fieldOwnerUid ?? null).toBeNull();
+    expect(await claim(ESTIMATOR_A, id)).toEqual({ status: 410, body: { error: 'archived' } });
+  });
+
+  it('makes the current draft once the job is restored, over the placeholder that kept the revision', async () => {
+    const { id, draftId, later, submissionId } = await draftNeverMade();
+    const { revision } = (await read(OWNER_A, id)).body.job as { revision: number };
+    expect((await archive(OWNER_A, id, { revision, changeId: randomUUID() })).status).toBe(200);
+    expect(h.field.draft(h.seed.a, later)).toMatchObject({ state: 'archived', placeholder: true });
+    expect((await restore(OWNER_A, id, { revision: revision + 1, changeId: randomUUID() })).status).toBe(200);
+    expect(h.field.draft(h.seed.a, later)).toMatchObject({ state: 'absent', placeholder: true, archiveRevision: revision + 2 });
+    expect((await claim(ESTIMATOR_A, id)).status).toBe(200);
+    const made = h.field.draft(h.seed.a, later);
+    expect(made).toMatchObject({ jobId: id, state: 'editing', field: MANIFEST.draft, previous: { draftId, submissionId }, archiveRevision: revision + 2 });
+    expect(made?.placeholder).toBeUndefined();
+    expect(draftOf(later)?.fieldOwnerUid).toBe('estimator-a');
+  });
+
+  // The archive's field step is held while the restore commits and lands; the archive then reaches a
+  // draft that is still missing. The restore's placeholder holds its revision, so the older archive
+  // changes nothing and the restored job's draft is made and opened.
+  it('never lets an archive that lands after a restore close the draft of the restored job', async () => {
+    const { id, later } = await draftNeverMade();
+    const { revision } = (await read(OWNER_A, id)).body.job as { revision: number };
+    const hold = latch();
+    h.field.gate.archiveDraft = () => hold.wait;
+    const archiving = archive(OWNER_A, id, { revision, changeId: randomUUID() });
+    await until(() => h.field.calls.includes('archiveDraft'), 'the archive at the field database');
+    expect((await restore(OWNER_A, id, { revision: revision + 1, changeId: randomUUID() })).status).toBe(200);
+    hold.open();
+    expect((await archiving).status).toBe(200);
+    expect(h.field.draft(h.seed.a, later)).toMatchObject({ state: 'absent', placeholder: true, archiveRevision: revision + 2 });
+    expect((await claim(ESTIMATOR_A, id)).status).toBe(200);
+    expect(h.field.draft(h.seed.a, later)).toMatchObject({ jobId: id, state: 'editing', archiveRevision: revision + 2 });
+    expect(draftOf(later)?.fieldOwnerUid).toBe('estimator-a');
+  });
+
+  // Back to editing's retry over the placeholder of a job whose restore did not reach the field
+  // database finds no draft there: it never answers 200 for one, and makes it once the restore has.
+  it('never answers Back to editing’s retry for a draft that is only an archive’s placeholder', async () => {
+    const { id, draftId, later, submissionId } = await draftNeverMade();
+    const { revision } = (await read(OWNER_A, id)).body.job as { revision: number };
+    expect((await archive(OWNER_A, id, { revision, changeId: randomUUID() })).status).toBe(200);
+    h.field.failNext.restoreDraft = true;
+    const once = { revision: revision + 1, changeId: randomUUID() };
+    expect(await restore(OWNER_A, id, once)).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
+    expect(await nextDraft(ESTIMATOR_A, id, { draftId: later, fromDraftId: draftId })).toEqual({
+      status: 503,
+      body: { error: 'draft_unavailable' },
+    });
+    expect(h.field.draft(h.seed.a, later)).toMatchObject({ state: 'archived', placeholder: true, rooms: {} });
+    expect((await restore(OWNER_A, id, once)).status).toBe(200);
+    expect((await nextDraft(ESTIMATOR_A, id, { draftId: later, fromDraftId: draftId })).status).toBe(200);
+    expect(h.field.draft(h.seed.a, later)).toMatchObject({
+      jobId: id,
+      state: 'editing',
+      rooms: { kitchen: { name: 'Kitchen' } },
+      previous: { draftId, submissionId },
+    });
+  });
+
+  // New job's draft was never made (the field database failed), then the job was archived and restored:
+  // the same create again makes the draft over the placeholder, in the one record, keeping its revision.
+  it('makes the draft of a New job retry over the placeholder an archive and restore left, keeping its revision', async () => {
+    const ids = { id: randomUUID(), draftId: randomUUID() };
+    h.drafts.failNext = { on: true, afterWrite: false };
+    expect((await create(OFFICE_A, { ...ids, propertyAddress: '40 Office Road' })).status).toBe(503);
+    const { revision } = (await read(OWNER_A, ids.id)).body.job as { revision: number };
+    expect((await archive(OWNER_A, ids.id, { revision, changeId: randomUUID() })).status).toBe(200);
+    expect(h.field.draft(h.seed.a, ids.draftId)).toMatchObject({ state: 'archived', placeholder: true });
+    // While the job is archived, the same create again is answered archived and makes nothing.
+    expect((await create(OFFICE_A, { ...ids, propertyAddress: '40 Office Road' })).status).toBe(410);
+    expect(h.field.draft(h.seed.a, ids.draftId)).toMatchObject({ state: 'archived', placeholder: true });
+    expect((await restore(OWNER_A, ids.id, { revision: revision + 1, changeId: randomUUID() })).status).toBe(200);
+    expect((await create(OFFICE_A, { ...ids, propertyAddress: '40 Office Road' })).status).toBe(200);
+    const made = h.field.draft(h.seed.a, ids.draftId);
+    expect(made).toMatchObject({ jobId: ids.id, state: 'editing', archiveRevision: revision + 2 });
+    expect(made?.placeholder).toBeUndefined();
+    expect(draftOf(ids.draftId)).toBeDefined();
+  });
+
+  // A stamp that reaches a draft the job's archive closed names nobody on it, though Postgres has
+  // restored the job since (its restore's field step is still to come): the archived scope and rooms
+  // never reach that estimator.
+  it('names nobody on a draft that is archived, until the restore reaches the field database', async () => {
+    const { id, draftId } = await officeJob();
+    await assign(OFFICE_A, id, h.seed.estimatorA.actor);
+    const { revision } = (await read(OWNER_A, id)).body.job as { revision: number };
+    expect((await archive(OWNER_A, id, { revision, changeId: randomUUID() })).status).toBe(200);
+    expect(h.field.draft(h.seed.a, draftId)).toMatchObject({ state: 'archived' });
+    h.field.failNext.restoreDraft = true;
+    const once = { revision: revision + 1, changeId: randomUUID() };
+    expect(await restore(OWNER_A, id, once)).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
+    expect(await claim(ESTIMATOR_A, id)).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
+    expect(draftOf(draftId)?.fieldOwnerUid).toBeNull();
+    expect((await restore(OWNER_A, id, once)).status).toBe(200);
+    expect((await claim(ESTIMATOR_A, id)).status).toBe(200);
+    expect(draftOf(draftId)?.fieldOwnerUid).toBe('estimator-a');
   });
 
   it('makes the draft naming nobody, and never names a field owner who has since changed on it', async () => {

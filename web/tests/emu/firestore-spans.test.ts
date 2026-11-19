@@ -45,7 +45,7 @@ describe('Firestore spans', () => {
     const ours = spans.filter((s) => s.instrumentationScope.name === 'dryscope-web');
     expect(spans.length).toBeGreaterThan(ours.length);
     expect(ours.map((s) => s.name)).toEqual([
-      'firestore.create drafts',
+      'firestore.runTransaction drafts',
       'firestore.get drafts',
       'firestore.runTransaction access',
       'firestore.runTransaction access',
@@ -53,7 +53,7 @@ describe('Firestore spans', () => {
     ]);
     expect(ours[0]!.attributes).toEqual({
       'db.system.name': 'gcp.firestore',
-      'db.operation.name': 'create',
+      'db.operation.name': 'runTransaction',
       'db.collection.name': 'drafts',
     });
     // Every span, the SDK's included.

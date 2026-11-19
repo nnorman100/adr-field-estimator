@@ -510,6 +510,8 @@ export function submissionsService(db: Database, store: FenceStore, options: Sub
         );
         // A draft made for another job or from another submission is never this one (security audit F1).
         if (result === 'taken') throw new SubmissionError('conflict');
+        // Only an archived job's placeholder is there: no draft yet, so the same request again.
+        if (result === 'archived') throw new JobError('draft_unavailable');
       });
       await field(() => store.projectJob(caller.companyId, jobId, {
         currentDraftId: made.job.currentDraftId, revision: made.job.revision,

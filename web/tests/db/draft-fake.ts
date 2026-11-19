@@ -1,5 +1,5 @@
 import type { JobProjection } from '@/lib/field/job-projection';
-import { draftOfOtherJob, type DraftStore } from '@/lib/jobs/drafts';
+import { draftOfOtherJob, placeholderRefusal, type DraftStore, type Placeholder } from '@/lib/jobs/drafts';
 
 // A stand-in for the field database's drafts: what the jobs service writes, kept in memory, with a
 // switch to make the next write fail as if Firestore were unreachable. tests/emu/ checks the real
@@ -13,6 +13,12 @@ export type FakeDrafts = DraftStore & {
   // The job each draft was made for, by "company/draft" (`jobId`, security audit F1); a draft with
   // none was made before that key.
   jobOf: Map<string, string>;
+  // The drafts that are archived, by "company/draft" (kept by tests/submissions/field-fake.ts): no
+  // field owner is named on one (src/lib/jobs/drafts.ts).
+  archived: Set<string>;
+  // The placeholders an archive or restore left where a draft is missing, by "company/draft" (kept by
+  // tests/submissions/field-fake.ts): ensure consumes a restored job's one and refuses an archived job's.
+  placeholders: Map<string, Placeholder>;
   // Every call to ensure, in order, including the ones that found the draft there.
   calls: { companyId: string; draftId: string; fieldOwnerUid: string | null }[];
   // Every call to setFieldOwner, in order (S5b-1).
@@ -26,6 +32,8 @@ export function fakeDrafts(): FakeDrafts {
   const store: FakeDrafts = {
     made: new Map(),
     jobOf: new Map(),
+    archived: new Set(),
+    placeholders: new Map(),
     projected: new Map(),
     async projectJob(companyId, jobId, projection) {
       const key = `${companyId}/${jobId}`;
@@ -45,6 +53,12 @@ export function fakeDrafts(): FakeDrafts {
       if (fail.on && !fail.afterWrite) {
         fail.on = false;
         throw new Error('field database unreachable');
+      }
+      const left = store.placeholders.get(key);
+      if (left) {
+        const refused = placeholderRefusal(left, jobId);
+        if (refused) return refused;
+        store.placeholders.delete(key);
       }
       const existed = store.made.has(key);
       if (existed && draftOfOtherJob(store.jobOf.get(key), jobId)) return 'taken';
@@ -71,6 +85,7 @@ export function fakeDrafts(): FakeDrafts {
       const draft = store.made.get(key);
       if (!draft) return 'missing';
       if (draftOfOtherJob(store.jobOf.get(key), jobId)) return 'taken';
+      if (store.archived.has(key)) return 'archived';
       const stored = draft.fieldOwnerRevision ?? 0;
       let result: 'set' | 'same' | 'newer' = 'set';
       if (stored > revision) result = 'newer';
