@@ -46,6 +46,10 @@ async function sendArchival(
   const answer = await send(session.user, jobId, { revision: request.revision, changeId: request.changeId });
   if (!pending.settleArchival(jobId, request.changeId, !answer.ok && sendAgain(answer) ? 'unanswered' : 'answered')) return null;
   if (archivalDone(request.kind, answer)) pending.archivalDone(jobId, request.kind === 'archive', answer.ok ? answer.value.job.revision : undefined);
+  // An archive answered 503 draft_unavailable committed in the job's record and only its field step is
+  // left: the job is archived, so the screens stop field edits now, and the same request is kept to
+  // finish the draft.
+  else if (request.kind === 'archive' && !answer.ok && answer.code === 'draft_unavailable') pending.archivalDone(jobId, true);
   return answer;
 }
 

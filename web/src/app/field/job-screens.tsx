@@ -117,6 +117,9 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   const archivalsDone = usePending(() => pending.archivalsDone(jobId));
   const [archivalsSeen] = useState(archivalsDone);
   const [draftError, setDraftError] = useState<string | null>(null);
+  // Something was typed into a form of this job on this screen. Set after the event, so the box being
+  // typed into is not drawn again before its own change is taken.
+  const [typed, setTyped] = useState(false);
   const [readDraft] = useState(draftReads);
   // A refusal waits for a read of the job to say what it meant (src/lib/field/pending.ts): nothing
   // is saved meanwhile.
@@ -323,8 +326,10 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
 
   // An archived job (an old link, or archived here) shows that it is archived: every job route answers
   // it 410, and the field rules refuse every write to its draft. Screens of the job as read here stay,
-  // read only, with whatever the person changed and did not save.
-  if (archived && !detail) {
+  // read only, with whatever the person changed and did not save. A job opened from this phone's saved
+  // field work (no job read yet) whose forms have had input keeps them mounted, read only, so what was
+  // typed and not saved is not lost; a job nobody typed into is the notice alone.
+  if (archived && !detail && !(draft && typed)) {
     return (
       <div className="flex flex-col gap-3">
         <FieldLink to={{ view: 'jobs', list: null }}>Back to jobs</FieldLink>
@@ -381,7 +386,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   const onDraftViews = view === 'scope' || view === 'photos';
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-4" onInputCapture={() => void setTimeout(() => setTyped(true), 0)}>
       <FieldLink to={{ view: 'jobs', list: null }}>Back to jobs</FieldLink>
       <h2 className="text-xl font-semibold break-words">{detail ? detail.job.propertyAddress || 'No address yet' : 'Saved field work'}</h2>
       <nav aria-label="Job" className="flex flex-wrap gap-x-4">

@@ -134,6 +134,26 @@ test('a failed SQL job read keeps the cached field work open', async ({ context,
   await expect(page.getByLabel('Year built')).toBeEditable();
 });
 
+test('a job found archived after an offline edit keeps the open forms and the unsaved input, read only', async ({ context, lane }) => {
+  const world = await seedCompany();
+  const phone = await signedIn(context, lane, world);
+  const jobId = randomUUID();
+  await openJob(phone.page, lane, world, jobId);
+  const page = phone.page;
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  lane.cut();
+  await page.reload();
+  await expect(page.getByLabel('Year built')).toBeEditable();
+  await page.getByLabel('Year built').fill('1962');
+  // The owner archived the job meanwhile: the first job read after the signal returns answers 410.
+  lane.serve(`/api/jobs/${jobId}`, { type: 'application/json', body: JSON.stringify({ error: 'archived' }), status: 410 });
+  lane.restore();
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await expect(page.getByRole('heading', { name: 'This job is archived' })).toBeVisible();
+  await expect(page.getByLabel('Year built')).toHaveValue('1962');
+  await expect(page.getByLabel('Year built')).not.toBeEditable();
+});
+
 test('a photo taken while the camera hid the page is kept to send again', async ({ context, lane }) => {
   const world = await seedCompany();
   const phone = await signedIn(context, lane, world);

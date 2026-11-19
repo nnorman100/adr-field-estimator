@@ -1,8 +1,10 @@
 import { test as base, expect as baseExpect, type APIRequestContext, type Page } from '@playwright/test';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { expectNoAxeViolations } from './a11y';
 import { JOBS_BASE_URL } from './jobs/backend';
 import { adminSql, currentDraftOf, seedCompany, type Company, type Person } from './jobs/seed';
+import { agreementOf, newSubmission, pricedResult, seedCommitted, seedEstimate, seedPin, seedSignature, seedVersion } from '../db/submission-harness';
+import { FieldValue } from 'firebase-admin/firestore';
 import { adminDb } from './offline/world';
 import { APP_CODE, fakeSecondStep, withSecondFactor } from './second-step/fake-totp';
 import { idTokenFor } from './sign-in/emulator';
@@ -64,11 +66,46 @@ async function seedJob(request: APIRequestContext, company: Company, maker: Pers
   return jobId;
 }
 
-// A signed job as the screens see it: the job row says signed. (Copy itself reads the signed record,
-// which tests/db/archive-api.test.ts drives through the real signing chain.)
+// A signed job as the real copy route reads it: a committed submission with its snapshot (the address
+// and scope as signed), the price version, estimate and signature it names, and the original
+// agreement, written as the table owner (tests/db/archive-api.test.ts drives the same chain).
+const SIGNED_SCOPE = { yearBuilt: 1965, roomOrder: ['kitchen'], notes: 'Wet carpet by the sink.', scopeConfirmed: true };
+const SIGNED_ROOM = { id: 'kitchen', field: { name: 'Kitchen', category: 2, floorSf: 120 } };
+
 async function seedSigned(request: APIRequestContext, company: Company, maker: Person, address: string): Promise<string> {
   const jobId = await seedJob(request, company, maker, address);
-  await adminSql()`UPDATE jobs SET status = 'signed', revision = revision + 1 WHERE id = ${jobId}::uuid`;
+  const sql = adminSql();
+  const [actor] = await sql<{ id: string }[]>`SELECT id::text FROM actors WHERE company_id = ${company.id}::uuid AND uid = ${maker.uid}`;
+  const draft = await currentDraftOf(company.id, jobId);
+  const made = newSubmission(company.id, jobId, actor!.id, { draft });
+  const bytes = Buffer.from(
+    JSON.stringify({
+      format: 'dryscope-submission-v1',
+      submissionId: made.id,
+      jobId,
+      draftId: draft,
+      fieldSha256: createHash('sha256').update(made.id).digest('hex'),
+      field: { draft: SIGNED_SCOPE, rooms: [SIGNED_ROOM], photos: [] },
+      photos: [],
+      job: { propertyAddress: address },
+      customer: { name: '', phone: '', email: '' },
+      claim: {},
+    }),
+  );
+  const submission = await seedCommitted(sql, made, { bytes, sha: createHash('sha256').update(bytes).digest('hex') });
+  const version = await seedVersion(sql, company.id, actor!.id);
+  const pin = await seedPin(sql, { company: company.id, job: jobId, version: version.id, actor: actor!.id });
+  const estimate = await seedEstimate(sql, { company: company.id, job: jobId, submission: submission.id, pin, actor: actor!.id, hash: version.hash });
+  const signature = await seedSignature(sql, company.id, jobId, actor!.id);
+  const a = agreementOf({ company: company.id, actor: actor!.id, job: { id: jobId } as never, version, submission, pin, estimate, signature });
+  await sql`
+    INSERT INTO agreements (id, company_id, job_id, submission_id, estimate_id, kind, signer_kind, signer_name, signature_evidence_id, proposal_sha256, priced_result,
+                            version_id, content_hash, engine_version, documents_bytes, request_digest, created_by_actor_id)
+    VALUES (${a.id}, ${a.company}, ${a.job}, ${a.submission}, ${a.estimate}, 'original', 'device', 'Pat Customer', ${a.signature}, ${a.proposalSha},
+            ${JSON.stringify(pricedResult)}::text::jsonb, ${a.version}, ${a.hash}, 'dryscope-v3',
+            ${Buffer.from('{"documents":"as signed"}')}, ${createHash('sha256').update(a.id).digest('hex')}, ${a.actor})
+  `;
+  await sql`UPDATE jobs SET status = 'signed', revision = revision + 1 WHERE id = ${jobId}::uuid`;
   return jobId;
 }
 
@@ -183,17 +220,15 @@ test('an estimator has no Archive, sees an archived job’s old link as archived
   await expect(page.getByText(ARCHIVED_TEXT)).toBeVisible();
   await expect(page.getByRole('link', { name: 'Archived drafts' })).toHaveCount(0);
 
-  // Copy, played at the network boundary: the phone's ids go to the real create route (POST
-  // /api/jobs makes one job per id and answers the same job again, as copy does). The first answer
-  // is lost after the server made the job.
+  // Copy through the real route: the phone's ids go to POST /api/jobs/{id}/copy, which reads the signed
+  // snapshot. Only the first answer is dropped, after the server made the copy.
   const sent: { id: string; draftId: string }[] = [];
   let lost = true;
   await page.route(`**/api/jobs/${signed}/copy`, async (route) => {
-    const body = JSON.parse(route.request().postData() ?? '{}') as { id: string; draftId: string };
-    sent.push(body);
-    const made = await route.fetch({ url: `${JOBS_BASE_URL}/api/jobs`, postData: JSON.stringify({ ...body, propertyAddress: '5 Signed Avenue' }) });
+    sent.push(JSON.parse(route.request().postData() ?? '{}') as { id: string; draftId: string });
+    const real = await route.fetch();
     if (lost) return route.abort();
-    return route.fulfill({ response: made });
+    return route.fulfill({ response: real });
   });
   await page.goto('/field');
   await openJob(page, '5 Signed Avenue');
@@ -220,6 +255,10 @@ test('an estimator has no Archive, sees an archived job’s old link as archived
   const copies = jobs.map((row) => row.id).filter((id) => ![draft, filed, signed].includes(id));
   expect(copies).toEqual([sent[0]!.id]);
   expect(await statusOf(signed)).toBe('signed');
+  // The one draft holds the signed scope, less its approval.
+  const copied = (await adminDb().doc(`companies/${company.id}/drafts/${sent[0]!.draftId}`).get()).data()!;
+  expect(copied.field).toEqual({ yearBuilt: 1965, roomOrder: ['kitchen'], notes: 'Wet carpet by the sink.' });
+  expect((await adminDb().doc(`companies/${company.id}/drafts/${sent[0]!.draftId}/rooms/kitchen`).get()).data()).toEqual({ field: SIGNED_ROOM.field });
 });
 
 test('archiving keeps what the owner typed and did not save on screen, read only', async ({ page, request }) => {
@@ -356,4 +395,75 @@ test('the owner who moves the field work to an estimator still sees Archive, and
   await expect(page.getByText(/field work is no longer yours/)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Copy to a new draft' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Archive job' })).toHaveCount(0);
+});
+
+test('an archive that committed but answered 503 draft_unavailable leaves the screen read only, with the same archive kept to send again', async ({ page, request }) => {
+  test.setTimeout(150_000);
+  const company = await seedCompany('archive-partial', { owner: 'owner' });
+  const owner = company.people.owner!;
+  const jobId = await seedJob(request, company, owner, '12 Half Archived Court');
+
+  // The first archive commits on the server, but its field step does not get through: the draft is
+  // still being edited and the answer is 503 draft_unavailable.
+  const sent: { revision: number; changeId: string }[] = [];
+  let failing = true;
+  await page.route(`**/api/jobs/${jobId}/archive`, async (route) => {
+    sent.push(JSON.parse(route.request().postData() ?? '{}') as { revision: number; changeId: string });
+    if (!failing) return route.continue();
+    const draft = adminDb().doc(`companies/${company.id}/drafts/${await currentDraftOf(company.id, jobId)}`);
+    const before = (await draft.get()).data()!;
+    await route.fetch();
+    await draft.update({ state: before.state, archiveRevision: before.archiveRevision ?? FieldValue.delete() });
+    return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'draft_unavailable' }) });
+  });
+
+  await signIn(page, company, owner);
+  await openJob(page, '12 Half Archived Court');
+  await page.getByLabel('Year built').fill('1971');
+  await page.getByRole('button', { name: 'Archive job' }).click();
+  await page.getByRole('dialog', { name: 'Archive this job?' }).getByRole('button', { name: 'Archive job' }).click();
+
+  // The job row is archived and the draft is not: nothing of it may be saved from this screen.
+  await expect(page.getByRole('heading', { name: 'This job is archived' })).toBeVisible();
+  expect(await statusOf(jobId)).toBe('archived');
+  expect(await draftStateOf(company, jobId)).toBe('editing');
+  await expect(page.getByLabel('Year built')).toHaveValue('1971');
+  await expect(page.getByLabel('Year built')).not.toBeEditable();
+  await expect(page.getByRole('button', { name: 'Save scope', exact: true })).toHaveCount(0);
+
+  // The archive is still kept: Try archiving again sends the same change and finishes the draft.
+  failing = false;
+  await page.getByRole('button', { name: 'Try archiving again' }).click();
+  await expect.poll(() => draftStateOf(company, jobId)).toBe('archived');
+  expect(sent).toHaveLength(2);
+  expect(sent[1]).toEqual(sent[0]);
+  await expect(page.getByRole('button', { name: 'Try archiving again' })).toHaveCount(0);
+});
+
+test('a refused jobs list clears every property address from the screen, the Restore notice and the unfinished archives included', async ({ page, request }) => {
+  test.setTimeout(150_000);
+  const company = await seedCompany('list-denied', { owner: 'owner' });
+  const owner = company.people.owner!;
+  const first = await seedJob(request, company, owner, '51 Restored First Street');
+  const second = await seedJob(request, company, owner, '52 Restored Second Street');
+  for (const jobId of [first, second]) {
+    const done = await request.post(`${JOBS_BASE_URL}/api/jobs/${jobId}/archive`, { headers: await bearer(company, owner), data: { revision: 1, changeId: randomUUID() } });
+    expect(done.status()).toBe(200);
+  }
+
+  await signIn(page, company, owner);
+  await main(page).getByRole('link', { name: 'Archived drafts' }).click();
+  const archived = page.getByRole('list', { name: 'Archived drafts' });
+  await archived.getByRole('listitem').filter({ hasText: '51 Restored First Street' }).getByRole('button', { name: 'Restore' }).click();
+  await expect(main(page).getByRole('link', { name: 'Open 51 Restored First Street' })).toBeVisible();
+
+  // The company is suspended: the list read that follows the next restore is refused (403), while the
+  // field shell still holds its last successful membership check.
+  await page.route(/\/api\/jobs\?/, (route) => route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ error: 'forbidden' }) }));
+  await archived.getByRole('listitem').filter({ hasText: '52 Restored Second Street' }).getByRole('button', { name: 'Restore' }).click();
+
+  await expect(main(page).getByRole('alert').filter({ hasText: /./ }).first()).toBeVisible();
+  await expect(main(page).getByText('51 Restored First Street')).toHaveCount(0);
+  await expect(main(page).getByText('52 Restored Second Street')).toHaveCount(0);
+  await expect(main(page).getByRole('status').filter({ hasText: 'Restored' })).toHaveCount(0);
 });

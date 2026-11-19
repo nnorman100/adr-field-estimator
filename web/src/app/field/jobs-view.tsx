@@ -35,6 +35,11 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
   const [cursor, setCursor] = useState<string | null>(null);
   const [error, setError] = useState<{ message: string; from: string | null } | null>(null);
   const [busy, setBusy] = useState(false);
+  // The server refused the list (a suspended company, a removed member): nothing with a property
+  // address stays on screen, and archive answers that arrive meanwhile are not shown, until a list
+  // read is answered again.
+  const [denied, setDenied] = useState(false);
+  const deniedNow = useRef(false);
   // Only the newest request answers: a page asked for before the list was read again from its first
   // page is not added to it, and no page is asked for until that first page is back.
   const latest = useRef(0);
@@ -43,13 +48,20 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
     setBusy(false);
     if (!answer.ok) {
       setError({ message: answer.message, from: answer.denied ? null : from });
-      // A refusal to list jobs drops the ones already shown.
+      // A refusal to list jobs drops the ones already shown, and with them the restored job and the
+      // unfinished archives, which name properties too.
       if (answer.denied) {
+        deniedNow.current = true;
+        setDenied(true);
         setJobs(null);
         setCursor(null);
+        setRestored(null);
+        setRefused(null);
       }
       return;
     }
+    deniedNow.current = false;
+    setDenied(false);
     setError(null);
     setJobs((current) => (from === null ? answer.value.jobs : [...(current ?? []), ...answer.value.jobs]));
     setCursor(answer.value.nextCursor);
@@ -115,17 +127,18 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
       ) : null}
       {!session.online ? <p role="status">Needs a connection</p> : null}
       {session.online && jobs === null && !error ? <p role="status">Loading jobs…</p> : null}
-      {restored ? (
+      {restored && !denied ? (
         <p role="status" className="text-sm">
           Restored: it is back in the job lists.{' '}
           <FieldLink to={{ view: 'scope', jobId: restored.id }}>Open {restored.address}</FieldLink>
         </p>
       ) : null}
-      {seesArchived ? (
+      {seesArchived && !denied ? (
         <UnfinishedArchivals
           session={session}
           shown={(jobId, kind) => archivedList && kind === 'restore' && (jobs ?? []).some((job) => job.id === jobId)}
           onAnswered={(kind, answer) => {
+            if (deniedNow.current) return;
             setRefused(archivalDone(kind, answer) || answer.ok ? null : answer.message);
             if (kind === 'restore' && answer.ok) setRestored({ id: answer.value.job.id, address: answer.value.job.propertyAddress || 'No address yet' });
             if (!archivalDone(kind, answer)) more(null);
@@ -146,6 +159,7 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
               session={session}
               job={job}
               onRestored={(back) => {
+                if (deniedNow.current) return;
                 setJobs((current) => (current ?? []).filter((one) => one.id !== job.id));
                 setRestored(back ? { id: back.id, address: back.propertyAddress || 'No address yet' } : null);
               }}
