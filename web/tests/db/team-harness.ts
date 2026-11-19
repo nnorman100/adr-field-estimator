@@ -272,7 +272,7 @@ export async function resetTeamDatabase(
   harness.field = fakeField(memoryBacking(), { drafts: harness.drafts, states: harness.draftStates });
   harness.jobs = {
     ...jobsService(handle.db, harness.drafts),
-    ...officeService(handle.db, harness.drafts),
+    ...officeService(handle.db, harness.drafts, harness.field),
     ...archiveService(handle.db, harness.field),
   };
   harness.submissions = submissionsService(handle.db, harness.field);

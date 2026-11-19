@@ -1,6 +1,7 @@
 import { serverDatabase } from '@/lib/auth/services';
 import { parseProjectionConfig } from '@/lib/config';
 import { firestoreFor } from '@/lib/projection/firestore';
+import { firestoreFenceStore } from '@/lib/submissions/fence';
 import { archiveService, type ArchiveService } from './archive';
 import { firestoreArchiveStore } from './archive-store';
 import { firestoreDraftStore } from './drafts';
@@ -23,7 +24,9 @@ export function jobsServices(): JobRoutesService {
     const db = serverDatabase();
     const firestore = firestoreFor(config);
     const drafts = firestoreDraftStore(firestore);
-    service = { ...jobsService(db, drafts), ...officeService(db, drafts), ...archiveService(db, firestoreArchiveStore(firestore)) };
+    const archiveStore = firestoreArchiveStore(firestore);
+    const remaker = { createFrom: firestoreFenceStore(firestore).createFrom, archiveDraft: archiveStore.archiveDraft };
+    service = { ...jobsService(db, drafts), ...officeService(db, drafts, remaker), ...archiveService(db, archiveStore) };
   }
   return service;
 }

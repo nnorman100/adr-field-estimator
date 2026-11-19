@@ -23,9 +23,10 @@ export type ArchiveResult =
   // is changed.
   | 'same'
   | 'newer'
-  // No such draft (its job's create never reached the field database): nothing to change. A draft is
-  // made only under its job's lock while the job is not archived (lockedJob), so none is made open
-  // to the phone after its job's archive.
+  // No such draft (its job's create never reached the field database): nothing to change. A draft made
+  // later, while its job is archived, is closed by the request that makes it (office.ts
+  // remakeCurrentDraft reads the job again once the draft is there), and one made under its job's
+  // lock is made only while the job is not archived (lockedJob).
   | 'missing';
 
 export type ArchiveStore = JobProjectionStore & DraftLookup & {
