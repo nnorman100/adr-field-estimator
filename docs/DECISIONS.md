@@ -169,7 +169,7 @@ Decision: no current GA Gemini Flash model is served from `us-central1`, so text
 Status: accepted (owner, Nov 12, 2026).
 Decision: no agent is built in S7. The first agent will be ADK TypeScript 2.x on Cloud Run, with its own service and account, fixed actions, an audit log, human approval, and Model Armor on its model calls. Agent Gateway and Agent Identity are not relied on, because they need the Google Cloud organization, which does not exist yet. A2UI is not adopted until an agent answers with screens and the A2UI React renderer is at 1.0 or later and supports spec 1.0. Trigger reworded 2026-11-13 (owner): React renderer at 1.0 or later supporting spec 1.0. Detail: `docs/plans/S7.md` (decision V10).
 
-### D-029: Pipeline reviewer is ChatGPT (GPT-6 Astra); builders are Claude only (Nov 13, 2026, Standard 2.10)
+### D-029: Pipeline reviewer is ChatGPT (GPT-6 Astra); builder family rule amended by Standard 2.11 (Nov 13, 2026, Standard 2.10)
 
 Status: accepted (owner, Nov 13, 2026, choice "A"). Supersedes D-015.
 Decision: the pipeline review agent is ChatGPT (GPT-6 Astra), with no Grok or Gemini fallback. Builders are Claude only, so the reviewer is always a different model family from the builder. Technology Standard 2.10 records the same change; the Standard is now at 2.10.
