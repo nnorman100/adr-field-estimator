@@ -85,6 +85,10 @@ export const operatorApiPaths: readonly string[] = [
   '/api/platform/companies/:id/owner',
   '/api/platform/companies/:id/team',
   '/api/platform/companies/:id/prices',
+  // S5b-5: the read-only support view of a company's jobs.
+  '/api/platform/companies/:id/jobs',
+  '/api/platform/companies/:id/jobs/:id',
+  '/api/platform/companies/:id/jobs/:id/photos/:id',
   '/api/platform/companies/:id/records-check',
   '/api/platform/companies/:id/members/:id',
   '/api/platform/companies/:id/members/:id/enable',

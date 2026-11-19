@@ -212,6 +212,10 @@ export const MATRIX: readonly MatrixRow[] = [
   row(`${PLATFORM_ONE}/owner`, 'POST', 'operator', { body: { email: 'boss@example.test', replace: true } }),
   row(`${PLATFORM_ONE}/team`, 'GET', 'operator'),
   row(`${PLATFORM_ONE}/prices`, 'GET', 'operator'),
+  // S5b-5: the read-only support view of a company's jobs, one job and one photo's bytes.
+  row(`${PLATFORM_ONE}/jobs`, 'GET', 'operator'),
+  row(`${PLATFORM_ONE}/jobs/[jobId]`, 'GET', 'operator'),
+  row(`${PLATFORM_ONE}/jobs/[jobId]/photos/[photoId]`, 'GET', 'operator', { query: '?kind=photo' }),
   // S8-3: the records check's first page; a later page also needs the operator's own run id.
   row(`${PLATFORM_ONE}/records-check`, 'POST', 'operator', { body: {} }),
   row(`${PLATFORM_ONE}/members/[membershipId]`, 'PATCH', 'operator', { body: { role: 'office' } }),

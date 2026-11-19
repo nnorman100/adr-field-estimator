@@ -12,6 +12,7 @@ export {
   supportPrices,
   supportTeam,
 } from './http';
+export { supportJob, supportJobs, supportPhoto } from './support-http';
 export {
   PLATFORM_ERRORS,
   PlatformError,

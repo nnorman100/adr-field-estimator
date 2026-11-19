@@ -173,11 +173,11 @@ function sameValues<T extends Record<string, unknown>>(stored: T, input: Record<
 const CURSOR_TIME = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d{1,6})?[+-]\d{2}(:\d{2})?$/;
 const CURSOR_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-function encodeCursor(time: string, id: string): string {
+export function encodeCursor(time: string, id: string): string {
   return Buffer.from(`${time}|${id}`).toString('base64url');
 }
 
-function decodeCursor(cursor: string): { time: string; id: string } {
+export function decodeCursor(cursor: string): { time: string; id: string } {
   const [time, id, ...rest] = Buffer.from(cursor, 'base64url').toString().split('|');
   if (rest.length > 0 || !time || !id || !CURSOR_TIME.test(time) || !CURSOR_ID.test(id)) throw new JobError('invalid_request');
   return { time, id };

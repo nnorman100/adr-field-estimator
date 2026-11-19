@@ -40,6 +40,9 @@ vi.mock('@/lib/platform', () => ({
   supportChangeRole: standIn('supportChangeRole'),
   supportEnableMember: standIn('supportEnableMember'),
   supportInvitationAction: standIn('supportInvitationAction'),
+  supportJob: standIn('supportJob'),
+  supportJobs: standIn('supportJobs'),
+  supportPhoto: standIn('supportPhoto'),
   supportPrices: standIn('supportPrices'),
   supportTeam: standIn('supportTeam'),
 }));
