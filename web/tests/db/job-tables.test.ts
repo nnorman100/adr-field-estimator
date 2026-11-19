@@ -79,7 +79,7 @@ describe('migration 0010: the four tables', () => {
       { name: 'evidence_objects', enabled: true, forced: true, policies: 2 },
       { name: 'job_claims', enabled: true, forced: true, policies: 3 },
       { name: 'job_customers', enabled: true, forced: true, policies: 3 },
-      { name: 'jobs', enabled: true, forced: true, policies: 3 },
+      { name: 'jobs', enabled: true, forced: true, policies: 4 },
     ]);
   });
 
@@ -96,7 +96,7 @@ describe('migration 0010: the four tables', () => {
     const columns = {
       job_claims: ['adjuster_email', 'adjuster_name', 'adjuster_phone', 'carrier', 'claim_number', 'date_of_loss', 'deductible', 'loss_cause', 'policy_number', 'updated_at'],
       job_customers: ['email', 'name', 'phone', 'updated_at'],
-      jobs: ['archived_at', 'archived_by_actor_id', 'current_draft_id', 'field_owner_actor_id', 'last_change_id', 'property_address', 'revision', 'status', 'updated_at'],
+      jobs: ['archived_at', 'archived_by_actor_id', 'current_draft_id', 'field_owner_actor_id', 'field_revision', 'field_synced_revision', 'last_change_id', 'property_address', 'revision', 'status', 'updated_at'],
     };
     expect(updates).toEqual(Object.entries(columns).flatMap(([table, list]) => list.map((column) => ({ table, column }))));
   });
