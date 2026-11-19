@@ -1,7 +1,9 @@
-import { and, asc, eq, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
 import { actors, jobAssignments, jobCoordination, jobDrafts, jobs, jobSubmissions, memberships } from '@/db/schema';
 import { holdAcrossOutsideCall, withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
+import type { FenceStore } from '@/lib/submissions/fence';
+import { snapshotManifest } from '@/lib/submissions/snapshot';
 import { hasAny, holdDraft, jobAccess, JobError, type JobCaller, type JobRow } from './access';
 import { draftOfOtherJob, type DraftStore } from './drafts';
 import { assignDigest, type AssignInput, type CoordinationInput, type TransferInput } from './schema';
@@ -192,7 +194,11 @@ async function draftIdsOf(tx: CompanyTransaction, row: JobRow): Promise<string[]
   return [...[...held].filter((id) => id !== row.currentDraftId), row.currentDraftId];
 }
 
-export function officeService(db: Database, drafts: DraftStore): OfficeService {
+// The one field-database step of Back to editing a move or Start field work may repeat
+// (remakeCurrentDraft): making the job's current draft from its latest record.
+export type DraftRemaker = Pick<FenceStore, 'createFrom'>;
+
+export function officeService(db: Database, drafts: DraftStore, remaker: DraftRemaker): OfficeService {
   async function inCompany<T>(companyId: string, run: (tx: CompanyTransaction) => Promise<T>): Promise<T> {
     try {
       return await withCompany(db, companyId, run);
@@ -212,25 +218,79 @@ export function officeService(db: Database, drafts: DraftStore): OfficeService {
     return ids;
   }
 
+  // A Firestore call: an error is "try again" (503), never a decision.
+  async function field<T>(work: () => Promise<T>): Promise<T> {
+    try {
+      return await work();
+    } catch (error) {
+      // Fixed text only: the SDK's message may quote a path.
+      console.error('job field owner unavailable', error instanceof Error ? error.name : 'unknown');
+      throw new JobError('draft_unavailable');
+    }
+  }
+
+  // The record a missing current draft is made from: the job's latest committed submission, while the
+  // job is being edited (`draft`) on this draft and holds it in job_drafts (0016). Back to editing put
+  // the job on this draft from that record and claimed it in the same commit; nothing is submitted
+  // since, or the job would not be `draft`. Null when the draft is not one Back to editing made (a new
+  // job's first draft), so the request answers 503 as before. A short transaction of its own, ended
+  // before the field database is called (security audit F5: no transaction waits on Firestore here).
+  async function recordOfCurrentDraft(companyId: string, jobId: string, draftId: string) {
+    return inCompany(companyId, async (tx) => {
+      const [row] = await tx
+        .select({ status: jobs.status, currentDraftId: jobs.currentDraftId })
+        .from(jobs)
+        .where(and(eq(jobs.companyId, companyId), eq(jobs.id, jobId)));
+      if (row?.status !== 'draft' || row.currentDraftId !== draftId) return null;
+      const [held] = await tx
+        .select({ draftId: jobDrafts.draftId })
+        .from(jobDrafts)
+        .where(and(eq(jobDrafts.companyId, companyId), eq(jobDrafts.jobId, jobId), eq(jobDrafts.draftId, draftId)));
+      if (!held) return null;
+      const [latest] = await tx
+        .select({ id: jobSubmissions.id, draftId: jobSubmissions.draftId, snapshotBytes: jobSubmissions.snapshotBytes })
+        .from(jobSubmissions)
+        .where(and(eq(jobSubmissions.companyId, companyId), eq(jobSubmissions.jobId, jobId), eq(jobSubmissions.status, 'committed')))
+        .orderBy(desc(jobSubmissions.createdAt))
+        .limit(1);
+      if (!latest?.snapshotBytes || latest.draftId === draftId) return null;
+      return { snapshotBytes: latest.snapshotBytes, previous: { draftId: latest.draftId, submissionId: latest.id } };
+    });
+  }
+
+  // Back to editing commits in Postgres and only then makes its draft; when that step fails and the
+  // phone that sent it is gone, nobody else knows the submitted draft id its retry needs. So the job's
+  // field owner step makes the current draft itself, exactly as Back to editing's retry does
+  // (submissions/service.ts backToEditing): from the latest record, never from the old draft, with
+  // where it came from, naming the field owner. A draft already there with the same provenance (Back
+  // to editing's own retry won) is left as it is; one made for another job or from another record is
+  // refused (409, security audit F1). False when there is no record to make it from.
+  async function remakeCurrentDraft(companyId: string, jobId: string, draftId: string, uid: string): Promise<boolean> {
+    const record = await recordOfCurrentDraft(companyId, jobId, draftId);
+    if (!record) return false;
+    const manifest = snapshotManifest(record.snapshotBytes);
+    const result = await field(() => remaker.createFrom(companyId, jobId, draftId, uid, manifest, record.previous));
+    if (result === 'taken') throw new JobError('conflict');
+    return true;
+  }
+
   // The Firestore step: each of the job's drafts names its field owner as Postgres has it, at that
-  // revision. A current draft that is not there yet (Back to editing makes its draft after its own
-  // commit) or a Firestore that cannot be reached answers 503; the same request again sets it. A
-  // newer owner already on a draft means a later change won, which is the answer Postgres holds too.
+  // revision. A current draft that is not there yet is made first when Back to editing left it
+  // missing (remakeCurrentDraft); otherwise, or when Firestore cannot be reached, the answer is 503
+  // and the same request again sets it. A newer owner already on a draft means a later change won,
+  // which is the answer Postgres holds too.
   async function project(companyId: string, jobId: string, draftIds: readonly string[], uid: string | null, revision: number): Promise<void> {
     if (uid === null) throw new JobError('draft_unavailable');
     for (const [index, draftId] of draftIds.entries()) {
-      let result;
-      try {
-        result = await drafts.setFieldOwner(companyId, jobId, draftId, uid, revision);
-      } catch (error) {
-        // Fixed text only: the SDK's message may quote a path.
-        console.error('job field owner unavailable', error instanceof Error ? error.name : 'unknown');
-        throw new JobError('draft_unavailable');
+      const last = index === draftIds.length - 1;
+      let result = await field(() => drafts.setFieldOwner(companyId, jobId, draftId, uid, revision));
+      if (result === 'missing' && last && (await remakeCurrentDraft(companyId, jobId, draftId, uid))) {
+        result = await field(() => drafts.setFieldOwner(companyId, jobId, draftId, uid, revision));
       }
-      if (result === 'missing' && index === draftIds.length - 1) throw new JobError('draft_unavailable');
+      if (result === 'missing' && last) throw new JobError('draft_unavailable');
       // A draft made for another job is left as it is (security audit F1); when it is the job's
       // current draft, the field work cannot be handed over at all.
-      if (result === 'taken' && index === draftIds.length - 1) throw new JobError('conflict');
+      if (result === 'taken' && last) throw new JobError('conflict');
     }
   }
 
