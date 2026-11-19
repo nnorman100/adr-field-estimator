@@ -215,7 +215,7 @@ function ReviewBody({ user, reviewer, links, canReprice, job, estimate: first, a
     );
   }
 
-  const repriceBanner = canReprice ? <RepriceBanner user={user} jobId={job.id} onRepriced={reload} /> : null;
+  const repriceBanner = canReprice ? <RepriceBanner user={user} jobId={job.id} onChanged={reload} /> : null;
 
   if (!estimate) {
     return (

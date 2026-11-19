@@ -181,11 +181,15 @@ const REFUSED: Record<string, string> = {
   documents: 'The documents need the property address, the year built and at least one room. Add them, then finish again.',
 };
 
+/** The fixed sentence for an engine refusal's stage; an unknown stage reads as the pricing one. */
+export function refusedText(stage: unknown): string {
+  return (typeof stage === 'string' ? REFUSED[stage] : undefined) ?? REFUSED.pricing!;
+}
+
 export function outcomeOf(status: number, body: unknown): { message: string; next: Next } {
   const code = field(body, 'error');
   if (code === 'estimate_refused') {
-    const stage = field(body, 'stage');
-    return { message: (typeof stage === 'string' ? REFUSED[stage] : undefined) ?? REFUSED.pricing!, next: 'done' };
+    return { message: refusedText(field(body, 'stage')), next: 'done' };
   }
   const known = typeof code === 'string' ? OUTCOMES[code] : undefined;
   if (known) return known;

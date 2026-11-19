@@ -76,7 +76,7 @@ export type ProposalInput = {
   showLineBreakdown: boolean;
   submission: { id: string; snapshotSha256: string };
   version: { sequence: number };
-  // The revised line, made once when the estimate is made and stored with it.
+  // The revised line, made once when the estimate is made; it is kept only in the proposal's bytes.
   revised?: string | null;
 };
 
@@ -156,12 +156,15 @@ export function priceText(totals: { mode: 'range' | 'single'; low: { total: stri
 }
 
 /**
- * The revised estimate's line (S5b-6, D6): "Revised {date}", or "Revised {date}: was {previous price}"
- * when a previous price is given. The date is the day the estimate is made (UTC), written out.
+ * The revised estimate's line (S5b-6, D6): "Revised {date}", with the price it replaces added as "was
+ * {price}". A revision of a signed agreement always names the signed price, whatever the setting;
+ * before signing the previous estimate's price is named only when the company shows it. The date is
+ * the day the estimate is made (UTC), written out.
  */
-export function revisedLine(made: Date, previousPrice: string | null): string {
+export function revisedLine(made: Date, prices: { previous: string | null; signed: string | null; showPrevious: boolean }): string {
   const day = new Intl.DateTimeFormat('en-US', { dateStyle: 'long', timeZone: 'UTC' }).format(made);
-  return previousPrice ? `Revised ${day}: was ${previousPrice}` : `Revised ${day}`;
+  const was = prices.signed ?? (prices.showPrevious ? prices.previous : null);
+  return was ? `Revised ${day}: was ${was}` : `Revised ${day}`;
 }
 
 /** The stored bytes of a proposal (canonical JSON, UTF-8) and their SHA-256. */

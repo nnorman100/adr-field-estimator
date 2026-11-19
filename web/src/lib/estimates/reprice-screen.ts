@@ -1,3 +1,4 @@
+import { refusedText } from './screen';
 import type { RepricePreview } from './service';
 
 // What the owner's Reprice banner on Review before signing decides in the browser (S5b-6), as pure
@@ -18,8 +19,7 @@ const priceOrNull = (value: unknown): value is string | null => value === null |
 
 /** The preview answer, checked enough to show it; null for anything else. */
 export function repricePreviewOf(body: unknown): RepricePreview | null {
-  const job = field(body, 'job');
-  if (typeof field(job, 'id') !== 'string' || typeof field(job, 'revision') !== 'number') return null;
+  if (typeof field(field(body, 'job'), 'revision') !== 'number') return null;
   const reprice = field(body, 'reprice');
   if (reprice === null) return body as RepricePreview;
   const pinned = field(reprice, 'pinned');
@@ -29,30 +29,24 @@ export function repricePreviewOf(body: unknown): RepricePreview | null {
   return body as RepricePreview;
 }
 
-/** The before and after lines of the preview, in plain words. */
+/**
+ * The before and after lines of the preview, in plain words. Both amounts are the job's last
+ * submitted scope; a draft being edited is not in them.
+ */
 export function repriceLines(preview: NonNullable<RepricePreview['reprice']>): {
   before: string;
   after: string;
 } {
-  const before = preview.pinned.price
-    ? `Now, at prices version ${preview.pinned.version}: ${preview.pinned.price}`
-    : `Now priced from prices version ${preview.pinned.version}.`;
-  if (preview.newest.refused) {
-    return {
-      before,
-      after: `Prices version ${preview.newest.version} cannot price this job's record as it is. Check the Prices page before repricing.`,
-    };
-  }
-  const after = preview.newest.price
-    ? `At prices version ${preview.newest.version}: ${preview.newest.price}`
-    : `Would be priced from prices version ${preview.newest.version}.`;
+  const before = `Last submitted scope at prices version ${preview.pinned.version}: ${preview.pinned.price ?? 'cannot be priced now'}`;
+  const after = preview.newest.refused
+    ? `Last submitted scope at prices version ${preview.newest.version}: cannot be priced. ${refusedText(preview.newest.refused.stage)}`
+    : `Last submitted scope at prices version ${preview.newest.version}: ${preview.newest.price ?? 'cannot be priced now'}`;
   return { before, after };
 }
 
 const OUTCOMES: Record<string, string> = {
   prices_superseded: 'Newer prices were published while you were looking. The preview shows them now; check it again.',
   prices_unchanged: 'This job already uses the newest prices.',
-  stale_revision: 'This job changed while you were looking. The preview shows it as it is now; check it again.',
   conflict: 'This reprice was already sent with different details. Reload the job.',
   job_signed: 'This job is signed. A signed job keeps its prices.',
   not_priced: 'This job has not been priced yet, so it has no prices to change.',

@@ -33,6 +33,9 @@ const estimateRoute = await import('@/app/api/jobs/[jobId]/estimate/route');
 const agreementsRoute = await import('@/app/api/jobs/[jobId]/agreements/route');
 const repriceRoute = await import('@/app/api/jobs/[jobId]/reprice/route');
 const { contentHash, ENGINE_VERSION, parseTable } = await import('@/engine/table');
+const { withCompany } = await import('@/db/tenant');
+const { readCompanyDocuments } = await import('@/lib/profile/documents');
+const { estimatesService, revisedFor } = await import('@/lib/estimates/service');
 const { everything, params, request, resetTeamDatabase, startTeamServer } = await import('./team-harness');
 
 let base: Awaited<ReturnType<typeof startTeamServer>>;
@@ -468,6 +471,19 @@ describe('the revised estimate heading (D6)', () => {
     expect((await make(ESTIMATOR_A, jobId)).body.estimate.proposal.revised).toBe(`Revised ${today()}: was $240.00`);
   });
 
+  it('a job with a signed agreement is headed with the signed price, whatever the setting', async () => {
+    const { jobId, estimate, signatureId } = await readyToSign();
+    expect((await sign(ESTIMATOR_A, jobId, bodyFor(estimate, signatureId))).status).toBe(201);
+    const made = new Date('2026-11-19T12:00:00Z');
+    const lineWith = (show: boolean) =>
+      withCompany(h.handle.db, h.seed.a, async (tx) => {
+        const company = (await readCompanyDocuments(tx, h.seed.a))!;
+        return revisedFor(tx, h.seed.a, jobId, { ...company, showPreviousPrice: show }, made);
+      });
+    expect(await lineWith(false)).toBe('Revised November 19, 2026: was $240.00');
+    expect(await lineWith(true)).toBe('Revised November 19, 2026: was $240.00');
+  });
+
   it('a signed proposal is unchanged: the agreement keeps the bytes it was signed with, with no revised line', async () => {
     const { jobId, estimate, signatureId } = await readyToSign();
     expect((await sign(ESTIMATOR_A, jobId, bodyFor(estimate, signatureId))).status).toBe(201);
@@ -487,12 +503,10 @@ describe('the before/after preview', () => {
     const two = await publish(h.seed.a, '3.00');
     const before = await everything(h.admin);
     const answer = await preview(OWNER_A, jobId);
-    expect(answer).toMatchObject({
-      status: 200,
-      body: {
-        job: { id: jobId, status: 'submitted', revision: (await f.job(jobId)).revision },
-        reprice: { pinned: { sequence: 1, version: 1, price: '$240.00' }, newest: { versionId: two.id, version: 2, price: '$360.00', refused: null } },
-      },
+    expect(answer.status).toBe(200);
+    expect(answer.body).toEqual({
+      job: { revision: (await f.job(jobId)).revision },
+      reprice: { pinned: { version: 1, price: '$240.00' }, newest: { versionId: two.id, version: 2, price: '$360.00', refused: null } },
     });
     expect(await everything(h.admin)).toBe(before);
   });
@@ -512,6 +526,14 @@ describe('the before/after preview', () => {
     expect((await preview(OWNER_A, unpriced.jobId)).body.reprice).toBeNull();
     expect((await sign(ESTIMATOR_A, jobId, bodyFor(estimate, signatureId))).status).toBe(201);
     expect((await preview(OWNER_A, jobId)).body.reprice).toBeNull();
+  });
+
+  it('is refused to an owner who was disabled after the sign-in was verified, and reads nothing', async () => {
+    const { jobId } = await readyToSign();
+    await publish(h.seed.a, '3.00');
+    await h.admin`UPDATE memberships SET status = 'disabled' WHERE id = ${h.seed.ownerA.membership}`;
+    const caller = { companyId: h.seed.a, actorId: h.seed.ownerA.actor, uid: 'owner-a', role: 'owner' as const, capabilities: ['job_reprice' as const] };
+    await expect(estimatesService(h.handle.db).repricePreview(caller, jobId)).rejects.toMatchObject({ code: 'not_allowed' });
   });
 
   it('is the owner’s only: estimator and office are 403, another company’s owner 404, signed out 401', async () => {

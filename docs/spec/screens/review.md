@@ -95,14 +95,19 @@ Rules: `docs/access/estimate.md`, `docs/access/signing.md`, `docs/access/signing
 
 With the owner's `job_reprice` key, on a job that is not signed, the screen reads
 `GET /api/jobs/{id}/reprice`. When newer prices are published than the ones the job is pinned to, a
-"Newer prices are published" banner shows the job's last record priced now and at the newest
-prices (or that the newest prices cannot price it), and a "Reprice this draft" button. The button
-sends the version and job revision the preview was read at, with a change id kept for a retry; a
-refusal for a changed basis shows its message and reads the preview again. After a reprice the job
-reloads: the old estimate is gone, and the scope must be confirmed again through Back to editing and
-Finish. The revised estimate's proposal shows its "Revised {date}" line under the heading (with the
-previous price when the company's "Show the previous price on a revised estimate" is on), and it
-needs a new signature. Estimator and office never see the banner.
+"Newer prices are published" banner says which prices version the job is priced from and offers
+"Review and reprice". That opens a dialog, "Reprice this draft?", with the job's last submitted
+scope priced at the pinned prices and at the newest (or why the newest prices cannot price it: the
+action stays and the server decides), and what a reprice does. Nothing is sent until "Reprice this
+draft" in the dialog; Cancel and Esc send nothing. The confirmation sends the version and job
+revision the preview was read at, with a change id kept for a retry; a refusal for a changed basis
+shows its message and reads the preview again, and a job that changed since it was opened (another
+device repriced it, or it was edited) reloads the job and its estimate. When the preview cannot be
+read, the screen says so. After a reprice the job reloads: the old estimate, its proposal and its
+signing actions are gone, and the scope must be confirmed again through Back to editing and Finish.
+The revised estimate's proposal shows its "Revised {date}" line under the heading (with the previous
+price when the company's "Show the previous price on a revised estimate" was on when it was made),
+and it needs a new signature. Estimator and office never see the banner.
 
 ## Not built yet
 
