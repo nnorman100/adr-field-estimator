@@ -1,6 +1,6 @@
 import { FieldValue, Timestamp, type DocumentReference, type Firestore } from 'firebase-admin/firestore';
 import type { FieldDoc, FieldManifest } from '@/lib/field/canonical';
-import { draftOfOtherJob, firestoreDraftLookup, placeholderOf, startDraft, type DraftLookup, type DraftMade } from '@/lib/jobs/drafts';
+import { draftOfOtherJob, firestoreDraftLookup, placeholderOf, placeholderRefusal, startDraft, type DraftLookup, type DraftMade } from '@/lib/jobs/drafts';
 import { firestoreJobProjectionStore, type JobProjectionStore } from '@/lib/jobs/projection';
 import { MAX_PHOTO_REFS, MAX_ROOMS } from '@/lib/field/schema';
 import { firestoreSpan } from '@/lib/telemetry/spans';
@@ -172,8 +172,8 @@ export function firestoreFenceStore(db: Firestore): FenceStore {
         const found = await tx.get(ref);
         const left = placeholderOf(found);
         if (left) {
-          if (draftOfOtherJob(left.jobId, jobId)) return 'taken';
-          if (left.archived) return 'archived';
+          const refused = placeholderRefusal(left, jobId);
+          if (refused) return refused;
         } else if (found.exists) {
           const from = found.get('previous') as Record<string, unknown> | undefined;
           const same = from?.draftId === previous.draftId && from?.submissionId === previous.submissionId;

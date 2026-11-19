@@ -42,12 +42,20 @@ export type DraftMade = 'created' | 'exists' | 'taken' | 'archived';
 // the job id, the job revision (`archiveRevision`) and `state`, `archived` while the job is and
 // `absent` once it is restored, with no field owner and no field work. It keeps the latest revision
 // where there is no draft to keep it on, so a slower archive or restore never undoes a newer one.
-export type Placeholder = { jobId: unknown; archived: boolean; archiveRevision: number };
+export type Placeholder = { jobId: unknown; state: unknown; archiveRevision: number | null };
 
 export function placeholderOf(found: DocumentSnapshot): Placeholder | null {
   if (!found.exists || found.get('placeholder') !== true) return null;
   const revision: unknown = found.get('archiveRevision');
-  return { jobId: found.get('jobId'), archived: found.get('state') === 'archived', archiveRevision: typeof revision === 'number' ? revision : 0 };
+  return { jobId: found.get('jobId'), state: found.get('state'), archiveRevision: typeof revision === 'number' ? revision : null };
+}
+
+// Whether a creation may replace the placeholder: only a restored one (`absent`) of this very job that
+// holds its revision. `archived` while the job is; anything else is not this job's to replace.
+export function placeholderRefusal(left: Placeholder, jobId: string): 'taken' | 'archived' | null {
+  if (left.jobId !== jobId) return 'taken';
+  if (left.state === 'archived') return 'archived';
+  return left.state === 'absent' && left.archiveRevision !== null ? null : 'taken';
 }
 
 // Writes the job's new draft: over a restored job's placeholder, taking the revision it kept, else
@@ -118,8 +126,8 @@ export function firestoreDraftStore(db: Firestore): DraftStore {
           }
           const left = placeholderOf(found);
           if (left) {
-            if (draftOfOtherJob(left.jobId, jobId)) return 'taken';
-            if (left.archived) return 'archived';
+            const refused = placeholderRefusal(left, jobId);
+            if (refused) return refused;
             startDraft(tx, draft, left, fresh);
             return 'created';
           }

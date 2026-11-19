@@ -1,7 +1,7 @@
 import type { Firestore } from 'firebase-admin/firestore';
 import type { FieldManifest } from '@/lib/field/canonical';
 import { firestoreSpan } from '@/lib/telemetry/spans';
-import { draftOfOtherJob, firestoreDraftLookup, placeholderOf, startDraft, type DraftLookup, type DraftMade } from './drafts';
+import { draftOfOtherJob, firestoreDraftLookup, placeholderOf, placeholderRefusal, startDraft, type DraftLookup, type DraftMade } from './drafts';
 import { firestoreJobProjectionStore, type JobProjectionStore } from './projection';
 
 // The field database side of archive, restore and copy (S5b-2). Postgres decides; these follow it.
@@ -109,8 +109,8 @@ export function firestoreArchiveStore(db: Firestore): ArchiveStore {
           const found = await tx.get(ref);
           const left = placeholderOf(found);
           if (left) {
-            if (draftOfOtherJob(left.jobId, jobId)) return 'taken';
-            if (left.archived) return 'archived';
+            const refused = placeholderRefusal(left, jobId);
+            if (refused) return refused;
           } else if (found.exists) {
             const stamped = found.get('jobId');
             if (draftOfOtherJob(stamped, jobId)) return 'taken';
