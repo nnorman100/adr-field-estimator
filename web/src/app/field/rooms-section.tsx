@@ -5,9 +5,8 @@ import { Button } from '@/components/ui/button';
 import { readScopeLists, type ScopeLists } from '@/lib/field/api';
 import { roomName } from '@/lib/field/forms';
 import { NO_TYPED, pending, typedBefore, usePending } from '@/lib/field/pending';
-import { addRoom, removeRoom } from '@/lib/field/room-actions';
 import { MAX_ROOMS, type RoomField } from '@/lib/field/schema';
-import type { FieldDraft } from '@/lib/field/store';
+import { addRoomEdit, removeRoomEdit, type FieldDraft } from '@/lib/field/store';
 import type { JobContext } from './job-screens';
 import { RoomCard } from './room-card';
 import { Box, Outcome, Section } from './ui';
@@ -76,18 +75,37 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
   }
   useEffect(loadLists, [user, jobId, job.session.online, checkAccess]);
 
-  // Adding and removing rooms are built from the phone's cache under a guard (src/lib/field/room-actions.ts).
-  const actions = { db: job.session.db, ref: job.draftRef, jobId, save: saveEdit, setError };
+  // Adding and removing rooms write the whole room order, so one waits for the other's local
+  // write and the draft read after it: each is built, limit and journal before-state included, from
+  // the phone's cache read again under the guard (src/lib/field/store.ts addRoomEdit, removeRoomEdit).
+  const unreadable = "Can't save. The rooms saved on this phone could not be read. Open the job again.";
   async function remove(roomId: string, label: string) {
-    if (writing || !window.confirm(`Remove ${label} from this job?`)) return;
-    await removeRoom(actions, roomId, label, typed.rooms[roomId]?.at ?? 0);
+    if (writing || !window.confirm(`Remove ${label} from this job?`) || !pending.startRoomWrite(jobId, draftId)) return;
+    const sent = typed.rooms[roomId]?.at ?? 0;
+    try {
+      const edit = await removeRoomEdit(job.session.db, job.draftRef, roomId).catch(() => null);
+      if (!edit) return setError(unreadable);
+      await saveEdit(edit.writes, `${label} removed.`, undefined, () => pending.settleRoomRemoved(jobId, draftId, roomId, sent), edit.base);
+    } finally {
+      pending.endRoomWrite(jobId, draftId);
+    }
   }
 
   async function add() {
     if (writing) return;
     const checked = roomName(name);
     if (!checked) return setError('Give the room a name.');
-    await addRoom(actions, crypto.randomUUID(), checked, typed.nameAt);
+    if (!pending.startRoomWrite(jobId, draftId)) return;
+    const roomId = crypto.randomUUID();
+    const sent = typed.nameAt;
+    try {
+      const edit = await addRoomEdit(job.session.db, job.draftRef, roomId, checked).catch(() => null);
+      if (!edit) return setError(unreadable);
+      if (edit === 'full') return setError(`A job holds at most ${MAX_ROOMS} rooms.`);
+      if (await saveEdit(edit.writes, `${checked} added.`, undefined, undefined, edit.base)) pending.settleRoomName(jobId, draftId, sent);
+    } finally {
+      pending.endRoomWrite(jobId, draftId);
+    }
   }
 
   // Rooms the draft does not list that still hold text typed and not added (on this draft or an

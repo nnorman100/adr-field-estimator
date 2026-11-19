@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { readJob, type JobDetail, type Refusal } from '@/lib/field/api';
 import { loadJobProjection, type JobProjection } from '@/lib/field/job-projection';
@@ -109,8 +109,6 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     [jobId, session.actorId],
   );
   const draftChanges = usePending(() => pending.draftChanges(jobId));
-  const draftsSaved = usePending(() => pending.draftsSaved(jobId));
-  const draftsSavedSeen = useRef(draftsSaved);
   const [locator, setLocator] = useState<JobProjection | null>(null);
   const [cachedError, setCachedError] = useState<string | null>(null);
   // A job whose field work moved away from this person, opened again on this page, starts from the
@@ -333,15 +331,6 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     if (draftChanges > 0) void Promise.resolve().then(() => reloadDraft());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftChanges]);
-
-  // A change saved on this phone after its form closed: read it from the cache, once. A screen opened
-  // after that starts from the count it found, so it never reads a save that came before it.
-  useEffect(() => {
-    if (draftsSaved === draftsSavedSeen.current) return;
-    draftsSavedSeen.current = draftsSaved;
-    void Promise.resolve().then(() => reloadDraft(undefined, 'cache'));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftsSaved]);
 
   // Whether this person's field work of the job is on this phone: the job names them, or the draft as
   // read does. A refusal then keeps the work on screen instead of dropping the job (J5).

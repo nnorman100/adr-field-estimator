@@ -174,8 +174,8 @@ export function addRoomWrites(ref: DraftRef, roomId: string, name: string, order
 // while the page-level room-write guard is held (./pending.ts startRoomWrite), never what a screen
 // last rendered. A screen that remounted between another room write's journal record and its local
 // batch can still show the old order; building from it would drop that room, mislead the room limit
-// and journal a stale before-state. `held` is that same read, for the journal.
-export type RoomEdit = { writes: DocWrite[]; held: Docs };
+// and journal a stale before-state. `base` is that same read, for the journal (draftDocs).
+export type RoomEdit = { writes: DocWrite[]; base: FieldDraft };
 
 // Null when the cache has no such draft; 'full' when the cached order already holds MAX_ROOMS.
 export async function addRoomEdit(db: Firestore, ref: DraftRef, roomId: string, name: string): Promise<RoomEdit | 'full' | null> {
@@ -183,12 +183,12 @@ export async function addRoomEdit(db: Firestore, ref: DraftRef, roomId: string, 
   if (!base) return null;
   const order = base.field.roomOrder ?? [];
   if (order.length >= MAX_ROOMS) return 'full';
-  return { writes: addRoomWrites(ref, roomId, name, order), held: draftDocs(ref, base) };
+  return { writes: addRoomWrites(ref, roomId, name, order), base };
 }
 
 export async function removeRoomEdit(db: Firestore, ref: DraftRef, roomId: string): Promise<RoomEdit | null> {
   const base = await loadDraft(db, ref, 'roomsFromCache');
-  return base ? { writes: removeRoomWrites(ref, roomId, base.field.roomOrder ?? []), held: draftDocs(ref, base) } : null;
+  return base ? { writes: removeRoomWrites(ref, roomId, base.field.roomOrder ?? []), base } : null;
 }
 
 // Removes a room: its document and its place in the room order, in one batch (the rules let only
