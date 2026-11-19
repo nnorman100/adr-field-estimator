@@ -31,6 +31,8 @@ export type FakeDraft = {
   archiveRevision?: number;
   // The job the draft was made for (security audit F1), absent on a draft made before that key.
   jobId?: string;
+  // An archive's placeholder for a missing draft (src/lib/jobs/archive-store.ts).
+  placeholder?: true;
 };
 export type FieldData = Record<string, FakeDraft>;
 
@@ -104,6 +106,8 @@ export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts:
     if (!linked) return;
     for (const [at, draft] of Object.entries(data)) {
       linked.states.set.set(at, draft.state);
+      // A placeholder is no draft to the jobs service (src/lib/jobs/drafts.ts): nobody is named on it.
+      if (draft.placeholder) continue;
       linked.states.refs.set(at, Object.keys(draft.photos).length);
       if (!linked.drafts.made.has(at)) linked.drafts.made.set(at, { fieldOwnerUid: draft.fieldOwnerUid });
       if (draft.jobId !== undefined && !linked.drafts.jobOf.has(at)) linked.drafts.jobOf.set(at, draft.jobId);
@@ -222,11 +226,15 @@ export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts:
       }),
 
     // As the real writer: a draft takes an archive or restore only at a newer job revision, and a
-    // restore changes the state only of a draft that is archived.
-    archiveDraft: (companyId, draftId, revision) =>
+    // restore changes the state only of a draft that is archived. An archive leaves a placeholder
+    // where the draft is missing, and a restore takes it away.
+    archiveDraft: (companyId, jobId, draftId, revision) =>
       call('archiveDraft', (data): ArchiveResult => {
         const draft = data[key(companyId, draftId)];
-        if (!draft) return 'missing';
+        if (!draft) {
+          data[key(companyId, draftId)] = { ...emptyDraft(null, jobId), state: 'archived', archiveRevision: revision, placeholder: true };
+          return 'set';
+        }
         const stored = draft.archiveRevision ?? 0;
         if (stored > revision) return 'newer';
         if (stored === revision) return 'same';
@@ -241,6 +249,11 @@ export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts:
         const stored = draft.archiveRevision ?? 0;
         if (stored > revision) return 'newer';
         if (stored === revision) return 'same';
+        if (draft.placeholder) {
+          delete data[key(companyId, draftId)];
+          linked?.states.set.delete(key(companyId, draftId));
+          return 'set';
+        }
         if (draft.state === 'archived') draft.state = state;
         draft.archiveRevision = revision;
         return 'set';
@@ -267,6 +280,8 @@ export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts:
       call('createFrom', (data) => {
         const found = data[key(companyId, draftId)];
         if (found) {
+          // As the real writer: nothing is made over an archive's placeholder for this job's draft.
+          if (found.placeholder && !draftOfOtherJob(found.jobId, jobId)) return 'exists' as const;
           const same = found.previous?.draftId === previous.draftId && found.previous?.submissionId === previous.submissionId;
           if (!same || draftOfOtherJob(found.jobId, jobId)) return 'taken' as const;
           // As the real writer: a draft made before `jobId` takes it.

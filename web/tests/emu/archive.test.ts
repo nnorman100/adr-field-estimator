@@ -5,6 +5,7 @@ import { parseProjectionConfig } from '@/lib/config';
 import { firestoreArchiveStore, type ArchiveStore } from '@/lib/jobs/archive-store';
 import { firestoreDraftStore } from '@/lib/jobs/drafts';
 import { firestoreAccessStore, firestoreFor } from '@/lib/projection/firestore';
+import { firestoreFenceStore } from '@/lib/submissions/fence';
 import { createTenant, projectId, signIn, signUp, withSecondFactor } from './auth-emulator';
 import { commit, createDoc, deleteDoc, getDoc, updateDoc, type Caller } from './rules/firestore-rest';
 
@@ -50,16 +51,17 @@ const path = (company: string, draft: string) => `companies/${company}/drafts/${
 async function company(name: string) {
   const tenant = await createTenant(`${name}-${randomUUID().slice(0, 6)}`);
   const id = randomUUID();
+  const job = randomUUID();
   const draft = randomUUID();
   const estimator = await member(tenant, id, 'estimator');
   const owner = await member(tenant, id, 'owner');
   const office = await member(tenant, id, 'office');
-  expect(await firestoreDraftStore(db).ensure(id, randomUUID(), draft, estimator.uid)).toBe('created');
+  expect(await firestoreDraftStore(db).ensure(id, job, draft, estimator.uid)).toBe('created');
   const at = path(id, draft);
   expect(await updateDoc(estimator.caller, at, { field: { notes: 'wet carpet', roomOrder: ['kitchen'] } })).toBe(200);
   expect(await createDoc(estimator.caller, `${at}/rooms/kitchen`, { field: { name: 'Kitchen' } })).toBe(200);
   expect(await createDoc(estimator.caller, `${at}/photos/p1`, { field: { roomId: 'kitchen' } })).toBe(200);
-  return { id, draft, at, estimator, owner, office };
+  return { id, job, draft, at, estimator, owner, office };
 }
 
 // Every client write the field rules could allow on a draft: the draft's field map, a room (made,
@@ -79,7 +81,7 @@ async function writes(caller: Caller, at: string): Promise<number[]> {
 describe('an archived draft', () => {
   it('refuses every client write, and restore opens it again', async () => {
     const a = await company('archive-a');
-    expect(await store.archiveDraft(a.id, a.draft, 4)).toBe('set');
+    expect(await store.archiveDraft(a.id, a.job, a.draft, 4)).toBe('set');
     expect((await db.doc(a.at).get()).data()).toMatchObject({ state: 'archived', archiveRevision: 4, field: { notes: 'wet carpet', roomOrder: ['kitchen'] } });
     for (const who of [a.estimator, a.owner, a.office]) expect(await writes(who.caller, a.at)).toEqual([403, 403, 403, 403, 403, 403, 403]);
     // Nor may a client put the state or the revision back.
@@ -90,22 +92,23 @@ describe('an archived draft', () => {
     expect(await getDoc(a.estimator.caller, a.at)).toBe(200);
     expect(await getDoc(a.owner.caller, a.at)).toBe(200);
     // Asked again at the same revision, nothing changes.
-    expect(await store.archiveDraft(a.id, a.draft, 4)).toBe('same');
+    expect(await store.archiveDraft(a.id, a.job, a.draft, 4)).toBe('same');
 
     expect(await store.restoreDraft(a.id, a.draft, 'editing', 5)).toBe('set');
     expect((await db.doc(a.at).get()).data()).toMatchObject({ state: 'editing', archiveRevision: 5 });
     expect(await updateDoc(a.estimator.caller, a.at, { field: { notes: 'back at work', roomOrder: ['kitchen'] } })).toBe(200);
     // The slower archive request that read the job before the restore changes nothing.
-    expect(await store.archiveDraft(a.id, a.draft, 4)).toBe('newer');
+    expect(await store.archiveDraft(a.id, a.job, a.draft, 4)).toBe('newer');
     expect((await db.doc(a.at).get()).get('state')).toBe('editing');
   });
 
   it('is restored as submitted when its job was, and a restore leaves a draft that is not archived as it is', async () => {
     const company = randomUUID();
+    const job = randomUUID();
     const submitted = randomUUID();
     const fence = { submissionId: randomUUID(), epoch: 'epoch-1' };
     await db.doc(path(company, submitted)).create({ fieldOwnerUid: 'uid-1', state: 'submitted', fence, field: { notes: 'as submitted' } });
-    expect(await store.archiveDraft(company, submitted, 3)).toBe('set');
+    expect(await store.archiveDraft(company, job, submitted, 3)).toBe('set');
     expect(await store.restoreDraft(company, submitted, 'submitted', 4)).toBe('set');
     expect((await db.doc(path(company, submitted)).get()).data()).toEqual({
       fieldOwnerUid: 'uid-1',
@@ -120,16 +123,17 @@ describe('an archived draft', () => {
     await db.doc(path(company, fenced)).create({ fieldOwnerUid: 'uid-1', state: 'submitting', fence, field: {} });
     expect(await store.restoreDraft(company, fenced, 'editing', 6)).toBe('set');
     expect((await db.doc(path(company, fenced)).get()).data()).toMatchObject({ state: 'submitting', fence, archiveRevision: 6 });
-    expect(await store.archiveDraft(company, fenced, 5)).toBe('newer');
+    expect(await store.archiveDraft(company, job, fenced, 5)).toBe('newer');
+    // A draft that is not there: the archive leaves its placeholder (below).
     const missing = randomUUID();
-    expect(await store.archiveDraft(company, missing, 2)).toBe('missing');
-    expect((await db.doc(path(company, missing)).get()).exists).toBe(false);
+    expect(await store.archiveDraft(company, job, missing, 2)).toBe('set');
+    expect((await db.doc(path(company, missing)).get()).data()).toEqual({ jobId: job, state: 'archived', placeholder: true, archiveRevision: 2 });
   });
 
   it('is never reached by the other company, archived or restored', async () => {
     const a = await company('archive-iso-a');
     const b = await company('archive-iso-b');
-    expect(await store.archiveDraft(a.id, a.draft, 2)).toBe('set');
+    expect(await store.archiveDraft(a.id, a.job, a.draft, 2)).toBe('set');
     for (const [attacker, victim] of [
       [b, a],
       [a, b],
@@ -143,6 +147,39 @@ describe('an archived draft', () => {
     // Company B's own draft, not archived, still takes its own estimator's writes: the refusals
     // above are the company boundary.
     expect(await updateDoc(b.estimator.caller, b.at, { field: { notes: 'still mine' } })).toBe(200);
+  });
+});
+
+// The fence where the draft is missing: an archive that finds no draft leaves a placeholder under its
+// id, so a draft made later without the job's lock (src/lib/jobs/office.ts remakeCurrentDraft) is not
+// made over it and nobody is named on it; the restore takes it away, and the draft is made then.
+describe('a missing draft of an archived job', () => {
+  it('holds the archive’s placeholder, which nothing is made over and nobody is named on, until the restore', async () => {
+    const a = await company('archive-missing');
+    const draft = randomUUID();
+    const at = path(a.id, draft);
+    const manifest = { draft: { notes: 'from the record' }, rooms: [{ id: 'kitchen', field: { name: 'Kitchen' } }], photos: [] };
+    const previous = { draftId: a.draft, submissionId: randomUUID() };
+    const placeholder = { jobId: a.job, state: 'archived', placeholder: true, archiveRevision: 3 };
+    expect(await store.archiveDraft(a.id, a.job, draft, 3)).toBe('set');
+    expect((await db.doc(at).get()).data()).toEqual(placeholder);
+    // Asked again at the same revision, nothing changes.
+    expect(await store.archiveDraft(a.id, a.job, draft, 3)).toBe('same');
+
+    expect(await firestoreFenceStore(db).createFrom(a.id, a.job, draft, null, manifest, previous)).toBe('exists');
+    expect(await firestoreDraftStore(db).setFieldOwner(a.id, a.job, draft, a.estimator.uid, 9)).toBe('missing');
+    expect(await firestoreFenceStore(db).createFrom(a.id, randomUUID(), draft, null, manifest, previous)).toBe('taken');
+    expect((await db.doc(at).get()).data()).toEqual(placeholder);
+    expect((await db.collection(`${at}/rooms`).get()).size).toBe(0);
+    expect(await getDoc(a.estimator.caller, at)).toBe(403);
+    for (const who of [a.estimator, a.owner, a.office]) expect(await writes(who.caller, at)).toEqual([403, 403, 403, 403, 403, 403, 403]);
+
+    // A slower restore that read the job before this archive changes nothing.
+    expect(await store.restoreDraft(a.id, draft, 'editing', 2)).toBe('newer');
+    expect(await store.restoreDraft(a.id, draft, 'editing', 4)).toBe('set');
+    expect((await db.doc(at).get()).exists).toBe(false);
+    expect(await firestoreFenceStore(db).createFrom(a.id, a.job, draft, null, manifest, previous)).toBe('created');
+    expect((await db.doc(at).get()).data()).toMatchObject({ jobId: a.job, state: 'editing', field: manifest.draft, previous });
   });
 });
 
