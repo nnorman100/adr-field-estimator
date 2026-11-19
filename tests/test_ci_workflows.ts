@@ -89,7 +89,8 @@ describe('ci.yml', () => {
 
   it("keeps the node job's rebuild checks on every pull request", () => {
     const job = ci().jobs.node;
-    expect(job).not.toHaveProperty('if');
+    // Its only condition keeps it running (and failing) when the terraform job it needs fails.
+    expect(evaluateStep(job.if, {}, true)).toBe(true);
     for (const s of job.steps) expect(s).not.toHaveProperty('if');
     const runs = job.steps.map((s: Data) => s.run ?? '');
     for (const command of ['npm ci', 'npm run format:check', 'npm run lint', 'npx vitest run']) {
