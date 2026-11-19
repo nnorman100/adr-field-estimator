@@ -195,7 +195,7 @@ async function draftIdsOf(tx: CompanyTransaction, row: JobRow): Promise<string[]
   return [...[...held].filter((id) => id !== row.currentDraftId), row.currentDraftId];
 }
 
-// The field-database steps of Back to editing a move or Start field work may repeat
+// The field-database steps that Back to editing, a move and Start field work may repeat
 // (remakeCurrentDraft): making the job's current draft from its latest record, and closing it when
 // the job was archived while it was made.
 export type DraftRemaker = Pick<FenceStore, 'createFrom'> & Pick<ArchiveStore, 'archiveDraft'>;
@@ -234,8 +234,9 @@ export function officeService(db: Database, drafts: DraftStore, remaker: DraftRe
   // The record a missing current draft is made from: the job's latest committed submission, while the
   // job is being edited (`draft`) on this draft. Both callers hold the draft in job_drafts (0016) for
   // the job already (draftIdsOf). Back to editing put the job on this draft from that record and
-  // claimed it in the same commit; nothing is submitted since, or the job would not be `draft`. Null when the draft is not one Back to editing made (a new
-  // job's first draft), so the request answers 503 as before. A short transaction of its own, ended
+  // claimed it in the same commit; nothing is submitted since, or the job would not be `draft`. Null
+  // when the draft is not one Back to editing made (a new job's first draft), so the request answers
+  // 503 as before. A short transaction of its own, ended
   // before the field database is called (security audit F5: no transaction waits on Firestore here).
   async function recordOfCurrentDraft(companyId: string, jobId: string, draftId: string) {
     return inCompany(companyId, async (tx) => {
