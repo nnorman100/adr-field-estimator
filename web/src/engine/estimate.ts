@@ -20,8 +20,8 @@ export { suggestedItems } from './table';
 /** A saved draft to price. `documents` is optional: without it only lines and totals are built. */
 export type EstimateJob = {
   inspection: Json;
-  /** The ids of the named adjustments approved on this job, in the order to apply them (S5b-7, S5b-8); none by default. */
-  adjustments?: string[];
+  /** The id of the named adjustment approved on this job (S5b-7, S5b-8); none by default. */
+  adjustment?: string;
   documents?: {
     company?: Json;
     claim?: Json;
@@ -62,9 +62,12 @@ export type EstimateEnd = {
   /** "Price-point adjustment": what rounding up to the company's price point added; only when it added any. */
   price_point?: string;
   total: string;
-  /** Each approved named adjustment, in order: `before` minus or plus `amount` is `after`; absent when none (S5b-7). */
-  adjustments?: EstimateAdjustment[];
+  /** The approved named adjustment: `before` minus or plus `amount` is `after`; absent when none (S5b-7). */
+  adjustment?: EstimateAdjustment;
 };
+
+/** An end as the proposal and every customer- or adjuster-facing payload carries it: the catalog id stays in the stored estimate only. */
+export type ProposalEnd = Omit<EstimateEnd, 'adjustment'> & { adjustment?: Omit<EstimateAdjustment, 'adjustment_id'> };
 
 export type EstimateAdjustment = {
   adjustment_id: string;
@@ -177,15 +180,15 @@ function endOf(end: End): EstimateEnd {
     total: cents(end.total),
   };
   if (!end.pricePoint.isZero()) body.price_point = cents(end.pricePoint);
-  if (end.adjustments?.length) {
-    body.adjustments = end.adjustments.map((row) => ({
-      adjustment_id: row.adjustmentId,
-      name: row.name,
-      direction: row.direction,
-      before: cents(row.before),
-      amount: cents(row.amount),
-      after: cents(row.after),
-    }));
+  if (end.adjustment) {
+    body.adjustment = {
+      adjustment_id: end.adjustment.adjustmentId,
+      name: end.adjustment.name,
+      direction: end.adjustment.direction,
+      before: cents(end.adjustment.before),
+      amount: cents(end.adjustment.amount),
+      after: cents(end.adjustment.after),
+    };
   }
   return body;
 }
@@ -283,7 +286,7 @@ export function priceEstimate(table: Json, job: EstimateJob): Estimate | Refusal
   let priced: Priced;
   let advisory: JObj[];
   try {
-    priced = priceAndRange(data, used, job.adjustments ?? []);
+    priced = priceAndRange(data, used, job.adjustment);
     advisory = advisoryWarnings(data, used, priced, null);
   } catch (error) {
     return { ok: false, stage: 'pricing', error: message(error) };
@@ -304,7 +307,7 @@ export function priceEstimate(table: Json, job: EstimateJob): Estimate | Refusal
           table: used,
           settings: input.settings,
           rooms: input.rooms,
-          adjustments: job.adjustments ?? [],
+          adjustment: job.adjustment,
         }),
       );
     } catch (error) {

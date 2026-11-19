@@ -1,4 +1,4 @@
-import type { EstimateEnd } from '@/engine/estimate';
+import type { ProposalEnd } from '@/engine/estimate';
 import type { EstimateView } from './result';
 
 // What the Review before signing screen decides in the browser, as pure functions so they are
@@ -54,28 +54,30 @@ export function priceLines(totals: EstimateView['totals']): { customer: string; 
 }
 
 /** The price-point adjustment of each end the customer price shows, untaxed (S4-4e); null when neither end has one. */
-export function pricePointLine(low: EstimateEnd, high: EstimateEnd | null): string | null {
+export function pricePointLine(low: ProposalEnd, high: ProposalEnd | null): string | null {
   if (!low.price_point && !high?.price_point) return null;
-  const amount = (end: EstimateEnd): string => dollars(end.price_point ?? '0.00');
+  const amount = (end: ProposalEnd): string => dollars(end.price_point ?? '0.00');
   if (!high) return `Price-point adjustment (not taxed): ${amount(low)}`;
   return `Price-point adjustment (not taxed): ${amount(low)} at the low end, ${amount(high)} at the high end`;
 }
 
 /**
- * Each approved named adjustment as arithmetic (S5b-7): a discount "{price before} \u2212 {name} {amount} = {price}",
+ * The approved named adjustment as arithmetic (S5b-7): a discount "{price before} \u2212 {name} {amount} = {price}",
  * a charge with "+". In a range each end's lines say which end they are. None when no adjustment applies.
  */
-export function adjustmentLines(low: EstimateEnd, high: EstimateEnd | null): string[] {
-  const lines = (end: EstimateEnd, prefix: string): string[] =>
-    (end.adjustments ?? []).map(
-      (row) => `${prefix}${dollars(row.before)} ${row.direction === 'discount' ? '\u2212' : '+'} ${row.name} ${dollars(row.amount)} = ${dollars(row.after)}`,
-    );
+export function adjustmentLines(low: ProposalEnd, high: ProposalEnd | null): string[] {
+  const lines = (end: ProposalEnd, prefix: string): string[] =>
+    end.adjustment
+      ? [
+          `${prefix}${dollars(end.adjustment.before)} ${end.adjustment.direction === 'discount' ? '\u2212' : '+'} ${end.adjustment.name} ${dollars(end.adjustment.amount)} = ${dollars(end.adjustment.after)}`,
+        ]
+      : [];
   if (!high) return lines(low, '');
   return [...lines(low, 'Low end: '), ...lines(high, 'High end: ')];
 }
 
 /** One end's charges in the order the engine adds them into its total: the subtotal, then each adjustment it charged. */
-export function chargeRows(end: EstimateEnd, afterHoursLabel: string, withPricePoint = true): Array<{ label: string; amount: string }> {
+export function chargeRows(end: ProposalEnd, afterHoursLabel: string, withPricePoint = true): Array<{ label: string; amount: string }> {
   const adjustments = [
     { label: afterHoursLabel, amount: end.after_hours },
     ...end.trade_minimums.map((row) => ({ label: `${row.name} trade minimum`, amount: row.amount })),
@@ -84,13 +86,14 @@ export function chargeRows(end: EstimateEnd, afterHoursLabel: string, withPriceP
     { label: 'Sales tax', amount: end.tax },
     // Rounding up to the company's price point comes last, outside every bucket and untaxed (S4-4e).
     { label: 'Price-point adjustment', amount: withPricePoint ? (end.price_point ?? '0.00') : '0.00' },
-    // Named adjustments come after rounding (S5b-7): a discount as a negative amount.
-    ...(withPricePoint ? (end.adjustments ?? []) : []).map((row) => ({
-      label: row.name,
-      amount: row.direction === 'discount' ? `-${row.amount}` : row.amount,
-    })),
   ];
-  return [{ label: 'Subtotal', amount: end.subtotal }, ...adjustments.filter((row) => row.amount !== '0.00')];
+  // The named adjustment comes after rounding (S5b-7): a discount as a negative amount, and no row when it came to nothing.
+  const named = withPricePoint && end.adjustment && end.adjustment.amount !== '0.00' ? [end.adjustment] : [];
+  return [
+    { label: 'Subtotal', amount: end.subtotal },
+    ...adjustments.filter((row) => row.amount !== '0.00'),
+    ...named.map((row) => ({ label: row.name, amount: row.direction === 'discount' ? `-${row.amount}` : row.amount })),
+  ];
 }
 
 // The engine's pricing warnings by code (src/engine/price-v2.ts), in plain words. The advisory

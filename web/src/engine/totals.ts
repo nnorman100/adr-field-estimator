@@ -48,13 +48,13 @@ export type End = {
   tax: Dec;
   /** What price-point rounding added, untaxed and outside every bucket; zero when off or already a price point. */
   pricePoint: Dec;
-  /** The price: the lines and charges above, then each approved named adjustment in turn. */
+  /** The price: the lines and charges above, then the approved named adjustment. */
   total: Dec;
-  /** Approved named adjustments, in the order applied; absent when none applies (S5b-7). */
-  adjustments?: AppliedAdjustment[];
+  /** The approved named adjustment applied to this end; absent when none applies (S5b-7). */
+  adjustment?: AppliedAdjustment;
 };
 
-/** One named adjustment applied to an end's price: `before` ∓ `amount` = `after`. */
+/** The named adjustment applied to an end's price: `before` ∓ `amount` = `after`. */
 export type AppliedAdjustment = {
   adjustmentId: string;
   name: string;
@@ -572,49 +572,40 @@ export function explanation(policy: Policy, data: Inspection, items: Item[]): st
   return sentences.join(' ');
 }
 
-/** Price a saved draft from a parsed table with the dryscope-v3 formulas. */
 /**
- * Named adjustments (S5b-7): each approved one, in the order given, changes each end's price after price-point
- * rounding; the result is not rounded again. A percent is of the price before it, rounded to cents once; a
- * discount larger than the price is refused rather than quoting below zero. An id the table does not have, or one
- * given twice, is refused. Only adjustments approved on the job are passed in (S5b-8); none by default.
+ * The named adjustment (S5b-7), when one is approved on the job: it changes each end's price after price-point
+ * rounding and the result is not rounded again. A percent is of the price before it, rounded to cents once; a
+ * discount larger than the price is refused rather than quoting below zero, and so is an id the table does not
+ * have. Only an adjustment approved on the job is passed in (S5b-8); none by default.
  */
-export function applyAdjustments(totals: Totals, defined: NamedAdjustment[], approved: readonly string[]): Totals {
-  if (!approved.length) return totals;
-  if (new Set(approved).size !== approved.length) throw new Error('An adjustment is approved twice.');
-  const chosen = approved.map((id) => {
-    const found = defined.find((adjustment) => adjustment.adjustment_id === id);
-    if (!found) throw new Error('An approved adjustment is not in the price table.');
-    return found;
-  });
+export function applyAdjustment(totals: Totals, defined: NamedAdjustment[], approved: string | undefined): Totals {
+  if (approved === undefined) return totals;
+  const chosen = defined.find((adjustment) => adjustment.adjustment_id === approved);
+  if (!chosen) throw new Error('The approved adjustment is not in the price table.');
+  const value = Dec.parse(chosen.value);
+  const discount = chosen.direction === 'discount';
   const adjust = (end: End): End => {
-    let price = end.total;
-    const applied: AppliedAdjustment[] = chosen.map((adjustment) => {
-      const value = Dec.parse(adjustment.value);
-      const amount = adjustment.kind === 'percent' ? money(price.mul(value).div(HUNDRED)) : money(value);
-      const discount = adjustment.direction === 'discount';
-      if (discount && amount.cmp(price) > 0) throw new Error(`The discount "${adjustment.name}" is larger than the price.`);
-      const after = discount ? price.sub(amount) : price.add(amount);
-      const row: AppliedAdjustment = {
-        adjustmentId: adjustment.adjustment_id,
-        name: adjustment.name,
-        direction: adjustment.direction,
-        before: price,
-        amount,
-        after,
-      };
-      price = after;
-      return row;
-    });
-    return { ...end, total: price, adjustments: applied };
+    const before = end.total;
+    const amount = chosen.kind === 'percent' ? money(before.mul(value).div(HUNDRED)) : money(value);
+    if (discount && amount.cmp(before) > 0) throw new Error(`The discount "${chosen.name}" is larger than the price.`);
+    const after = discount ? before.sub(amount) : before.add(amount);
+    const adjustment: AppliedAdjustment = {
+      adjustmentId: chosen.adjustment_id,
+      name: chosen.name,
+      direction: chosen.direction,
+      before,
+      amount,
+      after,
+    };
+    return { ...end, total: after, adjustment };
   };
   return { ...totals, low: adjust(totals.low), high: totals.high ? adjust(totals.high) : null };
 }
 
-/** `approved`: the ids of the named adjustments approved on this job, applied in that order (S5b-7). */
-export function priceAndRange(data: Inspection, table: Table, approved: readonly string[] = []): Priced {
+/** Price a saved draft from a parsed table with the dryscope-v3 formulas. `approved`: the id of the named adjustment approved on this job (S5b-7). */
+export function priceAndRange(data: Inspection, table: Table, approved?: string): Priced {
   const scoped = priceScopeV2(data, table.items, table.policy);
-  const totals = applyAdjustments(
+  const totals = applyAdjustment(
     computeTotals(data, scoped.lines, table.policy, table.items, table.trades ?? []),
     table.adjustments ?? [],
     approved,

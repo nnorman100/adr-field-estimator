@@ -328,6 +328,15 @@ function pricePointSentence(low: Dec, high: Dec | null): string {
   return `Price-point adjustment (not taxed): ${amount(low)} at the low end and ${amount(high)} at the high end.`;
 }
 
+function adjustmentSentence(low: End, high: End | null): string {
+  const amount = (value: Dec): string => `$${value.format(',.2f')}`;
+  const line = (end: End, prefix: string): string => {
+    const row = end.adjustment;
+    return row ? `${prefix}${amount(row.before)} ${row.direction === 'discount' ? '−' : '+'} ${row.name} ${amount(row.amount)} = ${amount(row.after)}` : '';
+  };
+  return (high ? [line(low, 'Low end: '), line(high, 'High end: ')] : [line(low, '')]).filter((text) => text).join('\n');
+}
+
 function estimateSentence(
   total: Dec,
   low: Dec,
@@ -361,8 +370,8 @@ export function makeDocuments(input: {
   settings?: Json;
   /** Each room's findings note and prep tasks, in the record's room order (S5a-10); absent means none. */
   rooms?: Json[];
-  /** The named adjustments approved on the job, applied after price-point rounding (S5b-7). */
-  adjustments?: readonly string[];
+  /** The id of the named adjustment approved on the job, applied after price-point rounding (S5b-7). */
+  adjustment?: string;
 }): JObj {
   const ai = parse(AI, input.ai, 'ai');
   const settings = parse(LAYOUT_SETTINGS, input.settings, 'settings');
@@ -383,7 +392,7 @@ export function makeDocuments(input: {
   }
   if (data.packagePrice !== null) fail('Update the app and clear the old package-tier selection before auditing.');
   const before = data.yearBuilt < 1978;
-  const priced = priceAndRange(data, input.table, input.adjustments ?? []);
+  const priced = priceAndRange(data, input.table, input.adjustment);
   const estimate = estimateOf(priced.totals, input.table);
   const items = priced.lines.map((line) => ({ ...line }));
   const total = money(priced.totals.low.total);
@@ -451,10 +460,15 @@ export function makeDocuments(input: {
       high,
       explanation,
       single,
-      pricePointSentence(
-        money(priced.totals.low.pricePoint),
-        priced.totals.mode === 'range' && priced.totals.high ? money(priced.totals.high.pricePoint) : null,
-      ),
+      [
+        pricePointSentence(
+          money(priced.totals.low.pricePoint),
+          priced.totals.mode === 'range' && priced.totals.high ? money(priced.totals.high.pricePoint) : null,
+        ),
+        adjustmentSentence(priced.totals.low, priced.totals.mode === 'range' ? priced.totals.high : null),
+      ]
+        .filter((text) => text)
+        .join('\n'),
     ),
     ['Sincerely,', identity?.signoff ?? '', companyName].filter((line) => line.trim()).join('\n'),
   ].join('\n\n');

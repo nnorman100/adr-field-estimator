@@ -1,5 +1,5 @@
 import { LinkPhoto } from '@/components/links/link-photo';
-import type { EstimateEnd, LetterLine, ProposalLetter } from '@/engine/estimate';
+import type { ProposalEnd, LetterLine, ProposalLetter } from '@/engine/estimate';
 import type { EstimateView } from '@/lib/estimates/result';
 import { adjustmentLines, chargeRows, dollars, photoAlbums, priceLines, pricePointLine, quantityNoteLine, warningText } from '@/lib/estimates/screen';
 
@@ -15,7 +15,7 @@ function text(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
-function Charges({ end, afterHoursLabel, withPricePoint = true }: { end: EstimateEnd; afterHoursLabel: string; withPricePoint?: boolean }) {
+function Charges({ end, afterHoursLabel, withPricePoint = true }: { end: ProposalEnd; afterHoursLabel: string; withPricePoint?: boolean }) {
   return chargeRows(end, afterHoursLabel, withPricePoint).map((row, index) => (
     <li key={`${index}-${row.label}`} className={ROW}>
       <span className="min-w-0 break-words">{row.label}</span>
@@ -27,7 +27,6 @@ function Charges({ end, afterHoursLabel, withPricePoint = true }: { end: Estimat
 export function EstimatePrice({ estimate }: { estimate: EstimateView }) {
   const price = priceLines(estimate.totals);
   const adjustment = pricePointLine(estimate.totals.low, estimate.totals.mode === 'range' ? estimate.totals.high : null);
-  const named = adjustmentLines(estimate.totals.low, estimate.totals.mode === 'range' ? estimate.totals.high : null);
   return (
     <section aria-labelledby="review-price" className={SECTION}>
       <h2 id="review-price" className={HEADING}>
@@ -36,11 +35,6 @@ export function EstimatePrice({ estimate }: { estimate: EstimateView }) {
       <p className="text-xl font-semibold">{price.customer}</p>
       <p>{price.itemized}</p>
       {adjustment ? <p>{adjustment}</p> : null}
-      {named.map((line, index) => (
-        <p key={index} className="tabular-nums" data-testid="named-adjustment">
-          {line}
-        </p>
-      ))}
       {estimate.totals.mode === 'range' && estimate.totals.range_explanation ? <p className="text-sm">{estimate.totals.range_explanation}</p> : null}
       <p className="text-sm">Priced from your company&apos;s price version {estimate.price.versionSequence}.</p>
       <h3 className="font-semibold">Lines</h3>
@@ -220,7 +214,7 @@ export function Proposal({ proposal }: { proposal: NonNullable<EstimateView['pro
 }
 
 /** The itemized claim's lines, then the charges and the itemized total of the end given. */
-export function ItemizedClaim({ rows, end, afterHoursLabel }: { rows: unknown[]; end: EstimateEnd; afterHoursLabel: string }) {
+export function ItemizedClaim({ rows, end, afterHoursLabel }: { rows: unknown[]; end: ProposalEnd; afterHoursLabel: string }) {
   return (
     <ul className="flex flex-col gap-2 pt-3">
       {rows.map((row, index) => {

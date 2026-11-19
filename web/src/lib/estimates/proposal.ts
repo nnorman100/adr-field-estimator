@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { Estimate, EstimateEnd, ProposalLetter } from '@/engine/estimate';
+import type { Estimate, EstimateEnd, ProposalEnd, ProposalLetter } from '@/engine/estimate';
 import { canonicalJson } from '@/lib/field/canonical';
 import type { CompanyDocuments } from '@/lib/profile/documents';
 
@@ -27,8 +27,8 @@ export type ProposalPrice = {
   mode: 'range' | 'single';
   // The itemized total at the company's base rates (the low end).
   itemized_total: string;
-  low: EstimateEnd;
-  high: EstimateEnd | null;
+  low: ProposalEnd;
+  high: ProposalEnd | null;
   explanation: string | null;
   // The price table's name for the after-hours adjustment.
   after_hours_label: string;
@@ -94,6 +94,13 @@ export function letterheadLines(company: CompanyDocuments): string[] {
   return lines.filter((line) => line.trim() !== '');
 }
 
+// The proposal prints the adjustment's name and amounts only: the table's catalog id stays in the stored estimate.
+function proposalEnd(end: EstimateEnd): ProposalEnd {
+  const { adjustment, ...rest } = end;
+  if (!adjustment) return rest;
+  return { ...rest, adjustment: { name: adjustment.name, direction: adjustment.direction, before: adjustment.before, amount: adjustment.amount, after: adjustment.after } };
+}
+
 export function proposalOf(input: ProposalInput): Proposal {
   const { estimate, company } = input;
   const documents = estimate.documents;
@@ -102,8 +109,8 @@ export function proposalOf(input: ProposalInput): Proposal {
   const price: ProposalPrice = {
     mode: totals.mode,
     itemized_total: totals.low.total,
-    low: totals.low,
-    high: totals.mode === 'range' ? totals.high : null,
+    low: proposalEnd(totals.low),
+    high: totals.mode === 'range' && totals.high ? proposalEnd(totals.high) : null,
     explanation: totals.mode === 'range' ? totals.range_explanation : totals.explanation,
     after_hours_label: totals.after_hours_label,
   };

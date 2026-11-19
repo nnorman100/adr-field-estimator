@@ -26,7 +26,6 @@ import {
 export const ENGINE_VERSION = 'dryscope-v3';
 const MAX_ITEMS = 150;
 const MAX_TRADES = 30;
-const MAX_ADJUSTMENTS = 30;
 const MAX_BRACKETS = 20;
 const MAX_SF = 100000;
 const MAX_ROOM_TYPES = 30;
@@ -631,7 +630,10 @@ const TRADE = z.strictObject({
 const ADJUSTMENT = z
   .strictObject({
     adjustment_id: z.string().regex(ITEM_ID, 'must be 2 to 40 lowercase letters, digits or _'),
-    name: text(1, 60),
+    name: z
+      .string()
+      .refine((value) => chars(value) >= 1 && chars(value) <= 60, { message: 'must be 1 to 60 characters' })
+      .refine((value) => printable(value), { message: 'must be printable text on one line' }),
     kind: z.enum(['percent', 'amount']),
     direction: z.enum(['discount', 'charge']),
     value: decimal({ max: '100000', places: 2 }),
@@ -639,8 +641,8 @@ const ADJUSTMENT = z
   .superRefine((adjustment, ctx) => {
     const value = Dec.parse(adjustment.value);
     if (value.isZero()) ctx.addIssue({ code: 'custom', path: ['value'], message: 'must be above 0' });
-    if (adjustment.kind === 'percent' && value.cmp(HUNDRED) > 0) {
-      ctx.addIssue({ code: 'custom', path: ['value'], message: 'a percent must be at most 100' });
+    if (adjustment.kind === 'percent' && adjustment.direction === 'discount' && value.cmp(HUNDRED) > 0) {
+      ctx.addIssue({ code: 'custom', path: ['value'], message: 'a percent discount must be at most 100' });
     }
   });
 
@@ -657,7 +659,7 @@ export const PriceTableV3 = z
   .strictObject({
     items: z.array(ITEM).max(MAX_ITEMS),
     trades: z.array(TRADE).max(MAX_TRADES).optional(),
-    adjustments: z.array(ADJUSTMENT).max(MAX_ADJUSTMENTS).optional(),
+    adjustments: z.array(ADJUSTMENT).optional(),
     policy: POLICY,
   })
   .superRefine((table, ctx) => {
