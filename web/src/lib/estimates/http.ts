@@ -62,9 +62,8 @@ export async function readEstimate(_request: Request, identity: Identity, contex
 
 // POST /api/jobs/{jobId}/reprice  { revision, changeId, versionId }
 // The owner's Reprice this draft (S5b-6): moves the job's pin to the price version the owner
-// reviewed, which must still be the company's newest, for the job revision they saw. `repriced` is
-// false when the job was already on it (nothing written); the same changeId again is answered as the
-// first time.
+// reviewed, which must still be the company's newest, for the job revision they saw; the same
+// changeId again is answered as the first time.
 export async function repriceJob(request: Request, identity: Identity, context: RouteContext): Promise<Response> {
   return respond(async () => {
     const id = await jobId(context);

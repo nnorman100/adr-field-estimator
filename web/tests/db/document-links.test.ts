@@ -136,9 +136,9 @@ async function signedJob() {
 async function phoneSigned() {
   const job = await l.pricedJob();
   const signatureId = randomUUID();
-  const sent = await json(
-    photoRoute.PUT(request(ESTIMATOR_A, `/api/jobs/${job.jobId}/photos/${signatureId}?kind=signature`, { method: 'PUT', body: image('phone') }), params({ jobId: job.jobId, photoId: signatureId })),
-  );
+  const built = request(ESTIMATOR_A, `/api/jobs/${job.jobId}/photos/${signatureId}?kind=signature`, { method: 'PUT', body: image('phone') });
+  built.headers.set('X-Proposal-Sha256', job.estimate.proposalSha256);
+  const sent = await json(photoRoute.PUT(built, params({ jobId: job.jobId, photoId: signatureId })));
   expect(sent.status).toBe(201);
   const body = { id: randomUUID(), estimateId: job.estimate.id, proposalSha256: job.estimate.proposalSha256, signatureId, signerName: 'Casey Customer', documentsConfirmed: true };
   const sign = (claims: FakeClaims = ESTIMATOR_A) =>

@@ -43,6 +43,9 @@ export type ReceiveInput = {
   readBytes: () => Promise<Uint8Array>;
   // For an original: the SHA-256 of the registered photo it belongs to.
   photoSha256?: string;
+  // For a signature: the SHA-256 of the proposal the signer was shown. The receipt is bound to it, and
+  // it must be the proposal of the job's current estimate.
+  proposalSha256?: string;
 };
 
 export type PhotosService = {
@@ -142,9 +145,12 @@ export function photosService(db: Database, store: EvidenceStore, drafts: DraftS
   // A signature needs a current unsigned estimate (docs/plans/S5.md, S5a-5 and S5a-11): the job is
   // submitted, not signed, and its current record and pin have been priced. Read under the job's
   // row lock when the row is made; the agreement checks the rest (which estimate, its proposal).
-  async function requireSignable(tx: CompanyTransaction, caller: JobCaller, job: JobRow): Promise<void> {
+  async function requireSignable(tx: CompanyTransaction, caller: JobCaller, job: JobRow, proposalSha256: string | undefined): Promise<void> {
     if (job.status !== 'submitted') throw new PhotoError('not_ready_to_sign');
-    if (!(await currentEstimateRow(tx, caller.companyId, job))) throw new PhotoError('not_ready_to_sign');
+    const estimate = await currentEstimateRow(tx, caller.companyId, job);
+    if (!estimate) throw new PhotoError('not_ready_to_sign');
+    if (!proposalSha256) throw new PhotoError('invalid_request');
+    if (estimate.proposalSha256 !== proposalSha256) throw new PhotoError('not_ready_to_sign');
   }
 
   return {
@@ -162,7 +168,7 @@ export function photosService(db: Database, store: EvidenceStore, drafts: DraftS
         }
         const rows = await registryRows(tx, caller, jobId, photoId);
         const same = rows.find((row) => row.kind === kind);
-        if (kind === 'signature' && !same) await requireSignable(tx, caller, job);
+        if (kind === 'signature' && !same) await requireSignable(tx, caller, job, input.proposalSha256);
         return { job, same, photo: rows.find((row) => row.kind === 'photo') };
       });
 
@@ -220,7 +226,7 @@ export function photosService(db: Database, store: EvidenceStore, drafts: DraftS
         }
         if (kind === 'signature') {
           const [there] = (await registryRows(tx, caller, jobId, photoId)).filter((row) => row.kind === kind);
-          if (!there) await requireSignable(tx, caller, job);
+          if (!there) await requireSignable(tx, caller, job, input.proposalSha256);
         }
         const [inserted] = await tx
           .insert(evidenceObjects)
@@ -244,7 +250,7 @@ export function photosService(db: Database, store: EvidenceStore, drafts: DraftS
             actorId: caller.actorId,
             action: RECEIVED[kind],
             target: jobId,
-            details: { kind, sizeBytes: bytes.byteLength },
+            details: kind === 'signature' ? { kind, sizeBytes: bytes.byteLength, object: photoId, proposal_sha256: input.proposalSha256! } : { kind, sizeBytes: bytes.byteLength },
           });
           return { created: true, receipt: receiptOf(inserted) };
         }

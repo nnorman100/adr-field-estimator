@@ -11,6 +11,8 @@ export const ESTIMATE_ERRORS = {
   not_priced: 409,
   // Reprice (S5b-6): the version the owner reviewed is no longer the company's newest.
   prices_superseded: 409,
+  // Reprice (S5b-6): the job is already priced from the company's newest version.
+  prices_unchanged: 409,
   // The company has no published price version, so nothing can be priced (pricing plan 3.2).
   prices_not_set: 409,
   // The submitted record's scope was not confirmed (docs/spec.md 2.3, Review before signing).

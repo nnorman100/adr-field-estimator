@@ -1,6 +1,6 @@
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { ZodError } from 'zod';
-import { auditEvents, jobEstimates, jobPricePins, jobSubmissions, memberships, priceTableVersions } from '@/db/schema';
+import { auditEvents, jobEstimates, jobPricePins, jobSubmissions, memberships, priceTableVersions, priceTableWorkingCopies } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import { priceEstimate, type Estimate, type Json } from '@/engine/estimate';
 import { contentHash, ENGINE_VERSION, parseTable, type Table } from '@/engine/table';
@@ -8,6 +8,7 @@ import type { Capability } from '@/lib/access';
 import { canonicalJson } from '@/lib/field/canonical';
 import { FieldMapError } from '@/lib/field/inspection';
 import { hasAny, jobAccess, JobError, type JobCaller, type JobRow } from '@/lib/jobs/access';
+import { advance } from '@/lib/jobs/service';
 import { readCompanyDocuments, type CompanyDocuments } from '@/lib/profile/documents';
 import { readJobDetails, type JobDetails } from '@/lib/submissions/details';
 import type { Snapshot } from '@/lib/submissions/snapshot';
@@ -47,8 +48,10 @@ const READ: readonly Capability[] = ['jobs_read'];
 // Reprice this draft (S5b-6; pricing plan S5b-1) is the owner's alone.
 const REPRICE: readonly Capability[] = ['job_reprice'];
 
-// The job's pin after a reprice: its sequence and the sequence of the price version it names.
-type RepriceResult = { repriced: boolean; job: EstimateJobState; pin: { sequence: number; version: number } };
+// The job and its pin after a reprice: the pin's sequence and the sequence of the price version it names.
+type RepriceResult = { job: EstimateJobState; pin: { sequence: number; version: number } };
+// What the reprice's audit row keeps of its answer, so the same change id again is answered as the first time.
+type RepriceAnswer = { sequence: number; version: number; job_status: JobRow['status']; job_draft: string; job_revision: number };
 
 export type EstimateJobState = { id: string; status: JobRow['status']; currentDraftId: string; revision: number };
 
@@ -350,12 +353,13 @@ export function estimatesService(db: Database): EstimatesService {
     },
 
     // Moves the job's pin to the version the owner reviewed, which must still be the company's newest
-    // published one and the job's revision the one they saw: one new pin row, reason owner_reprice,
-    // and one audit row carrying the change id, under the job's row lock. The estimate of the old pin
-    // is no longer the job's current one, so it cannot be signed, and the next estimate is priced from
-    // the new pin once scope is confirmed again on a new record. The same change id again is answered
-    // as the first time with nothing written; a job already on the reviewed version is answered as it
-    // is. A refusal writes nothing.
+    // published one and the job's revision the one they saw: one new pin row, reason owner_reprice, the
+    // job's next revision, and one audit row carrying the change id, the request and the answer, under
+    // the job's row lock and the lock Publish takes, so the check and the write cannot interleave with
+    // a publish. The estimate of the old pin is no longer the job's current one, so it cannot be
+    // signed, and the next estimate is priced from the new pin once scope is confirmed again on a new
+    // record. The same change id again is answered as the first time with nothing written, and with
+    // another body is refused. A refusal writes nothing.
     async reprice(caller, jobId, input) {
       if (!hasAny(caller, REPRICE)) throw new JobError('not_allowed');
       return withCompany(db, caller.companyId, async (tx) => {
@@ -373,16 +377,19 @@ export function estimatesService(db: Database): EstimatesService {
             ),
           );
         if (done) {
-          const details = done.details as { sequence: number; version: number };
-          return { repriced: true, job: jobState(job), pin: { sequence: details.sequence, version: details.version } };
+          const first = done.details as RepriceAnswer & { request_revision: number; request_version_id: string };
+          if (first.request_revision !== input.revision || first.request_version_id !== input.versionId) throw new JobError('conflict');
+          return { job: { id: jobId, status: first.job_status, currentDraftId: first.job_draft, revision: first.job_revision }, pin: { sequence: first.sequence, version: first.version } };
         }
         if (job.status === 'signed') throw new EstimateError('job_signed');
+        if (job.status !== 'submitted') throw new EstimateError('not_submitted');
         if (job.revision !== input.revision) throw new JobError('stale_revision');
         const pin = await currentPin(tx, caller.companyId, jobId);
         if (!pin) throw new EstimateError('not_priced');
+        await tx.select({ id: priceTableWorkingCopies.companyId }).from(priceTableWorkingCopies).where(eq(priceTableWorkingCopies.companyId, caller.companyId)).for('update');
         const version = (await latestVersion(tx, caller.companyId))!;
         if (version.id !== input.versionId) throw new EstimateError('prices_superseded');
-        if (version.id === pin.versionId) return { repriced: false, job: jobState(job), pin: { sequence: pin.sequence, version: version.sequence } };
+        if (version.id === pin.versionId) throw new EstimateError('prices_unchanged');
         // A version this server cannot price is never pinned.
         versionTable(version);
         if (version.engineVersion !== ENGINE_VERSION) throw new EstimateError('prices_unreadable');
@@ -391,8 +398,19 @@ export function estimatesService(db: Database): EstimatesService {
           .insert(jobPricePins)
           .values({ companyId: caller.companyId, jobId, sequence: pin.sequence + 1, versionId: version.id, reason: 'owner_reprice', pinnedByActorId: caller.actorId })
           .returning({ sequence: jobPricePins.sequence });
-        await audit(tx, caller, 'job_repriced', jobId, { sequence: made!.sequence, from_version: previous.sequence, version: version.sequence, change_id: input.changeId });
-        return { repriced: true, job: jobState(job), pin: { sequence: made!.sequence, version: version.sequence } };
+        const next = await advance(tx, job, input.changeId);
+        await audit(tx, caller, 'job_repriced', jobId, {
+          sequence: made!.sequence,
+          from_version: previous.sequence,
+          version: version.sequence,
+          change_id: input.changeId,
+          request_revision: input.revision,
+          request_version_id: input.versionId,
+          job_status: next.status,
+          job_draft: next.currentDraftId,
+          job_revision: next.revision,
+        });
+        return { job: jobState(next), pin: { sequence: made!.sequence, version: version.sequence } };
       });
     },
 

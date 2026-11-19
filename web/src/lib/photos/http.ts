@@ -50,13 +50,15 @@ function kindOf(request: Request, fallback: PhotoKind | null): PhotoKind {
 
 // PUT /api/jobs/{jobId}/photos/{photoId}?kind=photo|original|signature  (the raw image as the body)
 // 201 for a new photo, 200 for the same bytes again; the answer is the receipt. An original also
-// sends X-Photo-Sha256: the SHA-256 of the registered photo it belongs to.
+// sends X-Photo-Sha256: the SHA-256 of the registered photo it belongs to; a signature sends X-Proposal-Sha256: the SHA-256 of the proposal it was drawn for.
 export async function putPhoto(request: Request, identity: Identity, context: RouteContext): Promise<Response> {
   return respond(async () => {
     const { jobId, photoId } = await ids(context);
     const kind = kindOf(request, null);
     const photoSha256 = request.headers.get('x-photo-sha256');
     if (kind === 'original' && (photoSha256 === null || !HEX_SHA256.test(photoSha256))) throw new PhotoError('invalid_request');
+    const proposalSha256 = request.headers.get('x-proposal-sha256');
+    if (proposalSha256 !== null && !HEX_SHA256.test(proposalSha256)) throw new PhotoError('invalid_request');
     const { created, receipt } = await photosServices().receive(identity, jobId, photoId, kind, {
       readBytes: async () => {
         try {
@@ -67,6 +69,7 @@ export async function putPhoto(request: Request, identity: Identity, context: Ro
         }
       },
       ...(kind === 'original' ? { photoSha256: photoSha256!.toLowerCase() } : {}),
+      ...(kind === 'signature' && proposalSha256 !== null ? { proposalSha256: proposalSha256.toLowerCase() } : {}),
     });
     return json(receipt, created ? 201 : 200);
   });
