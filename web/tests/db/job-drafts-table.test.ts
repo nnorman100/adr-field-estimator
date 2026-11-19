@@ -17,7 +17,7 @@ import { resetTeamDatabase, startTeamServer, type Harness } from './team-harness
 // for one job, as the app's runtime role on a server set up like a fresh Cloud SQL instance
 // (team-harness.ts), and its fill of the rows already there, run as the migrator that owns the
 // tables (not a superuser, so forced row-level security binds it). The routes that claim a draft are
-// in jobs-api, next-draft-api, archive-api and office-jobs-api.test.ts.
+// in jobs-api, next-draft-api, archive-api, office-jobs-api and office-jobs-field-owner.test.ts.
 
 let base: Awaited<ReturnType<typeof startTeamServer>>;
 let h: Harness;
