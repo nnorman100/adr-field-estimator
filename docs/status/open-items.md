@@ -6,6 +6,8 @@ Part of [Status](../STATUS.md).
 Arbitrary company workbook upload (ADR's workbook is never used for another company; the owner-filled template is the price editor row above); AI-suggested prices (not wanted for now); crew calendar and reminders; per-visit reading dispatch; homeowner photo upload through the link; walkthrough recording stored with the signed agreement; recipient texting; anonymized cross-company price comparison; support role and owner-visible access log.
 
 ## Open items for the owner
+Items 1 to 6 below were written for the old app, switched off on 2026-11-10 and retired in S8; they are historical, not current work. Current owner work is the S8 owner steps in `docs/plans/S8.md`.
+
 1. Phone test 2 on a real phone (iPhone if possible) — roadmap Phase 0 item 1; script in `docs/phone-acceptance.md`.
 2. ADR company profile and logo — Phase 0 item 2.
 3. Invitation check to a Google and an Outlook address — Phase 0 item 3.

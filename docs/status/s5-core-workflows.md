@@ -24,6 +24,6 @@ Nothing here is deployed to production: no live project exists yet (D-018). S5a 
 | Office jobs, estimator assignment and field owner (S5b-1, server) | yes (#409, #470) | no (rebuild not live) | n/a | Migration `0015_office_jobs`; a missing current draft is rebuilt at Start field work and the owner move (#470) |
 | Office job screens, assign estimator, coordination and Start field work (S5b-1) | yes (#427, #466) | no (rebuild not live) | no | Unsent prep-task and new-room text kept across owner transfers (#466) |
 | Archive, restore and copy jobs (S5b-2) | yes (#430 server, #440 screens, #469) | no (rebuild not live) | no | Archived screens stay read only and a refused job list clears addresses (#469) |
-| Bounded email check and capped jobs request bodies (security F2) | yes (#434, #465) | no (rebuild not live) | n/a | |
+| Bounded email check and capped jobs request bodies (security F2) | yes (#434) | no (rebuild not live) | n/a | |
 | Each field draft id bound to one job (security F1) | yes (#435) | no (rebuild not live) | n/a | Migration `0016_job_drafts` |
 | Room Add and Remove built from a cache re-read under the room-write guard | yes (#471) | no (rebuild not live) | no | Owner phone check suggested in the PR: remove a room on a near-limit job and reopen Check Scope |

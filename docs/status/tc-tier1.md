@@ -15,4 +15,4 @@ Plan: `docs/plans/TC.md` (#343). Nothing here is deployed to production: no live
 | Synthetic monitor probe code (TC-10) | yes (#378) | no | n/a | |
 | Browser and phone errors sent to a server route | yes (#370, #385) | no (rebuild not live) | n/a | Per-caller cap of 20 reports a minute (#385) |
 | Fixed browser security headers (D-034) | yes (#385) | no (rebuild not live) | n/a | |
-| Full script/connect content security policy, report-only (D-034) | yes (#403, #414) | no (rebuild not live) | no | Not enforced; `docs/security-csp.md`. Enforcing needs the owner's phone check on the test copy and a separate owner approval |
+| Full script/connect content security policy, report-only (D-034) | yes (#403) | no (rebuild not live) | no | Not enforced; `docs/security-csp.md`. Enforcing needs the owner's phone check on the test copy and a separate owner approval |

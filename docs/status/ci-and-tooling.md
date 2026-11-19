@@ -9,7 +9,7 @@ Part of [Status](../STATUS.md). These changes affect how the project is built an
 | Emulator and browser test runs on a shared host: lock, own ports, no leaked emulators | yes (#319, #394, #401, #405) | `EMU_PORTS=auto` |
 | CodeQL: no results artifact; master pushes and weekly only, not pull requests | yes (#324, #452) | |
 | Modern Web Guidance skill; Google Stitch skills (hidden in #454) | yes (#328, #410, #454) | |
-| Browser tests against a production build, routes compiled first | yes (#331, #332, #366) | |
+| Browser tests against a production build, routes compiled first | yes (#331, #332, #366) | #366 made the second-step tests wait for the `/api/me` responses |
 | Database tests in parallel on one shared Postgres | yes (#347) | |
 | Web app workflow on every pull request; the five scoped jobs skip work when nothing changed | yes (#357, #450) | On a pull request the database, emulators, company-isolation, e2e and image jobs skip their steps and still report success when nothing changed under `web/`, `live-relay-placeholder/` or `.github/workflows/web.yml`; the `check` job always runs in full |
 | Browser tests as parallel shards (D-032) | yes (#384, #420) | Four shards with two workers |
@@ -20,6 +20,7 @@ Part of [Status](../STATUS.md). These changes affect how the project is built an
 | Agent stop checks; force-push, master-push and secret command guards | yes (#422, #436, #453) | |
 | `verify-dryscope` and `dryscope-gotchas` skills | yes (#426, #441) | |
 | Test guard covers `web/` tests, configs and Terraform tests; gaps F10 and F11 closed | yes (#443, #467) | |
-| Audit check skips only the approved picomatch advisory | yes (#437, #448) | Waiver expires 2026-12-18 |
+| Audit check skips only the approved picomatch advisory | yes (#437, #448) | #437 bumped ESLint, which cleared the minimatch advisory; #448 holds the picomatch waiver, which expires 2026-12-18 |
 | Web CI job time limits raised for the self-hosted runners | yes (#449) | |
 | Dependency updates | yes (#368, #415, #431, #432, #433) | OpenTelemetry bumps held (#431) |
+| Test-only fixes: the CSP field test answers the trusted-device prompt (#414); the email check's timing bound raised from 50 ms to 500 ms (#465) | yes (#414, #465) | No runtime change |
