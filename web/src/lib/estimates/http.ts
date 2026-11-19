@@ -58,3 +58,13 @@ export async function readEstimate(_request: Request, identity: Identity, contex
     return json(await estimatesServices().read(identity, id));
   });
 }
+
+// POST /api/jobs/{jobId}/reprice
+// The owner's Reprice this draft (S5b-6): moves the job's pin to the company's current prices.
+// `repriced` is false when it was already there (nothing written).
+export async function repriceJob(_request: Request, identity: Identity, context: RouteContext): Promise<Response> {
+  return respond(async () => {
+    const id = await jobId(context);
+    return json(await estimatesServices().reprice(identity, id));
+  });
+}

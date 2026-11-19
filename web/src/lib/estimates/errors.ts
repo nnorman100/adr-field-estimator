@@ -5,6 +5,8 @@ export const ESTIMATE_ERRORS = {
   not_submitted: 409,
   // A signed job keeps its signed documents (S5a-11); a change goes through S5b-9.
   job_signed: 409,
+  // Reprice (S5b-6) on a job never priced: it has no pin to move; the first estimate pins it.
+  not_priced: 409,
   // The company has no published price version, so nothing can be priced (pricing plan 3.2).
   prices_not_set: 409,
   // The submitted record's scope was not confirmed (docs/spec.md 2.3, Review before signing).

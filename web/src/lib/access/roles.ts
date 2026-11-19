@@ -21,6 +21,7 @@ export const BASE_CAPABILITIES = Object.freeze({
     'sign',
     'live',
     'jobs_archive',
+    'job_reprice',
     'team_manage',
     'profile_manage',
     'delivery_manage',
