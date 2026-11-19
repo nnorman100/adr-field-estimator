@@ -57,7 +57,11 @@ describe('job time limits', () => {
     ['ci.yml', 'audit'],
     ['test-guard.yml', 'test-guard'],
   ])('%s job %s has a time limit', (name, job) => {
-    expect(workflow(name).jobs[job]['timeout-minutes']).toEqual(expect.any(Number));
+    // A whole number of minutes below GitHub's 360-minute default.
+    const limit = workflow(name).jobs[job]['timeout-minutes'];
+    expect(Number.isInteger(limit)).toBe(true);
+    expect(limit).toBeGreaterThan(0);
+    expect(limit).toBeLessThan(360);
   });
 });
 

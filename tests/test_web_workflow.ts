@@ -75,11 +75,12 @@ const SHARDS = [1, 2, 3, 4];
 const shardOutputs = (value: string): Record<string, string> =>
   Object.fromEntries(SHARDS.map((n) => [`shard${n}`, value]));
 
-const all = (result: string): Needs =>
+/** Every needed job succeeded, and every e2e shard reported. */
+const allSuccess = (): Needs =>
   Object.fromEntries(
     REQUIRED.map((name) => [
       name,
-      { result, outputs: name === 'e2e' && result === 'success' ? shardOutputs('done') : {} },
+      { result: 'success', outputs: name === 'e2e' ? shardOutputs('done') : {} },
     ]),
   );
 
@@ -118,7 +119,7 @@ describe('the check job', () => {
   });
 
   it('passes when the jobs it needs succeed and runs every one of its own steps', () => {
-    const { passed, ran } = runCheck(all('success'));
+    const { passed, ran } = runCheck(allSuccess());
     expect(passed).toBe(true);
     for (const command of [
       'Require the database job',
@@ -137,7 +138,7 @@ describe('the check job', () => {
   it.each(REQUIRED.flatMap((name) => ['failure', 'cancelled', 'skipped'].map((r) => [name, r])))(
     'fails when %s is %s',
     (name, result) => {
-      const needs = all('success');
+      const needs = allSuccess();
       needs[name] = { result, outputs: needs[name].outputs };
       const { passed, ran } = runCheck(needs);
       expect(passed).toBe(false);
@@ -146,7 +147,7 @@ describe('the check job', () => {
   );
 
   it.each(SHARDS)('fails when e2e succeeds but shard %i never reported', (shard) => {
-    const needs = all('success');
+    const needs = allSuccess();
     needs.e2e.outputs = { ...shardOutputs('done'), [`shard${shard}`]: '' };
     const { passed, ran } = runCheck(needs);
     expect(passed).toBe(false);
@@ -201,13 +202,31 @@ describe('the e2e job', () => {
     );
     const done = (e2e.steps as Data[]).find((s) => s.id === 'done');
     expect(done).not.toHaveProperty('if');
+    // Each leg fills in the job's output mappings from its own step outputs; as GitHub does, the
+    // legs' non-empty values combine (workflow syntax, "Using Job Outputs in a Matrix Job").
+    const combined: Record<string, string> = {};
     for (const n of e2e.strategy.matrix.shard) {
       const sh = new Shell();
       shells.push(sh);
       const run = sh.run(done.run.replace('${{ matrix.shard }}', String(n)));
       expect(run.status).toBe(0);
-      expect(sh.outputs()).toEqual({ [`shard${n}`]: 'done' });
+      const stepOutputs = sh.outputs();
+      expect(stepOutputs).toEqual({ [`shard${n}`]: 'done' });
+      const published: Record<string, string> = {};
+      for (const [name, mapping] of Object.entries(e2e.outputs as Record<string, string>)) {
+        const match = /^\$\{\{\s*steps\.done\.outputs\.(\w+)\s*\}\}$/.exec(mapping);
+        expect(match, name).not.toBeNull();
+        const value = stepOutputs[match![1]] ?? '';
+        if (value !== '') published[name] = value;
+      }
+      // A leg that filled another shard's output would hide that shard going missing.
+      expect(published).toEqual({ [`shard${n}`]: 'done' });
+      Object.assign(combined, published);
     }
+    // The outputs the four legs really publish are what check needs to pass.
+    const needs = allSuccess();
+    needs.e2e.outputs = combined;
+    expect(runCheck(needs).passed).toBe(true);
   });
 
   it('keeps the setup steps it had, in order, before the browser tests', () => {

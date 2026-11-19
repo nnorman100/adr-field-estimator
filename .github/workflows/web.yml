@@ -11,7 +11,8 @@ name: Web app
 # (id `changes`) that compares the pull request's merge commit with its first parent, master (hence
 # checkout's fetch-depth 2); when nothing there changed, the job's later steps are skipped and the
 # job still reports success. When the diff cannot run, the job runs in full. Pushes to master and
-# `check` always run in full.
+# `check` always run in full. One exception: each e2e shard's last step (id `done`) runs either way,
+# so the shard reports its `shardN=done` output to `check` even when its work was skipped.
 on:
   push:
     branches: [master]
