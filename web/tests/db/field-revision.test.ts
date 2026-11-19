@@ -142,6 +142,31 @@ describe('migration 0018: nothing else moves the field revision', () => {
   });
 });
 
+describe('migration 0018: the sync’s watermark and the change time', () => {
+  it('accepts a repeated or late watermark write as no change, and refuses a blind save as before', async () => {
+    const job = await jobOf(h.seed.a);
+    await exec(h.seed.a, `UPDATE jobs SET field_revision = field_revision + 1 WHERE id = '${job.id}'`);
+    await exec(h.seed.a, `UPDATE jobs SET field_revision = field_revision + 1 WHERE id = '${job.id}'`);
+    const ack = (v: number) => exec(h.seed.a, `UPDATE jobs SET field_synced_revision = greatest(field_synced_revision, ${v}) WHERE id = '${job.id}'`);
+    await ack(2);
+    for (const v of [2, 1]) expect({ v, code: await errorCode(ack(v)) }).toEqual({ v, code: undefined });
+    expect(await state(job.id)).toMatchObject({ field: 2, synced: 2, revision: 1 });
+    // A save of anything else without a new job revision is still refused.
+    expect(await errorCode(exec(h.seed.a, `UPDATE jobs SET property_address = 'Blind' WHERE id = '${job.id}'`))).toBe(CHECK_VIOLATION);
+  });
+
+  it('stamps the change time with the clock at the bump, not the transaction’s start', async () => {
+    const job = await jobOf(h.seed.a);
+    const start = await as(h.seed.a, async (tx) => {
+      const [found] = rows<{ start: Date }>(await tx.execute(sql`SELECT now() AS start`));
+      await tx.execute(sql`SELECT pg_sleep(0.3)`);
+      await tx.execute(sql.raw(`UPDATE jobs SET field_revision = field_revision + 1 WHERE id = '${job.id}'`));
+      return new Date(found!.start);
+    });
+    expect((await state(job.id)).changed.getTime() - start.getTime()).toBeGreaterThanOrEqual(300);
+  });
+});
+
 describe('migration 0018: what the runtime may write', () => {
   it('raises the field revision only by one, never sets the change time or the copy source after insert, and starts a job at 0', async () => {
     const job = await jobOf(h.seed.a);

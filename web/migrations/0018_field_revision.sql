@@ -13,8 +13,10 @@
 --    therefore never miss its bump, because no writer has to remember it.
 -- 2. jobs.field_synced_revision: the highest field_revision whose state the sync has written to
 --    Firestore. The sync raises it after its Firestore commit; the database leaves it to the sync.
--- 3. jobs.field_changed_at: when field_revision last rose, set by the same trigger, so the repair pass
---    leaves a job alone for a short grace while the request that changed it is still syncing it.
+-- 3. jobs.field_changed_at: when field_revision last rose, set by the same trigger from the clock at
+--    the bump (not the transaction's start, which a wait for the job lock can make look older), so the
+--    repair pass leaves a job alone for a short grace while the request that changed it is still
+--    syncing it.
 -- 4. jobs.copied_from_job_id: the job a copy was made from (in the same company), set when the copy is
 --    inserted and never changed, so a copy's first draft can be built from its source's signed record.
 -- 5. job_field_sync_due_companies(max, grace): the repair worker's one lookup across companies, on the
@@ -27,7 +29,9 @@
 -- without its bump.
 --
 -- Lock order: a bump from another table locks the job row after that table's row, so every writer
--- locks the job row first (every route does; the submission worker does since this release).
+-- locks the job row first. Every route does, and the submission worker does since #482 (test release
+-- 2026.11.19-7), which must be serving before this file runs: an older worker deadlocks against
+-- Submit once these triggers exist, so no rollback goes behind that release once this is applied.
 
 -- 1 to 4. The columns. jobs is changed first, so its strongest lock is taken before the triggers on the
 -- other tables take theirs. Existing jobs start at 0 and synced at 0: nothing to repair until a change.
@@ -55,14 +59,14 @@ BEGIN
     IF NEW.field_revision <> 0 OR NEW.field_synced_revision <> 0 THEN
       RAISE EXCEPTION 'a new job starts at field revision 0' USING ERRCODE = '23514';
     END IF;
-    NEW.field_changed_at := now();
+    NEW.field_changed_at := clock_timestamp();
     RETURN NEW;
   END IF;
   IF NEW.field_revision <> OLD.field_revision AND NEW.field_revision <> OLD.field_revision + 1 THEN
     RAISE EXCEPTION 'a job field revision rises by exactly one' USING ERRCODE = '23514';
   END IF;
   NEW.field_revision := OLD.field_revision + 1;
-  NEW.field_changed_at := now();
+  NEW.field_changed_at := clock_timestamp();
   RETURN NEW;
 END
 $$;
@@ -84,9 +88,11 @@ CREATE TRIGGER jobs_field_revision_update
   )
   EXECUTE FUNCTION jobs_field_revision();
 
--- The job revision guard of 0015, the same but for the field columns: an update that changes only the
--- field owner, the field revision or the synced revision (with the change time the trigger above sets)
--- keeps the job revision. Every other rule of 0010 and 0015 is unchanged.
+-- The job revision guard of 0015, the same but for the field columns: an update that changes nothing
+-- but the field owner, the field revision or the synced revision (with the change time the trigger
+-- above sets) keeps the job revision. That includes an update that changes nothing at all, such as the
+-- sync's repeated or late watermark write (greatest(field_synced_revision, v) when v is not newer).
+-- Every save that changes anything else still raises the revision by exactly one (0010).
 CREATE OR REPLACE FUNCTION jobs_guard_revision() RETURNS trigger
   LANGUAGE plpgsql
   SET search_path = pg_catalog
@@ -100,9 +106,6 @@ BEGIN
       RAISE EXCEPTION 'a new job starts as a draft' USING ERRCODE = '23514';
     END IF;
   ELSIF NEW.revision = OLD.revision
-     AND (NEW.field_owner_actor_id IS DISTINCT FROM OLD.field_owner_actor_id
-          OR NEW.field_revision IS DISTINCT FROM OLD.field_revision
-          OR NEW.field_synced_revision IS DISTINCT FROM OLD.field_synced_revision)
      AND to_jsonb(NEW) - 'field_owner_actor_id' - 'field_revision' - 'field_synced_revision' - 'field_changed_at'
        = to_jsonb(OLD) - 'field_owner_actor_id' - 'field_revision' - 'field_synced_revision' - 'field_changed_at' THEN
     RETURN NEW;
