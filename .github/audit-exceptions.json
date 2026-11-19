@@ -5,14 +5,15 @@
       "reason": "picomatch ReDoS (high) with no patched release; it reaches only dev tooling (vitest, vite, tinyglobby, fdir). The owner waived this one advisory and nothing else.",
       "approved": "2026-11-18",
       "recheckBy": "2026-12-18",
-      "projects": ["."]
+      "project": ".",
+      "nodes": ["node_modules/picomatch"]
     },
     {
       "id": "GHSA-m9gg-hp2v-232j",
       "reason": "@grpc/grpc-js getAuthContext (high) in web/: only the copy nested under firebase -> @firebase/firestore is old (1.9.16). The flaw is in gRPC servers built with ServerCredentials and requireClientCertificate false; the app runs no gRPC server, and Firestore's Node build only opens a client channel (grpc.credentials.createSsl/createInsecure). The browser bundle uses WebChannel and ships no grpc-js. npm's only fix is a semver-major firebase downgrade. Owner decision 1a, 2026-11-19.",
       "approved": "2026-11-19",
       "recheckBy": "2026-12-19",
-      "projects": ["web"],
+      "project": "web",
       "nodes": ["node_modules/@firebase/firestore/node_modules/@grpc/grpc-js"]
     },
     {
@@ -20,7 +21,7 @@
       "reason": "@grpc/grpc-js server error messages sent to clients (rated low today, so it does not block yet) in web/, same nested copy under @firebase/firestore. It affects only gRPC servers' method handlers; the app runs no gRPC server. Owner decision 1a, 2026-11-19, waived with GHSA-m9gg-hp2v-232j.",
       "approved": "2026-11-19",
       "recheckBy": "2026-12-19",
-      "projects": ["web"],
+      "project": "web",
       "nodes": ["node_modules/@firebase/firestore/node_modules/@grpc/grpc-js"]
     }
   ]

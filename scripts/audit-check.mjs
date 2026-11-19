@@ -4,11 +4,11 @@
 // ships) and fails on any high or critical advisory, like `npm audit --audit-level=high`,
 // except the advisories listed in .github/audit-exceptions.json. A package whose high finding comes
 // only from a listed advisory (through its dependency chain) is skipped too. Every skipped advisory
-// and package is printed, so nothing is hidden. An exception can be limited to the audited
-// directories in its `projects` list and to the package locations in its `nodes` list (as npm
-// audit names them, such as node_modules/a/node_modules/b); a finding is then skipped only in those
-// directories and only when every affected copy of the package is listed, so a newly affected copy
-// still fails. Each exception carries a re-check date; after that
+// and package is printed, so nothing is hidden. Every exception names the one audited directory
+// it covers (`project`) and the package locations it covers (`nodes`, as npm audit names them,
+// such as node_modules/a/node_modules/b); a finding is skipped only in that directory and only when
+// every affected copy of the package is listed, so a newly affected copy still fails. Each
+// exception carries a re-check date; after that
 // date (UTC) the check fails until the owner re-checks and updates the file. The exceptions file sits
 // under .github/, so the Test guard asks for the owner's approval before it can change.
 import { spawnSync } from 'node:child_process';
@@ -39,24 +39,22 @@ export function parseExceptions(text) {
         throw new Error(`${where}: ${key} must be a YYYY-MM-DD date`);
       }
     }
-    const parsed = { id: e.id, reason: e.reason, approved: e.approved, recheckBy: e.recheckBy };
-    if ('projects' in e) {
-      const ok =
-        Array.isArray(e.projects) &&
-        e.projects.length > 0 &&
-        e.projects.every((dir) => AUDITED.includes(dir));
-      if (!ok) throw new Error(`${where}: projects must list audited directories (${AUDITED})`);
-      parsed.projects = e.projects;
+    if (!AUDITED.includes(e.project)) {
+      throw new Error(`${where}: project must be one audited directory (${AUDITED.join(', ')})`);
     }
-    if ('nodes' in e) {
-      const ok =
-        Array.isArray(e.nodes) &&
-        e.nodes.length > 0 &&
-        e.nodes.every((n) => typeof n === 'string' && n.startsWith('node_modules/'));
-      if (!ok) throw new Error(`${where}: nodes must list node_modules/... package locations`);
-      parsed.nodes = e.nodes;
-    }
-    return parsed;
+    const nodesOk =
+      Array.isArray(e.nodes) &&
+      e.nodes.length > 0 &&
+      e.nodes.every((n) => typeof n === 'string' && n.startsWith('node_modules/'));
+    if (!nodesOk) throw new Error(`${where}: nodes must list node_modules/... package locations`);
+    return {
+      id: e.id,
+      reason: e.reason,
+      approved: e.approved,
+      recheckBy: e.recheckBy,
+      project: e.project,
+      nodes: e.nodes,
+    };
   });
 }
 
@@ -108,13 +106,11 @@ export function checkAudit(report, exceptions, today, dir = '.', label = '') {
     }
     return found;
   };
-  // An advisory is waived when its exception is active, covers this directory and lists every
+  // An advisory is waived when its exception is active, names this directory and lists every
   // affected copy of the package that carries it.
   const waived = (a) => {
     const e = active.get(advisoryId(a));
-    if (!e) return false;
-    if (e.projects && !e.projects.includes(dir)) return false;
-    if (!e.nodes) return true;
+    if (!e || e.project !== dir) return false;
     const copies = vulns[a.carrier]?.nodes;
     return Array.isArray(copies) && copies.length > 0 && copies.every((n) => e.nodes.includes(n));
   };
