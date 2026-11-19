@@ -23,9 +23,15 @@ function json(body: unknown, status = 200): Response {
   return Response.json(body, { status, headers: NO_STORE });
 }
 
-async function respond(request: Request, run: () => Promise<Response>): Promise<Response> {
-  // The framework answers HEAD through GET; a view is read and audited only by the GET that sends it.
-  if (request.method === 'HEAD') return Response.json({ error: 'method_not_allowed' }, { status: 405, headers: { ...NO_STORE, Allow: 'GET' } });
+// HEAD on the three support routes. Without its own export the framework would answer HEAD through
+// GET, reading (and for a photo, downloading and checking) the view and writing its audit row for an
+// answer with no body. It is refused before any sign-in check, read or audit: a view is read and
+// audited only by the GET that sends it.
+export async function supportHead(): Promise<Response> {
+  return Response.json({ error: 'method_not_allowed' }, { status: 405, headers: { ...NO_STORE, Allow: 'GET' } });
+}
+
+async function respond(run: () => Promise<Response>): Promise<Response> {
   try {
     return await run();
   } catch (error) {
@@ -49,7 +55,7 @@ async function pathId(context: RouteContext, name: string): Promise<string> {
 
 // GET /api/platform/companies/{companyId}/jobs?limit=1..50&cursor=...  Every job, archived ones too.
 export async function supportJobs(request: Request, operator: Operator, context: RouteContext): Promise<Response> {
-  return respond(request, async () => {
+  return respond(async () => {
     const companyId = await pathId(context, 'companyId');
     const query = parseListQuery(new URL(request.url).searchParams);
     // The operator sees the whole company: no scope.
@@ -59,8 +65,8 @@ export async function supportJobs(request: Request, operator: Operator, context:
 }
 
 // GET /api/platform/companies/{companyId}/jobs/{jobId}
-export async function supportJob(request: Request, operator: Operator, context: RouteContext): Promise<Response> {
-  return respond(request, async () => {
+export async function supportJob(_request: Request, operator: Operator, context: RouteContext): Promise<Response> {
+  return respond(async () => {
     const companyId = await pathId(context, 'companyId');
     const jobId = await pathId(context, 'jobId');
     return json(await supportJobsServices().job(operator.operatorId, companyId, jobId));
@@ -70,7 +76,7 @@ export async function supportJob(request: Request, operator: Operator, context: 
 // GET /api/platform/companies/{companyId}/jobs/{jobId}/photos/{photoId}?kind=photo|original|signature
 // (exactly one kind, as the job view lists it), as the image it is.
 export async function supportPhoto(request: Request, operator: Operator, context: RouteContext): Promise<Response> {
-  return respond(request, async () => {
+  return respond(async () => {
     const companyId = await pathId(context, 'companyId');
     const jobId = await pathId(context, 'jobId');
     const photoId = await pathId(context, 'photoId');

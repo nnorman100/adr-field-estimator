@@ -23,7 +23,7 @@ import { starterTable } from '@/lib/prices/starter';
 //               is never read, so every company user without the token is refused (404)
 export type RouteKind = 'company' | 'invitation' | 'operator' | 'service' | 'session' | 'public' | 'link';
 
-export type Method = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
+export type Method = 'GET' | 'HEAD' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
 
 export type MatrixRow = {
   // The route file's folder under src/app, as the file system spells it.
@@ -216,6 +216,10 @@ export const MATRIX: readonly MatrixRow[] = [
   row(`${PLATFORM_ONE}/jobs`, 'GET', 'operator'),
   row(`${PLATFORM_ONE}/jobs/[jobId]`, 'GET', 'operator'),
   row(`${PLATFORM_ONE}/jobs/[jobId]/photos/[photoId]`, 'GET', 'operator', { query: '?kind=photo' }),
+  // Their HEAD is refused with 405 before any sign-in check, read or audit, for anyone.
+  row(`${PLATFORM_ONE}/jobs`, 'HEAD', 'public'),
+  row(`${PLATFORM_ONE}/jobs/[jobId]`, 'HEAD', 'public'),
+  row(`${PLATFORM_ONE}/jobs/[jobId]/photos/[photoId]`, 'HEAD', 'public', { query: '?kind=photo' }),
   // S8-3: the records check's first page; a later page also needs the operator's own run id.
   row(`${PLATFORM_ONE}/records-check`, 'POST', 'operator', { body: {} }),
   row(`${PLATFORM_ONE}/members/[membershipId]`, 'PATCH', 'operator', { body: { role: 'office' } }),

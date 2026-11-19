@@ -39,7 +39,7 @@ const OWNER_A: FakeClaims = { tenant: 'tenant-a', uid: 'owner-a' };
 const OPERATOR = operatorClaims();
 // A 1x1 JPEG and a 1x1 PNG: real images, so the registry's hash, size and type are those of the bytes.
 const BYTES = Buffer.from(
-  '/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=',
+  '/9j/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAT/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAABv/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AKQAI2f/2Q==',
   'base64',
 );
 const SIGNATURE_BYTES = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
@@ -259,16 +259,20 @@ describe('the operator’s support view of a company’s jobs', () => {
     expect(await supportRows()).toEqual([]);
   });
 
-  it('refuses HEAD on all three routes with 405 and writes no audit row', async () => {
+  it('refuses HEAD on all three routes with 405 before any sign-in check, and writes no audit row', async () => {
     const { jobId, photoId } = await signedJob();
-    const head = (path: string, ids: Record<string, string>, handler: typeof listRoute.GET) =>
-      handler(request(OPERATOR, path, { method: 'HEAD' }), params(ids));
-    const answers = [
-      await head(`${PLATFORM}/${h.seed.a}/jobs`, { companyId: h.seed.a }, listRoute.GET),
-      await head(`${PLATFORM}/${h.seed.a}/jobs/${jobId}`, { companyId: h.seed.a, jobId }, jobRoute.GET),
-      await head(`${PLATFORM}/${h.seed.a}/jobs/${jobId}/photos/${photoId}?kind=photo`, { companyId: h.seed.a, jobId, photoId }, photoRoute.GET),
-    ];
-    expect(answers.map((answer) => answer.status)).toEqual([405, 405, 405]);
+    const head = (claims: FakeClaims | null, path: string, ids: Record<string, string>, handler: (r: Request, c: unknown) => Response | Promise<Response>) =>
+      handler(request(claims, path, { method: 'HEAD' }), params(ids));
+    const answers: number[] = [];
+    // The operator, and a request with no sign-in at all: the same 405, so no sign-in is checked first.
+    for (const claims of [OPERATOR, null]) {
+      answers.push((await head(claims, `${PLATFORM}/${h.seed.a}/jobs`, { companyId: h.seed.a }, listRoute.HEAD)).status);
+      answers.push((await head(claims, `${PLATFORM}/${h.seed.a}/jobs/${jobId}`, { companyId: h.seed.a, jobId }, jobRoute.HEAD)).status);
+      answers.push(
+        (await head(claims, `${PLATFORM}/${h.seed.a}/jobs/${jobId}/photos/${photoId}?kind=photo`, { companyId: h.seed.a, jobId, photoId }, photoRoute.HEAD)).status,
+      );
+    }
+    expect(answers).toEqual([405, 405, 405, 405, 405, 405]);
     expect(await supportRows()).toEqual([]);
   });
 
@@ -329,7 +333,7 @@ describe('the operator’s support view of a company’s jobs', () => {
 
   it('has no write path: every route under it is a read, and viewing changes nothing but the audit log', async () => {
     const modules = await routeModules(join(APP_DIR, 'api/platform/companies/[companyId]/jobs'));
-    expect(handlersOf(modules).map((found) => `${found.method} ${found.route}`).sort()).toEqual(['GET ', 'GET [jobId]', 'GET [jobId]/photos/[photoId]']);
+    expect(handlersOf(modules).map((found) => `${found.method} ${found.route}`).sort()).toEqual(['GET ', 'GET [jobId]', 'GET [jobId]/photos/[photoId]', 'HEAD ', 'HEAD [jobId]', 'HEAD [jobId]/photos/[photoId]']);
     const { jobId, photoId } = await signedJob();
     const before = await allButAudit();
     expect((await list(OPERATOR, h.seed.a)).status).toBe(200);

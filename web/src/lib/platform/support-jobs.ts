@@ -66,7 +66,7 @@ export function supportJobsService(db: Database, openStore: () => EvidenceStore)
   // Reads the view in a read-only transaction, then writes its one audit row; the view is answered
   // only once that row committed.
   async function viewed<T>(operatorId: string, companyId: string, read: (tx: CompanyTransaction) => Promise<T>, action: string, target: string): Promise<T> {
-    const seen = await withOperator(db, operatorId, read, { companyId, readOnly: true });
+    const seen = await withOperator(db, operatorId, read, { companyId, readOnly: true, snapshot: true });
     await audit(operatorId, companyId, action, target);
     return seen;
   }
