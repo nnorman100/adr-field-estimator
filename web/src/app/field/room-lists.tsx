@@ -169,8 +169,8 @@ export function RoomPrepTasks({
   templates: string[];
   error: string | undefined;
   readOnly: boolean;
-  // The prep task typed and not added yet, held by the room card so it counts as a change typed and
-  // not saved, and the card stays on screen with it after a move (owner decision J5).
+  // The prep task typed and not added yet, held on the page (src/lib/field/pending.ts) so the room's
+  // card stays on screen with it after a move (owner decision J5).
   own: string;
   setOwn: (text: string) => void;
   // Prep tasks typed and not added on an earlier draft of the job: shown read only, never added here.
