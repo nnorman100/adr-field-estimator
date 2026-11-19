@@ -77,6 +77,9 @@ export const CAPABILITIES: readonly Capability[] = Object.freeze([
 export const OPERATOR_ACTIONS = Object.freeze([
   // S8-3: the records check after a restore, read-only, one audit row per run.
   'records_check',
+  // S5b-5: the read-only support view of a company's jobs, agreements, photos and evidence, one
+  // audit row per view.
+  'support_jobs_view',
 ] as const);
 
 // The company switches that decide which keys exist. The flag is passed in, not read from the

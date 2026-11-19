@@ -40,6 +40,9 @@ export type ProposalPrice = {
   after_hours_label: string;
   // Each line's description and price, only when the price table shows the line breakdown.
   lines?: Array<{ description: string; quantity: string; unit: string; total: string }>;
+  // Written only on a letter that prints its line prices (S4-4e): the proposal then also prints the
+  // stored charge rows, so its lines add up to the total. A letter signed before has no such key.
+  charge_rows?: true;
 };
 
 // The itemized layout's findings and scope list, or the letter's sections: never both.
@@ -118,6 +121,9 @@ export function proposalOf(input: ProposalInput): Proposal {
   // The letter's own lines carry their prices, so its price is the one price line.
   if (input.showLineBreakdown && !proposal.letter) {
     price.lines = estimate.lines.map((line) => ({ description: line.description, quantity: line.quantity, unit: line.unit, total: line.total }));
+  }
+  if (proposal.letter && [...proposal.letter.job_work, ...proposal.letter.room_work.flatMap((room) => room.lines)].some((line) => line.total !== undefined)) {
+    price.charge_rows = true;
   }
   const body: ProposalBody = proposal.letter ? { letter: proposal.letter } : { findings: proposal.findings, recommendations: proposal.recommendations };
   return {

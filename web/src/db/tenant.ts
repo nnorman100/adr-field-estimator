@@ -64,6 +64,9 @@ export type OperatorContext = {
   companyId?: string;
   // A read-only transaction: any write in it fails.
   readOnly?: boolean;
+  // With readOnly: the transaction reads one snapshot (repeatable read), so several queries in it
+  // never see a commit made between them (the support view of a company's jobs, S5b-5).
+  snapshot?: boolean;
 };
 
 // Runs a platform operator's work in one transaction. It sets app.operator_id for that transaction
@@ -93,6 +96,8 @@ export async function withOperator<T>(
       if (row?.active !== true) throw new OperatorContextError('not an active platform operator');
       return run(tx);
     },
-    context.readOnly === true ? { accessMode: 'read only' } : undefined,
+    context.readOnly === true
+      ? { accessMode: 'read only', ...(context.snapshot === true ? { isolationLevel: 'repeatable read' as const } : {}) }
+      : undefined,
   );
 }

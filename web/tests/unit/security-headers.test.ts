@@ -16,6 +16,7 @@ function directives(policy: string): Record<string, string[]> {
 }
 
 const PHOTO = '/api/jobs/5f0c6d0e-1b1a-4c55-9a43-1d2f7c9b0a11/photos/0b7d2c4e-8f61-4a4f-b3c2-6e9a1f0d5c22';
+const OPERATOR_PHOTO = '/api/platform/companies/7a1e4b52-0c3d-4e6f-8a9b-2c1d3e4f5a66/jobs/5f0c6d0e-1b1a-4c55-9a43-1d2f7c9b0a11/photos/0b7d2c4e-8f61-4a4f-b3c2-6e9a1f0d5c22';
 const plain = () => Response.json({ ok: true });
 const sandboxed = () => new Response('x', { headers: { 'Content-Security-Policy': "default-src 'none'; sandbox" } });
 
@@ -51,7 +52,7 @@ describe('security headers: the fixed set', () => {
 
 describe('security headers: the photo download keeps its own stricter policy', () => {
   it('sends the route’s sandboxed policy, not the global one, with the other headers still on', async () => {
-    for (const path of [PHOTO, `${PHOTO}?kind=photo`, `${PHOTO}?kind=original`, `${PHOTO}/`]) {
+    for (const path of [PHOTO, `${PHOTO}?kind=photo`, `${PHOTO}?kind=original`, `${PHOTO}/`, OPERATOR_PHOTO, `${OPERATOR_PHOTO}?kind=signature`]) {
       const sent = await servedHeaders(path, sandboxed());
       expect({ path, csp: sent.get('content-security-policy') }).toEqual({ path, csp: "default-src 'none'; sandbox" });
       expect(sent.get('x-frame-options')).toBe('DENY');
@@ -62,6 +63,7 @@ describe('security headers: the photo download keeps its own stricter policy', (
 
   it('would lose that policy to a global one on any other path, which is why the photo path is skipped', async () => {
     expect((await servedHeaders('/api/jobs', sandboxed())).get('content-security-policy')).toBe(CONTENT_SECURITY_POLICY.value);
+    expect((await servedHeaders(OPERATOR_PHOTO.replace('/photos/', '/other/'), sandboxed())).get('content-security-policy')).toBe(CONTENT_SECURITY_POLICY.value);
   });
 });
 

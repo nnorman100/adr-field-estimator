@@ -56,5 +56,6 @@ Rules: `docs/access/superadmin.md`.
 ## Mismatches to check
 
 - `docs/access/superadmin.md` gives the operator read-only support access to every company's jobs,
-  documents and photos; no operator screen or route reads them (S5b-5, see [README](README.md)
-  item 4).
+  documents and photos. The three routes under `/api/platform/companies/{id}/jobs` read them (S5b-5
+  server slice); no operator screen shows them yet: the screens are the next slice of S5b-5 (see
+  [README](README.md) item 4).
