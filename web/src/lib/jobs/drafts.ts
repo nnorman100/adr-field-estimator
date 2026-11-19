@@ -26,7 +26,7 @@ export type FieldOwnerResult =
   | 'same'
   // A newer owner is already on the draft (its revision is higher): nothing is changed.
   | 'newer'
-  // No such draft (yet).
+  // No such draft (yet), or only an archive's placeholder for it (archive-store.ts).
   | 'missing'
   // The draft was made for another job: nothing is changed.
   | 'taken';
@@ -106,7 +106,8 @@ export function firestoreDraftStore(db: Firestore): DraftStore {
       return firestoreSpan('runTransaction', 'drafts', () =>
         db.runTransaction(async (tx): Promise<FieldOwnerResult> => {
           const found = await tx.get(draft);
-          if (!found.exists) return 'missing';
+          // An archive's placeholder for a missing draft (archive-store.ts) is no draft: nobody is named on it.
+          if (!found.exists || found.get('placeholder') === true) return 'missing';
           const stamped = found.get('jobId');
           if (draftOfOtherJob(stamped, jobId)) return 'taken';
           // A draft made before `jobId` takes it, whatever the owner answer is.

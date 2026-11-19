@@ -24,9 +24,11 @@ export function jobsServices(): JobRoutesService {
     const db = serverDatabase();
     const firestore = firestoreFor(config);
     const drafts = firestoreDraftStore(firestore);
-    const archiveStore = firestoreArchiveStore(firestore);
-    const remaker = { createFrom: firestoreFenceStore(firestore).createFrom, archiveDraft: archiveStore.archiveDraft };
-    service = { ...jobsService(db, drafts), ...officeService(db, drafts, remaker), ...archiveService(db, archiveStore) };
+    service = {
+      ...jobsService(db, drafts),
+      ...officeService(db, drafts, firestoreFenceStore(firestore)),
+      ...archiveService(db, firestoreArchiveStore(firestore)),
+    };
   }
   return service;
 }

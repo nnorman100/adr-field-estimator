@@ -118,15 +118,16 @@ export function archiveService(db: Database, store: ArchiveStore): ArchiveServic
 
   // The job's current draft brought to the job's state as Postgres holds it now, under the job's
   // lock: `archived` while the job is, else out of `archived` to its status's state (a draft in any
-  // other state keeps it, restoreDraft). A draft not made yet has nothing to change: it is made only
-  // while its job is not archived (lockedJob).
+  // other state keeps it, restoreDraft). A draft not made yet gets the archive's placeholder, which
+  // nothing is made over until the restore takes it away (archive-store.ts), so a draft made without
+  // the job's lock (office.ts remakeCurrentDraft) never opens on an archived job.
   async function settle(companyId: string, jobId: string): Promise<void> {
     await inCompany(companyId, async (tx) => {
       const row = await lockedJob(tx, companyId, jobId);
       await holdAcrossOutsideCall(tx);
       await field(() =>
         row.status === 'archived'
-          ? store.archiveDraft(companyId, row.currentDraftId, row.revision)
+          ? store.archiveDraft(companyId, row.id, row.currentDraftId, row.revision)
           : store.restoreDraft(companyId, row.currentDraftId, draftState(row.status), row.revision),
       );
     });

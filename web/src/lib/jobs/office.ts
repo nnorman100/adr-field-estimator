@@ -5,7 +5,6 @@ import type { Capability } from '@/lib/access';
 import type { FenceStore } from '@/lib/submissions/fence';
 import { snapshotManifest } from '@/lib/submissions/snapshot';
 import { hasAny, holdDraft, jobAccess, JobError, type JobCaller, type JobRow } from './access';
-import type { ArchiveStore } from './archive-store';
 import { draftOfOtherJob, type DraftStore } from './drafts';
 import { assignDigest, type AssignInput, type CoordinationInput, type TransferInput } from './schema';
 import { audit, CHECK_VIOLATION, detailOf, errorCode, findDraft, type JobDetail } from './service';
@@ -195,10 +194,9 @@ async function draftIdsOf(tx: CompanyTransaction, row: JobRow): Promise<string[]
   return [...[...held].filter((id) => id !== row.currentDraftId), row.currentDraftId];
 }
 
-// The field-database steps that Back to editing, a move and Start field work may repeat
-// (remakeCurrentDraft): making the job's current draft from its latest record, and closing it when
-// the job was archived while it was made.
-export type DraftRemaker = Pick<FenceStore, 'createFrom'> & Pick<ArchiveStore, 'archiveDraft'>;
+// The field-database step that Back to editing, a move and Start field work may repeat
+// (remakeCurrentDraft): making the job's current draft from its latest record.
+export type DraftRemaker = Pick<FenceStore, 'createFrom'>;
 
 export function officeService(db: Database, drafts: DraftStore, remaker: DraftRemaker): OfficeService {
   async function inCompany<T>(companyId: string, run: (tx: CompanyTransaction) => Promise<T>): Promise<T> {
@@ -267,27 +265,17 @@ export function officeService(db: Database, drafts: DraftStore, remaker: DraftRe
   // No transaction or lock is held across the field database (security audit F5), so the draft is made
   // closed, naming nobody: no phone reads or writes it until project() names the field owner, and
   // project() does that only with the owner, revision and status Postgres holds at that moment
-  // (liveOwner), never with values this request read earlier. And an archive that found no
-  // draft to close while this one was being made is caught here: the job is read again once the draft
-  // is there, and a job archived by then has the draft closed by this request (archiveDraft, guarded by
-  // the job revision, so it never undoes a later restore). An archive that commits after that read finds
-  // the draft and closes it itself.
+  // (liveOwner), never with values this request read earlier. An archive and this step meet on the
+  // draft id in the field database, never in Postgres: an archive that finds no draft leaves its
+  // placeholder there, and nothing is made over that (createFrom answers `exists`), while one that
+  // comes after the draft is made closes it like any other (archive-store.ts). So whichever of the two
+  // lands first, the archived job's draft ends closed, even when this step's answer is lost.
   async function remakeCurrentDraft(companyId: string, jobId: string, draftId: string): Promise<boolean> {
     const record = await recordOfCurrentDraft(companyId, jobId, draftId);
     if (!record) return false;
     const manifest = snapshotManifest(record.snapshotBytes);
     const result = await field(() => remaker.createFrom(companyId, jobId, draftId, null, manifest, record.previous));
     if (result === 'taken') throw new JobError('conflict');
-    const now = await inCompany(companyId, async (tx) => {
-      const [row] = await tx
-        .select({ status: jobs.status, currentDraftId: jobs.currentDraftId, revision: jobs.revision })
-        .from(jobs)
-        .where(and(eq(jobs.companyId, companyId), eq(jobs.id, jobId)));
-      return row;
-    });
-    if (now?.status === 'archived' && now.currentDraftId === draftId) {
-      await field(() => remaker.archiveDraft(companyId, draftId, now.revision));
-    }
     return true;
   }
 

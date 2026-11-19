@@ -13,6 +13,14 @@ import { firestoreJobProjectionStore, type JobProjectionStore } from './projecti
 // it, so a slower request carrying an older revision never undoes a newer one; a client cannot
 // change it (the rules let a client change only `field`).
 //
+// The fence holds where the draft is missing too. Archive then leaves a placeholder under the draft id
+// (`placeholder: true`, `archived`, the job id and the revision, no field work and no field owner), so
+// a draft made later without the job's lock (office.ts remakeCurrentDraft) finds it there and makes
+// nothing over it (createFrom, src/lib/submissions/fence.ts), and nobody is named on it
+// (setFieldOwner, drafts.ts). Restore takes the placeholder away, so the draft is missing again as it
+// was before the archive. Every step is one Firestore transaction on the draft id, so an archive and a
+// draft being made never both win.
+//
 // A seam, so the route tests run without Firestore; tests/emu/archive.test.ts checks this writer
 // against the emulator and the field rules.
 
@@ -23,18 +31,17 @@ export type ArchiveResult =
   // is changed.
   | 'same'
   | 'newer'
-  // No such draft (its job's create never reached the field database): nothing to change. A draft made
-  // later, while its job is archived, is closed by the request that makes it (office.ts
-  // remakeCurrentDraft reads the job again once the draft is there), and one made under its job's
-  // lock is made only while the job is not archived (lockedJob).
+  // No such draft (its job's create never reached the field database) for a restore: nothing to
+  // change. An archive never answers it: it leaves its placeholder there instead.
   | 'missing';
 
 export type ArchiveStore = JobProjectionStore & DraftLookup & {
-  // In one Firestore transaction: the draft becomes `archived` at this job revision.
-  archiveDraft(companyId: string, draftId: string, revision: number): Promise<ArchiveResult>;
+  // In one Firestore transaction: the draft becomes `archived` at this job revision, or, when there is
+  // no draft, the job's placeholder is left in its place.
+  archiveDraft(companyId: string, jobId: string, draftId: string, revision: number): Promise<ArchiveResult>;
   // In one Firestore transaction: an `archived` draft becomes `state` at this job revision. A draft
   // in any other state keeps it (its archive never reached the field database) and only takes the
-  // revision, so that archive cannot land after this restore.
+  // revision, so that archive cannot land after this restore. A placeholder is taken away.
   restoreDraft(companyId: string, draftId: string, state: 'editing' | 'submitted', revision: number): Promise<ArchiveResult>;
   // A copy's first draft: an `editing` draft of the copy (`jobId`, as src/lib/jobs/drafts.ts)
   // holding the given field map and rooms, made whole or not at all; `exists` when the draft is
@@ -57,16 +64,30 @@ function storedRevision(value: unknown): number {
 export function firestoreArchiveStore(db: Firestore): ArchiveStore {
   const draftRef = (companyId: string, draftId: string) => db.collection('companies').doc(companyId).collection('drafts').doc(draftId);
 
-  async function step(companyId: string, draftId: string, revision: number, next: (state: unknown) => Record<string, unknown>): Promise<ArchiveResult> {
+  // `missing` is what an absent draft gets (null: nothing); `next` is the change to a draft there, from
+  // its state and whether it is a placeholder, or null to take the placeholder away.
+  async function step(
+    companyId: string,
+    draftId: string,
+    revision: number,
+    missing: Record<string, unknown> | null,
+    next: (state: unknown, placeholder: boolean) => Record<string, unknown> | null,
+  ): Promise<ArchiveResult> {
     const ref = draftRef(companyId, draftId);
     return firestoreSpan('runTransaction', 'drafts', () =>
       db.runTransaction(async (tx): Promise<ArchiveResult> => {
         const found = await tx.get(ref);
-        if (!found.exists) return 'missing';
+        if (!found.exists) {
+          if (!missing) return 'missing';
+          tx.create(ref, { ...missing, archiveRevision: revision });
+          return 'set';
+        }
         const stored = storedRevision(found.get('archiveRevision'));
         if (stored > revision) return 'newer';
         if (stored === revision) return 'same';
-        tx.update(ref, { ...next(found.get('state')), archiveRevision: revision });
+        const change = next(found.get('state'), found.get('placeholder') === true);
+        if (change) tx.update(ref, { ...change, archiveRevision: revision });
+        else tx.delete(ref);
         return 'set';
       }),
     );
@@ -75,9 +96,13 @@ export function firestoreArchiveStore(db: Firestore): ArchiveStore {
   return {
     ...firestoreJobProjectionStore(db),
     ...firestoreDraftLookup(db),
-    archiveDraft: (companyId, draftId, revision) => step(companyId, draftId, revision, () => ({ state: 'archived' })),
+    archiveDraft: (companyId, jobId, draftId, revision) =>
+      step(companyId, draftId, revision, { jobId, state: 'archived', placeholder: true }, () => ({ state: 'archived' })),
     restoreDraft: (companyId, draftId, state, revision) =>
-      step(companyId, draftId, revision, (current) => (current === 'archived' ? { state } : {})),
+      step(companyId, draftId, revision, null, (current, placeholder) => {
+        if (placeholder) return null;
+        return current === 'archived' ? { state } : {};
+      }),
 
     async createCopy(companyId, jobId, draftId, fieldOwnerUid, manifest) {
       const ref = draftRef(companyId, draftId);
