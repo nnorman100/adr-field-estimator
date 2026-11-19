@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 import { actors, jobAssignments, jobCoordination, jobDrafts, jobs, jobSubmissions, memberships } from '@/db/schema';
 import { holdAcrossOutsideCall, withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
@@ -8,7 +8,7 @@ import { hasAny, holdDraft, jobAccess, JobError, type JobCaller, type JobRow } f
 import type { ArchiveStore } from './archive-store';
 import { draftOfOtherJob, type DraftStore } from './drafts';
 import { assignDigest, type AssignInput, type CoordinationInput, type TransferInput } from './schema';
-import { audit, CHECK_VIOLATION, detailOf, errorCode, findDraft, type JobDetail } from './service';
+import { audit, CHECK_VIOLATION, detailOf, errorCode, findDraft, rebuildableRecord, type JobDetail } from './service';
 
 // Office jobs, assignment and the field owner (S5b-1, docs/plans/S5.md; docs/spec.md 6.2). Every
 // function runs inside withCompany for the company of the verified sign-in and goes through the one
@@ -231,29 +231,10 @@ export function officeService(db: Database, drafts: DraftStore, remaker: DraftRe
     }
   }
 
-  // The record a missing current draft is made from: the job's latest committed submission, while the
-  // job is being edited (`draft`) on this draft. Both callers hold the draft in job_drafts (0016) for
-  // the job already (draftIdsOf). Back to editing put the job on this draft from that record and
-  // claimed it in the same commit; nothing is submitted since, or the job would not be `draft`. Null
-  // when the draft is not one Back to editing made (a new job's first draft), so the request answers
-  // 503 as before. A short transaction of its own, ended
-  // before the field database is called (security audit F5: no transaction waits on Firestore here).
+  // A short transaction of its own, ended before the field database is called (security audit F5: no
+  // transaction waits on Firestore here).
   async function recordOfCurrentDraft(companyId: string, jobId: string, draftId: string) {
-    return inCompany(companyId, async (tx) => {
-      const [row] = await tx
-        .select({ status: jobs.status, currentDraftId: jobs.currentDraftId })
-        .from(jobs)
-        .where(and(eq(jobs.companyId, companyId), eq(jobs.id, jobId)));
-      if (row?.status !== 'draft' || row.currentDraftId !== draftId) return null;
-      const [latest] = await tx
-        .select({ id: jobSubmissions.id, draftId: jobSubmissions.draftId, snapshotBytes: jobSubmissions.snapshotBytes })
-        .from(jobSubmissions)
-        .where(and(eq(jobSubmissions.companyId, companyId), eq(jobSubmissions.jobId, jobId), eq(jobSubmissions.status, 'committed')))
-        .orderBy(desc(jobSubmissions.createdAt))
-        .limit(1);
-      if (!latest?.snapshotBytes || latest.draftId === draftId) return null;
-      return { snapshotBytes: latest.snapshotBytes, previous: { draftId: latest.draftId, submissionId: latest.id } };
-    });
+    return inCompany(companyId, (tx) => rebuildableRecord(tx, companyId, jobId, draftId));
   }
 
   // Back to editing commits in Postgres and only then makes its draft; when that step fails and the

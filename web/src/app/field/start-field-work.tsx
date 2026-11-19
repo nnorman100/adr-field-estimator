@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { pending } from '@/lib/field/pending';
 import { claimFieldOwner, type JobDetail } from '@/lib/field/api';
 import type { JobContext } from './job-screens';
 import { Outcome } from './ui';
@@ -23,6 +24,7 @@ export function StartFieldWork({ context, resume }: { context: JobContext & { de
     setError(null);
     const answer = await claimFieldOwner(context.session.user, context.jobId);
     setBusy(false);
+    if (answer.ok || answer.status !== 410) pending.setMissingDraft(context.jobId, null);
     if (answer.ok) {
       // The draft now names this person as its field owner: read it again.
       await context.reloadJob();
