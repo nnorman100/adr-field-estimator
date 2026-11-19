@@ -15,7 +15,6 @@ vi.mock('@/lib/auth/services', () => ({
 vi.mock('@/lib/jobs/services', () => ({ jobsServices: () => live.harness!.jobs }));
 vi.mock('@/lib/photos/services', () => ({ photosServices: () => live.harness!.photos }));
 vi.mock('@/lib/submissions/services', () => ({ submissionsServices: () => live.harness!.submissions }));
-vi.mock('@/lib/prices/services', () => ({ pricesServices: () => live.harness!.prices }));
 
 setUpOfficeJobsDatabase(live);
 

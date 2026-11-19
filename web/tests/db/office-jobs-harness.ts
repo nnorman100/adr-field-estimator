@@ -6,23 +6,24 @@ import type { FakeClaims, Harness } from './team-harness';
 // the route files, the people, the request helpers and the per-test database. Each test file mocks the
 // services (vi.mock is per file) and calls setUpOfficeJobsDatabase with its hoisted `live` holder.
 
-export const jobsRoute = await import('@/app/api/jobs/route');
-export const jobRoute = await import('@/app/api/jobs/[jobId]/route');
-export const customerRoute = await import('@/app/api/jobs/[jobId]/customer/route');
-export const claimRoute = await import('@/app/api/jobs/[jobId]/claim/route');
-export const archiveRoute = await import('@/app/api/jobs/[jobId]/archive/route');
-export const restoreRoute = await import('@/app/api/jobs/[jobId]/restore/route');
-export const draftsRoute = await import('@/app/api/jobs/[jobId]/drafts/route');
-export const coordinationRoute = await import('@/app/api/jobs/[jobId]/coordination/route');
-export const assignmentsRoute = await import('@/app/api/jobs/[jobId]/assignments/route');
-export const assignmentRoute = await import('@/app/api/jobs/[jobId]/assignments/[assignmentId]/route');
-export const fieldOwnerRoute = await import('@/app/api/jobs/[jobId]/field-owner/route');
-export const transferRoute = await import('@/app/api/jobs/[jobId]/field-owner/transfer/route');
-export const photoRoute = await import('@/app/api/jobs/[jobId]/photos/[photoId]/route');
-export const submissionsRoute = await import('@/app/api/jobs/[jobId]/submissions/route');
+const jobsRoute = await import('@/app/api/jobs/route');
+const jobRoute = await import('@/app/api/jobs/[jobId]/route');
+const customerRoute = await import('@/app/api/jobs/[jobId]/customer/route');
+const claimRoute = await import('@/app/api/jobs/[jobId]/claim/route');
+const archiveRoute = await import('@/app/api/jobs/[jobId]/archive/route');
+const restoreRoute = await import('@/app/api/jobs/[jobId]/restore/route');
+const draftsRoute = await import('@/app/api/jobs/[jobId]/drafts/route');
+const coordinationRoute = await import('@/app/api/jobs/[jobId]/coordination/route');
+const assignmentsRoute = await import('@/app/api/jobs/[jobId]/assignments/route');
+const assignmentRoute = await import('@/app/api/jobs/[jobId]/assignments/[assignmentId]/route');
+const fieldOwnerRoute = await import('@/app/api/jobs/[jobId]/field-owner/route');
+const transferRoute = await import('@/app/api/jobs/[jobId]/field-owner/transfer/route');
+const photoRoute = await import('@/app/api/jobs/[jobId]/photos/[photoId]/route');
+const submissionsRoute = await import('@/app/api/jobs/[jobId]/submissions/route');
 export const workingCopyRoute = await import('@/app/api/prices/working-copy/route');
 export const meRoute = await import('@/app/api/me/route');
-export const { everything, params, request, resetTeamDatabase, startTeamServer } = await import('./team-harness');
+const { everything, params, request, resetTeamDatabase, startTeamServer } = await import('./team-harness');
+export { everything, params, request };
 
 let base: Awaited<ReturnType<typeof startTeamServer>>;
 export let h: Harness;
@@ -37,8 +38,8 @@ export const ESTIMATOR_B: FakeClaims = { tenant: 'tenant-b', uid: 'estimator-b' 
 export let estimatorA2: string;
 
 
-export type Person = { actorId: string; displayName: string | null; email: string };
-export type Body = {
+type Person = { actorId: string; displayName: string | null; email: string };
+type Body = {
   job: { id: string; status: string; currentDraftId: string; fieldOwnerActorId: string | null; revision: number };
   customer: { name: string };
   draftMissing?: true;
@@ -52,7 +53,7 @@ export type Body = {
   capabilities: string[];
   error: string;
 };
-export type Answer = { status: number; body: Body };
+type Answer = { status: number; body: Body };
 
 export async function answer(response: Response | Promise<Response>): Promise<Answer> {
   const done = await response;
@@ -60,7 +61,7 @@ export async function answer(response: Response | Promise<Response>): Promise<An
   return { status: done.status, body: (await done.json()) as Body };
 }
 
-export const job = (jobId: string) => params({ jobId });
+const job = (jobId: string) => params({ jobId });
 export const create = (claims: FakeClaims, body: unknown) => answer(jobsRoute.POST(request(claims, '/api/jobs', { method: 'POST', body }), params({})));
 export const list = (claims: FakeClaims, query = '') => answer(jobsRoute.GET(request(claims, `/api/jobs${query}`), params({})));
 export const read = (claims: FakeClaims, jobId: string) => answer(jobRoute.GET(request(claims, `/api/jobs/${jobId}`), job(jobId)));
@@ -112,7 +113,7 @@ export const restore = (claims: FakeClaims, jobId: string, body: unknown) =>
 export const claim = (claims: FakeClaims, jobId: string) => answer(fieldOwnerRoute.POST(request(claims, `/api/jobs/${jobId}/field-owner`, { method: 'POST' }), job(jobId)));
 export const transfer = (claims: FakeClaims, jobId: string, body: unknown) =>
   answer(transferRoute.POST(request(claims, `/api/jobs/${jobId}/field-owner/transfer`, { method: 'POST', body }), job(jobId)));
-export const PNG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+const PNG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 export const sendPhoto = (claims: FakeClaims, jobId: string, photoId = randomUUID()) =>
   answer(
     photoRoute.PUT(
