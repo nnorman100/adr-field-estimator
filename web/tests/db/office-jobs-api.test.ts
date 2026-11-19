@@ -24,6 +24,7 @@ const jobsRoute = await import('@/app/api/jobs/route');
 const jobRoute = await import('@/app/api/jobs/[jobId]/route');
 const customerRoute = await import('@/app/api/jobs/[jobId]/customer/route');
 const claimRoute = await import('@/app/api/jobs/[jobId]/claim/route');
+const archiveRoute = await import('@/app/api/jobs/[jobId]/archive/route');
 const draftsRoute = await import('@/app/api/jobs/[jobId]/drafts/route');
 const coordinationRoute = await import('@/app/api/jobs/[jobId]/coordination/route');
 const assignmentsRoute = await import('@/app/api/jobs/[jobId]/assignments/route');
@@ -136,6 +137,8 @@ const unassign = (claims: FakeClaims, jobId: string, assignmentId: string) =>
   answer(
     assignmentRoute.DELETE(request(claims, `/api/jobs/${jobId}/assignments/${assignmentId}`, { method: 'DELETE' }), params({ jobId, assignmentId })),
   );
+const archive = (claims: FakeClaims, jobId: string, body: unknown) =>
+  answer(archiveRoute.POST(request(claims, `/api/jobs/${jobId}/archive`, { method: 'POST', body }), job(jobId)));
 const claim = (claims: FakeClaims, jobId: string) => answer(fieldOwnerRoute.POST(request(claims, `/api/jobs/${jobId}/field-owner`, { method: 'POST' }), job(jobId)));
 const transfer = (claims: FakeClaims, jobId: string, body: unknown) =>
   answer(transferRoute.POST(request(claims, `/api/jobs/${jobId}/field-owner/transfer`, { method: 'POST', body }), job(jobId)));
@@ -707,6 +710,53 @@ describe('moving the field work (owner decision J5)', () => {
     expect(draftOf(later)).toEqual({ fieldOwnerUid: 'estimator-a', fieldOwnerRevision: revision });
     // Back to editing sent again by the first phone finds the same draft: made once, from one record.
     expect((await nextDraft(ESTIMATOR_A, id, { draftId: later, fromDraftId: draftId })).status).toBe(200);
+  });
+
+  // No transaction or lock waits on the field database, so a draft made here is not open to a phone
+  // and not left open to one when its job is archived while it is being made.
+  async function pausedRemake<T>(start: () => Promise<T>) {
+    const hold = latch();
+    const before = h.field.calls.filter((call) => call === 'createFrom').length;
+    h.field.gate.createFrom = () => hold.wait;
+    const running = start();
+    await until(() => h.field.calls.filter((call) => call === 'createFrom').length > before, 'the draft being made');
+    return { running, resume: hold.open };
+  }
+
+  it('closes the draft it made when the job was archived while the draft was being made', async () => {
+    const { id, later } = await draftNeverMade();
+    const paused = await pausedRemake(() => claim(ESTIMATOR_A, id));
+    const { revision } = (await read(OWNER_A, id)).body.job as { revision: number };
+    expect((await archive(OWNER_A, id, { revision, changeId: randomUUID() })).status).toBe(200);
+    expect(h.field.draft(h.seed.a, later)).toBeNull();
+    paused.resume();
+    expect((await paused.running).status).toBe(200);
+    expect(h.field.draft(h.seed.a, later)).toMatchObject({ jobId: id, state: 'archived' });
+  });
+
+  it('makes the draft naming nobody, so a request for a field owner who has since changed never opens it to them', async () => {
+    const { id, later } = await draftNeverMade();
+    const { revision } = (await coordination(OWNER_A, id)).body;
+    const paused = await pausedRemake(() => claim(ESTIMATOR_A, id));
+    // The move commits, then its own field step fails before it makes the draft.
+    h.field.failNext.createFrom = true;
+    expect(await transfer(OWNER_A, id, { revision, changeId: randomUUID(), toActorId: estimatorA2 })).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
+    expect(h.field.draft(h.seed.a, later)).toBeNull();
+    const named = h.drafts.setFieldOwner;
+    const namedWhenMade: (string | null | undefined)[] = [];
+    h.drafts.setFieldOwner = (companyId, jobId, draftId, uid, at) => {
+      if (draftId === later) namedWhenMade.push(h.field.draft(companyId, draftId)?.fieldOwnerUid);
+      return named(companyId, jobId, draftId, uid, at);
+    };
+    try {
+      paused.resume();
+      await paused.running;
+    } finally {
+      h.drafts.setFieldOwner = named;
+    }
+    expect(namedWhenMade[0]).toBeNull();
+    expect((await claim(ESTIMATOR_A2, id)).status).toBe(200);
+    expect(draftOf(later)).toEqual({ fieldOwnerUid: 'estimator-a2', fieldOwnerRevision: revision + 1 });
   });
 
   it('refuses the company owner field work they do not own, until they move it to themself', async () => {
