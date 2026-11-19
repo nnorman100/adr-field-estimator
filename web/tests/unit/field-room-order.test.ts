@@ -1,17 +1,20 @@
 import type { Firestore } from 'firebase/firestore';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { addRoomWrites, cachedRoomOrder, removeRoomWrites } from '@/lib/field/store';
-import type { DocWrite } from '@/lib/field/journal';
+import { addRoomEdit, draftDocs, draftPath, removeRoomEdit } from '@/lib/field/store';
+import { heldOf, type DocWrite } from '@/lib/field/journal';
+import { MAX_ROOMS } from '@/lib/field/schema';
 
 // The phone's cached draft, changed by each local batch as the Firestore SDK would.
-const cache = vi.hoisted(() => ({ order: [] as string[], rooms: new Set<string>() }));
+const cache = vi.hoisted(() => ({ order: [] as string[], rooms: new Set<string>(), read: [] as string[] }));
 vi.mock('firebase/firestore', async (actual) => ({
   ...(await actual<object>()),
   doc: vi.fn((_db, path) => ({ path, kind: 'doc' })),
   collection: vi.fn((_db, path, name) => ({ path: `${path}/${name}`, kind: name })),
   getDocFromCache: () => Promise.resolve({ exists: () => true, data: () => ({ state: 'editing', field: { roomOrder: [...cache.order] } }) }),
-  getDocsFromCache: (target: { kind: string }) =>
-    Promise.resolve({ docs: target.kind === 'rooms' ? [...cache.rooms].map((id) => ({ id, data: () => ({ field: { name: id } }) })) : [] }),
+  getDocsFromCache: (target: { kind: string }) => {
+    cache.read.push(target.kind);
+    return Promise.resolve({ docs: target.kind === 'rooms' ? [...cache.rooms].map((id) => ({ id, data: () => ({ field: { name: id } }) })) : [] });
+  },
 }));
 
 const db = {} as Firestore;
@@ -23,33 +26,62 @@ function applyLocally(writes: DocWrite[]) {
     else if (write.op === 'update') cache.order = [...(write.fields['field.roomOrder'] as string[])];
   }
 }
+async function added(id: string) {
+  const edit = await addRoomEdit(db, ref, id, id);
+  if (edit === null || edit === 'full') throw new Error('expected an edit');
+  applyLocally(edit.writes);
+  return edit;
+}
 
 beforeEach(() => {
   cache.order = [];
   cache.rooms = new Set();
+  cache.read = [];
 });
 
-describe('a room-order batch after a remount', () => {
-  it('keeps a room added between the journal record and the local batch when the remounted screen adds another', async () => {
-    // The first screen journals and batches Kitchen; the screen remounts in between and renders the
-    // draft as read before the batch: no rooms.
-    const renderedAfterRemount: string[] = [...cache.order];
-    applyLocally(addRoomWrites(ref, 'kitchen', 'Kitchen', (await cachedRoomOrder(db, ref))!));
-    // The guard is released; the remounted screen adds Hall. Its order is read again under the guard.
-    const order = await cachedRoomOrder(db, ref);
-    expect(renderedAfterRemount).toEqual([]);
-    applyLocally(addRoomWrites(ref, 'hall', 'Hall', order!));
+// A screen that remounted before another room write's local batch still renders the old draft; the
+// Add and Remove it offers are built from the cache, not from that render.
+describe('a room Add or Remove after a remount', () => {
+  it('keeps a room added since the screen rendered when it adds another', async () => {
+    const rendered = [...cache.order];
+    await added('kitchen');
+    const second = await added('hall');
+    expect(rendered).toEqual([]);
     expect(cache.order).toEqual(['kitchen', 'hall']);
     expect([...cache.rooms].sort()).toEqual(['hall', 'kitchen']);
+    expect(second.base.field.roomOrder).toEqual(['kitchen']);
   });
 
   it('removes only the chosen room when the rendered order is older than the cache', async () => {
-    applyLocally(addRoomWrites(ref, 'kitchen', 'Kitchen', []));
-    const rendered = [...cache.order];
-    applyLocally(addRoomWrites(ref, 'hall', 'Hall', (await cachedRoomOrder(db, ref))!));
-    applyLocally(removeRoomWrites(ref, 'kitchen', (await cachedRoomOrder(db, ref))!));
-    expect(rendered).toEqual(['kitchen']);
+    await added('kitchen');
+    await added('hall');
+    const edit = await removeRoomEdit(db, ref, 'kitchen');
+    applyLocally(edit!.writes);
     expect(cache.order).toEqual(['hall']);
+    expect([...cache.rooms]).toEqual(['hall']);
   });
 
+  it('journals the cached draft as the before-state, so Try again does not report a change that was this device’s own', async () => {
+    await added('kitchen');
+    const hall = await added('hall');
+    const path = draftPath(ref);
+    // What the journal holds for Bath's Add: the order with Kitchen and Hall, not a render without Hall.
+    const bath = await added('bath');
+    expect(heldOf(bath.writes, draftDocs(ref, bath.base))[path]).toEqual({ 'field.roomOrder': ['kitchen', 'hall'] });
+    expect(heldOf(hall.writes, draftDocs(ref, hall.base))[path]).toEqual({ 'field.roomOrder': ['kitchen'] });
+    const removal = await removeRoomEdit(db, ref, 'hall');
+    expect(heldOf(removal!.writes, draftDocs(ref, removal!.base))[path]).toEqual({ 'field.roomOrder': ['kitchen', 'hall', 'bath'] });
+  });
+
+  it('refuses an Add when the cached order already holds the limit, whatever the screen shows', async () => {
+    for (let at = 0; at < MAX_ROOMS; at += 1) await added(`room-${at}`);
+    expect(await addRoomEdit(db, ref, 'one-more', 'One more')).toBe('full');
+    expect(cache.order).toHaveLength(MAX_ROOMS);
+  });
+
+  it('reads no photo references', async () => {
+    await added('kitchen');
+    await removeRoomEdit(db, ref, 'kitchen');
+    expect(cache.read).not.toContain('photos');
+  });
 });

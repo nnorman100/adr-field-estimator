@@ -24,7 +24,7 @@ import {
 import { answerMessage, type Refusal } from './api';
 import type { FieldChanges } from './forms';
 import type { DocWrite, Docs } from './journal';
-import { draftFieldSchema, photoFieldSchema, roomFieldSchema, type DraftField, type PhotoField, type RoomField } from './schema';
+import { draftFieldSchema, MAX_ROOMS, photoFieldSchema, roomFieldSchema, type DraftField, type PhotoField, type RoomField } from './schema';
 
 export type DraftRef = { companyId: string; draftId: string };
 
@@ -87,14 +87,15 @@ function mapOf<T>(schema: { safeParse: (value: unknown) => { success: boolean; d
 // The draft, rooms and photo references through the sync-gated client, or explicitly from the
 // cache after a local edit. Returns null when there is no such draft. Throws InvalidFieldData when a stored map does not
 // follow the field map, IncompleteFieldData when the room order lists a room the read did not get.
-export async function loadDraft(db: Firestore, ref: DraftRef, source?: 'cache'): Promise<FieldDraft | null> {
+// Without photos (a read for room writes) no photo reference is read and `photos` is empty.
+export async function loadDraft(db: Firestore, ref: DraftRef, source?: 'cache', withPhotos = true): Promise<FieldDraft | null> {
   const path = draftPath(ref);
   const readDoc = source === 'cache' ? getDocFromCache : getDoc;
   const readDocs = source === 'cache' ? getDocsFromCache : getDocs;
   const [draft, rooms, photos] = await Promise.all([
     readDoc(doc(db, path)),
     readDocs(collection(db, path, 'rooms')),
-    readDocs(collection(db, path, 'photos')),
+    withPhotos ? readDocs(collection(db, path, 'photos')) : null,
   ]);
   if (!draft.exists()) return null;
   const data = draft.data();
@@ -107,7 +108,7 @@ export async function loadDraft(db: Firestore, ref: DraftRef, source?: 'cache'):
     fieldOwnerUid: typeof data.fieldOwnerUid === 'string' ? data.fieldOwnerUid : null,
     field,
     rooms: order.map((id) => ({ id, field: byId.get(id)! })),
-    photos: photos.docs.map((photo) => ({ id: photo.id, field: mapOf<PhotoField>(photoFieldSchema, photo.data().field) })),
+    photos: (photos?.docs ?? []).map((photo) => ({ id: photo.id, field: mapOf<PhotoField>(photoFieldSchema, photo.data().field) })),
   };
 }
 
@@ -168,14 +169,25 @@ export function addRoomWrites(ref: DraftRef, roomId: string, name: string, order
   ];
 }
 
-// The room order to build an Add or Remove batch from, read from the phone's cache while the
-// page-level room-write guard is held (./pending.ts startRoomWrite), never the order a screen last
-// rendered: a screen that remounted between another room write's journal record and its local batch
-// can still show the old order, and building from it would drop that room. Null when the cache has
-// no such draft.
-export async function cachedRoomOrder(db: Firestore, ref: DraftRef): Promise<string[] | null> {
-  const draft = await loadDraft(db, ref, 'cache');
-  return draft ? [...(draft.field.roomOrder ?? [])] : null;
+// What an Add or Remove of a room is built from: the draft and its rooms read from the phone's cache
+// while the page-level room-write guard is held (./pending.ts startRoomWrite), never what a screen
+// last rendered. A screen that remounted between another room write's journal record and its local
+// batch can still show the old order; building from it would drop that room, mislead the room limit
+// and journal a stale before-state. `base` is that same read, for the journal (draftDocs).
+export type RoomEdit = { writes: DocWrite[]; base: FieldDraft };
+
+// Null when the cache has no such draft; 'full' when the cached order already holds MAX_ROOMS.
+export async function addRoomEdit(db: Firestore, ref: DraftRef, roomId: string, name: string): Promise<RoomEdit | 'full' | null> {
+  const base = await loadDraft(db, ref, 'cache', false);
+  if (!base) return null;
+  const order = base.field.roomOrder ?? [];
+  if (order.length >= MAX_ROOMS) return 'full';
+  return { writes: addRoomWrites(ref, roomId, name, order), base };
+}
+
+export async function removeRoomEdit(db: Firestore, ref: DraftRef, roomId: string): Promise<RoomEdit | null> {
+  const base = await loadDraft(db, ref, 'cache', false);
+  return base ? { writes: removeRoomWrites(ref, roomId, base.field.roomOrder ?? []), base } : null;
 }
 
 // Removes a room: its document and its place in the room order, in one batch (the rules let only
