@@ -57,8 +57,13 @@ today. There is no link to [Prices](prices.md) here (see Mismatches to check).
   second step): the session made at setup lacks the second-step claim, so the server still answers
   `second_step_required` for it. The page sees the account now has an app, signs the person out and
   shows "Your authenticator app is set up. Sign in again and enter its code."; they sign in again,
-  enter the code, and only then reach the dashboard. Adding a spare app later does not sign anyone
-  out.
+  enter the code, and only then reach the dashboard. Adding a spare app later, once signed in with a
+  code, returns to the dashboard and does not sign the person out.
+- Setting up or adding an authenticator app when Firebase wants a more recent sign-in (the same
+  15-minute rule as other second-step changes, on first setup, a spare, or on the invitation
+  path): the session ends and the sign-in page shows "For your safety, sign in again before changing
+  your second step." (`needsFreshSignIn`; the screen also does this when the setup key cannot be
+  made for the same reason). The person signs in again and repeats the setup.
 - "Verify your email" with "Send the link" and "I have verified it".
 - "Your access is turned off" ("Ask the owner of {company} to turn it back on.").
 - "{company} is not active" ("Sign-in is paused for this company. Contact DryScope support."): only

@@ -13,9 +13,9 @@ email, CSLB licence, document sign-off), the letterhead lines (emergency phone, 
 tagline, mailing address) and the document settings (proposal layout, the company's own clauses,
 photo log, start-work authorization, payment terms). The two documents carry different parts. The
 proposal's letterhead prints the name, tagline, address, mailing address, phone, emergency phone,
-fax, email, website and CSLB licence, each line only when set (`letterheadLines` in
-`web/src/lib/estimates/proposal.ts`). The scope defense letter builds its own header from the
-company name, address, phone and CSLB licence only, so the tagline, mailing address, emergency
+fax, email, website and CSLB licence, each line only when set and as saved, which is what the owner typed with its ends trimmed (`letterheadLines` in
+`web/src/lib/estimates/proposal.ts`; `profileInput` in `web/src/lib/profile/schema.ts`). The scope defense letter builds its own header from the
+company name, address, phone and CSLB licence only (each line with runs of spaces inside it collapsed to one space, `letterhead` and `oneLine` in `web/src/engine/documents.ts`), so the tagline, mailing address, emergency
 phone, fax, email and website do not print there, and it closes with the sign-off and the company
 name (`web/src/engine/documents.ts`). The settings do different things too. The company's prep task
 texts are the list the field picker offers on Check Scope (`web/src/lib/scope-lists/service.ts`);
@@ -24,8 +24,8 @@ the proposal letter prints the prep tasks recorded in each room, as submitted, n
 on a revised estimate" is saved but changes nothing yet: the document reader does not pass it to the
 engine, and Reprice, the revised estimate, is not built (see "Not built yet"). The company name is set by DryScope when the company is created and is shown, not
 edited. A box at the top says whether documents can be issued and signed, or lists what is still
-needed (the engine's setup check). Each company's identity prints exactly as entered here (AGENTS.md
-rule 7).
+needed (the engine's setup check). Each company's identity is meant to print exactly as entered here (AGENTS.md
+rule 7); as built, the save trims the ends of each text and the scope defense letter's header collapses spaces inside a line (see "Mismatches to check").
 
 ## Who may see it and do what
 
@@ -74,4 +74,4 @@ Rules: `docs/access/company-profile.md`, `docs/access/ai-usage.md`.
 
 ## Mismatches to check
 
-None found.
+- AGENTS.md rule 7 says a company's identity prints exactly as entered. The save trims leading and trailing spaces from every profile text, including the sign-off (`profileInput`), and the scope defense letter's header collapses consecutive interior spaces in the address, name, phone and licence lines (`oneLine`), while the proposal letterhead prints them as saved. So an address typed with two spaces inside it shows them on the proposal and one space on the scope defense letter. Neither changes a character other than spacing.

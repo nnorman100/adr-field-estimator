@@ -41,7 +41,7 @@ from here (no Unassign button for them).
   person moved to (an estimator, or the owner moving it to themself while the existing draft still
   names the former owner) can open Check Scope or Photos and use "Start field work" to finish it
   ([Check Scope](check-scope.md) lists every trigger of that prompt and which ones Start can repair:
-  it cannot make a job's first draft).
+  this recovery finishes a move onto an existing draft, and it cannot make a job's first draft).
 - Done: "The field work was moved.", "The estimator was assigned.", "Notes saved.".
 
 ## Key actions and server routes
@@ -52,7 +52,7 @@ from here (no Unassign button for them).
 | Save the office notes | `PUT /api/jobs/{id}/coordination` | `coordination` |
 | Assign an estimator | `POST /api/jobs/{id}/assignments` | `assignment` |
 | Unassign an estimator | `DELETE /api/jobs/{id}/assignments/{assignmentId}` | `assignment` |
-| Move field work (a 503 after the move is saved is finished by sending it again, or by the new owner's Start field work recovery, including the owner's move to themself) | `POST /api/jobs/{id}/field-owner/transfer` | `field_owner_transfer` |
+| Move field work (a 503 after the move is saved is finished by sending it again, or by the new owner's Start field work recovery, including the owner's move to themself; Start does not make a first draft that was never made) | `POST /api/jobs/{id}/field-owner/transfer` | `field_owner_transfer` |
 
 Rules: `docs/access/jobs.md` ("Office jobs routes"), owner decision J5 (`docs/plans/S5.md`).
 

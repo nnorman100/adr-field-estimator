@@ -59,14 +59,15 @@ job views) with a sync chip for changes not yet saved.
     and `scope` (`saveAsNew` in `web/src/lib/field/sync-status.ts`). Showing it is not eligibility: it
     reads the refusal as recorded, not the person's current access. The copy is allowed only for a job
     archived during editing, or whose field work moved to someone else while the job is still being
-    edited on that draft and the person can still read the job. How that is decided depends on what
+    edited on that draft and the person can still read the job (except that a readable archived
+    draft decides alone, below). How that is decided depends on what
     the draft itself says: the job is read (`GET /api/jobs/{id}`) when the draft is still being edited
     and names the person, or when the field rules refuse the draft to an estimator (the moved case);
     a readable draft that already says it is archived, with no finished record behind it, is taken
     as archived from the draft alone, with no read of the job (`draftRefusal` and `jobDecides` in
     `web/src/lib/field/journal.ts`). For example, an estimator whose edit
-    was refused as `owner-changed` while still assigned, and who is then unassigned, still sees the
-    button; pressing it rechecks access, refuses the copy and records `no-access`
+    was refused as `owner-changed` (the field rules refuse them the draft) while still assigned, and who is then unassigned,
+    still sees the button; pressing it reads the job, refuses the copy and records `no-access`
     (`saveAsNewDraft` in `web/src/lib/field/new-draft.ts`). An estimator who did not create the job and is also unassigned after the
     move is refused both the draft and the job (the job is read for the refused draft), so the panel reads "You no longer have access to this
     job" (`no-access`) and offers only Discard and Try again (`refusalOf` in `web/src/lib/field/journal.ts`). A write refused after Finish never offers it. Pressing it asks the server
@@ -89,7 +90,7 @@ job views) with a sync chip for changes not yet saved.
 | Learn who is signed in and their keys | `GET /api/me` (`web/src/lib/field/field-sync.ts`, `journal-sync.ts`) |
 | Keep or not keep jobs on the phone | the phone's Firestore cache and journal only, no server route |
 | Try again a refused change | the field database (Firestore) write again |
-| Save as new draft, step 1: the eligibility check (the button shows for a recorded `archived` or `owner-changed` refusal; pressing it first classifies fresh reads of the draft and job in the browser, `refusalNow` in `web/src/lib/field/journal-sync.ts`, and copies only for a job archived during editing or whose field work moved and that the person can still read; after they lost the job the answer is `no-access` and no request to make a job is sent. The job read is made only when the draft cannot decide alone: a readable draft that already says archived is not checked against the job, so a former estimator who lost the job after such a draft was archived can still be classified archived and reach step 2) | server reads of the draft and the person's role, and of the job only when the draft does not decide (the field database and `GET /api/jobs/{id}`), no write |
+| Save as new draft, step 1: the eligibility check (the button shows for a recorded `archived` or `owner-changed` refusal; pressing it first classifies fresh reads of the draft and job in the browser, `refusalNow` in `web/src/lib/field/journal-sync.ts`, and copies only for a job archived during editing or whose field work moved and that the person can still read; after they lost the job the answer is `no-access` and no request to make a job is sent. The job read is made only when the draft cannot decide alone, so that `no-access` rule has one exception: a draft that is still readable to the person and already says archived is not checked against the job. For example, a transfer commits but the draft is not stamped, so it still names the former estimator; the owner unassigns them, and only then archives the job (archiving first would make the unassignment answer 410) and the archive leaves that draft readable. The former estimator is then classified archived without a job read, and can reach step 2 with the work cached on their phone, although a read of the original job would answer 404) | server reads of the draft and the person's role, and of the job only when the draft does not decide (the field database and `GET /api/jobs/{id}`), no write |
 | Save as new draft, step 2: the copy, only when step 1 allows it (the new job has a blank address and no customer, claim or photos; the request names no source job, so the server does not recheck the original job) | `POST /api/jobs` with a new job and draft id and an empty address, then the field database |
 | Read a job named by an unsaved change | `GET /api/jobs/{id}` |
 | Reopen the Home Screen setup sheet (iPhone or iPad browser tab) | on the phone only, no server route |

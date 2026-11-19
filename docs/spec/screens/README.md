@@ -98,7 +98,8 @@ Each is flagged for the owner or a later fix; no code was changed.
    owner who owns it does not: Check Scope and Photos show "The field work of this job is not there
    yet. Try again in a moment." and the owner's retry is "Back to editing" again, which works only
    on the Finish screen that sent the request (after a reload, Finish shows "We could not open this
-   job" with no button). The Start field work prompt also appears for a job whose first draft was
-   never made (New job, Copy or Save as new draft after a 503), where Start answers 503 again and
-   the repair is to send the original action again with its original IDs. See
+   job" with no button). For a job whose first draft was never made (New job, Copy or Save as new draft
+   after a 503), an estimator named as field owner gets the Start field work prompt but Start
+   answers 503 again, a company owner named as field owner gets no prompt, and the repair is to send
+   the original action again with its original IDs. See
    [check-scope.md](check-scope.md) and [finish.md](finish.md).

@@ -45,7 +45,10 @@ here? Choose Set your own password.".
   message below and must sign in again with the code. If the account already has an app but signed
   in without it, the same: signed out with "Your authenticator app is set up. Sign
   in again and enter its code, then accept the invitation.".
-- Sign-in too old: "Your sign-in has run out. Sign in again, then accept the invitation.".
+- Sign-in too old: "Your sign-in has run out. Sign in again, then accept the invitation.". Setting up
+  the second step on this screen can also end the session with "For your safety, sign in again
+  before changing your second step." when Firebase wants a more recent sign-in ([Company
+  sign-in](sign-in.md)).
 
 ## Key actions and server routes
 
