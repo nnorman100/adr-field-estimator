@@ -1,6 +1,6 @@
 import { FieldValue, Timestamp, type DocumentReference, type Firestore } from 'firebase-admin/firestore';
 import type { FieldDoc, FieldManifest } from '@/lib/field/canonical';
-import { draftOfOtherJob, firestoreDraftLookup, type DraftLookup } from '@/lib/jobs/drafts';
+import { draftOfOtherJob, firestoreDraftLookup, placeholderOf, startDraft, type DraftLookup, type DraftMade } from '@/lib/jobs/drafts';
 import { firestoreJobProjectionStore, type JobProjectionStore } from '@/lib/jobs/projection';
 import { MAX_PHOTO_REFS, MAX_ROOMS } from '@/lib/field/schema';
 import { firestoreSpan } from '@/lib/telemetry/spans';
@@ -55,9 +55,10 @@ export type FenceStore = JobProjectionStore & DraftLookup & {
   // provenance. Made whole or not at all; `exists` when the draft is already there with the same job
   // and provenance (a retry), and nothing is changed then, except that a draft made before `jobId`
   // takes it (the caller holds the draft id for this job in Postgres first); `taken` when the draft
-  // there was made for another job or from another submission, and nothing is changed either. An
-  // archive's placeholder for this job's missing draft (src/lib/jobs/archive-store.ts) is `exists`
-  // too: the job was archived first, so nothing is made over it.
+  // there was made for another job or from another submission, and nothing is changed either;
+  // `archived` when only an archived job's placeholder is there (src/lib/jobs/archive-store.ts): no
+  // draft exists, none is made over it until the restore, and the request is sent again. A restored
+  // job's placeholder gives way to the draft, which keeps its revision.
   createFrom(
     companyId: string,
     jobId: string,
@@ -65,7 +66,7 @@ export type FenceStore = JobProjectionStore & DraftLookup & {
     fieldOwnerUid: string | null,
     manifest: FieldManifest,
     previous: Provenance,
-  ): Promise<'created' | 'exists' | 'taken'>;
+  ): Promise<DraftMade>;
 };
 
 type StoredFence = { submissionId: string; epoch: string };
@@ -167,12 +168,13 @@ export function firestoreFenceStore(db: Firestore): FenceStore {
 
     async createFrom(companyId, jobId, draftId, fieldOwnerUid, manifest, previous) {
       const ref = draftRef(companyId, draftId);
-      return inTransaction<'created' | 'exists' | 'taken'>(async (tx) => {
+      return inTransaction<DraftMade>(async (tx) => {
         const found = await tx.get(ref);
-        if (found.exists) {
-          // An archive's placeholder for this job's missing draft (src/lib/jobs/archive-store.ts): the
-          // job was archived first, so nothing is made over it.
-          if (found.get('placeholder') === true && !draftOfOtherJob(found.get('jobId'), jobId)) return 'exists';
+        const left = placeholderOf(found);
+        if (left) {
+          if (draftOfOtherJob(left.jobId, jobId)) return 'taken';
+          if (left.archived) return 'archived';
+        } else if (found.exists) {
           const from = found.get('previous') as Record<string, unknown> | undefined;
           const same = from?.draftId === previous.draftId && from?.submissionId === previous.submissionId;
           const stamped = found.get('jobId');
@@ -181,7 +183,7 @@ export function firestoreFenceStore(db: Firestore): FenceStore {
           if (stamped === undefined) tx.update(ref, { jobId });
           return 'exists';
         }
-        tx.create(ref, {
+        startDraft(tx, ref, left, {
           jobId,
           ...(fieldOwnerUid === null ? {} : { fieldOwnerUid }),
           state: 'editing',

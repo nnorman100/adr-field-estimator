@@ -13,8 +13,9 @@ import { audit, CHECK_VIOLATION, detailOf, errorCode, type JobDetail, type JobVi
 // test or a duplicate): the job leaves every list but the owner's archived list, and every job route
 // answers it with 410; nothing of it is deleted. Restore puts it back as it was. Copy starts a new
 // draft from a signed job's scope. Each write is one Postgres transaction with one audit row (ids
-// and revisions only); the field draft follows, under the job's row lock, as the job is then (an
-// archive or restore that lands late never undoes a newer one). Any archive or restore the owner
+// and revisions only); the field draft follows, once that transaction has ended, as the job is then
+// (the job revision kept in the field database is the fence: an archive or restore that lands late
+// never undoes a newer one). Any archive or restore the owner
 // sends again repairs a field step that did not get through (503 `draft_unavailable` until then),
 // even after the job changed since, when it is answered `archived` or `not_archived`.
 
@@ -116,21 +117,19 @@ export function archiveService(db: Database, store: ArchiveStore): ArchiveServic
     return actor?.uid ?? null;
   }
 
-  // The job's current draft brought to the job's state as Postgres holds it now, under the job's
-  // lock: `archived` while the job is, else out of `archived` to its status's state (a draft in any
-  // other state keeps it, restoreDraft). A draft not made yet gets the archive's placeholder, which
-  // nothing is made over until the restore takes it away (archive-store.ts), so a draft made without
-  // the job's lock (office.ts remakeCurrentDraft) never opens on an archived job.
+  // The job's current draft brought to the job's state as Postgres holds it now: `archived` while the
+  // job is, else out of `archived` to its status's state (a draft in any other state keeps it,
+  // restoreDraft). A draft not made yet gets a placeholder holding the revision (archive-store.ts), so
+  // nothing is made over an archived job's draft and no older archive or restore lands after a newer
+  // one. The job is read in a short transaction of its own, ended before the field database is
+  // called; the job revision on the draft is the fence, not a lock held across the call.
   async function settle(companyId: string, jobId: string): Promise<void> {
-    await inCompany(companyId, async (tx) => {
-      const row = await lockedJob(tx, companyId, jobId);
-      await holdAcrossOutsideCall(tx);
-      await field(() =>
-        row.status === 'archived'
-          ? store.archiveDraft(companyId, row.id, row.currentDraftId, row.revision)
-          : store.restoreDraft(companyId, row.currentDraftId, draftState(row.status), row.revision),
-      );
-    });
+    const row = await inCompany(companyId, (tx) => lockedJob(tx, companyId, jobId));
+    await field(() =>
+      row.status === 'archived'
+        ? store.archiveDraft(companyId, row.id, row.currentDraftId, row.revision)
+        : store.restoreDraft(companyId, row.id, row.currentDraftId, draftState(row.status), row.revision),
+    );
   }
 
   // The answer of an archive or restore, once the field draft is settled after it.
@@ -272,6 +271,8 @@ export function archiveService(db: Database, store: ArchiveStore): ArchiveServic
         const result = await field(() => store.createCopy(caller.companyId, input.id, input.draftId, made.ownerUid, made.field));
         // A draft made for another job is never the copy's (security audit F1).
         if (result === 'taken') throw new JobError('conflict');
+        // Only an archived job's placeholder is there: no draft yet, so the same request again.
+        if (result === 'archived') throw new JobError('draft_unavailable');
       });
       await field(() =>
         store.projectJob(caller.companyId, made.detail.job.id, { currentDraftId: made.detail.job.currentDraftId, revision: made.detail.job.revision }),

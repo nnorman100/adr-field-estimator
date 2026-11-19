@@ -1,4 +1,4 @@
-import type { Firestore } from 'firebase-admin/firestore';
+import type { DocumentReference, DocumentSnapshot, Firestore, Transaction } from 'firebase-admin/firestore';
 import { firestoreJobProjectionStore, type JobProjectionStore } from './projection';
 import { firestoreSpan } from '@/lib/telemetry/spans';
 
@@ -26,10 +26,38 @@ export type FieldOwnerResult =
   | 'same'
   // A newer owner is already on the draft (its revision is higher): nothing is changed.
   | 'newer'
-  // No such draft (yet), or only an archive's placeholder for it (archive-store.ts).
+  // No such draft (yet), or only the record an archive or restore left for it (archive-store.ts).
   | 'missing'
   // The draft was made for another job: nothing is changed.
-  | 'taken';
+  | 'taken'
+  // The draft is archived (its job is, or its restore has not reached the field database yet): no
+  // field owner is named on it, and nothing is changed.
+  | 'archived';
+
+// What a creation answers: `archived` when only the record of an archived job's missing draft is
+// there, so no draft exists yet and none is made until the restore: the request is sent again.
+export type DraftMade = 'created' | 'exists' | 'taken' | 'archived';
+
+// What an archive or restore leaves under the draft id where the draft is missing (archive-store.ts):
+// the job id, the job revision (`archiveRevision`) and `state`, `archived` while the job is and
+// `absent` once it is restored, with no field owner and no field work. It keeps the latest revision
+// where there is no draft to keep it on, so a slower archive or restore never undoes a newer one.
+export type Placeholder = { jobId: unknown; archived: boolean; archiveRevision: number };
+
+export function placeholderOf(found: DocumentSnapshot): Placeholder | null {
+  if (!found.exists || found.get('placeholder') !== true) return null;
+  const revision: unknown = found.get('archiveRevision');
+  return { jobId: found.get('jobId'), archived: found.get('state') === 'archived', archiveRevision: typeof revision === 'number' ? revision : 0 };
+}
+
+// Writes the job's new draft: over a restored job's placeholder, taking the revision it kept, else
+// where nothing is.
+export function startDraft(tx: Transaction, ref: DocumentReference, left: Placeholder | null, data: Record<string, unknown>): void {
+  if (left) tx.set(ref, { ...data, archiveRevision: left.archiveRevision });
+  else tx.create(ref, data);
+}
+
+const ALREADY_EXISTS = 6;
 
 export type DraftLookup = {
   // The draft under this id, with the job id written on it (undefined on a draft made before
@@ -49,20 +77,20 @@ export function firestoreDraftLookup(db: Firestore): DraftLookup {
 }
 
 export type DraftStore = JobProjectionStore & DraftLookup & {
-  // Makes the job's draft if it is not there yet. 'exists' is the answer to a retry, when the draft
-  // there carries this job id: nothing is changed, except that a draft made before `jobId` takes it
-  // (the caller holds the draft id for this job in Postgres first). 'taken' when the draft there was
-  // made for another job: nothing is changed. `fieldOwnerUid` is the owner's sign-in uid, or null
-  // while nobody owns the field work.
-  ensure(companyId: string, jobId: string, draftId: string, fieldOwnerUid: string | null): Promise<'created' | 'exists' | 'taken'>;
+  // Makes the job's draft if it is not there yet, in one Firestore transaction. 'exists' is the answer
+  // to a retry, when the draft there carries this job id: nothing is changed, except that a draft made
+  // before `jobId` takes it (the caller holds the draft id for this job in Postgres first). 'taken'
+  // when the draft there was made for another job: nothing is changed. `archived` when only an archived
+  // job's placeholder is there (archive-store.ts); a restored job's placeholder gives way to the draft,
+  // which keeps its revision. `fieldOwnerUid` is the owner's sign-in uid, or null while nobody owns the
+  // field work.
+  ensure(companyId: string, jobId: string, draftId: string, fieldOwnerUid: string | null): Promise<DraftMade>;
   // In one Firestore transaction: names `fieldOwnerUid` as the draft's field owner unless the draft
-  // already holds a newer one or was made for another job. Changes nothing else on the draft (its
-  // state, fence and field work stay as they are), except that a draft made before `jobId` takes it,
-  // whether or not the owner changes.
+  // already holds a newer one, was made for another job or is archived. Changes nothing else on the
+  // draft (its state, fence and field work stay as they are), except that a draft made before `jobId`
+  // takes it, whether or not the owner changes.
   setFieldOwner(companyId: string, jobId: string, draftId: string, fieldOwnerUid: string, revision: number): Promise<FieldOwnerResult>;
 };
-
-const ALREADY_EXISTS = 6;
 
 // A draft that names a job other than this one. A draft made before `jobId` names none.
 export function draftOfOtherJob(stamped: unknown, jobId: string): boolean {
@@ -75,23 +103,30 @@ export function firestoreDraftStore(db: Firestore): DraftStore {
     ...firestoreDraftLookup(db),
     async ensure(companyId, jobId, draftId, fieldOwnerUid) {
       const draft = db.collection('companies').doc(companyId).collection('drafts').doc(draftId);
+      const fresh = {
+        jobId,
+        ...(fieldOwnerUid === null ? {} : { fieldOwnerUid }),
+        state: 'editing',
+        field: {},
+      };
       try {
         // create() refuses an existing document, so a retry never overwrites later field work.
-        await firestoreSpan('create', 'drafts', () =>
-          draft.create({
-            jobId,
-            ...(fieldOwnerUid === null ? {} : { fieldOwnerUid }),
-            state: 'editing',
-            field: {},
-          }),
-        );
+        await firestoreSpan('create', 'drafts', () => draft.create(fresh));
         return 'created';
       } catch (error) {
         if ((error as { code?: unknown } | null)?.code !== ALREADY_EXISTS) throw error;
-        // A retry finds its own job's draft; one made before `jobId` takes it now, in one transaction.
+        // A retry finds its own job's draft, or the placeholder an archive or restore left, in one transaction.
         return firestoreSpan('runTransaction', 'drafts', () =>
-          db.runTransaction(async (tx): Promise<'exists' | 'taken'> => {
+          db.runTransaction(async (tx): Promise<'exists' | 'created' | 'taken' | 'archived'> => {
             const found = await tx.get(draft);
+            const left = placeholderOf(found);
+            if (left) {
+              if (draftOfOtherJob(left.jobId, jobId)) return 'taken';
+              if (left.archived) return 'archived';
+              startDraft(tx, draft, left, fresh);
+              return 'created';
+            }
+            // One made before `jobId` takes it now.
             const stamped = found.get('jobId');
             if (draftOfOtherJob(stamped, jobId)) return 'taken';
             if (stamped === undefined) tx.update(draft, { jobId });
@@ -106,10 +141,13 @@ export function firestoreDraftStore(db: Firestore): DraftStore {
       return firestoreSpan('runTransaction', 'drafts', () =>
         db.runTransaction(async (tx): Promise<FieldOwnerResult> => {
           const found = await tx.get(draft);
-          // An archive's placeholder for a missing draft (archive-store.ts) is no draft: nobody is named on it.
-          if (!found.exists || found.get('placeholder') === true) return 'missing';
+          // What an archive or restore left for a missing draft (archive-store.ts) is no draft: nobody is named on it.
+          if (!found.exists || placeholderOf(found)) return 'missing';
           const stamped = found.get('jobId');
           if (draftOfOtherJob(stamped, jobId)) return 'taken';
+          // Nobody is named on an archived draft: a stamp that was already on its way when the job was
+          // archived lands here too, so the archived scope and rooms never reach that estimator.
+          if (found.get('state') === 'archived') return 'archived';
           // A draft made before `jobId` takes it, whatever the owner answer is.
           const stamp = stamped === undefined ? { jobId } : {};
           const stored = found.get('fieldOwnerRevision');

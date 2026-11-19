@@ -267,15 +267,18 @@ export function officeService(db: Database, drafts: DraftStore, remaker: DraftRe
   // project() does that only with the owner, revision and status Postgres holds at that moment
   // (liveOwner), never with values this request read earlier. An archive and this step meet on the
   // draft id in the field database, never in Postgres: an archive that finds no draft leaves its
-  // placeholder there, and nothing is made over that (createFrom answers `exists`), while one that
-  // comes after the draft is made closes it like any other (archive-store.ts). So whichever of the two
-  // lands first, the archived job's draft ends closed, even when this step's answer is lost.
+  // placeholder there, and nothing is made over that (createFrom answers `archived`), while one that
+  // comes after the draft is made closes it like any other (archive-store.ts), and a stamp that comes
+  // after that is refused (setFieldOwner answers `archived`). So whichever lands first, the archived
+  // job's draft ends closed and unowned by this request, even when this step's answer is lost.
   async function remakeCurrentDraft(companyId: string, jobId: string, draftId: string): Promise<boolean> {
     const record = await recordOfCurrentDraft(companyId, jobId, draftId);
     if (!record) return false;
     const manifest = snapshotManifest(record.snapshotBytes);
     const result = await field(() => remaker.createFrom(companyId, jobId, draftId, null, manifest, record.previous));
     if (result === 'taken') throw new JobError('conflict');
+    // Only an archived job's placeholder is there: no draft is made over it, the same request again.
+    if (result === 'archived') throw new JobError('draft_unavailable');
     return true;
   }
 
@@ -331,6 +334,10 @@ export function officeService(db: Database, drafts: DraftStore, remaker: DraftRe
         result = await stamp(draftId, last);
       }
       if (result === 'missing' && last) throw new JobError('draft_unavailable');
+      // An archived draft is named for nobody. When it is the job's current draft, the request is
+      // sent again: Postgres says whether the job is archived (410) or the restore's field step is
+      // still to come.
+      if (result === 'archived' && last) throw new JobError('draft_unavailable');
       // A draft made for another job is left as it is (security audit F1); when it is the job's
       // current draft, the field work cannot be handed over at all.
       if (result === 'taken' && last) throw new JobError('conflict');

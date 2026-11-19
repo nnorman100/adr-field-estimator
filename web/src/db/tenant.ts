@@ -42,9 +42,8 @@ export async function withCompany<T>(
 // transaction only, it may sit idle as long as a request may run (Cloud Run's 300 s). They are:
 // - Firestore: Submit's fence (submissions/service.ts closeFence); the draft lookup before a claim
 //   commits and the draft made under its job's lock, in New job (jobs/service.ts create), Copy
-//   (jobs/archive.ts copy) and Back to editing (submissions/service.ts backToEditing); the draft
-//   settled after an archive or restore (jobs/archive.ts settle); the job's drafts read before a
-//   claim or reassignment (jobs/office.ts draftsToName); a member's access record written by the
+//   (jobs/archive.ts copy) and Back to editing (submissions/service.ts backToEditing); the job's
+//   drafts read before a claim or reassignment (jobs/office.ts draftsToName); a member's access record written by the
 //   outbox (projection/outbox.ts projectOnce).
 // - Identity Platform: member disable (team/service.ts disable) and the operator's owner
 //   invitation or replacement and second-step reset (platform/service.ts).

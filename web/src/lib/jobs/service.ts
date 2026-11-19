@@ -261,8 +261,11 @@ export function jobsService(db: Database, drafts: DraftStore): JobsService {
         await inCompany(caller.companyId, async (tx) => {
           await lockedJob(tx, caller.companyId, made.detail.job.id, { live: true });
           await holdAcrossOutsideCall(tx);
+          const result = await drafts.ensure(caller.companyId, made.detail.job.id, input.draftId, made.ownerUid);
           // A draft made for another job is never this job's.
-          if ((await drafts.ensure(caller.companyId, made.detail.job.id, input.draftId, made.ownerUid)) === 'taken') throw new JobError('conflict');
+          if (result === 'taken') throw new JobError('conflict');
+          // Only an archived job's placeholder is there: no draft yet, so the same request again.
+          if (result === 'archived') throw new JobError('draft_unavailable');
         });
         await drafts.projectJob(caller.companyId, made.detail.job.id, {
           currentDraftId: made.detail.job.currentDraftId, revision: made.detail.job.revision,
