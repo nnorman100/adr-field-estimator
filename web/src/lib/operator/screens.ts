@@ -94,6 +94,21 @@ export const STATUS_LABELS: Record<CompanyStatus, string> = {
   archived: 'Archived',
 };
 
+// A job's status in the operator's support view of a company's jobs (S5b-5), in the field screens' words.
+export const JOB_STATUS_LABELS: Record<string, string> = {
+  draft: 'In progress',
+  submitted: 'Submitted',
+  signed: 'Signed',
+  archived: 'Archived',
+};
+
+// A date of a job or a record in the support view, in the phone's own time zone.
+export function supportDate(iso: string): string {
+  const when = new Date(iso);
+  if (Number.isNaN(when.getTime())) return iso;
+  return new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(when);
+}
+
 // The words for an operator action the server refused, from its fixed error code.
 export function operatorErrorMessage(code: string | null): string {
   switch (code) {

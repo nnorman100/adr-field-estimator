@@ -55,6 +55,8 @@ one page, `/field`, whose views are picked by the address (`web/src/lib/field/vi
 | Platform and settings | Operator: companies (and operator sign-in) | `/operator/{tenantId}` | [operator-companies.md](operator-companies.md) |
 | Platform and settings | Operator: one company | `/operator/{tenantId}/companies/{companyId}` | [operator-company.md](operator-company.md) |
 | Platform and settings | Operator: a company's team | `/operator/{tenantId}/companies/{companyId}/team` | [operator-team.md](operator-team.md) |
+| Platform and settings | Operator: a company's jobs | `/operator/{tenantId}/companies/{companyId}/jobs` | [operator-jobs.md](operator-jobs.md) |
+| Platform and settings | Operator: one job | `/operator/{tenantId}/companies/{companyId}/jobs/{jobId}` | [operator-jobs.md](operator-jobs.md) |
 
 ## Each spec's sections
 
@@ -81,8 +83,8 @@ Each is flagged for the owner or a later fix; no code was changed.
 4. `docs/access/superadmin.md` describes read-only support access to any company's jobs,
    documents and photos. In the web app the operator routes under
    `web/src/app/api/platform/companies/[companyId]/jobs` read a company's jobs, one job and its
-   photos (S5b-5 server slice, `docs/plans/S5/S5b-5.md`); the operator screens that show them are the
-   next slice of S5b-5, not built.
+   photos (S5b-5 server slice, `docs/plans/S5/S5b-5.md`), and the operator screens show them read-only
+   ([operator-jobs.md](operator-jobs.md)). Resolved.
 5. Resolved: [docs/STATUS.md](../../STATUS.md) now has rows for the web app's screens (PRs #314 to
    #471 were added on 2026-11-19, for example "Job screens on the phone (S5a-6)" in
    `docs/status/s5-core-workflows.md`).

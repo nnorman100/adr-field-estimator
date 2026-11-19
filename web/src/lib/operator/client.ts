@@ -1,6 +1,7 @@
 import type { User } from 'firebase/auth';
 import { appCheckHeaders } from '@/lib/app-check-client';
 import type { CompanyView } from '@/lib/platform/service';
+import type { SupportJobListItem, SupportJobView } from '@/lib/platform/support-jobs';
 import type { MemberView, TeamView } from '@/lib/team/service';
 
 // The operator screens' calls to the platform operator routes (src/app/api/platform). The ID token
@@ -54,6 +55,12 @@ export const platformPaths = {
   team: (companyId: string) => `/api/platform/companies/${id(companyId)}/team`,
   resetSecondStep: (companyId: string, membershipId: string) =>
     `/api/platform/companies/${id(companyId)}/members/${id(membershipId)}/reset-second-step`,
+  // The read-only support view of a company's jobs (S5b-5); the cursor is the one the list gave.
+  supportJobs: (companyId: string, cursor: string | null = null) =>
+    `/api/platform/companies/${id(companyId)}/jobs${cursor === null ? '' : `?cursor=${encodeURIComponent(cursor)}`}`,
+  supportJob: (companyId: string, jobId: string) => `/api/platform/companies/${id(companyId)}/jobs/${id(jobId)}`,
+  supportPhoto: (companyId: string, jobId: string, photoId: string, kind: 'photo' | 'original' | 'signature') =>
+    `/api/platform/companies/${id(companyId)}/jobs/${id(jobId)}/photos/${id(photoId)}?kind=${kind}`,
 } as const;
 
 export type CompaniesAnswer = { companies: CompanyView[] };
@@ -67,6 +74,21 @@ export type OwnerAnswer = {
 };
 export type ResetAnswer = { reset: true; email: 'sent' | 'not_sent'; tellByPhone: boolean };
 export type SupportTeamAnswer = { company: CompanyView; team: TeamView };
+export type SupportJobsAnswer = { company: CompanyView; jobs: SupportJobListItem[]; nextCursor: string | null };
+export type SupportJobAnswer = SupportJobView;
+
+// One image of a job through the operator's photo route, as a local blob address for an <img>, or
+// null when it cannot be read now. Each read is audited on the server, so it is made only when asked.
+export async function operatorImage(user: Pick<User, 'getIdToken'>, path: string): Promise<string | null> {
+  try {
+    const token = await user.getIdToken();
+    const response = await fetch(path, { headers: { Authorization: `Bearer ${token}`, ...(await appCheckHeaders()) }, cache: 'no-store' });
+    if (!response.ok) return null;
+    return URL.createObjectURL(await response.blob());
+  } catch {
+    return null;
+  }
+}
 
 // The operator's team view is always the full one; anything else is treated as unavailable.
 export function fullTeam(team: TeamView): Extract<TeamView, { view: 'full' }> | null {

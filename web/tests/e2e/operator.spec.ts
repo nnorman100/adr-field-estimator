@@ -367,7 +367,19 @@ test('no screen shows or edits customer data', async ({ page }) => {
   await expect(page.getByRole('main')).not.toContainText(customerWords);
   await page.getByRole('link', { name: 'Manage Company A Restoration' }).click();
   await expect(page.getByRole('heading', { name: 'Company A Restoration', level: 1 })).toBeVisible();
-  await expect(page.getByRole('main')).not.toContainText(customerWords);
+  // Since S5b-5 the company page links to the read-only jobs view (tests/e2e/operator-jobs.spec.ts),
+  // so its Jobs section names jobs and photos; it holds that one link and no control. Everything
+  // else on the page still shows no customer data.
+  const jobs = page.getByRole('main').getByRole('region', { name: 'Jobs' });
+  await expect(jobs.getByRole('link')).toHaveText(['Open the jobs view']);
+  await expect(jobs.getByRole('button')).toHaveCount(0);
+  expect(
+    await page.getByRole('main').evaluate((main) => {
+      const copy = main.cloneNode(true) as HTMLElement;
+      copy.querySelector('section[aria-labelledby="jobs-heading"]')?.remove();
+      return copy.textContent ?? '';
+    }),
+  ).not.toMatch(customerWords);
   await page.getByRole('link', { name: 'Open the team view' }).click();
   await expect(page.getByRole('heading', { name: 'Company A Restoration: team' })).toBeVisible();
   await expect(page.getByRole('main')).not.toContainText(customerWords);

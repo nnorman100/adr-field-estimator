@@ -16,7 +16,7 @@ import {
   signOutCompany,
   type SecondStepChallenge,
 } from '@/lib/firebase-client';
-import { operatorCall, platformPaths, type ApiResult, type CompaniesAnswer, type CompanyView } from '@/lib/operator/client';
+import { operatorCall, operatorImage, platformPaths, type ApiResult, type CompaniesAnswer, type CompanyView } from '@/lib/operator/client';
 import { endsOperatorSession, operatorCheck, operatorSignInErrorMessage } from '@/lib/operator/screens';
 import { errorCode } from '@/lib/sign-in/outcome';
 import { FocusedPanel } from '../../(auth)/focused-panel';
@@ -37,6 +37,8 @@ export type OperatorApi = {
   // Puts a company the server just returned (created or changed) into the list the screens draw.
   applyCompany: (company: CompanyView) => void;
   call: <T>(path: string, request?: { method?: 'GET' | 'POST'; body?: unknown }) => Promise<ApiResult<T>>;
+  // One image through the operator's photo route, as a local blob address, or null (S5b-5).
+  image: (path: string) => Promise<string | null>;
   // A change to a team or a second step needs a sign-in under 15 minutes old: sign out, then sign in.
   signInAgain: () => Promise<void>;
 };
@@ -182,6 +184,11 @@ function ConfiguredSession({ tenantId, config, children }: { tenantId: string; c
     [refuse],
   );
 
+  const image = useCallback(async (path: string): Promise<string | null> => {
+    const user = authRef.current?.currentUser ?? null;
+    return user ? operatorImage(user, path) : null;
+  }, []);
+
   const applyCompany = useCallback((company: CompanyView) => {
     setCompanies((current) =>
       current.some((candidate) => candidate.id === company.id)
@@ -193,8 +200,8 @@ function ConfiguredSession({ tenantId, config, children }: { tenantId: string; c
   const signInAgain = useCallback(() => endSession('For that change, sign in again.'), [endSession]);
 
   const api = useMemo<OperatorApi>(
-    () => ({ tenantId, companies, applyCompany, call, signInAgain }),
-    [tenantId, companies, applyCompany, call, signInAgain],
+    () => ({ tenantId, companies, applyCompany, call, image, signInAgain }),
+    [tenantId, companies, applyCompany, call, image, signInAgain],
   );
 
   async function run(action: () => Promise<void>) {

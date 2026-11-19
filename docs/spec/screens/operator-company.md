@@ -11,14 +11,15 @@ operator session ([Operator: companies](operator-companies.md)).
 Administer one company without touching its customer data: see its status, sign-in address and
 whether its sign-in tenant is set; suspend, reactivate or archive it; invite the first owner or
 replace the owner by link; reset a member's second step after a phone check; and open the read-only
-[team view](operator-team.md). Jobs, estimates and prices are not shown or changed here.
+[team view](operator-team.md) and the read-only [jobs view](operator-jobs.md) (S5b-5). Jobs,
+estimates and prices are not shown or changed on this page itself.
 
 ## Who may see it and do what
 
 | Role | Sees | Can do |
 |---|---|---|
 | Owner, estimator, office | the operator sign-in only (a malformed tenant id answers 404; for a well-formed one the operator API answers 403 `not_an_operator` and the sign-in is dropped) | nothing |
-| Superadmin support (platform operator) | the company's name, Status, Sign-in address, Sign-in tenant, and the sections Status, Owner, Second step, Team | suspend (asks first), reactivate, archive (only for a suspended company; asks first); invite or replace the owner (replace needs "I understand the current owner is turned off and signed out everywhere straight away."); list members and reset one's second step (needs "I confirmed by phone that this is {name}."); open the team view |
+| Superadmin support (platform operator) | the company's name, Status, Sign-in address, Sign-in tenant, and the sections Status, Owner, Second step, Team, Jobs | suspend (asks first), reactivate, archive (only for a suspended company; asks first); invite or replace the owner (replace needs "I understand the current owner is turned off and signed out everywhere straight away."); list members and reset one's second step (needs "I confirmed by phone that this is {name}."); open the team view; open the jobs view |
 | Different-company user | the same as a company role | nothing |
 
 The page finds the company in the list the session already read, so opening it writes no audit
@@ -50,6 +51,7 @@ row ("Listing the team here is recorded in the audit log, like the team view.").
 | List members for the second step | `GET /api/platform/companies/{id}/team` | platform operator |
 | Reset second step | `POST /api/platform/companies/{id}/members/{membershipId}/reset-second-step` | platform operator, sign-in under 15 minutes |
 | Open the team view | `/operator/{tenantId}/companies/{id}/team` | platform operator |
+| Open the jobs view | `/operator/{tenantId}/companies/{id}/jobs` | platform operator |
 
 Rules: `docs/access/superadmin.md`.
 
