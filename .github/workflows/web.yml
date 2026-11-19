@@ -179,7 +179,8 @@ jobs:
   # check needs every other job, so the one required check named `check` fails when any of them
   # fails, is cancelled or is skipped (owner decision 2a, 2026-11-19). GitHub skips a job whose
   # needed job failed, and a skipped required check can still let a merge through, hence always()
-  # and a result step per job. e2e's result covers all four shards.
+  # and a result step per job. A cancelled matrix leg can leave e2e's aggregate result at success, so
+  # each e2e shard also reports its own output and check requires all four.
   check:
     needs: [database, emulators, company-isolation, e2e, image]
     if: always() && !cancelled()
@@ -194,7 +195,12 @@ jobs:
       - name: Require the company-isolation job
         run: test "${{ needs.company-isolation.result }}" = "success"
       - name: Require the browser test job
-        run: test "${{ needs.e2e.result }}" = "success"
+        run: |
+          test "${{ needs.e2e.result }}" = "success"
+          test "${{ needs.e2e.outputs.shard1 }}" = "done"
+          test "${{ needs.e2e.outputs.shard2 }}" = "done"
+          test "${{ needs.e2e.outputs.shard3 }}" = "done"
+          test "${{ needs.e2e.outputs.shard4 }}" = "done"
       - name: Require the image job
         run: test "${{ needs.image.result }}" = "success"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -223,6 +229,14 @@ jobs:
     env:
       EMU_PORTS: auto
     timeout-minutes: 35
+    # One output per shard: a matrix job's aggregate result does not show a shard that never ran.
+    # Each name is unique, so the legs' outputs combine rather than overwrite (docs.github.com,
+    # workflow syntax, "Using Job Outputs in a Matrix Job").
+    outputs:
+      shard1: ${{ steps.done.outputs.shard1 }}
+      shard2: ${{ steps.done.outputs.shard2 }}
+      shard3: ${{ steps.done.outputs.shard3 }}
+      shard4: ${{ steps.done.outputs.shard4 }}
     strategy:
       fail-fast: false
       matrix:
@@ -286,6 +300,10 @@ jobs:
             web/test-results
             web/playwright-report
           retention-days: 7
+      - name: Report this shard as done
+        id: done
+        working-directory: .
+        run: echo "shard${{ matrix.shard }}=done" >> "$GITHUB_OUTPUT"
 
   # The production image the release workflow (web-release.yml) ships, assembled without Docker by
   # web/scripts/build-image.sh: check its configuration, run its /app tree the way the image does and

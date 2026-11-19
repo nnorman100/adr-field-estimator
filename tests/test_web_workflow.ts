@@ -14,7 +14,7 @@ const REQUIRED = ['database', 'emulators', 'company-isolation', 'e2e', 'image'];
 
 const web = (): Data => load(WEB);
 
-type Needs = Record<string, { result: string }>;
+type Needs = Record<string, { result: string; outputs?: Record<string, string> }>;
 
 const shells: Shell[] = [];
 afterEach(() => {
@@ -31,12 +31,13 @@ function workDir(job: Data, step: Data): string {
   );
 }
 
-/** `${{ needs.<job>.result }}`, as Actions fills it in. */
+/** `${{ needs.<job>.result }}` and `${{ needs.<job>.outputs.<name> }}`, as Actions fills them in. */
 function expand(run: string, needs: Needs): string {
   return run.replace(/\$\{\{\s*([^}]*?)\s*\}\}/g, (_, expr: string) => {
-    const match = /^needs\.([\w-]+)\.result$/.exec(expr);
+    const match = /^needs\.([\w-]+)\.(?:(result)|outputs\.(\w+))$/.exec(expr);
     if (!match) throw new Error(`unexpected expression ${expr}`);
-    return needs[match[1]]?.result ?? '';
+    const need = needs[match[1]];
+    return (match[2] ? need?.result : need?.outputs?.[match[3]]) ?? '';
   });
 }
 
@@ -70,8 +71,17 @@ function runCheck(needs: Needs): { passed: boolean; ran: string[] } {
   return { passed: !failed, ran };
 }
 
+const SHARDS = [1, 2, 3, 4];
+const shardOutputs = (value: string): Record<string, string> =>
+  Object.fromEntries(SHARDS.map((n) => [`shard${n}`, value]));
+
 const all = (result: string): Needs =>
-  Object.fromEntries(REQUIRED.map((name) => [name, { result }]));
+  Object.fromEntries(
+    REQUIRED.map((name) => [
+      name,
+      { result, outputs: name === 'e2e' && result === 'success' ? shardOutputs('done') : {} },
+    ]),
+  );
 
 describe('web.yml triggers', () => {
   it('runs on every pull request, and on master pushes only when web files change', () => {
@@ -128,12 +138,20 @@ describe('the check job', () => {
     'fails when %s is %s',
     (name, result) => {
       const needs = all('success');
-      needs[name] = { result };
+      needs[name] = { result, outputs: needs[name].outputs };
       const { passed, ran } = runCheck(needs);
       expect(passed).toBe(false);
       expect(ran).not.toContain('npm run build');
     },
   );
+
+  it.each(SHARDS)('fails when e2e succeeds but shard %i never reported', (shard) => {
+    const needs = all('success');
+    needs.e2e.outputs = { ...shardOutputs('done'), [`shard${shard}`]: '' };
+    const { passed, ran } = runCheck(needs);
+    expect(passed).toBe(false);
+    expect(ran).not.toContain('npm run build');
+  });
 });
 
 describe('the e2e job', () => {
@@ -174,6 +192,22 @@ describe('the e2e job', () => {
         .map((line) => line.trim())
         .filter(Boolean),
     ).toEqual(['web/test-results', 'web/playwright-report']);
+  });
+
+  it('reports one output per shard, and every shard reports its own even when it skipped its work', () => {
+    const e2e = job();
+    expect(Object.keys(e2e.outputs).sort()).toEqual(
+      e2e.strategy.matrix.shard.map((n: number) => `shard${n}`).sort(),
+    );
+    const done = (e2e.steps as Data[]).find((s) => s.id === 'done');
+    expect(done).not.toHaveProperty('if');
+    for (const n of e2e.strategy.matrix.shard) {
+      const sh = new Shell();
+      shells.push(sh);
+      const run = sh.run(done.run.replace('${{ matrix.shard }}', String(n)));
+      expect(run.status).toBe(0);
+      expect(sh.outputs()).toEqual({ [`shard${n}`]: 'done' });
+    }
   });
 
   it('keeps the setup steps it had, in order, before the browser tests', () => {
@@ -236,6 +270,8 @@ describe('pull requests that change nothing under the web paths', { timeout: 30_
       const label = `${name}: ${s.name ?? s.uses ?? s.run}`;
       // The failure-only upload never runs when the work was skipped.
       if (s.if === 'failure()') continue;
+      // The shard's own report runs even when the work was skipped (the e2e describe covers it).
+      if (name === 'e2e' && s.id === 'done') continue;
       expect(s.if, label).toBe(WHEN_WEB);
     }
   });
