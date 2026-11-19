@@ -731,6 +731,22 @@
    }
   },
   {
+   "address": "google_project_service.apis[\"servicehealth.googleapis.com\"]",
+   "type": "google_project_service",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "disable_dependent_services": false,
+     "disable_on_destroy": false,
+     "project": "dryscope",
+     "service": "servicehealth.googleapis.com",
+     "timeouts": null
+    }
+   }
+  },
+  {
    "address": "google_project_service.apis[\"sqladmin.googleapis.com\"]",
    "type": "google_project_service",
    "change": {
@@ -1260,7 +1276,12 @@
        "enable_dataplex_integration": null,
        "enable_google_ml_integration": null,
        "entraid_config": [],
-       "final_backup_config": [],
+       "final_backup_config": [
+        {
+         "enabled": true,
+         "retention_days": 30
+        }
+       ],
        "insights_config": [
         {
          "enhanced_query_insights_enabled": null,
@@ -1294,7 +1315,7 @@
        "password_validation_policy": [],
        "pricing_plan": null,
        "read_pool_auto_scale_config": [],
-       "retain_backups_on_delete": null,
+       "retain_backups_on_delete": true,
        "sql_server_audit_config": [],
        "tier": "db-custom-1-3840",
        "time_zone": null,

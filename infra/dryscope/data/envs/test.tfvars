@@ -6,6 +6,7 @@ environment = "test"
 sql_tier                  = "db-f1-micro"
 sql_disk_size_gb          = 10
 sql_backup_retained_count = 7
+sql_final_backup_days     = 30
 sql_pitr_log_days         = 3
 
 evidence_soft_delete_days = 7

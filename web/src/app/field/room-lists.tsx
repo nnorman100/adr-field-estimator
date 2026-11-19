@@ -159,6 +159,9 @@ export function RoomPrepTasks({
   error,
   readOnly,
   onTyped,
+  own,
+  setOwn,
+  earlier,
 }: {
   id: string;
   stored: string[];
@@ -169,9 +172,14 @@ export function RoomPrepTasks({
   readOnly: boolean;
   // Told whether a task of their own is typed and not added.
   onTyped: (typed: boolean) => void;
+  // The prep task typed and not added yet, held on the page (src/lib/field/pending.ts) so the room's
+  // card stays on screen with it after a move (owner decision J5).
+  own: string;
+  setOwn: (text: string) => void;
+  // Prep tasks typed and not added on an earlier draft of the job: shown read only, never added here.
+  earlier: string[];
 }) {
   const [pick, setPick] = useState('');
-  const [own, setOwn] = useState('');
   useEffect(() => {
     onTyped(own !== '');
   }, [onTyped, own]);
@@ -203,6 +211,9 @@ export function RoomPrepTasks({
           </li>
         ))}
       </ol>
+      {earlier.map((text, at) => (
+        <Box key={at} id={`${id}-earlier-${at}`} label="Your earlier prep task" value={text} onChange={() => undefined} readOnly />
+      ))}
       {/* Typed and not added when the field work moved away: shown, read only (owner decision J5). */}
       {readOnly && own ? <Box id={`${id}-own`} label="Your own prep task" value={own} onChange={() => undefined} readOnly /> : null}
       {readOnly || full ? null : (

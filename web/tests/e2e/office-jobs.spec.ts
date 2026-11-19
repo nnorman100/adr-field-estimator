@@ -1,5 +1,6 @@
 import { test as base, expect as baseExpect, type APIRequestContext, type Browser, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+import { manifestDigest } from '@/lib/field/canonical';
 import { expectNoAxeViolations } from './a11y';
 import { JOBS_BASE_URL } from './jobs/backend';
 import { adminSql, currentDraftOf, seedCompany, type Company, type Person } from './jobs/seed';
@@ -97,6 +98,38 @@ async function transfer(request: APIRequestContext, company: Company, jobId: str
   const { revision } = (await read.json()) as { revision: number };
   const moved = await request.post(`${JOBS_BASE_URL}/api/jobs/${jobId}/field-owner/transfer`, { headers, data: { revision, changeId: randomUUID(), toActorId: to } });
   expect(moved.status()).toBe(200);
+}
+
+// Waits until the server holds the room named `name` in the job's current draft: a room shown on the
+// phone is first only in its local cache, and a move of the field work fences what is not yet sent.
+async function roomOnServer(company: Company, jobId: string, name: string) {
+  await expect
+    .poll(async () => {
+      const draftId = await currentDraftOf(company.id, jobId);
+      const rooms = await adminDb().collection(`companies/${company.id}/drafts/${draftId}/rooms`).get();
+      return rooms.docs.some((room) => room.get('field.name') === name);
+    })
+    .toBe(true);
+}
+
+// The field owner finishes the job and goes back to editing through the API: the job's current draft
+// is then a new one (S5b-1b), made from the submitted record.
+async function finishAndReopen(request: APIRequestContext, company: Company, who: Person, jobId: string) {
+  const headers = await bearer(company, who);
+  const draftId = await currentDraftOf(company.id, jobId);
+  const ref = adminDb().doc(`companies/${company.id}/drafts/${draftId}`);
+  const [draft, rooms, photos] = await Promise.all([ref.get(), ref.collection('rooms').get(), ref.collection('photos').get()]);
+  const manifest = {
+    draft: draft.get('field') ?? {},
+    rooms: rooms.docs.map((room) => ({ id: room.id, field: room.get('field') ?? {} })),
+    photos: photos.docs.map((photo) => ({ id: photo.id, field: photo.get('field') ?? {} })),
+  };
+  const submitted = await request.post(`${JOBS_BASE_URL}/api/jobs/${jobId}/submissions`, { headers, data: { id: randomUUID(), draftId, digest: await manifestDigest(manifest) } });
+  expect(submitted.status()).toBe(201);
+  const next = randomUUID();
+  expect((await request.post(`${JOBS_BASE_URL}/api/jobs/${jobId}/drafts`, { headers, data: { draftId: next, fromDraftId: draftId } })).status()).toBe(201);
+  expect(await currentDraftOf(company.id, jobId)).toBe(next);
+  return { before: draftId, after: next };
 }
 
 test('office starts an empty job, assigns and unassigns estimators and keeps notes; the first estimator to start the field work owns it', async ({ page, browser }) => {
@@ -421,6 +454,7 @@ test('text typed in a room and not added stays on screen, read only, after the f
   await page.getByRole('button', { name: 'Add room' }).click();
   const den = page.getByRole('form', { name: 'Den' });
   await expect(den).toBeVisible();
+  await roomOnServer(company, jobId, 'Den');
   await den.getByLabel('Your own prep task').fill('Tape the vent');
   await page.getByLabel('New room name').fill('Attic');
   await transfer(request, company, jobId, actorOf(company.people.first!));
@@ -434,6 +468,93 @@ test('text typed in a room and not added stays on screen, read only, after the f
   await expect(den.getByLabel('Your own prep task')).not.toBeEditable();
   await expect(page.getByLabel('New room name')).toHaveValue('Attic');
   await expect(page.getByLabel('New room name')).not.toBeEditable();
+});
+
+test('a prep task typed and not added stays on screen, read only, when the new owner removes its room, also when the field work comes back', async ({ page, request }) => {
+  test.setTimeout(150_000);
+  const company = await seedCompany('owner-keeps-prep', { owner: 'owner', first: 'estimator' });
+  const { jobId, actorOf } = await seedJob(request, company, company.people.owner!, '97 Prep Row', [company.people.first!]);
+
+  await signIn(page, company, company.people.owner!);
+  await openJob(page, '97 Prep Row');
+  for (const room of ['Den', 'Attic']) {
+    await page.getByLabel('New room name').fill(room);
+    await page.getByRole('button', { name: 'Add room' }).click();
+    await expect(page.getByRole('form', { name: room })).toBeVisible();
+    await roomOnServer(company, jobId, room);
+  }
+  const den = page.getByRole('form', { name: 'Den' });
+  const attic = page.getByRole('form', { name: 'Attic' });
+  const atticId = (await attic.getByLabel('Room name').getAttribute('id'))!.replace(/^room-/, '').replace(/-name$/, '');
+  // Only the prep-task box is typed in: nothing else of the room is changed.
+  await den.getByLabel('Your own prep task').fill('Tape the vent');
+  await transfer(request, company, jobId, actorOf(company.people.first!));
+  await adminDb().doc(`companies/${company.id}/drafts/${await currentDraftOf(company.id, jobId)}`).update({ 'field.roomOrder': [atticId] });
+  await main(page).getByRole('link', { name: 'Job coordination' }).click();
+  await page.getByRole('textbox', { name: 'Office notes' }).fill('Checked');
+  await page.getByRole('button', { name: 'Save notes' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Notes saved.' })).toBeVisible();
+  await main(page).getByRole('link', { name: 'Check Scope' }).click();
+  await expect(page.getByText(MOVED)).toBeVisible();
+  await expect(den.getByLabel('Your own prep task')).toHaveValue('Tape the vent');
+  await expect(den.getByLabel('Your own prep task')).not.toBeEditable();
+
+  // The field work comes back to this person: the room the draft still lists can be saved again; the
+  // removed one stays read only, with what was typed in it, and cannot be saved.
+  await transfer(request, company, jobId, actorOf(company.people.owner!));
+  await main(page).getByRole('link', { name: 'Job coordination' }).click();
+  await page.getByRole('textbox', { name: 'Office notes' }).fill('Checked again');
+  await page.getByRole('button', { name: 'Save notes' }).click();
+  // The move changed the job since this page read it: the first save shows what changed, the second saves.
+  await expect(page.getByText('Someone else changed this job.')).toBeVisible();
+  await expect(page.getByText('owner owns the field work.')).toBeVisible();
+  await page.getByRole('button', { name: 'Save notes' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Notes saved.' })).toBeVisible();
+  await main(page).getByRole('link', { name: 'Check Scope' }).click();
+  await expect(page.getByText(MOVED)).toHaveCount(0);
+  await expect(attic.getByRole('button', { name: 'Save room' })).toBeVisible();
+  await expect(attic.getByLabel('Room name')).toBeEditable();
+  await expect(den.getByLabel('Your own prep task')).toHaveValue('Tape the vent');
+  await expect(den.getByLabel('Your own prep task')).not.toBeEditable();
+  await expect(den.getByLabel('Room name')).not.toBeEditable();
+  await expect(den.getByRole('button', { name: 'Save room' })).toHaveCount(0);
+});
+
+test('a prep task and a room name typed and not added come back, read only, when the job is opened again on a replacement draft after the field work moved', async ({ page, request }) => {
+  test.setTimeout(150_000);
+  const company = await seedCompany('owner-typed-reopen', { owner: 'owner', first: 'estimator' });
+  const { jobId, actorOf } = await seedJob(request, company, company.people.owner!, '98 Reopen Row', [company.people.first!]);
+
+  await signIn(page, company, company.people.owner!);
+  await openJob(page, '98 Reopen Row');
+  await page.getByLabel('New room name').fill('Den');
+  await page.getByRole('button', { name: 'Add room' }).click();
+  const den = page.getByRole('form', { name: 'Den' });
+  await expect(den).toBeVisible();
+  await roomOnServer(company, jobId, 'Den');
+  await den.getByLabel('Your own prep task').fill('Tape the vent');
+  await page.getByLabel('New room name').fill('Attic');
+  await transfer(request, company, jobId, actorOf(company.people.first!));
+  // The new owner finishes the job and goes back to editing: the job's current draft is a new one.
+  const drafts = await finishAndReopen(request, company, company.people.first!, jobId);
+  expect(drafts.after).not.toBe(drafts.before);
+  await main(page).getByRole('link', { name: 'Job coordination' }).click();
+  await page.getByRole('textbox', { name: 'Office notes' }).fill('Checked');
+  await page.getByRole('button', { name: 'Save notes' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Notes saved.' })).toBeVisible();
+
+  await main(page).getByRole('link', { name: 'Back to jobs' }).click();
+  await openJob(page, '98 Reopen Row');
+  await main(page).getByRole('link', { name: 'Check Scope' }).click();
+  await expect(page.getByText(MOVED)).toBeVisible();
+  // Typed on the first draft, shown on the replacement one: read only, never part of it.
+  const reopened = page.getByRole('form', { name: 'Den' });
+  await expect(reopened.getByLabel('Your earlier prep task')).toHaveValue('Tape the vent');
+  await expect(reopened.getByLabel('Your earlier prep task')).not.toBeEditable();
+  await expect(reopened.getByLabel('Your own prep task')).toHaveCount(0);
+  await expect(page.getByLabel('Your earlier room name')).toHaveValue('Attic');
+  await expect(page.getByLabel('Your earlier room name')).not.toBeEditable();
+  await expect(page.getByLabel('New room name')).toHaveCount(0);
 });
 
 test('after the field work moves, the old phone shows its unsent photo read only and neither takes nor resends photos', async ({ page, request }) => {

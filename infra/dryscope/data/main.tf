@@ -32,7 +32,9 @@ locals {
 # Scanning (C5 A: every new image pushed to a Docker repository in the project is scanned once, at
 # $0.26 an image, then watched for 30 days at no charge; billing starts when the API is on), and the
 # budget, Cloud Run functions, Cloud Build, Cloud Run and Monitoring APIs the app root's TC-11 apply
-# uses (the budget, the synthetic monitor's function and its alerts).
+# uses (the budget, the synthetic monitor's function and its alerts). Personalized Service Health
+# (servicehealth.googleapis.com) is on so the app root's Google-incident alert has events to match
+# (documents/docs.cloud.google.com/service-health/docs/manage-access); the API itself is free.
 resource "google_project_service" "apis" {
   for_each = toset([
     "aiplatform.googleapis.com",
@@ -55,6 +57,7 @@ resource "google_project_service" "apis" {
     "recaptchaenterprise.googleapis.com",
     "run.googleapis.com",
     "secretmanager.googleapis.com",
+    "servicehealth.googleapis.com",
     "sqladmin.googleapis.com",
     "storage.googleapis.com",
     "telemetry.googleapis.com",

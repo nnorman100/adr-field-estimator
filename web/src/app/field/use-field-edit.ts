@@ -22,8 +22,10 @@ export function useFieldEdit(job: JobContext) {
     return () => { live.current = false; };
   }, []);
 
-  async function save(writes: DocWrite[], saved: string, locallySaved: () => void = () => undefined) {
-    if (!job.editable || job.stale) return;
+  // Answers whether the change was saved on the phone, also when the form is gone by then.
+  async function save(writes: DocWrite[], saved: string, locallySaved: () => void = () => undefined, acknowledgedBy: () => void = () => undefined): Promise<boolean> {
+    if (!job.editable || job.stale) return false;
+    let onPhone = false;
     const mine = ++latest.current;
     const current = () => live.current && mine === latest.current;
     setBusy(true);
@@ -42,6 +44,7 @@ export function useFieldEdit(job: JobContext) {
       const { acknowledged } = await journaledEdit(job.session.client, job.draftRef, writes, job.jobId, draftDocs(job.draftRef, job.draft));
       // The SDK's local transaction is finished; update the draft before clearing the form's edits.
       await job.reloadDraft('cache');
+      onPhone = true;
       if (current()) {
         locallySaved();
         setNotice(job.session.client.cache === 'persistent'
@@ -50,6 +53,7 @@ export function useFieldEdit(job: JobContext) {
       }
       void acknowledged.then(
         () => {
+          acknowledgedBy();
           if (current()) setNotice(saved);
         },
         refused,
@@ -59,6 +63,7 @@ export function useFieldEdit(job: JobContext) {
     } finally {
       if (current()) setBusy(false);
     }
+    return onPhone;
   }
   return { busy, error, notice, setError, setNotice, save };
 }

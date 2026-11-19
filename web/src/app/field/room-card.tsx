@@ -6,6 +6,7 @@ import type { ScopeLists } from '@/lib/field/api';
 import { editsAfterSave, roomChanges, roomTypeChoice, ROOM_FIELDS, withEdits, type FormValues, type RoomLists } from '@/lib/field/forms';
 import { MAX_FINDINGS, type RoomField } from '@/lib/field/schema';
 import { roomFieldWrites } from '@/lib/field/store';
+import { NO_TYPED, pending, typedBefore, usePending } from '@/lib/field/pending';
 import type { JobContext } from './job-screens';
 import { RoomItems, RoomPrepTasks } from './room-lists';
 import { Box, Choice, Outcome, READ_AGAIN } from './ui';
@@ -83,6 +84,7 @@ export function RoomCard({
   stored,
   number,
   lists,
+  listed,
   removing = false,
   onRemove,
   onDirty,
@@ -92,6 +94,8 @@ export function RoomCard({
   stored: RoomField;
   number: number;
   lists: ScopeLists | null;
+  // The draft still lists the room; one it no longer lists stays on screen read only, never saved.
+  listed: boolean;
   // Another room is being added or removed.
   removing?: boolean;
   onRemove?: () => Promise<void>;
@@ -102,6 +106,13 @@ export function RoomCard({
   // Only the boxes the person changed; the rest always show the room as last read.
   const [edits, setEdits] = useState<FormValues>({});
   const [listEdits, setListEdits] = useState<RoomLists>({});
+  // A prep task typed and not added yet (RoomPrepTasks), kept on the page (src/lib/field/pending.ts).
+  const { jobId } = job;
+  const { draftId } = job.draftRef;
+  const drafts = usePending(() => pending.typed(jobId));
+  const ownTask = (drafts[draftId] ?? NO_TYPED).rooms[roomId]?.task ?? '';
+  const earlierTasks = typedBefore(drafts, draftId).rooms[roomId]?.tasks ?? [];
+  const setOwnTask = (text: string) => pending.typeTask(jobId, draftId, roomId, text, { field: stored, number });
   const values = withEdits(ROOM_FIELDS, stored, edits);
   const [ownTyped, setOwnTyped] = useState(false);
   const dirty = Object.keys(edits).length > 0 || Object.keys(listEdits).length > 0 || ownTyped;
@@ -115,7 +126,7 @@ export function RoomCard({
   }, [markUnsaved, roomId, dirty]);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const { busy, error, notice, setError, setNotice, save: saveEdit } = useFieldEdit(job);
-  const readOnly = !job.editable;
+  const readOnly = !job.editable || !listed;
   const set = (key: string) => (value: string) => {
     setEdits((current) => ({ ...current, [key]: value }));
     setNotice(null);
@@ -128,7 +139,7 @@ export function RoomCard({
   const mold = values.category === 'mold';
 
   async function save() {
-    if (job.stale) return;
+    if (job.stale || readOnly) return;
     const { changes, errors: found } = roomChanges(values, stored, listEdits);
     setErrors(found);
     setNotice(null);
@@ -216,6 +227,9 @@ export function RoomCard({
         templates={lists?.prepTasks ?? []}
         error={errors.prepTasks}
         readOnly={readOnly}
+        own={ownTask}
+        setOwn={setOwnTask}
+        earlier={earlierTasks}
       />
       <div className="flex flex-col gap-1">
         <label htmlFor={id('findings')} className="text-sm font-medium">
