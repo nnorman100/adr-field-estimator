@@ -414,3 +414,61 @@ describe('migration 0018: the copy source of existing copies', () => {
     }
   });
 });
+
+// While it applies, 0018 holds jobs exclusively, so it gives up on any other lock after 5 seconds
+// rather than stall every job request: a blocked run fails with nothing applied, and runs again later.
+describe('migration 0018: a blocked run', () => {
+  let database: Awaited<ReturnType<typeof createDiscardDatabase>> | null = null;
+
+  afterAll(async () => {
+    await database?.drop();
+  });
+
+  it('fails within seconds when a table it changes stays locked, applying nothing, and applies once the lock is gone', async () => {
+    const shared = inject('dryscopeDatabases');
+    database = await createDiscardDatabase(shared.rolesUrl);
+    await emptyDiscardDatabase(database.databaseUrl);
+    const admin = postgres(database.databaseUrl, { max: 1, connect_timeout: 10, onnotice: () => {} });
+    const holder = postgres(database.databaseUrl, { max: 1, connect_timeout: 10, onnotice: () => {} });
+    const dir = await mkdtemp(join(tmpdir(), 'dryscope-mig-'));
+    try {
+      await admin.unsafe('GRANT USAGE ON SCHEMA public TO PUBLIC');
+      await admin.unsafe(`GRANT CREATE ON SCHEMA public TO ${shared.roles.migrator.name}`);
+      const migratorUrl = loginUrl(database.databaseUrl, shared.roles.migrator);
+      const earlier = (await readMigrations(migrationsDirectory)).filter((file) => file.id < '0018');
+      await Promise.all(earlier.map((file) => writeFile(join(dir, `${file.id}.sql`), file.sql)));
+      await applyMigrations(migratorUrl, dir);
+
+      // A request holding the audit log, as an audit row held open across an outside call does.
+      let release!: () => void;
+      const released = new Promise<void>((resolve) => (release = resolve));
+      let held = false;
+      const request = holder.begin(async (sql) => {
+        await sql`LOCK TABLE audit_events IN ROW EXCLUSIVE MODE`;
+        held = true;
+        await released;
+      });
+      request.catch(() => {});
+      try {
+        while (!held) await pause(20);
+        const started = Date.now();
+        const failed = await applyMigrations(migratorUrl, migrationsDirectory).then(
+          () => null,
+          (error: unknown) => String(error),
+        );
+        expect(failed).toMatch(/lock timeout/);
+        expect(Date.now() - started).toBeLessThan(15_000);
+        expect(await admin`SELECT count(*)::int AS n FROM migration_ledger WHERE id = '0018_field_revision'`).toEqual([{ n: 0 }]);
+        expect(await admin`SELECT count(*)::int AS n FROM information_schema.columns WHERE table_name = 'jobs' AND column_name = 'field_revision'`).toEqual([{ n: 0 }]);
+      } finally {
+        release();
+        await Promise.allSettled([request]);
+      }
+      expect((await applyMigrations(migratorUrl, migrationsDirectory)).applied).toEqual(['0018_field_revision']);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+      await holder.end({ timeout: 5 });
+      await admin.end({ timeout: 5 });
+    }
+  });
+});

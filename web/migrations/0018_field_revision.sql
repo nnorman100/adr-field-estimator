@@ -37,6 +37,13 @@
 -- 2026.11.19-7), which must be serving before this file runs: an older worker deadlocks against
 -- Submit once these triggers exist, so no rollback goes behind that release once this is applied.
 
+-- A lock this file waits for more than 5 seconds fails it, and the whole file rolls back with nothing
+-- applied (the release is then run again). It holds jobs exclusively from its first statement, so
+-- waiting longer, for example behind a request that holds its audit row open across an outside call,
+-- would stall every job request past the app's 10-second lock limit (db/client.ts). For this file's
+-- transaction only.
+SET LOCAL lock_timeout = '5s';
+
 -- 1 to 4. The columns. jobs is changed first, so its strongest lock is taken before the triggers on the
 -- other tables take theirs. Existing jobs start at 0 and synced at 0: nothing to repair until a change.
 ALTER TABLE jobs

@@ -131,7 +131,9 @@ A bump from another table locks the job row after that table's row, so every wri
 first. The submission worker does so before it aborts an expired attempt since #482
 (`web/src/lib/submissions/repair.ts`, test release 2026.11.19-7). That release must be serving before
 0018 is applied, and no rollback goes behind it afterwards: an older worker deadlocks against Submit once
-the triggers exist; the [test release runbook](../runbook/test-release.md) states that rollback floor. The job
+the triggers exist; the [test release runbook](../runbook/test-release.md) states that rollback floor and how to tell
+whether 0018 is applied (the migration job's executions, and `migration_ledger` whenever they cannot confirm it). 0018
+waits at most 5 seconds for each lock (`SET LOCAL lock_timeout`), so a blocked run fails with nothing applied. The job
 revision guard lets an update that changes only these field columns keep the job `revision`; an update
 that changes nothing is still refused, so the sync writes the watermark only when it is newer
 (`WHERE field_synced_revision < v`).
