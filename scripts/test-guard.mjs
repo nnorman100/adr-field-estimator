@@ -11,7 +11,11 @@
 //      or `continue-on-error`, adds an error-swallowing command to an existing
 //      step, or could let a workflow approve itself (write access to pull
 //      requests, issues, checks or statuses, a dropped `permissions:` key, a
-//      new secret, or the label's name).
+//      new secret, or the label's name). It also asks when `defaults.run.shell`
+//      or `defaults.run.working-directory` is new or changed (workflow level or
+//      in an existing job), when an actions/checkout step gains or changes a
+//      ref, repository, path or sparse-checkout input, or when an existing
+//      job gets a new checkout step.
 //      Workflows that never run on pull requests (deploys, releases) are
 //      checked for self-approval only.
 //   3. A changed, deleted or renamed stored answer (fixtures; their Markdown
@@ -351,6 +355,32 @@ function changedControl(base, head) {
   return out;
 }
 
+// defaults.run.shell and defaults.run.working-directory decide how every step of a
+// workflow or job runs, so a new or changed one is treated like a step's `shell:`.
+function changedDefaults(base, head) {
+  const out = [];
+  for (const key of ['shell', 'working-directory']) {
+    const after = head?.defaults?.run?.[key];
+    if (after != null && stable(after) !== stable(base?.defaults?.run?.[key])) {
+      out.push(`\`defaults.run.${key}\``);
+    }
+  }
+  return out;
+}
+
+// What a checkout step checks out is decided by these inputs.
+const CHECKOUT_INPUTS = ['ref', 'repository', 'path', 'sparse-checkout'];
+const usesCheckout = (step) =>
+  step && typeof step === 'object' && /^actions\/checkout(?:@|$)/.test(String(step.uses ?? ''));
+function changedCheckout(base, head) {
+  const out = [];
+  for (const key of CHECKOUT_INPUTS) {
+    const after = head.with?.[key];
+    if (after != null && stable(after) !== stable(base.with?.[key])) out.push(`\`with.${key}\``);
+  }
+  return out;
+}
+
 function matrixLeaves(matrix, prefix = '') {
   if (matrix == null || typeof matrix !== 'object') return [`${prefix}=${stable(matrix)}`];
   if (Array.isArray(matrix)) return matrix.map((v) => `${prefix}[]=${stable(v)}`);
@@ -439,6 +469,10 @@ export function checkWorkflow(path, baseText, headText, addedLines, baseChecks =
     }
   }
 
+  for (const what of changedDefaults(base, head)) {
+    v.push(`${path}: workflow has a new or changed ${what}`);
+  }
+
   for (const [id, bj] of Object.entries(base.jobs)) {
     const hj = head.jobs[id];
     if (!isMap(hj)) {
@@ -451,6 +485,9 @@ export function checkWorkflow(path, baseText, headText, addedLines, baseChecks =
     }
     for (const what of changedControl(bj, hj))
       v.push(`${path}: job ${id} has a new or changed ${what}`);
+    for (const what of changedDefaults(bj, hj)) {
+      v.push(`${path}: job ${id} has a new or changed ${what}`);
+    }
     const needs = (j) => (Array.isArray(j.needs) ? j.needs : j.needs == null ? [] : [j.needs]);
     const stillNeeds = new Set(needs(hj).map(String));
     for (const n of needs(bj)) {
@@ -492,6 +529,11 @@ export function checkWorkflow(path, baseText, headText, addedLines, baseChecks =
       for (const what of changedControl(bs, hs)) {
         v.push(`${path}: job ${id} step "${label}" has a new or changed ${what}`);
       }
+      if (usesCheckout(hs)) {
+        for (const what of changedCheckout(bs, hs)) {
+          v.push(`${path}: job ${id} checkout step has a new or changed ${what}`);
+        }
+      }
       const old = countBy(linesOf(bs.run).map((l) => l.trim()));
       for (const l of linesOf(hs.run)) {
         const t = l.trim();
@@ -502,6 +544,11 @@ export function checkWorkflow(path, baseText, headText, addedLines, baseChecks =
         }
       }
     }
+    headSteps.forEach((hs, k) => {
+      if (!used.has(k) && usesCheckout(hs)) {
+        v.push(`${path}: job ${id} has a new checkout step (it decides what the job tests)`);
+      }
+    });
   }
   return v;
 }
@@ -649,16 +696,26 @@ function show(commit, path) {
   }
 }
 
+// Reads added and removed lines only inside hunks (after a line starting with @@, up to the
+// next line starting with "diff --git"). A content line starting with ++ or -- is a real
+// change, not a file header, so it is not filtered by prefix.
 function diffLines(diff) {
   const removed = [];
   const added = [];
+  let inHunk = false;
   for (const line of diff.split('\n')) {
-    if (line.startsWith('+++') || line.startsWith('---')) continue;
-    if (line.startsWith('+')) added.push(line.slice(1));
+    if (line.startsWith('diff --git')) inHunk = false;
+    else if (line.startsWith('@@')) inHunk = true;
+    else if (!inHunk) continue;
+    else if (line.startsWith('+')) added.push(line.slice(1));
     else if (line.startsWith('-')) removed.push(line.slice(1));
   }
   return { removed, added };
 }
+
+// Flags that make git print the text of a change whatever the pull request's own
+// .gitattributes, textconv or external diff settings say.
+const DIFF_TEXT_FLAGS = ['--text', '--no-ext-diff', '--no-textconv'];
 
 export function runGuard(base) {
   // Read the rules from the base commit, so a pull request cannot loosen
@@ -706,8 +763,8 @@ export function runGuard(base) {
       diffLines(
         git(
           status === 'R'
-            ? ['diff', '-U0', '-M', range, '--', from, to]
-            : ['diff', '-U0', range, '--', to],
+            ? ['diff', '-U0', ...DIFF_TEXT_FLAGS, '-M', range, '--', from, to]
+            : ['diff', '-U0', ...DIFF_TEXT_FLAGS, range, '--', to],
         ),
       );
 

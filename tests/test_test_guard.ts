@@ -299,6 +299,80 @@ const NEEDS_LABEL: [string, Change, string][] = [
     'Stored answer changed (D)',
   ],
   [
+    'adding a workflow-level defaults shell',
+    ci(
+      'permissions:\n  contents: read\n',
+      'permissions:\n  contents: read\n\ndefaults:\n  run:\n    shell: bash -c "exit 0" {0}\n',
+    ),
+    'workflow has a new or changed `defaults.run.shell`',
+  ],
+  [
+    'adding a workflow-level defaults working directory',
+    ci(
+      'permissions:\n  contents: read\n',
+      'permissions:\n  contents: read\n\ndefaults:\n  run:\n    working-directory: docs\n',
+    ),
+    'workflow has a new or changed `defaults.run.working-directory`',
+  ],
+  [
+    'adding a job-level defaults shell',
+    ci(
+      '    timeout-minutes: 20\n',
+      '    timeout-minutes: 20\n    defaults:\n      run:\n        shell: bash -c "exit 0" {0}\n',
+    ),
+    'job node has a new or changed `defaults.run.shell`',
+  ],
+  [
+    'adding a ref to a checkout step',
+    ci(
+      'actions/checkout@aaaaaaaa # v7.0.1\n',
+      'actions/checkout@aaaaaaaa # v7.0.1\n        with:\n          ref: ${{ github.event.pull_request.base.sha }}\n',
+    ),
+    'job node checkout step has a new or changed `with.ref`',
+  ],
+  [
+    'adding a second checkout step to a job',
+    ci(
+      '      - run: npm ci\n',
+      '      - uses: actions/checkout@aaaaaaaa # v7.0.1\n      - run: npm ci\n',
+    ),
+    'job node has a new checkout step',
+  ],
+  [
+    'hiding a test removal behind a -diff attribute',
+    (r) => {
+      r.write('.gitattributes', 'tests/** -diff\n');
+      r.write('tests/test_math.py', 'x = 1\n');
+    },
+    'Fewer tests than before',
+  ],
+  [
+    'hiding a test skip behind a binary attribute in the tests folder',
+    (r) => {
+      r.write('tests/.gitattributes', '*.ts binary\n');
+      r.edit('tests/test_math.test.ts', "it('adds'", `it${SKIP}('adds'`);
+    },
+    'Skip or only marker added',
+  ],
+  [
+    'adding a skip on a line that starts with ++',
+    (r) => r.edit('tests/test_math.test.ts', "it('adds', () => {", `++it${SKIP}('adds', () => {`),
+    'Skip or only marker added',
+  ],
+  [
+    'hiding a new secret in a workflow behind a -diff attribute',
+    (r) => {
+      r.write('.gitattributes', '.github/** -diff\n');
+      r.edit('.github/workflows/ci.yml', 'run: npm run lint', 'run: echo ${{ secrets.TOKEN }}');
+    },
+    'uses a new secret',
+  ],
+  [
+    'adding a .gitattributes file',
+    (r) => r.write('.gitattributes', '*.png binary\n'),
+    'Protected file changed (A): .gitattributes',
+  ],
+  [
     'changing a golden file',
     (r) => r.edit('tests/golden/proposal.txt', '100.00', '90.00'),
     'Stored answer changed (M): tests/golden/proposal.txt',
@@ -635,6 +709,13 @@ const PASSES: [string, Change][] = [
     (r) => r.edit('tests/test_math.py', 'def test_adds():', 'def test_adds(tmp_path):'),
   ],
   ['raising a job timeout', ci('timeout-minutes: 20', 'timeout-minutes: 45')],
+  [
+    'adding a fetch-depth to a checkout step',
+    ci(
+      'actions/checkout@aaaaaaaa # v7.0.1\n',
+      'actions/checkout@aaaaaaaa # v7.0.1\n        with:\n          fetch-depth: 2\n',
+    ),
+  ],
   [
     'changing a runner',
     ci(
