@@ -102,6 +102,12 @@ async function originalOf(tx: CompanyTransaction, companyId: string, jobId: stri
   return row ? { ...row, documentsBytes: Buffer.from(row.documentsBytes) } : null;
 }
 
+/** The job's original agreement as its stored record, or null (the operator's support view, S5b-5). */
+export async function originalAgreementView(tx: CompanyTransaction, companyId: string, jobId: string): Promise<AgreementView | null> {
+  const row = await originalOf(tx, companyId, jobId);
+  return row ? viewOf(row) : null;
+}
+
 async function signatureOf(tx: CompanyTransaction, companyId: string, jobId: string, objectId: string) {
   const [row] = await tx
     .select({ id: evidenceObjects.id, sha256: evidenceObjects.sha256, contentType: evidenceObjects.contentType })

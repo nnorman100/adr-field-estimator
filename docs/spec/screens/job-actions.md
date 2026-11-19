@@ -49,7 +49,7 @@ Rules: `docs/access/jobs.md` ("Archive, restore and copy").
 
 ## Not built yet
 
-- Superadmin support archiving or restoring an unsigned draft (S5b-5).
+- Superadmin support archiving or restoring an unsigned draft: dropped by owner decision 2026-11-19 (S5b-5); the operator asks the company owner, who holds `jobs_archive`.
 
 ## Mismatches to check
 

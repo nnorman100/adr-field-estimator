@@ -313,6 +313,16 @@ const OPEN: Record<string, OpenCheck> = {
     expect(JSON.parse(answer.text), where).toEqual({ message: 'hello' });
     expect(leaks(answer.text, victim), where).toEqual([]);
   },
+  // S5b-5: HEAD on the operator's support views is refused for anyone, before any sign-in check.
+  ...Object.fromEntries(
+    ['jobs', 'jobs/[jobId]', 'jobs/[jobId]/photos/[photoId]'].map((route): [string, OpenCheck] => [
+      `HEAD api/platform/companies/[companyId]/${route}`,
+      (answer, where, _attacker, victim) => {
+        expect(answer.status, where).toBe(405);
+        expect(leaks(answer.text, victim), where).toEqual([]);
+      },
+    ]),
+  ),
   // Write-only error reports: the answer is how many of the one report sent were logged, nothing else.
   'POST api/client-errors': (answer, where, _attacker, victim) => {
     expect(answer.status, where).toBe(202);
@@ -375,8 +385,17 @@ describe('the calls the suite makes', () => {
     ]);
   });
 
-  it('lists exactly five open answers: the caller’s own sign-in, the sign-in page, health, echo and error reports', () => {
-    expect(Object.keys(OPEN).sort()).toEqual(['GET api/health', 'GET api/me', 'GET api/sign-in/[address]', 'POST api/client-errors', 'POST api/echo']);
+  it('lists exactly the open answers: the caller’s own sign-in, the sign-in page, health, echo, error reports and the support views’ HEAD refusal', () => {
+    expect(Object.keys(OPEN).sort()).toEqual([
+      'GET api/health',
+      'GET api/me',
+      'GET api/sign-in/[address]',
+      'HEAD api/platform/companies/[companyId]/jobs',
+      'HEAD api/platform/companies/[companyId]/jobs/[jobId]',
+      'HEAD api/platform/companies/[companyId]/jobs/[jobId]/photos/[photoId]',
+      'POST api/client-errors',
+      'POST api/echo',
+    ]);
   });
 });
 

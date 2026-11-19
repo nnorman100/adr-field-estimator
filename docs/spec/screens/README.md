@@ -79,8 +79,10 @@ Each is flagged for the owner or a later fix; no code was changed.
    `public/workspaces.js` (the retired app) as the source of truth; for the web app the table is
    `web/src/lib/access/roles.ts`, held to `docs/access/roles.md` by `web/tests/unit/access.test.ts`.
 4. `docs/access/superadmin.md` describes read-only support access to any company's jobs,
-   documents and photos. In the web app no operator route reads a job (`web/src/app/api/platform/`);
-   that is step S5b-5 (`docs/plans/S5/S5b-5.md`), not built.
+   documents and photos. In the web app the operator routes under
+   `web/src/app/api/platform/companies/[companyId]/jobs` read a company's jobs, one job and its
+   photos (S5b-5 server slice, `docs/plans/S5/S5b-5.md`); the operator screens that show them are the
+   next slice of S5b-5, not built.
 5. Resolved: [docs/STATUS.md](../../STATUS.md) now has rows for the web app's screens (PRs #314 to
    #471 were added on 2026-11-19, for example "Job screens on the phone (S5a-6)" in
    `docs/status/s5-core-workflows.md`).

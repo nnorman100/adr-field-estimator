@@ -137,6 +137,18 @@ async function lockedCompany(tx: CompanyTransaction, companyId: string): Promise
   return row;
 }
 
+// One company as the operator's views show it, read without a lock; not found when there is none.
+export async function readCompany(tx: CompanyTransaction, companyId: string): Promise<CompanyView> {
+  const [row] = rows<CompanyRow>(
+    await tx.execute(sql`
+      SELECT id::text, name, sign_in_slug, status, auth_tenant_id, created_at
+      FROM companies WHERE id = ${companyId}::uuid
+    `),
+  );
+  if (!row) throw new PlatformError('not_found');
+  return companyView(row);
+}
+
 export function platformService(db: Database, users: PlatformUsers, project: ProjectAccess, notice: SecondStepNotice) {
   // A unique index caught two operator actions racing; nothing was written.
   async function act<T>(operatorId: string, run: (tx: CompanyTransaction) => Promise<T>, companyId?: string): Promise<T> {
@@ -401,14 +413,8 @@ export function platformService(db: Database, users: PlatformUsers, project: Pro
         db,
         operatorId,
         async (tx) => {
-          const [company] = rows<CompanyRow>(
-            await tx.execute(sql`
-              SELECT id::text, name, sign_in_slug, status, auth_tenant_id, created_at
-              FROM companies WHERE id = ${companyId}::uuid
-            `),
-          );
-          if (!company) throw new PlatformError('not_found');
-          return { company: companyView(company), team: await readTeam(tx, companyId, 'full', now) };
+          const company = await readCompany(tx, companyId);
+          return { company, team: await readTeam(tx, companyId, 'full', now) };
         },
         { companyId, readOnly: true },
       );
@@ -428,16 +434,10 @@ export function platformService(db: Database, users: PlatformUsers, project: Pro
         db,
         operatorId,
         async (tx) => {
-          const [company] = rows<CompanyRow>(
-            await tx.execute(sql`
-              SELECT id::text, name, sign_in_slug, status, auth_tenant_id, created_at
-              FROM companies WHERE id = ${companyId}::uuid
-            `),
-          );
-          if (!company) throw new PlatformError('not_found');
+          const company = await readCompany(tx, companyId);
           const list = await readVersionList(tx, companyId);
           return {
-            company: companyView(company),
+            company,
             prices: await readCompanyPrices(tx, companyId, 'owner'),
             versions: list.versions,
             moreVersions: list.more,
