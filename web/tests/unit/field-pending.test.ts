@@ -319,3 +319,34 @@ describe('archive and restore done on this page (S5b-2)', () => {
     expect(pending.archivalsDone()).toBe(0);
   });
 });
+
+describe('text typed and not added', () => {
+  const room = { field: { name: 'Den' }, number: 1 };
+
+  it('shows for the draft it was typed on, for a later draft only once the field work moved, and ends with the sign-in', () => {
+    pending.openFor('company-a/user-typed-1');
+    pending.typeRoomName('job-t', 'd1', 'Attic');
+    pending.typeTask('job-t', 'd1', 'room-1', 'Tape the vent', room);
+    expect(pending.typed('job-t', 'd1', false)).toMatchObject({ roomName: 'Attic', rooms: { 'room-1': { task: 'Tape the vent', ...room } } });
+    expect(pending.typed('job-t', 'd2', false).roomName).toBe('');
+    expect(pending.typed('job-t', 'd2', false).rooms).toEqual({});
+    expect(pending.typed('job-t', 'd2', true).roomName).toBe('Attic');
+    expect(pending.typed('job-t', 'd1', false)).toBe(pending.typed('job-t', 'd1', false));
+    pending.openFor('company-a/user-typed-2');
+    expect(pending.typed('job-t', 'd1', true).roomName).toBe('');
+  });
+
+  it('is dropped when emptied or when its room is taken out, and typing on another draft starts over', () => {
+    pending.openFor('company-a/user-typed-3');
+    pending.typeTask('job-u', 'd1', 'room-1', 'Tape the vent', room);
+    pending.typeTask('job-u', 'd1', 'room-1', '', room);
+    expect(pending.typed('job-u', 'd1', true).rooms).toEqual({});
+    pending.typeTask('job-u', 'd1', 'room-1', 'Tape the vent', room);
+    pending.dropTypedRoom('job-u', 'd1', 'room-1');
+    expect(pending.typed('job-u', 'd1', true).rooms).toEqual({});
+    pending.typeRoomName('job-u', 'd1', 'Attic');
+    pending.typeRoomName('job-u', 'd2', 'Loft');
+    expect(pending.typed('job-u', 'd2', false).roomName).toBe('Loft');
+    expect(pending.typed('job-u', 'd1', false).roomName).toBe('');
+  });
+});

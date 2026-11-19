@@ -462,6 +462,36 @@ test('a prep task typed and not added stays on screen, read only, when the new o
   await expect(den.getByLabel('Your own prep task')).not.toBeEditable();
 });
 
+test('a prep task and a room name typed and not added come back, read only, when the job is opened again after the field work moved', async ({ page, request }) => {
+  test.setTimeout(120_000);
+  const company = await seedCompany('owner-typed-reopen', { owner: 'owner', first: 'estimator' });
+  const { jobId, actorOf } = await seedJob(request, company, company.people.owner!, '98 Reopen Row', [company.people.first!]);
+
+  await signIn(page, company, company.people.owner!);
+  await openJob(page, '98 Reopen Row');
+  await page.getByLabel('New room name').fill('Den');
+  await page.getByRole('button', { name: 'Add room' }).click();
+  const den = page.getByRole('form', { name: 'Den' });
+  await expect(den).toBeVisible();
+  await den.getByLabel('Your own prep task').fill('Tape the vent');
+  await page.getByLabel('New room name').fill('Attic');
+  await transfer(request, company, jobId, actorOf(company.people.first!));
+  await main(page).getByRole('link', { name: 'Job coordination' }).click();
+  await page.getByRole('textbox', { name: 'Office notes' }).fill('Checked');
+  await page.getByRole('button', { name: 'Save notes' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Notes saved.' })).toBeVisible();
+
+  await main(page).getByRole('link', { name: 'Back to jobs' }).click();
+  await openJob(page, '98 Reopen Row');
+  await main(page).getByRole('link', { name: 'Check Scope' }).click();
+  await expect(page.getByText(MOVED)).toBeVisible();
+  const reopened = page.getByRole('form', { name: 'Den' });
+  await expect(reopened.getByLabel('Your own prep task')).toHaveValue('Tape the vent');
+  await expect(reopened.getByLabel('Your own prep task')).not.toBeEditable();
+  await expect(page.getByLabel('New room name')).toHaveValue('Attic');
+  await expect(page.getByLabel('New room name')).not.toBeEditable();
+});
+
 test('after the field work moves, the old phone shows its unsent photo read only and neither takes nor resends photos', async ({ page, request }) => {
   test.setTimeout(120_000);
   const company = await seedCompany('keep-photo', { owner: 'owner', office: 'office', first: 'estimator', second: 'estimator' });

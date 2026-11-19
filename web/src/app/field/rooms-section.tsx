@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { readScopeLists, type ScopeLists } from '@/lib/field/api';
 import { roomName } from '@/lib/field/forms';
+import { pending, usePending } from '@/lib/field/pending';
 import { MAX_ROOMS, type RoomField } from '@/lib/field/schema';
 import { addRoomWrites, removeRoomWrites, type FieldDraft } from '@/lib/field/store';
 import type { JobContext } from './job-screens';
@@ -17,7 +18,12 @@ import { useFieldEdit } from './use-field-edit';
 export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraft }) {
   const [lists, setLists] = useState<ScopeLists | null>(null);
   const [listsError, setListsError] = useState<string | null>(null);
-  const [name, setName] = useState('');
+  // A name typed and not added, kept on the page (src/lib/field/pending.ts).
+  const jobId = job.jobId;
+  const draftId = job.draftRef.draftId;
+  const typed = usePending(() => pending.typed(jobId, draftId, job.moved));
+  const name = typed.roomName;
+  const setName = (text: string) => pending.typeRoomName(jobId, draftId, text);
   // Rooms with changes typed and not saved, and rooms the draft no longer lists that had some when
   // the field work moved to someone else: they stay on screen, read only, as last read (J5).
   const [dirty, setDirty] = useState<Record<string, true>>({});
@@ -48,7 +54,6 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
   const full = draft.rooms.length >= MAX_ROOMS;
   const { user } = job.session;
   const { checkAccess } = job;
-  const jobId = job.jobId;
 
   function loadLists() {
     if (!job.session.online) return;
@@ -64,7 +69,7 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
   // write and the draft read after it: each starts from the order the phone holds.
   async function remove(roomId: string, label: string) {
     if (busy || !window.confirm(`Remove ${label} from this job?`)) return;
-    await saveEdit(removeRoomWrites(job.draftRef, roomId, draft.field.roomOrder ?? []), `${label} removed.`);
+    await saveEdit(removeRoomWrites(job.draftRef, roomId, draft.field.roomOrder ?? []), `${label} removed.`, () => pending.dropTypedRoom(jobId, draftId, roomId));
   }
 
   async function add() {
@@ -73,9 +78,15 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
     if (!checked) return setError('Give the room a name.');
     const roomId = crypto.randomUUID();
     await saveEdit(addRoomWrites(job.draftRef, roomId, checked, draft.field.roomOrder ?? []), `${checked} added.`, () => {
-      setName((current) => current === name ? '' : current);
+      if (pending.typed(jobId, draftId, false).roomName === name) setName('');
     });
   }
+
+  // Rooms the draft does not list that still hold text typed and not added, apart from the ones kept above.
+  const unlisted = [
+    ...kept,
+    ...Object.entries(typed.rooms).map(([id, room]) => ({ id, field: room.field, number: room.number })),
+  ].filter((room, at, all) => !draft.rooms.some((listed) => listed.id === room.id) && all.findIndex((one) => one.id === room.id) === at);
 
   return (
     <Section title="Rooms">
@@ -92,7 +103,7 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
         {/* One list, so a room that leaves the draft keeps its card, and what was typed in it. */}
         {[
           ...draft.rooms.map((room, index) => ({ id: room.id, field: room.field, number: index + 1, listed: true })),
-          ...kept.filter((room) => !draft.rooms.some((listed) => listed.id === room.id)).map((room) => ({ ...room, listed: false })),
+          ...unlisted.map((room) => ({ ...room, listed: false })),
         ].map((room) => (
           <li key={room.id}>
             <RoomCard
@@ -101,6 +112,7 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
               stored={room.field}
               number={room.number}
               lists={lists}
+              listed={room.listed}
               removing={busy}
               onRemove={room.listed ? () => remove(room.id, room.field.name ?? `Room ${room.number}`) : undefined}
               onDirty={onDirty}
