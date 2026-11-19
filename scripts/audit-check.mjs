@@ -4,7 +4,11 @@
 // ships) and fails on any high or critical advisory, like `npm audit --audit-level=high`,
 // except the advisories listed in .github/audit-exceptions.json. A package whose high finding comes
 // only from a listed advisory (through its dependency chain) is skipped too. Every skipped advisory
-// and package is printed, so nothing is hidden. Each exception carries a re-check date; after that
+// and package is printed, so nothing is hidden. An exception can be limited to the audited
+// directories in its `projects` list and to the package locations in its `nodes` list (as npm
+// audit names them, such as node_modules/a/node_modules/b); a finding is then skipped only in those
+// directories and only when every affected copy of the package is listed, so a newly affected copy
+// still fails. Each exception carries a re-check date; after that
 // date (UTC) the check fails until the owner re-checks and updates the file. The exceptions file sits
 // under .github/, so the Test guard asks for the owner's approval before it can change.
 import { spawnSync } from 'node:child_process';
@@ -15,7 +19,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const EXCEPTIONS_FILE = path.join(ROOT, '.github', 'audit-exceptions.json');
 /** The directories audited, relative to the repository root; each holds a package-lock.json. */
-export const AUDITED = ['.', 'web'];
+const AUDITED = ['.', 'web'];
 
 const BLOCKING = new Set(['high', 'critical']);
 const GHSA = /^GHSA-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}$/;
@@ -35,7 +39,24 @@ export function parseExceptions(text) {
         throw new Error(`${where}: ${key} must be a YYYY-MM-DD date`);
       }
     }
-    return { id: e.id, reason: e.reason, approved: e.approved, recheckBy: e.recheckBy };
+    const parsed = { id: e.id, reason: e.reason, approved: e.approved, recheckBy: e.recheckBy };
+    if ('projects' in e) {
+      const ok =
+        Array.isArray(e.projects) &&
+        e.projects.length > 0 &&
+        e.projects.every((dir) => AUDITED.includes(dir));
+      if (!ok) throw new Error(`${where}: projects must list audited directories (${AUDITED})`);
+      parsed.projects = e.projects;
+    }
+    if ('nodes' in e) {
+      const ok =
+        Array.isArray(e.nodes) &&
+        e.nodes.length > 0 &&
+        e.nodes.every((n) => typeof n === 'string' && n.startsWith('node_modules/'));
+      if (!ok) throw new Error(`${where}: nodes must list node_modules/... package locations`);
+      parsed.nodes = e.nodes;
+    }
+    return parsed;
   });
 }
 
@@ -49,10 +70,11 @@ const advisoryId = (advisory) => {
  * @param report the parsed report
  * @param exceptions the parsed exceptions list
  * @param today the current UTC date as YYYY-MM-DD
+ * @param dir the audited directory the report is from, as in AUDITED ('.' is the root)
  * @param label put before each package line, naming the audited directory (empty for one report)
  * @returns { problems: string[], skipped: string[] }; the check passes when problems is empty
  */
-export function checkAudit(report, exceptions, today, label = '') {
+export function checkAudit(report, exceptions, today, dir = '.', label = '') {
   const problems = [];
   const skipped = [];
 
@@ -75,16 +97,26 @@ export function checkAudit(report, exceptions, today, label = '') {
   }
 
   // The advisories a package's finding comes from: its own, plus those of the packages it lists
-  // by name in `via`, followed down the chain.
+  // by name in `via`, followed down the chain. Each comes with the package that carries it.
   const rootAdvisories = (name, seen = new Set()) => {
     if (seen.has(name)) return [];
     seen.add(name);
     const found = [];
     for (const via of vulns[name]?.via ?? []) {
       if (typeof via === 'string') found.push(...rootAdvisories(via, seen));
-      else if (via && typeof via === 'object') found.push(via);
+      else if (via && typeof via === 'object') found.push({ ...via, carrier: name });
     }
     return found;
+  };
+  // An advisory is waived when its exception is active, covers this directory and lists every
+  // affected copy of the package that carries it.
+  const waived = (a) => {
+    const e = active.get(advisoryId(a));
+    if (!e) return false;
+    if (e.projects && !e.projects.includes(dir)) return false;
+    if (!e.nodes) return true;
+    const copies = vulns[a.carrier]?.nodes;
+    return Array.isArray(copies) && copies.length > 0 && copies.every((n) => e.nodes.includes(n));
   };
 
   const skippedIds = new Set();
@@ -95,7 +127,7 @@ export function checkAudit(report, exceptions, today, label = '') {
       problems.push(`${label}${name} (${vuln.severity}): could not trace the advisory behind it.`);
       continue;
     }
-    const blocking = roots.filter((a) => !active.has(advisoryId(a)));
+    const blocking = roots.filter((a) => !waived(a));
     for (const a of blocking) {
       problems.push(
         `${label}${name} (${vuln.severity}): ${advisoryId(a)} ${a.severity}: ${a.title}`,
@@ -126,7 +158,8 @@ export function checkReports(reports, exceptions, today) {
   const notes = new Set();
   const packages = [];
   for (const { dir, report } of reports) {
-    const result = checkAudit(report, exceptions, today, dir === '.' ? '[root] ' : `[${dir}/] `);
+    const label = dir === '.' ? '[root] ' : `[${dir}/] `;
+    const result = checkAudit(report, exceptions, today, dir, label);
     for (const line of result.problems) problems.add(line);
     // Package lines start with the directory label; the rest name an approved exception.
     for (const line of result.skipped) {
