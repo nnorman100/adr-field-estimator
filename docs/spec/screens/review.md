@@ -10,8 +10,10 @@ S5a-9, S5a-11, S5a-11b.
 
 Price the finished job from the company's own prices, show the four documents (the proposal, the
 itemized claim, the scope defense letter, the photo audit log) and the staff-only notes, then let
-the customer sign on the phone or get a signing link. A signed job opens read-only from the stored
-agreement, with links to the signed documents. Prices and the mandatory wording come from the
+the customer sign on the phone or get a signing link. Signing, on the phone or by a link, makes both
+document links (the homeowner's and the adjuster's) in the same step; their addresses come back in
+the first successful signing answer only. A signed job opens read-only from the stored agreement
+with the state of those links, but not their addresses. Prices and the mandatory wording come from the
 server (`web/src/engine/`); this screen never computes a price. Online only.
 
 ## Who may see it and do what
@@ -43,7 +45,12 @@ The screen decides by keys from `GET /api/me`: pricing by `audit`, signing and s
   evidence with the homeowner or representative."; once ticked, "Customer signature" (the customer's
   full name, a signature pad, "Sign"; "Signing needs a connection.").
 - Signed: "Signed", the stored proposal, who signed and when, the documents and a "Photo audit log",
-  and the document links.
+  and the document links. Right after signing on this phone the two addresses are shown to share;
+  after a reload or a retried signing (the same agreement, which answers no new tokens) only each
+  link's status is listed. The owner or office can then "Replace the link"; an estimator can "Make a
+  link" only for a set with no working link, so an estimator who missed the first answer cannot
+  recover the addresses (see "Mismatches to check"). For a link signed by the homeowner, the
+  addresses went to the homeowner's page, not this phone.
 - Errors: the server's message with "Try again", "Try signing again" or "Reload"; signing link
   errors such as "This job is already signed." and "That link has ended. Make a new one."
 
@@ -73,4 +80,9 @@ Rules: `docs/access/estimate.md`, `docs/access/signing.md`, `docs/access/signing
 
 ## Mismatches to check
 
-None found. The screen's key checks match the routes in `docs/access/`.
+- The two document links' addresses are shown once, in the first successful signing answer
+  (`web/src/lib/agreements/service.ts`). If it does not reach the phone, an estimator holding only
+  `sign` has no way to get them (both links are working, so Make a link is not offered); the owner or
+  office must replace them.
+
+The screen's key checks match the routes in `docs/access/`.

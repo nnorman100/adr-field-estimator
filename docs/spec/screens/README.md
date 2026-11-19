@@ -1,6 +1,7 @@
 # Screen specs (rebuilt app, `web/`)
 
-One spec per screen of the rebuilt app, written from the code as it is built today. This is the
+One spec per screen of the rebuilt app, written from the code as it is built today. This slice covers
+the jobs and field-work screens; the screens marked "not written yet" in the inventory follow in later slices. This is the
 per-screen companion to [docs/spec.md](../../spec.md), the approved feature spec, which describes the
 retired app's screens and the rebuild's accepted target (its section 6). Where this folder and the
 code disagree, the code wins and the spec is fixed. Where a screen and the access rules disagree,
@@ -64,9 +65,10 @@ check. Wording in quotes is the screen's own text.
 
 Each is flagged for the owner or a later fix; no code was changed.
 
-1. No screen of the field app links to Finish and review. The only link is in the sync chip's
-   "Changes not saved" sheet for a job with a refused change (`web/src/app/field/sync-chip.tsx`).
-   Otherwise a technician must type `/sign-in/{address}/jobs/{id}/finish`. See [finish.md](finish.md).
+1. No Check Scope action opens Finish and review. It is reached from the sync chip's "Changes not
+   saved" sheet (only for a write refused because the draft was finished, online, once the job
+   reads: `web/src/app/field/sync-chip.tsx`) and from Review's "Not finished yet" link; otherwise a
+   technician must type `/sign-in/{address}/jobs/{id}/finish`. See [finish.md](finish.md).
 2. Customer and claim: the screen offers Save to every estimator who can open the job, but the
    server (rightly, owner decision J3) lets an estimator save only while they own the job's field
    work, so an assigned estimator who does not own it fills the form and is refused. See
@@ -79,3 +81,7 @@ Each is flagged for the owner or a later fix; no code was changed.
    that is step S5b-5 (`docs/plans/S5/S5b-5.md`), not built.
 5. [docs/STATUS.md](../../STATUS.md) has no row for the web app's job screens (it was last built on
    2026-10-28); their state is only in the stage plans.
+6. No field screen edits the draft's summary of findings, which Finish checks (S5 decision J1). Notes
+   on Check Scope is a different key. See [check-scope.md](check-scope.md) and [finish.md](finish.md).
+7. The signed documents' links are shown only in the first successful signing answer. A signer who
+   misses it cannot recover the addresses; see [review.md](review.md).

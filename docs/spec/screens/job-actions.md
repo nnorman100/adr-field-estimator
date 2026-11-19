@@ -6,7 +6,10 @@ Restore, on Archived drafts. Built in: `web/src/app/field/job-actions.tsx`. Stag
 ## Purpose
 
 File away an unsigned job ("Archive job"), put it back ("Restore"), or start a new draft from a
-signed job ("Copy to a new draft"). All three need a connection and keep the ids the phone made until
+signed job ("Copy to a new draft"). Copy takes the signed job's address, field map and rooms as
+signed, with the scope confirmation cleared so it is confirmed again; the customer, the claim and the
+photos stay with the signed job (`COPY_CLEARED_KEYS` and `copiedField` in `web/src/lib/jobs/archive.ts`).
+All three need a connection and keep the ids the phone made until
 answered, so a retry is the same request.
 
 ## Who may see it and do what
@@ -40,7 +43,7 @@ the job is `signed` (`job-actions.tsx`). A signed job has no Archive.
 |---|---|---|
 | Archive | `POST /api/jobs/{id}/archive` | `jobs_archive` |
 | Restore | `POST /api/jobs/{id}/restore` | `jobs_archive` |
-| Copy to a new draft | `POST /api/jobs/{id}/copy` | `jobs_copy` |
+| Copy to a new draft (new job with the signed address, field map and rooms, scope confirmation cleared; customer, claim and photos not copied) | `POST /api/jobs/{id}/copy` | `jobs_copy` |
 
 Rules: `docs/access/jobs.md` ("Archive, restore and copy").
 

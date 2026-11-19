@@ -9,7 +9,8 @@ S5a-11b.
 A read-only page of one signed job's documents, for 30 days or until the company revokes the link.
 There are two sets (`SET_NAMES`): "Homeowner's documents" (the signed proposal, who signed, their role
 when given, when and how, the signature and the photo log) and "Adjuster's documents" (the price, the
-itemized claim and the scope defense letter, with no photos). The token is only in the address's
+itemized claim, the scope defense letter and a "Scope JSON" export, with no photos). The scope JSON is
+built in the browser from the itemized claim rows (`ScopeJson` in `documents-screen.tsx`). The token is only in the address's
 fragment and goes to the link routes in a header. No sign-in, not indexed, no referrer, not kept for
 offline use.
 
@@ -17,10 +18,16 @@ offline use.
 
 | Role | Sees | Can do |
 |---|---|---|
-| Holder of the link (homeowner or adjuster) | that link's set | read it; nothing else |
+| Holder of the link (homeowner or adjuster) | that link's set | read it; adjuster: also copy ("Copy the scope JSON") or download ("Download the scope JSON", `scope.json`) the scope JSON |
 | Owner, estimator, office | the same as any holder; links are made and revoked on [Review](review.md) | read it |
 | Superadmin support | the same as any holder | read it |
-| Different-company user | the same as any holder: the token alone decides | read it |
+| Different-company user | the same as any holder: no company sign-in is used | read it |
+
+The token is necessary but not enough. Every read acts as the person who made the link, as they are
+now (`resolve` in `web/src/lib/links/documents.ts`): they must still be an active member holding
+`sign` or `delivery_resend`, the company must be active with prices on (`price_books`), and they must
+still see the job. Losing any of these makes the link "This link is not available" before its end
+date; the owner or office can replace it.
 
 ## States
 
@@ -35,6 +42,7 @@ offline use.
 | Action | Route | Who |
 |---|---|---|
 | Read the set | `GET /api/documents` | the link |
+| Copy or download the scope JSON (adjuster's set only) | in the browser, from the itemized claim rows already read; no route | the link |
 | Show the signature (homeowner's set only) | `GET /api/documents/signature` | the link |
 | Show one photo (homeowner's set only) | `GET /api/documents/photos/{photoId}` | the link |
 

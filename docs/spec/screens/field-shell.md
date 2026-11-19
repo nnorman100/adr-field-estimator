@@ -44,8 +44,16 @@ job views) with a sync chip for changes not yet saved.
   offline work ("Open the app once online to continue"), access off, company not active, sign in
   again to send, and kept changes removed or hidden after 30 days with access off.
 - Sync chip: shown while the signed-in person's screens are; its sheet "Changes not saved" lists
-  refused or changed edits with "Send again", "Discard changes" and "Save as new draft" (the last
-  only for a role with `jobs_create` and `scope`).
+  refused or changed edits, one panel per job and reason (`web/src/lib/field/sync-status.ts`,
+  `sync-chip.tsx`). Each panel offers:
+  - "Discard" (then "Discard changes" or "Keep them"): always.
+  - "Try again": unless the job was finished or the edits were changed on another device.
+  - "Save as new draft" ("Save as another new draft" once one exists): only when the job is known
+    and was archived during editing or its field work moved to someone else, and only for a role with
+    `jobs_create` and `scope`. A write refused after Finish never offers it.
+  - "Go to Finish and review": only for a write refused because the draft was finished, with a
+    signal, once the job reads; if the job is archived the panel says the owner must restore it
+    first. Back to editing is on that screen ([Finish](finish.md)).
 
 ## Key actions and server routes
 
@@ -53,8 +61,8 @@ job views) with a sync chip for changes not yet saved.
 |---|---|
 | Learn who is signed in and their keys | `GET /api/me` (`web/src/lib/field/field-sync.ts`, `journal-sync.ts`) |
 | Keep or not keep jobs on the phone | the phone's Firestore cache and journal only, no server route |
-| Send again a refused change | the field database (Firestore) write again |
-| Save as new draft (unsaved changes on a job that moved or locked) | `POST /api/jobs` with a new job and draft id, then the field database |
+| Try again a refused change | the field database (Firestore) write again |
+| Save as new draft (unsaved changes on a job archived during editing or whose field work moved) | `POST /api/jobs` with a new job and draft id, then the field database |
 | Read a job named by an unsaved change | `GET /api/jobs/{id}` |
 
 ## Not built yet

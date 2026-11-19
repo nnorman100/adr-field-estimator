@@ -23,10 +23,14 @@ Only the person who owns the job's field work edits it, and only while the draft
 | Role | Sees | Can do |
 |---|---|---|
 | Owner | every job's draft | edit only once the field work is theirs (Start field work on a job nobody owns, or a move to themself in Job coordination) |
-| Estimator | the drafts of jobs they made, own or are assigned to | Start field work on a job nobody owns; edit the jobs whose field work they own |
+| Estimator | the job's header, tabs and Customer and claim on jobs they made or are assigned to; the draft (rooms, scope, photos) only while they own the job's field work (`draftReadable` in `job-screens.tsx`; `canRead` in `web/firestore.rules`) | Start field work on a job nobody owns, or again on a job that names them and whose draft does not yet (below); edit the jobs whose field work they own |
 | Office | every job's draft, read only | nothing: no `scope`; no Start field work |
 | Superadmin support | nothing | nothing |
 | Different-company user | nothing: the job answers 404 and the field rules refuse the draft | nothing |
+
+On a job another person owns, an estimator sees the job header and tabs but no draft: Check Scope and
+Photos show only "Another person owns this job's field work, so it is not shown here. The company
+owner can move it to you.".
 
 Read-only texts: "Read only. Only the estimator who owns this job's field work changes it, while the
 job is being edited."; for an estimator when another owns it, "Another person owns this job's field
@@ -52,8 +56,8 @@ job's field work is no longer yours…" (unsent changes stay on the phone, read 
 |---|---|---|
 | Read the job | `GET /api/jobs/{id}` | `jobs_read` |
 | Read the room types, items and prep tasks | `GET /api/jobs/{id}/scope-lists` | `jobs_read` |
-| Start field work (become field owner) | `POST /api/jobs/{id}/field-owner` ("Nobody has started this job's field work yet. Whoever starts it owns it…") | `scope` |
-| Save rooms, scope, counts, summary | the field database draft (`draftFieldWrites`), checked by `web/firestore.rules`; no server route | field owner with `scope` |
+| Start field work (become field owner) | `POST /api/jobs/{id}/field-owner` ("Nobody has started this job's field work yet. Whoever starts it owns it…"). Also shown, as "This job's field work is yours, but this phone cannot open it yet. Start field work again to finish.", when the job already names this person but its draft does not (the first request committed the owner and did not update the draft); sending it again repairs the draft. Offered on Check Scope and on [Photos](photos.md) (`startable` in `job-screens.tsx`, `start-field-work.tsx`) | `scope` |
+| Save rooms, scope, counts, notes | the field database draft (`draftFieldWrites`), checked by `web/firestore.rules`; no server route | field owner with `scope` |
 
 Rules: `docs/access/jobs.md` (field owner), `docs/access/scope-lists.md`; draft lock while
 submitting: `docs/access/submit.md`.
@@ -63,9 +67,17 @@ submitting: `docs/access/submit.md`.
 - Drying readings and the drying log, job close (S5b-10).
 - Voice notes, scope suggestions from AI and meter-photo reading (S7).
 - Named adjustments and Reprice (S5b-7, S5b-6).
-- A link from this screen to [Finish and review](finish.md): see "Mismatches to check".
+- A normal Check Scope action that opens [Finish and review](finish.md): see "Mismatches to check".
+- A field for the summary of findings that [Finish](finish.md) checks: see "Mismatches to check".
 
 ## Mismatches to check
 
-- No field view links to Finish and review; the technician reaches it only from the sync chip's
-  sheet or by typing the address (see [README](README.md), item 1).
+- No Check Scope action opens Finish and review. The technician reaches it from two places: the
+  sync chip's "Changes not saved" sheet ("Go to Finish and review", only for a write refused because the
+  draft was finished, online, once the job reads), and Review's "Not finished yet" link back to Finish
+  ([review.md](review.md)). Otherwise by typing the address (see [README](README.md), item 1).
+- Notes (`fact-notes`) save to the draft's `notes` key, but the summary of findings is a separate
+  `summary` key that no field screen edits: `web/src/lib/field/forms.ts` excludes it from the
+  forms. [Finish](finish.md) reads `draft.summary` (`summaryWritten` in
+  `web/src/lib/submissions/screen.ts`), so a technician who fills in Notes and saves still sees "No
+  summary of findings yet" there. S5 decision J1 calls for a summary editor; it is not built.

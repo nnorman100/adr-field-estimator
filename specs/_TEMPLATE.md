@@ -2,8 +2,6 @@
 
 Status: draft · building · done · Branch: `slice/NN-name` · Risk: Low | Medium | High
 
-Current behaviour of each screen: `docs/spec/screens/` (start from the screen this slice changes).
-
 ## Goal
 [What can a user do after this that they could not before?]
 

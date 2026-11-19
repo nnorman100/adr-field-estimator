@@ -15,7 +15,7 @@ tag are then written to the job's field draft.
 | Role | Sees | Can do |
 |---|---|---|
 | Owner | the job's photos | take photos only once they own the job's field work and the draft is being edited |
-| Estimator | the photos of jobs they made, own or are assigned to | take photos on jobs whose field work they own, while the draft is being edited |
+| Estimator | the photos of a job whose field work they own (the Photos tab lists the photos from the job's draft, which an estimator may read only while they own it); on a job another person owns, only "Another person owns this job's field work, so it is not shown here. The company owner can move it to you." | take photos on jobs whose field work they own, while the draft is being edited |
 | Office | the job's photos, read only | nothing (no `photos`) |
 | Superadmin support | nothing | nothing |
 | Different-company user | nothing: 404 | nothing |
@@ -44,6 +44,11 @@ cap (`docs/access/photos.md`).
 | Send a photo's bytes | `PUT /api/jobs/{id}/photos/{photoId}?kind=photo` | `photos`, field owner |
 | Save its room and tag | the field database draft, checked by `web/firestore.rules` | field owner |
 | Show a photo | `GET /api/jobs/{id}/photos/{photoId}?kind=photo` | `jobs_read` |
+
+"Start field work" can appear on this tab too, on a job nobody owns or whose owner this person is but whose draft is not yet set (see [Check Scope](check-scope.md)).
+
+The photo-by-ID route uses job access (`jobs_read`), but the tab needs the draft's photo references, so
+it shows no photos to an estimator who cannot read the draft.
 
 Rules: `docs/access/photos.md`.
 

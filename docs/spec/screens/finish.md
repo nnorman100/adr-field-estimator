@@ -9,14 +9,15 @@ Part of [Screen specs](README.md). Address: `/sign-in/{address}/jobs/{id}/finish
 Turn the job's draft into its record and lock it on every phone ("Finish and review"), or, for a
 finished job, make a new draft version from the record ("Back to editing"). Before Finish it lists
 "What will be recorded": the rooms (and how many have no name), the photo count, and whether the
-summary of findings is written. Online only: it is not part of the kept field shell.
+summary of findings is written (the draft's `summary` key, not the Notes box on Check Scope: no field
+screen edits it, see [Check Scope](check-scope.md)). Online only: it is not part of the kept field shell.
 
 ## Who may see it and do what
 
 | Role | Sees | Can do |
 |---|---|---|
 | Owner | the job's state and summary | Finish (once they own the field work) and Back to editing (`scope`) |
-| Estimator | the same, on jobs they can see | Finish and Back to editing on jobs whose field work they own |
+| Estimator | the job's state on jobs they can see; while the job is still being edited the screen also reads its draft, which an estimator may read only while they own the field work, so on another person's job they get "We could not open this job" (`finish-screen.tsx`) | Finish and Back to editing on jobs whose field work they own |
 | Office | the job's state; "Only the owner or the estimator on this job can finish it." | open the review of a finished job; nothing else (`scope` missing, the routes answer 403) |
 | Superadmin support | nothing (the page checks the company sign-in) | nothing |
 | Different-company user | signed out of this company's page (the sign-in must belong to this company's tenant), or "This job could not be found" | nothing |
@@ -56,6 +57,10 @@ Rules: `docs/access/submit.md`.
 
 ## Mismatches to check
 
-- Nothing in the field app links here. The only link is the sync chip's "Changes not saved" sheet
-  for a job with a refused change (`web/src/app/field/sync-chip.tsx`); otherwise the address must
-  be typed. A technician walking a loss has no button from Check Scope to Finish.
+- No Check Scope action opens this screen. It is reached from the sync chip's "Changes not saved"
+  sheet ("Go to Finish and review", only for a write refused because the draft was finished, with a
+  signal and once the job reads: `web/src/app/field/sync-chip.tsx`) and from [Review](review.md)'s
+  "Not finished yet" link; an archived or ownership-refused write does not offer it. Otherwise the
+  address must be typed. A technician walking a loss has no button from Check Scope to Finish.
+- The summary check reads `draft.summary`, which no field screen can write (see
+  [Check Scope](check-scope.md)), so "No summary of findings yet" stays until another source sets it.
