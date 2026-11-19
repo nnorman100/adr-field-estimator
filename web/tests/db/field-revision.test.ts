@@ -1,11 +1,15 @@
 import { randomUUID } from 'node:crypto';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { sql } from 'drizzle-orm';
 import postgres from 'postgres';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from 'vitest';
 import { openDatabase } from '@/db/client';
+import { applyMigrations, migrationsDirectory, readMigrations } from '@/db/migrate';
 import { withCompany, withOperator, type CompanyTransaction } from '@/db/tenant';
 import { claimDraft } from '@/lib/jobs/access';
-import { sharedRoles } from './postgres-harness';
+import { createDiscardDatabase, emptyDiscardDatabase, loginUrl, sharedRoles } from './postgres-harness';
 import { unprotectedRelations } from './row-security-guard';
 import { CHECK_VIOLATION, FOREIGN_KEY_VIOLATION, INSUFFICIENT_PRIVILEGE, errorCode, newJob, ownerOf, pause, seedJob } from './job-harness';
 import { abortSubmission, insertSubmission, newSubmission } from './submission-harness';
@@ -143,15 +147,22 @@ describe('migration 0018: nothing else moves the field revision', () => {
 });
 
 describe('migration 0018: the sync’s watermark and the change time', () => {
-  it('accepts a repeated or late watermark write as no change, and refuses a blind save as before', async () => {
+  it('takes a newer watermark only, so a repeated or late acknowledgement changes nothing, and refuses an update that changes nothing', async () => {
     const job = await jobOf(h.seed.a);
     await exec(h.seed.a, `UPDATE jobs SET field_revision = field_revision + 1 WHERE id = '${job.id}'`);
     await exec(h.seed.a, `UPDATE jobs SET field_revision = field_revision + 1 WHERE id = '${job.id}'`);
-    const ack = (v: number) => exec(h.seed.a, `UPDATE jobs SET field_synced_revision = greatest(field_synced_revision, ${v}) WHERE id = '${job.id}'`);
-    await ack(2);
-    for (const v of [2, 1]) expect({ v, code: await errorCode(ack(v)) }).toEqual({ v, code: undefined });
+    // The sync's acknowledgement: only a watermark newer than the stored one is written.
+    const ack = async (v: number) =>
+      rows<{ id: string }>(
+        await exec(h.seed.a, `UPDATE jobs SET field_synced_revision = ${v} WHERE id = '${job.id}' AND field_synced_revision < ${v} RETURNING id`),
+      ).length;
+    expect(await ack(2)).toBe(1);
+    for (const v of [2, 1]) expect({ v, written: await ack(v) }).toEqual({ v, written: 0 });
     expect(await state(job.id)).toMatchObject({ field: 2, synced: 2, revision: 1 });
-    // A save of anything else without a new job revision is still refused.
+    // An update that changes nothing, or anything else, without a new job revision is still refused (0010).
+    expect(await errorCode(exec(h.seed.a, `UPDATE jobs SET field_synced_revision = greatest(field_synced_revision, 1) WHERE id = '${job.id}'`))).toBe(
+      CHECK_VIOLATION,
+    );
     expect(await errorCode(exec(h.seed.a, `UPDATE jobs SET property_address = 'Blind' WHERE id = '${job.id}'`))).toBe(CHECK_VIOLATION);
   });
 
@@ -280,5 +291,81 @@ describe('migration 0018: the repair worker’s lookup across companies', () => 
     }
     expect(await errorCode(due(100, 86400))).toBeUndefined();
     expect(rows(await pool.db.execute(sql`SELECT job_field_sync_due_companies(NULL, 0)`))).toEqual([]);
+  });
+});
+
+// The fill of existing copies, on a database of the roles server built up to 0017 by the migrator (not a
+// superuser, so forced row-level security binds it), holding rows.
+describe('migration 0018: the copy source of existing copies', () => {
+  let database: Awaited<ReturnType<typeof createDiscardDatabase>> | null = null;
+
+  afterAll(async () => {
+    await database?.drop();
+  });
+
+  it('fills each copy’s source from its job_copied audit row, only for a job of the same company, and changes nothing else', async () => {
+    const shared = inject('dryscopeDatabases');
+    database = await createDiscardDatabase(shared.rolesUrl);
+    await emptyDiscardDatabase(database.databaseUrl);
+    const admin = postgres(database.databaseUrl, { max: 1, connect_timeout: 10, onnotice: () => {} });
+    const dir = await mkdtemp(join(tmpdir(), 'dryscope-mig-'));
+    try {
+      await admin.unsafe('GRANT USAGE ON SCHEMA public TO PUBLIC');
+      await admin.unsafe(`GRANT CREATE ON SCHEMA public TO ${shared.roles.migrator.name}`);
+      const migratorUrl = loginUrl(database.databaseUrl, shared.roles.migrator);
+      const earlier = (await readMigrations(migrationsDirectory)).filter((file) => file.id < '0018');
+      await Promise.all(earlier.map((file) => writeFile(join(dir, `${file.id}.sql`), file.sql)));
+      await applyMigrations(migratorUrl, dir);
+
+      const company = async (slug: string) => {
+        await admin`INSERT INTO auth_tenants (id, kind) VALUES (${slug}, 'company')`;
+        const [made] = await admin<{ id: string }[]>`INSERT INTO companies (name, sign_in_slug, auth_tenant_id) VALUES ('Existing', ${slug}, ${slug}) RETURNING id`;
+        const [actor] = await admin<{ id: string }[]>`
+          INSERT INTO actors (company_id, auth_tenant_id, uid, email) VALUES (${made!.id}, ${slug}, 'u1', 'u1@example.test') RETURNING id
+        `;
+        const job = async () => {
+          const id = randomUUID();
+          await admin`
+            INSERT INTO jobs (id, company_id, created_by_actor_id, current_draft_id, request_digest)
+            VALUES (${id}, ${made!.id}, ${actor!.id}, ${randomUUID()}, ${'b'.repeat(64)})
+          `;
+          return id;
+        };
+        const copied = (copy: string, from: unknown) =>
+          admin`INSERT INTO audit_events (company_id, actor_id, action, target, details) VALUES (${made!.id}, ${actor!.id}, 'job_copied', ${copy}, ${admin.json({ revision: 1, copiedFrom: from } as never)})`;
+        return { id: made!.id, job, copied };
+      };
+      const a = await company('tenant-fill-a');
+      const b = await company('tenant-fill-b');
+      const [source, copy, elsewhere, malformed, plain] = [await a.job(), await a.job(), await a.job(), await a.job(), await a.job()];
+      const other = await b.job();
+      await a.copied(copy, source);
+      // A source that is not a job of this company, and one that is not an id, fill nothing.
+      await a.copied(elsewhere, other);
+      await a.copied(malformed, 'not-a-job');
+      const before = await admin`SELECT id, revision, status, updated_at FROM jobs ORDER BY id`;
+
+      expect((await applyMigrations(migratorUrl, migrationsDirectory)).applied).toEqual(['0018_field_revision']);
+      const filled = await admin<{ id: string; source: string | null; field: number }[]>`
+        SELECT id::text, copied_from_job_id::text AS source, field_revision::int AS field FROM jobs ORDER BY id
+      `;
+      expect(Object.fromEntries(filled.map((row) => [row.id, row.source]))).toEqual({
+        [source]: null,
+        [copy]: source,
+        [elsewhere]: null,
+        [malformed]: null,
+        [plain]: null,
+        [other]: null,
+      });
+      expect(filled.every((row) => row.field === 0)).toBe(true);
+      expect(await admin`SELECT id, revision, status, updated_at FROM jobs ORDER BY id`).toEqual(before);
+      expect(await admin`SELECT relname AS name, relforcerowsecurity AS forced FROM pg_class WHERE relname IN ('audit_events', 'jobs') ORDER BY 1`).toEqual([
+        { name: 'audit_events', forced: true },
+        { name: 'jobs', forced: true },
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+      await admin.end({ timeout: 5 });
+    }
   });
 });

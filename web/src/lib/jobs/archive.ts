@@ -237,6 +237,7 @@ export function archiveService(db: Database, store: ArchiveStore): ArchiveServic
             currentDraftId: input.draftId,
             propertyAddress: address,
             requestDigest: digest,
+            copiedFromJobId: source.id,
           })
           // The same id, or a draft id another job holds, makes no second row.
           .onConflictDoNothing()

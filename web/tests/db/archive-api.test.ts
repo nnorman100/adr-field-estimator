@@ -254,6 +254,8 @@ describe('copy', () => {
     const again = await copy(ESTIMATOR_A, source, ids);
     expect(again).toEqual({ ...first, status: 200 });
     expect(await h.admin`SELECT 1 FROM jobs WHERE id = ${ids.id}`).toHaveLength(1);
+    // The copy names its source in Postgres (0018), so its first draft can be rebuilt from the signed record.
+    expect(await h.admin`SELECT copied_from_job_id::text AS source FROM jobs WHERE id = ${ids.id}`).toEqual([{ source }]);
     expect(h.field.calls.filter((call) => call === 'createCopy')).toHaveLength(2);
     // The rooms and the scope, less the approval; no photo (it stays the signed job's evidence).
     const { scopeConfirmed, ...kept } = manifest.draft as Record<string, unknown>;

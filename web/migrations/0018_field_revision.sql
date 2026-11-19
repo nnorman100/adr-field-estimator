@@ -17,8 +17,9 @@
 --    the bump (not the transaction's start, which a wait for the job lock can make look older), so the
 --    repair pass leaves a job alone for a short grace while the request that changed it is still
 --    syncing it.
--- 4. jobs.copied_from_job_id: the job a copy was made from (in the same company), set when the copy is
---    inserted and never changed, so a copy's first draft can be built from its source's signed record.
+-- 4. jobs.copied_from_job_id: the job a copy was made from (in the same company), set by Copy when it
+--    inserts the copy and never changed by the runtime, so a copy's first draft can be built from its
+--    source's signed record. Existing copies are filled from their job_copied audit rows (below).
 -- 5. job_field_sync_due_companies(max, grace): the repair worker's one lookup across companies, on the
 --    0005 pattern: company ids only.
 --
@@ -89,10 +90,11 @@ CREATE TRIGGER jobs_field_revision_update
   EXECUTE FUNCTION jobs_field_revision();
 
 -- The job revision guard of 0015, the same but for the field columns: an update that changes nothing
--- but the field owner, the field revision or the synced revision (with the change time the trigger
--- above sets) keeps the job revision. That includes an update that changes nothing at all, such as the
--- sync's repeated or late watermark write (greatest(field_synced_revision, v) when v is not newer).
--- Every save that changes anything else still raises the revision by exactly one (0010).
+-- but the field owner, the field revision, the synced revision or the copy source (with the change time
+-- the trigger above sets) keeps the job revision. The runtime cannot change the copy source (no grant);
+-- the fill below can. An update that changes nothing at all is still refused, as in 0010: the sync's
+-- acknowledgement writes only a newer watermark (WHERE field_synced_revision < v). Every other rule of
+-- 0010 and 0015 is unchanged.
 CREATE OR REPLACE FUNCTION jobs_guard_revision() RETURNS trigger
   LANGUAGE plpgsql
   SET search_path = pg_catalog
@@ -106,8 +108,12 @@ BEGIN
       RAISE EXCEPTION 'a new job starts as a draft' USING ERRCODE = '23514';
     END IF;
   ELSIF NEW.revision = OLD.revision
-     AND to_jsonb(NEW) - 'field_owner_actor_id' - 'field_revision' - 'field_synced_revision' - 'field_changed_at'
-       = to_jsonb(OLD) - 'field_owner_actor_id' - 'field_revision' - 'field_synced_revision' - 'field_changed_at' THEN
+     AND (NEW.field_owner_actor_id IS DISTINCT FROM OLD.field_owner_actor_id
+          OR NEW.field_revision IS DISTINCT FROM OLD.field_revision
+          OR NEW.field_synced_revision IS DISTINCT FROM OLD.field_synced_revision
+          OR NEW.copied_from_job_id IS DISTINCT FROM OLD.copied_from_job_id)
+     AND to_jsonb(NEW) - 'field_owner_actor_id' - 'field_revision' - 'field_synced_revision' - 'field_changed_at' - 'copied_from_job_id'
+       = to_jsonb(OLD) - 'field_owner_actor_id' - 'field_revision' - 'field_synced_revision' - 'field_changed_at' - 'copied_from_job_id' THEN
     RETURN NEW;
   ELSIF NEW.revision <> OLD.revision + 1 THEN
     RAISE EXCEPTION 'a job revision rises by exactly one' USING ERRCODE = '23514';
@@ -115,6 +121,30 @@ BEGIN
   RETURN NEW;
 END
 $$;
+
+-- 4. The fill: each existing copy's source, from its job_copied audit row (details.copiedFrom, the
+-- target being the copy's id), when that names a job of the same company. Row-level security is forced
+-- on jobs and the audit log, which binds their owner (the migrator) too, and no policy is the
+-- migrator's: the owner reads and fills them with it unforced, inside this file's one transaction, and
+-- forces it again right after (as 0016 does). The fill changes no status, draft or owner, so it moves
+-- no field revision, and the guard above lets it keep the job revision.
+ALTER TABLE jobs NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE audit_events NO FORCE ROW LEVEL SECURITY;
+
+UPDATE jobs j
+SET copied_from_job_id = s.id
+FROM audit_events a
+JOIN jobs s ON s.company_id = a.company_id
+  AND (a.details ->> 'copiedFrom') ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+  AND s.id = (a.details ->> 'copiedFrom')::uuid
+WHERE a.action = 'job_copied'
+  AND a.company_id = j.company_id
+  AND a.target = j.id::text
+  AND s.id <> j.id
+  AND j.copied_from_job_id IS NULL;
+
+ALTER TABLE jobs FORCE ROW LEVEL SECURITY;
+ALTER TABLE audit_events FORCE ROW LEVEL SECURITY;
 
 -- The bump from another table: raises the field revision of the row's job, as the caller. Refused
 -- when the caller cannot update that job (the foreign keys guarantee it exists).

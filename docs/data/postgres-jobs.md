@@ -118,8 +118,9 @@ draft of a job from Postgres, guarded by one version number. No route reads or w
 - `field_synced_revision` (starts at 0): the highest field revision the sync has written to Firestore. The
   runtime may set it.
 - `field_changed_at`: when the field revision last rose (the clock at the bump), set by the trigger only.
-- `copied_from_job_id`: the job a copy was made from, in the same company (a foreign key), set when the copy
-  is inserted and never changed by the runtime.
+- `copied_from_job_id`: the job a copy was made from, in the same company (a foreign key), set by Copy when
+  it inserts the copy and never changed by the runtime. 0018 fills it for existing copies from their
+  `job_copied` audit rows (`details.copiedFrom`).
 - `job_field_sync_due_companies(max, grace)` returns, on the 0005 pattern, the ids of companies with a job
   whose `field_synced_revision` is behind its `field_revision` and whose last change is more than `grace`
   seconds old, the one waiting longest first. The repair worker will use it.
@@ -128,5 +129,7 @@ A bump from another table locks the job row after that table's row, so every wri
 first. The submission worker does so before it aborts an expired attempt since #482
 (`web/src/lib/submissions/repair.ts`, test release 2026.11.19-7). That release must be serving before
 0018 is applied, and no rollback goes behind it afterwards: an older worker deadlocks against Submit once
-the triggers exist. The job revision guard also lets an update that changes nothing but these field
-columns (or nothing at all, such as a repeated watermark write) keep the job `revision`.
+the triggers exist; the [test release runbook](../runbook/test-release.md) states that rollback floor. The job
+revision guard lets an update that changes only these field columns keep the job `revision`; an update
+that changes nothing is still refused, so the sync writes the watermark only when it is newer
+(`WHERE field_synced_revision < v`).
