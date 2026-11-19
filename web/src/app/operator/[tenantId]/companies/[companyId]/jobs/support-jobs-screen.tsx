@@ -32,7 +32,7 @@ export function SupportJobsScreen({ companyId }: { companyId: string }) {
     void (async () => {
       const result = await call<SupportJobsAnswer>(first);
       if (!result.ok) {
-        setError(supportReadMessage(result.status, result.code, 'these jobs'));
+        setError(supportReadMessage(result.status, result.code));
         return;
       }
       setLoaded({ company: result.body.company, jobs: result.body.jobs, nextCursor: result.body.nextCursor });
@@ -44,7 +44,7 @@ export function SupportJobsScreen({ companyId }: { companyId: string }) {
     setMore({ busy: true, error: null });
     const result = await call<SupportJobsAnswer>(platformPaths.supportJobs(companyId, loaded.nextCursor));
     if (!result.ok) {
-      setMore({ busy: false, error: supportReadMessage(result.status, result.code, 'these jobs') });
+      setMore({ busy: false, error: supportReadMessage(result.status, result.code) });
       return;
     }
     setLoaded((current) =>

@@ -159,10 +159,10 @@ export function operatorErrorMessage(code: string | null): string {
 }
 
 // What a failed read of the support view says: with no answer at all, that it needs a connection;
-// otherwise the words for the server's code. `what` is "these jobs" or "this job".
-export function supportReadMessage(status: number, code: string, what: string): string {
+// otherwise the words for the server's code. A refusal that ends the sign-in never shows here: the
+// operator session removes the screen and asks for a new sign-in (operator-session.tsx).
+export function supportReadMessage(status: number, code: string): string {
   if (status === 0) return 'Needs a connection. Check the signal, then open this page again.';
-  if (isSignInAgainCode(code)) return `Sign in again to view ${what}.`;
   return operatorErrorMessage(code);
 }
 

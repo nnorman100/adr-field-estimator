@@ -30,8 +30,10 @@ each page is read once per opening, the next page only on "Show more jobs", and 
 ## States
 
 - Unknown company or job id (not an id): "Company not found" or "Job not found".
-- Loading: "Loading the jobs…", "Loading the job…"; refused: the server's reason, "That job was not
-  found in this company.", or "Sign in again to view these jobs." / "… this job."
+- Loading: "Loading the jobs…", "Loading the job…"; refused: the server's reason or "That job was not
+  found in this company."; a refusal that ends the sign-in removes the screen and asks for a new
+  sign-in (the operator session); no answer at all: "Needs a connection. Check the signal, then open
+  this page again."
 - Online only: "These views need a connection." on both screens, and "Needs a connection" while the
   phone cannot reach the app; a read with no answer says "Needs a connection. Check the signal, then
   open this page again."

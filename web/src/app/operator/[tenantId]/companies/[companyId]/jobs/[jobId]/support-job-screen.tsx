@@ -35,7 +35,7 @@ export function SupportJobScreen({ companyId, jobId }: { companyId: string; jobI
         setError(
           result.code === 'not_found'
             ? 'That job was not found in this company.'
-            : supportReadMessage(result.status, result.code, 'this job'),
+            : supportReadMessage(result.status, result.code),
         );
         return;
       }
