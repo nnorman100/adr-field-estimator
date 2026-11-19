@@ -42,8 +42,11 @@ button can show and its request still be refused with 403 `not_field_owner`.
 - Signed: "This job is signed".
 - Errors: the server's message with "Try again" (same request) or "Reload the job".
 - Back to editing answered 503 after Postgres committed the new draft ID: the new draft may be
-  missing. Opening Check Scope or Photos then offers the "Start field work" recovery, which rebuilds
-  the missing draft from the last submission ([Check Scope](check-scope.md)).
+  missing. For an estimator who owns the field work, opening Check Scope or Photos then offers the
+  "Start field work" recovery, which rebuilds the missing draft from the last submission ([Check
+  Scope](check-scope.md)). A company owner who owns the field work gets no such recovery (a known
+  gap): those screens say "The field work of this job is not there yet. Try again in a moment." and
+  the owner's retry is "Back to editing" again.
 
 ## Key actions and server routes
 

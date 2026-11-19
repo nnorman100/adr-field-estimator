@@ -93,3 +93,8 @@ Each is flagged for the owner or a later fix; no code was changed.
 8. Estimators and office hold `prices_read` while the company's prices are on, but no screen links
    to Prices for them: the only link is on Company settings, which only the owner opens. They must
    type `/sign-in/{address}/prices`. See [prices.md](prices.md) and [sign-in.md](sign-in.md).
+9. After "Back to editing" answers 503 once the new draft ID is committed and the new draft is
+   missing, an estimator who owns the field work gets the Start field work recovery, but a company
+   owner who owns it does not: Check Scope and Photos show "The field work of this job is not there
+   yet. Try again in a moment." and the owner's retry is "Back to editing" again. See
+   [check-scope.md](check-scope.md) and [finish.md](finish.md).

@@ -45,6 +45,17 @@ today. There is no link to [Prices](prices.md) here (see Mismatches to check).
   out: "That sign-in timed out. Sign in again."
 - Second step required and missing: "Set up your second sign-in step", no way past it but setting
   it up or signing out. Adding another: "Add an authenticator app".
+- Reset notice: when this browser remembers a second step for this person that is now gone (a
+  marker kept when one was set up or used, company and account id only, `second-step/remember.ts`),
+  the setup screen opens with "Your second sign-in step was reset. Set it up again to continue. If
+  you did not ask for this, tell DryScope support." A person on another phone sees the ordinary
+  setup screen without it (S3-14).
+- After setting up the first authenticator app (an owner or office user, whose role needs the
+  second step): the session made at setup lacks the second-step claim, so the server still answers
+  `second_step_required` for it. The page sees the account now has an app, signs the person out and
+  shows "Your authenticator app is set up. Sign in again and enter its code."; they sign in again,
+  enter the code, and only then reach the dashboard. Adding a spare app later does not sign anyone
+  out.
 - "Verify your email" with "Send the link" and "I have verified it".
 - "Your access is turned off" ("Ask the owner of {company} to turn it back on.").
 - "{company} is not active" ("Sign-in is paused for this company. Contact DryScope support.").

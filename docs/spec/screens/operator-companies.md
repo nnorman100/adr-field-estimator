@@ -20,7 +20,7 @@ and sign-in address. The operator is not a company member and sees no customer d
 | Superadmin support (platform operator) | "Companies" and "Add a company" | list, add a company, open [one company](operator-company.md) |
 | Different-company user | the same as a company role | nothing |
 
-A tenant id that is not an operator tenant id answers 404 (`isOperatorTenantId` in the layout).
+A tenant id that is not shaped like a tenant id (letters, digits and hyphens, 1 to 128 characters) answers 404 (`isOperatorTenantId` in the layout). The layout checks only that shape: a well-formed id of a company's tenant opens the operator sign-in, and a company account that signs in there is refused by the operator API with 403 `not_an_operator` and dropped.
 
 ## States
 
@@ -34,7 +34,7 @@ A tenant id that is not an operator tenant id answers 404 (`isOperatorTenantId` 
 - Empty: "No companies yet."
 - Add a company: "Enter the company's name."; "The sign-in address is lowercase letters, digits and
   hyphens…"; done: "{name} was created."; refusals from the server (`useAction`).
-- Sign-in too old for a change: signed out with "For that change, sign in again."
+- Sign-in too old for a change (a company status, owner or second-step change after 15 minutes, `useAction`): the person stays on the administration screen, which shows "For that change, sign in again." with a "Sign in again" button; pressing it signs them out, and the sign-in screen opens with that same message. Nothing is signed out until they press it.
 
 ## Key actions and server routes
 

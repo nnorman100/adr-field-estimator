@@ -20,14 +20,14 @@ on the phone, so a retry after a lost answer is the same save.
 | Role | Sees | Can do |
 |---|---|---|
 | Owner | both forms | save both while the job is unsigned (`scope` or `coordination`) |
-| Estimator | both forms, on jobs they made, own or are assigned to; after the app records a move of field work they held, reopening the job in the same field shell keeps the forms it had loaded, with what was typed, read only, not saved (`moved`); an estimator who was assigned but never held the field work loses the forms on the next refused read | save both only while they own the job's field work and the job is unsigned (`scope`; the server refuses others with `not_field_owner`) |
+| Estimator | both forms, on jobs they made, own or are assigned to; after the app records a move of field work they held, the open job keeps the forms it had loaded, with what was typed, read only, not saved (`moved`), while they switch tabs; leaving the job and reopening it in the same field shell restores the saved values and any pending or refused save, but not text that was typed and never sent; an estimator who was assigned but never held the field work loses the forms on the next refused read | save both only while they own the job's field work and the job is unsigned (`scope`; the server refuses others with `not_field_owner`) |
 | Office | both forms | save both while the job is unsigned (`coordination`) |
 | Superadmin support | nothing | nothing |
 | Different-company user | nothing: 404 | nothing |
 
 On a fresh online page, an estimator who still has job access sees the forms; one who lost it (404,
 for example unassigned from a job they did not make) gets no forms. Only the same field shell that
-recorded a move of field work they held keeps the forms read only ([Check Scope](check-scope.md)).
+recorded a move of field work they held keeps the forms read only: unsent typing only while the job stays open, saved values and pending or refused saves also when it is reopened ([Check Scope](check-scope.md)).
 
 The screen shows the forms read only after a move away (J5) or while the job is archived or being
 checked (`canSave` in `customer-view.tsx`). It does not check whether the job is signed; the server

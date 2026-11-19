@@ -12,7 +12,7 @@ versions, price-list file), `ui.tsx`; logic in `web/src/lib/prices/`. Stages S4-
 Each company sets its own prices; DryScope supplies none ("DryScope supplies no prices: every price
 here is yours."). The owner edits a working copy (items by heading, per-row prices and bands, "What
 does this room pay?", settings), previews it on sample jobs, and publishes it as the next version.
-New estimates use the newest version; an estimate already priced keeps its version. With no
+Publishing changes what a job is priced with only for a job being priced for the first time (it takes the newest version then); a job that already has a price version keeps it, so a technician who goes Back to editing and finishes again gets the new estimate at the version the job was first priced with (`currentPin` in `web/src/lib/estimates/service.ts`), and an estimate already priced keeps its version. With no
 published version, no estimate can be priced (AGENTS.md rule 3). Estimators and office see the
 current version read only.
 
@@ -40,7 +40,9 @@ are not open for {company} yet.") and asks nothing about prices.
   whole number" holds something else; stale working copy: "Reload the saved prices".
 - Publish: "Check the prices before publishing", then "Not ready to publish: {reason}" or the form
   ("What changed (kept with the version)", 3 to 500 characters; the first publish also asks whether
-  estimates show "A price range (low to high)" or "One price"); sign-in too old: "Sign in again" ("Save
+  estimates show "A price range (low to high)" or "One price"); when an enabled item is saved at $0,
+  the check lists it under "Confirm each $0.00 price" with a box for each, and the form is not
+  offered until the check has run (the box choices are sent as `confirmZeroPrices`); sign-in too old: "Sign in again" ("Save
   your changes before you sign in again.").
 - Versions: "No version is published yet."; restore asks first ("This replaces the working copy…").
 
@@ -52,7 +54,7 @@ are not open for {company} yet.") and asks nothing about prices.
 | Read prices | `GET /api/prices` (the owner also gets the working copy) | `prices_read` |
 | Save changes | `PUT /api/prices/working-copy` | `prices_manage` |
 | Preview on sample jobs, check before publishing | `POST /api/prices/preview` | `prices_manage` |
-| Publish these prices | `POST /api/prices/publish` | `prices_manage`, sign-in under 15 minutes |
+| Publish these prices (refused as not publishable, with the reason, when an item with a zero price is not among the ones confirmed with its box) | `POST /api/prices/publish` | `prices_manage`, sign-in under 15 minutes |
 | List versions | `GET /api/prices/versions` | `prices_manage` |
 | Restore a version | `POST /api/prices/versions/{id}/restore` | `prices_manage` |
 | Download the price list | `GET /api/prices/export` | `prices_manage` |

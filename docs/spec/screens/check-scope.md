@@ -34,9 +34,15 @@ work, so it is not shown here. The company owner can move it to you.". Once the 
 move away from an estimator who held the draft (`pending.moved` in `web/src/lib/field/pending.ts`),
 there are three cases:
 
-- Reopening the job inside the same field shell (no page reload) still shows the retained draft and
-  the customer and claim forms, read only, under "This job's field work is no longer yours…"
-  (`moved` in `job-screens.tsx`).
+- Switching tabs inside the job that is open keeps it as it is: the draft, the customer and claim
+  forms with what was typed, read only, under "This job's field work is no longer yours…" (`moved`
+  in `job-screens.tsx`). Leaving the job for the Jobs list and opening it again inside the same field
+  shell (no page reload) unmounts those screens: it starts from the retained draft and job detail
+  (`pending.moved` in `web/src/lib/field/pending.ts`), read only, and the customer and claim forms
+  show their saved values and any pending or refused save, but text that was only typed and never
+  sent is gone (it lives in the form's own state, `RecordForm` in `customer-view.tsx`). Photo
+  thumbnails are fetched again from the retained photo references, so an estimator who was unassigned
+  gets 404 for them even if they were visible before leaving ([Photos](photos.md)).
 - A fresh online page shows the ownership notice above if the estimator still has job access (they
   made the job or are still assigned), or answers 404 if they lost it (unassigned from a job they did
   not make).
@@ -67,7 +73,7 @@ job's field work is no longer yours…" (unsent changes stay on the phone, read 
 |---|---|---|
 | Read the job | `GET /api/jobs/{id}` | `jobs_read` |
 | Read the room types, items and prep tasks | `GET /api/jobs/{id}/scope-lists` | `jobs_read` |
-| Start field work (become field owner) | `POST /api/jobs/{id}/field-owner` ("Nobody has started this job's field work yet. Whoever starts it owns it…"). Also shown, as "This job's field work is yours, but this phone cannot open it yet. Start field work again to finish.", when the job already names this person but its draft does not. Ways to get there: the first Start request committed the owner and did not update the draft; the owner moved the field work to this estimator (or to themself) in [Job coordination](job-coordination.md), the move committed and the existing draft still names the former owner (for example a 503 before the draft named them); or the field owner used "Back to editing" on [Finish](finish.md), got a 503 after Postgres committed the new draft ID, and the new draft is missing (Start rebuilds it from the last submission, `remakeCurrentDraft` in `web/src/lib/jobs/office.ts`). Starting again finishes each (`ownerUnset` in `job-screens.tsx`). Offered on Check Scope and on [Photos](photos.md) (`startable` in `job-screens.tsx`, `start-field-work.tsx`) | `scope` |
+| Start field work (become field owner) | `POST /api/jobs/{id}/field-owner` ("Nobody has started this job's field work yet. Whoever starts it owns it…"). Also shown, as "This job's field work is yours, but this phone cannot open it yet. Start field work again to finish.", when the job already names this person but its draft does not. Ways to get there: the first Start request committed the owner and did not update the draft; the owner moved the field work to this estimator (or to themself) in [Job coordination](job-coordination.md), the move committed and the existing draft still names the former owner (for example a 503 before the draft named them); or an estimator who owns the field work used "Back to editing" on [Finish](finish.md), got a 503 after Postgres committed the new draft ID, and the new draft is missing (their read of it is refused, so Start field work appears; Start rebuilds it from the last submission, `remakeCurrentDraft` in `web/src/lib/jobs/office.ts`). Starting again finishes each (`ownerUnset` in `job-screens.tsx`). A company owner who owns the field work gets no recovery after that 503: the owner's read of the missing draft finds nothing, `ownerUnset` is set only when a draft exists and names someone else, so Check Scope and Photos show "The field work of this job is not there yet. Try again in a moment." and no Start field work; the owner's retry is "Back to editing" again (see "Mismatches to check") Offered on Check Scope and on [Photos](photos.md) (`startable` in `job-screens.tsx`, `start-field-work.tsx`) | `scope` |
 | Save rooms, scope, counts, notes | the field database draft (`draftFieldWrites`), checked by `web/firestore.rules`; no server route | field owner with `scope` |
 
 Rules: `docs/access/jobs.md` (field owner), `docs/access/scope-lists.md`; draft lock while
@@ -83,6 +89,7 @@ submitting: `docs/access/submit.md`.
 
 ## Mismatches to check
 
+- Known gap: after "Back to editing" answers 503 once Postgres has committed the new draft ID and the new draft is missing, a company owner who owns the field work has no Start field work recovery on Check Scope or [Photos](photos.md) (`ownerUnset` and the permission-denied recovery in `job-screens.tsx` exclude the owner's missing-draft read). The screen shows "The field work of this job is not there yet. Try again in a moment."; the owner's retry is "Back to editing" on [Finish](finish.md) again. The owner's move of the field work to themself, which leaves an existing draft naming the former owner, does offer Start field work.
 - No Check Scope action opens Finish and review. It is reached from the sync chip's "Changes not
   saved" sheet ("Go to Finish and review": only for a write refused because the draft was locked,
   that is being finished or finished, online, once the job reads) and from [Review](review.md)'s

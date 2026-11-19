@@ -84,7 +84,8 @@ job views) with a sync chip for changes not yet saved.
 | Learn who is signed in and their keys | `GET /api/me` (`web/src/lib/field/field-sync.ts`, `journal-sync.ts`) |
 | Keep or not keep jobs on the phone | the phone's Firestore cache and journal only, no server route |
 | Try again a refused change | the field database (Firestore) write again |
-| Save as new draft (shown for a recorded `archived` or `owner-changed` refusal; the server rechecks access when pressed and copies only for a job archived during editing or whose field work moved and that the person can still read, never after they lost the job; the new job has a blank address and no customer, claim or photos) | `POST /api/jobs` with a new job and draft id and an empty address, then the field database |
+| Save as new draft, step 1: the eligibility check (the button shows for a recorded `archived` or `owner-changed` refusal; pressing it first classifies fresh reads of the draft and job in the browser, `refusalNow` in `web/src/lib/field/journal-sync.ts`, and copies only for a job archived during editing or whose field work moved and that the person can still read; after they lost the job the answer is `no-access` and no request to make a job is sent) | server reads of the draft, the person's role and the job (the field database and `GET /api/jobs/{id}`), no write |
+| Save as new draft, step 2: the copy, only when step 1 allows it (the new job has a blank address and no customer, claim or photos; the request names no source job, so the server does not recheck the original job) | `POST /api/jobs` with a new job and draft id and an empty address, then the field database |
 | Read a job named by an unsaved change | `GET /api/jobs/{id}` |
 | Reopen the Home Screen setup sheet (iPhone or iPad browser tab) | on the phone only, no server route |
 

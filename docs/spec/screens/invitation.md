@@ -37,8 +37,12 @@ here? Choose Set your own password.".
   invitation was cancelled. Ask the owner of {company} for a new one." or "This invitation has
   already been used.".
 - Second step needed (an owner or office invitation, and the account has no authenticator app):
-  the "Set up your second sign-in step" screen; once set up, accepting is tried again. If the account
-  already has an app but signed in without it: signed out with "Your authenticator app is set up. Sign
+  the "Set up your second sign-in step" screen (with the reset notice when this browser remembers a
+  second step that is gone, as on [Company sign-in](sign-in.md)); once set up, accepting is tried
+  again automatically. That session lacks the second-step claim, so the server can answer
+  `second_step_required` again; the account now has an app, so the person is signed out with the
+  message below and must sign in again with the code. If the account already has an app but signed
+  in without it, the same: signed out with "Your authenticator app is set up. Sign
   in again and enter its code, then accept the invitation.".
 - Sign-in too old: "Your sign-in has run out. Sign in again, then accept the invitation.".
 

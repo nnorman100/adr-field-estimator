@@ -14,7 +14,7 @@ recorded in the audit log, one row per view.
 
 | Role | Sees | Can do |
 |---|---|---|
-| Owner, estimator, office | the operator sign-in only; the route answers 403 `not_an_operator` | nothing |
+| Owner, estimator, office | the operator sign-in only (a malformed tenant id answers 404; for a well-formed one the operator API answers 403 `not_an_operator` and the sign-in is dropped) | nothing |
 | Superadmin support (platform operator) | "{company}: team" ("Read-only support view. Company status: {status}. Opening this view is recorded in the audit log."), Members, Invitations | read only |
 | Different-company user | the same as a company role | nothing |
 

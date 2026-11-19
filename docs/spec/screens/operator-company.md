@@ -17,7 +17,7 @@ replace the owner by link; reset a member's second step after a phone check; and
 
 | Role | Sees | Can do |
 |---|---|---|
-| Owner, estimator, office | the operator sign-in only; the routes answer 403 `not_an_operator` | nothing |
+| Owner, estimator, office | the operator sign-in only (a malformed tenant id answers 404; for a well-formed one the operator API answers 403 `not_an_operator` and the sign-in is dropped) | nothing |
 | Superadmin support (platform operator) | the company's name, Status, Sign-in address, Sign-in tenant, and the sections Status, Owner, Second step, Team | suspend (asks first), reactivate, archive (only for a suspended company; asks first); invite or replace the owner (replace needs "I understand the current owner is turned off and signed out everywhere straight away."); list members and reset one's second step (needs "I confirmed by phone that this is {name}."); open the team view |
 | Different-company user | the same as a company role | nothing |
 
@@ -38,9 +38,8 @@ row ("Listing the team here is recorded in the audit log, like the team view.").
   (after a replace, first "The previous owner is turned off and signed out."), with the link and
   copy ("Link copied." / "Could not copy. Select the link and copy it.").
 - Second step: "This company has nobody to reset yet."; done: "Second step reset for {who}. No email
-  is sent yet: tell them by phone that they must set it up again when they sign in." (or "They have
-  been emailed.").
-- Refusals and "For that change, sign in again.": as on [Operator: companies](operator-companies.md).
+  is sent yet: tell them by phone that they must set it up again when they sign in."
+- Refusals and "For that change, sign in again.": as on [Operator: companies](operator-companies.md). A status, owner or second-step change with a sign-in over 15 minutes old leaves the person on this screen with that message and a "Sign in again" button; pressing it signs them out and returns to the operator sign-in.
 
 ## Key actions and server routes
 

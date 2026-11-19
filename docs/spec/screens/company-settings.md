@@ -10,9 +10,13 @@ S7-4.
 
 The owner sets what prints on every document: the company profile (company address, phone, email,
 CSLB licence, document sign-off), the letterhead lines (emergency phone, fax, website, tagline,
-mailing address) and the document settings (proposal layout, the company's own clauses, prep task
-texts, photo log, start-work authorization, payment terms, and "Show the previous price on a revised
-estimate"). The company name is set by DryScope when the company is created and is shown, not
+mailing address) and the document settings (proposal layout, the company's own clauses, photo log,
+start-work authorization, payment terms). The settings do different things. The company's prep task
+texts are the list the field picker offers on Check Scope (`web/src/lib/scope-lists/service.ts`);
+the letter prints the prep tasks recorded in each room, as submitted, not the company's list
+(`web/src/lib/estimates/inputs.ts`, `web/src/engine/proposal-letter.ts`). "Show the previous price
+on a revised estimate" is saved but changes nothing yet: the document reader does not pass it to the
+engine, and Reprice, the revised estimate, is not built (see "Not built yet"). The company name is set by DryScope when the company is created and is shown, not
 edited. A box at the top says whether documents can be issued and signed, or lists what is still
 needed (the engine's setup check). Each company's identity prints exactly as entered here (AGENTS.md
 rule 7).
@@ -37,8 +41,10 @@ shows the Prices link only when `GET /api/me` says the role can read prices (`pr
   on [Team](team.md).
 - Ready: "Ready to issue and sign documents" or "Still needed before documents can be issued and
   signed" with the missing items.
-- Saving, saved, refused: the server's message; a stale revision is refused and the typed values
-  stay.
+- Saving, saved, refused: the server's message. A stale revision (another owner tab saved first) is
+  refused with 409 `stale_revision` and the profile as saved: that saved profile replaces the whole
+  form, the typed profile and letterhead fields and the document settings alike, so the owner must
+  enter the edit again (`show` in `company-form.tsx`). Other refusals keep the typed values.
 - AI use: "Loading the AI use…", or "We could not load the AI use…".
 
 ## Key actions and server routes
@@ -55,6 +61,8 @@ Rules: `docs/access/company-profile.md`, `docs/access/ai-usage.md`.
 
 ## Not built yet
 
+- Reprice and the revised estimate that "Show the previous price on a revised estimate" is for
+  (S5b-6): the setting is stored and not used.
 - Record retention days (`retention_manage`) and delivery settings (`delivery_manage`): keys exist
   in `web/src/lib/access/roles.ts`, no screen in `web/`.
 
