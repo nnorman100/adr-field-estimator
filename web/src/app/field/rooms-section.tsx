@@ -59,7 +59,7 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
           .filter((room) => !listed.has(room.id) && dirty[room.id] && !still.some((one) => one.id === room.id));
     setKept([...still, ...gone]);
   }
-  const { busy, error, notice, setError, save: saveEdit, open } = useFieldEdit(job);
+  const { busy, error, notice, setError, save: saveEdit } = useFieldEdit(job);
   const writing = usePending(() => pending.roomWriting(jobId, draftId));
   const readOnly = !job.editable;
   const full = draft.rooms.length >= MAX_ROOMS;
@@ -77,7 +77,7 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
   useEffect(loadLists, [user, jobId, job.session.online, checkAccess]);
 
   // Adding and removing rooms are built from the phone's cache under a guard (src/lib/field/room-actions.ts).
-  const actions = { db: job.session.db, ref: job.draftRef, jobId, save: saveEdit, setError, live: open };
+  const actions = { db: job.session.db, ref: job.draftRef, jobId, save: saveEdit, setError };
   async function remove(roomId: string, label: string) {
     if (writing || !window.confirm(`Remove ${label} from this job?`)) return;
     await removeRoom(actions, roomId, label, typed.rooms[roomId]?.at ?? 0);

@@ -5,6 +5,7 @@ import { UnsentMarkNotSaved } from '@/lib/field-db';
 import { ReopenTheApp } from '@/lib/field/idb';
 import { JournalNotSaved, type DocWrite, type Docs } from '@/lib/field/journal';
 import { journaledEdit } from '@/lib/field/journal-sync';
+import { pending } from '@/lib/field/pending';
 import { draftDocs, fieldRefusal } from '@/lib/field/store';
 import type { JobContext } from './job-screens';
 
@@ -43,7 +44,8 @@ export function useFieldEdit(job: JobContext) {
     try {
       const { acknowledged } = await journaledEdit(job.session.client, job.draftRef, writes, job.jobId, held);
       // The SDK's local transaction is finished; update the draft before clearing the form's edits.
-      await job.reloadDraft('cache');
+      if (live.current) await job.reloadDraft('cache');
+      else pending.draftSaved(job.jobId);
       onPhone = true;
       if (current()) {
         locallySaved();
@@ -65,6 +67,5 @@ export function useFieldEdit(job: JobContext) {
     }
     return onPhone;
   }
-  const open = () => live.current;
-  return { busy, error, notice, setError, setNotice, save, open };
+  return { busy, error, notice, setError, setNotice, save };
 }

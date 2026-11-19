@@ -104,14 +104,15 @@ describe('a room Add or Remove after a remount', () => {
     expect(cache.order).toEqual(['kitchen']);
   });
 
-  it('tells the open screen to read the draft after a local write, and not after one that did not land', async () => {
+  it('releases the guard after a local write, and after one that did not land, and leaves the draft reads to the save', async () => {
     const before = pending.draftChanges(jobId);
+    const savedBefore = pending.draftsSaved(jobId);
     await add('kitchen');
-    expect(pending.draftChanges(jobId)).toBe(before + 1);
     expect(pending.roomWriting(jobId, ref.draftId)).toBe(false);
     await add('hall', { save: () => Promise.resolve(false) });
-    expect(pending.draftChanges(jobId)).toBe(before + 1);
     expect(pending.roomWriting(jobId, ref.draftId)).toBe(false);
+    expect(pending.draftChanges(jobId)).toBe(before);
+    expect(pending.draftsSaved(jobId)).toBe(savedBefore);
   });
 
   it('reads no photo references', async () => {

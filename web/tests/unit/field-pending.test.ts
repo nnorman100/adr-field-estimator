@@ -138,6 +138,18 @@ describe('what a late send posts for the open screen of its job', () => {
     expect(pending.detail('job-late')).toBeNull();
   });
 
+  it('counts saves that finished after their form closed per job, keeping no cache read for a later screen', () => {
+    pending.openFor('company-a/user-late');
+    const before = pending.draftsSaved('job-late');
+    const changes = pending.draftChanges('job-late');
+    pending.draftSaved('job-late');
+    expect(pending.draftsSaved('job-late')).toBe(before + 1);
+    expect(pending.draftsSaved('job-other')).toBe(0);
+    expect(pending.draftChanges('job-late')).toBe(changes);
+    pending.openFor('company-a/user-other');
+    expect(pending.draftsSaved('job-late')).toBe(0);
+  });
+
   it('counts draft changes per job, and starts empty for another sign-in', () => {
     pending.openFor('company-a/user-late');
     const before = pending.draftChanges('job-late');

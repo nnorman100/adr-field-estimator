@@ -100,7 +100,7 @@ type State = {
   // that settled after its screen closed.
   details: Record<string, JobDetail>;
   draftChanges: Record<string, number>;
-  draftChangedFrom: Record<string, 'cache' | undefined>;
+  draftsSaved: Record<string, number>;
   // By job: its access mark, and the server's reason while it refuses to show the job. `marked` is
   // the last mark handed out, of any job; `readAt`, by job, the mark of the newest read that showed it.
   marks: Record<string, number>;
@@ -147,7 +147,7 @@ const EMPTY = {
   photos: {},
   details: {},
   draftChanges: {},
-  draftChangedFrom: {},
+  draftsSaved: {},
   marks: {},
   marked: 0,
   readAt: {},
@@ -495,13 +495,14 @@ export const pending = {
     jobId === undefined ? Object.values(state.archivalsDone).reduce((sum, count) => sum + count, 0) : (state.archivalsDone[jobId] ?? 0),
   draftChanges: (jobId: string): number => state.draftChanges[jobId] ?? 0,
   // A send changed the job's field draft after its screen closed: the open screen reads it again.
-  draftChangeSource: (jobId: string): 'cache' | undefined => state.draftChangedFrom[jobId],
-  // `source` 'cache': the change is already on this phone, so the open screen reads it from there.
-  draftChanged(jobId: string, source?: 'cache') {
-    change({
-      draftChanges: { ...state.draftChanges, [jobId]: pending.draftChanges(jobId) + 1 },
-      draftChangedFrom: { ...state.draftChangedFrom, [jobId]: source },
-    });
+  draftChanged(jobId: string) {
+    change({ draftChanges: { ...state.draftChanges, [jobId]: pending.draftChanges(jobId) + 1 } });
+  },
+  draftsSaved: (jobId: string): number => state.draftsSaved[jobId] ?? 0,
+  // A change was saved on this phone after the form that made it closed: the screen open now reads
+  // the cache once. Nothing is kept for a screen opened later, which reads the job as any open does.
+  draftSaved(jobId: string) {
+    change({ draftsSaved: { ...state.draftsSaved, [jobId]: pending.draftsSaved(jobId) + 1 } });
   },
 };
 
