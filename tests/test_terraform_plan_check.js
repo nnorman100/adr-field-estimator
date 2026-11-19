@@ -393,7 +393,7 @@ describe.each(['test', 'live'])('data root, %s: grants and protection', (environ
       return check(changed, 'data', environment);
     };
     const pools =
-      'principalSet://iam.googleapis.com/projects/1/locations/global/workloadIdentityPools';
+      'principalSet://iam.googleapis.com/projects/570228742694/locations/global/workloadIdentityPools';
     const pool = `${pools}/dryscope-${environment}`;
     expect(withBinding(`${pool}/attribute.repository_id/42`)).toEqual([]);
     // D-024: the repository-name form is refused; only the numeric repository id is trusted.
@@ -406,7 +406,7 @@ describe.each(['test', 'live'])('data root, %s: grants and protection', (environ
 
   test('the migrator may take the same scoped principal set, on its own account only', () => {
     const address = 'google_service_account_iam_member.migrate_workload_identity[0]';
-    const pool = `principalSet://iam.googleapis.com/projects/1/locations/global/workloadIdentityPools/dryscope-${environment}`;
+    const pool = `principalSet://iam.googleapis.com/projects/570228742694/locations/global/workloadIdentityPools/dryscope-${environment}`;
     const withBinding = (account, member = `${pool}/attribute.repository_id/42`) => {
       const changed = plan();
       changed.push({
@@ -426,14 +426,19 @@ describe.each(['test', 'live'])('data root, %s: grants and protection', (environ
     expect(withBinding('migrate')).toEqual([]);
     expect(withBinding('api')).toHaveLength(1);
     expect(withBinding('migrate', `${pool}/*`)).toHaveLength(1);
+    const foreign = pool.replace('570228742694', '999999999999');
+    expect(withBinding('migrate', `${foreign}/attribute.repository_id/42`)).toHaveLength(1);
   });
 
-  test('a pool shared between environments or the other environment’s pool is refused', () => {
+  // A pool in another Google Cloud project is refused even with this environment's pool name: that
+  // project's owner, not this one, decides which identities it admits.
+  test('a shared pool, the other environment’s pool or another project’s pool is refused', () => {
     const address = 'google_service_account_iam_member.deploy_workload_identity[0]';
     const other = environment === 'test' ? 'live' : 'test';
     const pools =
-      'principalSet://iam.googleapis.com/projects/1/locations/global/workloadIdentityPools';
-    for (const pool of ['github', `dryscope-${other}`]) {
+      'principalSet://iam.googleapis.com/projects/570228742694/locations/global/workloadIdentityPools';
+    const foreign = `${pools.replace('570228742694', '999999999999')}/dryscope-${environment}`;
+    for (const pool of [`${pools}/github`, `${pools}/dryscope-${other}`, foreign]) {
       const changed = plan();
       changed.push({
         address,
@@ -442,7 +447,7 @@ describe.each(['test', 'live'])('data root, %s: grants and protection', (environ
           actions: ['create'],
           after: {
             role: 'roles/iam.workloadIdentityUser',
-            member: `${pools}/${pool}/attribute.repository_id/42`,
+            member: `${pool}/attribute.repository_id/42`,
             service_account_id: `projects/dryscope/serviceAccounts/dryscope-deploy-${environment}@dryscope.iam.gserviceaccount.com`,
           },
         },

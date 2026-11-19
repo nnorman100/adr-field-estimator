@@ -266,13 +266,14 @@ function expectedPlan(root, env) {
       location: REGION,
     };
     // Present only after the owner supplies a principal set from this environment's own pool,
-    // scoped to one repository by its numeric id (D-024: never the repository-name form).
+    // scoped to one repository by its numeric id (D-024: never the repository-name form). The pool
+    // must be in this project: a same-named pool in another project is controlled by its owner.
     const wif = 'google_service_account_iam_member.deploy_workload_identity[0]';
     optional.add(wif);
     grants[wif] = {
       role: 'roles/iam.workloadIdentityUser',
       member: new RegExp(
-        `^principalSet://iam\\.googleapis\\.com/projects/[0-9]+/locations/global/workloadIdentityPools/dryscope-${env}/attribute\\.repository_id/[0-9]+$`,
+        `^principalSet://iam\\.googleapis\\.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/dryscope-${env}/attribute\\.repository_id/[0-9]+$`,
       ),
       condition: null,
       service_account_id: `projects/${PROJECT}/serviceAccounts/dryscope-deploy-${env}@${PROJECT}.iam.gserviceaccount.com`,

@@ -393,7 +393,7 @@ run "pool_wide_workload_identity_principal_set_is_refused" {
   command = plan
 
   variables {
-    workload_identity_principal_set = "principalSet://iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/dryscope-${var.environment}/*"
+    workload_identity_principal_set = "principalSet://iam.googleapis.com/projects/570228742694/locations/global/workloadIdentityPools/dryscope-${var.environment}/*"
   }
 
   expect_failures = [var.workload_identity_principal_set]
@@ -403,7 +403,7 @@ run "wildcard_inside_the_repository_is_refused" {
   command = plan
 
   variables {
-    workload_identity_principal_set = "principalSet://iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/dryscope-${var.environment}/attribute.repository/nnorman100/*"
+    workload_identity_principal_set = "principalSet://iam.googleapis.com/projects/570228742694/locations/global/workloadIdentityPools/dryscope-${var.environment}/attribute.repository/nnorman100/*"
   }
 
   expect_failures = [var.workload_identity_principal_set]
@@ -413,7 +413,7 @@ run "a_single_identity_is_not_a_principal_set" {
   command = plan
 
   variables {
-    workload_identity_principal_set = "principal://iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/github/subject/anyone"
+    workload_identity_principal_set = "principal://iam.googleapis.com/projects/570228742694/locations/global/workloadIdentityPools/github/subject/anyone"
   }
 
   expect_failures = [var.workload_identity_principal_set]
@@ -423,7 +423,7 @@ run "a_pool_shared_between_environments_is_refused" {
   command = plan
 
   variables {
-    workload_identity_principal_set = "principalSet://iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/github/attribute.repository_id/987654321"
+    workload_identity_principal_set = "principalSet://iam.googleapis.com/projects/570228742694/locations/global/workloadIdentityPools/github/attribute.repository_id/987654321"
   }
 
   expect_failures = [var.workload_identity_principal_set]
@@ -433,7 +433,19 @@ run "the_other_environments_pool_is_refused" {
   command = plan
 
   variables {
-    workload_identity_principal_set = "principalSet://iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/dryscope-${var.environment == "test" ? "live" : "test"}/attribute.repository_id/987654321"
+    workload_identity_principal_set = "principalSet://iam.googleapis.com/projects/570228742694/locations/global/workloadIdentityPools/dryscope-${var.environment == "test" ? "live" : "test"}/attribute.repository_id/987654321"
+  }
+
+  expect_failures = [var.workload_identity_principal_set]
+}
+
+# F8: a pool named like this environment's but in another Google Cloud project is refused; that
+# project's owner, not this one, decides which identities the pool admits.
+run "a_pool_in_another_project_is_refused" {
+  command = plan
+
+  variables {
+    workload_identity_principal_set = "principalSet://iam.googleapis.com/projects/999999999999/locations/global/workloadIdentityPools/dryscope-${var.environment}/attribute.repository_id/987654321"
   }
 
   expect_failures = [var.workload_identity_principal_set]
@@ -443,7 +455,7 @@ run "a_repository_scoped_principal_set_is_accepted_and_bound_to_deploy_only" {
   command = plan
 
   variables {
-    workload_identity_principal_set = "principalSet://iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/dryscope-${var.environment}/attribute.repository_id/987654321"
+    workload_identity_principal_set = "principalSet://iam.googleapis.com/projects/570228742694/locations/global/workloadIdentityPools/dryscope-${var.environment}/attribute.repository_id/987654321"
   }
 
   assert {
@@ -469,7 +481,7 @@ run "the_migrator_takes_the_same_scoped_principal_set" {
   command = plan
 
   variables {
-    workload_identity_principal_set = "principalSet://iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/dryscope-${var.environment}/attribute.repository_id/987654321"
+    workload_identity_principal_set = "principalSet://iam.googleapis.com/projects/570228742694/locations/global/workloadIdentityPools/dryscope-${var.environment}/attribute.repository_id/987654321"
   }
 
   assert {

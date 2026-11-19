@@ -406,6 +406,11 @@ describe('data root, test: the floor setting and the evaluation account', () => 
       binding({ member: PRINCIPAL_SET.replace('dryscope-test', 'dryscope-live') }),
     ).not.toEqual([]);
     expect(binding({ member: PRINCIPAL_SET.replace(/attribute.*$/, '*') })).not.toEqual([]);
+    expect(
+      binding({
+        member: PRINCIPAL_SET.replace('/projects/570228742694/', '/projects/999999999999/'),
+      }),
+    ).not.toEqual([]);
   });
 });
 
