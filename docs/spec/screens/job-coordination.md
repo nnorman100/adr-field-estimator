@@ -40,7 +40,8 @@ from here (no Unassign button for them).
   but the draft does not name the new owner yet. The owner can send the same move again, or the
   person moved to (an estimator, or the owner moving it to themself while the existing draft still
   names the former owner) can open Check Scope or Photos and use "Start field work" to finish it
-  ([Check Scope](check-scope.md) lists every recovery trigger).
+  ([Check Scope](check-scope.md) lists every trigger of that prompt and which ones Start can repair:
+  it cannot make a job's first draft).
 - Done: "The field work was moved.", "The estimator was assigned.", "Notes saved.".
 
 ## Key actions and server routes

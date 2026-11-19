@@ -46,7 +46,7 @@ button can show and its request still be refused with 403 `not_field_owner`.
   "Start field work" recovery, which rebuilds the missing draft from the last submission ([Check
   Scope](check-scope.md)). A company owner who owns the field work gets no such recovery (a known
   gap): those screens say "The field work of this job is not there yet. Try again in a moment." and
-  the owner's retry is "Back to editing" again.
+  the owner's retry is "Back to editing" again, which works only on this screen as it stands (it keeps the request's IDs, so the retry is the same request). If the owner reloads or leaves and reopens Finish, it cannot load the missing draft and shows "We could not open this job" with no Back to editing button.
 
 ## Key actions and server routes
 

@@ -21,7 +21,9 @@ here: each company signs in at its own address ([Company sign-in](sign-in.md)).
 
 ## States
 
-- Remembered sign-in page: replaced at once by `/sign-in/{address}`.
+- Remembered sign-in page: replaced at once by `/sign-in/{address}`. That is a fresh visit to the
+  [sign-in page](sign-in.md), so if the company has since been suspended or archived the person
+  lands on "This sign-in link is not recognised" there, not on the inactive-company panel.
 - None remembered: the title, the sentence and a "Health check" button.
 
 ## Key actions and server routes
@@ -32,8 +34,7 @@ here: each company signs in at its own address ([Company sign-in](sign-in.md)).
 
 ## Not built yet
 
-- The S8 go-live plan notes the start page says only the sentence above and shows no environment
-  mark (`docs/plans/S8.md`).
+Nothing.
 
 ## Mismatches to check
 

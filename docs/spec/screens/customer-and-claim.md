@@ -8,9 +8,11 @@ Part of [Screen specs](README.md). Address: `/field?job={id}&view=customer`. Bui
 Two forms: Customer (customer name, customer phone, customer email, property address) and Claim (insurance carrier, claim number, policy number, date of loss, cause of loss,
 adjuster name, email and phone, deductible). The documents print the customer's name and the property
 address; the customer's phone and email are stored in the submitted record but the estimate builder
-does not carry them into the documents (`web/src/lib/estimates/inputs.ts`). The claim's fields (claim
-number, policy number, date and cause of loss, adjuster contact) print in the scope defense letter's
-addressee and reference block (`claimReference` and the letter in `web/src/engine/documents.ts`); the
+does not carry them into the documents (`web/src/lib/estimates/inputs.ts`). Every field of the claim
+that is filled in prints in the scope defense letter: the insurance carrier and the adjuster's name,
+email and phone in its addressee block, and the claim number, policy number, date of loss, cause
+of loss and deductible in its reference block (`addressee`, `claimReference` and the letter in
+`web/src/engine/documents.ts`); the
 itemized claim and its Scope JSON export carry the priced line items, not these fields. They are stored on the server (Postgres), not in the
 field draft, so they need a connection. Each save carries the job's revision and a change id made
 on the phone, so a retry after a lost answer is the same save.

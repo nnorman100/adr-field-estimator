@@ -8,12 +8,18 @@ S7-4.
 
 ## Purpose
 
-The owner sets what prints on every document: the company profile (company address, phone, email,
-CSLB licence, document sign-off), the letterhead lines (emergency phone, fax, website, tagline,
-mailing address) and the document settings (proposal layout, the company's own clauses, photo log,
-start-work authorization, payment terms). The settings do different things. The company's prep task
+The owner sets what prints on the company's documents: the company profile (company address, phone,
+email, CSLB licence, document sign-off), the letterhead lines (emergency phone, fax, website,
+tagline, mailing address) and the document settings (proposal layout, the company's own clauses,
+photo log, start-work authorization, payment terms). The two documents carry different parts. The
+proposal's letterhead prints the name, tagline, address, mailing address, phone, emergency phone,
+fax, email, website and CSLB licence, each line only when set (`letterheadLines` in
+`web/src/lib/estimates/proposal.ts`). The scope defense letter builds its own header from the
+company name, address, phone and CSLB licence only, so the tagline, mailing address, emergency
+phone, fax, email and website do not print there, and it closes with the sign-off and the company
+name (`web/src/engine/documents.ts`). The settings do different things too. The company's prep task
 texts are the list the field picker offers on Check Scope (`web/src/lib/scope-lists/service.ts`);
-the letter prints the prep tasks recorded in each room, as submitted, not the company's list
+the proposal letter prints the prep tasks recorded in each room, as submitted, not the company's list
 (`web/src/lib/estimates/inputs.ts`, `web/src/engine/proposal-letter.ts`). "Show the previous price
 on a revised estimate" is saved but changes nothing yet: the document reader does not pass it to the
 engine, and Reprice, the revised estimate, is not built (see "Not built yet"). The company name is set by DryScope when the company is created and is shown, not

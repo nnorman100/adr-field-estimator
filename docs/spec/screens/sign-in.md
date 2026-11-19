@@ -32,7 +32,10 @@ today. There is no link to [Prices](prices.md) here (see Mismatches to check).
 
 ## States
 
-- Unknown address: "This sign-in link is not recognised" (`not-found.tsx`).
+- Unknown address: "This sign-in link is not recognised" (`not-found.tsx`, a 404). The server looks
+  the address up on every fresh visit and finds only an active company with a sign-in tenant, so a
+  malformed address, an unknown one, a company without a tenant and a suspended or archived company
+  all show it alike; the page says nothing about which addresses exist (`loadSignInScreen`).
 - Sign-in not set up for this environment: "Sign-in is not set up here yet. Try again later."
 - Checking: "Checking your sign-in…"; getting ready for no signal: "Getting DryScope ready to work
   with no signal…"; not ready: "DryScope could not get ready to open with no signal on this phone.
@@ -58,7 +61,10 @@ today. There is no link to [Prices](prices.md) here (see Mismatches to check).
   out.
 - "Verify your email" with "Send the link" and "I have verified it".
 - "Your access is turned off" ("Ask the owner of {company} to turn it back on.").
-- "{company} is not active" ("Sign-in is paused for this company. Contact DryScope support.").
+- "{company} is not active" ("Sign-in is paused for this company. Contact DryScope support."): only
+  on a page that had already loaded while the company was active and then received `company_inactive`
+  from `GET /api/me` (the person signed in, or was signed in, as it was suspended). A fresh visit to a
+  suspended company's address gets "This sign-in link is not recognised" instead.
 - Unavailable: "We could not check your sign-in" with "Try again".
 - Sign out with unsent field work: "Work not sent yet" with "Keep it and sign out", "Discard it and
   sign out" or go back.

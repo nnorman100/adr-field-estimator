@@ -24,7 +24,8 @@ continues as for any member.
 | Different-company user | this page signs in to this company's tenant only; their account is not in it | nothing |
 
 The page answers 404 ("This sign-in link is not recognised") when the id is not a UUID or the address
-names no company. Signed out, the sign-in form adds "You have been invited to {company}. First time
+names no active company with a sign-in tenant: a fresh visit to the link of a suspended or archived
+company gets it too, the same lookup as the [sign-in page](sign-in.md). Signed out, the sign-in form adds "You have been invited to {company}. First time
 here? Choose Set your own password.".
 
 ## States

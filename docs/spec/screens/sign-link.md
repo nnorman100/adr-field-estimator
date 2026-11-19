@@ -38,8 +38,10 @@ signs, the job moves from submitted to signed and the same used link still opens
 agreement, read only, for 30 days while the maker keeps access (`web/src/lib/links/signing.ts`).
 While the company's prices are on, [Review](review.md) lists the link by its stored state (and
 `stateOf`), which does not recheck the maker, so staff can see a pending link that the recipient is
-refused (for example after the maker lost the job). With prices off, Review shows only "Prices are not
-switched on" and the staff link routes answer 404, so staff see no link.
+refused (for example after the maker lost the job). With prices off, a fresh load of Review shows only
+"Prices are not switched on" and the staff link routes answer 404, so staff see no link there (a
+Review already open when prices are switched off keeps whatever link status or address it last
+loaded on screen, and cannot list or replace it).
 
 ## States
 

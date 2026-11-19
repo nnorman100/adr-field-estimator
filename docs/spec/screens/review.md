@@ -62,8 +62,10 @@ The screen decides by keys from `GET /api/me`: pricing by `audit`, signing and s
   link's status is listed: the stored state (active, revoked or expired), which does not recheck the
   maker, so a link can read "active" here while its recipient is refused because the maker lost the
   job, the key or the company's prices (see [Signing link](sign-link.md)). While the company's prices are on, the owner or office can then
-  "Replace the link"; with prices switched off, Review stops at "Prices are not switched on" and the
-  staff link routes answer 404, so nobody can see or replace a link until prices are back on; an estimator can "Make a link" only for a set with no "active" link, so an
+  "Replace the link"; with prices switched off, a fresh load of Review stops at "Prices are not switched on" and the
+  staff link routes answer 404, so nobody can list or replace a link until prices are back on (a
+  Review already open when the switch is turned off keeps the link status or addresses it last
+  loaded on screen, but listing and replacing are then refused); an estimator can "Make a link" only for a set with no "active" link, so an
   estimator who missed the first answer, or whose link only reads active, cannot replace it (see
   "Mismatches to check"). For a link signed by the homeowner, the
   addresses went to the homeowner's page, not this phone.
@@ -100,7 +102,7 @@ Rules: `docs/access/estimate.md`, `docs/access/signing.md`, `docs/access/signing
   (`web/src/lib/agreements/service.ts`). If it does not reach the phone, an estimator holding only
   `sign` has no way to get them (both links read active, so Make a link is not offered); the owner or
   office must replace them, which works only while the company's prices are on (with prices off,
-  Review stops at "Prices are not switched on" and the staff link routes answer 404).
+  a fresh load of Review stops at "Prices are not switched on" and the staff link routes answer 404).
 - A document link, or a pending signing link, is listed by its stored state, not by whether its recipient
   can still open it: the recipient's page also needs the maker to still be an active member with the
   key, the company active with prices on, and the job still visible to them (`sign-link.md`,
