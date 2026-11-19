@@ -53,8 +53,16 @@ export function priceLines(totals: EstimateView['totals']): { customer: string; 
   return { customer: `Customer estimate range: ${dollars(totals.low.total)} to ${dollars(totals.high.total)}`, itemized };
 }
 
+/** The price-point adjustment of each end the customer price shows, untaxed (S4-4e); null when neither end has one. */
+export function pricePointLine(low: EstimateEnd, high: EstimateEnd | null): string | null {
+  if (!low.price_point && !high?.price_point) return null;
+  const amount = (end: EstimateEnd): string => dollars(end.price_point ?? '0.00');
+  if (!high) return `Price-point adjustment (not taxed): ${amount(low)}`;
+  return `Price-point adjustment (not taxed): ${amount(low)} at the low end, ${amount(high)} at the high end`;
+}
+
 /** One end's charges in the order the engine adds them into its total: the subtotal, then each adjustment it charged. */
-export function chargeRows(end: EstimateEnd, afterHoursLabel: string): Array<{ label: string; amount: string }> {
+export function chargeRows(end: EstimateEnd, afterHoursLabel: string, withPricePoint = true): Array<{ label: string; amount: string }> {
   const adjustments = [
     { label: afterHoursLabel, amount: end.after_hours },
     ...end.trade_minimums.map((row) => ({ label: `${row.name} trade minimum`, amount: row.amount })),
@@ -62,7 +70,7 @@ export function chargeRows(end: EstimateEnd, afterHoursLabel: string): Array<{ l
     { label: 'Overhead and profit', amount: end.overhead_profit },
     { label: 'Sales tax', amount: end.tax },
     // Rounding up to the company's price point comes last, outside every bucket and untaxed (S4-4e).
-    { label: 'Price-point adjustment', amount: end.price_point ?? '0.00' },
+    { label: 'Price-point adjustment', amount: withPricePoint ? (end.price_point ?? '0.00') : '0.00' },
   ];
   return [{ label: 'Subtotal', amount: end.subtotal }, ...adjustments.filter((row) => row.amount !== '0.00')];
 }

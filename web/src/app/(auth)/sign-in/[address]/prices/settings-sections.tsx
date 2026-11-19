@@ -215,7 +215,7 @@ export function SettingsSection({ table, onChange, published }: Edit & { publish
         label="Round the customer price up to a price point"
         checked={policy.price_point !== undefined}
         hint="Off by default. Example: with steps of $100 ending in $99, $2,431.17 becomes $2,499. The difference prints as its own line, untaxed; a price is never rounded down."
-        onChange={(on) => set({ price_point: on ? { step: '100', ending: '99' } : undefined })}
+        onChange={(on) => set({ price_point: on ? { step: '', ending: '' } : undefined })}
       />
       {policy.price_point ? (
         <>

@@ -84,12 +84,13 @@ export function exemptCharged(mix: Mix, adjustment: ReturnType<typeof adjustment
 /**
  * What each trade with a line at this end that carries overhead and profit is short of its minimum, in
  * trade-id order. Items that are exempt from overhead and profit (a rental, say) are neither counted toward a
- * minimum nor able to trigger one.
+ * minimum nor able to trigger one. `exact` leaves the amounts unrounded, for a total that rounds no minimum.
  */
 export function tradeMinimums(
   trades: Trade[],
   mix: Mix,
   adjustment: ReturnType<typeof adjustments>,
+  exact = false,
 ): TradeMinimum[] {
   const owed: TradeMinimum[] = [];
   for (const trade of trades) {
@@ -98,7 +99,8 @@ export function tradeMinimums(
     const minimum = Dec.parse(trade.minimum_charge);
     if (minimum.isZero()) continue;
     const charged = counted.add(adjustment.byGroup.get(trade.trade_id) ?? ZERO);
-    const amount = money(maxDec(ZERO, minimum.sub(charged)));
+    const short = maxDec(ZERO, minimum.sub(charged));
+    const amount = exact ? short : money(short);
     if (!amount.isZero()) owed.push({ tradeId: trade.trade_id, name: trade.name, amount });
   }
   return owed;

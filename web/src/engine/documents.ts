@@ -227,7 +227,6 @@ function endJson(end: End): JObj {
     tax: money(end.tax).toString(),
     total: money(end.total).toString(),
   };
-  if (!end.pricePoint.isZero()) body.price_point = money(end.pricePoint).toString();
   if (end.tradeMinimums.length) {
     body.trade_minimums = end.tradeMinimums.map((row) => ({
       amount: money(row.amount).toString(),
@@ -322,9 +321,24 @@ function addressee(claim: Claim | null): string {
     .join('\n');
 }
 
-function estimateSentence(total: Dec, low: Dec, high: Dec | null, explanation: string | null, single: boolean): string {
-  if (single) return `Itemized total: $${total.format(',.2f')}.`;
-  const sentence = `Itemized total: $${total.format(',.2f')}. Customer estimate range: $${low.format(',.2f')} to $${(high ?? low).format(',.2f')}.`;
+function pricePointSentence(low: Dec, high: Dec | null): string {
+  const amount = (value: Dec): string => `$${value.format(',.2f')}`;
+  if (high === null) return low.isZero() ? '' : ` Price-point adjustment (not taxed): ${amount(low)}.`;
+  if (low.isZero() && high.isZero()) return '';
+  if (low.eq(high)) return ` Price-point adjustment (not taxed): ${amount(low)} at each end.`;
+  return ` Price-point adjustment (not taxed): ${amount(low)} at the low end and ${amount(high)} at the high end.`;
+}
+
+function estimateSentence(
+  total: Dec,
+  low: Dec,
+  high: Dec | null,
+  explanation: string | null,
+  single: boolean,
+  adjustment: string,
+): string {
+  if (single) return `Itemized total: $${total.format(',.2f')}.${adjustment}`;
+  const sentence = `Itemized total: $${total.format(',.2f')}. Customer estimate range: $${low.format(',.2f')} to $${(high ?? low).format(',.2f')}.${adjustment}`;
   return explanation ? `${sentence} ${explanation}` : sentence;
 }
 
@@ -429,7 +443,17 @@ export function makeDocuments(input: {
     ...(sizing ? [sizing] : []),
     `Scope:\n${recommendations.join('\n')}`,
     clauses.join('\n'),
-    estimateSentence(total, low, high, explanation, single),
+    estimateSentence(
+      total,
+      low,
+      high,
+      explanation,
+      single,
+      pricePointSentence(
+        money(priced.totals.low.pricePoint),
+        priced.totals.mode === 'range' && priced.totals.high ? money(priced.totals.high.pricePoint) : null,
+      ),
+    ),
     ['Sincerely,', identity?.signoff ?? '', companyName].filter((line) => line.trim()).join('\n'),
   ].join('\n\n');
   const proposal: JObj = {

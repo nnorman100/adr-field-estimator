@@ -336,15 +336,15 @@ export function computeTotals(data: Inspection, lines: PriceLine[], policy: Poli
   // multiplier applies to flagged items only; an item that is exempt from overhead and profit is left out of its
   // base and out of what a minimum compares; a taxable item adds its materials share to the tax base, and the
   // rate is applied once to that base. A minimum line is never short by a cent that rounds away, so `short` is exact.
-  const end = (entries: Entry[]): { end: End; short: boolean } => {
+  const end = (entries: Entry[], exact = false): { end: End; short: boolean } => {
     const subtotal = sumDec(entries.map((entry) => entry.amount), ZERO);
     const mix = mixOf(entries, multiplier, overhead);
     const adjusted = adjustments(mix, multiplier);
     const adjustment = adjusted.total;
-    const owed = tradeMinimums(trades, mix, adjusted);
+    const owed = tradeMinimums(trades, mix, adjusted, exact);
     const topUps = minimumTotal(owed);
     const work = maxDec(ZERO, subtotal.add(adjustment).sub(exemptCharged(mix, adjusted)).add(topUps));
-    const floor = money(maxDec(ZERO, minimum.sub(work)));
+    const floor = exact ? maxDec(ZERO, minimum.sub(work)) : money(maxDec(ZERO, minimum.sub(work)));
     const overheadProfit = money(overhead.mul(work.add(floor)));
     const tax = money(taxRate.mul(mix.taxed));
     return {
@@ -364,24 +364,31 @@ export function computeTotals(data: Inspection, lines: PriceLine[], policy: Poli
   const low = end(entriesOf(lines)).end;
   // Each labor line's grown amount in whole cents. Fixed lines stay as they are; equipment lines stay too, except
   // under the uncertainty method, which prices them again at its own counts.
-  const grownLabor = settle(uncertainEnd ? uncertainEnd.laborEntries : cushion(data, policy, items, labor));
+  const grownExact = uncertainEnd ? uncertainEnd.laborEntries : cushion(data, policy, items, labor);
+  const grownLabor = settle(grownExact);
   const highLaborAmount = sumDec(grownLabor.map((entry) => entry.amount), ZERO);
   let high: End | null = null;
+  let highBase: Dec | null = null;
   if (policy.estimate_mode === 'range') {
-    const candidate = end([
+    const unsettled = [
       ...entriesOf(lines.filter((line) => line.bucket === 'fixed')),
       ...(uncertainEnd ? uncertainEnd.equipmentEntries : entriesOf(lines.filter((line) => line.bucket === 'equipment'))),
-      ...grownLabor,
-    ]);
+    ];
+    const candidate = end([...unsettled, ...grownLabor]);
     // A high end still under the job minimum is the low end unless it charges more before tax: it is not
     // floored on its own, but growth in items billed beyond the minimum still raises it.
     const beforeTax = (value: End): Dec => value.total.sub(value.tax);
-    high = candidate.short && beforeTax(candidate.end).cmp(beforeTax(low)) <= 0 ? { ...low } : candidate.end;
+    const atLow = candidate.short && beforeTax(candidate.end).cmp(beforeTax(low)) <= 0;
+    high = atLow ? { ...low } : candidate.end;
+    // The high end's cents can move to another line when work is added, so a price point is found from the same
+    // end priced on the grown amounts before they are put into cents, with no minimum rounded: it cannot fall
+    // when work is added.
+    if (policy.price_point && !atLow) highBase = end([...unsettled, ...grownExact], true).end.total;
   }
   return {
     mode: policy.estimate_mode,
     low: roundToPricePoint(low, policy),
-    high: high ? roundToPricePoint(high, policy) : null,
+    high: high ? roundToPricePoint(high, policy, highBase) : null,
     laborMaterialLow: lowLabor,
     laborMaterialHigh: highLaborAmount,
     afterHoursLabel: policy.after_hours.label,
@@ -397,15 +404,18 @@ export function computeTotals(data: Inspection, lines: PriceLine[], policy: Poli
  * It never rounds down, so an end is never quoted below its priced total.
  */
 export function pricePointOf(total: Dec, step: Dec, ending: Dec): Dec {
-  if (total.cmp(ending) <= 0) return ending;
   return ending.add(total.sub(ending).div(step).toIntegral('CEILING').mul(step));
 }
 
-/** Price-point rounding applies last, after the minimums, overhead and profit, and tax. */
-function roundToPricePoint(end: End, policy: Policy): End {
+/**
+ * Price-point rounding applies last, after the minimums, overhead and profit, and tax. `base` is the amount to find
+ * the point from when it is not the end's own total; the point is never below the end's total.
+ */
+function roundToPricePoint(end: End, policy: Policy, base: Dec | null = null): End {
   const rule = policy.price_point;
   if (!rule) return end;
-  const total = money(pricePointOf(end.total, Dec.parse(rule.step), Dec.parse(rule.ending)));
+  const from = base ? maxDec(base, end.total) : end.total;
+  const total = money(pricePointOf(from, Dec.parse(rule.step), Dec.parse(rule.ending)));
   return { ...end, pricePoint: total.sub(end.total), total };
 }
 
