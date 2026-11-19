@@ -22,6 +22,7 @@ run "the_stage_apis_are_enabled_and_never_switched_off" {
       "monitoring.googleapis.com",
       "recaptchaenterprise.googleapis.com",
       "run.googleapis.com",
+      "servicehealth.googleapis.com",
       "telemetry.googleapis.com",
     ] : contains(keys(google_project_service.apis), api)])
     error_message = "Every API stage TC needs is in the list."

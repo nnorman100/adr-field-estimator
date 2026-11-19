@@ -420,6 +420,14 @@ function expectedPlan(root, env) {
       'google_monitoring_notification_channel.email',
     );
     others.push('google_monitoring_alert_policy.api_latency');
+    // Only live has the Google Cloud incident alert (app/monitoring.tf), so a project shared by test
+    // and live is not emailed twice. It is optional on live only because the captured real S7-2 plan
+    // (fixtures/app-test.s7-2-reapply.plan.json) predates it; the mocked plans hold it and
+    // app/tests/app.tftest.hcl requires it.
+    if (env === 'live') {
+      others.push('google_monitoring_alert_policy.service_health[0]');
+      optional.add('google_monitoring_alert_policy.service_health[0]');
+    }
     others.push(
       'google_monitoring_alert_policy.sql["cpu"]',
       'google_monitoring_alert_policy.sql["disk"]',
@@ -680,8 +688,10 @@ function checkPlan(resourceChanges, { root, environment, complete = true, reappl
   };
 
   // An applied Cloud SQL instance may be updated in place only to move its backups to the US
-  // multi-region. Values the provider recomputes (marked unknown) are dropped from both sides;
-  // every other attribute must be equal, so the update can change nothing else.
+  // multi-region and to keep its backups when it is deleted (retain_backups_on_delete and the final
+  // backup, D-023). Values the provider recomputes (marked unknown) are dropped from both sides;
+  // every other attribute must be equal, so the update can change nothing else. The new values
+  // themselves are held to the table on every plan.
   const backupLocationUpdate = (rc, actions) => {
     const { before, after, after_unknown: unknown = {} } = rc.change ?? {};
     if (rc.address !== 'google_sql_database_instance.main') return false;
@@ -710,6 +720,11 @@ function checkPlan(resourceChanges, { root, environment, complete = true, reappl
       const copy = structuredClone(state);
       const parent = at(copy, LOCATION.slice(0, -1));
       if (parent) delete parent.location;
+      const settings = copy?.settings?.[0];
+      if (settings) {
+        delete settings.retain_backups_on_delete;
+        delete settings.final_backup_config;
+      }
       return copy;
     };
     return same(scrub(dropLocation(before), unknown), scrub(dropLocation(after), unknown));
