@@ -57,8 +57,6 @@ export function startDraft(tx: Transaction, ref: DocumentReference, left: Placeh
   else tx.create(ref, data);
 }
 
-const ALREADY_EXISTS = 6;
-
 export type DraftLookup = {
   // The draft under this id, with the job id written on it (undefined on a draft made before
   // `jobId`), or null when there is none. Read before a request commits a draft id in Postgres, so a
@@ -109,31 +107,29 @@ export function firestoreDraftStore(db: Firestore): DraftStore {
         state: 'editing',
         field: {},
       };
-      try {
-        // create() refuses an existing document, so a retry never overwrites later field work.
-        await firestoreSpan('create', 'drafts', () => draft.create(fresh));
-        return 'created';
-      } catch (error) {
-        if ((error as { code?: unknown } | null)?.code !== ALREADY_EXISTS) throw error;
-        // A retry finds its own job's draft, or the placeholder an archive or restore left, in one transaction.
-        return firestoreSpan('runTransaction', 'drafts', () =>
-          db.runTransaction(async (tx): Promise<'exists' | 'created' | 'taken' | 'archived'> => {
-            const found = await tx.get(draft);
-            const left = placeholderOf(found);
-            if (left) {
-              if (draftOfOtherJob(left.jobId, jobId)) return 'taken';
-              if (left.archived) return 'archived';
-              startDraft(tx, draft, left, fresh);
-              return 'created';
-            }
-            // One made before `jobId` takes it now.
-            const stamped = found.get('jobId');
-            if (draftOfOtherJob(stamped, jobId)) return 'taken';
-            if (stamped === undefined) tx.update(draft, { jobId });
-            return 'exists';
-          }),
-        );
-      }
+      // A missing draft, a retry that finds its own job's draft, and the placeholder an archive or
+      // restore left are all settled in one transaction.
+      return firestoreSpan('runTransaction', 'drafts', () =>
+        db.runTransaction(async (tx): Promise<DraftMade> => {
+          const found = await tx.get(draft);
+          if (!found.exists) {
+            startDraft(tx, draft, null, fresh);
+            return 'created';
+          }
+          const left = placeholderOf(found);
+          if (left) {
+            if (draftOfOtherJob(left.jobId, jobId)) return 'taken';
+            if (left.archived) return 'archived';
+            startDraft(tx, draft, left, fresh);
+            return 'created';
+          }
+          // One made before `jobId` takes it now.
+          const stamped = found.get('jobId');
+          if (draftOfOtherJob(stamped, jobId)) return 'taken';
+          if (stamped === undefined) tx.update(draft, { jobId });
+          return 'exists';
+        }),
+      );
     },
 
     async setFieldOwner(companyId, jobId, draftId, fieldOwnerUid, revision) {
