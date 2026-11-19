@@ -133,16 +133,6 @@ function CompanyClauses({ clauses }: { clauses: Array<{ title: string; text: str
   ));
 }
 
-function showsLinePrices(letter: ProposalLetter): boolean {
-  return [...letter.job_work, ...letter.room_work.flatMap((room) => room.lines)].some((line) => line.total !== undefined);
-}
-
-// A proposal signed before S4-4e cannot hold a price-point adjustment, so one that does was made after it:
-// only those show the charge rows that make a letter's lines add up. Older letters print exactly as signed.
-function reconcilesLines(price: NonNullable<EstimateView['proposal']>['price']): boolean {
-  return !!price.low.price_point || !!price.high?.price_point;
-}
-
 /** The proposal, shown from its stored bytes: on the review, and on the signed page (S5a-11). */
 export function Proposal({ proposal }: { proposal: NonNullable<EstimateView['proposal']> }) {
   const price = proposal.price;
@@ -168,7 +158,7 @@ export function Proposal({ proposal }: { proposal: NonNullable<EstimateView['pro
           <Letter letter={proposal.letter} />
           {clauses}
           <List items={proposal.disclaimers} />
-          {showsLinePrices(proposal.letter) && reconcilesLines(price) ? (
+          {price.charge_rows ? (
             <ul className="flex flex-col gap-1">
               <Charges end={price.low} afterHoursLabel={price.after_hours_label} withPricePoint={false} />
             </ul>

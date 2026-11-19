@@ -291,13 +291,14 @@ describe('one company’s settings never reach another company’s documents', (
 
 describe('the letter proposal with a price-point adjustment (S4-4e)', () => {
   // Work $240.00 + $37.50 + $150.00 = $427.50; 10% tax = $42.75; $470.25 rounds up to $499.00 (step 100, ending 99): $28.75.
-  function rounded(showLineBreakdown: boolean, pricePoint = true): { proposal: Proposal; html: string } {
+  function rounded(showLineBreakdown: boolean, pricePoint: { step: string; ending: string } | null = { step: '100', ending: '99' }, stored = true, scanPrice = '150.00'): { proposal: Proposal; html: string } {
     const base = table(showLineBreakdown) as { items: Array<Record<string, Json>>; policy: Record<string, Json> };
-    const policy = { ...base.policy, sales_tax: { enabled: true, percent: '10' }, ...(pricePoint ? { price_point: { step: '100', ending: '99' } } : {}) };
-    const priceTable = { ...base, items: base.items.map((row) => ({ ...row, taxable: true })), policy };
+    const policy = { ...base.policy, sales_tax: { enabled: true, percent: '10' }, ...(pricePoint ? { price_point: pricePoint } : {}) };
+    const priceTable = { ...base, items: base.items.map((row) => ({ ...row, taxable: true, ...(row.item_id === 'scan' ? { unit_price: scanPrice } : {}) })), policy };
     const result = priceEstimate(priceTable as Json, estimateInput(snapshot(1990), LETTER).job);
     if (!result.ok) expect.fail(`refused at ${result.stage}: ${result.error}`);
-    const letter = proposalOf({ estimate: result, company: LETTER, showLineBreakdown, ...BASIS });
+    const made = proposalOf({ estimate: result, company: LETTER, showLineBreakdown, ...BASIS });
+    const letter: Proposal = stored ? made : { ...made, price: Object.fromEntries(Object.entries(made.price).filter(([key]) => key !== 'charge_rows')) as Proposal['price'] };
     return { proposal: letter, html: renderToStaticMarkup(createElement(ProposalView, { proposal: letter as never })) };
   }
 
@@ -317,13 +318,30 @@ describe('the letter proposal with a price-point adjustment (S4-4e)', () => {
     expect(html).toContain('Price-point adjustment (not taxed): $28.75');
   });
 
-  it('a letter proposal made before price points, with line prices shown, prints as it was signed: no charge rows', () => {
-    const { proposal: letter, html } = rounded(true, false);
+  it('an exact price point adds no adjustment, and the stored charge rows still show and add up', () => {
+    // Work $427.50 + $12.50 more on the scan = $440.00; 10% tax is $44.00: $484.00 already ends in 4 within each 10.
+    const { proposal: letter, html } = rounded(true, { step: '10', ending: '4' }, true, '162.50');
     expect(letter.price.low.price_point).toBeUndefined();
+    expect(letter.price.low).toMatchObject({ subtotal: '440.00', tax: '44.00', total: '484.00' });
+    expect(html).toContain('Subtotal');
+    expect(html).toContain('Sales tax');
+    expect(html).toContain('$44.00');
+    expect(html).not.toContain('Price-point adjustment');
+    expect(html).toContain('Price: $484.00');
+  });
+
+  it('a letter proposal stored before the charge rows, with line prices shown, prints exactly as before: no Subtotal or Sales tax rows', () => {
+    const { proposal: letter, html } = rounded(true, null, false);
+    expect(letter.price).not.toHaveProperty('charge_rows');
     expect(letter.price.low).toMatchObject({ subtotal: '427.50', tax: '42.75', total: '470.25' });
     expect(html).not.toContain('Subtotal');
     expect(html).not.toContain('Sales tax');
     expect(html).not.toContain('Price-point adjustment');
     expect(html).toContain('Price: $470.25');
+  });
+
+  it('a new letter proposal stores the marker only when line prices are shown', () => {
+    expect(rounded(true).proposal.price.charge_rows).toBe(true);
+    expect(rounded(false).proposal.price).not.toHaveProperty('charge_rows');
   });
 });

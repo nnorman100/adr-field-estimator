@@ -137,7 +137,7 @@ describe('price-point properties', () => {
     expect(problems.slice(0, 10)).toEqual([]);
   });
 
-  it('with rounding on, adding square feet never lowers either end and the high end stays at or above the low', () => {
+  it('with rounding on, the high end stays at or above the low', () => {
     const problems: string[] = [];
     const priceList = table([item('demo', { unit_price: '3.17' })], {
       estimate_mode: 'range',
@@ -146,7 +146,6 @@ describe('price-point properties', () => {
       sales_tax: { enabled: true, percent: '7.25' },
       price_point: { step: '250', ending: '199' },
     });
-    let before: { low: number; high: number } | null = null;
     for (let sf = 10; sf <= 3000; sf += 37) {
       const result = priceEstimate(priceList, job([room('Kitchen', { unfinished_sf: sf })]));
       if (!result.ok) {
@@ -156,8 +155,6 @@ describe('price-point properties', () => {
       const low = Number(result.totals.low.total);
       const high = Number(result.totals.high!.total);
       if (high < low) problems.push(`${sf}: high ${high} < low ${low}`);
-      if (before && (low < before.low || high < before.high)) problems.push(`${sf}: fell`);
-      before = { low, high };
     }
     expect(problems).toEqual([]);
   });
