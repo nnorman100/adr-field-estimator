@@ -31,6 +31,34 @@ updates:
       - dependency-name: '@opentelemetry/resources'
         versions: ['>= 3.0.0']
 
+  # Weekly on Monday: npm for the repository root developer tooling (format,
+  # lint, root tests and the dependency audit gate). Minor and patch updates
+  # share one pull request; each major update gets its own pull request.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      root-npm-minor-patch:
+        update-types: [minor, patch]
+
+  # Weekly on Monday: npm for the synthetic probe in web/synthetic. Minor and
+  # patch updates share one pull request; each major update gets its own pull
+  # request, except TypeScript majors, which are held (the probe's tsconfig
+  # still uses moduleResolution node10, which TypeScript 6 rejects).
+  - package-ecosystem: npm
+    directory: /web/synthetic
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      synthetic-npm-minor-patch:
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: typescript
+        update-types: ['version-update:semver-major']
+
   # Monthly (Dependabot runs monthly updates on the 1st): Terraform providers and
   # modules for each stack. All updates for a stack share one pull request,
   # except Google provider (hashicorp/google) majors, which are held.
