@@ -6,25 +6,34 @@
 // they name. Each is closed as the sync closes a draft Postgres no longer gives the job: archived and
 // naming nobody, its field work kept (what becomes of it is the owner's decision).
 //
-//   npm run platform:reconcile-restored-drafts -- --project dryscope --database dryscope-field-test < job-drafts.csv
-//   npm run platform:reconcile-restored-drafts -- --project dryscope --database dryscope-field-test --apply < job-drafts.csv
+// It also puts each job's locator for the phone (`companies/{company}/jobs/{job}`, the job projection,
+// src/lib/jobs/projection.ts) back to the restored job: the locator moves only forward by job revision,
+// so after a restore it can still name a draft made after the restore point, which the lower restored
+// revision can never replace. A locator whose current draft id or revision differs from the restored job
+// is set to the restored ones, and a locator of a job the restored Postgres does not have is removed
+// (both are server-written projections, never field work).
 //
-// The input is the CSV the runbook's query writes from the restored Postgres: company id, draft id, job
-// id, one job_drafts row per line. Without --apply it only reads, and lists each draft it would close by
-// company and draft id with the reason, each one not given to its job that is closed already (listed,
-// never written), then the counts; the owner checks the list before adding --apply. With --apply each one is changed only if it has not changed since it was read (an update
-// precondition), so a draft a phone or the sync wrote meanwhile is read again on the next run. It runs
-// with the person's own Google credentials and prints ids and counts, never field data.
+//   npm run platform:reconcile-restored-drafts -- --project dryscope --database dryscope-field-test --job-drafts job-drafts.csv --jobs jobs.csv
+//   npm run platform:reconcile-restored-drafts -- --project dryscope --database dryscope-field-test --job-drafts job-drafts.csv --jobs jobs.csv --apply
+//
+// The inputs are the two CSVs the runbook's queries write from the restored Postgres: job_drafts (company
+// id, draft id, job id) and jobs (company id, job id, current draft id, revision), one row per line.
+// Without --apply it only reads, and lists each draft it would close by company and draft id with the
+// reason, each one not given to its job that is closed already (listed, never written), and each locator
+// it would set or remove, then the counts; the owner checks the list before adding --apply. With --apply
+// each write is made only if the document has not changed since it was read (an update precondition), so
+// one a phone or the app wrote meanwhile is read again on the next run. It runs with the person's own
+// Google credentials and prints ids and counts, never field data.
 import { pathToFileURL } from 'node:url';
 import type { Firestore, Timestamp } from 'firebase-admin/firestore';
 import { parseTargetArgs } from './target-args';
 
-export type ReconcileOptions = { project: string; database: string; apply: boolean };
+export type ReconcileOptions = { project: string; database: string; apply: boolean; files: Record<'job-drafts' | 'jobs', string> };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export function parseReconcileArgs(argv: string[]): ReconcileOptions {
-  return parseTargetArgs(argv, { apply: true });
+  return parseTargetArgs(argv, { apply: true, files: ['job-drafts', 'jobs'] as const });
 }
 
 /** The restored job_drafts: the job each draft is given to, by "company/draft". */
@@ -115,15 +124,85 @@ export async function closeDrafts(db: Firestore, closing: (Closing & { readAt: T
   return { closed, changed };
 }
 
-async function readStdin(): Promise<string> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk as Uint8Array));
-  return Buffer.concat(chunks).toString('utf8');
+/** The restored jobs: each one's current draft id and revision, by "company/job". */
+export type RestoredJobs = Map<string, { currentDraftId: string; revision: number }>;
+
+// The runbook query's CSV: three uuids and a revision per line. Blank lines are skipped; anything else
+// stops the run, and so does an empty export (which would remove every locator).
+export function parseJobs(text: string): RestoredJobs {
+  const jobs: RestoredJobs = new Map();
+  for (const [index, raw] of text.split(/\r?\n/).entries()) {
+    const line = raw.trim();
+    if (line === '') continue;
+    const fields = line.split(',');
+    const revision = Number(fields[3]);
+    if (fields.length !== 4 || !fields.slice(0, 3).every((field) => UUID.test(field)) || !/^\d+$/.test(fields[3]!) || !Number.isSafeInteger(revision)) {
+      throw new Error(`line ${index + 1} of the jobs export is not "company id,job id,current draft id,revision"`);
+    }
+    jobs.set(`${fields[0]}/${fields[1]}`, { currentDraftId: fields[2]!, revision });
+  }
+  if (jobs.size === 0) throw new Error('the jobs export is empty: every locator would be removed');
+  return jobs;
+}
+
+/** A job locator as the run reads it. */
+export type FoundLocator = { companyId: string; jobId: string; currentDraftId: unknown; revision: unknown };
+
+export type LocatorFix =
+  | { companyId: string; jobId: string; action: 'set'; currentDraftId: string; revision: number }
+  | { companyId: string; jobId: string; action: 'remove' };
+
+/** The locators to put back: one that differs from its restored job is set to it; one of a job the restored
+ * Postgres does not have is removed. A job with no locator is left to the app, which writes one. */
+export function locatorsToFix(locators: FoundLocator[], jobs: RestoredJobs): LocatorFix[] {
+  const fixes: LocatorFix[] = [];
+  for (const found of locators) {
+    const restored = jobs.get(`${found.companyId}/${found.jobId}`);
+    if (!restored) fixes.push({ companyId: found.companyId, jobId: found.jobId, action: 'remove' });
+    else if (found.currentDraftId !== restored.currentDraftId || found.revision !== restored.revision) {
+      fixes.push({ companyId: found.companyId, jobId: found.jobId, action: 'set', ...restored });
+    }
+  }
+  return fixes;
+}
+
+/** Every company's job locators, with the update time each was read at. */
+export async function readLocators(db: Firestore): Promise<(FoundLocator & { readAt: Timestamp })[]> {
+  const found: (FoundLocator & { readAt: Timestamp })[] = [];
+  const snapshot = await db.collectionGroup('jobs').get();
+  for (const doc of snapshot.docs) {
+    const company = doc.ref.parent.parent;
+    // Only companies/{company}/jobs/{job}.
+    if (!company || company.parent.id !== 'companies') continue;
+    found.push({ companyId: company.id, jobId: doc.id, currentDraftId: doc.get('currentDraftId'), revision: doc.get('revision'), readAt: doc.updateTime });
+  }
+  return found;
+}
+
+/** Writes each fix if its locator has not changed since it was read; how many were written. */
+export async function fixLocators(db: Firestore, fixes: (LocatorFix & { readAt: Timestamp })[]): Promise<{ fixed: number; changed: number }> {
+  let fixed = 0;
+  let changed = 0;
+  for (const fix of fixes) {
+    const ref = db.collection('companies').doc(fix.companyId).collection('jobs').doc(fix.jobId);
+    try {
+      if (fix.action === 'remove') await ref.delete({ lastUpdateTime: fix.readAt });
+      else await ref.update({ currentDraftId: fix.currentDraftId, revision: fix.revision }, { lastUpdateTime: fix.readAt });
+      fixed++;
+    } catch (error) {
+      // FAILED_PRECONDITION: written since it was read. Left for the next run, which reads it again.
+      if ((error as { code?: unknown }).code !== 9) throw error;
+      changed++;
+    }
+  }
+  return { fixed, changed };
 }
 
 async function main() {
   const options = parseReconcileArgs(process.argv.slice(2));
-  const claims = parseClaims(await readStdin());
+  const { readFile } = await import('node:fs/promises');
+  const claims = parseClaims(await readFile(options.files['job-drafts'], 'utf8'));
+  const jobs = parseJobs(await readFile(options.files.jobs, 'utf8'));
   const { initializeApp } = await import('firebase-admin/app');
   const { getFirestore } = await import('firebase-admin/firestore');
   const db = getFirestore(initializeApp({ projectId: options.project }, 'dryscope-reconcile-restored-drafts'), options.database);
@@ -131,16 +210,22 @@ async function main() {
   const byKey = new Map(drafts.map((draft) => [`${draft.companyId}/${draft.draftId}`, draft]));
   const closing = draftsToClose(drafts, claims);
   const closed = draftsAlreadyClosed(drafts, claims);
+  const locators = await readLocators(db);
+  const locatorAt = new Map(locators.map((found) => [`${found.companyId}/${found.jobId}`, found.readAt]));
+  const fixes = locatorsToFix(locators, jobs);
   for (const draft of closed) console.log(`already closed: ${draft.companyId}/${draft.draftId} (${draft.reason})`);
   for (const draft of closing) console.log(`${options.apply ? 'closing' : 'would close'}: ${draft.companyId}/${draft.draftId} (${draft.reason})`);
+  for (const fix of fixes) console.log(`${options.apply ? '' : 'would '}${fix.action} locator: ${fix.companyId}/${fix.jobId}`);
   console.log(`read ${drafts.length} drafts against ${claims.size} job_drafts rows: ${closing.length} to close, ${closed.length} closed already.`);
+  console.log(`read ${locators.length} job locators against ${jobs.size} jobs: ${fixes.length} to put back.`);
   if (!options.apply) {
-    console.log(closing.length === 0 ? 'nothing to close.' : 'check the list, then run again with --apply.');
+    console.log(closing.length + fixes.length === 0 ? 'nothing to change.' : 'check the list, then run again with --apply.');
     return;
   }
   const written = await closeDrafts(db, closing.map((draft) => ({ ...draft, readAt: byKey.get(`${draft.companyId}/${draft.draftId}`)!.readAt })));
-  const changed = written.changed;
-  console.log(`closed ${written.closed}; ${changed} changed since they were read: run it again.`);
+  const put = await fixLocators(db, fixes.map((fix) => ({ ...fix, readAt: locatorAt.get(`${fix.companyId}/${fix.jobId}`)! })));
+  const changed = written.changed + put.changed;
+  console.log(`closed ${written.closed} drafts and put back ${put.fixed} locators; ${changed} changed since they were read: run it again.`);
   if (changed > 0) process.exitCode = 1;
 }
 

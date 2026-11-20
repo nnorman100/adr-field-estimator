@@ -3,7 +3,7 @@ import type { Firestore } from 'firebase-admin/firestore';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { parseProjectionConfig } from '@/lib/config';
 import { firestoreFor } from '@/lib/projection/firestore';
-import { closeDrafts, draftsToClose, readDrafts } from '../../scripts/reconcile-restored-drafts';
+import { closeDrafts, draftsToClose, fixLocators, locatorsToFix, readDrafts, readLocators } from '../../scripts/reconcile-restored-drafts';
 import { projectId } from './auth-emulator';
 
 // The owner-run close of field drafts a restored Postgres no longer gives the job they name
@@ -57,5 +57,26 @@ describe('closing the drafts a restored Postgres does not give their job', () =>
     const next = draftsToClose(again, claims).map((draft) => ({ ...draft, readAt: again.find((one) => one.draftId === draft.draftId)!.readAt }));
     expect(next.map((draft) => draft.draftId)).toEqual([written]);
     expect(await closeDrafts(db, next)).toEqual({ closed: 1, changed: 0 });
+  });
+
+  it('puts each job locator back to the restored job, removes one of a job Postgres does not have, and leaves one written since it was read', async () => {
+    const company = randomUUID();
+    const [ahead, gone, written, same] = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+    const [draft, later] = [randomUUID(), randomUUID()];
+    const locator = (job: string) => db.doc(`companies/${company}/jobs/${job}`);
+    for (const job of [ahead, gone, written]) await locator(job).set({ currentDraftId: later, revision: 5 });
+    await locator(same).set({ currentDraftId: draft, revision: 3 });
+    const jobs = new Map([ahead, written, same].map((job) => [`${company}/${job}`, { currentDraftId: draft, revision: 3 }]));
+    const found = (await readLocators(db)).filter((one) => one.companyId === company);
+    expect(found.map((one) => one.jobId).sort()).toEqual([ahead, gone, written, same].sort());
+    const fixes = locatorsToFix(found, jobs).map((fix) => ({ ...fix, readAt: found.find((one) => one.jobId === fix.jobId)!.readAt }));
+    expect(fixes.map((fix) => [fix.jobId, fix.action]).sort()).toEqual([[ahead, 'set'], [gone, 'remove'], [written, 'set']].sort());
+    // The app projects a newer revision meanwhile: left for the next run.
+    await locator(written).set({ currentDraftId: later, revision: 6 });
+    expect(await fixLocators(db, fixes)).toEqual({ fixed: 2, changed: 1 });
+    expect((await locator(ahead).get()).data()).toEqual({ currentDraftId: draft, revision: 3 });
+    expect((await locator(gone).get()).exists).toBe(false);
+    expect((await locator(written).get()).data()).toEqual({ currentDraftId: later, revision: 6 });
+    expect((await locator(same).get()).data()).toEqual({ currentDraftId: draft, revision: 3 });
   });
 });

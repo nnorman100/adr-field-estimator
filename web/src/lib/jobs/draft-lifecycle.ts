@@ -75,6 +75,9 @@ export type DesiredDraft = {
 export type DesiredJob = {
   jobId: string;
   v: number;
+  // jobs.revision of the snapshot: recorded on the marker, so a retry at the same field revision after
+  // the job revision moved (an owner reprice) is planned again and writes the keys that follow it.
+  revision?: number;
   drafts: Record<string, DesiredDraft>;
   // The epochs of the submissions the snapshot knows for the current draft (its pending, committed and
   // aborted rows): a stored fence of any other epoch was closed by a writer Postgres had not told this
@@ -134,6 +137,7 @@ export function desired(snapshot: JobDraftSnapshot): DesiredJob {
   return {
     jobId: snapshot.jobId,
     v: snapshot.fieldRevision,
+    revision: snapshot.revision,
     drafts,
     knownEpochs,
     ...(snapshot.committed ? { recordedEpoch: snapshot.committed.epoch } : {}),
@@ -157,8 +161,9 @@ export type SyncSkips = {
   unmatched: string[];
 };
 
-/** The sync's marker for a job: the version last written, every draft of the job it has seen, and the skips. */
-export type SyncMarker = { gen: number; v: number; draftIds: string[]; skipped: SyncSkips };
+/** The sync's marker for a job: the version last written (with the job revision it was written at, `r`;
+ * none on a marker written before slice 4b), every draft of the job it has seen, and the skips. */
+export type SyncMarker = { gen: number; v: number; r?: number; draftIds: string[]; skipped: SyncSkips };
 
 // A draft id as the field rules accept one for a document (fieldId, field/schema.ts): no empty id, no path.
 const ids = (value: unknown): value is string[] => Array.isArray(value) && value.every((id) => fieldId.safeParse(id).success);
@@ -187,11 +192,12 @@ export function parseGeneration(data: Record<string, unknown> | undefined): numb
 
 /** A stored marker's fields, checked. Only a missing document is "no version applied". */
 export function parseMarker(data: Record<string, unknown>): SyncMarker {
-  const { gen, v, draftIds, skipped } = data;
+  const { gen, v, r, draftIds, skipped } = data;
   const skips = skipped as Record<string, unknown> | undefined;
   if (
     !version(gen) ||
     !version(v) ||
+    (r !== undefined && !version(r)) ||
     !ids(draftIds) ||
     typeof skips !== 'object' ||
     skips === null ||
@@ -205,6 +211,7 @@ export function parseMarker(data: Record<string, unknown>): SyncMarker {
   return {
     gen: gen as number,
     v: v as number,
+    ...(r === undefined ? {} : { r: r as number }),
     draftIds: [...draftIds],
     skipped: { conflicts: [...skips.conflicts], missing: [...skips.missing], superseded: [...skips.superseded], unmatched: [...skips.unmatched] },
   };
@@ -265,10 +272,12 @@ export function compareVersion(stored: SyncMarker | null, gen: number, v: number
   return v > stored.v ? 'newer' : 'older';
 }
 
-/** What the marker alone decides, before any draft is read: refused, a retry, or to be planned. */
-export function versionRefusal(marker: SyncMarker | null, gen: number, v: number): VersionRefusal | null {
+/** What the marker alone decides, before any draft is read: refused, a retry, or to be planned. The same
+ * version is a retry only at the same job revision `r` too (when the caller gives one): a marker written at
+ * another job revision, or before markers carried it, is planned again at that version. */
+export function versionRefusal(marker: SyncMarker | null, gen: number, v: number, r?: number): VersionRefusal | null {
   const order = compareVersion(marker, gen, v);
-  if (order === 'same') return { outcome: 'same', ...marker!.skipped };
+  if (order === 'same') return r === undefined || marker!.r === r ? { outcome: 'same', ...marker!.skipped } : null;
   if (order === 'older') return { outcome: 'stale' };
   return null;
 }
@@ -437,7 +446,7 @@ export function planSync(
   return {
     outcome: 'synced',
     // Every draft of this job the sync has seen; the skips, so a retry at the same version reports them again.
-    marker: { gen, v: job.v, draftIds: seen.sort(), skipped: skips },
+    marker: { gen, v: job.v, ...(job.revision === undefined ? {} : { r: job.revision }), draftIds: seen.sort(), skipped: skips },
     creates,
     updates,
     ...skips,

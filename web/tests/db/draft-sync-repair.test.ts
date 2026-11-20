@@ -81,6 +81,21 @@ describe('the draft sync repair pass', () => {
     expect(h.field.draft(h.seed.a, synced.draftId)?.state).toBe('editing');
   });
 
+  // R6 (slice 4b review round 2): a generation document not in its shape stops every sync the same way;
+  // no try raises the job's field revision for it, so nothing churns while the operator fixes it.
+  it('stops on a generation document not in its shape without raising any field revision, and goes on once it is fixed', async () => {
+    const { id, draftId } = await archivedWithoutItsFieldStep();
+    const fieldRevision = async () => (await h.admin<{ v: number }[]>`SELECT field_revision AS v FROM jobs WHERE id = ${id}`)[0]!.v;
+    const before = await fieldRevision();
+    h.field.setGeneration({ gen: -1 });
+    expect(await repair(0)).toEqual({ synced: 0, failed: 1 });
+    expect(await repair(0)).toEqual({ synced: 0, failed: 1 });
+    expect(await fieldRevision()).toBe(before);
+    h.field.setGeneration(null);
+    expect(await repair(0)).toEqual({ synced: 1, failed: 0 });
+    expect(h.field.draft(h.seed.a, draftId)?.state).toBe('archived');
+  });
+
   it('waits out the 60-second grace with no override: a job changed 59 seconds ago is left, one 61 seconds ago is synced', async () => {
     const recent = await archivedWithoutItsFieldStep();
     const older = await archivedWithoutItsFieldStep();

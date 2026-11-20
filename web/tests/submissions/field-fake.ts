@@ -179,7 +179,7 @@ export function fakeField(backing: Backing = memoryBacking()): FakeField {
         const record = backing.load();
         const left = record.markers[key(companyId, job.jobId)];
         const marker = left === undefined ? null : parseMarker(left as unknown as Record<string, unknown>);
-        if (versionRefusal(marker, Math.max(gen, parseGeneration(record.generation)), job.v)) return undefined;
+        if (versionRefusal(marker, Math.max(gen, parseGeneration(record.generation)), job.v, job.revision)) return undefined;
         return options.stillCurrent && !(await options.stillCurrent()) ? { outcome: 'moved' } : undefined;
       };
       return call('sync', ({ drafts: data, markers, generation: raised }) => {
@@ -189,7 +189,7 @@ export function fakeField(backing: Backing = memoryBacking()): FakeField {
         const generation = Math.max(gen, parseGeneration(raised));
         const left = markers[key(companyId, job.jobId)];
         const marker = left === undefined ? null : parseMarker(left as unknown as Record<string, unknown>);
-        const refused = versionRefusal(marker, generation, job.v);
+        const refused = versionRefusal(marker, generation, job.v, job.revision);
         if (refused) return refused;
         const stored = Object.fromEntries(draftIdsToRead(marker, job).map((draftId) => [draftId, storedOf(data[key(companyId, draftId)])]));
         // Rooms or photos left under a draft to make (only a placeholder can hold them here).

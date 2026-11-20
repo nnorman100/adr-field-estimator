@@ -127,10 +127,11 @@ export function archiveService(db: Database, store: ArchiveStore, sync: DraftSyn
       throw error;
     });
     await settle(caller.companyId, jobId);
-    if (outcome instanceof JobError) throw outcome;
-    // The job's details only to a caller still an active member of an active company with its role, read
-    // again after the field step (a company suspended or a member disabled while it waited gets none).
+    // Any answer after the field step, the job's details or a settled refusal, only to a caller still an
+    // active member of an active company with its role, read again (a company suspended or a member
+    // disabled while it waited is refused as a fresh request would be).
     await withCompany(db, caller.companyId, (tx) => stillMember(tx, caller), { snapshot: true });
+    if (outcome instanceof JobError) throw outcome;
     return jobView(outcome);
   }
 

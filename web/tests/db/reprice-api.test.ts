@@ -516,6 +516,42 @@ describe('what is refused, and writes nothing', () => {
     expect(h.field.draft(h.seed.a, open)).toMatchObject({ jobId, state: 'editing', archiveRevision: (await f.job(jobId)).revision });
   });
 
+  // R2 (slice 4b review round 2): the first try fails, and the last one commits while a reprice lands after
+  // its version check, then loses its answer. The next request starts again at the same field revision: its
+  // marker was written at the older job revision, so it is planned again and writes the job's revision.
+  it('a last try whose answer was lost while a reprice landed is caught up by the next request', async () => {
+    const { jobId, draftId } = await readyToSign();
+    await publish(h.seed.a, '3.00');
+    const open = randomUUID();
+    h.field.failNext.createFrom = true;
+    expect((await f.nextDraft(ESTIMATOR_A, jobId, { draftId: open, fromDraftId: draftId })).status).toBe(503);
+    h.field.failNext.sync = 1;
+    const sync = h.field.sync;
+    let repriced = false;
+    h.field.sync = (company, job, gen, options = {}) =>
+      sync(company, job, gen, {
+        ...options,
+        stillCurrent: async () => {
+          const current = await options.stillCurrent!();
+          if (current && !repriced) {
+            repriced = true;
+            expect((await reprice(OWNER_A, jobId)).status).toBe(200);
+            h.field.loseNext.sync = true;
+          }
+          return current;
+        },
+      });
+    const start = () => json(fieldOwnerRoute.POST(request(ESTIMATOR_A, `/api/jobs/${jobId}/field-owner`, { method: 'POST' }), params({ jobId })));
+    try {
+      expect(await start()).toMatchObject({ status: 503, body: { error: 'draft_unavailable' } });
+    } finally {
+      h.field.sync = sync;
+    }
+    expect(repriced).toBe(true);
+    expect((await start()).status).toBe(200);
+    expect(h.field.draft(h.seed.a, open)).toMatchObject({ jobId, state: 'editing', archiveRevision: (await f.job(jobId)).revision });
+  });
+
   it('a job never priced has no pin to move', async () => {
     await publish(h.seed.a, '2.00');
     const { jobId } = await submittedJob();

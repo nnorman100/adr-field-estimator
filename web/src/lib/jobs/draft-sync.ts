@@ -116,7 +116,7 @@ export function firestoreDraftSync(db: Firestore): DraftSync {
           // any draft is read.
           const generation = Math.max(gen, parseGeneration((await tx.get(db.doc(GENERATION_PATH))).data()));
           const marker = markerOf(await tx.get(markerRef));
-          const refused = versionRefusal(marker, generation, job.v);
+          const refused = versionRefusal(marker, generation, job.v, job.revision);
           if (refused) return refused;
           // Then every draft at once (a transaction reads before it writes).
           const refs = draftIdsToRead(marker, job).map(draftRef);

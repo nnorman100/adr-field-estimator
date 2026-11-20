@@ -1,21 +1,29 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { draftsAlreadyClosed, draftsToClose, parseClaims, parseReconcileArgs, type FoundDraft } from '../../scripts/reconcile-restored-drafts';
+import { draftsAlreadyClosed, draftsToClose, locatorsToFix, parseClaims, parseJobs, parseReconcileArgs, type FoundDraft } from '../../scripts/reconcile-restored-drafts';
 
 // The owner-run close of field drafts a restored Postgres no longer gives the job they name
 // (docs/runbook/backups.md). Its Firestore read and write, against the emulator, are in
 // tests/emu/reconcile-restored-drafts.test.ts.
 
 describe('parseReconcileArgs', () => {
-  it('needs a project and a Firestore database id; --apply makes it write', () => {
-    expect(parseReconcileArgs(['--project', 'dryscope', '--database', 'dryscope-field-test'])).toEqual({ project: 'dryscope', database: 'dryscope-field-test', apply: false });
-    expect(parseReconcileArgs(['--apply', '--database', '(default)', '--project', 'dryscope'])).toEqual({ project: 'dryscope', database: '(default)', apply: true });
-    expect(() => parseReconcileArgs(['--database', 'dryscope-field-test'])).toThrow('--project is required');
-    expect(() => parseReconcileArgs(['--project', 'dryscope'])).toThrow('--database is required');
-    expect(() => parseReconcileArgs(['--project', 'Not A Project', '--database', 'x-db'])).toThrow('--project must be');
-    expect(() => parseReconcileArgs(['--project', 'dryscope', '--database', 'Bad/Db'])).toThrow('--database must be');
-    expect(() => parseReconcileArgs(['--project', 'dryscope', '--database', 'dryscope-field-test', '--all'])).toThrow('unknown option --all');
-    expect(() => parseReconcileArgs(['--project'])).toThrow('--project needs a value');
+  it('needs a project, a Firestore database id and both exports; --apply makes it write', () => {
+    const files = ['--job-drafts', 'job-drafts.csv', '--jobs', 'jobs.csv'];
+    expect(parseReconcileArgs(['--project', 'dryscope', '--database', 'dryscope-field-test', ...files])).toEqual({
+      project: 'dryscope',
+      database: 'dryscope-field-test',
+      apply: false,
+      files: { 'job-drafts': 'job-drafts.csv', jobs: 'jobs.csv' },
+    });
+    expect(parseReconcileArgs(['--apply', ...files, '--database', '(default)', '--project', 'dryscope'])).toMatchObject({ database: '(default)', apply: true });
+    expect(() => parseReconcileArgs(['--database', 'dryscope-field-test', ...files])).toThrow('--project is required');
+    expect(() => parseReconcileArgs(['--project', 'dryscope', ...files])).toThrow('--database is required');
+    expect(() => parseReconcileArgs(['--project', 'Not A Project', '--database', 'x-db', ...files])).toThrow('--project must be');
+    expect(() => parseReconcileArgs(['--project', 'dryscope', '--database', 'Bad/Db', ...files])).toThrow('--database must be');
+    expect(() => parseReconcileArgs(['--project', 'dryscope', '--database', 'dryscope-field-test', '--jobs', 'jobs.csv'])).toThrow('--job-drafts is required');
+    expect(() => parseReconcileArgs(['--project', 'dryscope', '--database', 'dryscope-field-test', '--job-drafts', 'a.csv'])).toThrow('--jobs is required');
+    expect(() => parseReconcileArgs(['--project', 'dryscope', '--database', 'dryscope-field-test', ...files, '--all'])).toThrow('unknown option --all');
+    expect(() => parseReconcileArgs(['--project', 'dryscope', '--database', 'dryscope-field-test', '--jobs'])).toThrow('--jobs needs a value');
   });
 });
 
@@ -63,5 +71,39 @@ describe('draftsToClose', () => {
     const claims = new Map([[`${company}/${claimedClosed.draftId}`, claimedClosed.jobId as string]]);
     expect(draftsAlreadyClosed([closed, claimedClosed, open], claims)).toEqual([{ companyId: company, draftId: closed.draftId, reason: 'unclaimed' }]);
     expect(draftsToClose([closed, claimedClosed, open], claims).map((one) => one.draftId)).toEqual([open.draftId]);
+  });
+});
+
+describe('the job locators', () => {
+  it('reads the restored jobs export, and refuses anything else, an empty export included', () => {
+    const [company, job, draft] = [randomUUID(), randomUUID(), randomUUID()];
+    expect(parseJobs(`${company},${job},${draft},7\r\n\n`)).toEqual(new Map([[`${company}/${job}`, { currentDraftId: draft, revision: 7 }]]));
+    expect(() => parseJobs(`${company},${job},${draft}`)).toThrow('line 1 of the jobs export is not');
+    expect(() => parseJobs(`${company},${job},${draft},-1`)).toThrow('line 1 of the jobs export is not');
+    expect(() => parseJobs(`${company},${job},${draft},1.5`)).toThrow('line 1 of the jobs export is not');
+    expect(() => parseJobs('')).toThrow('the jobs export is empty');
+  });
+
+  it('puts back a locator that differs from its restored job, removes one of a job Postgres does not have, and leaves the rest', () => {
+    const company = randomUUID();
+    const [same, ahead, gone] = [randomUUID(), randomUUID(), randomUUID()];
+    const [draft, later] = [randomUUID(), randomUUID()];
+    const jobs = new Map([
+      [`${company}/${same}`, { currentDraftId: draft, revision: 3 }],
+      [`${company}/${ahead}`, { currentDraftId: draft, revision: 3 }],
+    ]);
+    expect(
+      locatorsToFix(
+        [
+          { companyId: company, jobId: same, currentDraftId: draft, revision: 3 },
+          { companyId: company, jobId: ahead, currentDraftId: later, revision: 5 },
+          { companyId: company, jobId: gone, currentDraftId: later, revision: 1 },
+        ],
+        jobs,
+      ),
+    ).toEqual([
+      { companyId: company, jobId: ahead, action: 'set', currentDraftId: draft, revision: 3 },
+      { companyId: company, jobId: gone, action: 'remove' },
+    ]);
   });
 });

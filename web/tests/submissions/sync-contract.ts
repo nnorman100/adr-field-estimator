@@ -98,7 +98,7 @@ export function draftSyncContract(name: string, probe: () => SyncProbe): void {
         rooms: [],
         photos: [],
       });
-      expect(await marker(company, job.jobId)).toEqual({ gen: 0, v: 4, draftIds: [job.currentDraftId], skipped: NONE });
+      expect(await marker(company, job.jobId)).toEqual({ gen: 0, v: 4, r: job.revision, draftIds: [job.currentDraftId], skipped: NONE });
       // A retry, or a slower request at the same version, writes nothing.
       expect(await store.sync(company, desired({ ...job, fieldOwnerUid: 'someone-else' }), 0)).toEqual({ outcome: 'same', ...NONE });
       expect((await peek(company, job.currentDraftId))?.fieldOwnerUid).toBe('estimator-1');
@@ -118,7 +118,7 @@ export function draftSyncContract(name: string, probe: () => SyncProbe): void {
       // After a database restore lowers the field revision, the operator raises the generation.
       expect(await store.sync(company, desired({ ...job, fieldRevision: 1, fieldOwnerUid: 'after-restore' }), 1)).toMatchObject({ outcome: 'synced' });
       expect((await peek(company, job.currentDraftId))?.fieldOwnerUid).toBe('after-restore');
-      expect(await marker(company, job.jobId)).toEqual({ gen: 1, v: 1, draftIds: [job.currentDraftId], skipped: NONE });
+      expect(await marker(company, job.jobId)).toEqual({ gen: 1, v: 1, r: job.revision, draftIds: [job.currentDraftId], skipped: NONE });
     });
 
     it('writes every draft of the job in one sync: the current one’s state and fence, every earlier one submitted with the current owner', async () => {
@@ -202,7 +202,7 @@ export function draftSyncContract(name: string, probe: () => SyncProbe): void {
       expect(await peek(company, theirs)).toMatchObject({ jobId: other, placeholder: true });
       expect(await peek(company, gone)).toBeNull();
       // The marker records none of them as written, and a retry at the same version reports them again.
-      expect(await marker(company, mixed.jobId)).toEqual({ gen: 0, v: 1, draftIds: [], skipped });
+      expect(await marker(company, mixed.jobId)).toEqual({ gen: 0, v: 1, r: mixed.revision, draftIds: [], skipped });
       expect(await store.sync(company, desired(mixed), 0)).toEqual({ outcome: 'same', ...skipped });
 
       // Another job's placeholder under an earlier draft's id is a conflict too, not a missing draft.
@@ -272,7 +272,7 @@ export function draftSyncContract(name: string, probe: () => SyncProbe): void {
       expect(await store.sync(company, desired(restored), 1)).toEqual({ outcome: 'synced', created: [], changed: [first, second].sort(), ...NONE, unmatched: [second] });
       expect(await peek(company, second)).toMatchObject({ jobId: later.jobId, state: 'archived', fieldOwnerUid: null, field: { notes: 'second visit' } });
       expect(await peek(company, first)).toMatchObject({ state: 'editing', fieldOwnerUid: 'estimator-1', field: { notes: 'first visit' } });
-      expect(await marker(company, later.jobId)).toEqual({ gen: 1, v: 2, draftIds: [first, second].sort(), skipped: { ...NONE, unmatched: [second] } });
+      expect(await marker(company, later.jobId)).toEqual({ gen: 1, v: 2, r: later.revision, draftIds: [first, second].sort(), skipped: { ...NONE, unmatched: [second] } });
       // A later sync of the job (a Move) keeps it closed and still reports it.
       expect(await store.sync(company, desired({ ...restored, fieldRevision: 3, fieldOwnerUid: 'estimator-2' }), 1)).toMatchObject({ changed: [first], unmatched: [second] });
       expect(await peek(company, second)).toMatchObject({ state: 'archived', fieldOwnerUid: null });
@@ -518,6 +518,19 @@ export function draftSyncContract(name: string, probe: () => SyncProbe): void {
       await remove(company, job.currentDraftId);
       expect(await store.sync(company, desired({ ...job, fieldRevision: 2 }), 0)).toEqual({ outcome: 'synced', created: [job.currentDraftId], changed: [], ...NONE });
       expect(await peek(company, job.currentDraftId)).toMatchObject({ state: 'editing', rooms: [], photos: [] });
+    });
+
+    // A sync whose answer was lost wrote its marker at the older job revision; the same field revision at a
+    // moved job revision (an owner reprice) is planned again, so the keys that follow the job revision move.
+    it('plans the same field revision again when the job revision moved, and is a retry only at the same one', async () => {
+      const { store, peek, marker } = probe();
+      const company = randomUUID();
+      const job = snapshotOf({ revision: 3 });
+      expect(await store.sync(company, desired(job), 0)).toMatchObject({ outcome: 'synced' });
+      expect(await store.sync(company, desired(job), 0)).toMatchObject({ outcome: 'same' });
+      expect(await store.sync(company, desired({ ...job, revision: 4 }), 0)).toMatchObject({ outcome: 'synced', changed: [job.currentDraftId] });
+      expect(await peek(company, job.currentDraftId)).toMatchObject({ archiveRevision: 4 });
+      expect(await marker(company, job.jobId)).toMatchObject({ v: job.fieldRevision, r: 4 });
     });
 
     it('stops, changing nothing, when the job’s marker is there but not in the shape the sync writes', async () => {

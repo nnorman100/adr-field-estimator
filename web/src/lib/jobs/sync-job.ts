@@ -9,7 +9,7 @@ import type { Fence } from '@/lib/submissions/fence';
 import { SNAPSHOT_FORMAT } from '@/lib/submissions/snapshot';
 import type { FieldManifest } from '@/lib/field/canonical';
 import { fieldId } from '@/lib/field/schema';
-import { desired, UnclaimedDraftError, type DraftContent, type JobDraftSnapshot } from './draft-lifecycle';
+import { desired, MalformedGenerationError, MalformedMarkerError, UnclaimedDraftError, type DraftContent, type JobDraftSnapshot } from './draft-lifecycle';
 import type { DraftSync, SyncResult } from './draft-sync';
 import { draftOfOtherJob, type DraftLookup } from './drafts';
 
@@ -328,10 +328,10 @@ export async function syncJobDrafts(
       // A current draft that names another job is never this job's, whatever an earlier sync recorded.
       if (found && draftOfOtherJob(found.jobId, jobId)) throw new JobError('conflict');
       // A missing current draft, or a placeholder a previous-version archive or restore left in its
-      // place, is made at a new version: at the version already synced the sync would write nothing. So is
-      // the one more try after an error: the failed try may have committed and lost its answer, and its
-      // marker would answer the same version as a retry, with the keys it wrote then.
-      if (!found || found.placeholder || attempt > 0) {
+      // place, is made at a new version: at the version already synced the sync would write nothing. (A try
+      // whose commit lost its answer needs no new version: the marker records the job revision it wrote at,
+      // so the same field revision at a moved job revision is planned again, draft-lifecycle.ts.)
+      if (!found || found.placeholder) {
         await withCompany(db, companyId, (tx) =>
           tx
             .update(jobs)
@@ -344,6 +344,12 @@ export async function syncJobDrafts(
     } catch (error) {
       if (error instanceof UnclaimedDraftError) throw new JobError('conflict');
       if (error instanceof JobError || isQueueTimeout(error)) throw error;
+      // A marker or generation document not in its shape stops the sync the same way every time: no more
+      // tries and no new version, the same request again (the repair pass reports it each period).
+      if (error instanceof MalformedMarkerError || error instanceof MalformedGenerationError) {
+        console.error('job draft sync refused', error.name);
+        throw new JobError('draft_unavailable');
+      }
       // Fixed text only: the SDK's message may quote a path.
       console.error('job draft sync unavailable', error instanceof Error ? error.name : 'unknown');
       // The answer may have been lost after the write: once more, from a fresh read of Postgres.

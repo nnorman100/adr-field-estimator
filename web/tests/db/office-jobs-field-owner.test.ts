@@ -700,6 +700,24 @@ describe('moving the field work (owner decision J5)', () => {
     expect(await restoring.running).toEqual({ status: 403, body: { error: 'company_inactive' } });
   });
 
+  it('gives an owner of a company suspended while a settled archive or restore waited on its field step 403, not the 409', async () => {
+    const { id } = await claimedJob();
+    const { revision } = (await read(OWNER_A, id)).body.job as { revision: number };
+    expect((await archive(OWNER_A, id, { revision, changeId: randomUUID() })).status).toBe(200);
+    // Another archive of the archived job (another change id): settled, its field step still runs.
+    const again = await heldSync(() => archive(OWNER_A, id, { revision: revision + 1, changeId: randomUUID() }));
+    await h.admin`UPDATE companies SET status = 'suspended' WHERE id = ${h.seed.a}`;
+    again.open();
+    expect(await again.running).toEqual({ status: 403, body: { error: 'company_inactive' } });
+    await h.admin`UPDATE companies SET status = 'active' WHERE id = ${h.seed.a}`;
+    expect((await restore(OWNER_A, id, { revision: revision + 1, changeId: randomUUID() })).status).toBe(200);
+    // Another restore of the open job.
+    const reopen = await heldSync(() => restore(OWNER_A, id, { revision: revision + 2, changeId: randomUUID() }));
+    await h.admin`UPDATE companies SET status = 'suspended' WHERE id = ${h.seed.a}`;
+    reopen.open();
+    expect(await reopen.running).toEqual({ status: 403, body: { error: 'company_inactive' } });
+  });
+
   it('answers 503 and records nothing as synced when Postgres moves on after the last try’s commit', async () => {
     const { id } = await claimedJob();
     const { revision } = (await coordination(OWNER_A, id)).body;
