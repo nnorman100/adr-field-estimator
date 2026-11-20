@@ -7,6 +7,7 @@ import {
   foreignKey,
   integer,
   jsonb,
+  numeric,
   pgTable,
   primaryKey,
   text,
@@ -480,7 +481,8 @@ export const evidenceObjects = pgTable(
   ],
 );
 
-export const submissionKinds = ['original', 'change_order'] as const;
+// A revision (0019, S5b-9) supersedes a signed agreement and names it as its parent, as a change order does.
+export const submissionKinds = ['original', 'change_order', 'revision'] as const;
 export type SubmissionKind = (typeof submissionKinds)[number];
 export const submissionStatuses = ['pending', 'committed', 'aborted'] as const;
 export type SubmissionStatus = (typeof submissionStatuses)[number];
@@ -614,6 +616,79 @@ export const jobEstimates = pgTable(
     foreignKey({
       name: 'job_estimates_created_by_fkey',
       columns: [t.companyId, t.createdByActorId],
+      foreignColumns: [actors.companyId, actors.id],
+    }),
+  ],
+);
+
+export const priceApprovalKinds = ['named_adjustment', 'line_multiplier', 'hourly', 'unit', 'flat'] as const;
+export type PriceApprovalKind = (typeof priceApprovalKinds)[number];
+export const priceApprovalEndReasons = ['edited', 'replaced'] as const;
+
+// What the estimator proposes on a submitted job and the owner approves (0019, S5b-8), bound to the
+// committed submission, the job revision and the pinned version's content hash. What a row says never
+// changes; it is approved once and ended once (the database sets both times). Decimals are strings.
+export const jobPriceApprovals = pgTable(
+  'job_price_approvals',
+  {
+    id: uuid('id').notNull(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companies.id),
+    jobId: uuid('job_id').notNull(),
+    submissionId: uuid('submission_id').notNull(),
+    pinId: uuid('pin_id').notNull(),
+    tableHash: text('table_hash').notNull(),
+    jobRevision: integer('job_revision').notNull(),
+    kind: text('kind', { enum: priceApprovalKinds }).notNull(),
+    adjustmentId: text('adjustment_id'),
+    itemId: text('item_id'),
+    roomId: text('room_id'),
+    multiplier: numeric('multiplier'),
+    description: text('description'),
+    quantity: numeric('quantity'),
+    unit: text('unit'),
+    price: numeric('price'),
+    taxable: boolean('taxable'),
+    requestDigest: text('request_digest').notNull(),
+    proposedByActorId: uuid('proposed_by_actor_id').notNull(),
+    proposedAt: timestamp('proposed_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    approvedByActorId: uuid('approved_by_actor_id'),
+    approvedAt: timestamp('approved_at', { withTimezone: true, mode: 'date' }),
+    endedByActorId: uuid('ended_by_actor_id'),
+    endedAt: timestamp('ended_at', { withTimezone: true, mode: 'date' }),
+    endedReason: text('ended_reason', { enum: priceApprovalEndReasons }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.companyId, t.id] }),
+    foreignKey({
+      name: 'job_price_approvals_job_fkey',
+      columns: [t.companyId, t.jobId],
+      foreignColumns: [jobs.companyId, jobs.id],
+    }),
+    foreignKey({
+      name: 'job_price_approvals_submission_fkey',
+      columns: [t.companyId, t.jobId, t.submissionId],
+      foreignColumns: [jobSubmissions.companyId, jobSubmissions.jobId, jobSubmissions.id],
+    }),
+    foreignKey({
+      name: 'job_price_approvals_pin_fkey',
+      columns: [t.companyId, t.jobId, t.pinId],
+      foreignColumns: [jobPricePins.companyId, jobPricePins.jobId, jobPricePins.id],
+    }),
+    foreignKey({
+      name: 'job_price_approvals_proposed_by_fkey',
+      columns: [t.companyId, t.proposedByActorId],
+      foreignColumns: [actors.companyId, actors.id],
+    }),
+    foreignKey({
+      name: 'job_price_approvals_approved_by_fkey',
+      columns: [t.companyId, t.approvedByActorId],
+      foreignColumns: [actors.companyId, actors.id],
+    }),
+    foreignKey({
+      name: 'job_price_approvals_ended_by_fkey',
+      columns: [t.companyId, t.endedByActorId],
       foreignColumns: [actors.companyId, actors.id],
     }),
   ],
@@ -848,6 +923,7 @@ export const schema = {
   jobSubmissions,
   jobPricePins,
   jobEstimates,
+  jobPriceApprovals,
   agreements,
   signingLinks,
   documentLinks,
