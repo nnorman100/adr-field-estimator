@@ -5,7 +5,7 @@ import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant
 import { holdDraft, JobError, lockedJob, type JobRow } from './access';
 import { confirmationPredatesReprice } from '@/lib/estimates/service';
 import type { Fence } from '@/lib/submissions/fence';
-import { SNAPSHOT_FORMAT, snapshotManifest } from '@/lib/submissions/snapshot';
+import { SNAPSHOT_FORMAT } from '@/lib/submissions/snapshot';
 import type { FieldManifest } from '@/lib/field/canonical';
 import { fieldId } from '@/lib/field/schema';
 import { desired, UnclaimedDraftError, type DraftContent, type JobDraftSnapshot } from './draft-lifecycle';
@@ -49,10 +49,13 @@ export async function claimJobDrafts(tx: CompanyTransaction, row: JobRow): Promi
 
 // A stored record's field work, or null when there are no bytes or they are not a whole record: its
 // format, a `field` holding a `draft` map and `rooms` and `photos` lists, every entry an id the field rules
-// accept (fieldId) with a `field` map. A draft is never made from part of a record.
+// accept (fieldId) with a `field` map, and no id twice in one list (a draft made from it would fail its
+// create, and with it the whole sync). A draft is never made from part of a record.
 const isMap = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 const isDocs = (value: unknown): value is { id: string; field: Record<string, unknown> }[] =>
-  Array.isArray(value) && value.every((entry) => isMap(entry) && fieldId.safeParse(entry.id).success && isMap(entry.field));
+  Array.isArray(value) &&
+  value.every((entry) => isMap(entry) && fieldId.safeParse(entry.id).success && isMap(entry.field)) &&
+  new Set(value.map((entry) => (entry as { id: string }).id)).size === value.length;
 
 function manifestOf(bytes: Buffer | null | undefined): FieldManifest | null {
   if (!bytes) return null;
@@ -65,7 +68,8 @@ function manifestOf(bytes: Buffer | null | undefined): FieldManifest | null {
   if (!isMap(parsed) || parsed.format !== SNAPSHOT_FORMAT || !isMap(parsed.field)) return null;
   const { draft, rooms, photos } = parsed.field;
   if (!isMap(draft) || !isDocs(rooms) || !isDocs(photos)) return null;
-  return snapshotManifest(bytes);
+  // The record already read and checked: decoded once.
+  return { draft, rooms, photos };
 }
 
 const fenceOf = (row: { id: string; epoch: string; expiresAt: Date }): Fence => ({ submissionId: row.id, epoch: row.epoch, expiresAt: row.expiresAt });

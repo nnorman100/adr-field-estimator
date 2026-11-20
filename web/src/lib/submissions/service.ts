@@ -38,9 +38,12 @@ import { manifestProblem, SNAPSHOT_FORMAT, snapshotBytes, snapshotManifest, stor
 // 5. Marker: only after the row is decided, the job's draft sync again, at the version the decision
 //    made (every change to a submission row raises jobs.field_revision, migration 0018): `submitted`
 //    after a commit, back to `editing` after an abort. A sync that read Postgres before a later change
-//    is refused at the job's marker document, or writes nothing when Postgres moved on while it ran, so
-//    a late fence never lands after its row's decision. The worker (repair.ts) syncs a job whose
-//    decided row this request could not, and aborts rows that stayed pending past their expiry.
+//    is refused at the job's marker document, or writes nothing when Postgres had moved on by its
+//    in-transaction version check. A change that commits in the milliseconds between that check and
+//    the Firestore commit can still see the older write land (the accepted residual window, the test
+//    release runbook); the sync reads the version again after its commit and syncs the job again at
+//    once. The worker (repair.ts) syncs a job whose decided row this request could not, and aborts rows
+//    that stayed pending past their expiry.
 //
 // No Postgres transaction is held across a Firestore call. A failure talking to Firestore leaves the
 // row pending: never an abort, so a retry racing a failing attempt can still commit, and never a
@@ -159,9 +162,15 @@ export type DecidedRow = Pick<SubmissionRow, 'id' | 'jobId' | 'draftId' | 'epoch
 export async function writeMarker(db: Database, store: SubmitStore, companyId: string, row: DecidedRow): Promise<boolean> {
   if (row.status === 'pending') return false;
   try {
-    // Postgres's state now, the decision among it: a draft another job holds, or a current draft that
-    // cannot be made, is refused (JobError) and left for the next pass.
-    await syncJobDrafts(db, store, store, companyId, row.jobId);
+    // Postgres's state now, the decision among it. A current draft that cannot be made now is refused
+    // (JobError draft_unavailable) and left for the next pass. A conflict (the current draft is another
+    // job's, or rooms or photos are left under its id) leaves nothing this row could still release or
+    // mark: the decision is final, so the row's marker is done, and the job stays due for the draft
+    // sync's repair pass, which reports it.
+    await syncJobDrafts(db, store, store, companyId, row.jobId).catch((error: unknown) => {
+      if (!(error instanceof JobError && error.code === 'conflict')) throw error;
+      console.error('submission marker refused', 'conflict');
+    });
     await withCompany(db, companyId, async (tx) => {
       await tx
         .update(jobSubmissions)
@@ -349,7 +358,9 @@ export function submissionsService(db: Database, store: SubmitStore, options: Su
   // Step 2: the fence, as the job's draft sync writes it. Only while the caller still owns the job's
   // field work and the row is still pending (a short transaction of its own, held across nothing); a
   // move or an abort after that check is the next sync's to write, and this one is refused at the
-  // job's marker or writes nothing (it reads Postgres's version again before it writes). A fence of an
+  // job's marker or writes nothing (it reads Postgres's version again before it writes; a change in the
+  // milliseconds between that read and the Firestore commit is the accepted residual window, closed by
+  // the sync's catch-up after its commit). A fence of an
   // aborted attempt is replaced, as Postgres knows that epoch released; a draft held by an attempt
   // Postgres does not know, or by a recorded one, is not this attempt's to take.
   async function closeFence(caller: JobCaller, row: SubmissionRow): Promise<SubmissionErrorCode | null> {
@@ -368,11 +379,18 @@ export function submissionsService(db: Database, store: SubmitStore, options: Su
     // here for a fence.
     const found = await field(() => store.findDraft(caller.companyId, row.draftId));
     if (!found || found.placeholder) return 'draft_missing';
-    const synced = await syncJobDrafts(db, store, store, caller.companyId, row.jobId).catch((error: unknown) => {
+    let synced: Awaited<ReturnType<typeof syncJobDrafts>>;
+    try {
+      synced = await syncJobDrafts(db, store, store, caller.companyId, row.jobId);
+    } catch (error) {
       if (error instanceof JobError && error.code === 'conflict') throw new SubmissionError('conflict');
-      if (error instanceof JobError && error.code === 'draft_unavailable') throw new SubmissionError('submissions_unavailable');
-      throw error;
-    });
+      if (!(error instanceof JobError && error.code === 'draft_unavailable')) throw error;
+      // The draft gone since the lookup above (the sync would not make it for a fence): draft_missing,
+      // as if the lookup had found it gone; otherwise the field database is unavailable.
+      const again = await field(() => store.findDraft(caller.companyId, row.draftId));
+      if (!again || again.placeholder) return 'draft_missing';
+      throw new SubmissionError('submissions_unavailable');
+    }
     const { result } = synced;
     if ((result.outcome === 'synced' || result.outcome === 'same') && result.superseded.includes(row.draftId)) return 'submission_in_progress';
     return null;

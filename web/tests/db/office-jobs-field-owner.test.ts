@@ -567,6 +567,28 @@ describe('moving the field work (owner decision J5)', () => {
     }
   });
 
+  // A record that repeats a room id is not whole: a draft made from it would fail its create and roll back
+  // the whole sync, the owner change on every other draft with it.
+  it('moves the field work on the earlier draft when the lost current draft’s record repeats a room id, and makes no draft from it', async () => {
+    const { id, draftId: first } = await claimedJob();
+    const repeated = { format: 'dryscope-submission-v1', field: { draft: {}, rooms: [{ id: 'kitchen', field: {} }, { id: 'kitchen', field: {} }], photos: [] } };
+    const bytes = Buffer.from(JSON.stringify(repeated));
+    const row = { id: randomUUID(), epoch: randomUUID() };
+    await h.admin`
+      INSERT INTO job_submissions (id, company_id, job_id, draft_id, epoch, kind, request_digest, expires_at, created_by_actor_id)
+      VALUES (${row.id}, ${h.seed.a}, ${id}, ${first}, ${row.epoch}, 'original', ${'a'.repeat(64)}, now() + interval '1 minute', ${h.seed.estimatorA.actor})
+    `;
+    await h.admin`UPDATE job_submissions SET status = 'committed', snapshot_bytes = ${bytes}, snapshot_sha256 = ${createHash('sha256').update(bytes).digest('hex')} WHERE id = ${row.id}`;
+    await h.admin`UPDATE jobs SET status = 'submitted', revision = revision + 1 WHERE id = ${id}`;
+    const second = randomUUID();
+    expect((await nextDraft(ESTIMATOR_A, id, { draftId: second, fromDraftId: first })).status).toBe(201);
+    h.field.remove(h.seed.a, second);
+    const { revision } = (await coordination(OWNER_A, id)).body;
+    expect(await transfer(OWNER_A, id, { revision, changeId: randomUUID(), toActorId: estimatorA2 })).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
+    expect(h.field.draft(h.seed.a, first)).toMatchObject({ jobId: id, fieldOwnerUid: 'estimator-a2' });
+    expect(h.field.draft(h.seed.a, second)).toBeNull();
+  });
+
   it('answers an archive whose current draft is another job’s with 409, and leaves its version unsynced', async () => {
     const { id, draftId } = await claimedJob();
     // The field database holds another job's draft under the id (as security audit F1 guards against).
