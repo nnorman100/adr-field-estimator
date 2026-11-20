@@ -53,20 +53,25 @@ under the same names; no stored row changes). No route uses the table yet.
 
 | Table | What it holds | Runtime rights |
 | --- | --- | --- |
-| `job_price_approvals` | What the estimator proposes on a submitted job and the owner approves, keyed `(company_id, id)` with `id` made on the phone: `job_id`, `submission_id`, `pin_id`, `table_hash`, `job_revision` (what it is bound to), `kind` (`named_adjustment`, `line_multiplier`, `hourly`, `unit`, `flat`), `adjustment_id` (a named adjustment of the pinned table), `item_id` and `room_id` (a custom multiplier's line; no room for a job-wide item), `multiplier` (above 1, at most 3, two decimal places), `description`, `quantity` (hours for `hourly`, 0.25 to 200), `unit`, `price` (the hourly rate, the unit price or the flat amount, above 0 to 100,000, to the cent), `taxable` (unit and flat only), `request_digest`, `proposed_by_actor_id`, `proposed_at`, `approved_by_actor_id`, `approved_at`, `ended_by_actor_id`, `ended_at`, `ended_reason` (`edited`, `replaced`) | `SELECT`, `INSERT`, and `UPDATE` of `approved_by_actor_id`, `ended_by_actor_id` and `ended_reason` only |
+| `job_price_approvals` | What the estimator proposes on a submitted job and the owner approves, keyed `(company_id, id)` with `id` made on the phone: `job_id`, `submission_id`, `pin_id`, `table_hash`, `job_revision` (what it is bound to), `kind` (`named_adjustment`, `line_multiplier`, `hourly`, `unit`, `flat`), `adjustment_id` (a named adjustment of the pinned table), `item_id` and `room_id` (a custom multiplier's line; no room for a job-wide item), `multiplier` (above 1, at most 3, two decimal places), `description`, `quantity` (hours for `hourly`, required, 0.25 to 200), `unit`, `price` (the hourly rate, at most 10,000 as the engine's approved-rate cap, the unit price or the flat amount, above 0 to 100,000, two decimal places at most), `taxable` (unit and flat only), `request_digest`, `proposed_by_actor_id`, `proposed_at`, `approved_by_actor_id`, `approved_at`, `approved_by_name` (hourly only: the approver's name as entered at approval, 1 to 150 characters, kept exactly as entered), `ended_by_actor_id`, `ended_at`, `ended_reason` (`edited`, `replaced`) | `SELECT`, `INSERT`, and `UPDATE` of `approved_by_actor_id`, `approved_by_name`, `ended_by_actor_id` and `ended_reason` only |
 
-- Each kind holds exactly its own fields (a check). Decimals are refused, not rounded, past two places.
+- Each kind holds exactly its own fields (a check). Decimals (multiplier, quantity, price) are refused, not rounded, past two places (`1.250` is refused). An hourly row
+  states the approver's name exactly when it is approved, and no other row does.
 - A row is bound to the job's committed submission of its current draft, the job revision, the job's current
   pin and that pin's version's content hash. A trigger refuses a proposal, an approval or an end unless the job
-  is `submitted` at that revision and pin and no estimate has been made from that submission and pin: after
-  the estimate, a change goes through Back to editing and Finish (owner decision D1, 2026-11-20).
+  is `submitted` at that revision and pin and no estimate has been made from that submission on any pin: after
+  the estimate (a reprice onto a newer pin included), a change goes through Back to editing and Finish (owner
+  decision D1, 2026-11-20). A finished job has no pin until its first estimate, so the first proposal on a job
+  with no pin will establish the first price pin (sequence 1, reason `first_price`, the company's newest
+  published version, the estimate service's pin rules) under the job lock; that route is the server slice of
+  S5b-8. A job that already has its first pin and no estimate is priced from that pin, with no second pin.
 - What a row says never changes. It is approved once and ended once, in separate changes, and the database
   sets both times. An edit ends the row (`edited`) and proposes a new one with no approval, so an approved
   hourly rate stays as saved. Approving a named adjustment while another is approved first ends that one
   (`replaced`); only an approved named adjustment is replaced.
 - One open custom multiplier per line (item and room, or job-wide item) per submission and job revision; at
   most one approved named adjustment in force per submission and job revision.
-- Personal data: `description` (as typed, printed on the proposal). The other columns are ids, kinds,
+- Personal data: `description` (as typed, printed on the proposal) and `approved_by_name` (the approver's name). The other columns are ids, kinds,
   amounts, hashes and times.
 - A platform operator reads a company's rows through `withOperator` with that company set, and every write
   policy refuses an active operator. No `DELETE`, no `TRUNCATE`.

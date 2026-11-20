@@ -276,11 +276,13 @@ Target acceptance checks (**not built**):
 - Two concurrent change orders on the same signed job cannot both build on a stale parent.
 - Change orders are not counted as separate completed jobs in estimate accuracy.
 
-Still **[open]**: the calculation version name, chosen with the price-bracket work (#228); whether
-custom adjustments apply to bracket-derived lines (the plan recommends yes, only through explicit
-eligible-item selection); whether a minimum or trip charge applies again on a change order (the
-plan recommends off unless selected); where the parent/child link is stored; and credits,
-reductions and whole-agreement replacement, which are outside the first workflow.
+Still **[open]**: the calculation version name, chosen with the price-bracket work (#228); whether a
+minimum or trip charge applies again on a change order (the plan recommends off unless selected);
+where the parent/child link is stored; and credits, reductions and whole-agreement replacement,
+which are outside the first workflow.
+
+Decided (owner decision D2, 2026-11-20): bracket-derived lines are eligible for a custom multiplier,
+through the estimator's explicit selection of the line (not built yet).
 
 ### 6.2 Field and office ownership
 

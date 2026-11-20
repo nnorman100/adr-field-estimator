@@ -655,6 +655,7 @@ export const jobPriceApprovals = pgTable(
     proposedAt: timestamp('proposed_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
     approvedByActorId: uuid('approved_by_actor_id'),
     approvedAt: timestamp('approved_at', { withTimezone: true, mode: 'date' }),
+    approvedByName: text('approved_by_name'),
     endedByActorId: uuid('ended_by_actor_id'),
     endedAt: timestamp('ended_at', { withTimezone: true, mode: 'date' }),
     endedReason: text('ended_reason', { enum: priceApprovalEndReasons }),

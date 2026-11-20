@@ -12,12 +12,19 @@
 --    - an hourly, unit or flat addition: a description, the hours, quantity and unit, or neither,
 --      and its price (the hourly rate is the price table's additional work rate when proposed), and
 --      whether a unit or flat addition is taxable (an hourly one is taxed as the additional work
---      item is). Additions never change the company's price table.
+--      item is), and for an hourly addition the name of the approver as entered at approval (the
+--      proposal prints it, as the additional work flow does today). Additions never change the
+--      company's price table.
 --    Each row is bound to the job's committed submission of its current draft, the job revision and
 --    the pinned price version's content hash when it is proposed, and it can be proposed, approved
 --    or ended only while the job is submitted at that revision and pin and no estimate has been made
---    from that submission and pin (D1: a change after the estimate goes through Back to editing and
---    Finish, so job_estimates is unchanged). What a row says never changes: an edit ends the row
+--    from that submission on any pin (D1: a change after the estimate, a reprice onto a newer pin
+--    included, goes through Back to editing and Finish, so job_estimates is unchanged). A finished
+--    job has a pin only once its first estimate is made, so the first proposal on a job with no pin
+--    will establish the first price pin (sequence 1, reason first_price, the company's newest
+--    published version, the pin rules of the estimate service) under the job lock; that route is the
+--    server slice of S5b-8, and a job that already has its first pin and no estimate is priced from
+--    that pin, which makes no second one. What a row says never changes: an edit ends the row
 --    (`edited`) and proposes a new one, which has no approval; a newly approved named adjustment
 --    ends the approved one it replaces (`replaced`). A row is approved once and ended once, and the
 --    database takes both times from its clock. Who may propose and approve is the route's check
@@ -70,14 +77,14 @@ CREATE TABLE job_price_approvals (
   item_id text CHECK (item_id ~ '^[a-z][a-z0-9_]{1,39}$'),
   room_id text CHECK (char_length(room_id) BETWEEN 1 AND 64 AND room_id ~ '^[A-Za-z0-9_-]+$'),
   -- Decimals are stored exactly as sent: a value with more than two decimal places is refused, not rounded.
-  multiplier numeric CHECK (multiplier > 1 AND multiplier <= 3 AND multiplier = round(multiplier, 2)),
+  multiplier numeric CHECK (multiplier > 1 AND multiplier <= 3 AND scale(multiplier) <= 2),
   -- An addition: one line of text as entered, the hours (hourly) or quantity and unit (unit), and its
   -- price: the hourly rate, the unit price or the flat amount.
   description text
     CHECK (char_length(description) BETWEEN 1 AND 300 AND btrim(description) <> '' AND description !~ '[[:cntrl:]]'),
-  quantity numeric CHECK (quantity > 0 AND quantity <= 100000 AND quantity = round(quantity, 2)),
+  quantity numeric CHECK (quantity > 0 AND quantity <= 100000 AND scale(quantity) <= 2),
   unit text CHECK (char_length(unit) BETWEEN 1 AND 20 AND btrim(unit) <> '' AND unit !~ '[[:cntrl:]]'),
-  price numeric CHECK (price > 0 AND price <= 100000 AND price = round(price, 2)),
+  price numeric CHECK (price > 0 AND price <= 100000 AND scale(price) <= 2),
   taxable boolean,
   -- SHA-256 of the propose request: the same id and body is the same proposal.
   request_digest text NOT NULL CHECK (request_digest ~ '^[0-9a-f]{64}$'),
@@ -85,6 +92,9 @@ CREATE TABLE job_price_approvals (
   proposed_at timestamptz NOT NULL DEFAULT now(),
   approved_by_actor_id uuid,
   approved_at timestamptz,
+  -- An hourly addition: the approver's name as entered at approval, kept exactly as entered.
+  approved_by_name text
+    CHECK (char_length(approved_by_name) BETWEEN 1 AND 150 AND btrim(approved_by_name) <> '' AND approved_by_name !~ '[[:cntrl:]]'),
   ended_by_actor_id uuid,
   ended_at timestamptz,
   ended_reason text CHECK (ended_reason IN ('edited', 'replaced')),
@@ -108,7 +118,8 @@ CREATE TABLE job_price_approvals (
       WHEN 'line_multiplier' THEN adjustment_id IS NULL AND item_id IS NOT NULL AND multiplier IS NOT NULL
         AND description IS NULL AND quantity IS NULL AND unit IS NULL AND price IS NULL AND taxable IS NULL
       WHEN 'hourly' THEN adjustment_id IS NULL AND item_id IS NULL AND room_id IS NULL AND multiplier IS NULL
-        AND description IS NOT NULL AND quantity BETWEEN 0.25 AND 200 AND unit IS NULL AND price IS NOT NULL AND taxable IS NULL
+        AND description IS NOT NULL AND quantity IS NOT NULL AND quantity BETWEEN 0.25 AND 200 AND unit IS NULL
+        AND price IS NOT NULL AND price <= 10000 AND taxable IS NULL
       WHEN 'unit' THEN adjustment_id IS NULL AND item_id IS NULL AND room_id IS NULL AND multiplier IS NULL
         AND description IS NOT NULL AND quantity IS NOT NULL AND unit IS NOT NULL AND price IS NOT NULL AND taxable IS NOT NULL
       WHEN 'flat' THEN adjustment_id IS NULL AND item_id IS NULL AND room_id IS NULL AND multiplier IS NULL
@@ -118,6 +129,8 @@ CREATE TABLE job_price_approvals (
   ),
   -- Approved exactly when it says when and by whom; ended likewise, and with a reason.
   CONSTRAINT job_price_approvals_approved_check CHECK ((approved_at IS NULL) = (approved_by_actor_id IS NULL)),
+  -- The approver's name is there exactly when an hourly row is approved.
+  CONSTRAINT job_price_approvals_approver_name_check CHECK ((kind = 'hourly' AND approved_at IS NOT NULL) = (approved_by_name IS NOT NULL)),
   CONSTRAINT job_price_approvals_ended_check CHECK (
     (ended_at IS NULL) = (ended_by_actor_id IS NULL) AND (ended_at IS NULL) = (ended_reason IS NULL)
   ),
@@ -164,7 +177,7 @@ DECLARE
   version_hash text;
 BEGIN
   IF TG_OP = 'INSERT' THEN
-    IF NEW.approved_by_actor_id IS NOT NULL OR NEW.approved_at IS NOT NULL
+    IF NEW.approved_by_actor_id IS NOT NULL OR NEW.approved_at IS NOT NULL OR NEW.approved_by_name IS NOT NULL
        OR NEW.ended_by_actor_id IS NOT NULL OR NEW.ended_at IS NOT NULL OR NEW.ended_reason IS NOT NULL THEN
       RAISE EXCEPTION 'a price approval starts as a proposal' USING ERRCODE = '23514';
     END IF;
@@ -180,6 +193,10 @@ BEGIN
     END IF;
     IF OLD.ended_at IS NOT NULL THEN
       RAISE EXCEPTION 'an ended price approval cannot change' USING ERRCODE = '23514';
+    END IF;
+    IF NEW.approved_by_name IS DISTINCT FROM OLD.approved_by_name
+       AND NEW.approved_by_actor_id IS NOT DISTINCT FROM OLD.approved_by_actor_id THEN
+      RAISE EXCEPTION 'the approver''s name is set with the approval and never changes' USING ERRCODE = '23514';
     END IF;
     IF NEW.approved_by_actor_id IS DISTINCT FROM OLD.approved_by_actor_id THEN
       IF OLD.approved_by_actor_id IS NOT NULL OR NEW.approved_by_actor_id IS NULL THEN
@@ -239,7 +256,7 @@ BEGIN
   END IF;
 
   PERFORM 1 FROM public.job_estimates e
-  WHERE e.company_id = NEW.company_id AND e.submission_id = NEW.submission_id AND e.pin_id = NEW.pin_id;
+  WHERE e.company_id = NEW.company_id AND e.submission_id = NEW.submission_id;
   IF FOUND THEN
     RAISE EXCEPTION 'the estimate is already made: go back to editing to change its prices' USING ERRCODE = '23514';
   END IF;
@@ -253,7 +270,7 @@ CREATE TRIGGER job_price_approvals_guard
   BEFORE INSERT OR UPDATE ON job_price_approvals
   FOR EACH ROW EXECUTE FUNCTION job_price_approvals_guard();
 
--- An estimate made while an approval of its submission and pin is being written waits for the job
+-- An estimate made while an approval of its submission is being written waits for the job
 -- row lock both take, so the estimate prices either before the change (and the change is then
 -- refused above) or after it.
 
@@ -276,7 +293,7 @@ CREATE POLICY job_price_approvals_update ON job_price_approvals
   USING (company_id = app_company_id() AND NOT (SELECT app_operator_active()))
   WITH CHECK (company_id = app_company_id() AND NOT (SELECT app_operator_active()));
 
--- Table rights. No DELETE and no TRUNCATE. Only who approved and who ended it, and why, may be set
--- (the trigger sets both times); never what the row says.
+-- Table rights. No DELETE and no TRUNCATE. Only who approved (and the name they entered) and who
+-- ended it, and why, may be set (the trigger sets both times); never what the row says.
 GRANT SELECT, INSERT ON job_price_approvals TO dryscope_runtime;
-GRANT UPDATE (approved_by_actor_id, ended_by_actor_id, ended_reason) ON job_price_approvals TO dryscope_runtime;
+GRANT UPDATE (approved_by_actor_id, approved_by_name, ended_by_actor_id, ended_reason) ON job_price_approvals TO dryscope_runtime;

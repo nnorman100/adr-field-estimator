@@ -105,9 +105,13 @@ const propose = (s: Submitted, r: Row, company = h.seed.a) =>
     `),
   );
 
+const OWNER_NAME = '  Olivia  Owner ';
+
 const approve = (id: string, tx?: CompanyTransaction) => {
   const write = (t: CompanyTransaction) =>
-    t.execute(sql`UPDATE job_price_approvals SET approved_by_actor_id = ${h.seed.ownerA.actor}::uuid WHERE id = ${id}::uuid RETURNING id::text`);
+    t.execute(
+      sql`UPDATE job_price_approvals SET approved_by_actor_id = ${h.seed.ownerA.actor}::uuid, approved_by_name = CASE WHEN kind = 'hourly' THEN ${OWNER_NAME} END WHERE id = ${id}::uuid RETURNING id::text`,
+    );
   return tx ? write(tx) : as(h.seed.a, write);
 };
 
@@ -144,7 +148,7 @@ describe('migration 0019: job_price_approvals', () => {
         SELECT column_name AS column FROM information_schema.column_privileges
         WHERE grantee = 'dryscope_runtime' AND table_name = 'job_price_approvals' AND privilege_type = 'UPDATE' ORDER BY 1
       `,
-    ).toEqual([{ column: 'approved_by_actor_id' }, { column: 'ended_by_actor_id' }, { column: 'ended_reason' }]);
+    ).toEqual([{ column: 'approved_by_actor_id' }, { column: 'approved_by_name' }, { column: 'ended_by_actor_id' }, { column: 'ended_reason' }]);
 
     const s = await submittedJob();
     const r = proposalOf('flat');
@@ -176,6 +180,7 @@ describe('migration 0019: job_price_approvals', () => {
       ['a multiplier without a value', { kind: 'line_multiplier', item_id: 'other_item', multiplier: null }],
       ['an hourly addition with a unit', { kind: 'hourly', description: 'x', quantity: '1', price: '1.00', unit: 'h' }],
       ['an hourly addition with its own tax treatment', { kind: 'hourly', description: 'x', quantity: '1', price: '1.00', taxable: true }],
+      ['an hourly addition without its hours', { kind: 'hourly', description: 'x', price: '1.00' }],
       ['an hourly addition under a quarter hour', { kind: 'hourly', description: 'x', quantity: '0.2', price: '1.00' }],
       ['a unit addition without its unit', { kind: 'unit', description: 'x', quantity: '1', price: '1.00', taxable: true }],
       ['a unit addition without its tax treatment', { kind: 'unit', description: 'x', quantity: '1', unit: 'bag', price: '1.00' }],
@@ -191,14 +196,18 @@ describe('migration 0019: job_price_approvals', () => {
   it('takes a custom multiplier above 1 and at most 3, with at most two decimal places, and refuses rather than rounds', async () => {
     const s = await submittedJob();
     const line = (multiplier: string, item = 'flood_cut') => propose(s, proposalOf('line_multiplier', { item_id: item, multiplier }));
-    for (const multiplier of ['1', '1.00', '0.99', '0.5', '3.01', '4', '1.234', '-1.5']) {
+    for (const multiplier of ['1', '1.00', '0.99', '0.5', '3.01', '4', '1.234', '1.250', '-1.5']) {
       expect({ multiplier, code: await errorCode(line(multiplier)) }).toEqual({ multiplier, code: CHECK_VIOLATION });
     }
     expect(rows(await line('1.01', 'item_a'))).toHaveLength(1);
     expect(rows(await line('3', 'item_b'))).toHaveLength(1);
     expect(await h.admin`SELECT multiplier::text AS m FROM job_price_approvals ORDER BY item_id`).toEqual([{ m: '1.01' }, { m: '3' }]);
+    expect(rows(await line('1.25', 'item_c'))).toHaveLength(1);
+    // An hourly rate is capped as the engine caps an approved rate.
+    expect(rows(await propose(s, proposalOf('hourly', { price: '10000.00' })))).toHaveLength(1);
+    expect(await errorCode(propose(s, proposalOf('hourly', { price: '10000.01' })))).toBe(CHECK_VIOLATION);
     // Prices and quantities are exact to the cent too, and never zero.
-    for (const extra of [{ price: '1.005' }, { price: '0' }, { quantity: '0' }, { quantity: '2.001' }, { price: '100000.01' }]) {
+    for (const extra of [{ price: '1.005' }, { price: '4.500' }, { price: '0' }, { quantity: '0' }, { quantity: '2.001' }, { quantity: '2.500' }, { price: '100000.01' }]) {
       expect({ extra, code: await errorCode(propose(s, proposalOf('unit', extra))) }).toEqual({ extra, code: CHECK_VIOLATION });
     }
     for (const description of ['', '   ', 'two\nlines', 'x'.repeat(301)]) {
@@ -244,6 +253,39 @@ describe('migration 0019: job_price_approvals', () => {
     expect((await refusal(approve(early.id)))?.message).toContain(message);
     expect((await refusal(end(early.id, 'edited')))?.message).toContain(message);
     expect(await stateOf(early.id)).toEqual({ approved: false, ended: null, price: '150.00' });
+
+    // Repriced onto a newer pin after the estimate: the submission is still the estimated one.
+    const v2 = await seedVersion(h.admin, h.seed.a, h.seed.ownerA.actor);
+    const pin2 = await seedPin(h.admin, { company: h.seed.a, job: t.job, version: v2.id, actor: h.seed.ownerA.actor, sequence: 2 });
+    const moved = { pin: pin2, hash: v2.hash };
+    expect((await refusal(propose(t, proposalOf('flat', moved))))?.message).toContain(message);
+    expect((await refusal(approve(early.id)))?.message).toContain('price pin has moved');
+  });
+
+  it('keeps the approver’s name as entered, on an approved hourly row and on no other', async () => {
+    const s = await submittedJob();
+    const hourly = proposalOf('hourly');
+    await propose(s, hourly);
+    const set = (id: string, name: string | null) =>
+      as(h.seed.a, (tx) =>
+        tx.execute(sql`UPDATE job_price_approvals SET approved_by_actor_id = ${h.seed.ownerA.actor}::uuid, approved_by_name = ${name} WHERE id = ${id}::uuid`),
+      );
+    expect(await errorCode(set(hourly.id, null))).toBe(CHECK_VIOLATION);
+    for (const name of ['', '   ', 'Olivia\nOwner', 'x'.repeat(151)]) {
+      expect({ name, code: await errorCode(set(hourly.id, name)) }).toEqual({ name, code: CHECK_VIOLATION });
+    }
+    expect(await stateOf(hourly.id)).toMatchObject({ approved: false });
+    await approve(hourly.id);
+    expect(await h.admin`SELECT approved_by_name AS name FROM job_price_approvals WHERE id = ${hourly.id}`).toEqual([{ name: OWNER_NAME }]);
+    // Frozen after approval.
+    expect(await errorCode(as(h.seed.a, (tx) => tx.execute(sql`UPDATE job_price_approvals SET approved_by_name = 'Another' WHERE id = ${hourly.id}::uuid`)))).toBe(CHECK_VIOLATION);
+
+    const flat = proposalOf('flat');
+    await propose(s, flat);
+    expect(await errorCode(set(flat.id, 'Olivia Owner'))).toBe(CHECK_VIOLATION);
+    expect(await errorCode(as(h.seed.a, (tx) => tx.execute(sql`UPDATE job_price_approvals SET approved_by_name = 'Olivia Owner' WHERE id = ${flat.id}::uuid`)))).toBe(CHECK_VIOLATION);
+    await approve(flat.id);
+    expect(await h.admin`SELECT approved_by_name AS name FROM job_price_approvals WHERE id = ${flat.id}`).toEqual([{ name: null }]);
   });
 
   it('is approved once, by the database’s clock, and only while the job is at the proposal’s revision', async () => {
@@ -292,6 +334,7 @@ describe('migration 0019: job_price_approvals', () => {
       proposed_at: `proposed_at - interval '1 hour'`,
       approved_by_actor_id: `'${h.seed.estimatorA.actor}'`,
       approved_at: `now() + interval '1 day'`,
+      approved_by_name: `'Someone Else'`,
       ended_by_actor_id: `'${h.seed.estimatorA.actor}'`,
       ended_at: `now() + interval '1 day'`,
       ended_reason: `'edited'`,
