@@ -87,7 +87,7 @@ type SignedFacts = { agreementId: string; setupAt: Date; plan: { plannedDays: nu
 
 // The agreement in force (the latest signed; S5b-9's resolver replaces this when revisions land), the
 // original signing's time, and the plan of the snapshot the agreement in force was signed from.
-async function signedFacts(tx: CompanyTransaction, job: JobRow): Promise<SignedFacts> {
+export async function signedFacts(tx: CompanyTransaction, job: JobRow): Promise<SignedFacts> {
   const signed = await tx
     .select({ id: agreements.id, kind: agreements.kind, submissionId: agreements.submissionId, signedAt: agreements.signedAt })
     .from(agreements)
@@ -215,9 +215,14 @@ async function viewOf(tx: CompanyTransaction, caller: JobCaller, job: JobRow, no
   };
 }
 
+/** The watch as its own card shows it, for the job close's suggested days (S5b-10 part 3). */
+export async function compute(tx: CompanyTransaction, caller: JobCaller, job: JobRow, now: string): Promise<{ view: WatchView }> {
+  return { view: await viewOf(tx, caller, job, now, await load(tx, job), await watchOf(tx, job)) };
+}
+
 // The database's clock (with its microseconds), so the status of a write is worked out at the time its
 // receipt is stamped.
-async function databaseNow(tx: CompanyTransaction): Promise<string> {
+export async function databaseNow(tx: CompanyTransaction): Promise<string> {
   const [row] = (await tx.execute(sql`SELECT ${micros(sql`clock_timestamp()`)} AS now`)) as unknown as { now: string }[];
   return row!.now;
 }

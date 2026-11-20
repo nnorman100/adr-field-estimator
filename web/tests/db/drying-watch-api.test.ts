@@ -27,7 +27,14 @@ vi.mock('@/lib/submissions/services', () => ({ submissionsServices: () => live.h
 vi.mock('@/lib/drying/services', async () => {
   const { readingsService } = await import('@/lib/drying/readings');
   const { watchService } = await import('@/lib/drying/watch-service');
-  return { dryingServices: () => ({ readings: readingsService(live.harness!.handle.db, () => live.reader!), watch: watchService(live.harness!.handle.db) }) };
+  const { outcomeService } = await import('@/lib/drying/outcome');
+  return {
+    dryingServices: () => ({
+      readings: readingsService(live.harness!.handle.db, () => live.reader!),
+      watch: watchService(live.harness!.handle.db),
+      outcome: outcomeService(live.harness!.handle.db),
+    }),
+  };
 });
 
 const jobsRoute = await import('@/app/api/jobs/route');
@@ -40,6 +47,7 @@ const readingsRoute = await import('@/app/api/jobs/[jobId]/drying-readings/route
 const voidRoute = await import('@/app/api/jobs/[jobId]/drying-readings/[readingId]/void/route');
 const watchRoute = await import('@/app/api/jobs/[jobId]/drying-watch/route');
 const actionsRoute = await import('@/app/api/jobs/[jobId]/drying-watch/actions/route');
+const outcomeRoute = await import('@/app/api/jobs/[jobId]/outcome/route');
 const { params, request, resetTeamDatabase, startTeamServer } = await import('./team-harness');
 
 let base: Awaited<ReturnType<typeof startTeamServer>>;
@@ -288,6 +296,21 @@ describe('acting on the watch', () => {
     expect(now.can.extend).toBe(false);
     expect(await act(OFFICE_A, jobId, action(now.factsHash))).toEqual({ status: 409, body: { error: 'extension_limit' } });
     expect((await act(OFFICE_A, jobId, action(now.factsHash, { action: 'close', reason: 'Equipment pulled.' }))).status).toBe(201);
+  });
+});
+
+describe('the drying days a job close is preset with', () => {
+  it('are the signed plan’s days, and the watch’s day count once monitoring has finished', async () => {
+    await h.admin`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${h.seed.a}, 'estimate_assist', true)`;
+    const { jobId } = await signedJob();
+    const outcome = () => json(outcomeRoute.GET(request(OWNER_A, `/api/jobs/${jobId}/outcome`), params({ jobId })));
+    expect((await outcome()).body.suggestedDays).toEqual({ days: 3, source: 'plan' });
+    const { factsHash } = (await watch(OWNER_A, jobId)).body;
+    expect((await act(OWNER_A, jobId, action(factsHash, { action: 'mark_dry' }))).status).toBe(201);
+    expect((await outcome()).body.suggestedDays).toEqual({ days: 1, source: 'watch' });
+    // With the drying watch switched off, the signed plan again.
+    await h.admin`UPDATE company_feature_flags SET enabled = false WHERE company_id = ${h.seed.a} AND flag = 'drying_watch'`;
+    expect((await outcome()).body.suggestedDays).toEqual({ days: 3, source: 'plan' });
   });
 });
 

@@ -215,8 +215,9 @@ async function signedSide(name: 'A' | 'B', companyId: string, estimator: FakeCla
   };
   const signedAssignment = await coordinate(linked.jobId, `Office Notes Line ${name}`);
   const pendingAssignment = await coordinate(pending.jobId, `Office Notes Second ${name}`);
-  // S5b-10 (0020, no routes yet): a drying reading on each job, and on the signed job a close, its
-  // estimate history sample (the close's baseline) and a drying watch action, written as slice 10B will.
+  // S5b-10 (0020): a drying reading on each job, and on the signed job a close and a drying watch action,
+  // written as slice 10B writes them; the signed job's estimate history sample (the close's baseline) is
+  // the one its signing wrote.
   const [agreement] = await h.admin<{ id: string }[]>`SELECT id::text FROM agreements WHERE job_id = ${linked.jobId}`;
   const readingIds: Record<string, string> = {};
   for (const jobId of [linked.jobId, pending.jobId]) {
@@ -229,16 +230,17 @@ async function signedSide(name: 'A' | 'B', companyId: string, estimator: FakeCla
               ${digestOf(readingId)}, ${estimatorActorId})
     `;
   }
-  await h.admin`
-    INSERT INTO estimate_history (company_id, job_id, agreement_id, signed_at, price_mode, low_cents, high_cents)
-    VALUES (${companyId}, ${linked.jobId}, ${agreement!.id}, now(), 'range', 110000, 140000)
+  const [sample] = await h.admin<{ price_mode: string; low_cents: string; high_cents: string | null }[]>`
+    SELECT price_mode, low_cents::text, high_cents::text FROM estimate_history WHERE job_id = ${linked.jobId} AND agreement_id = ${agreement!.id}
   `;
+  expect(sample).toBeDefined();
   const closeId = randomUUID();
+  // The final invoice at the low end lands inside, in a range or at one price.
   await h.admin`
     INSERT INTO job_closes (id, company_id, job_id, agreement_id, revision, request_digest, final_cents, actual_days, note, baseline_agreement_id, price_mode,
                             baseline_low_cents, baseline_high_cents, landed, closed_by_actor_id)
-    VALUES (${closeId}, ${companyId}, ${linked.jobId}, ${agreement!.id}, 1, ${digestOf(closeId)}, 125000, 4, ${`Close Note ${name}`}, ${agreement!.id}, 'range',
-            110000, 140000, 'inside', ${estimatorActorId})
+    VALUES (${closeId}, ${companyId}, ${linked.jobId}, ${agreement!.id}, 1, ${digestOf(closeId)}, ${Math.max(1, Number(sample!.low_cents))}, 4, ${`Close Note ${name}`},
+            ${agreement!.id}, ${sample!.price_mode}, ${sample!.low_cents}, ${sample!.high_cents}, 'inside', ${estimatorActorId})
   `;
   const watchRequest = randomUUID();
   const watch = {

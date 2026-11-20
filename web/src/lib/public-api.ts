@@ -59,6 +59,8 @@ export const memberApiPaths: readonly string[] = [
   '/api/jobs/:id/drying-readings/:id/void',
   '/api/jobs/:id/drying-watch',
   '/api/jobs/:id/drying-watch/actions',
+  '/api/jobs/:id/outcome',
+  '/api/jobs/:id/close',
   '/api/jobs/:id/signing-link',
   '/api/jobs/:id/document-links',
   '/api/jobs/:id/document-links/:id',
