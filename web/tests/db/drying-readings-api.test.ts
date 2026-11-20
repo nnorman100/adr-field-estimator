@@ -5,7 +5,7 @@ import type { FieldManifest } from '@/lib/field/canonical';
 import { newJob } from './job-harness';
 import { standIn } from './readiness-fake';
 import { agreementOf, insertAgreement, newSubmission, seedEstimate, seedPin, seedSignature, seedVersion } from './submission-harness';
-import { flow, json, type Answer } from './submission-flow';
+import { flow, json, latch, until, type Answer } from './submission-flow';
 import type { FakeClaims, Harness } from './team-harness';
 
 // S5b-10 slice 10B, the drying log: GET and POST /api/jobs/{jobId}/drying-readings and POST
@@ -305,6 +305,8 @@ describe('the 400-reading limit', () => {
     `;
     const extra = air();
     expect(await add(OWNER_A, jobId, extra)).toEqual({ status: 409, body: { error: 'reading_limit' } });
+    // A time the database cannot store is a bad request on a full job too, not a full job.
+    expect(await add(OWNER_A, jobId, air({ takenAt: '2026-11-12T09:30:00+16:00' }))).toEqual({ status: 400, body: { error: 'invalid_request' } });
     // A reading already stored is still answered: the replay comes before the limit.
     expect((await add(OWNER_A, jobId, kept)).status).toBe(200);
     expect((await voidOf(OWNER_A, jobId, kept.id, fresh())).status).toBe(200);
@@ -543,5 +545,47 @@ describe('the caller as they are when the log is read or written', () => {
     const made = await json(readingsRoute.POST(request(OWNER_A, `/api/jobs/${jobId}/drying-readings`, { method: 'POST', body: new Uint8Array(bytes) }), params({ jobId })));
     expect(made).toEqual({ status: 400, body: { error: 'invalid_request' } });
     expect(await rows(jobId)).toEqual([]);
+  });
+});
+
+describe('a room reading while a Submit of the draft is deciding', () => {
+  // Submit's intent row is committed before its fence closes (src/lib/submissions/service.ts): hold it at
+  // its draft sync, the field database step that closes the fence (the stand-in's `sync`), so Postgres
+  // has a pending submission while the field draft still says editing.
+  async function readyDraft() {
+    const { jobId, draftId, manifest: ready } = await f.readyJob(ESTIMATOR_A, h.seed.a);
+    const manifest: FieldManifest = { ...ready, draft: { ...(ready.draft as object), scopeConfirmed: true } };
+    h.field.put(h.seed.a, draftId, manifest);
+    return { jobId, draftId, manifest };
+  }
+  async function heldSubmit(jobId: string, draftId: string, manifest: FieldManifest) {
+    const hold = latch();
+    const reached = latch();
+    h.field.gate.sync = () => (reached.open(), hold.wait);
+    const submit = f.submitShown(ESTIMATOR_A, jobId, draftId, manifest);
+    await reached.wait;
+    await until(async () => (await f.submissions(jobId)).some((row) => row.status === 'pending'), 'the pending submission');
+    expect(h.field.draft(h.seed.a, draftId)?.state).toBe('editing');
+    return { release: async () => (hold.open(), (await submit).answer.status) };
+  }
+
+  it('is refused (409) while the Submit is pending, before and during the field read, and stores nothing', async () => {
+    const one = await readyDraft();
+    const held = await heldSubmit(one.jobId, one.draftId, one.manifest);
+    expect(await add(ESTIMATOR_A, one.jobId, material())).toEqual({ status: 409, body: { error: 'submission_in_progress' } });
+    // Still held, so the refusal was the pending submission's, not a submitted job's.
+    expect((await f.job(one.jobId)).status).toBe('draft');
+    expect(await held.release()).toBe(201);
+    expect(await rows(one.jobId)).toEqual([]);
+
+    const other = await readyDraft();
+    let during: Awaited<ReturnType<typeof heldSubmit>> | null = null;
+    live.reader!.during = async () => {
+      during = await heldSubmit(other.jobId, other.draftId, other.manifest);
+    };
+    expect(await add(ESTIMATOR_A, other.jobId, material())).toEqual({ status: 409, body: { error: 'submission_in_progress' } });
+    expect(await during!.release()).toBe(201);
+    expect(await rows(other.jobId)).toEqual([]);
+    expect([...(await readingAudits(one.jobId)), ...(await readingAudits(other.jobId))]).toEqual([]);
   });
 });

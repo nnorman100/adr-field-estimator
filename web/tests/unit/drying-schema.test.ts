@@ -38,6 +38,11 @@ describe('air readings', () => {
     expect(ok(air({ takenAt: '2026-11-20T09:30:00' }))).toBe(false);
     expect(ok(air({ takenAt: '2026-11-20' }))).toBe(false);
   });
+
+  it('takes only a time the database stores as given: a real day and an offset of at most 15:59', () => {
+    for (const takenAt of ['2026-11-20T09:30:00+15:59', '2026-11-20T09:30:00-15:00', '2024-02-29T09:30:00.123456Z']) expect(ok(air({ takenAt }))).toBe(true);
+    for (const takenAt of ['2026-11-20T09:30:00+16:00', '2026-11-20T09:30:00-16:30', '2026-02-30T09:30:00Z', '2025-02-29T09:30:00Z', '2026-04-31T09:30:00Z']) expect(ok(air({ takenAt }))).toBe(false);
+  });
 });
 
 describe('material readings', () => {

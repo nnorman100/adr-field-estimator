@@ -49,12 +49,25 @@ const number = (min: number, max: number) => z.number().min(min).max(max);
 // Lower-cased, as the database holds and returns a uuid: the digest and every comparison use one form.
 const uuid = z.uuid().transform((value) => value.toLowerCase());
 
+// An ISO time PostgreSQL stores as given: a real calendar day, and an offset of at most 15:59 either
+// way (the most a timestamptz takes). Checked here, so every path answers 400 for it, never a 409 or
+// a 503 that a resend could not get past.
+const TIME_PARTS = /^(\d{4})-(\d{2})-(\d{2})T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/;
+function storableTime(value: string): boolean {
+  const parts = TIME_PARTS.exec(value);
+  if (!parts) return false;
+  const [year, month, day] = [Number(parts[1]), Number(parts[2]), Number(parts[3])];
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return false;
+  return parts[4] === undefined || (Number(parts[4]) <= 15 && Number(parts[5]) <= 59);
+}
+
 // Every reading: the phone's own id (so a resend finds its row), the room's stable field id (none for a
 // whole-job or outside reading) and when it was taken, with its offset as the phone recorded it.
 const common = {
   id: uuid,
   roomId: fieldId.nullable().optional(),
-  takenAt: z.iso.datetime({ offset: true }).max(40),
+  takenAt: z.iso.datetime({ offset: true }).max(40).refine(storableTime),
   note: noteText(MAX_NOTE).default(''),
 };
 
