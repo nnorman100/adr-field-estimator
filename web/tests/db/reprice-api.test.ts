@@ -32,6 +32,7 @@ const customerRoute = await import('@/app/api/jobs/[jobId]/customer/route');
 const estimateRoute = await import('@/app/api/jobs/[jobId]/estimate/route');
 const agreementsRoute = await import('@/app/api/jobs/[jobId]/agreements/route');
 const repriceRoute = await import('@/app/api/jobs/[jobId]/reprice/route');
+const fieldOwnerRoute = await import('@/app/api/jobs/[jobId]/field-owner/route');
 const { contentHash, ENGINE_VERSION, parseTable } = await import('@/engine/table');
 const { revisedLine } = await import('@/lib/estimates/proposal');
 const { estimatesService } = await import('@/lib/estimates/service');
@@ -399,6 +400,22 @@ describe('what is refused, and writes nothing', () => {
     const revised = await make(ESTIMATOR_A, jobId);
     expect(revised.status).toBe(201);
     expect(revised.body.estimate).toMatchObject({ price: { pinSequence: 2, versionSequence: 2 } });
+  });
+
+  // Back to editing commits, its field draft is never made, and the owner reprices while that draft is
+  // current (the reprice names it). The draft the sync then makes from the record starts unconfirmed.
+  it('a draft the sync makes from the record after a reprice of the draft Back to editing left current starts unconfirmed', async () => {
+    const { jobId, draftId } = await readyToSign();
+    await publish(h.seed.a, '3.00');
+    const open = randomUUID();
+    h.field.failNext.createFrom = true;
+    expect((await f.nextDraft(ESTIMATOR_A, jobId, { draftId: open, fromDraftId: draftId })).status).toBe(503);
+    expect(await reprice(OWNER_A, jobId)).toMatchObject({ status: 200, body: { job: { status: 'draft', currentDraftId: open } } });
+    // Start field work syncs the job: the missing current draft is made from the latest record.
+    const started = await json(fieldOwnerRoute.POST(request(ESTIMATOR_A, `/api/jobs/${jobId}/field-owner`, { method: 'POST' }), params({ jobId })));
+    expect(started.status).toBe(200);
+    expect(h.field.draft(h.seed.a, open)).toMatchObject({ jobId, state: 'editing', previous: { draftId } });
+    expect(h.field.draft(h.seed.a, open)?.field).not.toHaveProperty('scopeConfirmed');
   });
 
   it('a job never priced has no pin to move', async () => {

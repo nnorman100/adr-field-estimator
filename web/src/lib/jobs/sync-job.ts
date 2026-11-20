@@ -53,22 +53,34 @@ const fenceOf = (row: { id: string; epoch: string; expiresAt: Date }): Fence => 
 // the draft before it, when there is one). A copy that never submitted: from its source's signed record
 // (as archive.ts copy makes it). Only a draft no record holds at all starts empty.
 async function contentOf(tx: CompanyTransaction, companyId: string, job: { id: string; currentDraftId: string; copiedFromJobId: string | null }): Promise<DraftContent> {
+  // The job's committed records, newest first, by id only: a record's bytes (up to 8 MiB) are read for the
+  // newest one alone.
   const committed = await tx
-    .select({ id: jobSubmissions.id, draftId: jobSubmissions.draftId, snapshotBytes: jobSubmissions.snapshotBytes })
+    .select({ id: jobSubmissions.id, draftId: jobSubmissions.draftId })
     .from(jobSubmissions)
     .where(and(eq(jobSubmissions.companyId, companyId), eq(jobSubmissions.jobId, job.id), eq(jobSubmissions.status, 'committed')))
     .orderBy(desc(jobSubmissions.createdAt));
   const [latest] = committed;
-  const before = latest ? committed.find((row) => row.draftId !== latest.draftId) : undefined;
-  if (latest?.snapshotBytes && latest.draftId !== job.currentDraftId) {
-    const manifest = snapshotManifest(latest.snapshotBytes);
-    if (await confirmationPredatesReprice(tx, companyId, job.id, latest.draftId)) {
-      manifest.draft = Object.fromEntries(Object.entries((manifest.draft ?? {}) as Record<string, unknown>).filter(([key]) => key !== 'scopeConfirmed'));
+  if (latest) {
+    const [record] = await tx
+      .select({ snapshotBytes: jobSubmissions.snapshotBytes })
+      .from(jobSubmissions)
+      .where(and(eq(jobSubmissions.companyId, companyId), eq(jobSubmissions.id, latest.id)));
+    if (!record?.snapshotBytes) throw new Error('a committed record has no snapshot');
+    const manifest = snapshotManifest(record.snapshotBytes);
+    if (latest.draftId !== job.currentDraftId) {
+      // An owner reprice after the confirmation, of the record's draft or of the draft Back to editing
+      // made from it (the reprice names whichever was current), clears it (pricing plan 3).
+      const repriced =
+        (await confirmationPredatesReprice(tx, companyId, job.id, latest.draftId)) ||
+        (await confirmationPredatesReprice(tx, companyId, job.id, job.currentDraftId));
+      if (repriced) {
+        manifest.draft = Object.fromEntries(Object.entries((manifest.draft ?? {}) as Record<string, unknown>).filter(([key]) => key !== 'scopeConfirmed'));
+      }
+      return { kind: 'next', manifest, previous: { draftId: latest.draftId, submissionId: latest.id } };
     }
-    return { kind: 'next', manifest, previous: { draftId: latest.draftId, submissionId: latest.id } };
-  }
-  if (latest?.snapshotBytes) {
-    return { kind: 'record', manifest: snapshotManifest(latest.snapshotBytes), previous: before ? { draftId: before.draftId, submissionId: before.id } : null };
+    const before = committed.find((row) => row.draftId !== latest.draftId);
+    return { kind: 'record', manifest, previous: before ? { draftId: before.draftId, submissionId: before.id } : null };
   }
   if (job.copiedFromJobId !== null) {
     const [signed] = await tx
@@ -79,10 +91,10 @@ async function contentOf(tx: CompanyTransaction, companyId: string, job: { id: s
         and(eq(jobSubmissions.companyId, agreements.companyId), eq(jobSubmissions.jobId, agreements.jobId), eq(jobSubmissions.id, agreements.submissionId)),
       )
       .where(and(eq(agreements.companyId, companyId), eq(agreements.jobId, job.copiedFromJobId), eq(agreements.kind, 'original')));
-    if (signed?.bytes) {
-      const manifest = snapshotManifest(signed.bytes);
-      return { kind: 'copy', manifest: { draft: manifest.draft, rooms: manifest.rooms } };
-    }
+    // A copy is never made empty: until its source's signed record can be read, no draft is made.
+    if (!signed?.bytes) throw new Error('a copy’s signed source record cannot be read');
+    const manifest = snapshotManifest(signed.bytes);
+    return { kind: 'copy', manifest: { draft: manifest.draft, rooms: manifest.rooms } };
   }
   return { kind: 'empty' };
 }
@@ -231,8 +243,8 @@ export async function syncJobDrafts(db: Database, store: DraftSync, lookup: Draf
   const { result, currentDraftId: current } = synced;
   // A newer version is already written: that sync answered for the current state.
   if (result.outcome === 'stale') return;
-  // Postgres kept moving while this request synced: the latest change's own sync answers for it.
-  if (result.outcome === 'moved') return;
+  // Postgres kept moving through every try and nothing was written: the same request again.
+  if (result.outcome === 'moved') throw new JobError('draft_unavailable');
   // A retry at the same version reports what that sync skipped, so it answers the same.
   if (result.conflicts.includes(current)) throw new JobError('conflict');
   // A current draft it could not make: the same request again. One a newer write held back in part is

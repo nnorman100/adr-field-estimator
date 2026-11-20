@@ -285,7 +285,7 @@ export function officeService(db: Database, drafts: DraftStore, sync: DraftSync)
       await fieldStep(caller.companyId, jobId);
       // The job as Postgres holds it after the field step, read with the caller's access again: a change
       // committed meanwhile (an archive, a move, an unassignment) is the answer, not what this request saw.
-      const detail = await inCompany(caller.companyId, async (tx) => detailOf(tx, await jobAccess(tx, caller, jobId, CLAIM)));
+      const detail = await withCompany(db, caller.companyId, async (tx) => detailOf(tx, await jobAccess(tx, caller, jobId, CLAIM)), { snapshot: true });
       return { claimed: made.claimed, detail };
     },
 
@@ -327,7 +327,7 @@ export function officeService(db: Database, drafts: DraftStore, sync: DraftSync)
       await fieldStep(caller.companyId, jobId);
       // The coordination as Postgres holds it after the field step: a later move's owner and revision,
       // when one committed meanwhile, never this request's superseded ones.
-      return inCompany(caller.companyId, async (tx) => viewOf(tx, await jobAccess(tx, caller, jobId, TRANSFER)));
+      return withCompany(db, caller.companyId, async (tx) => viewOf(tx, await jobAccess(tx, caller, jobId, TRANSFER)), { snapshot: true });
     },
   };
 }
