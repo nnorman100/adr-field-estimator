@@ -460,7 +460,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       {onDraftViews && !draft && !draftError && cachedError ? <p role="status">{cachedError}</p> : null}
       {/* The views of one job stay mounted and only the open one shows, so moving between them
           keeps what the person has typed and not saved. */}
-      <div hidden={view !== 'scope'}>{draft ? <ScopeView key={draftAt} job={context} draft={draft} /> : null}</div>
+      <div hidden={view !== 'scope'}>{draft ? <ScopeView key={draftAt} job={context} draft={draft} open={view === 'scope'} /> : null}</div>
       <div hidden={view !== 'photos'}>{draft ? <PhotosView key={draftAt} job={context} draft={draft} open={view === 'photos'} /> : null}</div>
       <div hidden={view !== 'customer'}>
         {detail ? (

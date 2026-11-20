@@ -19,6 +19,7 @@ import { MAX_NOTES } from '@/lib/field/schema';
 import { draftFieldWrites, type FieldDraft } from '@/lib/field/store';
 import { EquipmentSuggestion } from './equipment-suggestion';
 import type { JobContext } from './job-screens';
+import { PublishedItemList } from './published-item-list';
 import { RoomsSection } from './rooms-section';
 import { useFieldEdit } from './use-field-edit';
 import { Box, Outcome, READ_AGAIN, Section, Tick } from './ui';
@@ -29,7 +30,7 @@ import { Box, Outcome, READ_AGAIN, Section, Tick } from './ui';
 // person changed over the draft as last read; Save writes only those, and the screen then reads the
 // draft back, so a save never writes back a value someone else has since changed. The
 // pre-1978 wording itself comes from the server with the estimate (S5a-9), never from here.
-export function ScopeView({ job, draft }: { job: JobContext; draft: FieldDraft }) {
+export function ScopeView({ job, draft, open }: { job: JobContext; draft: FieldDraft; open: boolean }) {
   // Only the boxes the person changed; the rest always show the draft as last read.
   const [edits, setEdits] = useState<FormValues>({});
   const values = withEdits(FACT_FIELDS, draft.field, edits);
@@ -81,6 +82,7 @@ export function ScopeView({ job, draft }: { job: JobContext; draft: FieldDraft }
   return (
     <div className="flex flex-col gap-4">
       <h3 className="sr-only">Check Scope</h3>
+      {open ? <PublishedItemList session={job.session} /> : null}
       {box(YEAR_FIELD)}
       <RoomsSection job={job} draft={draft} />
       <form
