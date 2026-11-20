@@ -340,6 +340,19 @@ export function draftSyncContract(name: string, probe: () => SyncProbe): void {
 
     // draft-sync-02: a sync whose snapshot was read while a Submit was pending, landing after a
     // previous-version Submit committed it and marked the draft submitted (that writer moves no marker).
+    it('never makes a missing current draft while a Submit is pending, and makes it once that attempt is decided', async () => {
+      const { store, peek } = probe();
+      const company = randomUUID();
+      const fence = fenceOf();
+      const job = snapshotOf({ pending: fence });
+      expect(await store.sync(company, desired(job), 0)).toEqual({ outcome: 'synced', created: [], changed: [], ...NONE, missing: [job.currentDraftId] });
+      expect(await peek(company, job.currentDraftId)).toBeNull();
+      // The attempt aborted: the draft is made, editing, with no fence.
+      const decided = { ...job, fieldRevision: 2, pending: null, abortedEpochs: [fence.epoch] };
+      expect(await store.sync(company, desired(decided), 0)).toMatchObject({ outcome: 'synced', created: [job.currentDraftId], missing: [] });
+      expect(await peek(company, job.currentDraftId)).toMatchObject({ state: 'editing', fence: null });
+    });
+
     it('never fences or opens again a draft the field database holds as submitted, and still moves its owner', async () => {
       const { store, seed, peek } = probe();
       const company = randomUUID();

@@ -27,6 +27,7 @@ const jobsRoute = await import('@/app/api/jobs/route');
 const photoRoute = await import('@/app/api/jobs/[jobId]/photos/[photoId]/route');
 const { submissionsService } = await import('@/lib/submissions/service');
 const { runSubmissionRepair } = await import('@/lib/submissions/repair');
+const { runDraftSyncRepair } = await import('@/lib/jobs/sync-repair');
 const { params, request, resetTeamDatabase, startTeamServer } = await import('./team-harness');
 
 let base: Awaited<ReturnType<typeof startTeamServer>>;
@@ -147,6 +148,20 @@ describe('a crash during Submit', () => {
     await expire();
     expect(await repair()).toEqual({ aborted: 1, marked: 1, failed: 0 });
     expect(await outcome(jobId, draftId)).toBe('aborted');
+  });
+
+  // A Submit deciding (its row pending) and its draft lost: the draft sync's repair pass makes no draft
+  // while that attempt could still record it, and the worker's abort makes it, editing.
+  it('after the intent row, with the draft lost: no draft is made while the attempt is pending, and the abort makes it editing', async () => {
+    const { jobId, draftId, body } = await ready();
+    await crashAt('fence', jobId, body);
+    field.remove(h.seed.a, draftId);
+    expect(await runDraftSyncRepair(h.handle.db, field, { graceSeconds: 0 })).toEqual({ synced: 0, failed: 1 });
+    expect(field.draft(h.seed.a, draftId)).toBeNull();
+    await expire();
+    expect(await repair()).toEqual({ aborted: 1, marked: 1, failed: 0 });
+    expect(field.draft(h.seed.a, draftId)).toMatchObject({ jobId, state: 'editing', fence: null });
+    expect(await rows(jobId)).toEqual([expect.objectContaining({ status: 'aborted', marker_state: 'done' })]);
   });
 
   it('after the fence: the worker aborts the row after its expiry and releases the draft', async () => {

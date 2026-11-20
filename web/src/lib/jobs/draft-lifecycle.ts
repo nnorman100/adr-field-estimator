@@ -348,7 +348,9 @@ export function planSync(
         seen.push(draftId);
         continue;
       }
-      if (!want.content) {
+      // No content, or a Submit deciding now (Postgres's pending row): a draft made now would be fenced
+      // field work no phone wrote, which that attempt could record. It is made once the row is decided.
+      if (!want.content || want.state === 'submitting') {
         skips.missing.push(draftId);
         continue;
       }

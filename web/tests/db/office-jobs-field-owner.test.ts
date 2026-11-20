@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { manifestDigest } from '@/lib/field/canonical';
 import { latch, until } from './submission-flow';
@@ -540,6 +540,31 @@ describe('moving the field work (owner decision J5)', () => {
     h.field.remove(h.seed.a, draftId);
     expect((await claim(ESTIMATOR_A, id)).status).toBe(200);
     expect(h.field.draft(h.seed.a, draftId)).toMatchObject({ jobId: id, state: 'submitted', field: MANIFEST.draft, rooms: { kitchen: { name: 'Kitchen' } } });
+  });
+
+  // unreadable-reconstruction: a draft is made only from a whole record (its format, the draft map, and
+  // rooms and photos lists of ids the field rules accept, each with a field map), never from part of one.
+  it('makes no draft from a record that is not whole: the same request again', async () => {
+    const shapes = [
+      { format: 'dryscope-submission-v1', field: true },
+      { format: 'dryscope-submission-v1', field: { draft: {}, rooms: [{ id: 'a/b', field: {} }], photos: [] } },
+      { format: 'dryscope-submission-v1', field: { draft: {}, rooms: [{ id: 'kitchen' }], photos: [] } },
+      { format: 'dryscope-submission-v1', field: { draft: [], rooms: [], photos: [] } },
+    ];
+    for (const shape of shapes) {
+      const { id, draftId } = await claimedJob();
+      const bytes = Buffer.from(JSON.stringify(shape));
+      const row = { id: randomUUID(), epoch: randomUUID() };
+      await h.admin`
+        INSERT INTO job_submissions (id, company_id, job_id, draft_id, epoch, kind, request_digest, expires_at, created_by_actor_id)
+        VALUES (${row.id}, ${h.seed.a}, ${id}, ${draftId}, ${row.epoch}, 'original', ${'a'.repeat(64)}, now() + interval '1 minute', ${h.seed.estimatorA.actor})
+      `;
+      await h.admin`UPDATE job_submissions SET status = 'committed', snapshot_bytes = ${bytes}, snapshot_sha256 = ${createHash('sha256').update(bytes).digest('hex')} WHERE id = ${row.id}`;
+      await h.admin`UPDATE jobs SET status = 'submitted', revision = revision + 1 WHERE id = ${id}`;
+      h.field.remove(h.seed.a, draftId);
+      expect({ shape, answer: await claim(ESTIMATOR_A, id) }).toEqual({ shape, answer: { status: 503, body: { error: 'draft_unavailable' } } });
+      expect(h.field.draft(h.seed.a, draftId)).toBeNull();
+    }
   });
 
   it('answers an archive whose current draft is another job’s with 409, and leaves its version unsynced', async () => {

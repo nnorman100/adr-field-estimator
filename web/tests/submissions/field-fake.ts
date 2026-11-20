@@ -79,6 +79,8 @@ export type FakeField = FenceStore & ArchiveStore & DraftSync & {
   marker(companyId: string, jobId: string): SyncMarker | null;
   // Every field owner the sync wrote on a draft, by "company/draft", in order.
   ownerWrites: { at: string; fieldOwnerUid: string | null }[];
+  // Every state the sync writes, in order: on a draft it makes, and each change of a draft's state.
+  stateWrites: { at: string; state: string }[];
   // The drafts as stored now (a copy).
   data(): FieldData;
   projected: Map<string, JobProjection>;
@@ -157,6 +159,7 @@ export function fakeField(backing: Backing = memoryBacking()): FakeField {
   const fake: FakeField = {
     marker: (companyId, jobId) => backing.load().markers[key(companyId, jobId)] ?? null,
     ownerWrites: [],
+    stateWrites: [],
     sync: async (companyId, job, gen, options = {}) => {
       // As the real writer: refused before any read or write, as a rejected promise.
       assertVersion(gen, job.v);
@@ -194,6 +197,10 @@ export function fakeField(backing: Backing = memoryBacking()): FakeField {
         for (const made of plan.creates) fake.ownerWrites.push({ at: key(companyId, made.draftId), fieldOwnerUid: made.data.fieldOwnerUid ?? null });
         for (const update of plan.updates) {
           if (update.set.fieldOwnerUid !== undefined) fake.ownerWrites.push({ at: key(companyId, update.draftId), fieldOwnerUid: update.set.fieldOwnerUid });
+        }
+        for (const made of plan.creates) fake.stateWrites.push({ at: key(companyId, made.draftId), state: made.data.state });
+        for (const update of plan.updates) {
+          if (update.set.state !== undefined) fake.stateWrites.push({ at: key(companyId, update.draftId), state: update.set.state });
         }
         for (const made of plan.creates) {
           const { fence, previous, fieldOwnerUid, field, ...rest } = made.data;

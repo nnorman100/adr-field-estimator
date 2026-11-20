@@ -153,15 +153,10 @@ export async function abortPending(tx: CompanyTransaction, companyId: string, id
 export type DecidedRow = Pick<SubmissionRow, 'id' | 'jobId' | 'draftId' | 'epoch' | 'status'>;
 
 // The marker of a decided row (step 5): the job's draft sync, then the row's marker state. `false` when
-// the drafts could not be synced now: the row stays as it is for the worker. Never throws, except that
-// the worker's pass (`scheduled`) ends when no database connection came free in time (isQueueTimeout).
-export async function writeMarker(
-  db: Database,
-  store: SubmitStore,
-  companyId: string,
-  row: DecidedRow,
-  { scheduled = false }: { scheduled?: boolean } = {},
-): Promise<boolean> {
+// the drafts could not be synced now: the row stays as it is for the worker. Never throws, except when
+// no database connection came free in time (isQueueTimeout): a request answers 503 (the record stands,
+// and the same request again writes the marker), and the worker's pass ends there.
+export async function writeMarker(db: Database, store: SubmitStore, companyId: string, row: DecidedRow): Promise<boolean> {
   if (row.status === 'pending') return false;
   try {
     // Postgres's state now, the decision among it: a draft another job holds, or a current draft that
@@ -182,7 +177,7 @@ export async function writeMarker(
     });
     return true;
   } catch (error) {
-    if (scheduled && isQueueTimeout(error)) throw error;
+    if (isQueueTimeout(error)) throw error;
     console.error('submission marker unavailable', error instanceof Error ? error.name : 'unknown');
     return false;
   }

@@ -262,7 +262,9 @@ describe('Submit', () => {
       expect((await f.submit(ESTIMATOR_A, jobId, body)).status).toBe(201);
       hold.open();
       expect((await first).status).toBe(200);
-      expect(h.field.calls.filter((call) => call === 'release')).toEqual([]);
+      // The draft is never opened again once recorded: no sync writes it back to editing after `submitted`.
+      const states = h.field.stateWrites.filter((write) => write.at === `${h.seed.a}/${draftId}`).map((write) => write.state);
+      expect(states.slice(states.indexOf('submitted'))).not.toContain('editing');
       expect(await f.expectOneOutcome(h.seed.a, jobId, draftId)).toBe('committed');
     });
   });
@@ -420,6 +422,8 @@ describe('Submit', () => {
     const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
     expect((await f.submitShown(ESTIMATOR_A, jobId, draftId, manifest)).answer).toMatchObject({ status: 409, body: { error: 'submission_aborted' } });
     expect(h.field.calls).not.toContain('fence');
+    // No sync fenced the draft either.
+    expect(h.field.stateWrites.filter((write) => write.at === `${h.seed.a}/${draftId}`).map((write) => write.state)).not.toContain('submitting');
     expect(await f.expectOneOutcome(h.seed.a, jobId, draftId)).toBe('aborted');
   });
 });
@@ -581,7 +585,44 @@ describe('the worker', () => {
     afterTheRead(() => (h.field.failNext.sync = 2));
     expect((await f.submitShown(ESTIMATOR_A, jobId, draftId, manifest)).answer.status).toBe(201);
     const refused = Object.assign(new Error('QUEUE_TIMEOUT: Waited more than 10 seconds for a connection'), { code: 'QUEUE_TIMEOUT' });
-    // Full for the one transaction after the marker's sync: its acknowledgement.
+    // Full for the acknowledgement only: after the marker's sync, its two short transactions (the
+    // version read again, and the watermark) find a connection; the third, the acknowledgement, does not.
+    let since = -1;
+    const db = new Proxy(h.handle.db, {
+      get: (target, key) => {
+        if (key !== 'transaction' || since < 0) return Reflect.get(target, key);
+        since += 1;
+        if (since < 3) return Reflect.get(target, key);
+        since = -1;
+        return () => Promise.reject(refused);
+      },
+    });
+    const store = new Proxy(h.field, {
+      get: (target, key) =>
+        key === 'sync'
+          ? async (...args: Parameters<SubmitStore['sync']>) => {
+              const synced = await target.sync(...args);
+              since = 0;
+              return synced;
+            }
+          : Reflect.get(target, key),
+    });
+    await expect(runSubmissionRepair(db, store, { markerGraceSeconds: 0 })).rejects.toMatchObject({ code: 'QUEUE_TIMEOUT' });
+    // The drafts are synced and the version recorded; only the row's acknowledgement waits.
+    expect(h.field.draft(h.seed.a, draftId)?.state).toBe('submitted');
+    const [job] = await h.admin<{ behind: boolean }[]>`SELECT field_synced_revision < field_revision AS behind FROM jobs WHERE id = ${jobId}`;
+    expect(job!.behind).toBe(false);
+    expect((await f.submissions(jobId))[0]).toMatchObject({ status: 'committed', marker_state: 'pending' });
+    expect(await runSubmissionRepair(h.handle.db, h.field, { markerGraceSeconds: 0 })).toEqual({ aborted: 0, marked: 1, failed: 0 });
+  });
+
+  // Security audit F5: a request whose marker found no free database connection answers 503, never
+  // 201 with its marker unwritten; the record stands, and the same request again writes the marker.
+  it('answers 503 when the marker finds no free database connection after the record, and the same request then answers it', async () => {
+    const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
+    const refused = Object.assign(new Error('QUEUE_TIMEOUT: Waited more than 10 seconds for a connection'), { code: 'QUEUE_TIMEOUT' });
+    // Full once, for the first transaction after the attempt's second sync (the marker's).
+    let syncs = 0;
     let full = false;
     const db = new Proxy(h.handle.db, {
       get: (target, key) => {
@@ -595,14 +636,19 @@ describe('the worker', () => {
         key === 'sync'
           ? async (...args: Parameters<SubmitStore['sync']>) => {
               const synced = await target.sync(...args);
-              full = true;
+              syncs += 1;
+              if (syncs === 2) full = true;
               return synced;
             }
           : Reflect.get(target, key),
     });
-    await expect(runSubmissionRepair(db, store, { markerGraceSeconds: 0 })).rejects.toMatchObject({ code: 'QUEUE_TIMEOUT' });
+    live.service = submissionsService(db, store);
+    const { body, answer } = await f.submitShown(ESTIMATOR_A, jobId, draftId, manifest);
+    expect(answer).toMatchObject({ status: 503, body: { error: 'submissions_unavailable' } });
     expect((await f.submissions(jobId))[0]).toMatchObject({ status: 'committed', marker_state: 'pending' });
-    expect(await runSubmissionRepair(h.handle.db, h.field, { markerGraceSeconds: 0 })).toEqual({ aborted: 0, marked: 1, failed: 0 });
+    live.service = null;
+    expect((await f.submit(ESTIMATOR_A, jobId, body)).status).toBe(200);
+    expect(await f.expectOneOutcome(h.seed.a, jobId, draftId)).toBe('committed');
   });
 
   it('writes a release the request could not after an abort, and leaves a marker it cannot write for the next run', async () => {
@@ -692,6 +738,14 @@ describe('the worker', () => {
         reached = true;
         await hold.wait;
       };
+      // What the held sync's own transaction answers and leaves, before any catch-up runs.
+      const sync = h.field.sync;
+      let resumed: { outcome: string; draft: unknown; writes: number } | null = null;
+      h.field.sync = async (...args) => {
+        const result = await sync(...args);
+        resumed ??= { outcome: result.outcome, draft: structuredClone(h.field.draft(h.seed.a, draftId)), writes: h.field.stateWrites.length };
+        return result;
+      };
       await h.admin`UPDATE jobs SET field_revision = field_revision + 1 WHERE id = ${jobId}`;
       const delayed = syncJob(h.handle.db, h.field, h.seed.a, jobId);
       await until(() => reached, 'the held sync');
@@ -705,8 +759,13 @@ describe('the worker', () => {
         await h.admin`UPDATE jobs SET status = 'submitted', revision = revision + 1 WHERE id = ${jobId}`;
         expect(await h.field.markSubmitted(h.seed.a, draftId, row!.epoch, row!.id)).toBe('marked');
       }
+      const decided = structuredClone(h.field.draft(h.seed.a, draftId));
+      const writes = h.field.stateWrites.length;
       hold.open();
       await delayed;
+      h.field.sync = sync;
+      // The held sync wrote nothing: Postgres had moved on.
+      expect(resumed).toEqual({ outcome: 'moved', draft: decided, writes });
       expect({ decision, draft: h.field.draft(h.seed.a, draftId) }).toMatchObject({
         decision,
         draft: decision === 'aborted' ? { state: 'editing', fence: null } : { state: 'submitted', fence: { epoch: row!.epoch } },

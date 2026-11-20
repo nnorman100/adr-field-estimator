@@ -80,4 +80,44 @@ describe('the draft sync repair pass', () => {
     expect(h.field.draft(h.seed.b, other.draftId)).toMatchObject({ jobId: other.id, state: 'archived' });
     expect(h.field.draft(h.seed.a, synced.draftId)?.state).toBe('editing');
   });
+
+  it('waits out the 60-second grace with no override: a job changed 59 seconds ago is left, one 61 seconds ago is synced', async () => {
+    const recent = await archivedWithoutItsFieldStep();
+    const older = await archivedWithoutItsFieldStep();
+    // The trigger's own column, set back as an older change would have left it (as the admin, with the
+    // jobs triggers off for that one transaction: no route can set it).
+    const changedAgo = (jobId: string, seconds: number) =>
+      h.admin.begin(async (sql) => {
+        await sql`SET LOCAL session_replication_role = replica`;
+        await sql`UPDATE jobs SET field_changed_at = now() - make_interval(secs => ${seconds}) WHERE id = ${jobId}`;
+      });
+    await changedAgo(recent.id, 59);
+    await changedAgo(older.id, 61);
+    expect(await repair()).toEqual({ synced: 1, failed: 0 });
+    expect(h.field.draft(h.seed.a, older.draftId)?.state).toBe('archived');
+    expect(h.field.draft(h.seed.a, recent.draftId)?.state).toBe('editing');
+    expect(await behind(recent.id)).toBe(true);
+  });
+
+  it('counts a job a newer write held back as failed, and keeps it due', async () => {
+    const { id, draftId } = await archivedWithoutItsFieldStep();
+    // A previous-version writer archived the draft at a revision Postgres does not have yet.
+    expect(await h.field.archiveDraft(h.seed.a, id, draftId, 999)).toBe('set');
+    expect(await repair(0)).toEqual({ synced: 0, failed: 1 });
+    expect(await behind(id)).toBe(true);
+  });
+
+  // Jobs that keep failing stay the oldest; the pass's starting place moves on each scheduler period, so
+  // they cannot hide a later job beyond one pass's bound.
+  it('tries every due job of a company within a few periods, however many of the oldest keep failing', async () => {
+    const jobs = [];
+    for (let i = 0; i < 3; i += 1) jobs.push(await archivedWithoutItsFieldStep());
+    // The two oldest hold another job's draft under their current draft id: they fail every pass.
+    for (const job of jobs.slice(0, 2)) h.drafts.stamp(`${h.seed.a}/${job.draftId}`, randomUUID());
+    const pass = (period: number) => runDraftSyncRepair(h.handle.db, h.field, { graceSeconds: 0, maxJobsPerCompany: 2, now: () => new Date(period * 300_000) });
+    expect(await pass(0)).toEqual({ synced: 0, failed: 2 });
+    expect(await behind(jobs[2]!.id)).toBe(true);
+    expect(await pass(1)).toEqual({ synced: 1, failed: 1 });
+    expect(h.field.draft(h.seed.a, jobs[2]!.draftId)?.state).toBe('archived');
+  });
 });
