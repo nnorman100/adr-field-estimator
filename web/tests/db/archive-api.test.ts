@@ -202,7 +202,7 @@ describe('archive', () => {
 
   it('answers 503 when the field draft is not reached, and the same request again archives it', async () => {
     const { jobId, draftId } = await draftJob();
-    h.field.failNext.archiveDraft = true;
+    h.field.failNext.sync = true;
     const once = change(1);
     expect(await archive(OWNER_A, jobId, once)).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
     expect(h.field.draft(h.seed.a, draftId)?.state).toBe('editing');
@@ -428,11 +428,12 @@ describe('overlapping requests', () => {
   it('never leaves a submitted job’s draft open when an archive and a restore land after a Submit', async () => {
     const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
     const revision = (await f.job(jobId)).revision;
-    const archived = hold('archiveDraft');
-    const restored = hold('restoreDraft');
+    // Archive and restore each reach the field database through the draft sync: held one after the other.
+    const archived = hold('sync');
     const marked = hold('markSubmitted');
     const archiving = archive(OWNER_A, jobId, change(revision));
     await archived.arrived;
+    const restored = hold('sync');
     const restoring = restore(OWNER_A, jobId, change(revision + 1));
     await briefly(restored.arrived);
     const submitting = f.submitShown(ESTIMATOR_A, jobId, draftId, manifest);
@@ -452,7 +453,7 @@ describe('overlapping requests', () => {
   it('opens the field draft on the restore sent again after the job was saved meanwhile', async () => {
     const { jobId, draftId } = await draftJob();
     await archive(OWNER_A, jobId, change(1));
-    h.field.failNext.restoreDraft = true;
+    h.field.failNext.sync = true;
     const once = change(2);
     expect(await restore(OWNER_A, jobId, once)).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
     expect(h.field.draft(h.seed.a, draftId)?.state).toBe('archived');

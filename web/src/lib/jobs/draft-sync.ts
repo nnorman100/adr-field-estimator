@@ -28,7 +28,7 @@ export type SyncResult =
   | ({ outcome: 'synced'; created: string[]; changed: string[] } & SyncSkips)
   // A retry at the version the marker holds: nothing is written, and what that sync skipped is reported again.
   | ({ outcome: 'same' } & SyncSkips)
-  | { outcome: 'stale'; stored: SyncMarker };
+  | { outcome: 'stale' };
 
 export type DraftSync = {
   // Writes the job's desired drafts at version (gen, desired.v) unless its marker holds that version

@@ -264,7 +264,7 @@ describe('the first capture', () => {
   it('keeps the field owner when the draft could not be updated, and sets the draft when the same person asks again', async () => {
     const { id, draftId } = await officeJob();
     await assign(OFFICE_A, id, h.seed.estimatorA.actor);
-    h.drafts.failNext = { on: true, afterWrite: false };
+    h.field.failNext.sync = true;
     expect(await claim(ESTIMATOR_A, id)).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
     expect((await read(OWNER_A, id)).body.job.fieldOwnerActorId).toBe(h.seed.estimatorA.actor);
     expect(draftOf(draftId)?.fieldOwnerUid).toBeNull();

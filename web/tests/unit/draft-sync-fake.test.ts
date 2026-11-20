@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { desired, type JobDraftSnapshot } from '@/lib/jobs/draft-lifecycle';
+import { desired, type JobDraftSnapshot, type SyncMarker } from '@/lib/jobs/draft-lifecycle';
 import { fakeDraftStates } from '../db/evidence-fake';
 import { fakeDrafts } from '../db/draft-fake';
 import { fakeField, memoryBacking, type FakeDraft } from '../submissions/field-fake';
@@ -53,6 +53,11 @@ draftSyncContract('in-memory', () => {
     },
     async remove(company, draft) {
       store.remove(company, draft);
+    },
+    async seedMarker(company, job, data) {
+      const record = backing.load();
+      record.markers[`${company}/${job}`] = data as unknown as SyncMarker;
+      backing.save(record);
     },
   };
 });

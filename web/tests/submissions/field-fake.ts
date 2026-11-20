@@ -3,7 +3,7 @@ import type { JobProjection } from '@/lib/field/job-projection';
 import type { FieldManifest } from '@/lib/field/canonical';
 import { MAX_PHOTO_REFS, MAX_ROOMS } from '@/lib/field/schema';
 import type { ArchiveResult, ArchiveStore } from '@/lib/jobs/archive-store';
-import { assertVersion, planSync, versionRefusal, type StoredDraft, type SyncMarker } from '@/lib/jobs/draft-lifecycle';
+import { assertVersion, parseMarker, planSync, versionRefusal, type StoredDraft, type SyncMarker } from '@/lib/jobs/draft-lifecycle';
 import { draftIdsToRead, draftsToMake, resultOf, type DraftSync } from '@/lib/jobs/draft-sync';
 import { placeholderRefusal as refusalOf, draftOfOtherJob, type DraftMade } from '@/lib/jobs/drafts';
 import type { FenceResult, FenceStore, Provenance } from '@/lib/submissions/fence';
@@ -152,8 +152,10 @@ export function fakeField(backing: Backing = memoryBacking()): FakeField {
       // As the real writer: refused before any read or write, as a rejected promise.
       assertVersion(gen, job.v);
       return call('sync', ({ drafts: data, markers }) => {
-        const marker = markers[key(companyId, job.jobId)] ?? null;
-        // As the real writer: the marker decides first, before any draft is read.
+        // As the real writer: a marker there is read in its shape or the sync stops (MalformedMarkerError),
+        // and it decides first, before any draft is read.
+        const left = markers[key(companyId, job.jobId)];
+        const marker = left === undefined ? null : parseMarker(left as unknown as Record<string, unknown>);
         const refused = versionRefusal(marker, gen, job.v);
         if (refused) return refused;
         const stored = Object.fromEntries(draftIdsToRead(marker, job).map((draftId) => [draftId, storedOf(data[key(companyId, draftId)])]));

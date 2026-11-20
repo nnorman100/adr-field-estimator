@@ -2,10 +2,13 @@ import { and, desc, eq, sql } from 'drizzle-orm';
 import { actors, agreements, jobs, jobSubmissions } from '@/db/schema';
 import { holdAcrossOutsideCall, withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
-import type { FieldDoc, FieldManifest } from '@/lib/field/canonical';
+import type { FieldDoc } from '@/lib/field/canonical';
 import { snapshotManifest } from '@/lib/submissions/snapshot';
 import { canSeeJob, claimDraft, hasAny, holdDraft, jobAccess, JobError, lockedJob, type JobCaller, type JobRow } from './access';
 import type { ArchiveStore } from './archive-store';
+import type { DraftSync } from './draft-sync';
+import { syncJobDrafts } from './sync-job';
+import { copiedManifest } from './copy-rule';
 import { copyDigest, type ArchiveInput, type CopyInput } from './schema';
 import { audit, CHECK_VIOLATION, detailOf, errorCode, type JobDetail, type JobView } from './service';
 
@@ -23,11 +26,8 @@ import { audit, CHECK_VIOLATION, detailOf, errorCode, type JobDetail, type JobVi
 const ARCHIVE: readonly Capability[] = ['jobs_archive'];
 const COPY: readonly Capability[] = ['jobs_copy'];
 
-// The keys of a signed draft's field map a copy leaves out: what the technician approved on the
-// signed visit, which they confirm again on the new draft (the old app's copy cleared the same).
-// The field map holds no transcript (a Live walkthrough's transcript is never kept in a draft), and
-// photos are not copied: they are the signed job's evidence and stay with it.
-export const COPY_CLEARED_KEYS = ['scopeConfirmed'] as const;
+// The copy rule (copy-rule.ts), shared with the draft sync.
+export { COPY_CLEARED_KEYS, copiedManifest } from './copy-rule';
 
 export type ArchiveService = {
   archive(caller: JobCaller, jobId: string, input: ArchiveInput): Promise<{ job: JobView }>;
@@ -69,8 +69,6 @@ async function restoredStatus(tx: CompanyTransaction, row: JobRow): Promise<'dra
   return latest?.draftId === row.currentDraftId ? 'submitted' : 'draft';
 }
 
-const draftState = (status: JobRow['status']): 'editing' | 'submitted' => (status === 'draft' ? 'editing' : 'submitted');
-
 // The answers after which the job's field draft is still brought to its state: the job is already
 // as asked, by this request or another.
 const SETTLED = new Set(['archived', 'not_archived']);
@@ -79,20 +77,12 @@ function jobView(detail: JobDetail): { job: JobView } {
   return { job: detail.job };
 }
 
-// The field map and rooms a copy starts from: its source's, in a fresh map less COPY_CLEARED_KEYS
-// (the photos stay the signed job's evidence). Shared with the draft sync (draft-lifecycle.ts).
-export function copiedManifest(manifest: Pick<FieldManifest, 'draft' | 'rooms'>): { draft: Record<string, unknown>; rooms: FieldDoc[] } {
-  const draft = { ...((manifest.draft ?? {}) as Record<string, unknown>) };
-  for (const key of COPY_CLEARED_KEYS) delete draft[key];
-  return { draft, rooms: manifest.rooms };
-}
-
 // The same, from the signed record's snapshot bytes.
 function copiedField(bytes: Buffer | Uint8Array): { draft: Record<string, unknown>; rooms: FieldDoc[] } {
   return copiedManifest(snapshotManifest(bytes));
 }
 
-export function archiveService(db: Database, store: ArchiveStore): ArchiveService {
+export function archiveService(db: Database, store: ArchiveStore, sync: DraftSync): ArchiveService {
   async function inCompany<T>(companyId: string, run: (tx: CompanyTransaction) => Promise<T>): Promise<T> {
     try {
       return await withCompany(db, companyId, run);
@@ -122,19 +112,12 @@ export function archiveService(db: Database, store: ArchiveStore): ArchiveServic
     return actor?.uid ?? null;
   }
 
-  // The job's current draft brought to the job's state as Postgres holds it now: `archived` while the
-  // job is, else out of `archived` to its status's state (a draft in any other state keeps it,
-  // restoreDraft). A draft not made yet gets a placeholder holding the revision (archive-store.ts), so
-  // nothing is made over an archived job's draft and no older archive or restore lands after a newer
-  // one. The job is read in a short transaction of its own, ended before the field database is
-  // called; the job revision on the draft is the fence, not a lock held across the call.
+  // Every draft of the job brought to the job's state as Postgres holds it now, at its field revision, in
+  // one Firestore transaction (sync-job.ts): archived while the job is, else its status's state. A slower
+  // archive or restore never lands after a newer change, whatever it is (the job's marker refuses it),
+  // and no Postgres transaction waits on the field database.
   async function settle(companyId: string, jobId: string): Promise<void> {
-    const row = await inCompany(companyId, (tx) => lockedJob(tx, companyId, jobId));
-    await field(() =>
-      row.status === 'archived'
-        ? store.archiveDraft(companyId, row.id, row.currentDraftId, row.revision)
-        : store.restoreDraft(companyId, row.id, row.currentDraftId, draftState(row.status), row.revision),
-    );
+    await syncJobDrafts(db, sync, companyId, jobId, { conflictOk: true });
   }
 
   // The answer of an archive or restore, once the field draft is settled after it.
