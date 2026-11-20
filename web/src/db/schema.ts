@@ -623,7 +623,7 @@ export const jobEstimates = pgTable(
 
 export const priceApprovalKinds = ['named_adjustment', 'line_multiplier', 'hourly', 'unit', 'flat'] as const;
 export type PriceApprovalKind = (typeof priceApprovalKinds)[number];
-export const priceApprovalEndReasons = ['edited', 'replaced'] as const;
+export const priceApprovalEndReasons = ['edited', 'replaced', 'repriced'] as const;
 
 // What the estimator proposes on a submitted job and the owner approves (0019, S5b-8), bound to the
 // committed submission, the job revision and the pinned version's content hash. What a row says never

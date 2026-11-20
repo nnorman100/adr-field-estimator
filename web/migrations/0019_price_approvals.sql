@@ -29,6 +29,15 @@
 --    ends the approved one it replaces (`replaced`). A row is approved once and ended once, and the
 --    database takes both times from its clock. Who may propose and approve is the route's check
 --    (`additions_approve`, today the owner).
+--    A reprice moves the job's pin onto a newer version (S5b-6), and the estimate service then refuses
+--    to price any record of the draft that was current at the move (confirmationPredatesReprice: the
+--    job's current pin has reason owner_reprice and a `job_repriced` audit row names its sequence and
+--    that draft). So once a pin is added with reason owner_reprice, every open row of the job ends
+--    (`repriced`, by the owner who repriced) in the same transaction, and no proposal, approval or end
+--    is accepted on a submission of such a draft: the job goes through Back to editing and Finish, which
+--    makes a new draft and submission. Only that end skips the binding checks (the pin has just moved,
+--    and the job's status, revision and estimate are no longer the row's concern), and it is refused
+--    unless the row's pin is no longer the job's newest and the newest was added by a reprice.
 -- 2. Kind `revision` (S5b-9; revisions after signing, owner decision 2026-11-13): a revised estimate
 --    supersedes a signed agreement and names it as its parent, as a change order does. The kind
 --    checks on job_submissions and agreements are replaced by wider ones under the same names
@@ -78,12 +87,14 @@ CREATE TABLE job_price_approvals (
   room_id text CHECK (char_length(room_id) BETWEEN 1 AND 64 AND room_id ~ '^[A-Za-z0-9_-]+$'),
   -- Decimals are stored exactly as sent: a value with more than two decimal places is refused, not rounded.
   multiplier numeric CHECK (multiplier > 1 AND multiplier <= 3 AND scale(multiplier) <= 2),
-  -- An addition: one line of text as entered, the hours (hourly) or quantity and unit (unit), and its
-  -- price: the hourly rate, the unit price or the flat amount.
+  -- An addition: one line of text as entered (kept exactly, padding included, and holding a character
+  -- that is not whitespace, Unicode spaces included, by a class that does not depend on the database
+  -- locale), the hours (hourly) or quantity and unit (unit), and its price: the hourly rate, the unit
+  -- price or the flat amount.
   description text
-    CHECK (char_length(description) BETWEEN 1 AND 300 AND btrim(description) <> '' AND description !~ '[[:cntrl:]]'),
+    CHECK (char_length(description) BETWEEN 1 AND 300 AND description ~ '[^ \t\n\v\f\r\u0085\u00a0\u1680\u180e\u2000-\u200b\u2028\u2029\u202f\u205f\u3000\ufeff]' AND description !~ '[[:cntrl:]]'),
   quantity numeric CHECK (quantity > 0 AND quantity <= 100000 AND scale(quantity) <= 2),
-  unit text CHECK (char_length(unit) BETWEEN 1 AND 20 AND btrim(unit) <> '' AND unit !~ '[[:cntrl:]]'),
+  unit text CHECK (char_length(unit) BETWEEN 1 AND 20 AND unit ~ '[^ \t\n\v\f\r\u0085\u00a0\u1680\u180e\u2000-\u200b\u2028\u2029\u202f\u205f\u3000\ufeff]' AND unit !~ '[[:cntrl:]]'),
   price numeric CHECK (price > 0 AND price <= 100000 AND scale(price) <= 2),
   taxable boolean,
   -- SHA-256 of the propose request: the same id and body is the same proposal.
@@ -94,10 +105,10 @@ CREATE TABLE job_price_approvals (
   approved_at timestamptz,
   -- An hourly addition: the approver's name as entered at approval, kept exactly as entered.
   approved_by_name text
-    CHECK (char_length(approved_by_name) BETWEEN 1 AND 150 AND btrim(approved_by_name) <> '' AND approved_by_name !~ '[[:cntrl:]]'),
+    CHECK (char_length(approved_by_name) BETWEEN 1 AND 150 AND approved_by_name ~ '[^ \t\n\v\f\r\u0085\u00a0\u1680\u180e\u2000-\u200b\u2028\u2029\u202f\u205f\u3000\ufeff]' AND approved_by_name !~ '[[:cntrl:]]'),
   ended_by_actor_id uuid,
   ended_at timestamptz,
-  ended_reason text CHECK (ended_reason IN ('edited', 'replaced')),
+  ended_reason text CHECK (ended_reason IN ('edited', 'replaced', 'repriced')),
   PRIMARY KEY (company_id, id),
   CONSTRAINT job_price_approvals_job_fkey FOREIGN KEY (company_id, job_id) REFERENCES jobs (company_id, id),
   CONSTRAINT job_price_approvals_submission_fkey FOREIGN KEY (company_id, job_id, submission_id)
@@ -175,6 +186,9 @@ DECLARE
   submission_draft uuid;
   pin_sequence integer;
   version_hash text;
+  current_pin_id uuid;
+  current_pin_sequence integer;
+  current_pin_reason text;
 BEGIN
   IF TG_OP = 'INSERT' THEN
     IF NEW.approved_by_actor_id IS NOT NULL OR NEW.approved_at IS NOT NULL OR NEW.approved_by_name IS NOT NULL
@@ -220,6 +234,18 @@ BEGIN
     END IF;
   END IF;
 
+  -- Ending as repriced runs inside the reprice's own transaction (the pins trigger below), which
+  -- already holds the job row, so the newest pin it reads is the one just added.
+  IF TG_OP = 'UPDATE' AND NEW.ended_reason = 'repriced' THEN
+    SELECT p.id, p.reason INTO current_pin_id, current_pin_reason
+    FROM public.job_price_pins p WHERE p.company_id = NEW.company_id AND p.job_id = NEW.job_id
+    ORDER BY p.sequence DESC LIMIT 1;
+    IF current_pin_reason IS DISTINCT FROM 'owner_reprice' OR NEW.pin_id = current_pin_id THEN
+      RAISE EXCEPTION 'a price approval ends as repriced only when its job was repriced onto a newer pin' USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
+  END IF;
+
   -- The binding, checked at every change. A row the keys will refuse anyway (a missing job,
   -- submission or pin) is left to them.
   SELECT j.status, j.revision, j.current_draft_id INTO job_status, job_revision, job_draft
@@ -233,6 +259,12 @@ BEGIN
   IF job_revision <> NEW.job_revision THEN
     RAISE EXCEPTION 'the job has changed since the proposal' USING ERRCODE = '23514';
   END IF;
+
+  -- The job's newest pin, read under the job row lock taken above, so a reprice that commits while
+  -- this change waits is seen.
+  SELECT p.sequence, p.reason INTO current_pin_sequence, current_pin_reason
+  FROM public.job_price_pins p WHERE p.company_id = NEW.company_id AND p.job_id = NEW.job_id
+  ORDER BY p.sequence DESC LIMIT 1;
 
   SELECT s.status, s.draft_id INTO submission_status, submission_draft
   FROM public.job_submissions s WHERE s.company_id = NEW.company_id AND s.job_id = NEW.job_id AND s.id = NEW.submission_id;
@@ -248,11 +280,19 @@ BEGIN
     IF NEW.table_hash <> version_hash THEN
       RAISE EXCEPTION 'a price approval states the content hash of its pinned version' USING ERRCODE = '23514';
     END IF;
-    IF pin_sequence <> (
-      SELECT max(p.sequence) FROM public.job_price_pins p WHERE p.company_id = NEW.company_id AND p.job_id = NEW.job_id
-    ) THEN
+    IF pin_sequence <> current_pin_sequence THEN
       RAISE EXCEPTION 'the job''s price pin has moved since the proposal' USING ERRCODE = '23514';
     END IF;
+  END IF;
+
+  -- The same rule as the estimate service's confirmationPredatesReprice: the draft of this submission
+  -- was the job's current one when the owner moved the pin to its current version.
+  IF current_pin_reason = 'owner_reprice' AND EXISTS (
+    SELECT 1 FROM public.audit_events e
+    WHERE e.company_id = NEW.company_id AND e.target = NEW.job_id::text AND e.action = 'job_repriced'
+      AND e.details->>'sequence' = current_pin_sequence::text AND e.details->>'job_draft' = submission_draft::text
+  ) THEN
+    RAISE EXCEPTION 'the job was repriced: go back to editing and Finish to price it again' USING ERRCODE = '23514';
   END IF;
 
   PERFORM 1 FROM public.job_estimates e
@@ -269,6 +309,27 @@ REVOKE ALL ON FUNCTION job_price_approvals_guard() FROM PUBLIC;
 CREATE TRIGGER job_price_approvals_guard
   BEFORE INSERT OR UPDATE ON job_price_approvals
   FOR EACH ROW EXECUTE FUNCTION job_price_approvals_guard();
+
+-- A reprice ends the job's open rows: the pin the owner adds ends them as repriced, as the caller
+-- (so under row-level security), by the same owner. The guard lets only this end through unchecked.
+CREATE FUNCTION job_price_pins_end_approvals() RETURNS trigger
+  LANGUAGE plpgsql
+  SET search_path = pg_catalog
+AS $$
+BEGIN
+  UPDATE public.job_price_approvals a
+  SET ended_by_actor_id = NEW.pinned_by_actor_id, ended_reason = 'repriced'
+  WHERE a.company_id = NEW.company_id AND a.job_id = NEW.job_id AND a.ended_at IS NULL;
+  RETURN NULL;
+END
+$$;
+
+REVOKE ALL ON FUNCTION job_price_pins_end_approvals() FROM PUBLIC;
+
+CREATE TRIGGER job_price_pins_end_approvals
+  AFTER INSERT ON job_price_pins
+  FOR EACH ROW WHEN (NEW.reason = 'owner_reprice')
+  EXECUTE FUNCTION job_price_pins_end_approvals();
 
 -- An estimate made while an approval of its submission is being written waits for the job
 -- row lock both take, so the estimate prices either before the change (and the change is then

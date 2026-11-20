@@ -63,6 +63,30 @@ async function submittedJob(): Promise<Submitted> {
   return { job: job.id, submission: submission.id, pin, version, revision: 2 };
 }
 
+// What the owner's reprice writes (estimates/service.ts reprice): a second pin with reason owner_reprice,
+// added by the owner as the runtime role, the job's next revision, and the job_repriced audit row that
+// names the new pin's sequence and the job's current draft.
+async function repriceJob(s: Submitted, draft?: string) {
+  const owner = h.seed.ownerA.actor;
+  const version = await seedVersion(h.admin, h.seed.a, owner);
+  const [pin] = rows<{ id: string }>(
+    await as(h.seed.a, (tx) =>
+      tx.execute(sql`
+        INSERT INTO job_price_pins (company_id, job_id, sequence, version_id, reason, pinned_by_actor_id)
+        VALUES (${h.seed.a}::uuid, ${s.job}::uuid, 2, ${version.id}::uuid, 'owner_reprice', ${owner}::uuid)
+        RETURNING id::text
+      `),
+    ),
+  );
+  const [job] = await h.admin<{ current_draft_id: string }[]>`UPDATE jobs SET revision = revision + 1 WHERE id = ${s.job} RETURNING current_draft_id::text`;
+  const details = { sequence: 2, job_draft: draft ?? job!.current_draft_id, job_revision: s.revision + 1, job_status: 'submitted' };
+  await h.admin`
+    INSERT INTO audit_events (company_id, actor_id, action, target, details)
+    VALUES (${h.seed.a}, ${owner}, 'job_repriced', ${s.job}, ${JSON.stringify(details)}::text::jsonb)
+  `;
+  return { pin: pin!.id, hash: version.hash, revision: s.revision + 1 };
+}
+
 type Row = {
   id: string;
   kind: string;
@@ -106,6 +130,10 @@ const propose = (s: Submitted, r: Row, company = h.seed.a) =>
   );
 
 const OWNER_NAME = '  Olivia  Owner ';
+
+// Text made only of Unicode whitespace looks blank on a proposal: a no-break space, an em space and an
+// ideographic space, which the database's own locale may not call whitespace.
+const BLANK_TEXTS = [String.fromCharCode(0xa0), String.fromCharCode(0x2003).repeat(3), String.fromCharCode(0x3000), ` ${String.fromCharCode(0xa0)}\t`];
 
 const approve = (id: string, tx?: CompanyTransaction) => {
   const write = (t: CompanyTransaction) =>
@@ -210,13 +238,17 @@ describe('migration 0019: job_price_approvals', () => {
     for (const extra of [{ price: '1.005' }, { price: '4.500' }, { price: '0' }, { quantity: '0' }, { quantity: '2.001' }, { quantity: '2.500' }, { price: '100000.01' }]) {
       expect({ extra, code: await errorCode(propose(s, proposalOf('unit', extra))) }).toEqual({ extra, code: CHECK_VIOLATION });
     }
-    for (const description of ['', '   ', 'two\nlines', 'x'.repeat(301)]) {
+    for (const description of ['', '   ', 'two\nlines', 'x'.repeat(301), ...BLANK_TEXTS]) {
       expect({ description, code: await errorCode(propose(s, proposalOf('flat', { description }))) }).toEqual({ description, code: CHECK_VIOLATION });
     }
-    // Text is kept exactly as entered, padding included.
-    const padded = proposalOf('flat', { description: '  Permit filing ' });
+    for (const unit of ['', '   ', 'a\tb', 'x'.repeat(21), ...BLANK_TEXTS]) {
+      expect({ unit, code: await errorCode(propose(s, proposalOf('unit', { unit }))) }).toEqual({ unit, code: CHECK_VIOLATION });
+    }
+    // Text is kept exactly as entered, padding (Unicode spaces too) included.
+    const nbsp = String.fromCharCode(0xa0);
+    const padded = proposalOf('unit', { description: `  Permit filing${nbsp}`, unit: ` ${nbsp}bag ` });
     await propose(s, padded);
-    expect(await h.admin`SELECT description FROM job_price_approvals WHERE id = ${padded.id}`).toEqual([{ description: '  Permit filing ' }]);
+    expect(await h.admin`SELECT description, unit FROM job_price_approvals WHERE id = ${padded.id}`).toEqual([{ description: `  Permit filing${nbsp}`, unit: ` ${nbsp}bag ` }]);
   });
 
   it('binds a proposal to the job’s committed record of its current draft, its revision, its current pin and that pin’s content hash', async () => {
@@ -236,7 +268,6 @@ describe('migration 0019: job_price_approvals', () => {
     const v2 = await seedVersion(h.admin, h.seed.a, h.seed.ownerA.actor);
     await seedPin(h.admin, { company: h.seed.a, job: s.job, version: v2.id, actor: h.seed.ownerA.actor, sequence: 2 });
     expect(await refused({})).toContain('price pin has moved');
-    expect(rows(await propose(s, proposalOf('flat', { pin: (await h.admin<{ id: string }[]>`SELECT id::text FROM job_price_pins WHERE sequence = 2`)[0]!.id, hash: v2.hash })))).toHaveLength(1);
   });
 
   it('is made only on a submitted job, and never once its estimate is made', async () => {
@@ -259,7 +290,90 @@ describe('migration 0019: job_price_approvals', () => {
     const pin2 = await seedPin(h.admin, { company: h.seed.a, job: t.job, version: v2.id, actor: h.seed.ownerA.actor, sequence: 2 });
     const moved = { pin: pin2, hash: v2.hash };
     expect((await refusal(propose(t, proposalOf('flat', moved))))?.message).toContain(message);
-    expect((await refusal(approve(early.id)))?.message).toContain('price pin has moved');
+    // The reprice ended the row (a later test covers it), so it is no longer there to approve.
+    expect((await refusal(approve(early.id)))?.message).toContain('an ended price approval cannot change');
+    expect(await stateOf(early.id)).toEqual({ approved: false, ended: 'repriced', price: '150.00' });
+  });
+
+  it('ends every open proposal and approval of the job when the owner reprices it, and leaves an ended row as it was', async () => {
+    const s = await submittedJob();
+    const proposed = proposalOf('flat');
+    const approved = proposalOf('hourly');
+    const edited = proposalOf('unit');
+    await propose(s, proposed);
+    await propose(s, approved);
+    await approve(approved.id);
+    await propose(s, edited);
+    await end(edited.id, 'edited');
+    const [before] = await h.admin<{ ended_at: Date }[]>`SELECT ended_at FROM job_price_approvals WHERE id = ${edited.id}`;
+    // Another job's open row is not touched.
+    const other = await submittedJob();
+    const untouched = proposalOf('flat');
+    await propose(other, untouched);
+
+    await repriceJob(s);
+    expect(await stateOf(proposed.id)).toEqual({ approved: false, ended: 'repriced', price: '150.00' });
+    expect(await stateOf(approved.id)).toEqual({ approved: true, ended: 'repriced', price: '85.00' });
+    expect(await stateOf(edited.id)).toEqual({ approved: false, ended: 'edited', price: '4.50' });
+    expect(await stateOf(untouched.id)).toEqual({ approved: false, ended: null, price: '150.00' });
+    expect(await h.admin`SELECT id::text, ended_by_actor_id::text AS by FROM job_price_approvals WHERE job_id = ${s.job} AND ended_reason = 'repriced' ORDER BY id`).toEqual(
+      [proposed.id, approved.id].sort().map((id) => ({ id, by: h.seed.ownerA.actor })),
+    );
+    expect(await h.admin`SELECT ended_at FROM job_price_approvals WHERE id = ${edited.id}`).toEqual([before]);
+    expect(await h.admin`SELECT count(*)::int AS n FROM job_price_approvals WHERE id = ${proposed.id} AND ended_at IS NOT NULL AND ended_at <= now()`).toEqual([{ n: 1 }]);
+
+    // An open row whose estimate is already made is ended by the reprice too: the estimate stays as it is.
+    const t = await submittedJob();
+    const priced = proposalOf('flat');
+    await propose(t, priced);
+    await seedEstimate(h.admin, { company: h.seed.a, job: t.job, submission: t.submission, pin: t.pin, actor: h.seed.ownerA.actor, hash: t.version.hash });
+    await repriceJob(t);
+    expect(await stateOf(priced.id)).toEqual({ approved: false, ended: 'repriced', price: '150.00' });
+    expect(await h.admin`SELECT count(*)::int AS n FROM job_estimates WHERE job_id = ${t.job}`).toEqual([{ n: 1 }]);
+  });
+
+  it('refuses a proposal, an approval or an end on a submission whose draft was repriced, and an end as repriced unless it was', async () => {
+    const message = 'the job was repriced: go back to editing and Finish to price it again';
+    const s = await submittedJob();
+    const open = proposalOf('flat');
+    await propose(s, open);
+    // Nothing has moved the pin: no row ends as repriced by hand.
+    expect(await refusal(end(open.id, 'repriced'))).toMatchObject({ code: CHECK_VIOLATION, message: expect.stringContaining('ends as repriced only when its job was repriced') });
+    expect(await stateOf(open.id)).toEqual({ approved: false, ended: null, price: '150.00' });
+
+    // Reprice with the end of open rows switched off, to reach the guard's own refusal of the three changes.
+    await h.admin`ALTER TABLE job_price_pins DISABLE TRIGGER job_price_pins_end_approvals`;
+    let moved: Awaited<ReturnType<typeof repriceJob>>;
+    try {
+      moved = await repriceJob(s);
+    } finally {
+      await h.admin`ALTER TABLE job_price_pins ENABLE TRIGGER job_price_pins_end_approvals`;
+    }
+    expect((await refusal(propose(s, proposalOf('flat', moved))))?.message).toContain(message);
+    expect((await refusal(propose(s, proposalOf('flat', { revision: moved.revision }))))?.message).toContain('price pin has moved');
+    // The open row still names the old pin and revision, so its own change is refused as those moved first.
+    expect((await refusal(approve(open.id)))?.message).toContain('the job has changed since the proposal');
+    expect(await stateOf(open.id)).toEqual({ approved: false, ended: null, price: '150.00' });
+    // The reprice's own end of it is the one change let through.
+    expect(rows(await end(open.id, 'repriced'))).toEqual([{ id: open.id }]);
+    expect(await stateOf(open.id)).toEqual({ approved: false, ended: 'repriced', price: '150.00' });
+
+    // With the trigger on, a proposal on the new pin and revision is refused the same way, as is every other change.
+    const t = await submittedJob();
+    const kept = proposalOf('flat');
+    await propose(t, kept);
+    const after = await repriceJob(t);
+    expect((await refusal(propose(t, proposalOf('flat', after))))?.message).toContain(message);
+    expect((await refusal(propose(t, proposalOf('line_multiplier', after))))?.message).toContain(message);
+    expect((await refusal(approve(kept.id)))?.message).toContain('an ended price approval cannot change');
+    expect((await refusal(end(kept.id, 'edited')))?.message).toContain('an ended price approval cannot change');
+    expect(await stateOf(kept.id)).toEqual({ approved: false, ended: 'repriced', price: '150.00' });
+
+    // A draft made after the reprice (Back to editing and Finish) is another submission: it is priced and proposed on again.
+    const draft = randomUUID();
+    const fresh = await seedCommitted(h.admin, newSubmission(h.seed.a, t.job, h.seed.ownerA.actor, { draft }));
+    await h.admin`UPDATE jobs SET current_draft_id = ${draft}, revision = revision + 1 WHERE id = ${t.job}`;
+    expect(rows(await propose({ ...t, submission: fresh.id }, proposalOf('flat', { ...after, revision: after.revision + 1 })))).toHaveLength(1);
   });
 
   it('keeps the approver’s name as entered, on an approved hourly row and on no other', async () => {
@@ -271,7 +385,7 @@ describe('migration 0019: job_price_approvals', () => {
         tx.execute(sql`UPDATE job_price_approvals SET approved_by_actor_id = ${h.seed.ownerA.actor}::uuid, approved_by_name = ${name} WHERE id = ${id}::uuid`),
       );
     expect(await errorCode(set(hourly.id, null))).toBe(CHECK_VIOLATION);
-    for (const name of ['', '   ', 'Olivia\nOwner', 'x'.repeat(151)]) {
+    for (const name of ['', '   ', 'Olivia\nOwner', 'x'.repeat(151), ...BLANK_TEXTS]) {
       expect({ name, code: await errorCode(set(hourly.id, name)) }).toEqual({ name, code: CHECK_VIOLATION });
     }
     expect(await stateOf(hourly.id)).toMatchObject({ approved: false });
@@ -279,6 +393,13 @@ describe('migration 0019: job_price_approvals', () => {
     expect(await h.admin`SELECT approved_by_name AS name FROM job_price_approvals WHERE id = ${hourly.id}`).toEqual([{ name: OWNER_NAME }]);
     // Frozen after approval.
     expect(await errorCode(as(h.seed.a, (tx) => tx.execute(sql`UPDATE job_price_approvals SET approved_by_name = 'Another' WHERE id = ${hourly.id}::uuid`)))).toBe(CHECK_VIOLATION);
+
+    // Padding with Unicode spaces around a real name is kept exactly.
+    const second = proposalOf('hourly');
+    await propose(s, second);
+    const padded = `${String.fromCharCode(0xa0)}Olivia Owner${String.fromCharCode(0x2003)}`;
+    await set(second.id, padded);
+    expect(await h.admin`SELECT approved_by_name AS name FROM job_price_approvals WHERE id = ${second.id}`).toEqual([{ name: padded }]);
 
     const flat = proposalOf('flat');
     await propose(s, flat);
