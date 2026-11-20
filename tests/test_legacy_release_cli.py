@@ -1,4 +1,4 @@
-"""Automatic production release: refusals, staging checks, promotion order and rollback.
+"""Legacy release CLI: refusals, staging checks, promotion order and rollback.
 
 Everything outside the process is replaced by FakeRunner; no test touches Google Cloud, GitHub or git.
 """
@@ -6,18 +6,13 @@ Everything outside the process is replaced by FakeRunner; no test touches Google
 import importlib
 import json
 import re
-import shlex
 import subprocess
-import sys
-from pathlib import Path
 
 import pytest
-import yaml
 
 from scripts import auto_deploy as auto
 from scripts import deploy_backend
 
-ROOT = Path(__file__).resolve().parents[1]
 OLD = 'a' * 40
 NEW = 'b' * 40
 TAG = 'a' + NEW[:7]
@@ -358,6 +353,7 @@ def test_rules_or_indexes_change_stops_before_anything_is_staged(summary, name):
     assert release(runner) == 1
     assert 'stage' not in runner.keys() and 'traffic' not in runner.keys()
     assert name in summary.text() and 'by hand' in summary.text()
+    assert 'automatically' not in summary.text()
 
 
 def test_other_file_changes_do_not_block():
@@ -514,11 +510,6 @@ def test_a_baseline_that_is_not_less_permissive_is_recorded_not_blocked(summary,
     assert "PRICE_BOOKS_ENABLED '(unset)' -> 'false'" in summary.text()
 
 
-def confirmations(expression):
-    """The flag each dispatch input turns on in a workflow expression."""
-    return dict(re.findall(r"inputs\.(\w+) == 'yes' && '(--[\w-]+)'", expression))
-
-
 def serving_with(runner, commit=OLD, **env):
     runner.revisions['rev-old'] = revision(commit, env)
     return runner
@@ -672,13 +663,6 @@ def test_automatic_rollback_after_a_confirmed_release_restores_the_serving_revis
     assert 'completed' in summary.text()
 
 
-def test_the_automatic_workflow_can_never_confirm_a_lower_baseline():
-    step = next(step for step in deploy_job()['steps'] if step.get('name') == 'Release')
-    variables = {token for token in shlex.split(step['run'], comments=True) if '$' in token}
-    assert variables == {'$COMMIT', '$RUN_ID', '$DEPLOY_ARGS'}
-    assert confirmations(deploy_job()['env']['DEPLOY_ARGS']) == {}
-
-
 def test_one_constant_sets_the_baseline_for_both_deploy_scripts(monkeypatch):
     for name, value in (('DEFAULT_PRICE_BOOKS', 'on'), ('DEFAULT_AI_FEATURES', 'job_summary')):
         monkeypatch.setattr(deploy_backend, name, value)
@@ -794,66 +778,6 @@ def test_matching_specs_have_no_differences():
     )
 
 
-# --- The workflow and setup script -------------------------------------------------------------
-
-WORKFLOW = (ROOT / '.github' / 'workflows' / 'deploy.yml').read_text(encoding='utf8')
-SETUP = (ROOT / 'scripts' / 'setup_auto_deploy.sh').read_text(encoding='utf8')
-
-
-def test_workflow_runs_only_after_ci_succeeds_on_a_master_push():
-    assert re.search(
-        r'workflow_run:\s*\n\s*workflows: \[CI\]\s*\n\s*types: \[completed\]', WORKFLOW
-    )
-    assert 'branches: [master]' in WORKFLOW
-    for condition in (
-        "github.event.workflow_run.conclusion == 'success'",
-        "github.event.workflow_run.event == 'push'",
-        "github.event.workflow_run.head_branch == 'master'",
-        'github.event.workflow_run.head_repository.full_name == github.repository',
-    ):
-        assert condition in WORKFLOW
-    assert 'pull_request' not in WORKFLOW
-
-
-def test_workflow_serializes_deploys_and_never_cancels_one_in_flight():
-    assert re.search(
-        r'concurrency:\s*\n\s*group: production-deploy\s*\n\s*cancel-in-progress: false', WORKFLOW
-    )
-
-
-def test_workflow_uses_keyless_auth_and_never_a_blanket_firebase_deploy():
-    assert 'workload_identity_provider: ${{ vars.' in WORKFLOW
-    assert 'id-token: write' in WORKFLOW
-    assert 'credentials_json' not in WORKFLOW and 'secrets.' not in WORKFLOW
-    assert 'firebase deploy' not in WORKFLOW
-    assert 'firebase-tools' not in WORKFLOW or '--only' in WORKFLOW
-
-
-def test_workflow_deploys_the_tested_commit_not_the_branch_tip():
-    assert 'ref: ${{ github.event.workflow_run.head_sha || github.sha }}' in WORKFLOW
-    assert 'fetch-depth: 0' in WORKFLOW
-    assert 'scripts/auto_deploy.py --commit' in WORKFLOW
-
-
-def test_workflow_actions_are_pinned_to_commits():
-    for line in WORKFLOW.splitlines():
-        match = re.search(r'uses: (\S+)', line)
-        if match:
-            assert re.search(r'@[0-9a-f]{40}$', match.group(1)), line
-
-
-def test_setup_script_restricts_the_identity_to_this_repository_and_master():
-    assert 'REPO=nnorman100/adr-field-estimator' in SETUP
-    assert "assertion.repository == '$REPO'" in SETUP
-    assert "assertion.ref == 'refs/heads/master'" in SETUP
-    assert 'roles/owner' not in SETUP and 'roles/editor' not in SETUP
-    assert 'keys create' not in SETUP
-
-
-def test_setup_script_has_valid_shell_syntax():
-    subprocess.run(['bash', '-n', str(ROOT / 'scripts' / 'setup_auto_deploy.sh')], check=True)
-
-
 def test_default_tag_fits_cloud_run_limit_for_real_run_ids():
     tag = auto.default_tag('90d08b55f32e' + '0' * 28, '41140166919')
     assert tag == 'a90d08b5-0166919'
@@ -880,27 +804,8 @@ def test_overlong_explicit_tag_is_refused_before_anything_runs():
     )
 
 
-def deploy_job():
-    return yaml.safe_load(WORKFLOW)['jobs']['deploy']
-
-
-def step_argv(name, env):
-    step = next(step for step in deploy_job()['steps'] if step.get('name') == name)
-    tokens = shlex.split(step['run'], comments=True)
-    for key, value in env.items():
-        tokens = [token.replace(f'${key}', value) for token in tokens]
-    tokens = [token for token in tokens if token]
-    return tokens[tokens.index('scripts/auto_deploy.py') + 1 :]
-
-
-def release_argv(run_id):
-    return step_argv('Release', {'COMMIT': NEW, 'RUN_ID': run_id, 'DEPLOY_ARGS': ''})
-
-
-def test_workflow_release_step_stages_a_tag_cloud_run_accepts():
-    argv = release_argv('41140166919')
-    assert '--tag' not in argv
-    assert argv[argv.index('--run-id') + 1] == '41140166919'
+def test_release_cli_stages_a_tag_cloud_run_accepts():
+    argv = ['--commit', NEW, '--run-id', '41140166919']
     runner = FakeRunner()
     assert auto.main(argv, runner=runner) == 0
     stage = next(command for key, command in runner.calls if key == 'stage')
