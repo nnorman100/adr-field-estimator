@@ -144,7 +144,7 @@ The rest of this page describes the old app's pricing, which the Python backend 
 
 - **A company with no published prices cannot price an estimate.** The audit answers 409 and the job stays a draft. The owner is told "Set your company prices before your first estimate", with a Set company prices button while the editor is on; estimators and office staff are told to ask the owner.
 - **Owners publish prices under Company prices** (behind `PRICE_BOOKS_ENABLED`), or import the CSV/XLSX template. The template for a company without prices lists item names and units with blank prices; `version_id=starter` on the export route gives the v2 starter catalog in the same blank form. See [Company workspaces](company-workspaces.md#company-prices). While the flag is off the editor is unavailable, so a company other than the first company cannot set prices; that page says when the flag may be turned on.
-- **The browser gets prices only from the API,** for the signed-in company. No rate is written in `public/`; `tests/test_no_adr_default.py` checks that.
+- **The browser gets prices only from the API,** for the signed-in company. No rate is written in `public/`. The old Python check for that (`tests/test_no_adr_default.py`) was removed with the first company's price book files.
 - **Rates live on the server as data:** a published book is stored per company, and each job pins one book: a v2 draft at its first server save, a v1 draft at its first audit. A published book applies to new pricing from the server's publication time. An existing draft keeps its saved rates until the owner reviews and applies new prices to that one draft. Signed records never change.
 - **Formulas, waste and range factors, default quantities and mandatory wording stay in code** (`backend/claims.py`) for now on `adr-residential-v1` books, under `CALCULATION_VERSION`. An owner-defined `dryscope-v2` table is a separate model that holds its own items and settings.
 
@@ -195,7 +195,7 @@ The itemized total printed beside the range is the low total. A single-price com
 
 **Guards.** A priced scope of $0.00 is refused with "The priced scope totals $0.00. Enter at least one quantity or room measurement before auditing." before any minimum applies, so a minimum never turns an empty job into a signable one. A line outside the three buckets raises an error rather than vanishing from the range.
 
-**Neither total drops when work is added (flat tables and tiered mode).** Raising any room area, equipment count, day count, labor hour, charge count, approved extra, the after-hours flag or any unit price never lowers the low or the high beyond rounding (two cents at most). `tests/test_pricing_v2.py` scans this over 2,000 random tables and jobs on a fixed seed.
+**Neither total drops when work is added (flat tables and tiered mode).** Raising any room area, equipment count, day count, labor hour, charge count, approved extra, the after-hours flag or any unit price never lowers the low or the high beyond rounding (two cents at most). The old Python property scan for this (`tests/test_pricing_v2.py`) was removed with the first company's price book files.
 
 **Explanation text.** `explanation()` builds the paragraph under the amounts from the pinned policy, and `range_explanation()` builds the one sentence naming how the high end is built, such as "The high end allows 50% extra on the first 1,000 sq ft of work and 20% beyond, for hidden damage." Both are server text.
 

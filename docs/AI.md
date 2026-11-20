@@ -82,13 +82,13 @@ and ceilings".
 
 Run by CI (provider-free, `python -m pytest tests`, `npm test`): `test_audit_retry.py`,
 `test_live*.py`, `test_voice_notes.py`, `test_voice_note_gate.py`, `test_late_transcript_gate.py`,
-`test_scope.py`, `test_claims.py`, `test_claims_documents.py` with `tests/golden/v1-documents.json`, `test_insights.py`,
+`test_scope.py`, `test_insights.py`,
 `test_drying_watch.py`, `test_readiness.py` (includes the `scripts/readiness_eval.py` accept and
 reject cases), `test_sizing.py`, `test_estimate_warnings.py`, `test_outcomes.py`, `test_outcome_history.py`,
-`test_pricing_v2.py`, `test_logging.py`.
+`test_logging.py`.
 
 Real-service checks, run by hand with synthetic data and **not** in CI: `scripts/verify_scope_extraction.py`,
-`verify_estimate_prompts.py`, `verify_estimate_batch3.py`, `verify_job_summaries.py` and
+`verify_estimate_batch3.py`, `verify_job_summaries.py` and
 `verify_drying_summaries.py` (`--live` is a separate release gate), `verify_live_reliability.py`,
 `verify_live_release.py`, `verify_workspace_database.py`. Record their results separately from
 mock tests.

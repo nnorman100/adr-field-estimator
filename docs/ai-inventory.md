@@ -98,7 +98,7 @@ returns 429 before any model call.
   at most 4.5 s, median 2.6 s (comment in `backend/main.py`).
 - **Budget hooks:** 6 a minute, 120 a day (`scope`).
 - **Evals:** `tests/test_scope.py` (provider-free); real service: `scripts/verify_scope_extraction.py`,
-  `verify_estimate_prompts.py` (`extract` cases) and `verify_estimate_batch3.py` (`scope_case`). Each case must match the
+  `verify_estimate_batch3.py` (`scope_case`; the `verify_estimate_prompts.py` `extract` cases were removed). Each case must match the
   expected `(room, field) → value` map exactly.
 - **Switch:** none.
 
@@ -117,10 +117,8 @@ returns 429 before any model call.
   `Vertex AI retry`.
 - **Budget hooks:** 3 attempts a minute (`audit_attempt`, charged before the checks) and 60 a day (`audit`, charged only
   when no saved audit can be reused). A reusable audit makes no model call.
-- **Evals:** `tests/test_audit_retry.py`, `tests/test_claims.py`, `tests/test_claims_documents.py` with `tests/golden/v1-documents.json` (provider-free);
-  real service: `verify_estimate_prompts.py` (`audit_specialty`, `audit_priced_extra` run three times, `audit_cleaning_only`)
-  and `verify_estimate_batch3.py` (health, evidence and open-extent cases). All assertions must hold; the priced-extra case
-  must pass 3 of 3.
+- **Evals:** `tests/test_audit_retry.py` (provider-free); the claim and document tests and the `verify_estimate_prompts.py`
+  audit cases were removed with the first company's price book files; real service: `verify_estimate_batch3.py` (health, evidence and open-extent cases). All assertions must hold.
 - **Switch:** none.
 
 ### 5. Job summary
