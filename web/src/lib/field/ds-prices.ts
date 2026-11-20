@@ -6,6 +6,13 @@ import { transact, withDatabase, type DbSpec } from './idb';
 export type ItemList = NonNullable<z.infer<typeof itemListResponseSchema>['current']>;
 type Person = { tenantId: string; uid: string };
 type ListOwner = Person & { companyId: string };
+// What a phone knows of one company's published list: null when it never asked, `{ list: null }`
+// when the server last said the company has none.
+export type SavedList = { list: ItemList | null } | null;
+
+// Stored in the version part of the key for a confirmed "no published list". It is no UUID, so it
+// never matches a version id.
+const NONE = 'none';
 
 const STORE = 'item-lists';
 const SPEC: DbSpec = {
@@ -65,12 +72,15 @@ function changing<T>({ tenantId, uid }: Person, work: (signal: AbortSignal) => P
   });
 }
 
-export function readItemList(owner: ListOwner): Promise<ItemList | null> {
+export function readItemList(owner: ListOwner): Promise<SavedList> {
   return within((signal) => onLists('readonly', signal, (store) => {
     const request = store.get(range(owner, owner.companyId));
     return () => {
-      const parsed = itemListResponseSchema.safeParse({ current: request.result?.list });
-      return parsed.success ? parsed.data.current : null;
+      const row = request.result as { versionId?: unknown; list?: unknown } | undefined;
+      if (!row) return null;
+      if (row.versionId === NONE) return { list: null };
+      const parsed = itemListResponseSchema.safeParse({ current: row.list });
+      return parsed.success && parsed.data.current ? { list: parsed.data.current } : null;
     };
   }));
 }
@@ -84,16 +94,25 @@ export function replaceItemList(owner: ListOwner, list: ItemList | null, authTim
     return onLists('readwrite', signal, (store) => {
       if (!active()) return () => false;
       store.delete(range(owner, owner.companyId));
-      if (list) store.put({ ...owner, versionId: list.versionId, list });
+      store.put({ ...owner, versionId: list?.versionId ?? NONE, list });
       return () => true;
     });
   });
 }
 
-export async function forgetItemLists(person: Person, active: () => boolean = () => true): Promise<void> {
-  if (typeof indexedDB === 'undefined') return;
-  await changing(person, (signal) => onLists('readwrite', signal, (store) => {
-    if (active()) store.delete(range(person));
+function forget(person: Person, companyId: string | undefined, active: () => boolean): Promise<void> {
+  return changing(person, (signal) => onLists('readwrite', signal, (store) => {
+    if (active()) store.delete(range(person, companyId));
     return () => undefined;
   }));
+}
+
+// The server refused this company's item list: only that company's copy for this person goes.
+export function forgetItemList(owner: ListOwner, active: () => boolean): Promise<void> {
+  return forget(owner, owner.companyId, active);
+}
+
+export async function forgetItemLists(person: Person, active: () => boolean = () => true): Promise<void> {
+  if (typeof indexedDB === 'undefined') return;
+  await forget(person, undefined, active);
 }

@@ -3,13 +3,15 @@
 import { useEffect, useState } from 'react';
 import { companyAuth } from '@/lib/firebase-client';
 import { readPublishedItemList } from '@/lib/field/api';
-import { readItemList, replaceItemList, type ItemList } from '@/lib/field/ds-prices';
+import { forgetItemList, readItemList, replaceItemList, type ItemList, type SavedList } from '@/lib/field/ds-prices';
+import { ReopenTheApp } from '@/lib/field/idb';
 import type { FieldSession } from '@/lib/field/session';
 import { signInOf, stillSameSignIn } from '@/lib/field/sign-out';
 import { itemUnitLabel } from './room-lists';
 
 const DATE = new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeZone: 'UTC' });
 const UPDATED = 'The older copy was updated.';
+const NOT_SET = 'Prices not set';
 const NEEDS_SIGNAL = 'Connect to get the published item list.';
 const UNAVAILABLE = 'The item list could not be read. Try opening Check Scope again.';
 const NOT_SAVED = 'This item list could not be saved on this phone.';
@@ -34,25 +36,32 @@ function PublishedList({ session }: { session: FieldSession }) {
   useEffect(() => {
     const owner = { companyId, tenantId, uid };
     const auth = companyAuth(person);
-    const openedFor = signInOf(auth.currentUser);
     let disposed = false;
-    let cached: ItemList | null = null;
+    let cached: SavedList = null;
+    let readFailure: string | null = null;
     let loaded = false;
     let request: AbortController | null = null;
-    const active = () => !disposed && openedFor.user?.uid === uid && stillSameSignIn(auth, openedFor);
-    const show = (list: ItemList | null, note?: string) => {
-      setDisplay((before) => !note && list && before.list?.versionId === list.versionId ? before : { list, note });
+    const signedIn = () => {
+      const now = signInOf(auth.currentUser);
+      return now.user?.uid === uid ? now : null;
     };
+    const show = (list: ItemList | null, note?: string) => {
+      setDisplay((before) => before.note === note && before.list?.versionId === list?.versionId ? before : { list, note });
+    };
+    const showSaved = (saved: NonNullable<SavedList>) => show(saved.list, saved.list ? undefined : NOT_SET);
 
     async function refresh() {
-      if (!loaded || !online || !active() || request || document.visibilityState === 'hidden') return;
+      const from = signedIn();
+      if (!loaded || !online || !from?.user || request || document.visibilityState === 'hidden') return;
+      const { user: current } = from;
+      const active = () => !disposed && stillSameSignIn(auth, from);
       const pending = new AbortController();
       request = pending;
       const timeout = window.setTimeout(() => pending.abort(), REQUEST_TIMEOUT_MS);
       const stopped = new Promise<null>((resolve) => pending.signal.addEventListener('abort', () => resolve(null), { once: true }));
       const read = async () => {
-        const answer = await readPublishedItemList(user, pending.signal);
-        const authTime = keep && answer.ok ? await user.getIdTokenResult().then((token) => Date.parse(token.authTime), () => NaN) : NaN;
+        const answer = await readPublishedItemList(current, pending.signal);
+        const authTime = keep && answer.ok ? await current.getIdTokenResult().then((token) => Date.parse(token.authTime), () => NaN) : NaN;
         return { answer, authTime };
       };
       try {
@@ -60,26 +69,33 @@ function PublishedList({ session }: { session: FieldSession }) {
         if (!active()) return;
         const answer = result?.answer;
         if (!answer || !answer.ok) {
-          if (answer?.denied || !cached) show(null, UNAVAILABLE);
+          if (answer?.denied) {
+            cached = null;
+            readFailure = null;
+            if (keep) await forgetItemList(owner, active).catch(() => undefined);
+            if (!active()) return;
+          }
+          if (!cached) show(null, readFailure ?? UNAVAILABLE);
           return;
         }
 
         const list = answer.value.current;
-        const older = cached !== null && list !== null && list.versionId !== cached.versionId;
-        if (older) show(cached, 'This item list is out of date. Updating…');
-        const changed = cached?.versionId !== list?.versionId;
-        const saved = !keep || !changed || await replaceItemList(owner, list, result?.authTime ?? NaN, active).catch(() => false);
-        if (!active()) return;
-        if (!list) {
-          if (saved) cached = null;
-          show(null, 'Prices not set');
-        } else if (!saved) {
-          if (cached) show(cached, 'This item list is out of date. The newer list could not be saved.');
-          else show(list, NOT_SAVED);
-        } else {
-          cached = list;
-          show(list, older ? UPDATED : undefined);
+        const older = cached?.list != null && list !== null && list.versionId !== cached.list.versionId;
+        if (older && cached) show(cached.list, 'This item list is out of date. Updating…');
+        const changed = cached === null || cached.list?.versionId !== list?.versionId;
+        let failure: string | null = null;
+        if (keep && changed) {
+          const saved = await replaceItemList(owner, list, result?.authTime ?? NaN, active).catch((error: unknown) => (error instanceof ReopenTheApp ? error : false));
+          if (saved instanceof ReopenTheApp) failure = saved.message;
+          else if (!saved) failure = NOT_SAVED;
         }
+        if (!active()) return;
+        if (!failure) {
+          cached = keep ? { list } : null;
+          readFailure = null;
+        }
+        if (!list) show(null, NOT_SET);
+        else show(list, failure ?? (older ? UPDATED : undefined));
       } finally {
         window.clearTimeout(timeout);
         request = null;
@@ -87,10 +103,15 @@ function PublishedList({ session }: { session: FieldSession }) {
     }
 
     void (async () => {
-      cached = keep ? await readItemList(owner).catch(() => null) : null;
-      if (!active()) return;
+      const saved = keep ? await readItemList(owner).catch((error: unknown) => {
+        readFailure = error instanceof ReopenTheApp ? error.message : UNAVAILABLE;
+        return null;
+      }) : null;
+      if (disposed || !signedIn()) return;
+      cached = saved;
       loaded = true;
-      if (cached) show(cached);
+      if (saved) showSaved(saved);
+      else if (readFailure) show(null, readFailure);
       else if (!online) show(null, NEEDS_SIGNAL);
       void refresh();
     })();

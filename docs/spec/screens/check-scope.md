@@ -64,7 +64,10 @@ job's field work is no longer yours…" (unsent changes stay on the phone, read 
   published item names, units, room types and suggestions. The reference contains no prices
   or totals. If the phone keeps jobs, the list reopens offline from `ds-prices`. Check Scope
   checks for a new publication on online open, reconnect and foreground refresh. It identifies an
-  older copy when it finds a newer version. A company without a publication sees "Prices not set".
+  older copy when it finds a newer version, and shows the newer list with a warning when the phone
+  cannot save it. A company without a publication sees "Prices not set", also offline once the
+  phone has seen that answer. When the server refuses the list, the saved copy for that person and
+  company is removed and stays unavailable until a later read succeeds.
 - Offline with jobs kept: edits save on the phone (the shell's "No signal: your work is saved on
   this phone"); offline with Online only, nothing opens without a signal.
 - Draft unreadable: the error with "Try again".
