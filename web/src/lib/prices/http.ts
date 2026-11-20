@@ -1,13 +1,14 @@
 import { z } from 'zod';
 import type { Identity } from '@/lib/auth';
 import { IdentityRefusal } from '@/lib/auth';
+import { itemListResponseSchema } from './item-list';
 import { PricesError } from './service';
 import { pricesServices } from './services';
 
 // The Prices routes (src/app/api/prices/...). Each route file wraps one of these in requireFlag
 // ('price_books', ...), so a company without price books gets 404 before anything here runs and the
 // company comes from the verified sign-in alone: no route takes a company id. These add the price
-// rules: everyone with prices_read reads the current prices (a reader sees the enabled items only),
+// rules: everyone with prices_read reads the current prices and the published item list,
 // and every other route needs prices_manage, the owner's key, and is refused before the body or the
 // database is read. Publishing also needs a sign-in under 15 minutes old, declared on its route.
 
@@ -111,6 +112,27 @@ export async function readPrices(_request: Request, identity: Identity): Promise
     else if (identity.capabilities.includes('prices_read')) view = 'reader';
     else throw new PricesError('not_allowed');
     return json(await pricesServices().read(identity.companyId, view));
+  });
+}
+
+// GET /api/prices/item-list: the published reference list for Check Scope (S6-8).
+export async function readPublishedItemList(_request: Request, identity: Identity): Promise<Response> {
+  return respond(async () => {
+    if (!identity.capabilities.includes('prices_read')) throw new PricesError('not_allowed');
+    const { current } = await pricesServices().read(identity.companyId, 'reader');
+    if (!current) return json({ current: null });
+
+    const { table } = current;
+    return json(itemListResponseSchema.parse({
+      current: {
+        versionId: current.id,
+        publishedAt: current.publishedAt,
+        items: [...table.items]
+          .sort((left, right) => left.sort_order - right.sort_order)
+          .map(({ item_id, name, unit }) => ({ itemId: item_id, name, unit })),
+        roomTypes: table.policy.room_types.map(({ id, name, suggested_items }) => ({ id, name, suggestedItemIds: suggested_items })),
+      },
+    }));
   });
 }
 

@@ -127,6 +127,7 @@ export const MATRIX: readonly MatrixRow[] = [
   row(`${COMPANY}/members/[membershipId]/enable`, 'POST', 'company', { own: 'cross' }),
 
   row(PRICES, 'GET', 'company', { self: true, own: 'list' }),
+  row(`${PRICES}/item-list`, 'GET', 'company', { self: true, own: 'list' }),
   row(`${PRICES}/working-copy`, 'PUT', 'company', { self: true, body: { expectedRevision: STALE, table: starterTable() } }),
   row(`${PRICES}/preview`, 'POST', 'company', { self: true, body: {} }),
   row(`${PRICES}/publish`, 'POST', 'company', {

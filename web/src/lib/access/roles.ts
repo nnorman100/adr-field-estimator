@@ -53,7 +53,7 @@ export const BASE_CAPABILITIES = Object.freeze({
 } as const);
 
 // These two exist only while price books are switched on (PRICE_BOOKS_ENABLED today). Everyone may
-// read prices; only the owner manages them.
+// read prices and the published Check Scope item list; only the owner manages prices.
 export const PRICE_CAPABILITIES = Object.freeze({
   owner: ['prices_read', 'prices_manage'],
   estimator: ['prices_read'],
