@@ -171,7 +171,16 @@ export async function forgetItemLists(person: Person, active: () => boolean = ()
   try {
     await changing(person, (signal) => onLists('readwrite', signal, (store) => {
       erased = active();
-      if (erased) store.delete(range(person));
+      // Row by row, as forgetJournal does: a phone with no saved list has nothing to delete.
+      if (erased) {
+        const request = store.openKeyCursor(range(person));
+        request.onsuccess = () => {
+          const cursor = request.result;
+          if (!cursor) return;
+          store.delete(cursor.primaryKey);
+          cursor.continue();
+        };
+      }
       return () => undefined;
     }));
   } catch (error) {
