@@ -35,6 +35,13 @@ export function splitlines(text: string): string[] {
   return lines;
 }
 
+/** Whether a `uses` reference is owner/name (or a path inside it) at a full lowercase commit SHA. */
+export function isPinnedUses(ref: unknown, nameShape: RegExp = /^[\w.-]+\/[\w./-]+$/): boolean {
+  if (typeof ref !== 'string') return false;
+  const match = /^(.+)@[0-9a-f]{40}$/.exec(ref);
+  return match !== null && nameShape.test(match[1]);
+}
+
 export function steps(job: Data): Data[] {
   return job.steps ?? [];
 }

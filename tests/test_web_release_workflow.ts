@@ -12,6 +12,7 @@ import {
   commands,
   evaluate,
   isOperator,
+  isPinnedUses,
   load,
   RELEASE,
   Shell,
@@ -101,7 +102,7 @@ describe('triggers and gate', () => {
       .filter((s) => 'uses' in s)
       .map((s) => s.uses);
     expect(uses.length).toBeGreaterThan(0);
-    for (const ref of uses) expect(ref).toMatch(/^[\w.-]+\/[\w./-]+@[0-9a-f]{40}$/);
+    for (const ref of uses) expect(isPinnedUses(ref), ref).toBe(true);
   });
 
   it.each([RELEASE, WEB])('%s gives every job a time limit', (file) => {
