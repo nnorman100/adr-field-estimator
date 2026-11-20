@@ -7,7 +7,7 @@ import type { Fence } from '@/lib/submissions/fence';
 import { snapshotManifest } from '@/lib/submissions/snapshot';
 import { desired, UnclaimedDraftError, type DraftContent, type JobDraftSnapshot } from './draft-lifecycle';
 import type { DraftSync, SyncResult } from './draft-sync';
-import type { DraftLookup } from './drafts';
+import { draftOfOtherJob, type DraftLookup } from './drafts';
 
 // The draft life-cycle sync of one job (the draft life-cycle redesign, Design 2): read what Postgres
 // holds for the job in one snapshot with its field revision (jobs.field_revision, migration 0018),
@@ -150,15 +150,17 @@ export async function readJobDraftSnapshot(db: Database, companyId: string, jobI
   );
 }
 
-// The job's field revision as Postgres holds it now, in a short read of its own.
-async function fieldRevisionOf(db: Database, companyId: string, jobId: string): Promise<number | null> {
+// The job's versions as Postgres holds them now, in a short read of its own: its field revision (every
+// life-cycle input) and its revision (every change of what the documents say, an owner reprice among
+// them, which decides whether a made draft keeps its scope confirmation).
+async function versionOf(db: Database, companyId: string, jobId: string): Promise<{ fieldRevision: number; revision: number } | null> {
   const [now] = await withCompany(db, companyId, (tx) =>
     tx
-      .select({ fieldRevision: jobs.fieldRevision })
+      .select({ fieldRevision: jobs.fieldRevision, revision: jobs.revision })
       .from(jobs)
       .where(and(eq(jobs.companyId, companyId), eq(jobs.id, jobId))),
   );
-  return now?.fieldRevision ?? null;
+  return now ?? null;
 }
 
 // How many times one call syncs again when Postgres moved on while it was syncing.
@@ -168,7 +170,7 @@ const CATCH_UP = 3;
  * Syncs every draft of the job to what Postgres holds now, then records the version as synced, unless a
  * draft is to be written again (one held back by a newer legacy write, or a current draft it could not
  * make), so the repair pass syncs the job again. Inside the Firestore transaction, before any write, the
- * job's field revision is read once more: a snapshot Postgres has moved on from writes nothing, and the job
+ * job's versions (field revision and revision) are read once more: a snapshot Postgres has moved on from writes nothing, and the job
  * is synced again at the newer version (as it is when Postgres moves on after the commit). Null when there
  * is no such job. Throws UnclaimedDraftError (draft-lifecycle.ts) when job_drafts does not give the job its
  * current draft, and whatever the field database throws.
@@ -176,13 +178,18 @@ const CATCH_UP = 3;
 export async function syncJob(db: Database, store: DraftSync, companyId: string, jobId: string, round = 0): Promise<{ result: SyncResult; currentDraftId: string } | null> {
   const snapshot = await readJobDraftSnapshot(db, companyId, jobId);
   if (!snapshot) return null;
-  const stillCurrent = async () => (await fieldRevisionOf(db, companyId, jobId)) === snapshot.fieldRevision;
+  const current = (now: { fieldRevision: number; revision: number } | null) =>
+    now !== null && now.fieldRevision === snapshot.fieldRevision && now.revision === snapshot.revision;
+  const stillCurrent = async () => current(await versionOf(db, companyId, jobId));
   const result = await store.sync(companyId, desired(snapshot), 0, { stillCurrent });
-  if (round < CATCH_UP && (result.outcome === 'moved' || ((await fieldRevisionOf(db, companyId, jobId)) ?? 0) > snapshot.fieldRevision)) {
-    return syncJob(db, store, companyId, jobId, round + 1);
+  // Read again after the commit, the last try included: a snapshot Postgres moved on from is synced again,
+  // and once the tries are used up it is answered as not written (the same request again), never synced.
+  if (result.outcome === 'moved' || !current(await versionOf(db, companyId, jobId))) {
+    if (round < CATCH_UP) return syncJob(db, store, companyId, jobId, round + 1);
+    return { result: { outcome: 'moved' }, currentDraftId: snapshot.currentDraftId };
   }
   const synced = { result, currentDraftId: snapshot.currentDraftId };
-  if (result.outcome === 'stale' || result.outcome === 'moved') return synced;
+  if (result.outcome === 'stale') return synced;
   if (result.superseded.length > 0 || result.missing.includes(snapshot.currentDraftId) || result.conflicts.includes(snapshot.currentDraftId)) return synced;
   // The watermark: only ever raised, and only by the version this sync wrote or found written.
   await withCompany(db, companyId, (tx) =>
@@ -221,7 +228,10 @@ export async function syncJobDrafts(db: Database, store: DraftSync, lookup: Draf
   let synced: Awaited<ReturnType<typeof syncJob>> = null;
   for (let attempt = 0; ; attempt += 1) {
     try {
-      if (!(await lookup.findDraft(companyId, claimed))) {
+      const found = await lookup.findDraft(companyId, claimed);
+      // A current draft that names another job is never this job's, whatever an earlier sync recorded.
+      if (found && draftOfOtherJob(found.jobId, jobId)) throw new JobError('conflict');
+      if (!found) {
         await withCompany(db, companyId, (tx) =>
           tx
             .update(jobs)
@@ -233,6 +243,7 @@ export async function syncJobDrafts(db: Database, store: DraftSync, lookup: Draf
       break;
     } catch (error) {
       if (error instanceof UnclaimedDraftError) throw new JobError('conflict');
+      if (error instanceof JobError) throw error;
       // Fixed text only: the SDK's message may quote a path.
       console.error('job draft sync unavailable', error instanceof Error ? error.name : 'unknown');
       // The answer may have been lost after the write: once more, from a fresh read of Postgres.

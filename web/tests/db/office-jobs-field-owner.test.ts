@@ -579,6 +579,67 @@ describe('moving the field work (owner decision J5)', () => {
     expect(h.field.draft(h.seed.a, draftId)).toBeNull();
   });
 
+  // Holds the next draft sync at the field database until the test opens it.
+  async function heldSync<T>(start: () => Promise<T>) {
+    const hold = latch();
+    let arrived = false;
+    h.field.gate.sync = async () => {
+      delete h.field.gate.sync;
+      arrived = true;
+      await hold.wait;
+    };
+    const running = start();
+    await until(() => arrived, 'the draft sync');
+    return { running, open: hold.open };
+  }
+
+  it('gives a caller disabled while its field step waited no job, customer or staff details after it', async () => {
+    const { id } = await officeJob();
+    await assign(OFFICE_A, id, h.seed.estimatorA.actor);
+    const started = await heldSync(() => claim(ESTIMATOR_A, id));
+    await h.admin`UPDATE memberships SET status = 'disabled' WHERE id = ${h.seed.estimatorA.membership}`;
+    started.open();
+    expect(await started.running).toEqual({ status: 403, body: { error: 'not_allowed' } });
+
+    // A Move by an owner whose role changed while its field step waited.
+    await h.admin`UPDATE memberships SET status = 'active' WHERE id = ${h.seed.estimatorA.membership}`;
+    const moved = await claimedJob();
+    const { revision } = (await coordination(OWNER_A, moved.id)).body;
+    const moving = await heldSync(() => transfer(OWNER_A, moved.id, { revision, changeId: randomUUID(), toActorId: estimatorA2 }));
+    await h.admin`UPDATE memberships SET role = 'office' WHERE id = ${h.seed.ownerA.membership}`;
+    moving.open();
+    expect(await moving.running).toEqual({ status: 403, body: { error: 'not_allowed' } });
+  });
+
+  it('answers 503 and records nothing as synced when Postgres moves on after the last try’s commit', async () => {
+    const { id } = await claimedJob();
+    const { revision } = (await coordination(OWNER_A, id)).body;
+    // Every sync commits, and Postgres moves on just after (a change committing between the version check
+    // and the commit, each time).
+    const sync = h.field.sync;
+    h.field.sync = async (...args) => {
+      const result = await sync(...args);
+      await h.admin`UPDATE jobs SET field_revision = field_revision + 1 WHERE id = ${id}`;
+      return result;
+    };
+    const body = { revision, changeId: randomUUID(), toActorId: estimatorA2 };
+    expect(await transfer(OWNER_A, id, body)).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
+    const [row] = await h.admin<{ behind: boolean }[]>`SELECT field_synced_revision < field_revision AS behind FROM jobs WHERE id = ${id}`;
+    expect(row!.behind).toBe(true);
+    h.field.sync = sync;
+    expect((await transfer(OWNER_A, id, body)).status).toBe(200);
+  });
+
+  it('answers 409 on a retried archive when the current draft now names another job, whatever the earlier sync recorded', async () => {
+    const { id, draftId } = await claimedJob();
+    const { revision } = (await read(OWNER_A, id)).body.job as { revision: number };
+    const body = { revision, changeId: randomUUID() };
+    expect((await archive(OWNER_A, id, body)).status).toBe(200);
+    // A damaged field database now holds another job's draft under the job's current draft id.
+    h.drafts.plant(`${h.seed.a}/${draftId}`, { fieldOwnerUid: null, jobId: randomUUID() });
+    expect(await archive(OWNER_A, id, body)).toEqual({ status: 409, body: { error: 'conflict' } });
+  });
+
   it('refuses the company owner field work they do not own, until they move it to themself', async () => {
     const { id, draftId } = await claimedJob();
     h.field.put(h.seed.a, draftId, MANIFEST);

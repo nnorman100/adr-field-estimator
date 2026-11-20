@@ -418,6 +418,36 @@ describe('what is refused, and writes nothing', () => {
     expect(h.field.draft(h.seed.a, open)?.field).not.toHaveProperty('scopeConfirmed');
   });
 
+  // The same, with the reprice committing while the sync that makes the draft is held after it read Postgres:
+  // the sync's version check sees the reprice and syncs again, so the made draft starts unconfirmed.
+  it('a draft the sync is making when the owner reprices starts unconfirmed', async () => {
+    const { jobId, draftId } = await readyToSign();
+    await publish(h.seed.a, '3.00');
+    const open = randomUUID();
+    h.field.failNext.createFrom = true;
+    expect((await f.nextDraft(ESTIMATOR_A, jobId, { draftId: open, fromDraftId: draftId })).status).toBe(503);
+    let arrived = false;
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    h.field.gate.sync = async () => {
+      delete h.field.gate.sync;
+      arrived = true;
+      await held;
+    };
+    const started = json(fieldOwnerRoute.POST(request(ESTIMATOR_A, `/api/jobs/${jobId}/field-owner`, { method: 'POST' }), params({ jobId })));
+    for (const deadline = Date.now() + 10_000; !arrived; ) {
+      if (Date.now() > deadline) throw new Error('timed out waiting for the draft sync');
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(await reprice(OWNER_A, jobId)).toMatchObject({ status: 200, body: { job: { status: 'draft', currentDraftId: open } } });
+    release();
+    expect((await started).status).toBe(200);
+    expect(h.field.draft(h.seed.a, open)).toMatchObject({ jobId, state: 'editing', previous: { draftId } });
+    expect(h.field.draft(h.seed.a, open)?.field).not.toHaveProperty('scopeConfirmed');
+  });
+
   it('a job never priced has no pin to move', async () => {
     await publish(h.seed.a, '2.00');
     const { jobId } = await submittedJob();
