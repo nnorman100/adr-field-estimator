@@ -100,7 +100,7 @@ python scripts/deploy_backend.py --workspaces off --tag workspaces-off-YYYYMMDD 
 # {"status":"healthy","schema_version":3,"version":"<the release version>","source_commit":"<the stamped commit>"}.
 curl.exe -s <tagged-revision-url>/api/health
 # Configuration, including the chosen flag ("workspaces_enabled":false for --workspaces off), is staff-only at
-# /api/health/details; `node scripts/verify_live_browser.js --backend-tag <tag>` prints it after normal staff sign-in.
+# /api/health/details; the retired `scripts/verify_live_browser.js --backend-tag <tag>` printed it after normal staff sign-in (removed from the repository).
 gcloud run services update-traffic alert-disaster-field-estimator --to-tags=workspaces-off-YYYYMMDD=100 --region=us-west2 --project=alert-disaster-field-2026 --billing-project=alert-disaster-field-2026
 # Append a "100% (promoted)" row for the backend to RELEASES.md.
 firebase.cmd deploy --only firestore:rules --project alert-disaster-field-2026
@@ -226,7 +226,7 @@ A new policy reports `CREATING` while Firestore backfills, then `ACTIVE`; the sc
 
 ## Verification and review scope
 
-Local tests cover pricing, documents, ownership, retries, authentication, bounded uploads, failures, revision conflicts, Live formats and teardown. Chromium/WebKit tests exercise the real UI with synthetic adapters. Release verification uses scripts/verify_live_browser.js with normal staff sign-in and makes no IAM changes. Each verifier takes the dedicated backend URL as a required argument and has no default target. The historical `verify_migration.py`, `verify_repairs.py` and `verify_review_fixes.py` probes, which minted synthetic custom tokens through a signing grant, were removed; their shared helpers now live in `scripts/verify_common.py`.
+Local tests cover pricing, documents, ownership, retries, authentication, bounded uploads, failures, revision conflicts, Live formats and teardown. Chromium/WebKit tests exercise the real UI with synthetic adapters. Release verification historically used scripts/verify_live_browser.js with normal staff sign-in and made no IAM changes; that verifier and `verify_live_release.py` were removed from the repository. The historical `verify_migration.py`, `verify_repairs.py` and `verify_review_fixes.py` probes, which minted synthetic custom tokens through a signing grant, were removed; their shared helpers now live in `scripts/verify_common.py`.
 
 The [original review](https://chatgpt.com/space/page_4a5293fc2ec481918bd32e5c78fb2dca) remains the baseline. Current repair status and device acceptance are in `docs/review-repairs.md`.
 
@@ -265,7 +265,7 @@ No direct-client keys, ephemeral tokens, vocabulary options or Live tools are en
 
 ## Normal staff sign-in release verification
 
-The current release helper does not mint synthetic user tokens or change IAM. Start it from
+**Historical:** the release helper (`scripts/verify_live_browser.js`) was removed from the repository, so the commands below can no longer be run. It did not mint synthetic user tokens or change IAM. It started from
 the repository root:
 
 ```powershell
@@ -274,8 +274,8 @@ node scripts/verify_live_browser.js --backend-tag body-limits --hold
 
 Select the exact candidate tag after checking its revision in the dedicated project and in
 [RELEASES.md](../RELEASES.md); tags such as `body-limits` name past releases, not a permanent staging
-alias. There is no implicit historical staged target. `--expect-commit <commit>` makes
-`verify_live_release.py` fail unless the backend reports that `source_commit`.
+alias. There is no implicit historical staged target. `--expect-commit <commit>` made
+the removed `verify_live_release.py` fail unless the backend reported that `source_commit`.
 Staged requests reach the tagged revision directly, so its signing-link phase reports `ip_address absent`; after the Hosting release, confirm with one synthetic link signature made through Hosting that the record's `signer.ip_address` is the signing device's public address.
 `--workspaces` explicitly selects the
 workspace staging tag (`workspaces`) and is not appropriate for a repairs-only release. `--production` verifies
@@ -318,7 +318,7 @@ IDs created by that run and their exact evidence prefixes. Failed-test checkpoin
 also uses an update-time precondition and cannot erase another inspection's checkpoint.
 The existing staff identity, other jobs and staff quotas are retained.
 
-Credential-free initialization check:
+Credential-free initialization check (historical, same removal):
 
 ```powershell
 node scripts/verify_live_browser.js --headless --auth-smoke

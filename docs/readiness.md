@@ -59,10 +59,10 @@ bumps its cache version and asset URLs. Both landing HTML copies remain identica
 
 Verification: `tests/test_readiness.py`, `tests/browser/readiness.spec.js`, the node
 fixture checks and the existing lifecycle suites run with fakes. The dry-run eval
-is `python scripts/verify_live_release.py --readiness-dry-run`; its synthetic
-transcripts prove the pass-bar code, not model behavior. With later release
-authorization, pass `--readiness-audio /absolute/path/question.wav` alongside the
-normal staged `--backend-tag ... --token-stdin` flow. Supply 16 kHz mono PCM16 audio
+was `python scripts/verify_live_release.py --readiness-dry-run` (historical: the script was removed from the repository); its synthetic
+transcripts prove the pass-bar code, not model behavior. Historically, with release
+authorization, `--readiness-audio /absolute/path/question.wav` was passed alongside the
+normal staged `--backend-tag ... --token-stdin` flow (the verifier was removed, so this optional eval is no longer runnable). Supply 16 kHz mono PCM16 audio
 asking “What is still missing? Ask me for just one item.” It checks three replies
 after saved readiness updates: exactly one listed gap requested, no completion or
 blocking claim. No production target is allowed for that optional eval. The owner

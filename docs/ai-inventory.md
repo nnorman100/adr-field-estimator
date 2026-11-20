@@ -20,7 +20,7 @@ inventory behind it.
   sends (model, client, config, parts, response schema with its full SHA-256, quota charges, and the prompt text as emitted)
   can only be observed by running the legacy Python routes, which needs pydantic, FastAPI and the Gen AI SDK. The Node job
   installs none of them and workflow files are protected, so those assertions live in the existing Python suite
-  (`tests/test_ai_inventory.py`, run by the Python CI job). This is a recorded exception: the assertions exercise the legacy
+  (`tests/test_ai_inventory.py`; the legacy Python suite was retired from CI on 2026-11-10, so it no longer runs there). This is a recorded exception: the assertions exercise the legacy
   backend, so they belong to its suite until that area is rewritten in TypeScript (stage S7), when they convert to Vitest
   ("old suites convert by area").
 - Only the text each prompt owns is hashed. Data the server adds at call time (inspection JSON, photo log, claim details,
@@ -67,8 +67,9 @@ returns 429 before any model call.
   unreadable results are never treated as verified.
 - **Limits:** thinking level provider default; call timeout 50 s (the 55 s REST deadline less its 5 s save reserve); no retry.
 - **Budget hooks:** 20 a minute, 400 a day (`ocr`). `Vertex AI call` log line with model, operation, time and outcome only.
-- **Evals:** none in CI beyond fakes (`tests/test_image_handling.py`). Real-service check: the
-  `ocr_case` in `scripts/verify_estimate_batch3.py` (non-meter image must give `meter_detected=false` and an empty value).
+- **Evals:** none in CI; the legacy OCR fakes (`tests/test_image_handling.py`) belong to the Python suite retired from CI on 2026-11-10.
+  Historical real-service check: the `ocr_case` in `scripts/verify_estimate_batch3.py` (non-meter image must give
+  `meter_detected=false` and an empty value); the script no longer runs because it imports the removed first-company price book.
 - **Switch:** none.
 
 ### 2. Voice-note transcription
@@ -97,9 +98,9 @@ returns 429 before any model call.
 - **Limits:** thinking level LOW; timeout 50 s (the 55 s REST deadline less its 5 s save reserve); no retry. Staged check on 2026-10-13: 10 calls
   at most 4.5 s, median 2.6 s (comment in `backend/main.py`).
 - **Budget hooks:** 6 a minute, 120 a day (`scope`).
-- **Evals:** `tests/test_scope.py` (provider-free); real service: `scripts/verify_scope_extraction.py`,
-  `verify_estimate_batch3.py` (`scope_case`; the `verify_estimate_prompts.py` `extract` cases were removed). Each case must match the
-  expected `(room, field) → value` map exactly.
+- **Evals:** `tests/test_scope.py` (provider-free); historical real-service checks, no longer runnable because they import the retired
+  backend: `scripts/verify_scope_extraction.py`, `verify_estimate_batch3.py` (`scope_case`; the `verify_estimate_prompts.py` `extract`
+  cases were removed). Each case had to match the expected `(room, field) → value` map exactly.
 - **Switch:** none.
 
 ### 4. Audit
@@ -118,7 +119,8 @@ returns 429 before any model call.
 - **Budget hooks:** 3 attempts a minute (`audit_attempt`, charged before the checks) and 60 a day (`audit`, charged only
   when no saved audit can be reused). A reusable audit makes no model call.
 - **Evals:** `tests/test_audit_retry.py` (provider-free); the claim and document tests and the `verify_estimate_prompts.py`
-  audit cases were removed with the first company's price book files; real service: `verify_estimate_batch3.py` (health, evidence and open-extent cases). All assertions must hold.
+  audit cases were removed with the first company's price book files (historical bar: three of three priced-extra cases); the
+  `verify_estimate_batch3.py` real-service cases (health, evidence and open-extent) are historical too, since the script no longer imports. Every assertion had to hold.
 - **Switch:** none.
 
 ### 5. Job summary
@@ -132,7 +134,7 @@ returns 429 before any model call.
 - **Limits:** thinking level LOW; timeout 25 s; no retry.
 - **Budget hooks:** 6 a minute, 60 a day (`job_summary`); a cached summary costs nothing.
 - **Evals:** `tests/test_insights.py`; `scripts/verify_job_summaries.py` (default: 10 fixture packs, no model;
-  `--live`: 5 of 5 summaries pass the validator unchanged, then the owner reads each).
+  `--live` is historical, since it imports `backend.main`: it required 5 of 5 summaries to pass the validator unchanged, then the owner read each).
 - **Switch:** `AI_FEATURES=job_summary`.
 
 ### 6. Drying-watch summary
@@ -143,7 +145,7 @@ returns 429 before any model call.
   sentence and measurement; `validate_summary` rejects anything else (502).
 - **Limits:** thinking level LOW; timeout 25 s; no retry.
 - **Budget hooks:** 6 a minute, 60 a day (`drying_summary`); a stored summary costs nothing.
-- **Evals:** `tests/test_drying_watch.py`; `scripts/verify_drying_summaries.py` (10 fixture packs, no model; `--live` 5 of 5).
+- **Evals:** `tests/test_drying_watch.py`; `scripts/verify_drying_summaries.py` (10 fixture packs, no model; `--live` was 5 of 5 and is historical, since it imports `backend.main`).
 - **Switch:** `AI_FEATURES=drying_watch`.
 
 ### 7. Live walkthrough
@@ -160,10 +162,11 @@ returns 429 before any model call.
   3,600 s (Cloud Run), access rechecked every 20 s.
 - **Budget hooks:** 40 new (non-resumed) sessions a day (`live`); no per-minute limit; the lease limits concurrency.
   Counters in the final `Live session ended` log line contain no content.
-- **Evals:** `tests/test_live*.py` and `test_late_transcript_gate.py` (fakes); real service: `scripts/verify_live_release.py`
-  (ready packet, audio and transcript seen, checkpoint saved and resumed; `--readiness-audio`: three of three replies ask for
-  exactly one listed gap and claim neither completion nor a block) and `scripts/verify_live_reliability.py` (direct Vertex
-  session longer than 120 s with a resumption handle). No automated latency threshold exists.
+- **Evals:** `tests/test_live*.py` and `test_late_transcript_gate.py` (fakes; legacy Python suite, retired from CI on 2026-11-10);
+  real service: `scripts/verify_live_reliability.py` (direct Vertex session longer than 120 s with a resumption handle). The live
+  release verifier `verify_live_release.py` (ready packet, audio and transcript seen, checkpoint saved and resumed; `--readiness-audio`:
+  three of three replies ask for exactly one listed gap and claim neither completion nor a block) was removed from the repository,
+  so that check and its three-of-three bar are historical. No automated latency threshold exists.
 - **Switch:** none for Live itself. `AI_FEATURES=readiness` adds the readiness text to the prompt.
 
 ## Budget and evaluation status
@@ -171,7 +174,7 @@ returns 429 before any model call.
 - **Spend budget:** a shared per-company monthly AI allowance applies to every path above ([ai-spending.md](ai-spending.md)),
   beside the per-user per-minute and daily counts. `ai_usage` reports those counts per company and enforces nothing.
 - **Gating evals:** no numeric score or threshold gates a release. The thresholds that exist are exact-match assertions in
-  the hand-run real-service scripts and the fixed pass bars named above (job and drying summaries 5 of 5, readiness 3 of 3).
+  the hand-run real-service scripts and the fixed pass bars named above (job and drying summaries 5 of 5 in their historical `--live` mode; the readiness 3 of 3 bar belonged to the removed live release verifier).
   The earlier priced-extra audit bar (3 of 3) is historical: its cases were removed with the first company's price book
   files. The legacy Python suite is retired from CI (2026-11-10); the DryScope rebuild's provider-free tests run in CI, and
   real-service checks are run by hand and recorded apart from mock tests. Physical iPhone, Bluetooth, interruption, reconnect and sub-second latency stay open until observed on a device.

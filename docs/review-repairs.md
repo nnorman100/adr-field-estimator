@@ -252,7 +252,7 @@ Authenticated deployment checks are currently gated: automatic approval review r
 Service Account Token Creator grant to the project operator on the dedicated runtime account. No IAM
 binding was added. A normal existing-Google-OAuth sign-in alternative was attempted without IAM changes,
 but Firebase returned HTTP 400 before any synthetic jobs were created. The exact synthetic release
-checker is scripts/verify_live_release.py; its public mode ran successfully. No customer content was used.
+checker was scripts/verify_live_release.py (since removed from the repository); its public mode ran successfully. No customer content was used.
 
 Final additional evidence:
 
@@ -450,7 +450,7 @@ Backend `alert-disaster-field-estimator-00015-kem` (recorded here as master `9b7
 
 ## Staged-check routing repair — October 13, 2026
 
-The staged check (`node scripts/verify_live_browser.js --backend-tag TAG --hold`) had never
+The staged check (`node scripts/verify_live_browser.js --backend-tag TAG --hold`, since removed from the repository) had never
 reached its tagged revision: the automated tab was served a memory-only Firebase persistence
 stand-in, so it never inherited the private window's Google sign-in and the run stopped before
 any routed request. The helper now inherits that sign-in through the app's own persistence,
@@ -468,7 +468,7 @@ run with the repaired helper is still to be observed.
 **Release gates for this frontend** (from [mobile-usability-repairs.md](mobile-usability-repairs.md)):
 
 1. Confirm the serving backend, then deploy only `hosting:alert-disaster` in `alert-disaster-field-2026`.
-2. Authenticated acceptance with normal approved-staff sign-in: `node scripts/verify_live_browser.js --backend-tag body-limits --hold`.
+2. Authenticated acceptance with normal approved-staff sign-in (historical: the `scripts/verify_live_browser.js` verifier was removed from the repository, so this cannot be run as written).
 3. The guided iPhone acceptance above, now including the camera preview appearing and Live connecting promptly.
 4. ADR approval to release repairs 1–3 with the keyboard signature method (repair 4) deferred.
 

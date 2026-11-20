@@ -1,6 +1,8 @@
 """Real Firestore transactions for quotas, Live leases and signing, run against the local emulator.
 
-Skipped unless FIRESTORE_EMULATOR_HOST is set. Run locally from the repository root:
+Historical: this suite no longer collects (it imports the removed first-company price book and the retired
+backend) and stays as reference until S8 deletes it. Skipped unless FIRESTORE_EMULATOR_HOST is set. It ran
+locally from the repository root as:
     npx firebase-tools emulators:exec --only firestore --project demo-adr-emulator \
         "python -m pytest tests/test_firestore_emulator.py -q -p no:cacheprovider"
 Evidence objects use the in-memory bucket; only Firestore is real here.
