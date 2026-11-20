@@ -26,6 +26,10 @@ export type FakeDrafts = DraftStore & {
   // Fails the next write; if `afterWrite`, the draft is made first and the answer is lost (the
   // response never reaches the caller).
   failNext: { on: boolean; afterWrite: boolean };
+  // Called after every write, before an answer is lost: the field stand-in it is linked to
+  // (tests/submissions/field-fake.ts) takes the write into the one record it keeps, so the photo
+  // route's state and the draft sync see it at once.
+  written: ((companyId: string, draftId: string) => void) | null;
 };
 
 export function fakeDrafts(): FakeDrafts {
@@ -46,6 +50,7 @@ export function fakeDrafts(): FakeDrafts {
     calls: [],
     ownerCalls: [],
     failNext: { on: false, afterWrite: false },
+    written: null,
     async ensure(companyId, jobId, draftId, fieldOwnerUid) {
       store.calls.push({ companyId, draftId, fieldOwnerUid });
       const key = `${companyId}/${draftId}`;
@@ -65,6 +70,7 @@ export function fakeDrafts(): FakeDrafts {
       if (!existed) store.made.set(key, { fieldOwnerUid });
       // As the real writer: a new draft, or one made before `jobId`, carries this job's id.
       if (!store.jobOf.has(key)) store.jobOf.set(key, jobId);
+      store.written?.(companyId, draftId);
       if (fail.on) {
         fail.on = false;
         fail.afterWrite = false;
@@ -93,6 +99,7 @@ export function fakeDrafts(): FakeDrafts {
       else Object.assign(draft, { fieldOwnerUid, fieldOwnerRevision: revision });
       // A draft made before `jobId` takes it, whatever the owner answer is.
       if (!store.jobOf.has(key)) store.jobOf.set(key, jobId);
+      store.written?.(companyId, draftId);
       if (fail.on) {
         fail.on = false;
         fail.afterWrite = false;

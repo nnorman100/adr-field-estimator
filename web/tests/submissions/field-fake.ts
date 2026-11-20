@@ -3,8 +3,8 @@ import type { JobProjection } from '@/lib/field/job-projection';
 import type { FieldManifest } from '@/lib/field/canonical';
 import { MAX_PHOTO_REFS, MAX_ROOMS } from '@/lib/field/schema';
 import type { ArchiveResult, ArchiveStore } from '@/lib/jobs/archive-store';
-import { planSync, type StoredDraft, type SyncMarker } from '@/lib/jobs/draft-lifecycle';
-import { resultOf, type DraftSync } from '@/lib/jobs/draft-sync';
+import { planSync, versionRefusal, type StoredDraft, type SyncMarker } from '@/lib/jobs/draft-lifecycle';
+import { draftIdsToRead, resultOf, type DraftSync } from '@/lib/jobs/draft-sync';
 import { placeholderRefusal as refusalOf, draftOfOtherJob, type DraftMade } from '@/lib/jobs/drafts';
 import type { FenceResult, FenceStore, Provenance } from '@/lib/submissions/fence';
 import type { FakeDrafts } from '../db/draft-fake';
@@ -41,25 +41,40 @@ export type FakeDraft = {
 };
 export type FieldData = Record<string, FakeDraft>;
 
-export type Backing = { load(): FieldData; save(data: FieldData): void };
+// The draft sync's markers (src/lib/jobs/draft-sync.ts), by "company/job", kept in the same backing
+// as the drafts they guard.
+export type Markers = Record<string, SyncMarker>;
+
+export type Backing = { load(): FieldData; save(data: FieldData): void; loadMarkers(): Markers; saveMarkers(markers: Markers): void };
 
 export const memoryBacking = (): Backing => {
   let data: FieldData = {};
+  let markers: Markers = {};
   return {
     load: () => structuredClone(data),
     save: (next) => {
       data = structuredClone(next);
     },
+    loadMarkers: () => structuredClone(markers),
+    saveMarkers: (next) => {
+      markers = structuredClone(next);
+    },
   };
 };
 
 // Written whole and renamed into place, so a reader never sees half a file.
+function readJson<T>(path: string, empty: T): T {
+  return existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as T) : empty;
+}
+function writeJson(path: string, value: unknown): void {
+  writeFileSync(`${path}.tmp`, JSON.stringify(value));
+  renameSync(`${path}.tmp`, path);
+}
 export const fileBacking = (path: string): Backing => ({
-  load: () => (existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as FieldData) : {}),
-  save: (next) => {
-    writeFileSync(`${path}.tmp`, JSON.stringify(next));
-    renameSync(`${path}.tmp`, path);
-  },
+  load: () => readJson<FieldData>(path, {}),
+  save: (next) => writeJson(path, next),
+  loadMarkers: () => readJson<Markers>(`${path}.markers`, {}),
+  saveMarkers: (next) => writeJson(`${path}.markers`, next),
 });
 
 type Method = keyof FenceStore | keyof ArchiveStore | keyof DraftSync;
@@ -70,8 +85,8 @@ type Method = keyof FenceStore | keyof ArchiveStore | keyof DraftSync;
 // (planSync) to this one shared record, so the jobs and photo stand-ins linked to it see every
 // draft it makes or changes (the r11 fake split).
 export type FakeField = FenceStore & ArchiveStore & DraftSync & {
-  // The sync's marker per job, by "company/job".
-  markers: Map<string, SyncMarker>;
+  // The sync's marker for a job, as the backing holds it, or null.
+  marker(companyId: string, jobId: string): SyncMarker | null;
   // The drafts as stored now (a copy).
   data(): FieldData;
   projected: Map<string, JobProjection>;
@@ -82,6 +97,8 @@ export type FakeField = FenceStore & ArchiveStore & DraftSync & {
   // Takes the job id off a draft, as on one the previous version made before drafts carried it
   // (security audit F1).
   unstamp(companyId: string, draftId: string): void;
+  // Removes a draft from the one record, as one that is not there (the jobs and photo stand-ins too).
+  remove(companyId: string, draftId: string): void;
   // Makes the next call of a method fail as if Firestore were unreachable, before it changes anything.
   failNext: Partial<Record<Method, boolean>>;
   // Makes the next call of a method do its work and then fail, as if Firestore's answer were lost.
@@ -115,6 +132,16 @@ export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts:
         data[made] = { ...emptyDraft(fieldOwnerUid, linked?.drafts.jobOf.get(made)), ...(left ? { archiveRevision: left.archiveRevision } : {}) };
       }
     }
+    // What the jobs stand-in named last (setFieldOwner, or a test) is the draft's field owner here too.
+    for (const [made, owner] of linked?.drafts.made ?? []) {
+      const draft = data[made];
+      if (!draft || draft.placeholder) continue;
+      draft.fieldOwnerUid = owner.fieldOwnerUid;
+      if (owner.fieldOwnerRevision === undefined) delete draft.fieldOwnerRevision;
+      else draft.fieldOwnerRevision = owner.fieldOwnerRevision;
+      const job = linked?.drafts.jobOf.get(made);
+      if (job !== undefined) draft.jobId ??= job;
+    }
     return data;
   }
   function save(data: FieldData): void {
@@ -131,7 +158,11 @@ export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts:
       if (draft.state === 'archived') linked.drafts.archived.add(at);
       else linked.drafts.archived.delete(at);
       linked.states.refs.set(at, Object.keys(draft.photos).length);
-      if (!linked.drafts.made.has(at)) linked.drafts.made.set(at, { fieldOwnerUid: draft.fieldOwnerUid });
+      // The one record: the jobs stand-in sees the owner every writer here leaves (the sync included).
+      linked.drafts.made.set(at, {
+        fieldOwnerUid: draft.fieldOwnerUid,
+        ...(draft.fieldOwnerRevision === undefined ? {} : { fieldOwnerRevision: draft.fieldOwnerRevision }),
+      });
       if (draft.jobId !== undefined && !linked.drafts.jobOf.has(at)) linked.drafts.jobOf.set(at, draft.jobId);
     }
   }
@@ -157,12 +188,19 @@ export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts:
     return result;
   }
 
+  // The jobs stand-in's writes reach this record (and the photo route's state) at once.
+  if (linked) linked.drafts.written = () => save(load());
   const fake: FakeField = {
-    markers: new Map(),
+    marker: (companyId, jobId) => backing.loadMarkers()[key(companyId, jobId)] ?? null,
     sync: (companyId, job, gen = 0) =>
       call('sync', (data) => {
-        const stored = Object.fromEntries(Object.keys(job.drafts).map((draftId) => [draftId, storedOf(data[key(companyId, draftId)])]));
-        const plan = planSync(fake.markers.get(key(companyId, job.jobId)) ?? null, stored, job, gen);
+        const markers = backing.loadMarkers();
+        const marker = markers[key(companyId, job.jobId)] ?? null;
+        // As the real writer: the marker decides first, before any draft is read.
+        const refused = versionRefusal(marker, gen, job.v);
+        if (refused) return refused;
+        const stored = Object.fromEntries(draftIdsToRead(marker, job).map((draftId) => [draftId, storedOf(data[key(companyId, draftId)])]));
+        const plan = planSync(marker, stored, job, gen);
         if (plan.outcome !== 'synced') return resultOf(plan);
         for (const made of plan.creates) {
           const { fence, previous, fieldOwnerUid, field, ...rest } = made.data;
@@ -184,7 +222,8 @@ export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts:
           if (update.remove.includes('fieldOwnerUid')) draft.fieldOwnerUid = null;
           if (update.remove.includes('fence')) draft.fence = null;
         }
-        fake.markers.set(key(companyId, job.jobId), plan.marker);
+        markers[key(companyId, job.jobId)] = plan.marker;
+        backing.saveMarkers(markers);
         return resultOf(plan);
       }),
     failNext: {},
@@ -210,6 +249,19 @@ export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts:
       for (const room of manifest.rooms ?? []) draft.rooms[room.id] = room.field;
       for (const photo of manifest.photos ?? []) draft.photos[photo.id] = photo.field;
       save(data);
+    },
+
+    remove(companyId, draftId) {
+      const at = key(companyId, draftId);
+      const data = load();
+      delete data[at];
+      backing.save(data);
+      linked?.drafts.made.delete(at);
+      linked?.drafts.jobOf.delete(at);
+      linked?.drafts.archived.delete(at);
+      linked?.drafts.placeholders.delete(at);
+      linked?.states.set.delete(at);
+      linked?.states.refs.delete(at);
     },
 
     unstamp(companyId, draftId) {

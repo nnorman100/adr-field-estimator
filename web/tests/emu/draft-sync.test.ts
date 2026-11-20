@@ -3,7 +3,7 @@ import { Timestamp, type Firestore } from 'firebase-admin/firestore';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { parseProjectionConfig } from '@/lib/config';
 import { MAX_PHOTO_REFS, MAX_ROOMS } from '@/lib/field/schema';
-import { desired, type JobDraftSnapshot, type SyncMarker } from '@/lib/jobs/draft-lifecycle';
+import { desired, MalformedMarkerError, type JobDraftSnapshot, type SyncMarker } from '@/lib/jobs/draft-lifecycle';
 import { firestoreDraftSync, type DraftSync } from '@/lib/jobs/draft-sync';
 import { firestoreAccessStore, firestoreFor } from '@/lib/projection/firestore';
 import { draftSyncContract } from '../submissions/sync-contract';
@@ -150,9 +150,38 @@ describe('the draft sync under the field rules', () => {
       fieldOwnerUid: 'estimator-1',
       content: { kind: 'next', manifest: { draft: { roomOrder: rooms.map((room) => room.id) }, rooms, photos }, previous: { draftId: earlier[0]!, submissionId: randomUUID() } },
     });
-    expect(await store.sync(company, desired(job))).toEqual({ outcome: 'synced', created: [current], changed: [...earlier].sort(), conflicts: [], missing: [] });
+    expect(await store.sync(company, desired(job))).toEqual({ outcome: 'synced', created: [current], changed: [...earlier].sort(), conflicts: [], missing: [], superseded: [], unmatched: [] });
     expect((await db.doc(draftPath(company, current)).collection('rooms').count().get()).data().count).toBe(MAX_ROOMS);
     expect((await db.doc(draftPath(company, current)).collection('photos').count().get()).data().count).toBe(MAX_PHOTO_REFS);
     for (const draft of earlier) expect((await db.doc(draftPath(company, draft)).get()).get('fieldOwnerUid')).toBe('estimator-1');
+  });
+
+  it('writes nothing at all when one of its writes fails: the new draft, the earlier drafts and the marker stay as they were', async () => {
+    const company = randomUUID();
+    const [earlier, current] = [randomUUID(), randomUUID()];
+    await db.doc(draftPath(company, earlier)).set({ state: 'submitted', fieldOwnerUid: 'old-owner', field: {} });
+    // A room left under the new draft's id (no draft above it): creating that room fails the transaction.
+    await db.doc(`${draftPath(company, current)}/rooms/kitchen`).set({ field: { name: 'Left over' } });
+    const job = snapshotOf({
+      currentDraftId: current,
+      draftIds: [earlier, current],
+      fieldOwnerUid: 'estimator-1',
+      content: { kind: 'next', manifest: { draft: {}, rooms: [{ id: 'kitchen', field: { name: 'Kitchen' } }], photos: [] }, previous: { draftId: earlier, submissionId: randomUUID() } },
+    });
+    await expect(store.sync(company, desired(job))).rejects.toThrow();
+    expect((await db.doc(draftPath(company, current)).get()).exists).toBe(false);
+    expect((await db.doc(draftPath(company, earlier)).get()).data()).toEqual({ state: 'submitted', fieldOwnerUid: 'old-owner', field: {} });
+    expect((await db.doc(markerPath(company, job.jobId)).get()).exists).toBe(false);
+    expect((await db.doc(`${draftPath(company, current)}/rooms/kitchen`).get()).data()).toEqual({ field: { name: 'Left over' } });
+  });
+
+  it('stops, changing nothing, when the job’s marker is there but not in the shape the sync writes', async () => {
+    const company = randomUUID();
+    const draft = randomUUID();
+    const job = snapshotOf({ currentDraftId: draft, draftIds: [draft], fieldOwnerUid: 'estimator-1' });
+    await db.doc(markerPath(company, job.jobId)).set({ gen: 0, v: 'one' });
+    await expect(store.sync(company, desired(job))).rejects.toBeInstanceOf(MalformedMarkerError);
+    expect((await db.doc(draftPath(company, draft)).get()).exists).toBe(false);
+    expect((await db.doc(markerPath(company, job.jobId)).get()).data()).toEqual({ gen: 0, v: 'one' });
   });
 });

@@ -127,7 +127,7 @@ describe('moving the field work (owner decision J5)', () => {
     const other = await officeJob();
     await h.admin`DELETE FROM job_drafts WHERE job_id = ${id}`;
     await h.admin`INSERT INTO job_drafts (company_id, draft_id, job_id) VALUES (${h.seed.a}, ${draftId}, ${other.id})`;
-    h.drafts.jobOf.delete(`${h.seed.a}/${draftId}`);
+    h.field.unstamp(h.seed.a, draftId);
     const stored = structuredClone(draftOf(draftId));
     const { revision } = (await coordination(OWNER_A, id)).body;
     expect((await transfer(OWNER_A, id, { revision, changeId: randomUUID(), toActorId: estimatorA2 })).status).toBe(200);

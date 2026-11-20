@@ -1,6 +1,7 @@
 import { FieldValue, Timestamp, type DocumentSnapshot, type Firestore } from 'firebase-admin/firestore';
 import { firestoreSpan } from '@/lib/telemetry/spans';
-import { planSync, type DesiredJob, type SyncFence, type SyncMarker, type SyncPlan, type StoredDraft } from './draft-lifecycle';
+import type { Fence } from '@/lib/submissions/fence';
+import { parseMarker, planSync, versionRefusal, type DesiredJob, type StoredDraft, type SyncMarker, type SyncPlan, type SyncSkips } from './draft-lifecycle';
 import { placeholderOf } from './drafts';
 
 // The sync's Firestore writer (the draft life-cycle redesign, Design 2): in one transaction it reads
@@ -9,7 +10,8 @@ import { placeholderOf } from './drafts';
 // editing, New job and Copy to it.
 //
 // The marker is one server-only document per job, `companies/{c}/draftLifecycle/{jobId}` =
-// `{ gen, v, draftIds }`. web/firestore.rules has no match for that collection, so every client read
+// `{ gen, v, draftIds, skipped }`: the version last written, the drafts that hold it (and the
+// unmatched ones an earlier sync wrote), and what that sync skipped. web/firestore.rules has no match for that collection, so every client read
 // and write of it is refused by default (tests/emu/draft-sync.test.ts). The version lives beside the
 // drafts, not on them, so a missing draft needs no placeholder to hold it, and a stale sync is refused
 // at the marker before it makes or changes any draft.
@@ -23,13 +25,15 @@ import { placeholderOf } from './drafts';
 // again and plans again; it never re-reads Postgres.
 
 export type SyncResult =
-  | { outcome: 'synced'; created: string[]; changed: string[]; conflicts: string[]; missing: string[] }
-  | { outcome: 'same' }
+  | ({ outcome: 'synced'; created: string[]; changed: string[] } & SyncSkips)
+  // A retry at the version the marker holds: nothing is written, and what that sync skipped is reported again.
+  | ({ outcome: 'same' } & SyncSkips)
   | { outcome: 'stale'; stored: SyncMarker };
 
 export type DraftSync = {
   // Writes the job's desired drafts at version (gen, desired.v) unless its marker holds that version
   // or a newer one. `gen` is raised by an operator after a database restore lowers field revisions.
+  // Throws MalformedMarkerError, before any change, when the marker is there but not in its shape.
   sync(companyId: string, desired: DesiredJob, gen?: number): Promise<SyncResult>;
 };
 
@@ -42,17 +46,13 @@ export function resultOf(plan: SyncPlan): SyncResult {
     changed: plan.updates.map((update) => update.draftId).sort(),
     conflicts: plan.conflicts,
     missing: plan.missing,
+    superseded: plan.superseded,
+    unmatched: plan.unmatched,
   };
 }
 
 function markerOf(found: DocumentSnapshot): SyncMarker | null {
-  if (!found.exists) return null;
-  const gen: unknown = found.get('gen');
-  const v: unknown = found.get('v');
-  const ids: unknown = found.get('draftIds');
-  // A marker this writer did not leave is treated as the oldest version.
-  if (typeof gen !== 'number' || typeof v !== 'number') return null;
-  return { gen, v, draftIds: Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : [] };
+  return found.exists ? parseMarker(found.data()!) : null;
 }
 
 /** A Firestore draft as planSync reads it. */
@@ -74,23 +74,32 @@ export function storedOf(found: DocumentSnapshot): StoredDraft {
   };
 }
 
-const stored = (fence: SyncFence) => ({ submissionId: fence.submissionId, epoch: fence.epoch, expiresAt: Timestamp.fromDate(fence.expiresAt) });
+const stored = (fence: Fence) => ({ submissionId: fence.submissionId, epoch: fence.epoch, expiresAt: Timestamp.fromDate(fence.expiresAt) });
+
+/** Every draft one sync reads: the job's desired drafts and the ones its marker lists. */
+export function draftIdsToRead(marker: SyncMarker | null, job: DesiredJob): string[] {
+  return [...new Set([...Object.keys(job.drafts), ...(marker?.draftIds ?? [])])].sort();
+}
 
 export function firestoreDraftSync(db: Firestore): DraftSync {
   const company = (companyId: string) => db.collection('companies').doc(companyId);
   return {
     async sync(companyId, job, gen = 0) {
       const markerRef = company(companyId).collection('draftLifecycle').doc(job.jobId);
-      const refs = Object.keys(job.drafts).map((draftId) => company(companyId).collection('drafts').doc(draftId));
+      const draftRef = (draftId: string) => company(companyId).collection('drafts').doc(draftId);
       return firestoreSpan('runTransaction', 'drafts', () =>
         db.runTransaction(async (tx): Promise<SyncResult> => {
-          // Reads first (a transaction reads before it writes): the marker, then every draft at once.
+          // The marker first: a stale sync or a retry has its answer before any draft is read.
           const marker = markerOf(await tx.get(markerRef));
+          const refused = versionRefusal(marker, gen, job.v);
+          if (refused) return refused;
+          // Then every draft at once (a transaction reads before it writes).
+          const refs = draftIdsToRead(marker, job).map(draftRef);
           const found = refs.length > 0 ? await tx.getAll(...refs) : [];
           const plan = planSync(marker, Object.fromEntries(found.map((doc) => [doc.id, storedOf(doc)])), job, gen);
           if (plan.outcome !== 'synced') return plan;
           for (const made of plan.creates) {
-            const ref = company(companyId).collection('drafts').doc(made.draftId);
+            const ref = draftRef(made.draftId);
             const data = { ...made.data, ...(made.data.fence ? { fence: stored(made.data.fence) } : {}) };
             // A placeholder is replaced whole; where nothing is, the draft is created.
             if (made.replaces) tx.set(ref, data);
@@ -99,10 +108,9 @@ export function firestoreDraftSync(db: Firestore): DraftSync {
             for (const photo of made.photos) tx.create(ref.collection('photos').doc(photo.id), { field: photo.field ?? {} });
           }
           for (const update of plan.updates) {
-            const ref = company(companyId).collection('drafts').doc(update.draftId);
             const change: Record<string, unknown> = { ...update.set, ...(update.set.fence ? { fence: stored(update.set.fence) } : {}) };
             for (const key of update.remove) change[key] = FieldValue.delete();
-            tx.update(ref, change);
+            tx.update(draftRef(update.draftId), change);
           }
           tx.set(markerRef, plan.marker);
           return resultOf(plan);

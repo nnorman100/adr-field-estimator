@@ -330,7 +330,7 @@ describe('a photo and the draft', () => {
     h.draftStates.fail = true;
     expect(await sendPhoto(ESTIMATOR_A, jobId, randomUUID(), image('a'))).toEqual({ status: 503, body: { error: 'photos_unavailable' } });
     h.draftStates.fail = false;
-    h.drafts.made.delete(`${h.seed.a}/${draftId}`);
+    h.field.remove(h.seed.a, draftId);
     expect(await sendPhoto(ESTIMATOR_A, jobId, randomUUID(), image('b'))).toEqual({ status: 503, body: { error: 'photos_unavailable' } });
     expect(h.evidence.creates).toEqual([]);
   });
