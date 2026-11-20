@@ -5,6 +5,7 @@ export {
   previewPrices,
   publishPrices,
   readPrices,
+  readPublishedItemList,
   readVersion,
   restoreVersion,
   saveWorkingCopy,
