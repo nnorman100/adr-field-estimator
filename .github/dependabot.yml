@@ -45,7 +45,8 @@ updates:
 
   # Weekly on Monday: npm for the synthetic probe in web/synthetic. Minor and
   # patch updates share one pull request; each major update gets its own pull
-  # request.
+  # request, except TypeScript majors, which are held (the probe's tsconfig
+  # still uses moduleResolution node10, which TypeScript 6 rejects).
   - package-ecosystem: npm
     directory: /web/synthetic
     schedule:
@@ -54,6 +55,9 @@ updates:
     groups:
       synthetic-npm-minor-patch:
         update-types: [minor, patch]
+    ignore:
+      - dependency-name: typescript
+        update-types: ['version-update:semver-major']
 
   # Monthly (Dependabot runs monthly updates on the 1st): Terraform providers and
   # modules for each stack. All updates for a stack share one pull request,
