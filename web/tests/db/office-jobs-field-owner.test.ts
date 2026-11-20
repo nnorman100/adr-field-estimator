@@ -655,6 +655,17 @@ describe('moving the field work (owner decision J5)', () => {
     expect(made).toMatchObject({ jobId: id, state: 'editing', fieldOwnerUid: 'estimator-a' });
   });
 
+  // reconstruction-blocks-revocation (PR 504 follow-up): the record a missing draft would be made from is
+  // read only to make it; one that cannot be read never holds up a move of the field work on a draft that exists.
+  it('moves the field work on a copy’s draft that exists even when its source’s signed record cannot be read', async () => {
+    const { id, draftId } = await claimedJob();
+    const source = await officeJob();
+    await h.admin`UPDATE jobs SET copied_from_job_id = ${source.id} WHERE id = ${id}`;
+    const { revision } = (await coordination(OWNER_A, id)).body;
+    expect((await transfer(OWNER_A, id, { revision, changeId: randomUUID(), toActorId: estimatorA2 })).status).toBe(200);
+    expect(h.field.draft(h.seed.a, draftId)).toMatchObject({ jobId: id, state: 'editing', fieldOwnerUid: 'estimator-a2' });
+  });
+
   it('refuses the company owner field work they do not own, until they move it to themself', async () => {
     const { id, draftId } = await claimedJob();
     h.field.put(h.seed.a, draftId, MANIFEST);

@@ -27,7 +27,10 @@ vi.mock('@/lib/auth/services', () => ({
 }));
 vi.mock('@/lib/team/services', () => ({ teamServices: () => live.harness!.team }));
 vi.mock('@/lib/prices/services', () => ({ pricesServices: () => live.harness!.prices }));
-vi.mock('@/lib/jobs/services', () => ({ jobsServices: () => live.harness!.jobs }));
+vi.mock('@/lib/jobs/services', () => ({
+  jobsServices: () => live.harness!.jobs,
+  runQueuedDraftSyncRepair: async () => ({ synced: 0, failed: 0 }),
+}));
 vi.mock('@/lib/photos/services', () => ({ photosServices: () => live.harness!.photos }));
 vi.mock('@/lib/submissions/services', () => ({
   submissionsServices: () => live.harness!.submissions,

@@ -338,6 +338,40 @@ export function draftSyncContract(name: string, probe: () => SyncProbe): void {
       expect(await peek(company, job.currentDraftId)).toMatchObject({ state: 'editing', fence: null });
     });
 
+    // draft-sync-02: a sync whose snapshot was read while a Submit was pending, landing after a
+    // previous-version Submit committed it and marked the draft submitted (that writer moves no marker).
+    it('never fences or opens again a draft the field database holds as submitted, and still moves its owner', async () => {
+      const { store, seed, peek } = probe();
+      const company = randomUUID();
+      const fence = fenceOf();
+      // The delayed snapshot: the Submit still pending, and the field work since moved.
+      const job = snapshotOf({ pending: fence, fieldOwnerUid: 'estimator-2', coordinationRevision: 1 });
+      await seed(company, job.currentDraftId, { jobId: job.jobId, state: 'submitted', fieldOwnerUid: 'estimator-1', fence, archiveRevision: 1 });
+      expect(await store.sync(company, desired(job), 0)).toEqual({ outcome: 'synced', created: [], changed: [job.currentDraftId], ...NONE, superseded: [job.currentDraftId] });
+      expect(await peek(company, job.currentDraftId)).toMatchObject({ state: 'submitted', fence: at(fence), fieldOwnerUid: 'estimator-2' });
+      // Nor is it opened by one that read the job as a draft with no Submit in flight.
+      expect(await store.sync(company, desired({ ...job, fieldRevision: 2, pending: null }), 0)).toMatchObject({ superseded: [job.currentDraftId] });
+      expect(await peek(company, job.currentDraftId)).toMatchObject({ state: 'submitted', fence: at(fence) });
+      // Postgres's record of that Submit writes it as Postgres says.
+      const recorded = { ...job, fieldRevision: 3, status: 'submitted' as const, pending: null, committed: fence };
+      expect(await store.sync(company, desired(recorded), 0)).toMatchObject({ superseded: [] });
+      expect(await peek(company, job.currentDraftId)).toMatchObject({ state: 'submitted', fence: at(fence) });
+    });
+
+    it('never opens or fences anew a draft fenced by its recorded Submit, even while the job reads as a draft', async () => {
+      const { store, seed, peek } = probe();
+      const company = randomUUID();
+      const recorded = fenceOf();
+      const next = fenceOf();
+      // A state no route makes: the record's fence still on the draft, its marker unwritten, and a new attempt pending.
+      const job = snapshotOf({ committed: recorded, pending: next });
+      await seed(company, job.currentDraftId, { jobId: job.jobId, state: 'submitting', fieldOwnerUid: 'estimator-1', fence: recorded, archiveRevision: 1 });
+      expect(await store.sync(company, desired(job), 0)).toMatchObject({ outcome: 'synced', superseded: [job.currentDraftId] });
+      expect(await peek(company, job.currentDraftId)).toMatchObject({ state: 'submitting', fence: at(recorded) });
+      expect(await store.sync(company, desired({ ...job, fieldRevision: 2, pending: null }), 0)).toMatchObject({ superseded: [job.currentDraftId] });
+      expect(await peek(company, job.currentDraftId)).toMatchObject({ state: 'submitting', fence: at(recorded) });
+    });
+
     it('keeps a tracked draft on the marker while Postgres still gives it to the job, even when it is missing, so a restore still closes it', async () => {
       const { store, seed, peek, marker, remove } = probe();
       const company = randomUUID();

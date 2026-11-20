@@ -216,10 +216,11 @@ describe('the draft sync under the field rules', () => {
   it('removes a fence the sync cannot read (no expiry) when Postgres says the draft is editing', async () => {
     const company = randomUUID();
     const draft = randomUUID();
-    // The fence of a row the snapshot knows (so not another writer's Submit), stored without its expiry.
-    const committed = { submissionId: randomUUID(), epoch: randomUUID(), expiresAt: new Date(Date.UTC(2031, 0, 1)) };
-    const job = snapshotOf({ currentDraftId: draft, draftIds: [draft], fieldOwnerUid: 'estimator-1', committed });
-    await db.doc(draftPath(company, draft)).set({ jobId: job.jobId, state: 'submitting', fieldOwnerUid: 'estimator-1', fence: { submissionId: committed.submissionId, epoch: committed.epoch }, field: {} });
+    // The fence of a row the snapshot knows (so not another writer's Submit), stored without its expiry:
+    // an aborted one (a recorded attempt's fence is never opened, sync-contract.ts).
+    const aborted = { submissionId: randomUUID(), epoch: randomUUID() };
+    const job = snapshotOf({ currentDraftId: draft, draftIds: [draft], fieldOwnerUid: 'estimator-1', abortedEpochs: [aborted.epoch] });
+    await db.doc(draftPath(company, draft)).set({ jobId: job.jobId, state: 'submitting', fieldOwnerUid: 'estimator-1', fence: { submissionId: aborted.submissionId, epoch: aborted.epoch }, field: {} });
     expect(await store.sync(company, desired(job), 0)).toMatchObject({ changed: [draft], superseded: [] });
     const found = (await db.doc(draftPath(company, draft)).get()).data()!;
     expect(found.state).toBe('editing');

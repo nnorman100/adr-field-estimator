@@ -2,8 +2,7 @@ import { randomUUID } from 'node:crypto';
 import postgres from 'postgres';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { canonicalManifest, manifestDigest } from '@/lib/field/canonical';
-import type { FenceStore } from '@/lib/submissions/fence';
-import type { SubmissionsService } from '@/lib/submissions/service';
+import type { SubmissionsService, SubmitStore } from '@/lib/submissions/service';
 import { flow, latch, sha256, until } from './submission-flow';
 import type { FakeClaims, Harness } from './team-harness';
 
@@ -27,8 +26,10 @@ const jobsRoute = await import('@/app/api/jobs/route');
 const photoRoute = await import('@/app/api/jobs/[jobId]/photos/[photoId]/route');
 const submissionsRoute = await import('@/app/api/jobs/[jobId]/submissions/route');
 const draftsRoute = await import('@/app/api/jobs/[jobId]/drafts/route');
+const archiveRoute = await import('@/app/api/jobs/[jobId]/archive/route');
 const { submissionsService } = await import('@/lib/submissions/service');
 const { runSubmissionRepair } = await import('@/lib/submissions/repair');
+const { syncJob } = await import('@/lib/jobs/sync-job');
 const { everything, params, request, resetTeamDatabase, startTeamServer } = await import('./team-harness');
 
 let base: Awaited<ReturnType<typeof startTeamServer>>;
@@ -73,6 +74,13 @@ afterAll(async () => {
 // A service with a short window, so an attempt can expire within a test.
 const shortWindow = (windowMs = 1500) => submissionsService(h.handle.db, h.field, { windowMs, fenceMarginMs: 200 });
 const expire = (ms = 1600) => new Promise((resolve) => setTimeout(resolve, ms));
+// Runs `then` once the attempt reaches its read of the fenced draft: after its fence, before its
+// decision, so only the marker's draft sync (after the decision) meets what `then` sets up.
+const afterTheRead = (then: () => void) => {
+  h.field.gate.read = async () => {
+    then();
+  };
+};
 
 describe('Submit', () => {
   it('records the draft once as an immutable snapshot and marks the draft submitted', async () => {
@@ -217,15 +225,16 @@ describe('Submit', () => {
       const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
       // The phone's digest is not what the draft holds, so whichever attempt reads the draft aborts.
       const body = { id: randomUUID(), draftId, digest: await manifestDigest({ ...manifest, photos: [] }) };
-      // The first attempt waits at its fence, then closes it and dies before deciding.
+      // The first attempt waits at its fence (the draft sync that writes it), then closes it and dies
+      // before deciding.
       const hold = latch();
       let reached = false;
-      const delayed: FenceStore = {
+      const delayed: SubmitStore = {
         ...h.field,
-        fence: async (...args) => {
+        sync: async (...args) => {
           reached = true;
           await hold.wait;
-          return h.field.fence(...args);
+          return h.field.sync(...args);
         },
         read: () => new Promise(() => {}),
       };
@@ -359,7 +368,8 @@ describe('Submit', () => {
 
   it('leaves the attempt pending when the field database cannot be reached, and the same request then records', async () => {
     const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
-    h.field.failNext.fence = true;
+    // The fence's sync and its one more try both fail.
+    h.field.failNext.sync = 2;
     const { body, answer } = await f.submitShown(ESTIMATOR_A, jobId, draftId, manifest);
     expect(answer).toMatchObject({ status: 503, body: { error: 'submissions_unavailable' } });
     expect(await f.submissions(jobId)).toEqual([expect.objectContaining({ status: 'pending' })]);
@@ -553,7 +563,7 @@ describe('the worker', () => {
 
   it('writes a submitted marker the request could not, after the grace', async () => {
     const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
-    h.field.failNext.markSubmitted = true;
+    afterTheRead(() => (h.field.failNext.sync = 2));
     expect((await f.submitShown(ESTIMATOR_A, jobId, draftId, manifest)).answer.status).toBe(201);
     expect(h.field.draft(h.seed.a, draftId)?.state).toBe('submitting');
     expect((await f.submissions(jobId))[0]).toMatchObject({ status: 'committed', marker_state: 'pending' });
@@ -568,10 +578,10 @@ describe('the worker', () => {
   // ends there, so the scheduled caller sees 503, and the row waits for the next pass.
   it('ends the worker pass when the marker acknowledgement finds no free database connection', async () => {
     const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
-    h.field.failNext.markSubmitted = true;
+    afterTheRead(() => (h.field.failNext.sync = 2));
     expect((await f.submitShown(ESTIMATOR_A, jobId, draftId, manifest)).answer.status).toBe(201);
     const refused = Object.assign(new Error('QUEUE_TIMEOUT: Waited more than 10 seconds for a connection'), { code: 'QUEUE_TIMEOUT' });
-    // Full for the one transaction after the marker write: the acknowledgement.
+    // Full for the one transaction after the marker's sync: its acknowledgement.
     let full = false;
     const db = new Proxy(h.handle.db, {
       get: (target, key) => {
@@ -582,11 +592,11 @@ describe('the worker', () => {
     });
     const store = new Proxy(h.field, {
       get: (target, key) =>
-        key === 'markSubmitted'
-          ? async (...args: Parameters<FenceStore['markSubmitted']>) => {
-              const marked = await target.markSubmitted(...args);
+        key === 'sync'
+          ? async (...args: Parameters<SubmitStore['sync']>) => {
+              const synced = await target.sync(...args);
               full = true;
-              return marked;
+              return synced;
             }
           : Reflect.get(target, key),
     });
@@ -597,10 +607,10 @@ describe('the worker', () => {
 
   it('writes a release the request could not after an abort, and leaves a marker it cannot write for the next run', async () => {
     const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
-    h.field.failNext.release = true;
+    afterTheRead(() => (h.field.failNext.sync = 2));
     expect((await f.submitShown(ESTIMATOR_A, jobId, draftId, { ...manifest, photos: [] })).answer.body.error).toBe('digest_mismatch');
     expect(h.field.draft(h.seed.a, draftId)?.state).toBe('submitting');
-    h.field.failNext.release = true;
+    h.field.failNext.sync = 2;
     expect(await runSubmissionRepair(h.handle.db, h.field, { markerGraceSeconds: 0 })).toEqual({ aborted: 0, marked: 0, failed: 1 });
     expect((await f.submissions(jobId))[0]).toMatchObject({ status: 'aborted', marker_state: 'pending' });
     expect(await runSubmissionRepair(h.handle.db, h.field, { markerGraceSeconds: 0 })).toEqual({ aborted: 0, marked: 1, failed: 0 });
@@ -629,9 +639,86 @@ describe('the worker', () => {
     expect(await f.expectOneOutcome(h.seed.a, stalled.jobId, stalled.draftId)).toBe('aborted');
   });
 
+  // r4 (b): an attempt's fence held at the field database (the draft sync, or the previous fence writer)
+  // past its expiry; the worker aborts it and releases the draft, the owner archives the job, then the
+  // held fence goes on. It is refused at the job's marker: the archived draft is never fenced.
+  it('never fences a draft after its attempt was aborted and the job archived: the late fence is refused (r4 b)', async () => {
+    live.service = shortWindow();
+    const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
+    const hold = latch();
+    let reached = false;
+    const held = async () => {
+      delete h.field.gate.sync;
+      delete h.field.gate.fence;
+      reached = true;
+      await hold.wait;
+    };
+    h.field.gate.sync = held;
+    h.field.gate.fence = held;
+    const attempt = f.submitShown(ESTIMATOR_A, jobId, draftId, manifest);
+    await until(() => reached, 'the held fence');
+    await expire();
+    expect(await runSubmissionRepair(h.handle.db, h.field, { markerGraceSeconds: 0 })).toEqual({ aborted: 1, marked: 1, failed: 0 });
+    const { revision } = await f.job(jobId);
+    const archived = await archiveRoute.POST(
+      request(OWNER_A, `/api/jobs/${jobId}/archive`, { method: 'POST', body: { revision, changeId: randomUUID() } }),
+      params({ jobId }),
+    );
+    expect(archived.status).toBe(200);
+    hold.open();
+    // Its job is archived now: every job route answers 410.
+    expect((await attempt).answer).toMatchObject({ status: 410, body: { error: 'archived' } });
+    expect(h.field.draft(h.seed.a, draftId)).toMatchObject({ state: 'archived', fence: null });
+    expect((await f.submissions(jobId)).map((row) => row.status)).toEqual(['aborted']);
+  });
+
+  // draft-sync-02: a sync that read the job while an attempt was pending, held at the field database
+  // while a previous-version Submit (which moves no marker) decides that attempt, writes nothing when
+  // it goes on, and the job is synced again as Postgres now says: never fenced again after the
+  // release, never opened after the record.
+  it('a sync that read a pending attempt writes nothing after a previous-version Submit decides it, in either order', async () => {
+    for (const decision of ['aborted', 'committed'] as const) {
+      const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
+      // The attempt fenced the draft and stalls before its read.
+      const stall = latch();
+      h.field.gate.read = () => stall.wait;
+      const attempt = f.submitShown(ESTIMATOR_A, jobId, draftId, manifest);
+      await until(() => h.field.draft(h.seed.a, draftId)?.state === 'submitting', 'the fence');
+      const [row] = await f.submissions(jobId);
+      // A later sync of the job reads it pending, and is held at the field database.
+      const hold = latch();
+      let reached = false;
+      h.field.gate.sync = async () => {
+        reached = true;
+        await hold.wait;
+      };
+      await h.admin`UPDATE jobs SET field_revision = field_revision + 1 WHERE id = ${jobId}`;
+      const delayed = syncJob(h.handle.db, h.field, h.seed.a, jobId);
+      await until(() => reached, 'the held sync');
+      // The previous version decides the attempt and writes its own marker.
+      if (decision === 'aborted') {
+        await h.admin`UPDATE job_submissions SET status = 'aborted' WHERE id = ${row!.id}`;
+        expect(await h.field.release(h.seed.a, draftId, row!.epoch)).toBe('released');
+      } else {
+        const bytes = Buffer.from('{}');
+        await h.admin`UPDATE job_submissions SET status = 'committed', snapshot_bytes = ${bytes}, snapshot_sha256 = ${sha256(bytes)} WHERE id = ${row!.id}`;
+        await h.admin`UPDATE jobs SET status = 'submitted', revision = revision + 1 WHERE id = ${jobId}`;
+        expect(await h.field.markSubmitted(h.seed.a, draftId, row!.epoch, row!.id)).toBe('marked');
+      }
+      hold.open();
+      await delayed;
+      expect({ decision, draft: h.field.draft(h.seed.a, draftId) }).toMatchObject({
+        decision,
+        draft: decision === 'aborted' ? { state: 'editing', fence: null } : { state: 'submitted', fence: { epoch: row!.epoch } },
+      });
+      stall.open();
+      await attempt;
+    }
+  });
+
   it('a retry of a decided submission writes its missing marker', async () => {
     const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
-    h.field.failNext.markSubmitted = true;
+    afterTheRead(() => (h.field.failNext.sync = 2));
     const { body } = await f.submitShown(ESTIMATOR_A, jobId, draftId, manifest);
     expect(h.field.draft(h.seed.a, draftId)?.state).toBe('submitting');
     expect((await f.submit(ESTIMATOR_A, jobId, body)).status).toBe(200);
