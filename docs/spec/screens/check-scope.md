@@ -63,7 +63,7 @@ job's field work is no longer yours…" (unsent changes stay on the phone, read 
 - Company members with `prices_read` can expand "Item list as of {date}" to read the latest
   published item names, units, room types and suggestions. The reference contains no prices
   or totals. If the phone keeps jobs, the list reopens offline from `ds-prices`. Check Scope
-  checks for a new publication on online open, reconnect and foreground refresh. It identifies an
+  checks for a new publication on online open, on reconnect, when the page comes back to the foreground and every minute while it stays open. It identifies an
   older copy when it finds a newer version, and shows the newer list with a warning when the phone
   cannot save it. A company without a publication sees "Prices not set", also offline once the
   phone has seen that answer. When the server refuses the list (403, price books off, or a revoked sign-in), the list is
