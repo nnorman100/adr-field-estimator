@@ -83,6 +83,7 @@ Status: accepted (owner, Nov 10, 2026). Exception to Technology Standard 2.2.
 Reason: the standard puts the build server and CI runner on a Google Cloud VM with no public IP. That needs the company domain and Google Cloud organization, which do not exist yet. Until they do, the build server and CI runner stay on a Hostinger VPS.
 Known effect: this server cannot reach the test Cloud SQL address, so release migrations are moving inside Google (a Cloud Run job, PR #297). Until that lands, the `migrate` job in `.github/workflows/web-release.yml` runs them from the self-hosted runner through the Cloud SQL Auth Proxy.
 Ends when the company domain and Google Cloud organization exist.
+Superseded in part (Nov 20, 2026): the CI runner part. The repository is public, and GitHub advises against self-hosted runners for public repositories, so every workflow job runs on GitHub-hosted `ubuntu-latest` and the `CI_RUNNER` fallback to the self-hosted pool is removed (`docs/runbook/ci.md`). The `migrate` job's self-hosted runner and Cloud SQL Auth Proxy path no longer exists. The build server part of this decision stands.
 
 ### D-014: DryScope may use more than three agents (Nov 6, 2026)
 

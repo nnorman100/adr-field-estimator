@@ -26,7 +26,7 @@ Before coding or answering a review finding, load the `dryscope-gotchas` skill.
 ## Technology Standard 2.10 (build and agent rules)
 Profile and exceptions: `docs/ARCHITECTURE.md`, `docs/DECISIONS.md` (D-013 to D-016); stage plans: `docs/plans/`.
 - Migrations: add first, switch over, remove later; never rename or drop in one step. Drops or row deletions need a fresh backup and the owner. Test-copy migrations run from the release workflow's job; live ones need the owner. One database-changing job at a time.
-- CI runs on the self-hosted pool. Never set or delete `CI_RUNNER` or move a job to GitHub-hosted runners ($0 Actions hard stop).
+- CI runs on standard GitHub-hosted runners (`ubuntu-latest`, free for this public repo). Never move a job to a self-hosted runner or a larger runner, and never set or delete `CI_RUNNER`.
 - New dependency: reason in the PR, check the package is genuine, reviewer approval.
 - UI work: consult the Modern Web Guidance skill (`.agents/skills/modern-web-guidance`).
 

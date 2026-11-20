@@ -15,7 +15,7 @@ permissions:
 # checks the rebuild depends on. See docs/runbook/ci.md, "Legacy CI retired".
 jobs:
   node:
-    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
+    runs-on: ubuntu-latest
     # About 1.5 minutes in recent runs; the limit leaves room for a loaded host.
     timeout-minutes: 15
     env:
@@ -57,7 +57,7 @@ jobs:
         run: infra/dryscope/scripts/check.sh
 
   audit:
-    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
