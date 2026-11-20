@@ -51,6 +51,9 @@ draftSyncContract('in-memory', () => {
     async marker(company, job) {
       return store.marker(company, job);
     },
+    async remove(company, draft) {
+      store.remove(company, draft);
+    },
   };
 });
 
@@ -72,6 +75,7 @@ describe('the draft sync stand-in', () => {
     draftIds: [draft],
     pending: null,
     committed: null,
+    abortedEpochs: [],
     content: { kind: 'empty' },
     ...extra,
   });
@@ -81,11 +85,11 @@ describe('the draft sync stand-in', () => {
     const [company, job, draft] = [randomUUID(), randomUUID(), randomUUID()];
     await field.restoreDraft(company, job, draft, 'editing', 2);
     expect(await states.state(company, draft)).toBe('absent');
-    expect(await field.sync(company, desired(snapshotOf(job, draft)))).toMatchObject({ outcome: 'synced', created: [draft] });
+    expect(await field.sync(company, desired(snapshotOf(job, draft)), 0)).toMatchObject({ outcome: 'synced', created: [draft] });
     expect(await states.state(company, draft)).toBe('editing');
     expect(await drafts.findDraft(company, draft)).toEqual({ jobId: job });
     // The owner moves, at a coordination revision: the jobs stand-in names the new owner with it.
-    await field.sync(company, desired(snapshotOf(job, draft, { fieldRevision: 4, coordinationRevision: 2, fieldOwnerUid: 'estimator-2' })));
+    await field.sync(company, desired(snapshotOf(job, draft, { fieldRevision: 4, coordinationRevision: 2, fieldOwnerUid: 'estimator-2' })), 0);
     expect(drafts.owner(`${company}/${draft}`)).toEqual({ fieldOwnerUid: 'estimator-2', fieldOwnerRevision: 2 });
     expect(await drafts.setFieldOwner(company, job, draft, 'estimator-1', 1)).toBe('newer');
   });
@@ -100,16 +104,16 @@ describe('the draft sync stand-in', () => {
     expect(await drafts.setFieldOwner(company, job, draft, 'estimator-2', 4)).toBe('set');
     expect(field.draft(company, draft)).toMatchObject({ fieldOwnerUid: 'estimator-2', fieldOwnerRevision: 4, jobId: job });
     // The sync reads the owner the jobs stand-in named: a sync that read revision 3 leaves it.
-    expect(await field.sync(company, desired(snapshotOf(job, draft, { revision: 2, coordinationRevision: 3 })))).toMatchObject({ superseded: [draft] });
+    expect(await field.sync(company, desired(snapshotOf(job, draft, { revision: 2, coordinationRevision: 3 })), 0)).toMatchObject({ superseded: [draft] });
   });
 
   it('keeps the marker in the backing, so another stand-in over the same backing sees it', async () => {
     const { backing, field } = linked();
     const [company, job, draft] = [randomUUID(), randomUUID(), randomUUID()];
-    await field.sync(company, desired(snapshotOf(job, draft)));
+    await field.sync(company, desired(snapshotOf(job, draft)), 0);
     const again = fakeField(backing);
     expect(again.marker(company, job)).toMatchObject({ gen: 0, v: 3, draftIds: [draft] });
-    expect(await again.sync(company, desired(snapshotOf(job, draft)))).toMatchObject({ outcome: 'same' });
+    expect(await again.sync(company, desired(snapshotOf(job, draft)), 0)).toMatchObject({ outcome: 'same' });
   });
 
   it('answers every caller alike from the one record: a placeholder is under the id for the jobs and field stand-ins', async () => {

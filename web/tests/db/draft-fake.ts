@@ -1,6 +1,6 @@
 import type { JobProjection } from '@/lib/field/job-projection';
 import { draftOfOtherJob, placeholderRefusal, type DraftStore } from '@/lib/jobs/drafts';
-import { emptyDraft, memoryBacking, type Backing } from '../submissions/field-fake';
+import { emptyDraft, type Backing } from '../submissions/field-fake';
 
 // A stand-in for the field database's drafts as the jobs service writes them (src/lib/jobs/drafts.ts),
 // over the one record every field stand-in shares (`Backing`, tests/submissions/field-fake.ts): the
@@ -35,7 +35,7 @@ export type FakeDrafts = DraftStore & {
   failNext: { on: boolean; afterWrite: boolean };
 };
 
-export function fakeDrafts(backing: Backing = memoryBacking()): FakeDrafts {
+export function fakeDrafts(backing: Backing): FakeDrafts {
   const draftOf = (at: string) => {
     const found = backing.load().drafts[at];
     return found && !found.placeholder ? found : undefined;

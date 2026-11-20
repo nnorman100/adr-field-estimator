@@ -48,6 +48,8 @@ export type JobDraftSnapshot = {
   // The current draft's pending submission (status `pending`), and its committed one.
   pending: Fence | null;
   committed: Fence | null;
+  // The epochs of the current draft's aborted submissions: fences Postgres knows were released.
+  abortedEpochs: readonly string[];
   content: DraftContent;
 };
 
@@ -64,7 +66,15 @@ export type DesiredDraft = {
   content?: DraftContent;
 };
 
-export type DesiredJob = { jobId: string; v: number; drafts: Record<string, DesiredDraft> };
+export type DesiredJob = {
+  jobId: string;
+  v: number;
+  drafts: Record<string, DesiredDraft>;
+  // The epochs of the submissions the snapshot knows for the current draft (its pending, committed and
+  // aborted rows): a stored fence of any other epoch was closed by a writer Postgres had not told this
+  // sync about.
+  knownEpochs: string[];
+};
 
 /** A snapshot whose current draft job_drafts does not give the job: it is never synced. */
 export class UnclaimedDraftError extends Error {
@@ -111,7 +121,8 @@ export function desired(snapshot: JobDraftSnapshot): DesiredJob {
   // fence stays as its Submit left it.
   for (const draftId of snapshot.draftIds) drafts[draftId] = { ...common, state: 'submitted' };
   drafts[snapshot.currentDraftId] = { ...common, ...currentDraft(snapshot), content: snapshot.content };
-  return { jobId: snapshot.jobId, v: snapshot.fieldRevision, drafts };
+  const knownEpochs = [snapshot.pending?.epoch, snapshot.committed?.epoch, ...snapshot.abortedEpochs].filter((epoch): epoch is string => epoch !== undefined);
+  return { jobId: snapshot.jobId, v: snapshot.fieldRevision, drafts, knownEpochs };
 }
 
 /** The drafts one sync left as they were, and why. A retry at the same version reports them again. */
@@ -122,9 +133,9 @@ export type SyncSkips = {
   // rooms or photos are left under the id (never handed to a new owner): those are conflicts.
   missing: string[];
   // Drafts holding a newer legacy revision (archiveRevision or fieldOwnerRevision) than this
-  // snapshot: an older writer changed them after Postgres was read. The keys that revision guards
-  // are left as they are (state, fence and archiveRevision; or the owner and fieldOwnerRevision);
-  // every other key is written, and a sync at a newer version handles the rest.
+  // snapshot, or a fence of a Submit it does not know: an older writer changed them after Postgres was
+  // read. The keys that change guards are left as they are (state, fence and archiveRevision; or the
+  // owner and fieldOwnerRevision); every other key is written, and a sync at a newer version handles the rest.
   superseded: string[];
   // Drafts an earlier sync wrote that Postgres no longer gives the job (after a database restore):
   // closed to field access (archived, nobody named), their field work kept.
@@ -134,7 +145,9 @@ export type SyncSkips = {
 /** The sync's marker for a job: the version last written, every draft of the job it has seen, and the skips. */
 export type SyncMarker = { gen: number; v: number; draftIds: string[]; skipped: SyncSkips };
 
-const ids = (value: unknown): value is string[] => Array.isArray(value) && value.every((id) => typeof id === 'string');
+// A draft id as the field rules accept one for a document (web/firestore.rules): no empty id, no path.
+const DRAFT_ID = /^[A-Za-z0-9_-]{1,64}$/;
+const ids = (value: unknown): value is string[] => Array.isArray(value) && value.every((id) => typeof id === 'string' && DRAFT_ID.test(id));
 
 const version = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0;
 
@@ -174,8 +187,10 @@ export type StoredDraft = {
   placeholder: boolean;
   jobId: unknown;
   state: unknown;
-  // Whether a `fence` key is there at all, and the fence it holds when it is one the sync can read.
+  // Whether a `fence` key is there at all, its epoch as stored (whatever else it holds), and the fence
+  // it holds when it is one the sync can read.
   hasFence: boolean;
+  fenceEpoch: unknown;
   fence: { submissionId: string; epoch: string; expiresAt: number } | null;
   fieldOwnerUid: unknown;
   archiveRevision: unknown;
@@ -266,7 +281,8 @@ export function planSync(
   job: DesiredJob,
   gen: number,
 ): SyncPlan {
-  const reset = marker !== null && gen > marker.gen;
+  // A generation above the stored one (or above 0 on a job's first sync) is the operator's reset.
+  const reset = gen > (marker?.gen ?? 0);
   const creates: DraftCreate[] = [];
   const updates: DraftUpdate[] = [];
   const skips: SyncSkips = { conflicts: [], missing: [], superseded: [], unmatched: [] };
@@ -279,18 +295,27 @@ export function planSync(
       skips.conflicts.push(draftId);
       continue;
     }
-    // Never lower a legacy revision an older writer set after Postgres was read.
-    const holdState = found !== null && !reset && revisionOf(found.archiveRevision) > want.archiveRevision;
+    // Never lower a legacy revision an older writer set after Postgres was read, and never open or
+    // re-fence a draft a Submit this snapshot does not know about has fenced (a writer that serves
+    // during the rollout and guards its fence with no revision).
+    const unknownFence =
+      found !== null &&
+      !found.placeholder &&
+      want.fence !== undefined &&
+      found.hasFence &&
+      !(typeof found.fenceEpoch === 'string' && job.knownEpochs.includes(found.fenceEpoch));
+    const holdState = found !== null && !reset && (revisionOf(found.archiveRevision) > want.archiveRevision || unknownFence);
     const holdOwner = found !== null && !reset && revisionOf(found.fieldOwnerRevision) > want.fieldOwnerRevision;
     if (!found || found.placeholder) {
+      // Rooms or photos left under the id are never handed to an owner, whatever else holds.
+      if (orphans.has(draftId)) {
+        skips.conflicts.push(draftId);
+        continue;
+      }
       if (holdState) {
         // A newer archive or restore left this placeholder: not made over now.
         skips.superseded.push(draftId);
         seen.push(draftId);
-        continue;
-      }
-      if (orphans.has(draftId)) {
-        skips.conflicts.push(draftId);
         continue;
       }
       if (!want.content) {
@@ -355,6 +380,9 @@ export function planSync(
     if (found.fieldOwnerUid !== undefined) update.remove.push('fieldOwnerUid');
     if (Object.keys(update.set).length > 0 || update.remove.length > 0) updates.push(update);
   }
+  // A draft the marker tracked stays on it while Postgres still gives it to the job, even when it is
+  // missing now or another job's or leftover data sits under its id: a later restore must still find it.
+  for (const draftId of marker?.draftIds ?? []) if (draftId in job.drafts && !seen.includes(draftId)) seen.push(draftId);
   for (const list of Object.values(skips)) list.sort();
   return {
     outcome: 'synced',

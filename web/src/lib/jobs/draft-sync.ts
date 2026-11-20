@@ -35,7 +35,7 @@ export type DraftSync = {
   // or a newer one. `gen` is raised by an operator after a database restore lowers field revisions.
   // Throws, before any read or write, when gen or desired.v is not a non-negative integer, and before
   // any change when the marker is there but not in its shape (MalformedMarkerError).
-  sync(companyId: string, desired: DesiredJob, gen?: number): Promise<SyncResult>;
+  sync(companyId: string, desired: DesiredJob, gen: number): Promise<SyncResult>;
 };
 
 /** The result a plan reports once applied. */
@@ -65,6 +65,7 @@ export function storedOf(found: DocumentSnapshot): StoredDraft {
     jobId: found.get('jobId'),
     state: found.get('state'),
     hasFence: fence !== undefined,
+    fenceEpoch: fence?.epoch,
     fence:
       fence && typeof fence.submissionId === 'string' && typeof fence.epoch === 'string' && expiresAt instanceof Timestamp
         ? { submissionId: fence.submissionId, epoch: fence.epoch, expiresAt: expiresAt.toMillis() }
@@ -92,7 +93,7 @@ export function draftIdsToRead(marker: SyncMarker | null, job: DesiredJob): stri
 export function firestoreDraftSync(db: Firestore): DraftSync {
   const company = (companyId: string) => db.collection('companies').doc(companyId);
   return {
-    async sync(companyId, job, gen = 0) {
+    async sync(companyId, job, gen) {
       assertVersion(gen, job.v);
       const markerRef = company(companyId).collection('draftLifecycle').doc(job.jobId);
       const draftRef = (draftId: string) => company(companyId).collection('drafts').doc(draftId);

@@ -148,7 +148,7 @@ export function fakeField(backing: Backing = memoryBacking()): FakeField {
 
   const fake: FakeField = {
     marker: (companyId, jobId) => backing.load().markers[key(companyId, jobId)] ?? null,
-    sync: async (companyId, job, gen = 0) => {
+    sync: async (companyId, job, gen) => {
       // As the real writer: refused before any read or write, as a rejected promise.
       assertVersion(gen, job.v);
       return call('sync', ({ drafts: data, markers }) => {
@@ -165,6 +165,13 @@ export function fakeField(backing: Backing = memoryBacking()): FakeField {
           }),
         );
         const plan = planSync(marker, stored, orphans, job, gen);
+        // As Firestore's commit: a create of a room or photo the same write already creates fails the
+        // whole write, and nothing (no draft, no marker) is saved.
+        for (const made of plan.creates) {
+          for (const docs of [made.rooms, made.photos]) {
+            if (new Set(docs.map((doc) => doc.id)).size !== docs.length) throw new Error('a document is created twice in one write');
+          }
+        }
         for (const made of plan.creates) {
           const { fence, previous, fieldOwnerUid, field, ...rest } = made.data;
           data[key(companyId, made.draftId)] = {
@@ -391,6 +398,7 @@ function storedOf(found: FakeDraft | undefined): StoredDraft {
     jobId: found.jobId,
     state: found.state,
     hasFence: found.fence !== null,
+    fenceEpoch: found.fence?.epoch,
     fence: found.fence ? { submissionId: found.fence.submissionId, epoch: found.fence.epoch, expiresAt: Date.parse(found.fence.expiresAt) } : null,
     fieldOwnerUid: found.fieldOwnerUid ?? undefined,
     archiveRevision: found.archiveRevision,

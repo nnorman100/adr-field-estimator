@@ -72,6 +72,9 @@ draftSyncContract('Firestore', () => ({
     const found = await db.doc(markerPath(company, job)).get();
     return found.exists ? (found.data() as SyncMarker) : null;
   },
+  async remove(company, draft) {
+    await db.doc(draftPath(company, draft)).delete();
+  },
 }));
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -95,6 +98,7 @@ function snapshotOf(extra: Partial<JobDraftSnapshot> & Pick<JobDraftSnapshot, 'c
     coordinationRevision: 0,
     pending: null,
     committed: null,
+    abortedEpochs: [],
     content: { kind: 'empty' },
     ...extra,
   };
@@ -107,7 +111,7 @@ describe('the draft sync under the field rules', () => {
     const [owner, estimator] = [await member(tenant, company, 'owner'), await member(tenant, company, 'estimator')];
     const draft = randomUUID();
     const job = snapshotOf({ currentDraftId: draft, draftIds: [draft], fieldOwnerUid: estimator.uid });
-    expect(await store.sync(company, desired(job))).toMatchObject({ outcome: 'synced' });
+    expect(await store.sync(company, desired(job), 0)).toMatchObject({ outcome: 'synced' });
     for (const who of [owner, estimator]) {
       expect(await getDoc(who.caller, markerPath(company, job.jobId))).toBe(403);
       expect(await updateDoc(who.caller, markerPath(company, job.jobId), { gen: 9, v: 99 })).toBe(403);
@@ -125,10 +129,10 @@ describe('the draft sync under the field rules', () => {
     // An earlier, submitted draft (made by Back to editing's predecessor) and the current one.
     await db.doc(draftPath(company, earlier)).set({ state: 'submitted', fieldOwnerUid: first.uid, field: { notes: 'first visit' } });
     const job = snapshotOf({ currentDraftId: current, draftIds: [earlier, current], fieldOwnerUid: first.uid });
-    await store.sync(company, desired(job));
+    await store.sync(company, desired(job), 0);
     for (const draft of [earlier, current]) expect(await getDoc(first.caller, draftPath(company, draft))).toBe(200);
 
-    await store.sync(company, desired({ ...job, fieldRevision: 2, fieldOwnerUid: second.uid }));
+    await store.sync(company, desired({ ...job, fieldRevision: 2, fieldOwnerUid: second.uid }), 0);
     for (const draft of [earlier, current]) {
       expect(await getDoc(first.caller, draftPath(company, draft))).toBe(403);
       expect(await getDoc(second.caller, draftPath(company, draft))).toBe(200);
@@ -150,7 +154,7 @@ describe('the draft sync under the field rules', () => {
       fieldOwnerUid: 'estimator-1',
       content: { kind: 'next', manifest: { draft: { roomOrder: rooms.map((room) => room.id) }, rooms, photos }, previous: { draftId: earlier[0]!, submissionId: randomUUID() } },
     });
-    expect(await store.sync(company, desired(job))).toEqual({ outcome: 'synced', created: [current], changed: [...earlier].sort(), conflicts: [], missing: [], superseded: [], unmatched: [] });
+    expect(await store.sync(company, desired(job), 0)).toEqual({ outcome: 'synced', created: [current], changed: [...earlier].sort(), conflicts: [], missing: [], superseded: [], unmatched: [] });
     expect((await db.doc(draftPath(company, current)).collection('rooms').count().get()).data().count).toBe(MAX_ROOMS);
     expect((await db.doc(draftPath(company, current)).collection('photos').count().get()).data().count).toBe(MAX_PHOTO_REFS);
     for (const draft of earlier) expect((await db.doc(draftPath(company, draft)).get()).get('fieldOwnerUid')).toBe('estimator-1');
@@ -172,7 +176,7 @@ describe('the draft sync under the field rules', () => {
         previous: { draftId: earlier, submissionId: randomUUID() },
       },
     });
-    await expect(store.sync(company, desired(job))).rejects.toThrow();
+    await expect(store.sync(company, desired(job), 0)).rejects.toThrow();
     expect((await db.doc(draftPath(company, current)).get()).exists).toBe(false);
     expect((await db.doc(draftPath(company, earlier)).get()).data()).toEqual({ state: 'submitted', fieldOwnerUid: 'old-owner', field: {} });
     expect((await db.doc(markerPath(company, job.jobId)).get()).exists).toBe(false);
@@ -184,7 +188,7 @@ describe('the draft sync under the field rules', () => {
     const draft = randomUUID();
     const job = snapshotOf({ currentDraftId: draft, draftIds: [draft], fieldOwnerUid: 'estimator-1' });
     await db.doc(markerPath(company, job.jobId)).set({ gen: 0, v: 'one' });
-    await expect(store.sync(company, desired(job))).rejects.toBeInstanceOf(MalformedMarkerError);
+    await expect(store.sync(company, desired(job), 0)).rejects.toBeInstanceOf(MalformedMarkerError);
     expect((await db.doc(draftPath(company, draft)).get()).exists).toBe(false);
     expect((await db.doc(markerPath(company, job.jobId)).get()).data()).toEqual({ gen: 0, v: 'one' });
   });
@@ -200,7 +204,7 @@ describe('the draft sync under the field rules', () => {
         fieldOwnerUid: 'estimator-1',
         content: { kind: 'next', manifest: { draft: {}, rooms: [{ id: 'kitchen', field: {} }], photos: [] }, previous: { draftId: randomUUID(), submissionId: randomUUID() } },
       });
-      expect(await store.sync(company, desired(job))).toMatchObject({ outcome: 'synced', created: [], conflicts: [draft] });
+      expect(await store.sync(company, desired(job), 0)).toMatchObject({ outcome: 'synced', created: [], conflicts: [draft] });
       expect((await db.doc(draftPath(company, draft)).get()).exists).toBe(false);
       expect((await db.doc(`${draftPath(company, draft)}/rooms/kitchen`).get()).exists).toBe(false);
     }
@@ -209,9 +213,11 @@ describe('the draft sync under the field rules', () => {
   it('removes a fence the sync cannot read (no expiry) when Postgres says the draft is editing', async () => {
     const company = randomUUID();
     const draft = randomUUID();
-    const job = snapshotOf({ currentDraftId: draft, draftIds: [draft], fieldOwnerUid: 'estimator-1' });
-    await db.doc(draftPath(company, draft)).set({ jobId: job.jobId, state: 'submitting', fieldOwnerUid: 'estimator-1', fence: { submissionId: randomUUID(), epoch: randomUUID() }, field: {} });
-    expect(await store.sync(company, desired(job))).toMatchObject({ changed: [draft] });
+    // The fence of a row the snapshot knows (so not another writer's Submit), stored without its expiry.
+    const committed = { submissionId: randomUUID(), epoch: randomUUID(), expiresAt: new Date(Date.UTC(2031, 0, 1)) };
+    const job = snapshotOf({ currentDraftId: draft, draftIds: [draft], fieldOwnerUid: 'estimator-1', committed });
+    await db.doc(draftPath(company, draft)).set({ jobId: job.jobId, state: 'submitting', fieldOwnerUid: 'estimator-1', fence: { submissionId: committed.submissionId, epoch: committed.epoch }, field: {} });
+    expect(await store.sync(company, desired(job), 0)).toMatchObject({ changed: [draft], superseded: [] });
     const found = (await db.doc(draftPath(company, draft)).get()).data()!;
     expect(found.state).toBe('editing');
     expect('fence' in found).toBe(false);

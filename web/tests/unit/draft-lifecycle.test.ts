@@ -21,6 +21,7 @@ const snapshot = (extra: Partial<JobDraftSnapshot> = {}): JobDraftSnapshot => ({
   draftIds: [EARLIER, CURRENT],
   pending: null,
   committed: null,
+  abortedEpochs: [],
   content: { kind: 'empty' },
   ...extra,
 });
@@ -87,6 +88,10 @@ describe('parseMarker()', () => {
       { gen: 0, v: 3, draftIds: [] },
       { ...good, skipped: { ...SKIPS, unmatched: undefined } },
       { ...good, skipped: null },
+      // Not a draft id: empty, a path, or too long.
+      { ...good, draftIds: [''] },
+      { ...good, draftIds: ['draft/rooms/kitchen'] },
+      { ...good, skipped: { ...SKIPS, superseded: ['x'.repeat(65)] } },
     ];
     for (const marker of bad) expect(() => parseMarker(marker)).toThrow(MalformedMarkerError);
   });
