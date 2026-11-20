@@ -1,6 +1,7 @@
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { type AppConfig, ConfigError, parseConfig } from '../lib/config';
+import { dryingSchema } from './drying-schema';
 import { createTokenSource } from './iam-token';
 import { applyMigrations, migrationsDirectory, type MigrationTarget } from './migrate';
 import { schema } from './schema';
@@ -114,7 +115,7 @@ function connect(config: AppConfig, max = common.max) {
 export function openDatabase(env: Record<string, string | undefined>, { max }: { max?: number } = {}) {
   const sql = connect(parseConfig(env), max);
   return {
-    db: drizzle(sql, { schema }),
+    db: drizzle(sql, { schema: { ...schema, ...dryingSchema } }),
     async close() {
       await sql.end({ timeout: 5 });
     },

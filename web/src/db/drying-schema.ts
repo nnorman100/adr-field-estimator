@@ -5,12 +5,13 @@ import { actors, agreements, companies, jobs } from './schema';
 // Typed view of the drying log and outcomes tables (migration 0020, S5b-10 slice 10A). The SQL file
 // holds every check and trigger; this module only reads and writes those tables, inside withCompany
 // or withOperator (./tenant.ts). It sits beside ./schema.ts to keep each file under the length limit,
-// as ./ai-schema.ts does, and is not part of the relational `schema` object (no route uses relational
-// queries); `dryingSchema` below lists its tables (tests/db/identity-tables.test.ts matches them to the
+// as ./ai-schema.ts does; `dryingSchema` below lists its tables, and openDatabase (./client.ts) passes
+// it beside `schema`, so db.query sees them (tests/db/identity-tables.test.ts matches them to the
 // database). The drying watch's column on job_coordination is in ./schema.ts.
 
 const time = (name: string) => timestamp(name, { withTimezone: true, mode: 'date' });
-// Whole cents, at most a few billion, so a JavaScript number holds them exactly.
+// Whole cents. Every cents column is checked to at most 2^53 - 1 in the database (0020), so a JavaScript
+// number holds each exactly.
 const cents = (name: string) => bigint(name, { mode: 'number' });
 
 export const dryingReadingKinds = ['air', 'material', 'thermal'] as const;
@@ -119,7 +120,6 @@ export const estimateHistory = pgTable(
     roomCategories: text('room_categories', { enum: roomCategories }).array(),
     plannedDays: integer('planned_days'),
     areaSf: numeric('area_sf'),
-    recordedAt: time('recorded_at').notNull().defaultNow(),
   },
   (t) => [
     primaryKey({ columns: [t.companyId, t.jobId, t.agreementId] }),

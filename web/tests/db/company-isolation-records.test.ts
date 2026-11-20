@@ -201,7 +201,7 @@ async function signedSide(name: 'A' | 'B', companyId: string, estimator: FakeCla
   const signedAssignment = await coordinate(linked.jobId, `Office Notes Line ${name}`);
   const pendingAssignment = await coordinate(pending.jobId, `Office Notes Second ${name}`);
   // S5b-10 (0020, no routes yet): a drying reading on each job, and on the signed job a close, its
-  // estimate history sample and a drying watch action, written as slice 10B will.
+  // estimate history sample (the close's baseline) and a drying watch action, written as slice 10B will.
   const [agreement] = await h.admin<{ id: string }[]>`SELECT id::text FROM agreements WHERE job_id = ${linked.jobId}`;
   for (const jobId of [linked.jobId, pending.jobId]) {
     const readingId = randomUUID();
@@ -212,16 +212,16 @@ async function signedSide(name: 'A' | 'B', companyId: string, estimator: FakeCla
               ${digestOf(readingId)}, ${estimatorActorId})
     `;
   }
+  await h.admin`
+    INSERT INTO estimate_history (company_id, job_id, agreement_id, signed_at, price_mode, low_cents, high_cents)
+    VALUES (${companyId}, ${linked.jobId}, ${agreement!.id}, now(), 'range', 110000, 140000)
+  `;
   const closeId = randomUUID();
   await h.admin`
     INSERT INTO job_closes (id, company_id, job_id, agreement_id, revision, request_digest, final_cents, actual_days, note, baseline_agreement_id, price_mode,
                             baseline_low_cents, baseline_high_cents, landed, closed_by_actor_id)
     VALUES (${closeId}, ${companyId}, ${linked.jobId}, ${agreement!.id}, 1, ${digestOf(closeId)}, 125000, 4, ${`Close Note ${name}`}, ${agreement!.id}, 'range',
             110000, 140000, 'inside', ${estimatorActorId})
-  `;
-  await h.admin`
-    INSERT INTO estimate_history (company_id, job_id, agreement_id, signed_at, price_mode, low_cents, high_cents)
-    VALUES (${companyId}, ${linked.jobId}, ${agreement!.id}, now(), 'range', 110000, 140000)
   `;
   const watchRequest = randomUUID();
   const watch = {

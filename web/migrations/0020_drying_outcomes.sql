@@ -1,7 +1,9 @@
 -- Drying log and outcomes (S5b-10 slice 10A, docs/plans/S5/S5b-10.md; the S5b-10/11 plan, "10A -
--- Database"). This file only adds: three tables, their guards and policies, and one column on
--- job_coordination. No table, column, row or policy of 0001 to 0019 is removed or renamed, nothing is
--- backfilled, and no Firestore record changes. No route reads or writes these yet (slices 10B and 10C).
+-- Database"). This file adds: three tables, their guards and policies, and one column on
+-- job_coordination; and it widens two rules of job_coordination (4, below) so the first watch action
+-- can make the row at revision 0. No table, column, row or policy of 0001 to 0019 is removed or renamed,
+-- nothing is backfilled, and no Firestore record changes. No route reads or writes these yet (slices 10B
+-- and 10C).
 --
 -- 1. drying_readings: one drying-log entry (air, material or thermal) on a job, made on the phone with
 --    its own uuid, so a reading resent after a lost response is stored once. Removing a reading is a
@@ -24,7 +26,8 @@
 --    area when the signed record has them. The baseline is the signed priced result after any approved
 --    S5b-8 named adjustment, multipliers and additions (so approved extras sit inside it, and an invoice
 --    above it is an overrun of what was signed). Every sample is kept; a reporting window, if the
---    product wants one, is a query, not an eviction.
+--    product wants one, is a query, not an eviction. A close's baseline is the sample of the job's
+--    original agreement, and its price mode and cents are that sample's (the owner's Q1, option A).
 -- 4. job_coordination.drying_watch: the drying watch's explicit decisions on a signed job, as one
 --    checked document with its own revision (one per accepted action) and the accepted action receipts:
 --    up to 100 plan extensions and one closing action (mark dry or close monitoring), after which the
@@ -33,7 +36,11 @@
 --    is not stored: it comes from the signed facts, the live reading log and the clock. A watch change
 --    leaves the office notes and the coordination revision (notes and field owner) as they are, and an
 --    office change leaves the watch. The first watch action on a job with no coordination row makes the
---    row with the existing defaults; on conflict only the watch column is updated.
+--    row at coordination revision 0 ("no office change yet") with the existing defaults otherwise; on
+--    conflict only the watch column is updated. A row made at revision 0 does not raise the job's field
+--    revision (the insert trigger of 0018 fires from revision 1), so an office save opened before the
+--    first watch action (expected revision 0) still succeeds and moves the revision to 1, and that
+--    update raises the field revision as before.
 -- 5. Every row belongs to a company and is held only inside withCompany (0003). A platform operator
 --    reads a company's rows through withOperator with that company set; every write policy refuses an
 --    active operator. Every key carries company_id. No DELETE and no TRUNCATE for the runtime.
@@ -46,16 +53,23 @@ SET LOCAL lock_timeout = '5s';
 -- The checks below call these functions. Each reads no table, and each answers false (never null)
 -- for a value that is not what it checks, so a check cannot pass on a null answer.
 
--- One line of text a person reads back: 1 to `max` characters, no control character, and at least one
--- character that is not whitespace, Unicode spaces included, by a class that does not depend on the
--- database locale (the class of 0019).
+-- At least one character that is not whitespace, Unicode spaces included, by a class that does not
+-- depend on the database locale (the class of 0019).
+CREATE FUNCTION drying_nonblank(value text) RETURNS boolean
+  LANGUAGE sql IMMUTABLE PARALLEL SAFE
+  SET search_path = pg_catalog
+AS $$
+  SELECT coalesce(value ~ '[^ \t\n\v\f\r\u0085\u00a0\u1680\u180e\u2000-\u200b\u2028\u2029\u202f\u205f\u3000\ufeff]', false)
+$$;
+
+-- One line of text a person reads back: 1 to `max` characters, no control character, and not blank.
 CREATE FUNCTION drying_line_ok(value text, max integer) RETURNS boolean
   LANGUAGE sql IMMUTABLE PARALLEL SAFE
   SET search_path = pg_catalog
 AS $$
   SELECT coalesce(
     char_length(value) BETWEEN 1 AND max
-      AND value ~ '[^ \t\n\v\f\r\u0085\u00a0\u1680\u180e\u2000-\u200b\u2028\u2029\u202f\u205f\u3000\ufeff]'
+      AND public.drying_nonblank(value)
       AND value !~ '[[:cntrl:]]',
     false)
 $$;
@@ -108,13 +122,13 @@ $$;
 --        0 to 1000, or null), affected (true or false), note;
 --   thermal: delta_t_f (-200 to 200), pattern (cold_anomaly, thermal_bridge, evaporative_cooling),
 --        boundary (a note on its edge, at most 300 characters, '' when none), note.
--- A note is at most 500 characters ('' when none). The whole payload is at most 2,048 bytes as text.
+-- A note is at most 500 characters ('' when none). Every field is bounded as above, so the payload is.
 CREATE FUNCTION drying_reading_payload_ok(kind text, payload jsonb) RETURNS boolean
   LANGUAGE sql IMMUTABLE PARALLEL SAFE
   SET search_path = pg_catalog
 AS $$
   SELECT CASE
-    WHEN jsonb_typeof(payload) IS DISTINCT FROM 'object' OR octet_length(payload::text) > 2048 THEN false
+    WHEN jsonb_typeof(payload) IS DISTINCT FROM 'object' THEN false
     WHEN NOT public.drying_text_in(payload->'note', 500, true) THEN false
     WHEN kind = 'air' THEN coalesce(
       public.drying_keys(payload) = ARRAY['note', 'relative_humidity', 'temperature_f', 'zone']
@@ -190,7 +204,7 @@ BEGIN
     IF NOT (public.drying_text_in(receipt->'agreement_id', 36, false) AND public.drying_text_in(receipt->'actor_id', 36, false)
             AND public.drying_text_in(receipt->'request_id', 36, false) AND public.drying_text_in(receipt->'request_digest', 64, false)
             AND public.drying_text_in(receipt->'at', 27, false) AND public.drying_text_in(receipt->'action', 10, false)
-            AND public.drying_text_in(receipt->'reason', 500, true) AND public.drying_line_ok(btrim(receipt->>'reason', E' \t\r\n'), 500)) THEN
+            AND public.drying_text_in(receipt->'reason', 500, true) AND public.drying_nonblank(receipt->>'reason')) THEN
       RETURN false;
     END IF;
     IF receipt->>'agreement_id' !~ uuid_form OR receipt->>'actor_id' !~ uuid_form OR receipt->>'request_id' !~ uuid_form
@@ -217,10 +231,10 @@ END
 $$;
 
 -- The checks call these as the writer, so the runtime may run them.
-REVOKE ALL ON FUNCTION drying_line_ok(text, integer), drying_note_ok(text, integer), drying_number_in(jsonb, numeric, numeric),
+REVOKE ALL ON FUNCTION drying_nonblank(text), drying_line_ok(text, integer), drying_note_ok(text, integer), drying_number_in(jsonb, numeric, numeric),
   drying_text_in(jsonb, integer, boolean), drying_keys(jsonb), drying_reading_payload_ok(text, jsonb),
   drying_categories_ok(text[]), drying_watch_ok(jsonb) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION drying_line_ok(text, integer), drying_note_ok(text, integer), drying_number_in(jsonb, numeric, numeric),
+GRANT EXECUTE ON FUNCTION drying_nonblank(text), drying_line_ok(text, integer), drying_note_ok(text, integer), drying_number_in(jsonb, numeric, numeric),
   drying_text_in(jsonb, integer, boolean), drying_keys(jsonb), drying_reading_payload_ok(text, jsonb),
   drying_categories_ok(text[]), drying_watch_ok(jsonb) TO dryscope_runtime;
 
@@ -277,7 +291,9 @@ CREATE TABLE drying_readings (
 
 -- A job's active readings in the order the log shows them.
 CREATE INDEX drying_readings_job_active ON drying_readings (company_id, job_id, taken_at, id) WHERE voided_at IS NULL;
--- A job's whole log, voided readings included, as the watch's facts read it.
+-- A job's whole log, voided readings included: slice 10B's watch facts hash includes the relevant
+-- reading and void changes (the S5b-10/11 plan, 10B "Watch calculation"), so that read scans a job's
+-- voided readings too.
 CREATE INDEX drying_readings_job ON drying_readings (company_id, job_id, taken_at, id);
 -- A void request's uuid voids one reading: the same uuid on another reading is refused.
 CREATE UNIQUE INDEX drying_readings_void_change ON drying_readings (company_id, void_change_id) WHERE void_change_id IS NOT NULL;
@@ -319,6 +335,35 @@ CREATE TRIGGER drying_readings_guard
   BEFORE INSERT OR UPDATE ON drying_readings
   FOR EACH ROW EXECUTE FUNCTION drying_readings_guard();
 
+-- 3. Estimate history, made before the closes, which name its samples as their baselines.
+CREATE TABLE estimate_history (
+  company_id uuid NOT NULL REFERENCES companies (id),
+  job_id uuid NOT NULL,
+  agreement_id uuid NOT NULL,
+  signed_at timestamptz NOT NULL,
+  price_mode text NOT NULL CHECK (price_mode IN ('range', 'single')),
+  -- The signed priced result after any approved named adjustment, multipliers and additions, in cents.
+  -- Every cents column is at most 2^53 - 1, so a JavaScript number holds it exactly (as ai-schema.ts does).
+  low_cents bigint NOT NULL CHECK (low_cents BETWEEN 0 AND 9007199254740991),
+  high_cents bigint,
+  -- The low end's labor and materials total, in cents, when it can be read.
+  labor_material_low_cents bigint CHECK (labor_material_low_cents BETWEEN 0 AND 9007199254740991),
+  -- The signed rooms' categories, each once, in this order ('1', '2', '3', 'mold'), when they can be read.
+  room_categories text[] CHECK (room_categories IS NULL OR drying_categories_ok(room_categories)),
+  -- The signed drying plan's days and the job's area on its price table's basis, when the record has them.
+  planned_days integer CHECK (planned_days BETWEEN 1 AND 365),
+  area_sf numeric CHECK (area_sf >= 0),
+  PRIMARY KEY (company_id, job_id, agreement_id),
+  CONSTRAINT estimate_history_job_fkey FOREIGN KEY (company_id, job_id) REFERENCES jobs (company_id, id),
+  CONSTRAINT estimate_history_agreement_fkey FOREIGN KEY (company_id, job_id, agreement_id)
+    REFERENCES agreements (company_id, job_id, id),
+  CONSTRAINT estimate_history_high_cents_check CHECK (high_cents BETWEEN low_cents AND 9007199254740991),
+  CONSTRAINT estimate_history_mode_check CHECK ((price_mode = 'single') = (high_cents IS NULL))
+);
+
+-- A company's samples by signing time, as the accuracy numbers read them.
+CREATE INDEX estimate_history_company_signed ON estimate_history (company_id, signed_at);
+
 -- 2. Job closes.
 CREATE TABLE job_closes (
   -- The close request's uuid, made on the phone: a replay finds its receipt, even after a correction.
@@ -337,11 +382,11 @@ CREATE TABLE job_closes (
   actual_days integer CHECK (actual_days BETWEEN 0 AND 365),
   note text NOT NULL DEFAULT '' CHECK (drying_note_ok(note, 300)),
   -- What it was compared with, saved as classified: the baseline agreement (its own reference, apart
-  -- from the confirmed agreement), its price mode and its low and high ends in cents (no high end for
-  -- one price), and where the final invoice landed.
+  -- from the confirmed agreement; the job's original), its price mode and its low and high ends in
+  -- cents (no high end for one price; the baseline sample's own), and where the final invoice landed.
   baseline_agreement_id uuid NOT NULL,
   price_mode text NOT NULL CHECK (price_mode IN ('range', 'single')),
-  baseline_low_cents bigint NOT NULL CHECK (baseline_low_cents >= 0),
+  baseline_low_cents bigint NOT NULL CHECK (baseline_low_cents BETWEEN 0 AND 9007199254740991),
   baseline_high_cents bigint,
   landed text NOT NULL CHECK (landed IN ('inside', 'above', 'below')),
   closed_by_actor_id uuid NOT NULL,
@@ -351,11 +396,12 @@ CREATE TABLE job_closes (
   CONSTRAINT job_closes_job_fkey FOREIGN KEY (company_id, job_id) REFERENCES jobs (company_id, id),
   CONSTRAINT job_closes_agreement_fkey FOREIGN KEY (company_id, job_id, agreement_id)
     REFERENCES agreements (company_id, job_id, id),
+  -- The baseline is a sample of the job's history: of its original agreement (guard below).
   CONSTRAINT job_closes_baseline_agreement_fkey FOREIGN KEY (company_id, job_id, baseline_agreement_id)
-    REFERENCES agreements (company_id, job_id, id),
+    REFERENCES estimate_history (company_id, job_id, agreement_id),
   CONSTRAINT job_closes_closed_by_fkey FOREIGN KEY (company_id, closed_by_actor_id)
     REFERENCES actors (company_id, id),
-  CONSTRAINT job_closes_baseline_high_cents_check CHECK (baseline_high_cents >= baseline_low_cents),
+  CONSTRAINT job_closes_baseline_high_cents_check CHECK (baseline_high_cents BETWEEN baseline_low_cents AND 9007199254740991),
   -- A range has both ends; one price has only its price (the low end).
   CONSTRAINT job_closes_mode_check CHECK ((price_mode = 'single') = (baseline_high_cents IS NULL)),
   -- Where it landed, as docs/estimate-assist.md classifies it: a range is inside from low to high,
@@ -373,14 +419,18 @@ CREATE TABLE job_closes (
 
 -- What a close may be. It is made with the next revision of its job (1, then one more for each
 -- correction), read under the job row lock, and stamped with the database's clock after that lock; it
--- never changes (the runtime has no UPDATE). A row the keys or the policy will refuse anyway (a job
--- the caller cannot see, a request id already used) is left to them. Runs as the caller, under the caller's row-level security.
+-- never changes (the runtime has no UPDATE). Its baseline is the job's original agreement, and its price
+-- mode and baseline cents are that agreement's history sample's, whatever agreement the close was
+-- confirmed against (the owner's Q1, option A). A row the keys or the policy will refuse anyway (a job
+-- the caller cannot see, a request id already used, a baseline with no sample of this job) is left to
+-- them. Runs as the caller, under the caller's row-level security.
 CREATE FUNCTION job_closes_guard() RETURNS trigger
   LANGUAGE plpgsql
   SET search_path = pg_catalog
 AS $$
 DECLARE
   latest integer;
+  baseline public.estimate_history;
 BEGIN
   PERFORM 1 FROM public.jobs j WHERE j.company_id = NEW.company_id AND j.id = NEW.job_id FOR UPDATE;
   IF NOT FOUND THEN
@@ -395,6 +445,20 @@ BEGIN
   IF NEW.revision <> coalesce(latest, 0) + 1 THEN
     RAISE EXCEPTION 'a job close takes the next close revision of its job' USING ERRCODE = '23514';
   END IF;
+  SELECT h.* INTO baseline FROM public.estimate_history h
+  WHERE h.company_id = NEW.company_id AND h.job_id = NEW.job_id AND h.agreement_id = NEW.baseline_agreement_id;
+  IF FOUND THEN
+    IF NOT EXISTS (
+      SELECT 1 FROM public.agreements a
+      WHERE a.company_id = NEW.company_id AND a.job_id = NEW.job_id AND a.id = NEW.baseline_agreement_id AND a.kind = 'original'
+    ) THEN
+      RAISE EXCEPTION 'a job close is compared with the job''s original agreement' USING ERRCODE = '23514';
+    END IF;
+    IF NEW.price_mode IS DISTINCT FROM baseline.price_mode OR NEW.baseline_low_cents IS DISTINCT FROM baseline.low_cents
+       OR NEW.baseline_high_cents IS DISTINCT FROM baseline.high_cents THEN
+      RAISE EXCEPTION 'a job close keeps the price mode and baseline cents of its baseline sample' USING ERRCODE = '23514';
+    END IF;
+  END IF;
   NEW.closed_at := clock_timestamp();
   RETURN NEW;
 END
@@ -406,38 +470,24 @@ CREATE TRIGGER job_closes_guard
   BEFORE INSERT ON job_closes
   FOR EACH ROW EXECUTE FUNCTION job_closes_guard();
 
--- 3. Estimate history.
-CREATE TABLE estimate_history (
-  company_id uuid NOT NULL REFERENCES companies (id),
-  job_id uuid NOT NULL,
-  agreement_id uuid NOT NULL,
-  signed_at timestamptz NOT NULL,
-  price_mode text NOT NULL CHECK (price_mode IN ('range', 'single')),
-  -- The signed priced result after any approved named adjustment, multipliers and additions, in cents.
-  low_cents bigint NOT NULL CHECK (low_cents >= 0),
-  high_cents bigint,
-  -- The low end's labor and materials total, in cents, when it can be read.
-  labor_material_low_cents bigint CHECK (labor_material_low_cents >= 0),
-  -- The signed rooms' categories, each once, in this order ('1', '2', '3', 'mold'), when they can be read.
-  room_categories text[] CHECK (room_categories IS NULL OR drying_categories_ok(room_categories)),
-  -- The signed drying plan's days and the job's area on its price table's basis, when the record has them.
-  planned_days integer CHECK (planned_days BETWEEN 1 AND 365),
-  area_sf numeric CHECK (area_sf >= 0 AND scale(area_sf) <= 2),
-  recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-  PRIMARY KEY (company_id, job_id, agreement_id),
-  CONSTRAINT estimate_history_job_fkey FOREIGN KEY (company_id, job_id) REFERENCES jobs (company_id, id),
-  CONSTRAINT estimate_history_agreement_fkey FOREIGN KEY (company_id, job_id, agreement_id)
-    REFERENCES agreements (company_id, job_id, id),
-  CONSTRAINT estimate_history_high_cents_check CHECK (high_cents >= low_cents),
-  CONSTRAINT estimate_history_mode_check CHECK ((price_mode = 'single') = (high_cents IS NULL))
-);
-
--- A company's samples by signing time, as the accuracy numbers read them.
-CREATE INDEX estimate_history_company_signed ON estimate_history (company_id, signed_at);
-
 -- 4. The drying watch's decisions.
 ALTER TABLE job_coordination
   ADD COLUMN drying_watch jsonb CONSTRAINT job_coordination_drying_watch_check CHECK (drying_watch IS NULL OR drying_watch_ok(drying_watch));
+
+-- A row the first watch action makes has coordination revision 0: no office change yet. The check of 0015
+-- allows it, and the insert trigger of 0018 (same name, same function) raises the job's field revision
+-- only for a row made at revision 1 or more (an office save), so a watch-made row leaves it; the update
+-- trigger still raises it when the office moves the revision from 0 to 1.
+ALTER TABLE job_coordination
+  DROP CONSTRAINT job_coordination_revision_check,
+  ADD CONSTRAINT job_coordination_revision_check CHECK (revision >= 0);
+
+DROP TRIGGER job_coordination_field_revision_insert ON job_coordination;
+CREATE TRIGGER job_coordination_field_revision_insert
+  AFTER INSERT ON job_coordination
+  FOR EACH ROW
+  WHEN (NEW.revision >= 1)
+  EXECUTE FUNCTION job_field_revision_bump();
 
 -- What the watch may do: start with its first receipt (revision 1), then gain exactly one receipt per
 -- change, every earlier receipt kept as it was, and none after a closing action; it is never removed.
@@ -575,9 +625,20 @@ CREATE POLICY estimate_history_insert ON estimate_history
   FOR INSERT TO dryscope_runtime
   WITH CHECK (company_id = app_company_id() AND NOT (SELECT app_operator_active()));
 
--- Table rights. No DELETE and no TRUNCATE. A reading's void only (the guard sets its time); the closes
--- and the history are insert-only; on job_coordination the watch column alone, apart from the office
--- columns of 0015 (its INSERT right of 0015 already covers the new column).
-GRANT SELECT, INSERT ON drying_readings, job_closes, estimate_history TO dryscope_runtime;
+-- Table rights. No DELETE and no TRUNCATE. Reading is table-wide; inserting names the columns a writer
+-- supplies, leaving out the ones the guards stamp (a reading's receive time and void, a close's time). A
+-- reading's void only is updated (the guard sets its time); the closes and the history are insert-only;
+-- on job_coordination the watch column alone, apart from the office columns of 0015 (its INSERT right
+-- of 0015 already covers the new column).
+GRANT SELECT ON drying_readings, job_closes, estimate_history TO dryscope_runtime;
+GRANT INSERT (id, company_id, job_id, kind, room_id, room_label, taken_at, payload, gpp, dew_point_f, dew_point_depression_f,
+              vapor_pressure_inhg, enthalpy_btu_lb, request_digest, created_by_actor_id)
+  ON drying_readings TO dryscope_runtime;
+GRANT INSERT (id, company_id, job_id, agreement_id, revision, request_digest, final_cents, actual_days, note, baseline_agreement_id,
+              price_mode, baseline_low_cents, baseline_high_cents, landed, closed_by_actor_id)
+  ON job_closes TO dryscope_runtime;
+GRANT INSERT (company_id, job_id, agreement_id, signed_at, price_mode, low_cents, high_cents, labor_material_low_cents, room_categories,
+              planned_days, area_sf)
+  ON estimate_history TO dryscope_runtime;
 GRANT UPDATE (voided_by_actor_id, void_change_id, void_digest) ON drying_readings TO dryscope_runtime;
 GRANT UPDATE (drying_watch) ON job_coordination TO dryscope_runtime;

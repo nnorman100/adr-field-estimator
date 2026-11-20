@@ -2,15 +2,25 @@ import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import postgres from 'postgres';
 import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from 'vitest';
+import { openDatabase } from '@/db/client';
+import { estimateHistory } from '@/db/drying-schema';
 import { applyMigrations, migrationsDirectory, readMigrations } from '@/db/migrate';
 import { withCompany, withOperator, type CompanyTransaction } from '@/db/tenant';
+import { capabilitiesFor } from '@/lib/access/can';
+import { signedRecordBytes, SIGNED_FORMAT, type SignedRecord } from '@/lib/agreements/record';
+import { agreementsService } from '@/lib/agreements/service';
+import { PROPOSAL_FORMAT, type Proposal } from '@/lib/estimates/proposal';
+import { canonicalJson } from '@/lib/field/canonical';
+import { jobsService } from '@/lib/jobs/service';
+import { fakeDrafts } from './draft-fake';
 import { createDiscardDatabase, emptyDiscardDatabase, loginUrl } from './postgres-harness';
 import { unprotectedRelations } from './row-security-guard';
 import { CHECK_VIOLATION, FOREIGN_KEY_VIOLATION, INSUFFICIENT_PRIVILEGE, UNIQUE_VIOLATION, digestOf, errorCode, newJob, ownerOf, seedJob } from './job-harness';
-import { agreementOf, insertAgreement, newSubmission, refusal, seedChain, seedCommitted, seedEstimate, seedSignature, type Chain } from './submission-harness';
+import { agreementOf, bytesOf, insertAgreement, newSubmission, refusal, seedChain, seedCommitted, seedEstimate, seedPin, seedSignature, seedVersion, type Chain } from './submission-harness';
+import { memoryBacking } from '../submissions/field-fake';
 import { resetTeamDatabase, startTeamServer, type Harness } from './team-harness';
 
 // S5b-10 slice 10A: migration 0020, the drying log (drying_readings), the job close (job_closes), the
@@ -159,17 +169,16 @@ const closeOf = (s: Signed, extra: Partial<Close> = {}): Close => ({
   ...extra,
 });
 
-const addClose = (c: Close, caller = c.company ?? h.seed.a) =>
-  as(caller, (tx) =>
-    tx.execute(sql`
+const insertClose = (tx: CompanyTransaction, c: Close) =>
+  tx.execute(sql`
       INSERT INTO job_closes (id, company_id, job_id, agreement_id, revision, request_digest, final_cents, actual_days, note, baseline_agreement_id, price_mode,
                               baseline_low_cents, baseline_high_cents, landed, closed_by_actor_id)
       VALUES (${c.id}::uuid, ${c.company ?? h.seed.a}::uuid, ${c.job}::uuid, ${c.agreement}::uuid, ${c.revision ?? 1}, ${digestOf(c.id)}, ${c.final}, ${c.days ?? null}::integer,
               ${c.note ?? ''}, ${c.baseline ?? c.agreement}::uuid, ${c.mode ?? 'range'}, ${c.low ?? 110000}, ${c.high === undefined ? 140000 : c.high}::bigint, ${c.landed},
               ${c.actor ?? h.seed.ownerA.actor}::uuid)
       RETURNING id::text, revision, closed_at
-    `),
-  );
+    `);
+const addClose = (c: Close, caller = c.company ?? h.seed.a) => as(caller, (tx) => insertClose(tx, c));
 
 type Sample = {
   job: string;
@@ -184,9 +193,8 @@ type Sample = {
   company?: string;
 };
 
-const addSample = (s: Sample, caller = s.company ?? h.seed.a) =>
-  as(caller, (tx) =>
-    tx.execute(sql`
+const insertSample = (tx: CompanyTransaction, s: Sample) =>
+  tx.execute(sql`
       INSERT INTO estimate_history (company_id, job_id, agreement_id, signed_at, price_mode, low_cents, high_cents, labor_material_low_cents, room_categories,
                                     planned_days, area_sf)
       VALUES (${s.company ?? h.seed.a}::uuid, ${s.job}::uuid, ${s.agreement}::uuid, '2026-11-18T18:00:00Z', ${s.mode ?? 'range'}, ${s.low ?? 110000},
@@ -194,8 +202,17 @@ const addSample = (s: Sample, caller = s.company ?? h.seed.a) =>
               ${s.categories === undefined ? '{2,mold}' : s.categories === null ? null : `{${s.categories.join(',')}}`}::text[],
               ${s.days === undefined ? 4 : s.days}::integer, ${s.area === undefined ? '412.50' : s.area}::numeric)
       RETURNING agreement_id::text
-    `),
-  );
+    `);
+const addSample = (s: Sample, caller = s.company ?? h.seed.a) => as(caller, (tx) => insertSample(tx, s));
+
+// The signed figures of a job's original agreement, as its history sample holds them: a close is compared
+// with them (the owner's Q1, option A), and a close of a job with no sample has no baseline to name.
+const RANGE = { mode: 'range', low: 110000, high: 140000 } as const;
+const SINGLE = { mode: 'single', low: 125000, high: null } as const;
+const baselined = async (s: Signed, figures: Pick<Sample, 'mode' | 'low' | 'high'> = RANGE): Promise<Signed> => {
+  await addSample({ job: s.job, agreement: s.agreement, company: s.company, ...figures });
+  return s;
+};
 
 // --- The watch -------------------------------------------------------------------------------------
 
@@ -215,12 +232,14 @@ const coordinationOf = async (job: string): Promise<Coordination> =>
     `
   )[0]!;
 
-// The watch as the write sets it: the first action makes the coordination row with its defaults, and
-// on conflict only the watch column changes.
+const fieldRevisionOf = async (job: string) => (await h.admin<{ revision: number }[]>`SELECT field_revision::int AS revision FROM jobs WHERE id = ${job}`)[0]!.revision;
+
+// The watch as the write sets it: the first action makes the coordination row at coordination revision 0
+// (no office change yet) with its other defaults, and on conflict only the watch column changes.
 const writeWatch = (s: Signed, watch: unknown, caller = s.company) =>
   as(caller, (tx) =>
     tx.execute(sql`
-      INSERT INTO job_coordination (company_id, job_id, drying_watch) VALUES (${s.company}::uuid, ${s.job}::uuid, ${json(watch)}::text::jsonb)
+      INSERT INTO job_coordination (company_id, job_id, revision, drying_watch) VALUES (${s.company}::uuid, ${s.job}::uuid, 0, ${json(watch)}::text::jsonb)
       ON CONFLICT (company_id, job_id) DO UPDATE SET drying_watch = EXCLUDED.drying_watch
       RETURNING job_id::text
     `),
@@ -236,7 +255,7 @@ async function act(s: Signed, receipt: Receipt) {
 describe('migration 0020: rights and row-level security', () => {
   const TABLES = ['drying_readings', 'estimate_history', 'job_closes'];
 
-  it('forces row-level security with company policies, grants no DELETE, and lets the runtime change only a void and the watch', async () => {
+  it('forces row-level security with company policies, grants no DELETE, inserts only the creation columns, and lets the runtime change only a void and the watch', async () => {
     expect(await unprotectedRelations(h.admin)).toEqual([]);
     expect(
       await h.admin`
@@ -253,7 +272,32 @@ describe('migration 0020: rights and row-level security', () => {
         SELECT table_name AS table, privilege_type AS privilege FROM information_schema.role_table_grants
         WHERE grantee = 'dryscope_runtime' AND table_name = ANY(${TABLES}) ORDER BY 1, 2
       `,
-    ).toEqual(TABLES.flatMap((table) => [{ table, privilege: 'INSERT' }, { table, privilege: 'SELECT' }]));
+    ).toEqual(TABLES.map((table) => ({ table, privilege: 'SELECT' })));
+    // Inserting is granted by column: not a reading's receive time or void, nor a close's time.
+    const insertable = async (table: string) =>
+      (
+        await h.admin<{ column: string }[]>`
+          SELECT column_name AS column FROM information_schema.column_privileges
+          WHERE grantee = 'dryscope_runtime' AND table_name = ${table} AND privilege_type = 'INSERT'
+        `
+      )
+        .map((row) => row.column)
+        .sort();
+    expect(await insertable('drying_readings')).toEqual(
+      [
+        'id', 'company_id', 'job_id', 'kind', 'room_id', 'room_label', 'taken_at', 'payload', 'gpp', 'dew_point_f', 'dew_point_depression_f',
+        'vapor_pressure_inhg', 'enthalpy_btu_lb', 'request_digest', 'created_by_actor_id',
+      ].sort(),
+    );
+    expect(await insertable('job_closes')).toEqual(
+      [
+        'id', 'company_id', 'job_id', 'agreement_id', 'revision', 'request_digest', 'final_cents', 'actual_days', 'note', 'baseline_agreement_id',
+        'price_mode', 'baseline_low_cents', 'baseline_high_cents', 'landed', 'closed_by_actor_id',
+      ].sort(),
+    );
+    expect(await insertable('estimate_history')).toEqual(
+      ['company_id', 'job_id', 'agreement_id', 'signed_at', 'price_mode', 'low_cents', 'high_cents', 'labor_material_low_cents', 'room_categories', 'planned_days', 'area_sf'].sort(),
+    );
     expect(
       await h.admin`
         SELECT table_name AS table, column_name AS column FROM information_schema.column_privileges
@@ -275,8 +319,8 @@ describe('migration 0020: rights and row-level security', () => {
     const s = await signedJob();
     const reading = readingOf(s.job, 'air');
     await addReading(reading);
+    await baselined(s);
     await addClose(closeOf(s));
-    await addSample({ job: s.job, agreement: s.agreement });
     await act(s, receiptOf(s));
 
     for (const statement of ['DELETE FROM drying_readings', 'DELETE FROM job_closes', 'DELETE FROM estimate_history', 'TRUNCATE drying_readings']) {
@@ -292,6 +336,7 @@ describe('migration 0020: rights and row-level security', () => {
     }
     expect(await errorCode(addReading(readingOf(s.job, 'air'), h.seed.b))).toBe(INSUFFICIENT_PRIVILEGE);
     expect(await errorCode(addClose(closeOf(s, { revision: 2 }), h.seed.b))).toBe(INSUFFICIENT_PRIVILEGE);
+    expect(await errorCode(addSample({ job: s.job, agreement: s.agreement }, h.seed.b))).toBe(INSUFFICIENT_PRIVILEGE);
     expect(rows(await voidReading(reading.id, randomUUID(), h.seed.estimatorA.actor, h.seed.b))).toEqual([]);
     expect(rows(await as(h.seed.b, (tx) => tx.execute(sql`UPDATE job_coordination SET drying_watch = NULL RETURNING job_id`)))).toEqual([]);
 
@@ -313,10 +358,21 @@ describe('migration 0020: rights and row-level security', () => {
       expect({ table, n: rows(await asOperator((tx) => tx.execute(sql.raw(`SELECT * FROM ${table}`)), true)).length }).toEqual({ table, n: 1 });
     }
     expect(rows(await asOperator((tx) => tx.execute(sql`SELECT drying_watch->>'revision' AS revision FROM job_coordination`), true))).toEqual([{ revision: '1' }]);
+    const added = await changeOrder(s);
     expect(rows(await asOperator((tx) => tx.execute(sql`UPDATE drying_readings SET voided_by_actor_id = ${h.seed.ownerA.actor}::uuid RETURNING id`)))).toEqual([]);
     expect(rows(await asOperator((tx) => tx.execute(sql`UPDATE job_coordination SET drying_watch = NULL RETURNING job_id`)))).toEqual([]);
     expect(await errorCode(asOperator((tx) => addReadingIn(tx, readingOf(s.job, 'thermal'))))).toBe(INSUFFICIENT_PRIVILEGE);
-    expect(await h.admin`SELECT count(*)::int AS n FROM drying_readings WHERE voided_at IS NOT NULL`).toEqual([{ n: 0 }]);
+    // A valid next close revision and a fresh history sample (a change order's, of the same job) are refused too.
+    expect(await errorCode(asOperator((tx) => insertClose(tx, closeOf(s, { revision: 2, final: 151000, landed: 'above' }))))).toBe(INSUFFICIENT_PRIVILEGE);
+    expect(await errorCode(asOperator((tx) => insertSample(tx, { job: s.job, agreement: added, ...SINGLE, laborMaterial: null, categories: null, days: null, area: null })))).toBe(
+      INSUFFICIENT_PRIVILEGE,
+    );
+    expect(
+      await h.admin`
+        SELECT (SELECT count(*)::int FROM drying_readings) AS readings, (SELECT count(*)::int FROM job_closes) AS closes, (SELECT count(*)::int FROM estimate_history) AS history,
+               (SELECT count(*)::int FROM drying_readings WHERE voided_at IS NOT NULL) AS voided
+      `,
+    ).toEqual([{ readings: 1, closes: 1, history: 1, voided: 0 }]);
   });
 });
 
@@ -327,6 +383,9 @@ describe('migration 0020: drying_readings', () => {
     // A whole-job reading has no room, and outside air belongs to no room.
     expect(rows(await addReading(readingOf(s.job, 'material', { room: null, label: null })))).toHaveLength(1);
     expect(rows(await addReading(readingOf(s.job, 'air', { room: null, label: null, payload: { ...PAYLOADS.air, zone: 'outside' } })))).toHaveLength(1);
+    // Every field is bounded by characters, not bytes: a 300-character boundary and a 400-character note in Chinese hold.
+    expect(rows(await addReading(readingOf(s.job, 'thermal', { payload: { ...PAYLOADS.thermal, boundary: '界'.repeat(300), note: '界'.repeat(400) } })))).toHaveLength(1);
+    expect(rows(await addReading(readingOf(s.job, 'material', { payload: { ...PAYLOADS.material, material: '界'.repeat(100), unit: '界'.repeat(20), note: '界'.repeat(500) } })))).toHaveLength(1);
     // A material reading with no dry standard.
     expect(rows(await addReading(readingOf(s.job, 'material', { payload: { ...PAYLOADS.material, dry_standard: null } })))).toHaveLength(1);
     const [air] = await h.admin`
@@ -348,6 +407,7 @@ describe('migration 0020: drying_readings', () => {
     expect(await refused(readingOf(s.job, 'material', { payload: { ...PAYLOADS.material, note: 'n'.repeat(501) } }))).toBe('drying_readings_payload_check');
     expect(await refused(readingOf(s.job, 'thermal', { payload: { ...PAYLOADS.thermal, delta_t_f: -200.5 } }))).toBe('drying_readings_payload_check');
     expect(await refused(readingOf(s.job, 'thermal', { payload: { ...PAYLOADS.thermal, pattern: 'warm' } }))).toBe('drying_readings_payload_check');
+    expect(await refused(readingOf(s.job, 'thermal', { payload: { ...PAYLOADS.thermal, boundary: '界'.repeat(301) } }))).toBe('drying_readings_payload_check');
     expect(await refused(readingOf(s.job, 'thermal', { payload: PAYLOADS.air }))).toBe('drying_readings_payload_check');
     // The air values come with an air reading only, all five or none.
     expect(await refused(readingOf(s.job, 'air', { air: null }))).toBe('drying_readings_air_values_check');
@@ -431,7 +491,7 @@ describe('migration 0020: drying_readings', () => {
 
 describe('migration 0020: job_closes', () => {
   it('is append-only: each correction takes the next revision, and every earlier receipt stays readable by its request id', async () => {
-    const s = await signedJob();
+    const s = await baselined(await signedJob());
     const first = closeOf(s);
     const [made] = rows<{ revision: number; closed_at: Date }>(await addClose(first));
     expect(made!.revision).toBe(1);
@@ -450,7 +510,7 @@ describe('migration 0020: job_closes', () => {
       expect.objectContaining({ revision: 3 }),
     ]);
     // Another job's revisions are its own.
-    const other = await signedJob();
+    const other = await baselined(await signedJob());
     expect(rows(await addClose(closeOf(other)))).toHaveLength(1);
     // A close never changes: the runtime has no UPDATE (and no DELETE).
     expect(await errorCode(as(h.seed.a, (tx) => tx.execute(sql`UPDATE job_closes SET note = 'changed'`)))).toBe(INSUFFICIENT_PRIVILEGE);
@@ -474,22 +534,31 @@ describe('migration 0020: job_closes', () => {
     expect(await refused({ mode: 'single', high: 140000, final: 100000, landed: 'inside' })).toBe('job_closes_mode_check');
     expect(await refused({ mode: 'range', high: null })).toBe('job_closes_mode_check');
     expect(await refused({ low: 150000, high: 140000 })).toBe('job_closes_baseline_high_cents_check');
+    // A baseline above 2^53 - 1 cents is refused, so a number holds every baseline exactly.
+    expect(await refused({ low: 9007199254740992, high: 9007199254740992, landed: 'below' })).toBe('job_closes_baseline_high_cents_check');
+    expect(await refused({ mode: 'single', high: null, low: 9007199254740992, final: 125000, landed: 'inside' })).toBe('job_closes_baseline_low_cents_check');
 
     // The bounds themselves are accepted, each as its own correction: the inclusive range ends, one
-    // price exactly, the largest invoice, zero days and 365 days, a 300-character note over lines.
+    // price exactly, the largest invoice, zero days and 365 days, a 300-character note over lines. A
+    // range job and a one-price job have each their own signed figures.
+    const ranged = await baselined(await signedJob());
     const accepted: Partial<Close>[] = [
       { final: 110000, landed: 'inside', days: 0 },
       { final: 140000, landed: 'inside', days: 365 },
       { final: 109999, landed: 'below', note: `${'n'.repeat(298)}\r\n` },
-      { mode: 'single', high: null, low: 125000, final: 125000, landed: 'inside' },
-      { mode: 'single', high: null, low: 125000, final: 200000000, landed: 'above' },
       { final: 1, landed: 'below', days: null },
     ];
-    for (const [index, extra] of accepted.entries()) expect(rows(await addClose(closeOf(s, { revision: index + 1, ...extra })))).toHaveLength(1);
+    for (const [index, extra] of accepted.entries()) expect(rows(await addClose(closeOf(ranged, { revision: index + 1, ...extra })))).toHaveLength(1);
+    const priced = await baselined(await signedJob(), SINGLE);
+    const single: Partial<Close>[] = [
+      { ...SINGLE, final: 125000, landed: 'inside' },
+      { ...SINGLE, final: 200000000, landed: 'above' },
+    ];
+    for (const [index, extra] of single.entries()) expect(rows(await addClose(closeOf(priced, { revision: index + 1, ...extra })))).toHaveLength(1);
   });
 
   it('is bound to an agreement of its own job, and keeps its baseline agreement as its own reference', async () => {
-    const s = await signedJob();
+    const s = await baselined(await signedJob());
     const added = await changeOrder(s);
     // Confirmed against the change order in force, compared with the original (the owner's Q1, option A).
     expect(rows(await addClose(closeOf(s, { agreement: added, baseline: s.agreement })))).toHaveLength(1);
@@ -505,6 +574,39 @@ describe('migration 0020: job_closes', () => {
     // A job with no agreement (not signed) cannot close: there is nothing to confirm it against.
     const unsigned = await seedJob(h.admin, newJob(h.seed.a, h.seed.ownerA.actor));
     expect(await refusal(addClose(closeOf(s, { job: unsigned.id })))).toMatchObject({ code: FOREIGN_KEY_VIOLATION });
+    // A signed job whose original has no history sample has no baseline to name.
+    const unsampled = await signedJob();
+    expect(await refusal(addClose(closeOf(unsampled)))).toMatchObject({ code: FOREIGN_KEY_VIOLATION, constraint: 'job_closes_baseline_agreement_fkey' });
+  });
+
+  it('is compared with the job’s original agreement, by that sample’s price mode and cents, never a change order’s', async () => {
+    // A range job and a one-price job, each with its own signed figures.
+    const ranged = await baselined(await signedJob());
+    const priced = await baselined(await signedJob(), SINGLE);
+    const message = async (c: Close) => (await refusal(addClose(c)))?.message;
+    const mismatch = 'a job close keeps the price mode and baseline cents of its baseline sample';
+
+    // The change order has its own sample with different totals; it cannot be the baseline, even by its own figures.
+    const added = await changeOrder(ranged);
+    await addSample({ job: ranged.job, agreement: added, mode: 'range', low: 150000, high: 190000, laborMaterial: null, categories: null, days: null, area: null });
+    expect(await message(closeOf(ranged, { agreement: added, baseline: added, low: 150000, high: 190000, final: 160000, landed: 'inside' }))).toBe(
+      "a job close is compared with the job's original agreement",
+    );
+    // A close that states another mode, low end or high end than the original's sample is refused, however it classifies.
+    expect(await message(closeOf(ranged, { mode: 'single', low: 110000, high: null, final: 100000, landed: 'inside' }))).toBe(mismatch);
+    expect(await message(closeOf(ranged, { low: 125000, high: 140000, final: 130000, landed: 'inside' }))).toBe(mismatch);
+    expect(await message(closeOf(ranged, { low: 110000, high: 150000, final: 145000, landed: 'inside' }))).toBe(mismatch);
+    expect(await message(closeOf(priced, { mode: 'range', low: 125000, high: 150000, final: 130000, landed: 'inside' }))).toBe(mismatch);
+    expect(await message(closeOf(priced, { ...SINGLE, low: 130000, final: 130000, landed: 'inside' }))).toBe(mismatch);
+    expect(await h.admin`SELECT count(*)::int AS n FROM job_closes`).toEqual([{ n: 0 }]);
+
+    // The original's own figures are accepted: the invoice that is inside a range stays inside while a change order moves the total.
+    expect(rows(await addClose(closeOf(ranged, { agreement: added, baseline: ranged.agreement, final: 130000, landed: 'inside' })))).toHaveLength(1);
+    expect(rows(await addClose(closeOf(priced, { ...SINGLE, final: 130000, landed: 'above' })))).toHaveLength(1);
+    expect(await h.admin`SELECT job_id::text AS job, price_mode AS mode, baseline_low_cents::int AS low, baseline_high_cents::int AS high, landed FROM job_closes ORDER BY price_mode`).toEqual([
+      { job: ranged.job, mode: 'range', low: 110000, high: 140000, landed: 'inside' },
+      { job: priced.job, mode: 'single', low: 125000, high: null, landed: 'above' },
+    ]);
   });
 });
 
@@ -538,25 +640,51 @@ describe('migration 0020: estimate_history', () => {
     expect(await refused({ categories: ['4'] })).toBe('estimate_history_room_categories_check');
     expect(await refused({ categories: [] })).toBe('estimate_history_room_categories_check');
     expect(await refused({ days: 0 })).toBe('estimate_history_planned_days_check');
-    expect(await refused({ area: '1.005' })).toBe('estimate_history_area_sf_check');
+    expect(await refused({ area: '-1' })).toBe('estimate_history_area_sf_check');
+    // A cents figure above 2^53 - 1 is refused, in each of the three cents columns.
+    expect(await refused({ low: 9007199254740992, high: null, mode: 'single' })).toBe('estimate_history_low_cents_check');
+    expect(await refused({ low: 1, high: 9007199254740992 })).toBe('estimate_history_high_cents_check');
+    expect(await refused({ laborMaterial: 9007199254740992 })).toBe('estimate_history_labor_material_low_cents_check');
+  });
+
+  it('keeps the signed area at the precision the field form took it, and every cents figure up to 2^53 - 1 exactly, as the typed schema reads them', async () => {
+    const precise = await signedJob();
+    const largest = await signedJob();
+    expect(rows(await addSample({ job: precise.job, agreement: precise.agreement, area: '125.125' }))).toHaveLength(1);
+    expect(rows(await addSample({ job: largest.job, agreement: largest.agreement, low: 9007199254740991, high: 9007199254740991, laborMaterial: 9007199254740991, area: '1.005' }))).toHaveLength(1);
+    expect(await h.admin`SELECT area_sf::text AS area FROM estimate_history WHERE job_id = ${precise.job}`).toEqual([{ area: '125.125' }]);
+
+    // The typed view reads the figure back exactly, and db.query sees the three tables.
+    const [typed] = await as(h.seed.a, (tx) => tx.select().from(estimateHistory).where(eq(estimateHistory.jobId, largest.job)));
+    expect(typed).toMatchObject({ lowCents: Number.MAX_SAFE_INTEGER, highCents: Number.MAX_SAFE_INTEGER, laborMaterialLowCents: Number.MAX_SAFE_INTEGER, areaSf: '1.005' });
+    expect(Number.isSafeInteger(typed!.lowCents)).toBe(true);
+    const [queried] = await as(h.seed.a, (tx) => tx.query.estimateHistory.findMany({ where: eq(estimateHistory.jobId, largest.job) }));
+    expect(queried).toEqual(typed);
+    expect(await as(h.seed.a, (tx) => tx.query.dryingReadings.findMany())).toEqual([]);
+    expect(await as(h.seed.a, (tx) => tx.query.jobCloses.findMany())).toEqual([]);
   });
 });
 
 describe('migration 0020: the drying watch on job_coordination', () => {
-  it('makes the coordination row with its defaults on the first action, stamps each receipt’s time, and keeps the office versions apart', async () => {
+  it('makes the coordination row at revision 0 on the first action, stamps each receipt’s time, and keeps the office versions and the field revision apart', async () => {
     const s = await signedJob();
+    const field = await fieldRevisionOf(s.job);
     await act(s, receiptOf(s));
     const made = await coordinationOf(s.job);
-    expect(made).toMatchObject({ revision: 1, notes: '', watch: { revision: 1 } });
+    expect(made).toMatchObject({ revision: 0, notes: '', watch: { revision: 1 } });
+    expect(await fieldRevisionOf(s.job)).toBe(field);
     expect(made.watch!.receipts[0]!.at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/);
 
     // An office change leaves the watch; a watch change leaves the notes, the coordination revision and its time.
     await as(h.seed.a, (tx) => tx.execute(sql`UPDATE job_coordination SET office_notes = 'Gate code 4411', revision = revision + 1, updated_at = now() WHERE job_id = ${s.job}::uuid`));
     const office = await coordinationOf(s.job);
-    expect(office).toMatchObject({ revision: 2, notes: 'Gate code 4411', watch: made.watch });
+    expect(office).toMatchObject({ revision: 1, notes: 'Gate code 4411', watch: made.watch });
+    const afterOffice = await fieldRevisionOf(s.job);
+    expect(afterOffice).toBeGreaterThan(field);
     await act(s, receiptOf(s, 'extend'));
     const watched = await coordinationOf(s.job);
-    expect(watched).toMatchObject({ revision: 2, notes: 'Gate code 4411', updated: office.updated, watch: { revision: 2 } });
+    expect(watched).toMatchObject({ revision: 1, notes: 'Gate code 4411', updated: office.updated, watch: { revision: 2 } });
+    expect(await fieldRevisionOf(s.job)).toBe(afterOffice);
     expect(watched.watch!.receipts[0]).toEqual(made.watch!.receipts[0]);
 
     // A watch on a job that already has office notes: the row is kept and only the watch is set.
@@ -564,6 +692,23 @@ describe('migration 0020: the drying watch on job_coordination', () => {
     await as(h.seed.a, (tx) => tx.execute(sql`INSERT INTO job_coordination (company_id, job_id, office_notes) VALUES (${h.seed.a}::uuid, ${noted.job}::uuid, 'Call first')`));
     await act(noted, receiptOf(noted, 'mark_dry'));
     expect(await coordinationOf(noted.job)).toMatchObject({ revision: 1, notes: 'Call first', watch: { revision: 1, receipts: [expect.objectContaining({ action: 'mark_dry' })] } });
+  });
+
+  it('leaves an office save opened before the first watch action standing: it still succeeds, moves the revision to 1 and raises the field revision', async () => {
+    const s = await signedJob();
+    const owner = { companyId: s.company, actorId: h.seed.ownerA.actor, uid: 'owner-a', role: 'owner' as const, capabilities: capabilitiesFor('owner', { priceBooks: false }) };
+    // The office screen opens with no coordination row: revision 0.
+    expect((await h.jobs.coordination(owner, s.job)).revision).toBe(0);
+    const field = await fieldRevisionOf(s.job);
+    // The first watch action lands before the office saves.
+    await act(s, receiptOf(s));
+    expect(await fieldRevisionOf(s.job)).toBe(field);
+    expect((await h.jobs.coordination(owner, s.job)).revision).toBe(0);
+    // The save, still expecting revision 0, is not stale.
+    const saved = await h.jobs.saveCoordination(owner, s.job, { changeId: randomUUID(), revision: 0, notes: 'Gate code 4411' });
+    expect(saved).toMatchObject({ revision: 1, notes: 'Gate code 4411' });
+    expect(await coordinationOf(s.job)).toMatchObject({ revision: 1, notes: 'Gate code 4411', watch: { revision: 1 } });
+    expect(await fieldRevisionOf(s.job)).toBeGreaterThan(field);
   });
 
   it('adds exactly one receipt per change, keeps the earlier ones, and takes nothing after a closing action', async () => {
@@ -609,6 +754,17 @@ describe('migration 0020: the drying watch on job_coordination', () => {
       revision: 3,
       receipts: [expect.objectContaining({ action: 'extend' }), expect.objectContaining({ action: 'extend' }), expect.objectContaining({ action: 'close' })],
     });
+  });
+
+  it('takes a reason over several lines, and refuses a blank one', async () => {
+    const s = await signedJob();
+    await act(s, receiptOf(s, 'extend', { reason: 'Ceiling still wet\nRecheck Friday' }));
+    await act(s, receiptOf(s, 'mark_dry', { reason: 'Dry at every point\r\n\tReadings logged' }));
+    expect((await coordinationOf(s.job)).watch!.receipts.map((receipt) => receipt.reason)).toEqual(['Ceiling still wet\nRecheck Friday', 'Dry at every point\r\n\tReadings logged']);
+    const blank = await signedJob();
+    for (const reason of ['', ' \t ', '\n\n', ' \r\n \u00a0\u3000 ', 'bell\u0007']) {
+      expect({ reason, found: (await refusal(act(blank, receiptOf(blank, 'extend', { reason }))))?.constraint }).toEqual({ reason, found: 'job_coordination_drying_watch_check' });
+    }
   });
 
   it('holds up to 100 extensions and then one closing action', async () => {
@@ -663,14 +819,38 @@ describe('migration 0020: applied to an existing database', () => {
       const [actor] = await admin<{ id: string }[]>`
         INSERT INTO actors (company_id, auth_tenant_id, uid, email) VALUES (${company!.id}, 'tenant-existing', 'u1', 'u1@example.test') RETURNING id
       `;
-      // A signed job (its whole chain and its original agreement), with office notes, and a draft job.
-      const chain = await seedChain(admin, company!.id, actor!.id);
-      const a = agreementOf(chain);
+      // A signed job (its whole chain and its original agreement, its documents bytes a signed record the app
+      // reads), with office notes, and a draft job.
+      const proposal = { format: PROPOSAL_FORMAT, heading: 'Existing proposal' } as unknown as Proposal;
+      const seededJob = await seedJob(admin, newJob(company!.id, actor!.id));
+      const version = await seedVersion(admin, company!.id, actor!.id);
+      const submission = await seedCommitted(admin, newSubmission(company!.id, seededJob.id, actor!.id));
+      const pin = await seedPin(admin, { company: company!.id, job: seededJob.id, version: version.id, actor: actor!.id });
+      const proposalBytes = bytesOf(canonicalJson(proposal));
+      const estimate = await seedEstimate(admin, { company: company!.id, job: seededJob.id, submission: submission.id, pin, actor: actor!.id, hash: version.hash, proposal: proposalBytes });
+      const signature = await seedSignature(admin, company!.id, seededJob.id, actor!.id);
+      const chain = { company: company!.id, actor: actor!.id, job: seededJob, version, submission, pin, estimate, signature };
+      const agreementId = randomUUID();
+      const record: SignedRecord = {
+        format: SIGNED_FORMAT,
+        agreement_id: agreementId,
+        job_id: seededJob.id,
+        kind: 'original',
+        signed_at: '2026-11-18T18:00:00.000Z',
+        signer: { name: 'Pat Customer' },
+        signed_with: { kind: 'device', presented_by: { actor_id: actor!.id, name: 'Owner' } },
+        signature: { id: signature, sha256: digestOf('signature'), content_type: 'image/png' },
+        proposal_sha256: proposalBytes.sha,
+        proposal,
+        documents: { itemized_claim: [], letter: 'Synthetic letter.', photo_log: [], claim: {}, compliance_notes: [] },
+        basis: { estimate_id: estimate.id, submission_id: submission.id },
+      };
+      const a = agreementOf(chain, { id: agreementId });
       await admin`
         INSERT INTO agreements (id, company_id, job_id, submission_id, estimate_id, kind, signer_kind, signer_name, signature_evidence_id, proposal_sha256, priced_result,
                                 version_id, content_hash, engine_version, documents_bytes, request_digest, created_by_actor_id)
         SELECT ${a.id}, ${a.company}, ${a.job}, ${a.submission}, ${a.estimate}, 'original', 'device', 'Pat Customer', ${a.signature}, ${a.proposalSha}, e.priced_result,
-               ${a.version}, ${a.hash}, e.engine_version, ${Buffer.from('{"documents":"as signed"}')}, ${digestOf(a.id)}, ${a.actor}
+               ${a.version}, ${a.hash}, e.engine_version, ${signedRecordBytes(record)}, ${digestOf(a.id)}, ${a.actor}
         FROM job_estimates e WHERE e.id = ${a.estimate}
       `;
       await admin`UPDATE jobs SET status = 'signed', revision = revision + 1 WHERE id = ${chain.job.id}`;
@@ -690,22 +870,20 @@ describe('migration 0020: applied to an existing database', () => {
       expect(
         await admin`SELECT (SELECT count(*)::int FROM drying_readings) AS readings, (SELECT count(*)::int FROM job_closes) AS closes, (SELECT count(*)::int FROM estimate_history) AS history`,
       ).toEqual([{ readings: 0, closes: 0, history: 0 }]);
-      // Both jobs still open: each reads as before through a company transaction of the runtime role.
-      const runtime = postgres(loginUrl(database.databaseUrl, shared.roles.api), { max: 1, connect_timeout: 10, onnotice: () => {} });
+      // Both jobs still open: each reads as before through the app's own services, as the runtime role.
+      const handle = openDatabase({ APP_ENV: 'test', DATABASE_URL: loginUrl(database.databaseUrl, shared.roles.api) });
       try {
-        const opened = await runtime.begin(async (tx) => {
-          await tx`SELECT set_config('app.company_id', ${company!.id}, true)`;
-          return tx<{ id: string; status: string }[]>`SELECT id::text, status FROM jobs ORDER BY id`;
-        });
-        const byId = (x: { id: string }, y: { id: string }) => x.id.localeCompare(y.id);
-        expect([...opened].sort(byId)).toEqual(
-          [
-            { id: chain.job.id, status: 'signed' },
-            { id: draft.id, status: 'draft' },
-          ].sort(byId),
-        );
+        const caller = { companyId: company!.id, actorId: actor!.id, uid: 'u1', role: 'owner' as const, capabilities: capabilitiesFor('owner', { priceBooks: false }) };
+        const jobs = jobsService(handle.db, fakeDrafts(memoryBacking()));
+        expect((await jobs.read(caller, chain.job.id)).job).toMatchObject({ id: chain.job.id, status: 'signed' });
+        expect((await jobs.read(caller, draft.id)).job).toMatchObject({ id: draft.id, status: 'draft' });
+        const signed = await agreementsService(handle.db).read(caller, chain.job.id);
+        expect(signed.job).toMatchObject({ id: chain.job.id, status: 'signed' });
+        expect(signed.agreement?.id).toBe(agreementId);
+        expect(signed.agreement?.record).toEqual(record);
+        expect((await jobs.list(caller, { scope: null, limit: 50, cursor: null })).jobs.map((job) => job.id).sort()).toEqual([chain.job.id, draft.id].sort());
       } finally {
-        await runtime.end({ timeout: 5 });
+        await handle.close();
       }
     } finally {
       await rm(dir, { recursive: true, force: true });

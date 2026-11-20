@@ -56,7 +56,7 @@ the read-only operator policy (an operator reads through `withOperator`; every w
 | Table | What it holds | Runtime rights |
 | --- | --- | --- |
 | `job_assignments` | An estimator assigned to a job: `id` made on the phone, `job_id`, `estimator_actor_id`, `request_digest` (SHA-256 of the assign request), `assigned_by_actor_id`, `assigned_at`, and `ended_at` with `ended_by_actor_id` once unassigned. At most one active row per job and estimator | `SELECT`, `INSERT`, and `UPDATE` of `ended_at` and `ended_by_actor_id`; a trigger keeps every other column as made, lets an active row end once (the time from the clock) and freezes an ended row |
-| `job_coordination` | At most one row per job: `office_notes` (up to 4,000 characters; line breaks and tabs, no other control character), `revision` (the coordination revision: 1 when the row is made, up by one with each note or field owner change), `last_change_id`; since 0020 also `drying_watch`, the drying watch's accepted actions with their own revision, apart from the coordination revision ([Drying log and outcomes](postgres-drying-outcomes.md)) | `SELECT`, `INSERT`, and `UPDATE` of `office_notes`, `revision`, `last_change_id` and `updated_at`, and since 0020 of `drying_watch` |
+| `job_coordination` | At most one row per job: `office_notes` (up to 4,000 characters; line breaks and tabs, no other control character), `revision` (the coordination revision: 1 when an office save or field owner change makes the row, 0 when the first drying watch action makes it since 0020, up by one with each note or field owner change), `last_change_id`; since 0020 also `drying_watch`, the drying watch's accepted actions with their own revision, apart from the coordination revision ([Drying log and outcomes](postgres-drying-outcomes.md)) | `SELECT`, `INSERT`, and `UPDATE` of `office_notes`, `revision`, `last_change_id` and `updated_at`, and since 0020 of `drying_watch` |
 | `agreement_corrections` | A correction of a signed job's `property_address`, `customer_name`, `customer_phone` or `customer_email` beside its agreement (same job): `id` made on the phone, `field`, `value` (one line, the corrected column's limits), `request_digest`, `created_by_actor_id`, `created_at` | `SELECT`, `INSERT`; never changed or removed, and the agreement it sits beside never changes |
 
 - Who owns a job's field work is `jobs.field_owner_actor_id` (0010): empty on an office user's job until the
@@ -111,7 +111,8 @@ Copy switch to it in later slices.
 
 - `field_revision` (starts at 0) rises by exactly one, inside the database, every time an input of the
   drafts' life cycle changes: the job's `status`, `current_draft_id`, `field_owner_actor_id` or `copied_from_job_id`; its
-  `job_coordination` row being made or its `revision` moving; a `job_submissions` row being made or its
+  `job_coordination` row being made at revision 1 or more (one made at revision 0, by the first drying watch action,
+  does not) or its `revision` moving; a `job_submissions` row being made or its
   `status` moving; a draft id claimed in `job_drafts`; and the sign-in `uid` of the person who owns the
   field work (`actors`). Nothing else moves it: not the address, the job `revision` alone, office notes saved
   without a coordination revision, a submission's marker, an email, or the watermark below. The runtime may
