@@ -8,6 +8,7 @@ import { readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  actionSteps,
   allSteps,
   commands,
   evaluate,
@@ -98,7 +99,8 @@ describe('triggers and gate', () => {
   });
 
   it.each([RELEASE, WEB])('%s pins every action to a full commit', (file) => {
-    const uses = allSteps(load(file))
+    const uses = Object.values(load(file).jobs as Record<string, Data>)
+      .flatMap((job) => actionSteps(job))
       .filter((s) => 'uses' in s)
       .map((s) => s.uses);
     expect(uses.length).toBeGreaterThan(0);

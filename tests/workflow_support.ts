@@ -46,6 +46,13 @@ export function steps(job: Data): Data[] {
   return job.steps ?? [];
 }
 
+/** Every step of a job that can name an action: direct steps plus the children of `parallel` groups. */
+export function actionSteps(job: Data): Data[] {
+  const flatten = (list: Data[]): Data[] =>
+    list.flatMap((s) => (Array.isArray(s.parallel) ? flatten(s.parallel) : [s]));
+  return flatten(steps(job));
+}
+
 /** The shell a step runs, without comment lines, so a comment never satisfies a check. */
 export function commands(step: Data): string {
   const lines = splitlines(String(step.run ?? '').replaceAll('\\\n', ' ')); // join continuations

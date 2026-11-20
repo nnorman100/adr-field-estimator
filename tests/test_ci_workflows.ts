@@ -8,11 +8,11 @@ import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  actionSteps,
   evaluateStep,
   isPinnedUses,
   load,
   ROOT,
-  steps,
   WORKFLOWS,
   type Data,
 } from './workflow_support.ts';
@@ -50,7 +50,7 @@ describe('every workflow', () => {
 
   it.each(WORKFLOW_FILES)('%s pins every action step to a full commit SHA', (name) => {
     for (const [job, config] of Object.entries(workflow(name).jobs)) {
-      steps(config).forEach((step, index) => {
+      actionSteps(config).forEach((step, index) => {
         if (Object.hasOwn(step, 'uses')) {
           expect(
             isPinnedUses(step.uses),
@@ -59,6 +59,19 @@ describe('every workflow', () => {
         }
       });
     }
+  });
+
+  it('rejects a tagged action inside a parallel step group', () => {
+    const pinned = `actions/checkout@${'a'.repeat(40)}`;
+    const job = {
+      steps: [
+        { uses: pinned },
+        { parallel: [{ uses: pinned }, { uses: 'actions/setup-node@v7' }] },
+      ],
+    };
+    const refs = actionSteps(job).map((step) => step.uses);
+    expect(refs).toEqual([pinned, pinned, 'actions/setup-node@v7']);
+    expect(refs.map((ref) => isPinnedUses(ref))).toEqual([true, true, false]);
   });
 
   it.each(WORKFLOW_FILES)(
