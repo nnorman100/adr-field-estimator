@@ -18,6 +18,7 @@ The sections of this document, one file per area (each keeps its original headin
 - [Estimate and review](access/estimate.md): Estimate and review (rebuilt app, S5a-9); Reprice this draft (S5b-6).
 - [Signing on the phone](access/signing.md): Signing on the phone (rebuilt app, S5a-11).
 - [Check Scope lists](access/scope-lists.md): Check Scope lists (rebuilt app, S5a-10).
+- [Ready to review?](access/readiness.md): Ready to review? (rebuilt app, S5b-11): the advisory gaps before Finish.
 - [Signing links and document links](access/signing-links.md): Signing links and document links (rebuilt app, S5a-11b), including "Homeowner signing link".
 - [Company isolation gate](access/isolation-gate.md): Company isolation gate.
 - [Rules for adding a feature](access/adding-a-feature.md): Rules for adding a feature.
