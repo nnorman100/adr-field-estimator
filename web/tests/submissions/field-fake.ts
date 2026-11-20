@@ -170,6 +170,12 @@ export function fakeField(backing: Backing = memoryBacking()): FakeField {
     marker: (companyId, jobId) => backing.load().markers[key(companyId, jobId)] ?? null,
     ownerWrites: [],
     stateWrites: [],
+    checkControls: (companyId, jobId) =>
+      call('checkControls', ({ markers, generation }) => {
+        parseGeneration(generation);
+        const left = markers[key(companyId, jobId)];
+        if (left !== undefined) parseMarker(left as unknown as Record<string, unknown>);
+      }),
     sync: async (companyId, job, gen, options = {}) => {
       // As the real writer: refused before any read or write, as a rejected promise.
       assertVersion(gen, job.v);

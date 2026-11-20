@@ -7,7 +7,7 @@ import { snapshotManifest } from '@/lib/submissions/snapshot';
 import { canSeeJob, claimDraft, hasAny, holdDraft, jobAccess, JobError, lockedJob, type JobCaller, type JobRow } from './access';
 import type { ArchiveStore } from './archive-store';
 import type { DraftSync } from './draft-sync';
-import { stillMember, syncJobDrafts } from './sync-job';
+import { afterFieldStep, syncJobDrafts } from './sync-job';
 import { copiedManifest } from './copy-rule';
 import { copyDigest, type ArchiveInput, type CopyInput } from './schema';
 import { audit, CHECK_VIOLATION, detailOf, errorCode, type JobDetail, type JobView } from './service';
@@ -126,11 +126,9 @@ export function archiveService(db: Database, store: ArchiveStore, sync: DraftSyn
       if (error instanceof JobError && SETTLED.has(error.code)) return error;
       throw error;
     });
-    await settle(caller.companyId, jobId);
-    // Any answer after the field step, the job's details or a settled refusal, only to a caller still an
-    // active member of an active company with its role, read again (a company suspended or a member
-    // disabled while it waited is refused as a fresh request would be).
-    await withCompany(db, caller.companyId, (tx) => stillMember(tx, caller), { snapshot: true });
+    // Any answer after the field step, the job's details, a settled refusal or the field step's own
+    // failure, only to a caller still an active member of an active company with its role (afterFieldStep).
+    await afterFieldStep(db, caller, () => settle(caller.companyId, jobId));
     if (outcome instanceof JobError) throw outcome;
     return jobView(outcome);
   }

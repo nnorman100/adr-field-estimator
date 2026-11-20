@@ -533,6 +533,22 @@ export function draftSyncContract(name: string, probe: () => SyncProbe): void {
       expect(await marker(company, job.jobId)).toMatchObject({ v: job.fieldRevision, r: 4 });
     });
 
+    it('checks the generation and the job’s marker before a field step writes anything, writing nothing itself', async () => {
+      const { store, marker, seedMarker, seedGeneration } = probe();
+      const company = randomUUID();
+      const job = snapshotOf();
+      await expect(store.checkControls(company, job.jobId)).resolves.toBeUndefined();
+      expect(await marker(company, job.jobId)).toBeNull();
+      try {
+        await seedGeneration({ gen: -1 });
+        await expect(store.checkControls(company, job.jobId)).rejects.toBeInstanceOf(MalformedGenerationError);
+      } finally {
+        await seedGeneration(null);
+      }
+      await seedMarker(company, job.jobId, { gen: 0, v: 'one' });
+      await expect(store.checkControls(company, job.jobId)).rejects.toBeInstanceOf(MalformedMarkerError);
+    });
+
     it('stops, changing nothing, when the job’s marker is there but not in the shape the sync writes', async () => {
       const { store, peek, seedMarker } = probe();
       const company = randomUUID();

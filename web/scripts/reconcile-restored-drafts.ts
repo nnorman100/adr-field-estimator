@@ -26,14 +26,14 @@
 // Google credentials and prints ids and counts, never field data.
 import { pathToFileURL } from 'node:url';
 import type { Firestore, Timestamp } from 'firebase-admin/firestore';
-import { parseTargetArgs } from './target-args';
+import { parseTargetArgs, ScriptError, stopMessage } from './target-args';
 
 export type ReconcileOptions = { project: string; database: string; apply: boolean; files: Record<'job-drafts' | 'jobs', string> };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export function parseReconcileArgs(argv: string[]): ReconcileOptions {
-  return parseTargetArgs(argv, { apply: true, files: ['job-drafts', 'jobs'] as const });
+  return parseTargetArgs(argv, { files: ['job-drafts', 'jobs'] as const });
 }
 
 /** The restored job_drafts: the job each draft is given to, by "company/draft". */
@@ -48,12 +48,12 @@ export function parseClaims(text: string): Claims {
     if (line === '') continue;
     const fields = line.split(',');
     if (fields.length !== 3 || !fields.every((field) => UUID.test(field))) {
-      throw new Error(`line ${index + 1} is not "company id,draft id,job id"`);
+      throw new ScriptError(`line ${index + 1} is not "company id,draft id,job id"`);
     }
     const [companyId, draftId, jobId] = fields as [string, string, string];
     claims.set(`${companyId}/${draftId}`, jobId);
   }
-  if (claims.size === 0) throw new Error('the job_drafts export is empty: nothing would be kept');
+  if (claims.size === 0) throw new ScriptError('the job_drafts export is empty: nothing would be kept');
   return claims;
 }
 
@@ -137,12 +137,25 @@ export function parseJobs(text: string): RestoredJobs {
     const fields = line.split(',');
     const revision = Number(fields[3]);
     if (fields.length !== 4 || !fields.slice(0, 3).every((field) => UUID.test(field)) || !/^\d+$/.test(fields[3]!) || !Number.isSafeInteger(revision)) {
-      throw new Error(`line ${index + 1} of the jobs export is not "company id,job id,current draft id,revision"`);
+      throw new ScriptError(`line ${index + 1} of the jobs export is not "company id,job id,current draft id,revision"`);
     }
     jobs.set(`${fields[0]}/${fields[1]}`, { currentDraftId: fields[2]!, revision });
   }
-  if (jobs.size === 0) throw new Error('the jobs export is empty: every locator would be removed');
+  if (jobs.size === 0) throw new ScriptError('the jobs export is empty: every locator would be removed');
   return jobs;
+}
+
+/** The two exports agree, or the run stops before it plans any write: every exported job's current draft
+ * is claimed for that job, and every claim names an exported job. A truncated or mismatched export would
+ * otherwise close a current draft as unclaimed, or remove a locator of a job that is there. */
+export function checkExports(claims: Claims, jobs: RestoredJobs): void {
+  const unclaimed = [...jobs].filter(([key, job]) => claims.get(`${key.split('/')[0]}/${job.currentDraftId}`) !== key.split('/')[1]).length;
+  const orphaned = [...claims].filter(([key, jobId]) => !jobs.has(`${key.split('/')[0]}/${jobId}`)).length;
+  if (unclaimed > 0 || orphaned > 0) {
+    throw new ScriptError(
+      `the exports do not agree: ${unclaimed} jobs whose current draft the job_drafts export does not give them, ${orphaned} job_drafts rows naming a job the jobs export does not have. Export both again, in one transaction.`,
+    );
+  }
 }
 
 /** A job locator as the run reads it. */
@@ -203,6 +216,9 @@ async function main() {
   const { readFile } = await import('node:fs/promises');
   const claims = parseClaims(await readFile(options.files['job-drafts'], 'utf8'));
   const jobs = parseJobs(await readFile(options.files.jobs, 'utf8'));
+  checkExports(claims, jobs);
+  // The counts to compare with the export transaction's own counts of the two tables.
+  console.log(`exports: ${claims.size} job_drafts rows, ${jobs.size} jobs.`);
   const { initializeApp } = await import('firebase-admin/app');
   const { getFirestore } = await import('firebase-admin/firestore');
   const db = getFirestore(initializeApp({ projectId: options.project }, 'dryscope-reconcile-restored-drafts'), options.database);
@@ -231,8 +247,8 @@ async function main() {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((error: unknown) => {
-    // Fixed text and our own messages only: the SDK's message may quote a path.
-    console.error(error instanceof Error && !/firestore|grpc/i.test(error.message) ? error.message : 'reconciling the drafts failed');
+    // Its own messages and fixed categories only: an SDK's or the file system's message may quote a path.
+    console.error(stopMessage(error, 'reconciling the drafts failed'));
     process.exit(1);
   });
 }

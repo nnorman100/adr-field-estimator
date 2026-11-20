@@ -49,6 +49,11 @@ export type DraftSync = {
   // any change when the marker or the generation document is there but not in its shape
   // (MalformedMarkerError, MalformedGenerationError).
   sync(companyId: string, desired: DesiredJob, gen: number, options?: SyncOptions): Promise<SyncResult>;
+  // Reads the operator's generation and the job's marker and checks their shape, writing nothing: the
+  // field step calls it before any Postgres write of its own (a claim, a raised field revision), so a
+  // document not in its shape stops it before it changes anything. Throws MalformedGenerationError or
+  // MalformedMarkerError; the sync's own transaction checks them again.
+  checkControls(companyId: string, jobId: string): Promise<void>;
 };
 
 /** The result a plan reports once applied. */
@@ -106,6 +111,13 @@ export function draftIdsToRead(marker: SyncMarker | null, job: DesiredJob): stri
 export function firestoreDraftSync(db: Firestore): DraftSync {
   const company = (companyId: string) => db.collection('companies').doc(companyId);
   return {
+    async checkControls(companyId, jobId) {
+      const [generation, marker] = await firestoreSpan('get', 'draftLifecycle', () =>
+        db.getAll(db.doc(GENERATION_PATH), company(companyId).collection('draftLifecycle').doc(jobId)),
+      );
+      parseGeneration(generation!.data());
+      markerOf(marker!);
+    },
     async sync(companyId, job, gen, options = {}) {
       assertVersion(gen, job.v);
       const markerRef = company(companyId).collection('draftLifecycle').doc(job.jobId);

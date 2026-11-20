@@ -3,7 +3,7 @@ import { Timestamp, type Firestore } from 'firebase-admin/firestore';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { parseProjectionConfig } from '@/lib/config';
 import { MAX_PHOTO_REFS, MAX_ROOMS } from '@/lib/field/schema';
-import { desired, MalformedGenerationError, MalformedMarkerError, type JobDraftSnapshot, type SyncMarker } from '@/lib/jobs/draft-lifecycle';
+import { desired, MalformedMarkerError, type JobDraftSnapshot, type SyncMarker } from '@/lib/jobs/draft-lifecycle';
 import { raiseGeneration } from '../../scripts/raise-draft-sync-generation';
 import { firestoreDraftSync, GENERATION_PATH, type DraftSync } from '@/lib/jobs/draft-sync';
 import { firestoreAccessStore, firestoreFor } from '@/lib/projection/firestore';
@@ -143,7 +143,7 @@ describe('the draft sync under the field rules', () => {
       expect(await store.sync(company, desired(job), 0)).toMatchObject({ outcome: 'synced' });
       expect((await db.doc(markerPath(company, job.jobId)).get()).get('gen')).toBe(2);
       await db.doc(GENERATION_PATH).set({ gen: 'two' });
-      await expect(raiseGeneration(db)).rejects.toBeInstanceOf(MalformedGenerationError);
+      await expect(raiseGeneration(db)).rejects.toThrow('the draft sync generation document is not { gen } with a non-negative integer: nothing changed');
       expect((await db.doc(GENERATION_PATH).get()).data()).toEqual({ gen: 'two' });
       // Never past a generation the sync can read back.
       await db.doc(GENERATION_PATH).set({ gen: Number.MAX_SAFE_INTEGER });

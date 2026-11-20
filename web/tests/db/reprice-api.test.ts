@@ -459,6 +459,8 @@ describe('what is refused, and writes nothing', () => {
     expect((await f.nextDraft(ESTIMATOR_A, jobId, { draftId: open, fromDraftId: draftId })).status).toBe(503);
     const sync = h.field.sync;
     let repriced = false;
+    // The field revision the check passed at, before the reprice landed.
+    let checkedAt = -1;
     h.field.sync = (company, job, gen, options = {}) =>
       sync(company, job, gen, {
         ...options,
@@ -466,6 +468,7 @@ describe('what is refused, and writes nothing', () => {
           const current = await options.stillCurrent!();
           if (current && !repriced) {
             repriced = true;
+            checkedAt = job.v;
             expect((await reprice(OWNER_A, jobId)).status).toBe(200);
           }
           return current;
@@ -479,12 +482,20 @@ describe('what is refused, and writes nothing', () => {
     }
     expect(repriced).toBe(true);
     expect(h.field.draft(h.seed.a, open)).toMatchObject({ jobId, state: 'editing', archiveRevision: (await f.job(jobId)).revision });
+    // The catch-up was exactly one field revision higher, not a replan at the same one.
+    const [fieldRevision] = await h.admin<{ v: number }[]>`SELECT field_revision::int AS v FROM jobs WHERE id = ${jobId}`;
+    expect(fieldRevision!.v).toBe(checkedAt + 1);
+    expect(h.field.marker(h.seed.a, jobId)).toMatchObject({ v: checkedAt + 1 });
+    // The first commit made the draft with the confirmation it read; a sync never rewrites field work, so
+    // the catch-up keeps it (the estimate refuses a confirmation older than the reprice).
+    expect(h.field.draft(h.seed.a, open)?.field).toHaveProperty('scopeConfirmed', true);
     const [row] = await h.admin<{ behind: boolean }[]>`SELECT field_synced_revision < field_revision AS behind FROM jobs WHERE id = ${jobId}`;
     expect(row!.behind).toBe(false);
   });
 
   // R3 (slice 4b review): the sync commits the older job revision's keys and its answer is lost; the one
-  // more try is a new field revision, so it writes the job's revision rather than answering `same`.
+  // more try meets a marker written at the older job revision, so it is planned again and writes the job's
+  // revision rather than answering `same`.
   it('a sync whose answer was lost while a reprice landed is tried again at a new version', async () => {
     const { jobId, draftId } = await readyToSign();
     await publish(h.seed.a, '3.00');

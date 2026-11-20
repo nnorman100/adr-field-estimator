@@ -864,6 +864,22 @@ describe('the worker', () => {
     expect(h.field.stateWrites.length).toBe(writes);
   });
 
+  // R5 (slice 4b review round 3): the record stands, but its answer after the marker's field step goes only to
+  // a caller of an active company: suspended while the marker synced, 403 as a fresh request would be.
+  it('answers 403 when the company is suspended while the marker syncs, and the record stands', async () => {
+    const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
+    afterTheRead(() => {
+      h.field.gate.sync = async () => {
+        await h.admin`UPDATE companies SET status = 'suspended' WHERE id = ${h.seed.a}`;
+      };
+    });
+    const { body, answer } = await f.submitShown(ESTIMATOR_A, jobId, draftId, manifest);
+    expect(answer).toEqual({ status: 403, body: { error: 'company_inactive' } });
+    expect((await f.submissions(jobId))[0]).toMatchObject({ status: 'committed', marker_state: 'done' });
+    await h.admin`UPDATE companies SET status = 'active' WHERE id = ${h.seed.a}`;
+    expect((await f.submit(ESTIMATOR_A, jobId, body)).status).toBe(200);
+  });
+
   it('a retry of a decided submission writes its missing marker', async () => {
     const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
     afterTheRead(() => (h.field.failNext.sync = 2));

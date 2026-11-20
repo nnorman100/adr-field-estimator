@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { draftsAlreadyClosed, draftsToClose, locatorsToFix, parseClaims, parseJobs, parseReconcileArgs, type FoundDraft } from '../../scripts/reconcile-restored-drafts';
+import { checkExports, draftsAlreadyClosed, draftsToClose, locatorsToFix, parseClaims, parseJobs, parseReconcileArgs, type FoundDraft } from '../../scripts/reconcile-restored-drafts';
 
 // The owner-run close of field drafts a restored Postgres no longer gives the job they name
 // (docs/runbook/backups.md). Its Firestore read and write, against the emulator, are in
@@ -105,5 +105,21 @@ describe('the job locators', () => {
       { companyId: company, jobId: ahead, action: 'set', currentDraftId: draft, revision: 3 },
       { companyId: company, jobId: gone, action: 'remove' },
     ]);
+  });
+});
+
+describe('checkExports', () => {
+  it('stops on exports that do not agree, before any write is planned', () => {
+    const [company, job, draft, earlier] = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+    const jobs = new Map([[`${company}/${job}`, { currentDraftId: draft, revision: 2 }]]);
+    const claims = new Map([
+      [`${company}/${draft}`, job],
+      [`${company}/${earlier}`, job],
+    ]);
+    expect(() => checkExports(claims, jobs)).not.toThrow();
+    // The job_drafts export cut short: the current draft's claim is missing.
+    expect(() => checkExports(new Map([[`${company}/${earlier}`, job]]), jobs)).toThrow('1 jobs whose current draft the job_drafts export does not give them, 0 job_drafts rows');
+    // The jobs export cut short: a claim names a job it does not have.
+    expect(() => checkExports(new Map([...claims, [`${company}/${randomUUID()}`, randomUUID()]]), jobs)).toThrow('0 jobs whose current draft the job_drafts export does not give them, 1 job_drafts rows');
   });
 });

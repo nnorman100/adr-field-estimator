@@ -154,6 +154,26 @@ export async function stillMember(tx: CompanyTransaction, caller: JobCaller): Pr
   if (!found || found.role !== caller.role) throw new JobError('not_allowed');
 }
 
+/**
+ * A field step at a route's answer boundary: whatever the step answers, its result or its refusal, reaches
+ * only a caller still an active member of an active company with the same role, read again after it (a
+ * company suspended or a member disabled while it waited is refused as a fresh request would be, 403). What
+ * the request committed before the step stays committed. A database connection that did not come free in
+ * time is passed on as it is.
+ */
+export async function afterFieldStep<T>(db: Database, caller: JobCaller, step: () => Promise<T>): Promise<T> {
+  let outcome: { ok: true; value: T } | { ok: false; error: unknown };
+  try {
+    outcome = { ok: true, value: await step() };
+  } catch (error) {
+    if (isQueueTimeout(error)) throw error;
+    outcome = { ok: false, error };
+  }
+  await withCompany(db, caller.companyId, (tx) => stillMember(tx, caller), { snapshot: true });
+  if (!outcome.ok) throw outcome.error;
+  return outcome.value;
+}
+
 /** What Postgres holds for the job's drafts, in one read-only snapshot. Null when there is no such job. */
 export async function readJobDraftSnapshot(db: Database, companyId: string, jobId: string): Promise<JobDraftSnapshot | null> {
   return withCompany(
@@ -309,6 +329,15 @@ export async function syncJobDrafts(
   companyId: string,
   jobId: string,
 ): Promise<{ result: SyncResult; currentDraftId: string }> {
+  // The operator's generation and the job's marker in their shape first, before this step's own Postgres
+  // writes (the claim below, a raised field revision): one that is not stops it with nothing changed.
+  try {
+    await store.checkControls(companyId, jobId);
+  } catch (error) {
+    if (isQueueTimeout(error)) throw error;
+    console.error('job draft sync refused', error instanceof Error ? error.name : 'unknown');
+    throw new JobError('draft_unavailable');
+  }
   const claimed = await withCompany(db, companyId, async (tx) => {
     const row = await lockedJob(tx, companyId, jobId);
     try {

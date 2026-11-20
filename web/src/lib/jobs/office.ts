@@ -7,7 +7,7 @@ import type { DraftSync } from './draft-sync';
 import { draftOfOtherJob, type DraftStore } from './drafts';
 import { assignDigest, type AssignInput, type CoordinationInput, type TransferInput } from './schema';
 import { audit, CHECK_VIOLATION, detailOf, errorCode, findDraft, type JobDetail } from './service';
-import { claimJobDrafts, stillMember, syncJobDrafts } from './sync-job';
+import { afterFieldStep, claimJobDrafts, stillMember, syncJobDrafts } from './sync-job';
 
 // Office jobs, assignment and the field owner (S5b-1, docs/plans/S5.md; docs/spec.md 6.2). Every
 // function runs inside withCompany for the company of the verified sign-in and goes through the one
@@ -282,7 +282,7 @@ export function officeService(db: Database, drafts: DraftStore, sync: DraftSync)
         await draftsToName(tx, next);
         return { claimed: next !== row };
       });
-      await fieldStep(caller.companyId, jobId);
+      await afterFieldStep(db, caller, () => fieldStep(caller.companyId, jobId));
       // The job as Postgres holds it after the field step, read with the caller's access again: a change
       // committed meanwhile (an archive, a move, an unassignment) is the answer, not what this request saw.
       const detail = await withCompany(
@@ -332,7 +332,7 @@ export function officeService(db: Database, drafts: DraftStore, sync: DraftSync)
         }
         await draftsToName(tx, next);
       });
-      await fieldStep(caller.companyId, jobId);
+      await afterFieldStep(db, caller, () => fieldStep(caller.companyId, jobId));
       // The coordination as Postgres holds it after the field step: a later move's owner and revision,
       // when one committed meanwhile, never this request's superseded ones.
       return withCompany(

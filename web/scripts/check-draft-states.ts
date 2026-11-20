@@ -14,7 +14,7 @@
 // reads only, and prints company and job ids and counts, never field data. It exits 1 when any job
 // is stuck, so 0016 waits.
 import { pathToFileURL } from 'node:url';
-import { parseTargetArgs } from './target-args';
+import { parseTargetArgs, ScriptError, stopMessage } from './target-args';
 
 export type CheckOptions = { project: string; database: string };
 
@@ -35,7 +35,7 @@ export function parseDraftJobs(text: string): DraftJob[] {
     if (line === '') continue;
     const fields = line.split(',');
     if (fields.length !== 3 || !fields.every((field) => UUID.test(field))) {
-      throw new Error(`line ${index + 1} is not "company id,job id,current draft id"`);
+      throw new ScriptError(`line ${index + 1} is not "company id,job id,current draft id"`);
     }
     const [companyId, jobId, draftId] = fields as [string, string, string];
     jobs.push({ companyId, jobId, draftId });
@@ -94,8 +94,8 @@ async function main() {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((error: unknown) => {
-    // Fixed text and our own messages only: the SDK's message may quote a path.
-    console.error(error instanceof Error && !/firestore|grpc/i.test(error.message) ? error.message : 'checking the drafts failed');
+    // Its own messages and fixed categories only: an SDK's or the file system's message may quote a path.
+    console.error(stopMessage(error, 'checking the drafts failed'));
     process.exit(1);
   });
 }

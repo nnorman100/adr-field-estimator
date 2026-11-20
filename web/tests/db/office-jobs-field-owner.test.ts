@@ -718,6 +718,18 @@ describe('moving the field work (owner decision J5)', () => {
     expect(await reopen.running).toEqual({ status: 403, body: { error: 'company_inactive' } });
   });
 
+  // R5 (slice 4b review round 3): a field step that fails is an answer after it too: refused 403 for a company
+  // suspended while it ran, never the field step's 503.
+  it('answers 403, not the field step’s 503, when the company is suspended while a failing field step ran', async () => {
+    const { id } = await officeJob();
+    await assign(OFFICE_A, id, h.seed.estimatorA.actor);
+    h.field.gate.sync = async () => {
+      await h.admin`UPDATE companies SET status = 'suspended' WHERE id = ${h.seed.a}`;
+      h.field.failNext.sync = 2;
+    };
+    expect(await claim(ESTIMATOR_A, id)).toEqual({ status: 403, body: { error: 'company_inactive' } });
+  });
+
   it('answers 503 and records nothing as synced when Postgres moves on after the last try’s commit', async () => {
     const { id } = await claimedJob();
     const { revision } = (await coordination(OWNER_A, id)).body;

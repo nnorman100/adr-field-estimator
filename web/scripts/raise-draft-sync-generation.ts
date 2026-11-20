@@ -13,9 +13,9 @@
 // `{ gen }` with a non-negative integer stops it, changing nothing.
 import { pathToFileURL } from 'node:url';
 import type { Firestore } from 'firebase-admin/firestore';
-import { parseGeneration } from '../src/lib/jobs/draft-lifecycle';
+import { MalformedGenerationError, parseGeneration } from '../src/lib/jobs/draft-lifecycle';
 import { GENERATION_PATH } from '../src/lib/jobs/draft-sync';
-import { parseTargetArgs } from './target-args';
+import { parseTargetArgs, ScriptError, stopMessage } from './target-args';
 
 export type RaiseOptions = { project: string; database: string };
 
@@ -27,9 +27,15 @@ export function parseRaiseArgs(argv: string[]): RaiseOptions {
 export async function raiseGeneration(db: Firestore): Promise<{ from: number; to: number }> {
   const ref = db.doc(GENERATION_PATH);
   return db.runTransaction(async (tx) => {
-    const from = parseGeneration((await tx.get(ref)).data());
+    let from: number;
+    try {
+      from = parseGeneration((await tx.get(ref)).data());
+    } catch (error) {
+      if (error instanceof MalformedGenerationError) throw new ScriptError('the draft sync generation document is not { gen } with a non-negative integer: nothing changed');
+      throw error;
+    }
     // A generation the sync could not read back (past the largest safe integer) is never written.
-    if (!Number.isSafeInteger(from + 1)) throw new Error('the draft sync generation cannot be raised further');
+    if (!Number.isSafeInteger(from + 1)) throw new ScriptError('the draft sync generation cannot be raised further');
     tx.set(ref, { gen: from + 1 });
     return { from, to: from + 1 };
   });
@@ -46,8 +52,8 @@ async function main() {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((error: unknown) => {
-    // Fixed text and our own messages only: the SDK's message may quote a path.
-    console.error(error instanceof Error && !/firestore|grpc/i.test(error.message) ? error.message : 'raising the draft sync generation failed');
+    // Its own messages and fixed categories only: an SDK's or the file system's message may quote a path.
+    console.error(stopMessage(error, 'raising the draft sync generation failed'));
     process.exit(1);
   });
 }

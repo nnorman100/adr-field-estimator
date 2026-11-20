@@ -77,7 +77,7 @@ export type DesiredJob = {
   v: number;
   // jobs.revision of the snapshot: recorded on the marker, so a retry at the same field revision after
   // the job revision moved (an owner reprice) is planned again and writes the keys that follow it.
-  revision?: number;
+  revision: number;
   drafts: Record<string, DesiredDraft>;
   // The epochs of the submissions the snapshot knows for the current draft (its pending, committed and
   // aborted rows): a stored fence of any other epoch was closed by a writer Postgres had not told this
@@ -273,11 +273,11 @@ export function compareVersion(stored: SyncMarker | null, gen: number, v: number
 }
 
 /** What the marker alone decides, before any draft is read: refused, a retry, or to be planned. The same
- * version is a retry only at the same job revision `r` too (when the caller gives one): a marker written at
- * another job revision, or before markers carried it, is planned again at that version. */
-export function versionRefusal(marker: SyncMarker | null, gen: number, v: number, r?: number): VersionRefusal | null {
+ * version is a retry only at the same job revision `r` too: a marker written at another job revision, or
+ * before markers carried it, is planned again at that version. */
+export function versionRefusal(marker: SyncMarker | null, gen: number, v: number, r: number): VersionRefusal | null {
   const order = compareVersion(marker, gen, v);
-  if (order === 'same') return r === undefined || marker!.r === r ? { outcome: 'same', ...marker!.skipped } : null;
+  if (order === 'same') return marker!.r === r ? { outcome: 'same', ...marker!.skipped } : null;
   if (order === 'older') return { outcome: 'stale' };
   return null;
 }
@@ -446,7 +446,7 @@ export function planSync(
   return {
     outcome: 'synced',
     // Every draft of this job the sync has seen; the skips, so a retry at the same version reports them again.
-    marker: { gen, v: job.v, ...(job.revision === undefined ? {} : { r: job.revision }), draftIds: seen.sort(), skipped: skips },
+    marker: { gen, v: job.v, r: job.revision, draftIds: seen.sort(), skipped: skips },
     creates,
     updates,
     ...skips,

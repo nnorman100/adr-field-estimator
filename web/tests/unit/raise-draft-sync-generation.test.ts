@@ -13,7 +13,8 @@ describe('parseRaiseArgs', () => {
     expect(() => parseRaiseArgs(['--project', 'Not A Project', '--database', 'x-db'])).toThrow('--project must be');
     expect(() => parseRaiseArgs(['--project', 'dryscope', '--database', 'Bad/Db'])).toThrow('--database must be');
     expect(() => parseRaiseArgs(['--project', 'dryscope', '--database', 'dryscope-field-test', '--to', '5'])).toThrow('unknown option --to');
-    expect(() => parseRaiseArgs(['--project', 'dryscope', '--database', 'dryscope-field-test', 'extra'])).toThrow('unexpected argument extra');
+    // A value it does not take is refused without being echoed (it may be a path).
+    expect(() => parseRaiseArgs(['--project', 'dryscope', '--database', 'dryscope-field-test', 'extra'])).toThrow(/^unexpected argument$/);
     expect(() => parseRaiseArgs(['--project'])).toThrow('--project needs a value');
   });
 });
