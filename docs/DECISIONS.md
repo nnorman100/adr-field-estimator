@@ -145,10 +145,12 @@ Decision: the Standard's 35 days is made true, not reworded. On evidence buckets
 Basis: Google's own suggested setup is Object Versioning and soft delete on the same bucket, with Object Lifecycle Management deleting noncurrent versions after a number of days (`documents/docs.cloud.google.com/storage/docs/object-versioning`). DryScope never overwrites evidence (uploads use `ifGenerationMatch=0` and the app role cannot delete), so old versions arise only from deliberate deletion.
 Consequences: small Terraform change in the data root, High risk, owner-applied, together with the missing Firestore backup schedule (`docs/plans/TC.md`). `docs/DATA.md` records the window as planned until it is applied.
 
-### D-024: GitHub keyless sign-in trusts the numeric repository id only (Nov 12, 2026, G7)
+### D-024: GitHub keyless sign-in binds the deploy account by numeric repository ID (Nov 12, 2026, G7)
 
 Status: accepted (owner, Nov 12, 2026).
 Decision: DryScope keeps service-account impersonation for now, and its deploy principal is restricted to the numeric `repository_id`; the repository-name form is dropped. The starter template uses direct resource access for new projects. Terraform validation change, High risk, owner-applied (`docs/plans/TC.md`).
+
+On Nov 19, 2026, the owner also tightened the test provider's condition to require the repository and owner IDs, ref, environment, workflow ref and event name. The full condition and mapping are in the [test release runbook](runbook/test-release.md).
 
 ### D-025: Offline capture on iPhone needs the installed Home Screen app (Nov 12, 2026, G8)
 

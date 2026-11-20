@@ -11,7 +11,9 @@ Until all three repository variables in part C are set, every run ends with a "T
 
 The owner runs parts A to D once, in order, from the repository root on a machine with `gcloud`, `gh`, `terraform`, `node`, `psql` and the [Cloud SQL Auth Proxy](https://cloud.google.com/sql/docs/postgres/sql-proxy) (part B only; [Cloud Shell](https://cloud.google.com/shell) has all of them and reaches the instance from inside Google); no Docker is needed. **First-run order:** the part B grants must be in place before the migration job first executes, which is the first release after part D; a release before part B fails at migrate, before any traffic moves, and is rerun after part B. Agents never run them. Steps 1 to 4 of [Apply the central Terraform](terraform-apply.md#apply-the-central-terraform) come first.
 
-**A. Workload identity pool and provider for test (step 9).** The provider accepts only this repository (`nnorman100/adr-field-estimator`, id `1413863528`, owner id `201970234`), the `master` branch and the `test` GitHub environment:
+**A. Workload identity pool and provider for test (step 9).** The settings below match the configuration the owner applied on 2026-11-19. The provider requires repository ID `1413863528` (`nnorman100/adr-field-estimator`), owner ID `201970234`, the `master` branch, and the `test` GitHub environment. It also requires the `workflow_ref` of `web-release.yml` or `ai-evals.yml` on `master` and an `event_name` of `workflow_run` or `workflow_dispatch`. [GitHub OIDC reference](https://docs.github.com/en/actions/reference/security/oidc), [Google Cloud Workload Identity Federation for deployment pipelines](https://docs.cloud.google.com/iam/docs/workload-identity-federation-with-deployment-pipelines)
+
+Without the workflow and event checks, any workflow on `master` with permission to request an OIDC token could get credentials by naming the `test` environment, including workflows triggered by `pull_request_target` or `workflow_run`, which GitHub runs in the context of the default branch. [GitHub workflow events](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows)
 
 ```bash
 gcloud iam workload-identity-pools create dryscope-test --project=dryscope --location=global \
@@ -19,9 +21,13 @@ gcloud iam workload-identity-pools create dryscope-test --project=dryscope --loc
 gcloud iam workload-identity-pools providers create-oidc github --project=dryscope --location=global \
   --workload-identity-pool=dryscope-test --display-name="adr-field-estimator master, test" \
   --issuer-uri="https://token.actions.githubusercontent.com" \
-  --attribute-mapping="google.subject=assertion.sub,attribute.repository_id=assertion.repository_id,attribute.repository_owner_id=assertion.repository_owner_id,attribute.ref=assertion.ref,attribute.environment=assertion.environment" \
-  --attribute-condition="assertion.repository_id == '1413863528' && assertion.repository_owner_id == '201970234' && assertion.ref == 'refs/heads/master' && assertion.environment == 'test'"
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository_id=assertion.repository_id,attribute.repository_owner_id=assertion.repository_owner_id,attribute.ref=assertion.ref,attribute.environment=assertion.environment,attribute.workflow_ref=assertion.workflow_ref,attribute.event_name=assertion.event_name" \
+  --attribute-condition="assertion.repository_id == '1413863528' && assertion.repository_owner_id == '201970234' && assertion.ref == 'refs/heads/master' && assertion.environment == 'test' && assertion.workflow_ref in ['nnorman100/adr-field-estimator/.github/workflows/web-release.yml@refs/heads/master', 'nnorman100/adr-field-estimator/.github/workflows/ai-evals.yml@refs/heads/master'] && assertion.event_name in ['workflow_run', 'workflow_dispatch']"
 ```
+
+If a credentialed workflow file is renamed or a new credentialed workflow is added, the owner must update the provider's `workflow_ref` allowlist and this runbook.
+
+Use the same pattern for the planned live pool, with the live environment and only the workflow refs and trigger events the live release requires. See [S8-18](../plans/S8/S8-18.md).
 
 Then bind that repository's principal set to the deploy account and the migrator through the data root. Pass the same `-var` on every later plan of the test data root; leaving it out would plan to remove both bindings, which the plan check refuses.
 
