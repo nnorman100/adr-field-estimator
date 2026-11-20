@@ -39,6 +39,10 @@ vi.mock('@/lib/estimates/services', async () => {
   const { estimatesService } = await import('@/lib/estimates/service');
   return { estimatesServices: () => estimatesService(live.harness!.handle.db) };
 });
+vi.mock('@/lib/approvals/services', async () => {
+  const { approvalsService } = await import('@/lib/approvals/service');
+  return { approvalsServices: () => approvalsService(live.harness!.handle.db) };
+});
 vi.mock('@/lib/agreements/services', async () => {
   const { agreementsService } = await import('@/lib/agreements/service');
   return { agreementsServices: () => agreementsService(live.harness!.handle.db) };
@@ -227,6 +231,8 @@ async function signedSide(name: 'A' | 'B', companyId: string, estimator: FakeCla
 
 async function seedSides(): Promise<void> {
   await l.setUp();
+  // Priced extras too (S5b-8), so the proposal and approval routes are reached and refused by their access rule, not the switch.
+  await h.admin`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${h.seed.a}, 'priced_extras', true), (${h.seed.b}, 'priced_extras', true)`;
   const [officeB] = await h.admin<{ id: string }[]>`
     INSERT INTO actors (company_id, auth_tenant_id, uid, email) VALUES (${h.seed.b}, 'tenant-b', 'office-b', 'office-b@example.test') RETURNING id
   `;

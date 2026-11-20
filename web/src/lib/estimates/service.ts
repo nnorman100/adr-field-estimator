@@ -107,14 +107,14 @@ export async function currentSubmission(tx: CompanyTransaction, companyId: strin
 }
 
 // The job's most recently committed record, of any of its drafts, or none.
-async function lastSubmission(tx: CompanyTransaction, companyId: string, jobId: string): Promise<{ snapshotBytes: Buffer } | null> {
+async function lastSubmission(tx: CompanyTransaction, companyId: string, jobId: string): Promise<{ id: string; snapshotBytes: Buffer } | null> {
   const [row] = await tx
-    .select({ snapshotBytes: jobSubmissions.snapshotBytes })
+    .select({ id: jobSubmissions.id, snapshotBytes: jobSubmissions.snapshotBytes })
     .from(jobSubmissions)
     .where(and(eq(jobSubmissions.companyId, companyId), eq(jobSubmissions.jobId, jobId), eq(jobSubmissions.status, 'committed')))
     .orderBy(desc(jobSubmissions.decidedAt))
     .limit(1);
-  return row?.snapshotBytes ? { snapshotBytes: Buffer.from(row.snapshotBytes) } : null;
+  return row?.snapshotBytes ? { id: row.id, snapshotBytes: Buffer.from(row.snapshotBytes) } : null;
 }
 
 // Whether the record states the job's property address, customer and claim as they are now: asked
@@ -163,7 +163,7 @@ export async function latestVersion(tx: CompanyTransaction, companyId: string): 
 }
 
 // The estimate stored for a record and a pin, with the pin's and its version's sequence numbers.
-export type StoredRow = EstimateRecord & { versionId: string };
+export type StoredRow = EstimateRecord & { versionId: string; pinId: string };
 
 async function storedEstimate(tx: CompanyTransaction, companyId: string, submissionId: string, pinId: string): Promise<StoredRow | null> {
   const [row] = await tx
@@ -171,6 +171,7 @@ async function storedEstimate(tx: CompanyTransaction, companyId: string, submiss
       id: jobEstimates.id,
       jobId: jobEstimates.jobId,
       submissionId: jobEstimates.submissionId,
+      pinId: jobEstimates.pinId,
       pinSequence: jobPricePins.sequence,
       versionSequence: priceTableVersions.sequence,
       versionId: priceTableVersions.id,
@@ -338,6 +339,14 @@ export async function currentEstimateRow(tx: CompanyTransaction, companyId: stri
   return row ? { ...row, submission } : null;
 }
 
+// The approvals a stored estimate was priced with (S5b-8): the rows in force on its record and pin
+// at the job revision it was priced at, which cannot change once it exists; none when it was priced
+// without any, so a rebuilt copy prices the same work and the same total.
+async function pricedWith(tx: CompanyTransaction, companyId: string, row: Pick<StoredRow, 'submissionId' | 'pinId' | 'pricedResult'>) {
+  const revision = readStoredEstimate(row.pricedResult).approvals_job_revision;
+  return revision === undefined ? null : approvedFor(tx, companyId, { submissionId: row.submissionId, jobRevision: revision, pinId: row.pinId });
+}
+
 // The details the documents cannot be built without that a save after Finish can take away (the
 // year built and the rooms are the record's own), in plain words.
 function missingDetails(details: JobDetails): string[] {
@@ -358,7 +367,9 @@ async function present(tx: CompanyTransaction, caller: JobCaller, job: JobRow, r
   const version = await versionById(tx, caller.companyId, row.versionId);
   if (!version) throw new EstimateError('prices_unreadable');
   const company = await companyDocuments(tx, caller.companyId);
-  const { estimate, table } = priceInput(inputOf({ ...readSnapshot(submission.snapshotBytes), ...details }, company).job, version);
+  const approved = await pricedWith(tx, caller.companyId, row);
+  const rebuilt = inputOf({ ...readSnapshot(submission.snapshotBytes), ...details }, company).job;
+  const { estimate, table } = priceInput(approved ? withApprovals(rebuilt, approved) : rebuilt, version);
   const proposal = proposalFor(estimate, company, table, submission, version, readStoredProposal(row.proposalBytes).revised ?? null);
   return estimateView(row, caller.capabilities, { documents: estimate.documents!, proposal, proposalSha256: proposalBytes(proposal).sha256 });
 }
@@ -400,7 +411,11 @@ export function estimatesService(db: Database): EstimatesService {
         const pinned = pin ?? (await pinFirstPrice(tx, caller, jobId, version));
 
         const revised = await revisedFor(tx, caller.companyId, jobId, company);
-        const pricedResult = { ...estimate, job_revision: (await detailsCurrent(tx, caller.companyId, job, snapshot)) ? job.revision : null };
+        const pricedResult = {
+          ...estimate,
+          job_revision: (await detailsCurrent(tx, caller.companyId, job, snapshot)) ? job.revision : null,
+          ...(approved ? { approvals_job_revision: job.revision } : {}),
+        };
         const { bytes, sha256 } = proposalBytes(proposalFor(estimate, company, table, submission, version, revised));
         const [stored] = await tx
           .insert(jobEstimates)
@@ -425,6 +440,7 @@ export function estimatesService(db: Database): EstimatesService {
           pinSequence: pinned.sequence,
           versionSequence: version.sequence,
           versionId: version.id,
+          pinId: pinned.id,
           tableHash: version.contentHash,
           engineVersion: version.engineVersion,
           pricedResult,
@@ -522,9 +538,12 @@ export function estimatesService(db: Database): EstimatesService {
           if (error instanceof SnapshotError || error instanceof FieldMapError || error instanceof ZodError) throw new EstimateError('record_unreadable');
           throw error;
         }
-        const priced = (version: VersionRow): PricedSide => {
+        // The pinned side prices what the pin's stored estimate priced, approvals and all.
+        const estimate = await storedEstimate(tx, caller.companyId, record.id, pin.id);
+        const approved = estimate ? await pricedWith(tx, caller.companyId, estimate) : null;
+        const priced = (version: VersionRow, withApproved: boolean): PricedSide => {
           try {
-            return { price: priceText(priceInput(pricing, version).estimate.totals), refused: null };
+            return { price: priceText(priceInput(approved && withApproved ? withApprovals(pricing, approved) : pricing, version).estimate.totals), refused: null };
           } catch (error) {
             if (error instanceof EstimateError && error.code === 'estimate_refused') return { price: null, refused: { stage: error.extra.stage ?? '' } };
             throw error;
@@ -533,8 +552,8 @@ export function estimatesService(db: Database): EstimatesService {
         return {
           job: { revision: job.revision },
           reprice: {
-            pinned: { version: pinned.sequence, ...priced(pinned) },
-            newest: { versionId: newest.id, version: newest.sequence, ...priced(newest) },
+            pinned: { version: pinned.sequence, ...priced(pinned, true) },
+            newest: { versionId: newest.id, version: newest.sequence, ...priced(newest, false) },
           },
         };
       });

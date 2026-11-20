@@ -7,7 +7,8 @@ import { approvalsServices } from './services';
 
 // The proposal and approval routes (src/app/api/jobs/[jobId]/approvals). Each is wrapped there in
 // requireFlag('priced_extras', ...), so a company without priced extras gets 404 before anything here
-// runs (owner decision D5). The company comes only from the verified sign-in: no path or body names one.
+// runs (owner decision D5); each also needs `price_books`, as every price route does, because a
+// proposal reads and pins the company's published prices. The company comes only from the verified sign-in: no path or body names one.
 
 type RouteContext = { params: Promise<Record<string, string | string[] | undefined>> };
 
@@ -39,12 +40,14 @@ async function jobPath(context: RouteContext): Promise<string> {
   return value.toLowerCase();
 }
 
-// The proposal id as given: the service checks it only after job access, so an archived job still
-// answers 410 and another company's job 404 whatever proposal id the path names.
+// The proposal id: a uuid, or no proposal has it.
 async function approvalPath(context: RouteContext): Promise<string> {
   const value = (await context.params).approvalId;
-  return typeof value === 'string' && UUID.test(value) ? value.toLowerCase() : '';
+  if (typeof value !== 'string' || !UUID.test(value)) throw new ApprovalError('approval_not_found');
+  return value.toLowerCase();
 }
+
+const priceBooksOff = (identity: Identity): Response | null => (identity.flags.price_books === true ? null : json({ error: 'not_found' }, 404));
 
 async function bodyOf(request: Request): Promise<unknown> {
   try {
@@ -66,13 +69,13 @@ function proposal(raw: unknown): ProposalInput {
 // GET /api/jobs/{jobId}/approvals
 // The submitted record's open proposals and approvals at the job's revision.
 export async function listApprovals(_request: Request, identity: Identity, context: RouteContext): Promise<Response> {
-  return respond(async () => json(await approvalsServices().list(identity, await jobPath(context))));
+  return priceBooksOff(identity) ?? respond(async () => json(await approvalsServices().list(identity, await jobPath(context))));
 }
 
 // POST /api/jobs/{jobId}/approvals  { id, revision, kind, ... }
 // Proposes a named adjustment or an hourly addition: 201 when made, 200 when this id was already.
 export async function proposeApproval(request: Request, identity: Identity, context: RouteContext): Promise<Response> {
-  return respond(async () => {
+  return priceBooksOff(identity) ?? respond(async () => {
     const id = await jobPath(context);
     const input = proposal(await bodyOf(request));
     const { created, approval } = await approvalsServices().propose(identity, id, input);
@@ -83,7 +86,7 @@ export async function proposeApproval(request: Request, identity: Identity, cont
 // PUT /api/jobs/{jobId}/approvals/{approvalId}  { id, revision, kind, ... }
 // Edits a proposal: ends it, approval and all, and proposes the new one (a new id).
 export async function editApproval(request: Request, identity: Identity, context: RouteContext): Promise<Response> {
-  return respond(async () => {
+  return priceBooksOff(identity) ?? respond(async () => {
     const id = await jobPath(context);
     const approvalId = await approvalPath(context);
     const input = proposal(await bodyOf(request));
@@ -95,7 +98,7 @@ export async function editApproval(request: Request, identity: Identity, context
 // POST /api/jobs/{jobId}/approvals/{approvalId}/approve  { revision, approverName? }
 // The owner approves a proposal exactly as proposed.
 export async function approveApproval(request: Request, identity: Identity, context: RouteContext): Promise<Response> {
-  return respond(async () => {
+  return priceBooksOff(identity) ?? respond(async () => {
     const id = await jobPath(context);
     const approvalId = await approvalPath(context);
     const parsed = approveBody.safeParse(await bodyOf(request));

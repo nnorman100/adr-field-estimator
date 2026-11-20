@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto';
-import { and, asc, eq, isNotNull, isNull } from 'drizzle-orm';
-import { auditEvents, jobEstimates, jobPriceApprovals } from '@/db/schema';
+import { and, asc, count, eq, isNotNull, isNull } from 'drizzle-orm';
+import { auditEvents, jobEstimates, jobPriceApprovals, memberships } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Table } from '@/engine/table';
 import type { Capability } from '@/lib/access';
 import { canonicalJson } from '@/lib/field/canonical';
-import { hasAny, jobAccess, JobError, type JobCaller, type JobRow } from '@/lib/jobs/access';
+import { jobAccess, JobError, type JobCaller, type JobRow } from '@/lib/jobs/access';
 import { EstimateError } from '@/lib/estimates/errors';
 import {
   confirmationPredatesReprice,
@@ -49,6 +49,8 @@ export type ApprovalView = {
   approved: boolean;
   approvedAt: string | null;
   approverName: string | null;
+  // The proposal was ended (edited or replaced): whatever its approval, it prices nothing.
+  ended: boolean;
 };
 
 export type ApprovalsAnswer = { job: { revision: number }; approvals: ApprovalView[] };
@@ -77,6 +79,7 @@ function viewOf(row: Row): ApprovalView {
     approved: row.approvedAt !== null,
     approvedAt: row.approvedAt ? row.approvedAt.toISOString() : null,
     approverName: row.approvedByName,
+    ended: row.endedAt !== null,
   };
 }
 
@@ -84,9 +87,11 @@ async function audit(tx: CompanyTransaction, caller: JobCaller, action: string, 
   await tx.insert(auditEvents).values({ companyId: caller.companyId, actorId: caller.actorId, action, target: jobId, details });
 }
 
-// A proposal of this job by id; an empty id (one the path did not give as a uuid) is no proposal.
+// The most hourly rows a record can carry: the estimate's limit on additional work (web/src/engine/inspection.ts).
+const MAX_HOURLY = 30;
+
+// A proposal of this job by id.
 async function rowById(tx: CompanyTransaction, companyId: string, jobId: string, id: string): Promise<Row | null> {
-  if (id === '') return null;
   const [row] = await tx
     .select()
     .from(jobPriceApprovals)
@@ -130,6 +135,17 @@ function hourlyRate(table: Table): string {
   return rate;
 }
 
+// The caller is still an active member with the role their sign-in gave, and stays so until the
+// transaction commits: a change of role or status locks the same membership row.
+async function lockMember(tx: CompanyTransaction, caller: JobCaller): Promise<void> {
+  const [member] = await tx
+    .select({ id: memberships.id })
+    .from(memberships)
+    .where(and(eq(memberships.companyId, caller.companyId), eq(memberships.actorId, caller.actorId), eq(memberships.role, caller.role), eq(memberships.status, 'active')))
+    .for('share');
+  if (!member) throw new JobError('not_allowed');
+}
+
 function supported(input: { kind: string }): void {
   if (!(SUPPORTED_KINDS as readonly string[]).includes(input.kind)) throw new ApprovalError('not_yet_supported');
 }
@@ -168,6 +184,19 @@ export function approvalsService(db: Database): ApprovalsService {
     } else {
       // The rate is the pinned table's additional work rate now; it stays saved on the row (D3).
       const rate = hourlyRate(bound.table);
+      const [open] = await tx
+        .select({ n: count() })
+        .from(jobPriceApprovals)
+        .where(
+          and(
+            eq(jobPriceApprovals.companyId, caller.companyId),
+            eq(jobPriceApprovals.submissionId, bound.submissionId),
+            eq(jobPriceApprovals.jobRevision, job.revision),
+            eq(jobPriceApprovals.kind, 'hourly'),
+            isNull(jobPriceApprovals.endedAt),
+          ),
+        );
+      if ((open?.n ?? 0) >= MAX_HOURLY) throw new ApprovalError('too_many_additions');
       [row] = await tx.insert(jobPriceApprovals).values({ ...values, description: input.description, quantity: input.hours, price: rate }).returning();
     }
     await audit(tx, caller, 'price_proposed', job.id, { approval: row!.id, kind: row!.kind });
@@ -176,8 +205,8 @@ export function approvalsService(db: Database): ApprovalsService {
 
   return {
     async list(caller, jobId) {
-      if (!hasAny(caller, READ)) throw new JobError('not_allowed');
       return withCompany(db, caller.companyId, async (tx) => {
+        await lockMember(tx, caller);
         const job = await jobAccess(tx, caller, jobId, READ);
         const submission = job.status === 'submitted' ? await currentSubmission(tx, caller.companyId, job) : null;
         if (!submission) return { job: { revision: job.revision }, approvals: [] };
@@ -200,8 +229,8 @@ export function approvalsService(db: Database): ApprovalsService {
 
     async propose(caller, jobId, input) {
       supported(input);
-      if (!hasAny(caller, PROPOSE)) throw new JobError('not_allowed');
       return withCompany(db, caller.companyId, async (tx) => {
+        await lockMember(tx, caller);
         const job = await jobAccess(tx, caller, jobId, PROPOSE, { lock: true });
         const { created, row } = await insertProposal(tx, caller, job, input, { action: 'propose', ...input });
         return { created, approval: viewOf(row) };
@@ -212,8 +241,8 @@ export function approvalsService(db: Database): ApprovalsService {
     // one transaction; the same new id and body again is the same edit.
     async edit(caller, jobId, approvalId, input) {
       supported(input);
-      if (!hasAny(caller, PROPOSE)) throw new JobError('not_allowed');
       return withCompany(db, caller.companyId, async (tx) => {
+        await lockMember(tx, caller);
         const job = await jobAccess(tx, caller, jobId, PROPOSE, { lock: true });
         const request = { action: 'edit', replaces: approvalId, ...input };
         const [already] = await tx
@@ -245,21 +274,27 @@ export function approvalsService(db: Database): ApprovalsService {
     // is approved ends that one (`replaced`, D4) in the same transaction. Approving again with the
     // same name is answered as the first time.
     async approve(caller, jobId, approvalId, input) {
-      if (!hasAny(caller, APPROVE)) throw new JobError('not_allowed');
       return withCompany(db, caller.companyId, async (tx) => {
-        await lockActiveOwner(tx, caller);
+        // Company row, then the owner's membership, before the job lock; a caller who is not the
+        // active owner is refused by the job access first (archived 410, not found), then here.
+        const owner = await lockActiveOwner(tx, caller).then(
+          () => true,
+          (error: unknown) => {
+            if (error instanceof JobError && error.code === 'not_allowed') return false;
+            throw error;
+          },
+        );
         const job = await jobAccess(tx, caller, jobId, APPROVE, { lock: true });
+        if (!owner) throw new JobError('not_allowed');
         const row = await rowById(tx, caller.companyId, jobId, approvalId);
         if (!row) throw new ApprovalError('approval_not_found');
         const name = row.kind === 'hourly' ? (input.approverName ?? null) : null;
         if (row.kind === 'hourly' && name === null) throw new ApprovalError('approver_name_required');
         if (row.kind !== 'hourly' && input.approverName !== undefined) throw new ApprovalError('invalid_request');
-        if (row.approvedAt && !row.endedAt) {
-          if (row.approvedByActorId === caller.actorId && row.approvedByName === name) return { approval: viewOf(row) };
-          throw new ApprovalError('approval_closed');
-        }
         if (row.endedAt) throw new ApprovalError('approval_closed');
+        if (row.approvedAt && (row.approvedByActorId !== caller.actorId || row.approvedByName !== name)) throw new ApprovalError('approval_closed');
         if (job.revision !== input.revision || row.jobRevision !== job.revision) throw new JobError('stale_revision', { revision: job.revision });
+        if (row.approvedAt) return { approval: viewOf(row) };
         await binding(tx, caller, job, false);
         if (row.kind === 'named_adjustment') {
           const approved = await tx

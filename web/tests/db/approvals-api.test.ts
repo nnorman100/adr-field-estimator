@@ -34,6 +34,8 @@ const approvalsRoute = await import('@/app/api/jobs/[jobId]/approvals/route');
 const approvalRoute = await import('@/app/api/jobs/[jobId]/approvals/[approvalId]/route');
 const approveRoute = await import('@/app/api/jobs/[jobId]/approvals/[approvalId]/approve/route');
 const repriceRoute = await import('@/app/api/jobs/[jobId]/reprice/route');
+const archiveRoute = await import('@/app/api/jobs/[jobId]/archive/route');
+const { approvalsService } = await import('@/lib/approvals/service');
 const { contentHash, ENGINE_VERSION, parseTable } = await import('@/engine/table');
 const { params, request, resetTeamDatabase, startTeamServer } = await import('./team-harness');
 
@@ -282,5 +284,129 @@ describe('proposals and approvals (S5b-8)', () => {
     expect(await h.admin`SELECT ended_reason FROM job_price_approvals WHERE id = ${id}`).toEqual([{ ended_reason: 'repriced' }]);
     expect((await list(ESTIMATOR_A, jobId)).body.approvals).toEqual([]);
     expect(await propose(ESTIMATOR_A, jobId, HOURLY)).toMatchObject({ status: 409, body: { error: 'repriced' } });
+  });
+
+  it('answers 404 on every route while price books are off, and writes nothing', async () => {
+    await publish();
+    const { jobId } = await submittedJob();
+    await h.admin`UPDATE company_feature_flags SET enabled = false WHERE company_id = ${h.seed.a} AND flag = 'price_books'`;
+    const id = randomUUID();
+    for (const answer of [await list(ESTIMATOR_A, jobId), await propose(ESTIMATOR_A, jobId, HOURLY), await edit(ESTIMATOR_A, jobId, id, HOURLY), await approve(OWNER_A, jobId, id)]) {
+      expect(answer).toMatchObject({ status: 404, body: { error: 'not_found' } });
+    }
+    expect(await h.admin`SELECT count(*)::int AS n FROM job_price_approvals`).toEqual([{ n: 0 }]);
+    expect(await h.admin`SELECT count(*)::int AS n FROM job_price_pins`).toEqual([{ n: 0 }]);
+  });
+
+  it('answers an archived job 410 before the role refusal, to the estimator, office and owner alike', async () => {
+    await publish();
+    const { jobId } = await submittedJob();
+    const id = (await propose(ESTIMATOR_A, jobId, HOURLY)).body.approval.id as string;
+    const revision = await revisionOf(jobId);
+    expect((await json(archiveRoute.POST(request(OWNER_A, `/api/jobs/${jobId}/archive`, { method: 'POST', body: { revision, changeId: randomUUID() } }), params({ jobId })))).status).toBe(200);
+    for (const claims of [ESTIMATOR_A, OFFICE_A, OWNER_A]) {
+      const proposed = await json(approvalsRoute.POST(request(claims, `/api/jobs/${jobId}/approvals`, { method: 'POST', body: { id: randomUUID(), revision: 2, ...HOURLY } }), params({ jobId })));
+      const edited = await json(approvalRoute.PUT(request(claims, `/api/jobs/${jobId}/approvals/${id}`, { method: 'PUT', body: { id: randomUUID(), revision: 2, ...HOURLY } }), params({ jobId, approvalId: id })));
+      const approved = await json(approveRoute.POST(request(claims, `/api/jobs/${jobId}/approvals/${id}/approve`, { method: 'POST', body: { revision: 2, approverName: 'Pat' } }), params({ jobId, approvalId: id })));
+      const listed = await list(claims, jobId);
+      expect([proposed.status, edited.status, approved.status, listed.status]).toEqual([410, 410, 410, 410]);
+    }
+  });
+
+  it('answers a proposal id that is not a uuid as not found', async () => {
+    await publish();
+    const { jobId } = await submittedJob();
+    const approvalId = 'not-a-uuid';
+    const body = { id: randomUUID(), revision: await revisionOf(jobId), ...HOURLY };
+    expect(await json(approvalRoute.PUT(request(ESTIMATOR_A, `/api/jobs/${jobId}/approvals/${approvalId}`, { method: 'PUT', body }), params({ jobId, approvalId })))).toMatchObject({ status: 404, body: { error: 'approval_not_found' } });
+  });
+
+  it('keeps a pending hourly row in the estimate as unsettled work: it prices nothing and the estimate cannot be signed', async () => {
+    await publish();
+    const clean = await submittedJob();
+    expect((await make(ESTIMATOR_A, clean.jobId)).body.estimate.documents.signable).toBe(true);
+    const { jobId } = await submittedJob();
+    await propose(ESTIMATOR_A, jobId, HOURLY);
+    const estimate = (await make(ESTIMATOR_A, jobId)).body.estimate;
+    expect(estimate.totals.low.total).toBe('240.00');
+    expect(estimate.documents.signable).toBe(false);
+  });
+
+  it('rebuilds a saved-after estimate with the approved work it was priced with, and previews its pinned price the same way', async () => {
+    await publish();
+    const { jobId } = await submittedJob();
+    const id = (await propose(ESTIMATOR_A, jobId, HOURLY)).body.approval.id as string;
+    await approve(OWNER_A, jobId, id, { approverName: OWNER_NAME });
+    expect((await make(ESTIMATOR_A, jobId)).body.estimate.totals.low.total).toBe('365.00');
+    const saved = { revision: await revisionOf(jobId), changeId: randomUUID(), name: 'Casey Customer', phone: '555-0101', email: 'casey@example.invalid', propertyAddress: '14 Synthetic Lane, Testville' };
+    expect((await customerRoute.PUT(request(ESTIMATOR_A, `/api/jobs/${jobId}/customer`, { method: 'PUT', body: saved }), params({ jobId }))).status).toBe(200);
+    for (const estimate of [(await make(ESTIMATOR_A, jobId)).body.estimate, (await json(estimateRoute.GET(request(ESTIMATOR_A, `/api/jobs/${jobId}/estimate`), params({ jobId })))).body.estimate]) {
+      expect(estimate).toMatchObject({ needsReview: true, totals: { low: { total: '365.00' } } });
+      expect(JSON.stringify(estimate.proposal)).toContain(`approved by ${OWNER_NAME} on`);
+      expect(JSON.stringify(estimate.documents.itemizedClaim)).toContain('Additional work');
+    }
+    await publish('60.00');
+    const preview = await json(repriceRoute.GET(request(OWNER_A, `/api/jobs/${jobId}/reprice`), params({ jobId })));
+    expect(preview.body.reprice).toMatchObject({ pinned: { price: '$365.00' }, newest: { price: '$240.00' } });
+  });
+
+  it('refuses a thirty-first hourly row, and lets an edit replace one at the limit', async () => {
+    await publish();
+    const { jobId } = await submittedJob();
+    let first = '';
+    for (let n = 0; n < 30; n++) {
+      const made = await propose(ESTIMATOR_A, jobId, { ...HOURLY, description: `Task ${n}` });
+      expect(made.status).toBe(201);
+      first ||= made.body.approval.id;
+    }
+    expect(await propose(ESTIMATOR_A, jobId, HOURLY)).toMatchObject({ status: 409, body: { error: 'too_many_additions' } });
+    expect((await edit(ESTIMATOR_A, jobId, first, { ...HOURLY, description: 'Replaced' })).status).toBe(201);
+    expect((await list(ESTIMATOR_A, jobId)).body.approvals).toHaveLength(30);
+    expect(await propose(ESTIMATOR_A, jobId, HOURLY)).toMatchObject({ status: 409, body: { error: 'too_many_additions' } });
+  });
+
+  it('refuses a description the estimate cannot print, on propose and on edit, and keeps an accepted one as entered', async () => {
+    await publish();
+    const { jobId } = await submittedJob();
+    const joiner = { ...HOURLY, description: 'Crew \u{1F477}\u200D\u2642\uFE0F on site' };
+    expect(await propose(ESTIMATOR_A, jobId, joiner)).toMatchObject({ status: 400, body: { error: 'invalid_request' } });
+    const id = (await propose(ESTIMATOR_A, jobId, HOURLY)).body.approval.id as string;
+    expect(await edit(ESTIMATOR_A, jobId, id, joiner)).toMatchObject({ status: 400, body: { error: 'invalid_request' } });
+    expect((await list(ESTIMATOR_A, jobId)).body.approvals[0].description).toBe(HOURLY.description);
+  });
+
+  it('answers a replay with the row as it stands: an ended proposal says so, and an approval left at an older revision is stale', async () => {
+    await publish();
+    const { jobId } = await submittedJob();
+    const first = randomUUID();
+    const proposal = { ...HOURLY, hours: '2' };
+    expect((await propose(ESTIMATOR_A, jobId, proposal, first)).body.approval.ended).toBe(false);
+    const second = (await edit(ESTIMATOR_A, jobId, first, { ...HOURLY, hours: '3' })).body.approval;
+    expect(second.ended).toBe(false);
+    expect(await propose(ESTIMATOR_A, jobId, proposal, first)).toMatchObject({ status: 200, body: { approval: { id: first, ended: true } } });
+
+    expect((await approve(OWNER_A, jobId, second.id, { approverName: OWNER_NAME })).status).toBe(200);
+    const saved = { revision: await revisionOf(jobId), changeId: randomUUID(), name: 'Casey Customer', phone: '555-0101', email: 'casey@example.invalid', propertyAddress: '14 Synthetic Lane, Testville' };
+    expect((await customerRoute.PUT(request(ESTIMATOR_A, `/api/jobs/${jobId}/customer`, { method: 'PUT', body: saved }), params({ jobId }))).status).toBe(200);
+    expect(await approve(OWNER_A, jobId, second.id, { approverName: OWNER_NAME })).toMatchObject({ status: 409, body: { error: 'stale_revision' } });
+    expect(await approve(OWNER_A, jobId, first, { approverName: OWNER_NAME })).toMatchObject({ status: 409, body: { error: 'approval_closed' } });
+  });
+
+  it('refuses a member whose role changed or who was disabled after the sign-in, and writes nothing', async () => {
+    await publish();
+    const { jobId } = await submittedJob();
+    const id = (await propose(ESTIMATOR_A, jobId, HOURLY)).body.approval.id as string;
+    await approve(OWNER_A, jobId, id, { approverName: OWNER_NAME });
+    const caller = { companyId: h.seed.a, actorId: h.seed.estimatorA.actor, uid: 'estimator-a', role: 'estimator' as const, capabilities: ['scope' as const, 'jobs_read' as const] };
+    const input = { id: randomUUID(), revision: await revisionOf(jobId), kind: 'hourly' as const, description: 'Other work', hours: '1' };
+    const service = approvalsService(h.handle.db);
+    for (const change of [`role = 'office'`, `status = 'disabled'`]) {
+      await h.admin.unsafe(`UPDATE memberships SET ${change} WHERE id = '${h.seed.estimatorA.membership}'`);
+      await expect(service.edit(caller, jobId, id, input)).rejects.toMatchObject({ code: 'not_allowed' });
+      await expect(service.propose(caller, jobId, input)).rejects.toMatchObject({ code: 'not_allowed' });
+      await expect(service.list(caller, jobId)).rejects.toMatchObject({ code: 'not_allowed' });
+      await h.admin.unsafe(`UPDATE memberships SET role = 'estimator', status = 'active' WHERE id = '${h.seed.estimatorA.membership}'`);
+    }
+    expect(await h.admin`SELECT approved_at IS NOT NULL AS approved, ended_at FROM job_price_approvals`).toEqual([{ approved: true, ended_at: null }]);
   });
 });

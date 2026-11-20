@@ -21,6 +21,8 @@ export const APPROVAL_ERRORS = {
   unknown_adjustment: 409,
   // The job's pinned prices have no rate on their additional work item.
   no_hourly_rate: 409,
+  // The record already has the most additional work rows the estimate takes (30).
+  too_many_additions: 409,
   // The proposal named was already ended or approved, so it cannot change that way.
   approval_closed: 409,
 } as const;

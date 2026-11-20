@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { oneLine, printable } from '@/engine/values';
 import { uuid } from '@/lib/jobs/schema';
 
 // The proposal and approval bodies (S5b-8). Ids are made on the phone, so a lost answer sent again is
@@ -18,6 +19,9 @@ const text = (max: number) =>
     .min(1)
     .refine((value) => [...value].length <= max && NOT_SPACE.test(value) && !CONTROL.test(value), { message: 'text' });
 
+// An hourly description as the estimate reads it (web/src/engine/inspection.ts): one line, printable.
+const description = text(300).refine((value) => printable(oneLine(value)), { message: 'description' });
+
 const revision = z.int().min(1).max(2_147_483_647);
 const ADJUSTMENT_ID = /^[a-z][a-z0-9_]{1,39}$/;
 // Hours as decimal text: 0.25 to 200, at most two decimal places.
@@ -31,7 +35,7 @@ export const proposalKind = z.object({ kind: z.enum(PROPOSAL_KINDS) });
 
 export const proposalBody = z.discriminatedUnion('kind', [
   z.strictObject({ id: uuid, revision, kind: z.literal('named_adjustment'), adjustmentId: z.string().regex(ADJUSTMENT_ID) }),
-  z.strictObject({ id: uuid, revision, kind: z.literal('hourly'), description: text(300), hours }),
+  z.strictObject({ id: uuid, revision, kind: z.literal('hourly'), description, hours }),
 ]);
 export type ProposalInput = z.infer<typeof proposalBody>;
 

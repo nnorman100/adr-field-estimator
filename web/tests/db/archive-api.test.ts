@@ -153,7 +153,7 @@ describe('archive', () => {
     // first. Restore is the one way back. The estimator who made the job is answered the same.
     expect(await read(ESTIMATOR_A, jobId)).toEqual({ status: 410, body: { error: 'archived' } });
     const modules = await routeModules(join(APP_DIR, 'api/jobs/[jobId]'));
-    const ids = { jobId, photoId: randomUUID(), assignmentId: randomUUID(), linkId: randomUUID() };
+    const ids = { jobId, photoId: randomUUID(), assignmentId: randomUUID(), linkId: randomUUID(), approvalId: randomUUID() };
     const called: string[] = [];
     for (const [folder, module] of modules) {
       const route = folder === '' ? 'api/jobs/[jobId]' : `api/jobs/[jobId]/${folder}`;
