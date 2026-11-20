@@ -1,8 +1,22 @@
 import { and, eq, isNull } from 'drizzle-orm';
-import { jobPriceApprovals } from '@/db/schema';
+import { companyFeatureFlags, jobPriceApprovals } from '@/db/schema';
 import type { CompanyTransaction } from '@/db/tenant';
 import { Dec, money } from '@/engine/decimal';
 import type { EstimateJob, Json } from '@/engine/estimate';
+
+// Whether the company's `priced_extras` switch is on, read inside the caller's transaction after its
+// job lock, so the switch the work is done under is the one stored at that moment, never the sign-in's
+// copy (owner decision D5). A missing row is off.
+export async function pricedExtrasOn(tx: CompanyTransaction, companyId: string): Promise<boolean> {
+  const [flag] = await tx
+    .select({ enabled: companyFeatureFlags.enabled })
+    .from(companyFeatureFlags)
+    .where(and(eq(companyFeatureFlags.companyId, companyId), eq(companyFeatureFlags.flag, 'priced_extras')));
+  return flag?.enabled === true;
+}
+
+// An hourly row's line total: hours times its saved rate, to the cent as the engine rounds money.
+export const hourlyTotal = (hours: string, rate: string): string => money(Dec.parse(hours).mul(Dec.parse(rate))).format('.2f');
 
 // What the estimate takes of a record's approvals (S5b-8): only rows approved by the owner, still
 // open, at the job's revision and on the pin the estimate is priced from reach a total; any edit, a
@@ -46,7 +60,7 @@ export async function approvedFor(
       accepted_by_name: row.approvedByName!,
       accepted_at: row.approvedAt!.toISOString(),
       rate: row.price!,
-      total: money(Dec.parse(row.quantity!).mul(Dec.parse(row.price!))).format('.2f'),
+      total: hourlyTotal(row.quantity!, row.price!),
       company_id: companyId,
       company_version: 1,
     },

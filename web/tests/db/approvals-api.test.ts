@@ -207,7 +207,7 @@ describe('proposals and approvals (S5b-8)', () => {
     const { jobId } = await submittedJob();
     const id = randomUUID();
     const made = await propose(ESTIMATOR_A, jobId, HOURLY, id);
-    expect(made).toMatchObject({ status: 201, body: { approval: { id, kind: 'hourly', description: HOURLY.description, hours: '2.5', rate: '50.00', approved: false } } });
+    expect(made).toMatchObject({ status: 201, body: { approval: { id, kind: 'hourly', description: HOURLY.description, hours: '2.5', rate: '50.00', total: '125.00', approved: false } } });
     expect(await h.admin`SELECT sequence, version_id::text, reason FROM job_price_pins WHERE job_id = ${jobId}`).toEqual([{ sequence: 1, version_id: one.id, reason: 'first_price' }]);
     expect((await propose(ESTIMATOR_A, jobId, HOURLY, id)).status).toBe(200);
     expect(await propose(ESTIMATOR_A, jobId, { ...HOURLY, hours: '3' }, id)).toMatchObject({ status: 409, body: { error: 'conflict' } });
@@ -305,6 +305,56 @@ describe('proposals and approvals (S5b-8)', () => {
     await approve(OWNER_A, jobId, id, { approverName: OWNER_NAME });
     await h.admin`UPDATE company_feature_flags SET enabled = false WHERE company_id = ${h.seed.a} AND flag = 'priced_extras'`;
     expect((await make(ESTIMATOR_A, jobId)).body.estimate.totals.low.total).toBe('240.00');
+  });
+
+  it('takes the priced extras switch from the database inside the transaction, not from the sign-in', async () => {
+    await publish();
+    const { jobId } = await submittedJob();
+    const id = (await propose(ESTIMATOR_A, jobId, HOURLY)).body.approval.id as string;
+    await approve(OWNER_A, jobId, id, { approverName: OWNER_NAME });
+    const flag = (enabled: boolean) => async (tx: postgres.TransactionSql) => {
+      await tx`UPDATE company_feature_flags SET enabled = ${enabled} WHERE company_id = ${h.seed.a} AND flag = 'priced_extras'`;
+    };
+    const lockJob = async (tx: postgres.TransactionSql) => {
+      await tx`SELECT id FROM jobs WHERE id = ${jobId} FOR UPDATE`;
+    };
+    // Off when the request signed in, on once it holds the job's lock: the approved work is priced.
+    await h.admin`UPDATE company_feature_flags SET enabled = false WHERE company_id = ${h.seed.a} AND flag = 'priced_extras'`;
+    const maker = { ...ESTIMATOR_CALLER(), capabilities: ['audit' as const, 'jobs_read' as const], flags: { priced_extras: false } };
+    const on = await interleaved(lockJob, () => estimatesService(h.handle.db).make(maker, jobId), flag(true));
+    expect(on.blocked).toBe(true);
+    expect(on.result.estimate.totals.low.total).toBe('365.00');
+
+    // On when the request signed in, off by the time it holds the lock: a proposal answers 404, nothing is written.
+    const second = (await submittedJob()).jobId;
+    const revision = await revisionOf(second);
+    const answered = await interleaved(
+      async (tx) => {
+        await tx`SELECT id FROM jobs WHERE id = ${second} FOR UPDATE`;
+      },
+      () =>
+        approvalsService(h.handle.db)
+          .propose(ESTIMATOR_CALLER(), second, { id: randomUUID(), revision, kind: 'hourly', description: 'Move contents', hours: '1' })
+          .then(
+            () => 'made',
+            (error: { code?: string }) => error.code,
+          ),
+      flag(false),
+    );
+    expect(answered).toMatchObject({ blocked: true, result: 'not_found' });
+    expect(await h.admin`SELECT count(*)::int AS n FROM job_price_approvals WHERE job_id = ${second}`).toEqual([{ n: 0 }]);
+  });
+
+  it('shows an hourly line’s total with every view of it, and none for a named adjustment', async () => {
+    await publish();
+    const { jobId } = await submittedJob();
+    const hourly = (await propose(ESTIMATOR_A, jobId, { ...HOURLY, hours: '2.75' })).body.approval;
+    expect(hourly).toMatchObject({ rate: '50.00', total: '137.50' });
+    const approved = await approve(OWNER_A, jobId, hourly.id, { approverName: OWNER_NAME });
+    expect(approved.body.approval.total).toBe('137.50');
+    const named = (await propose(ESTIMATOR_A, jobId, { kind: 'named_adjustment', adjustmentId: 'rush_charge' })).body.approval;
+    expect(named.total).toBeNull();
+    expect((await list(OWNER_A, jobId)).body.approvals.map((row: { total: string | null }) => row.total)).toEqual(['137.50', null]);
   });
 
   it('ends the record’s proposals when the owner reprices, and refuses new ones until Back to editing and Finish', async () => {
@@ -434,16 +484,23 @@ describe('proposals and approvals (S5b-8)', () => {
     expect((await make(ESTIMATOR_A, jobId)).body.estimate.totals.low.total).toBe('365.00');
     const saved = { revision: await revisionOf(jobId), changeId: randomUUID(), name: 'Casey Customer', phone: '555-0101', email: 'casey@example.invalid', propertyAddress: '14 Synthetic Lane, Testville' };
     expect((await customerRoute.PUT(request(ESTIMATOR_A, `/api/jobs/${jobId}/customer`, { method: 'PUT', body: saved }), params({ jobId }))).status).toBe(200);
+    const newer = await publish('80.00');
     const { blocked, result } = await interleaved(
       async (tx) => {
         await tx`LOCK TABLE job_price_approvals IN ACCESS EXCLUSIVE MODE`;
       },
       () => estimatesService(h.handle.db).read(ESTIMATOR_CALLER(), jobId),
-      // What a reprice commits: the record's open rows end as repriced.
+      // What the reprice route commits, with the production triggers on: the owner's pin (which ends the
+      // record's open rows as repriced), the job's next revision and the audit row.
       async (tx) => {
-        await tx`ALTER TABLE job_price_approvals DISABLE TRIGGER job_price_approvals_guard`;
-        await tx`UPDATE job_price_approvals SET ended_at = now(), ended_by_actor_id = ${h.seed.ownerA.actor}, ended_reason = 'repriced' WHERE id = ${id}`;
-        await tx`ALTER TABLE job_price_approvals ENABLE TRIGGER job_price_approvals_guard`;
+        const [pin] = await tx<{ sequence: number }[]>`
+          INSERT INTO job_price_pins (company_id, job_id, sequence, version_id, reason, pinned_by_actor_id)
+          SELECT ${h.seed.a}, ${jobId}, max(sequence) + 1, ${newer.id}, 'owner_reprice', ${h.seed.ownerA.actor} FROM job_price_pins WHERE job_id = ${jobId}
+          RETURNING sequence`;
+        const [job] = await tx<{ revision: number; current_draft_id: string }[]>`UPDATE jobs SET revision = revision + 1 WHERE id = ${jobId} RETURNING revision, current_draft_id::text`;
+        await tx`
+          INSERT INTO audit_events (company_id, actor_id, action, target, details)
+          VALUES (${h.seed.a}, ${h.seed.ownerA.actor}, 'job_repriced', ${jobId}, ${JSON.stringify({ sequence: pin!.sequence, job_draft: job!.current_draft_id, job_revision: job!.revision })}::text::jsonb)`;
       },
     );
     expect(blocked).toBe(true);

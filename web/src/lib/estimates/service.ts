@@ -8,8 +8,7 @@ import type { Capability } from '@/lib/access';
 import { canonicalJson } from '@/lib/field/canonical';
 import { FieldMapError } from '@/lib/field/inspection';
 import { hasAny, jobAccess, JobError, type JobCaller, type JobRow } from '@/lib/jobs/access';
-import { approvedFor, withApprovals } from '@/lib/approvals/priced';
-import type { CompanyFlags } from '@/lib/flags';
+import { approvedFor, pricedExtrasOn, withApprovals } from '@/lib/approvals/priced';
 import { advance } from '@/lib/jobs/service';
 import { readCompanyDocuments, type CompanyDocuments } from '@/lib/profile/documents';
 import { readJobDetails, type JobDetails } from '@/lib/submissions/details';
@@ -76,11 +75,11 @@ type RepriceAnswer = { sequence: number; version: number; job_status: JobRow['st
 export type EstimateJobState = { id: string; status: JobRow['status']; currentDraftId: string; revision: number };
 
 export type EstimatesService = {
-  // `flags`: the company's switches from the sign-in; with `priced_extras` on, the record's approvals are priced (S5b-8, D5).
-  make(caller: JobCaller & { flags?: Partial<CompanyFlags> }, jobId: string): Promise<{ created: boolean; job: EstimateJobState; estimate: EstimateView }>;
+  // With the company's `priced_extras` switch on (read in the transaction, under the job's lock), the record's approvals are priced (S5b-8, D5).
+  make(caller: JobCaller, jobId: string): Promise<{ created: boolean; job: EstimateJobState; estimate: EstimateView }>;
   read(caller: JobCaller, jobId: string): Promise<{ job: EstimateJobState; estimate: EstimateView | null }>;
   reprice(caller: JobCaller, jobId: string, input: RepriceInput): Promise<RepriceResult>;
-  repricePreview(caller: JobCaller & { flags?: Partial<CompanyFlags> }, jobId: string): Promise<RepricePreview>;
+  repricePreview(caller: JobCaller, jobId: string): Promise<RepricePreview>;
 };
 
 const jobState = (row: JobRow): EstimateJobState => ({ id: row.id, status: row.status, currentDraftId: row.currentDraftId, revision: row.revision });
@@ -358,11 +357,23 @@ export async function currentEstimateRow(tx: CompanyTransaction, companyId: stri
 }
 
 // The approvals a stored estimate was priced with (S5b-8): the rows in force on its record and pin
-// at the job revision it was priced at, which cannot change once it exists; none when it was priced
-// without any, so a rebuilt copy prices the same work and the same total.
-async function pricedWith(tx: CompanyTransaction, companyId: string, row: Pick<StoredRow, 'submissionId' | 'pinId' | 'pricedResult'>) {
-  const revision = readStoredEstimate(row.pricedResult).approvals_job_revision;
-  return revision === undefined ? null : approvedFor(tx, companyId, { submissionId: row.submissionId, jobRevision: revision, pinId: row.pinId });
+// at the job revision its `estimate_created` audit row names, which cannot change once it exists;
+// none when it was priced without any, so a rebuilt copy prices the same work and the same total.
+async function pricedWith(tx: CompanyTransaction, companyId: string, row: Pick<StoredRow, 'id' | 'jobId' | 'submissionId' | 'pinId'>) {
+  const [made] = await tx
+    .select({ revision: sql<string | null>`${auditEvents.details}->>'approvals_revision'` })
+    .from(auditEvents)
+    .where(
+      and(
+        eq(auditEvents.companyId, companyId),
+        eq(auditEvents.target, row.jobId),
+        eq(auditEvents.action, 'estimate_created'),
+        sql`${auditEvents.details}->>'estimate' = ${row.id}`,
+      ),
+    )
+    .limit(1);
+  const revision = made?.revision == null ? null : Number(made.revision);
+  return revision === null ? null : approvedFor(tx, companyId, { submissionId: row.submissionId, jobRevision: revision, pinId: row.pinId });
 }
 
 // The details the documents cannot be built without that a save after Finish can take away (the
@@ -423,7 +434,7 @@ export function estimatesService(db: Database): EstimatesService {
         if (await confirmationPredatesReprice(tx, caller.companyId, jobId, job.currentDraftId)) throw new EstimateError('scope_not_confirmed');
         if (!input.summary.trim()) throw new EstimateError('summary_missing');
         // The owner's approvals on this record, at the job's revision and pin (S5b-8); none without a pin yet.
-        const approved = pin && caller.flags?.priced_extras === true ? await approvedFor(tx, caller.companyId, { submissionId: submission.id, jobRevision: job.revision, pinId: pin.id }) : null;
+        const approved = pin && (await pricedExtrasOn(tx, caller.companyId)) ? await approvedFor(tx, caller.companyId, { submissionId: submission.id, jobRevision: job.revision, pinId: pin.id }) : null;
         const { estimate, table } = priceInput(approved ? withApprovals(input.job, approved) : input.job, version);
 
         const pinned = pin ?? (await pinFirstPrice(tx, caller, jobId, version));
@@ -432,7 +443,6 @@ export function estimatesService(db: Database): EstimatesService {
         const pricedResult = {
           ...estimate,
           job_revision: (await detailsCurrent(tx, caller.companyId, job, snapshot)) ? job.revision : null,
-          ...(approved ? { approvals_job_revision: job.revision } : {}),
         };
         const { bytes, sha256 } = proposalBytes(proposalFor(estimate, company, table, submission, version, revised));
         const [stored] = await tx
@@ -450,7 +460,13 @@ export function estimatesService(db: Database): EstimatesService {
             createdByActorId: caller.actorId,
           })
           .returning({ id: jobEstimates.id, createdAt: jobEstimates.createdAt });
-        await audit(tx, caller, 'estimate_created', jobId, { pin: pinned.sequence, version: version.sequence, lines: estimate.lines.length });
+        await audit(tx, caller, 'estimate_created', jobId, {
+          estimate: stored!.id,
+          pin: pinned.sequence,
+          version: version.sequence,
+          lines: estimate.lines.length,
+          ...(approved ? { approvals_revision: job.revision } : {}),
+        });
         const row: StoredRow = {
           id: stored!.id,
           jobId,
@@ -556,12 +572,15 @@ export function estimatesService(db: Database): EstimatesService {
           if (error instanceof SnapshotError || error instanceof FieldMapError || error instanceof ZodError) throw new EstimateError('record_unreadable');
           throw error;
         }
-        // The pinned side prices what the pin's stored estimate priced, approvals and all; with no
-        // estimate yet, the submitted record's current approvals, as the estimate would take them.
-        const estimate = await storedEstimate(tx, caller.companyId, record.id, pin.id);
-        const approved = estimate
-          ? await pricedWith(tx, caller.companyId, estimate)
-          : job.status === 'submitted' && caller.flags?.priced_extras === true
+        // The pinned side is the pin's stored estimate's own total, approvals and all, never priced
+        // again; with no estimate yet, the submitted record's current approvals, as the estimate would
+        // take them.
+        const [stored] = await tx
+          .select({ pricedResult: jobEstimates.pricedResult })
+          .from(jobEstimates)
+          .where(and(eq(jobEstimates.companyId, caller.companyId), eq(jobEstimates.submissionId, record.id), eq(jobEstimates.pinId, pin.id)));
+        const approved =
+          !stored && job.status === 'submitted' && (await pricedExtrasOn(tx, caller.companyId))
             ? await approvedFor(tx, caller.companyId, { submissionId: record.id, jobRevision: job.revision, pinId: pin.id })
             : null;
         const priced = (version: VersionRow, withApproved: boolean): PricedSide => {
@@ -572,10 +591,11 @@ export function estimatesService(db: Database): EstimatesService {
             throw error;
           }
         };
+        const pinnedSide: PricedSide = stored ? { price: priceText(readStoredEstimate(stored.pricedResult).totals), refused: null } : priced(pinned, true);
         return {
           job: { revision: job.revision },
           reprice: {
-            pinned: { version: pinned.sequence, ...priced(pinned, true) },
+            pinned: { version: pinned.sequence, ...pinnedSide },
             newest: { versionId: newest.id, version: newest.sequence, ...priced(newest, false) },
           },
         };

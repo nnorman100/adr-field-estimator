@@ -116,9 +116,6 @@ export const storedEstimateSchema = z.strictObject({
   // The job revision whose customer, claim and property address the documents state; null when
   // they had changed between Finish and the first price (src/lib/estimates/service.ts).
   job_revision: z.int().min(1).nullable(),
-  // The job revision whose approvals (S5b-8) the estimate was priced with; absent when it was priced
-  // without any (priced extras off, or no pin yet), which a rebuilt copy must do again.
-  approvals_job_revision: z.int().min(1).optional(),
 }) satisfies z.ZodType<Estimate>;
 
 export type StoredEstimate = z.infer<typeof storedEstimateSchema>;

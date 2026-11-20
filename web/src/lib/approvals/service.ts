@@ -12,7 +12,6 @@ import {
   currentPin,
   currentSubmissionId,
   latestVersion,
-  lockActiveOwner,
   pinFirstPrice,
   versionById,
   versionTable,
@@ -20,6 +19,7 @@ import {
 } from '@/lib/estimates/service';
 import { ENGINE_VERSION } from '@/engine/table';
 import { ApprovalError } from './errors';
+import { hourlyTotal, pricedExtrasOn } from './priced';
 import type { ApproveInput, ProposalInput } from './schema';
 
 // Proposals and approvals on a job (S5b-8; spec 6.1; owner decisions D1 to D5, 2026-11-20). The
@@ -44,6 +44,8 @@ export type ApprovalView = {
   description: string | null;
   hours: string | null;
   rate: string | null;
+  // The hourly line's total, hours times rate to the cent as the estimate prices it; null for a named adjustment.
+  total: string | null;
   jobRevision: number;
   proposedAt: string;
   approved: boolean;
@@ -74,6 +76,7 @@ function viewOf(row: Row): ApprovalView {
     description: row.description,
     hours: row.quantity,
     rate: row.price,
+    total: row.kind === 'hourly' && row.quantity !== null && row.price !== null ? hourlyTotal(row.quantity, row.price) : null,
     jobRevision: row.jobRevision,
     proposedAt: row.proposedAt.toISOString(),
     approved: row.approvedAt !== null,
@@ -136,13 +139,14 @@ function hourlyRate(table: Table): string {
 }
 
 // The caller is still an active member with the role their sign-in gave, and stays so until the
-// transaction commits: a change of role or status locks the same membership row.
-async function lockMember(tx: CompanyTransaction, caller: JobCaller): Promise<void> {
+// transaction commits: a change of role or status locks the same membership row. The owner's approval
+// takes the row for update, as Reprice's owner lock does.
+async function lockMember(tx: CompanyTransaction, caller: JobCaller, mode: 'share' | 'update' = 'share'): Promise<void> {
   const [member] = await tx
     .select({ id: memberships.id })
     .from(memberships)
     .where(and(eq(memberships.companyId, caller.companyId), eq(memberships.actorId, caller.actorId), eq(memberships.role, caller.role), eq(memberships.status, 'active')))
-    .for('share');
+    .for(mode);
   if (!member) throw new JobError('not_allowed');
 }
 
@@ -153,6 +157,11 @@ async function lockMember(tx: CompanyTransaction, caller: JobCaller): Promise<vo
 async function lockCompany(tx: CompanyTransaction, caller: JobCaller, mode: 'share' | 'no key update'): Promise<void> {
   const [company] = await tx.select({ status: companies.status }).from(companies).where(eq(companies.id, caller.companyId)).for(mode);
   if (company?.status !== 'active') throw new JobError('not_allowed');
+}
+
+// The company's `priced_extras` switch is on under the job's lock; off, every route answers 404 (D5).
+async function lockedFlagOn(tx: CompanyTransaction, caller: JobCaller): Promise<void> {
+  if (!(await pricedExtrasOn(tx, caller.companyId))) throw new JobError('not_found');
 }
 
 export function approvalsService(db: Database): ApprovalsService {
@@ -214,6 +223,7 @@ export function approvalsService(db: Database): ApprovalsService {
         await lockCompany(tx, caller, 'share');
         await lockMember(tx, caller);
         const job = await jobAccess(tx, caller, jobId, READ, { lock: true });
+        await lockedFlagOn(tx, caller);
         const submissionId = job.status === 'submitted' ? await currentSubmissionId(tx, caller.companyId, job) : null;
         if (!submissionId) return { job: { revision: job.revision }, approvals: [] };
         // The record's open rows at the job's current revision: what the next estimate prices.
@@ -238,6 +248,7 @@ export function approvalsService(db: Database): ApprovalsService {
         await lockCompany(tx, caller, 'share');
         await lockMember(tx, caller);
         const job = await jobAccess(tx, caller, jobId, PROPOSE, { lock: true });
+        await lockedFlagOn(tx, caller);
         const { created, row } = await insertProposal(tx, caller, job, input, { action: 'propose', ...input });
         return { created, approval: viewOf(row) };
       });
@@ -250,6 +261,7 @@ export function approvalsService(db: Database): ApprovalsService {
         await lockCompany(tx, caller, 'share');
         await lockMember(tx, caller);
         const job = await jobAccess(tx, caller, jobId, PROPOSE, { lock: true });
+        await lockedFlagOn(tx, caller);
         const request = { action: 'edit', replaces: approvalId, ...input };
         const [already] = await tx
           .select({ id: jobPriceApprovals.id })
@@ -281,18 +293,12 @@ export function approvalsService(db: Database): ApprovalsService {
     // same name is answered as the first time.
     async approve(caller, jobId, approvalId, input) {
       return withCompany(db, caller.companyId, async (tx) => {
-        // Company row, then the owner's membership, before the job lock; a caller who is not the
-        // active owner is refused by the job access first (archived 410, not found), then here.
+        // Company row, then the caller's membership (for update when the owner), before the job lock;
+        // the job access then answers archived 410 and not found, and a caller without the key is 403.
         await lockCompany(tx, caller, 'no key update');
-        const owner = await lockActiveOwner(tx, caller).then(
-          () => true,
-          (error: unknown) => {
-            if (error instanceof JobError && error.code === 'not_allowed') return false;
-            throw error;
-          },
-        );
+        await lockMember(tx, caller, caller.role === 'owner' ? 'update' : 'share');
         const job = await jobAccess(tx, caller, jobId, APPROVE, { lock: true });
-        if (!owner) throw new JobError('not_allowed');
+        await lockedFlagOn(tx, caller);
         const row = await rowById(tx, caller.companyId, jobId, approvalId);
         if (!row) throw new ApprovalError('approval_not_found');
         const name = row.kind === 'hourly' ? (input.approverName ?? null) : null;
