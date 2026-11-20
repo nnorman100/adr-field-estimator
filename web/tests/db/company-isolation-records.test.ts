@@ -369,6 +369,9 @@ const idsOf = (victim: Side, job: 'signed' | 'pending', company: Side = victim):
   assignmentId: victim[job].assignmentId,
   // No proposal is seeded here; the job's photo id stands in (approvals-api.test.ts uses real ones).
   approvalId: victim[job].photoId,
+  // A drying-log reading (S5b-10): none is seeded here, the job's photo id stands in (a reading of
+  // another job or company is 404 to the void route); drying-readings-api.test.ts uses real readings.
+  readingId: victim[job].photoId,
 });
 
 const directions = (): [Side, Side][] => [

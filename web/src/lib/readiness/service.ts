@@ -109,7 +109,7 @@ async function setupReading(tx: CompanyTransaction, readings: SetupReadingSource
 // Whether a draft id is this job's in Postgres, read only (the rule of holdDraft in jobs/access.ts,
 // without its claim): held by this job in job_drafts, or held by no job and named by no other job's
 // submission.
-async function draftIsJobs(tx: CompanyTransaction, companyId: string, jobId: string, draftId: string): Promise<boolean> {
+export async function draftIsJobs(tx: CompanyTransaction, companyId: string, jobId: string, draftId: string): Promise<boolean> {
   const [claim] = await tx
     .select({ jobId: jobDrafts.jobId })
     .from(jobDrafts)

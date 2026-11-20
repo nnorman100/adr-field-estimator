@@ -3,8 +3,9 @@
 Part of [Data](../DATA.md).
 
 `0020_drying_outcomes` adds the drying log, the job close and the estimate history, and the drying watch's decisions on
-`job_coordination` (S5b-10 slice 10A, [S5b-10](../plans/S5/S5b-10.md)). No route reads or writes them yet: the routes
-and screens are slices 10B and 10C. All three tables hold a company's rows only inside `withCompany`, with forced
+`job_coordination` (S5b-10 slice 10A, [S5b-10](../plans/S5/S5b-10.md)). The drying log routes read and write
+`drying_readings` (slice 10B, [Drying log](../access/drying.md)); no route reads or writes the other two tables or the
+watch column yet (the rest of slice 10B), and the screens are slice 10C. All three tables hold a company's rows only inside `withCompany`, with forced
 row-level security. A key between rows always carries `company_id`, so a row can never point at another company's
 job, agreement or person. A platform operator reads them only through `withOperator` with the company set, and every
 write policy refuses an operator. The runtime has no `DELETE` or `TRUNCATE` on any of them.
@@ -50,7 +51,7 @@ write policy refuses an operator. The runtime has no `DELETE` or `TRUNCATE` on a
 
 ## Personal and business data
 
-| Where | What it is | Who will read it (the routes are slice 10B) |
+| Where | What it is | Who reads it (the drying log routes since slice 10B; the others' routes are later in 10B) |
 | --- | --- | --- |
 | `drying_readings` | Moisture and air measurements of a customer's property, a room label and free-text notes (`payload.note`, a thermal `boundary`), with who took and voided each | The job's people (owner, office, and the estimator who made the job, owns its field work or is assigned it); the platform operator through its read-only path only |
 | `job_closes` | The company's final invoice amount for a customer's job, actual days, a free-text note, and the signed amounts it was compared with | Owner and office (`coordination`); an estimator on the job sees only whether it closed and when |
