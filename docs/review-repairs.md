@@ -79,7 +79,7 @@ Verification: **27 Python tests**, Node checks and **19 browser tests passed**, 
 
 ## Estimating-sheet correction — deployed October 6, 2026
 
-The user supplied `1 - Water . Mold - Estimating Sheet (2).xlsx` and confirmed that ADR does not use the package tiers previously coded. The user chose the workbook's low–high customer estimate and instructed us to mirror its added-labor formula even for after-hours jobs. The source-cell notes for that workbook were removed from this repository because the rates are the company's proprietary data. New audits reject a selected legacy package price with an update-required response; current clients clear it while preserving old signed documents.
+The user supplied the company's estimating workbook and confirmed that ADR does not use the package tiers previously coded. The user chose the workbook's low–high customer estimate and instructed us to mirror its added-labor formula even for after-hours jobs. The source-cell notes for that workbook were removed from this repository because the rates are the company's proprietary data. New audits reject a selected legacy package price with an update-required response; current clients clear it while preserving old signed documents.
 
 New proposals show a customer estimate range and separate itemized base-rate charges. The backend uses confirmed job-charge quantities, demolition areas, waste, equipment and optional sheet items. It adds the sheet's after-hours charge, applies its 20% labor/material adjustment, then calculates the high bound from the affected-area threshold. The default five job charges and the 3-fan, 1-dehumidifier, 3-day example match the sheet's totals. Schema-3 authorizations retain both range bounds and the original four documents.
 
