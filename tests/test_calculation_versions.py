@@ -1,6 +1,6 @@
 """The saved calculation version selects the formulas; adr-residential-v1 never changes.
 
-Every number below was worked out by hand from the workbook formulas in docs/adr-pricing-source.md and
+Every number below was worked out by hand from the first company's workbook formulas and
 is written as a literal, so a change to v1's rates, factors or rounding fails here. The rates are
 spelled out rather than read from ADR's price book, because existing pins carry their own copy of them.
 """

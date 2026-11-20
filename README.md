@@ -33,7 +33,7 @@ Use the persistent **1. Walk & Photo / 2. Check Scope / 3. Review & Sign** step 
 
 ## Pricing and evidence
 
-`backend/claims.py` calculates money with Decimal and cent rounding. Each company sets its own prices and there is no default price list ([pricing source](docs/pricing-source.md)); a company without published prices cannot price an estimate. The populated default job charges appear exactly once. Waste increases applicable demolition item totals. After-hours estimates add the company's after-hours job charge and apply the labor/material factor. ADR's rates and source notes are in [ADR pricing source](docs/adr-pricing-source.md).
+`backend/claims.py` calculates money with Decimal and cent rounding. Each company sets its own prices and there is no default price list ([pricing source](docs/pricing-source.md)); a company without published prices cannot price an estimate. The populated default job charges appear exactly once. Waste increases applicable demolition item totals. After-hours estimates add the company's after-hours job charge and apply the labor/material factor.
 
 The customer proposal shows the low–high estimate, with itemized base-rate charges shown separately as its calculation detail. ADR package tiers are not in the supplied sheet and are no longer accepted for new audits. Models cannot supply prices, override totals or remove conditional clauses. AI summaries and suggestions are labeled for technician review; suggestions do not become observed evidence or authorized work.
 
