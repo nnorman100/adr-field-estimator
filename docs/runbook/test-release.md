@@ -25,7 +25,7 @@ gcloud iam workload-identity-pools providers create-oidc github --project=drysco
   --attribute-condition="assertion.repository_id == '1413863528' && assertion.repository_owner_id == '201970234' && assertion.ref == 'refs/heads/master' && assertion.environment == 'test' && assertion.workflow_ref in ['nnorman100/adr-field-estimator/.github/workflows/web-release.yml@refs/heads/master', 'nnorman100/adr-field-estimator/.github/workflows/ai-evals.yml@refs/heads/master'] && assertion.event_name in ['workflow_run', 'workflow_dispatch']"
 ```
 
-If a credentialed workflow file is renamed or a new credentialed workflow is added, the owner must update the provider's `workflow_ref` allowlist and this runbook. For an existing pool, run the provider command with `update-oidc` in place of `create-oidc` and pass the full mapping and condition. [Google Cloud CLI reference](https://docs.cloud.google.com/sdk/gcloud/reference/iam/workload-identity-pools/providers/update-oidc)
+If a credentialed workflow file is renamed or a new credentialed workflow is added, the owner must update the provider's `workflow_ref` allowlist and this runbook.
 
 Use the same pattern for the planned live pool, with the live environment and only the workflow refs and trigger events the live release requires. See [S8-18](../plans/S8/S8-18.md).
 
