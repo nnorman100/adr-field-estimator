@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { and, asc, count, eq, isNotNull, isNull } from 'drizzle-orm';
-import { auditEvents, jobEstimates, jobPriceApprovals, memberships } from '@/db/schema';
+import { auditEvents, companies, jobEstimates, jobPriceApprovals, memberships } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Table } from '@/engine/table';
 import type { Capability } from '@/lib/access';
@@ -10,7 +10,7 @@ import { EstimateError } from '@/lib/estimates/errors';
 import {
   confirmationPredatesReprice,
   currentPin,
-  currentSubmission,
+  currentSubmissionId,
   latestVersion,
   lockActiveOwner,
   pinFirstPrice,
@@ -20,7 +20,7 @@ import {
 } from '@/lib/estimates/service';
 import { ENGINE_VERSION } from '@/engine/table';
 import { ApprovalError } from './errors';
-import { SUPPORTED_KINDS, type ApproveInput, type ProposalInput } from './schema';
+import type { ApproveInput, ProposalInput } from './schema';
 
 // Proposals and approvals on a job (S5b-8; spec 6.1; owner decisions D1 to D5, 2026-11-20). The
 // estimator (or the owner) proposes on the job's submitted record, before its estimate is made; only
@@ -106,12 +106,12 @@ type Binding = { submissionId: string; pin: PinRow; table: Table; tableHash: str
 async function binding(tx: CompanyTransaction, caller: JobCaller, job: JobRow, pinIfMissing: boolean): Promise<Binding> {
   if (job.status === 'signed') throw new EstimateError('job_signed');
   if (job.status !== 'submitted') throw new EstimateError('not_submitted');
-  const submission = await currentSubmission(tx, caller.companyId, job);
-  if (!submission) throw new EstimateError('not_submitted');
+  const submissionId = await currentSubmissionId(tx, caller.companyId, job);
+  if (!submissionId) throw new EstimateError('not_submitted');
   const [estimate] = await tx
     .select({ id: jobEstimates.id })
     .from(jobEstimates)
-    .where(and(eq(jobEstimates.companyId, caller.companyId), eq(jobEstimates.submissionId, submission.id)))
+    .where(and(eq(jobEstimates.companyId, caller.companyId), eq(jobEstimates.submissionId, submissionId)))
     .limit(1);
   if (estimate) throw new ApprovalError('estimate_made');
   if (await confirmationPredatesReprice(tx, caller.companyId, job.id, job.currentDraftId)) throw new ApprovalError('repriced');
@@ -124,7 +124,7 @@ async function binding(tx: CompanyTransaction, caller: JobCaller, job: JobRow, p
     if (!pinIfMissing) throw new EstimateError('not_priced');
     pin = await pinFirstPrice(tx, caller, job.id, version);
   }
-  return { submissionId: submission.id, pin, table, tableHash: version.contentHash };
+  return { submissionId, pin, table, tableHash: version.contentHash };
 }
 
 // The table's additional work rate: its one enabled `extras` item's price, which is per hour.
@@ -146,14 +146,19 @@ async function lockMember(tx: CompanyTransaction, caller: JobCaller): Promise<vo
   if (!member) throw new JobError('not_allowed');
 }
 
-function supported(input: { kind: string }): void {
-  if (!(SUPPORTED_KINDS as readonly string[]).includes(input.kind)) throw new ApprovalError('not_yet_supported');
+// The caller's company is active, and stays so until the transaction commits: a suspension or an owner
+// replacement locks the same company row. Every approval transaction takes it first, then the
+// member's row, then the job's, the order the owner replacement takes them in. The owner's approval
+// takes the stronger lock the owner lock takes, so two of them never wait on each other's upgrade.
+async function lockCompany(tx: CompanyTransaction, caller: JobCaller, mode: 'share' | 'no key update'): Promise<void> {
+  const [company] = await tx.select({ status: companies.status }).from(companies).where(eq(companies.id, caller.companyId)).for(mode);
+  if (company?.status !== 'active') throw new JobError('not_allowed');
 }
 
 export function approvalsService(db: Database): ApprovalsService {
   // Inserts a proposal, or finds the one already made with this id: the same body is the same
   // proposal (200), another body or another job is refused.
-  async function insertProposal(tx: CompanyTransaction, caller: JobCaller, job: JobRow, input: ProposalInput, request: unknown) {
+  async function insertProposal(tx: CompanyTransaction, caller: JobCaller, job: JobRow, input: ProposalInput, request: unknown, checked?: Binding) {
     const digest = digestOf(request);
     const existing = await tx
       .select()
@@ -164,7 +169,7 @@ export function approvalsService(db: Database): ApprovalsService {
       return { created: false, row: existing[0] };
     }
     if (job.revision !== input.revision) throw new JobError('stale_revision', { revision: job.revision });
-    const bound = await binding(tx, caller, job, true);
+    const bound = checked ?? (await binding(tx, caller, job, true));
     const values = {
       id: input.id,
       companyId: caller.companyId,
@@ -199,17 +204,18 @@ export function approvalsService(db: Database): ApprovalsService {
       if ((open?.n ?? 0) >= MAX_HOURLY) throw new ApprovalError('too_many_additions');
       [row] = await tx.insert(jobPriceApprovals).values({ ...values, description: input.description, quantity: input.hours, price: rate }).returning();
     }
-    await audit(tx, caller, 'price_proposed', job.id, { approval: row!.id, kind: row!.kind });
+    await audit(tx, caller, 'price_proposed', job.id, { approval: row!.id });
     return { created: true, row: row! };
   }
 
   return {
     async list(caller, jobId) {
       return withCompany(db, caller.companyId, async (tx) => {
+        await lockCompany(tx, caller, 'share');
         await lockMember(tx, caller);
-        const job = await jobAccess(tx, caller, jobId, READ);
-        const submission = job.status === 'submitted' ? await currentSubmission(tx, caller.companyId, job) : null;
-        if (!submission) return { job: { revision: job.revision }, approvals: [] };
+        const job = await jobAccess(tx, caller, jobId, READ, { lock: true });
+        const submissionId = job.status === 'submitted' ? await currentSubmissionId(tx, caller.companyId, job) : null;
+        if (!submissionId) return { job: { revision: job.revision }, approvals: [] };
         // The record's open rows at the job's current revision: what the next estimate prices.
         const rows = await tx
           .select()
@@ -217,7 +223,7 @@ export function approvalsService(db: Database): ApprovalsService {
           .where(
             and(
               eq(jobPriceApprovals.companyId, caller.companyId),
-              eq(jobPriceApprovals.submissionId, submission.id),
+              eq(jobPriceApprovals.submissionId, submissionId),
               eq(jobPriceApprovals.jobRevision, job.revision),
               isNull(jobPriceApprovals.endedAt),
             ),
@@ -228,8 +234,8 @@ export function approvalsService(db: Database): ApprovalsService {
     },
 
     async propose(caller, jobId, input) {
-      supported(input);
       return withCompany(db, caller.companyId, async (tx) => {
+        await lockCompany(tx, caller, 'share');
         await lockMember(tx, caller);
         const job = await jobAccess(tx, caller, jobId, PROPOSE, { lock: true });
         const { created, row } = await insertProposal(tx, caller, job, input, { action: 'propose', ...input });
@@ -240,8 +246,8 @@ export function approvalsService(db: Database): ApprovalsService {
     // An edit ends the proposal named (`edited`, its approval with it) and proposes the new one, in
     // one transaction; the same new id and body again is the same edit.
     async edit(caller, jobId, approvalId, input) {
-      supported(input);
       return withCompany(db, caller.companyId, async (tx) => {
+        await lockCompany(tx, caller, 'share');
         await lockMember(tx, caller);
         const job = await jobAccess(tx, caller, jobId, PROPOSE, { lock: true });
         const request = { action: 'edit', replaces: approvalId, ...input };
@@ -259,12 +265,12 @@ export function approvalsService(db: Database): ApprovalsService {
         if (old.kind !== input.kind) throw new JobError('conflict');
         // A row left at an older revision (a customer save since) is no longer bound to the job: propose anew.
         if (job.revision !== input.revision || old.jobRevision !== job.revision) throw new JobError('stale_revision', { revision: job.revision });
-        await binding(tx, caller, job, false);
+        const bound = await binding(tx, caller, job, false);
         await tx
           .update(jobPriceApprovals)
           .set({ endedByActorId: caller.actorId, endedReason: 'edited' })
           .where(and(eq(jobPriceApprovals.companyId, caller.companyId), eq(jobPriceApprovals.id, old.id)));
-        const { row } = await insertProposal(tx, caller, job, input, request);
+        const { row } = await insertProposal(tx, caller, job, input, request, bound);
         await audit(tx, caller, 'price_edited', job.id, { approval: old.id, replaced_by: row.id });
         return { created: true, approval: viewOf(row) };
       });
@@ -277,6 +283,7 @@ export function approvalsService(db: Database): ApprovalsService {
       return withCompany(db, caller.companyId, async (tx) => {
         // Company row, then the owner's membership, before the job lock; a caller who is not the
         // active owner is refused by the job access first (archived 410, not found), then here.
+        await lockCompany(tx, caller, 'no key update');
         const owner = await lockActiveOwner(tx, caller).then(
           () => true,
           (error: unknown) => {
@@ -325,7 +332,7 @@ export function approvalsService(db: Database): ApprovalsService {
           .set({ approvedByActorId: caller.actorId, approvedByName: name })
           .where(and(eq(jobPriceApprovals.companyId, caller.companyId), eq(jobPriceApprovals.id, row.id)))
           .returning();
-        await audit(tx, caller, 'price_approved', job.id, { approval: row.id, kind: row.kind });
+        await audit(tx, caller, 'price_approved', job.id, { approval: row.id });
         return { approval: viewOf(done!) };
       });
     },

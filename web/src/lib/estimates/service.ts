@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, isNotNull, sql } from 'drizzle-orm';
 import { ZodError } from 'zod';
 import { auditEvents, companies, jobEstimates, jobPricePins, jobSubmissions, memberships, priceTableVersions, priceTableWorkingCopies } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
@@ -80,7 +80,7 @@ export type EstimatesService = {
   make(caller: JobCaller & { flags?: Partial<CompanyFlags> }, jobId: string): Promise<{ created: boolean; job: EstimateJobState; estimate: EstimateView }>;
   read(caller: JobCaller, jobId: string): Promise<{ job: EstimateJobState; estimate: EstimateView | null }>;
   reprice(caller: JobCaller, jobId: string, input: RepriceInput): Promise<RepriceResult>;
-  repricePreview(caller: JobCaller, jobId: string): Promise<RepricePreview>;
+  repricePreview(caller: JobCaller & { flags?: Partial<CompanyFlags> }, jobId: string): Promise<RepricePreview>;
 };
 
 const jobState = (row: JobRow): EstimateJobState => ({ id: row.id, status: row.status, currentDraftId: row.currentDraftId, revision: row.revision });
@@ -104,6 +104,24 @@ export async function currentSubmission(tx: CompanyTransaction, companyId: strin
     );
   if (!row || !row.snapshotBytes || !row.snapshotSha256) return null;
   return { id: row.id, snapshotBytes: Buffer.from(row.snapshotBytes), snapshotSha256: row.snapshotSha256 };
+}
+
+// Only the id of that record, for a step that never reads the snapshot (the snapshot can be 8 MiB).
+export async function currentSubmissionId(tx: CompanyTransaction, companyId: string, job: JobRow): Promise<string | null> {
+  const [row] = await tx
+    .select({ id: jobSubmissions.id })
+    .from(jobSubmissions)
+    .where(
+      and(
+        eq(jobSubmissions.companyId, companyId),
+        eq(jobSubmissions.jobId, job.id),
+        eq(jobSubmissions.draftId, job.currentDraftId),
+        eq(jobSubmissions.status, 'committed'),
+        isNotNull(jobSubmissions.snapshotBytes),
+        isNotNull(jobSubmissions.snapshotSha256),
+      ),
+    );
+  return row?.id ?? null;
 }
 
 // The job's most recently committed record, of any of its drafts, or none.
@@ -538,9 +556,14 @@ export function estimatesService(db: Database): EstimatesService {
           if (error instanceof SnapshotError || error instanceof FieldMapError || error instanceof ZodError) throw new EstimateError('record_unreadable');
           throw error;
         }
-        // The pinned side prices what the pin's stored estimate priced, approvals and all.
+        // The pinned side prices what the pin's stored estimate priced, approvals and all; with no
+        // estimate yet, the submitted record's current approvals, as the estimate would take them.
         const estimate = await storedEstimate(tx, caller.companyId, record.id, pin.id);
-        const approved = estimate ? await pricedWith(tx, caller.companyId, estimate) : null;
+        const approved = estimate
+          ? await pricedWith(tx, caller.companyId, estimate)
+          : job.status === 'submitted' && caller.flags?.priced_extras === true
+            ? await approvedFor(tx, caller.companyId, { submissionId: record.id, jobRevision: job.revision, pinId: pin.id })
+            : null;
         const priced = (version: VersionRow, withApproved: boolean): PricedSide => {
           try {
             return { price: priceText(priceInput(approved && withApproved ? withApprovals(pricing, approved) : pricing, version).estimate.totals), refused: null };
@@ -559,15 +582,22 @@ export function estimatesService(db: Database): EstimatesService {
       });
     },
 
+    // One snapshot reads the job, the stored estimate and its approvals, so a reprice that commits
+    // meanwhile (it ends the approvals) cannot change what the rebuilt documents price.
     async read(caller, jobId) {
       if (!hasAny(caller, READ)) throw new JobError('not_allowed');
-      return withCompany(db, caller.companyId, async (tx) => {
-        const job = await jobAccess(tx, caller, jobId, READ);
-        const none = { job: jobState(job), estimate: null };
-        // A job being edited has no current estimate: the review of its last record is void (J4).
-        const row = await currentEstimateRow(tx, caller.companyId, job);
-        return row ? { job: jobState(job), estimate: await present(tx, caller, job, row, row.submission) } : none;
-      });
+      return withCompany(
+        db,
+        caller.companyId,
+        async (tx) => {
+          const job = await jobAccess(tx, caller, jobId, READ);
+          const none = { job: jobState(job), estimate: null };
+          // A job being edited has no current estimate: the review of its last record is void (J4).
+          const row = await currentEstimateRow(tx, caller.companyId, job);
+          return row ? { job: jobState(job), estimate: await present(tx, caller, job, row, row.submission) } : none;
+        },
+        { snapshot: true },
+      );
     },
   };
 }

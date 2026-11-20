@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import postgres from 'postgres';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FieldManifest } from '@/lib/field/canonical';
 import { flow, json, type Answer } from './submission-flow';
@@ -36,6 +37,7 @@ const approveRoute = await import('@/app/api/jobs/[jobId]/approvals/[approvalId]
 const repriceRoute = await import('@/app/api/jobs/[jobId]/reprice/route');
 const archiveRoute = await import('@/app/api/jobs/[jobId]/archive/route');
 const { approvalsService } = await import('@/lib/approvals/service');
+const { estimatesService } = await import('@/lib/estimates/service');
 const { contentHash, ENGINE_VERSION, parseTable } = await import('@/engine/table');
 const { params, request, resetTeamDatabase, startTeamServer } = await import('./team-harness');
 
@@ -153,6 +155,38 @@ async function approve(claims: FakeClaims | null, jobId: string, approvalId: str
 }
 const make = (claims: FakeClaims, jobId: string): Promise<Reply> =>
   json(estimateRoute.POST(request(claims, `/api/jobs/${jobId}/estimate`, { method: 'POST' }), params({ jobId })));
+
+const ESTIMATOR_CALLER = () => ({ companyId: h.seed.a, actorId: h.seed.estimatorA.actor, uid: 'estimator-a', role: 'estimator' as const, capabilities: ['scope' as const, 'jobs_read' as const] });
+const OWNER_CALLER = () => ({ companyId: h.seed.a, actorId: h.seed.ownerA.actor, uid: 'owner-a', role: 'owner' as const, capabilities: ['scope' as const, 'jobs_read' as const, 'additions_approve' as const] });
+
+// Holds locks in a transaction of the test's own, starts `start`, waits until Postgres shows it
+// blocked on a lock, runs `between` in the holding transaction, and commits: so a change lands
+// between two of the call's queries, in the same order every run.
+async function interleaved<T>(
+  hold: (tx: postgres.TransactionSql) => Promise<void>,
+  start: () => Promise<T>,
+  between: (tx: postgres.TransactionSql) => Promise<void> = async () => undefined,
+): Promise<{ blocked: boolean; result: T }> {
+  const side = postgres(base.server.databaseUrl, { max: 1, connect_timeout: 10, onnotice: () => {} });
+  try {
+    let running: Promise<T> | undefined;
+    let blocked = false;
+    await h.admin.begin(async (tx) => {
+      await hold(tx);
+      running = start();
+      running.catch(() => undefined);
+      for (let tries = 0; tries < 200 && !blocked; tries++) {
+        const [waiting] = await side<{ n: number }[]>`SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`;
+        blocked = waiting!.n > 0;
+        if (!blocked) await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      await between(tx);
+    });
+    return { blocked, result: await running! };
+  } finally {
+    await side.end({ timeout: 5 });
+  }
+}
 
 const HOURLY = { kind: 'hourly', description: '  Move contents to the garage ', hours: '2.5' };
 const OWNER_NAME = ' Pat  Example ';
@@ -390,6 +424,88 @@ describe('proposals and approvals (S5b-8)', () => {
     expect((await customerRoute.PUT(request(ESTIMATOR_A, `/api/jobs/${jobId}/customer`, { method: 'PUT', body: saved }), params({ jobId }))).status).toBe(200);
     expect(await approve(OWNER_A, jobId, second.id, { approverName: OWNER_NAME })).toMatchObject({ status: 409, body: { error: 'stale_revision' } });
     expect(await approve(OWNER_A, jobId, first, { approverName: OWNER_NAME })).toMatchObject({ status: 409, body: { error: 'approval_closed' } });
+  });
+
+  it('rebuilds the estimate from one snapshot: a reprice that commits between its reads cannot change what it prices', async () => {
+    await publish();
+    const { jobId } = await submittedJob();
+    const id = (await propose(ESTIMATOR_A, jobId, HOURLY)).body.approval.id as string;
+    await approve(OWNER_A, jobId, id, { approverName: OWNER_NAME });
+    expect((await make(ESTIMATOR_A, jobId)).body.estimate.totals.low.total).toBe('365.00');
+    const saved = { revision: await revisionOf(jobId), changeId: randomUUID(), name: 'Casey Customer', phone: '555-0101', email: 'casey@example.invalid', propertyAddress: '14 Synthetic Lane, Testville' };
+    expect((await customerRoute.PUT(request(ESTIMATOR_A, `/api/jobs/${jobId}/customer`, { method: 'PUT', body: saved }), params({ jobId }))).status).toBe(200);
+    const { blocked, result } = await interleaved(
+      async (tx) => {
+        await tx`LOCK TABLE job_price_approvals IN ACCESS EXCLUSIVE MODE`;
+      },
+      () => estimatesService(h.handle.db).read(ESTIMATOR_CALLER(), jobId),
+      // What a reprice commits: the record's open rows end as repriced.
+      async (tx) => {
+        await tx`ALTER TABLE job_price_approvals DISABLE TRIGGER job_price_approvals_guard`;
+        await tx`UPDATE job_price_approvals SET ended_at = now(), ended_by_actor_id = ${h.seed.ownerA.actor}, ended_reason = 'repriced' WHERE id = ${id}`;
+        await tx`ALTER TABLE job_price_approvals ENABLE TRIGGER job_price_approvals_guard`;
+      },
+    );
+    expect(blocked).toBe(true);
+    expect(result.estimate).toMatchObject({ needsReview: true, totals: { low: { total: '365.00' } }, proposal: { price: { itemized_total: '365.00' } } });
+  });
+
+  it('takes the job lock to list, as the writes do', async () => {
+    await publish();
+    const { jobId } = await submittedJob();
+    await propose(ESTIMATOR_A, jobId, HOURLY);
+    const { blocked, result } = await interleaved(
+      async (tx) => {
+        await tx`SELECT id FROM jobs WHERE id = ${jobId} FOR UPDATE`;
+      },
+      () => approvalsService(h.handle.db).list(ESTIMATOR_CALLER(), jobId),
+    );
+    expect(blocked).toBe(true);
+    expect(result.approvals).toHaveLength(1);
+  });
+
+  it('refuses every approval route once the company is suspended, and writes nothing', async () => {
+    await publish();
+    const { jobId } = await submittedJob();
+    const id = (await propose(ESTIMATOR_A, jobId, HOURLY)).body.approval.id as string;
+    await h.admin`UPDATE companies SET status = 'suspended' WHERE id = ${h.seed.a}`;
+    const service = approvalsService(h.handle.db);
+    const input = { id: randomUUID(), revision: await revisionOf(jobId), kind: 'hourly' as const, description: 'Other work', hours: '1' };
+    await expect(service.list(ESTIMATOR_CALLER(), jobId)).rejects.toMatchObject({ code: 'not_allowed' });
+    await expect(service.propose(ESTIMATOR_CALLER(), jobId, input)).rejects.toMatchObject({ code: 'not_allowed' });
+    await expect(service.edit(ESTIMATOR_CALLER(), jobId, id, input)).rejects.toMatchObject({ code: 'not_allowed' });
+    await expect(service.approve(OWNER_CALLER(), jobId, id, { revision: input.revision, approverName: 'Pat' })).rejects.toMatchObject({ code: 'not_allowed' });
+    expect(await h.admin`SELECT approved_at, ended_at FROM job_price_approvals`).toEqual([{ approved_at: null, ended_at: null }]);
+  });
+
+  it('keeps only ids in the audit rows of a proposal, an edit and an approval', async () => {
+    await publish();
+    const { jobId } = await submittedJob();
+    const first = (await propose(ESTIMATOR_A, jobId, HOURLY)).body.approval.id as string;
+    const second = (await edit(ESTIMATOR_A, jobId, first, { ...HOURLY, hours: '3' })).body.approval.id as string;
+    await approve(OWNER_A, jobId, second, { approverName: OWNER_NAME });
+    const rows = await h.admin<{ action: string; details: Record<string, string> }[]>`
+      SELECT action, details FROM audit_events WHERE action IN ('price_proposed', 'price_edited', 'price_approved') ORDER BY action, details::text`;
+    expect(rows.map((row) => [row.action, Object.keys(row.details).sort()])).toEqual([
+      ['price_approved', ['approval']],
+      ['price_edited', ['approval', 'replaced_by']],
+      ['price_proposed', ['approval']],
+      ['price_proposed', ['approval']],
+    ]);
+  });
+
+  it('previews the pinned price with the current approvals when no estimate is made yet', async () => {
+    await publish();
+    const { jobId } = await submittedJob();
+    const hourly = (await propose(ESTIMATOR_A, jobId, HOURLY)).body.approval.id as string;
+    await approve(OWNER_A, jobId, hourly, { approverName: OWNER_NAME });
+    const rush = (await propose(ESTIMATOR_A, jobId, { kind: 'named_adjustment', adjustmentId: 'rush_charge' })).body.approval.id as string;
+    await approve(OWNER_A, jobId, rush);
+    await publish('60.00');
+    const preview = await json(repriceRoute.GET(request(OWNER_A, `/api/jobs/${jobId}/reprice`), params({ jobId })));
+    // $240.00 and 2.5 h x $50.00 = $125.00, plus the $10.00 rush charge.
+    expect(preview.body.reprice).toMatchObject({ pinned: { price: '$375.00' }, newest: { price: '$240.00' } });
+    expect((await make(ESTIMATOR_A, jobId)).body.estimate.totals.low.total).toBe('375.00');
   });
 
   it('refuses a member whose role changed or who was disabled after the sign-in, and writes nothing', async () => {
