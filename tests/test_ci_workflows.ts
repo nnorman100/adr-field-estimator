@@ -1,5 +1,5 @@
 // Repo-wide workflow rules, run by vitest in the required node CI job. Ported from
-// tests/test_ci_config.py (workflows exist, every job on the switchable self-hosted runner with no
+// tests/test_ci_config.py (workflows exist, every job on the fixed GitHub-hosted runner with no
 // Docker services or containers) and the workflow-wiring tests in
 // tests/test_ci_legacy_scope.py (no legacy CI jobs, the node job keeps the rebuild's checks on every
 // pull request). Also checks that these ported guards stay in
@@ -9,10 +9,10 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { evaluateStep, load, ROOT, WORKFLOWS, type Data } from './workflow_support.ts';
 
-// The Actions budget stop blocks GitHub-hosted jobs, so every job defaults to the self-hosted pool
-// and the repository variable CI_RUNNER (for example ubuntu-latest) switches it back. See
-// docs/runbook/ci.md, "CI runners".
-const RUNNER = "${{ vars.CI_RUNNER || 'dryscope-linux' }}";
+// The repository is public, so every job runs on a fixed standard GitHub-hosted runner (free for
+// public repositories) and never on a self-hosted one, which a pull request could compromise. No
+// variable switches it. See docs/runbook/ci.md, "CI runners".
+const RUNNER = 'ubuntu-latest';
 const WORKFLOW_FILES = readdirSync(WORKFLOWS)
   .filter((name) => /\.y[^/]*ml$/.test(name))
   .sort();
@@ -40,16 +40,19 @@ describe('every workflow', () => {
     expect(WORKFLOW_FILES).not.toContain('codeql.yml');
   });
 
-  it.each(WORKFLOW_FILES)('%s runs every job on the switchable runner, without Docker', (name) => {
-    const jobs = Object.entries(workflow(name).jobs as Record<string, Data>);
-    expect(jobs.length).toBeGreaterThan(0);
-    for (const [job, config] of jobs) {
-      expect(config['runs-on'], `${name} job ${job}`).toBe(RUNNER);
-      // The self-hosted job container has no Docker daemon for service or job containers.
-      expect(config, `${name} job ${job}`).not.toHaveProperty('services');
-      expect(config, `${name} job ${job}`).not.toHaveProperty('container');
-    }
-  });
+  it.each(WORKFLOW_FILES)(
+    '%s runs every job on the fixed GitHub-hosted runner, without Docker',
+    (name) => {
+      const jobs = Object.entries(workflow(name).jobs as Record<string, Data>);
+      expect(jobs.length).toBeGreaterThan(0);
+      for (const [job, config] of jobs) {
+        expect(config['runs-on'], `${name} job ${job}`).toBe(RUNNER);
+        // No service or job containers: every job installs what it needs itself (docs/runbook/ci.md).
+        expect(config, `${name} job ${job}`).not.toHaveProperty('services');
+        expect(config, `${name} job ${job}`).not.toHaveProperty('container');
+      }
+    },
+  );
 });
 
 // GitHub's default job limit is 360 minutes; on a pool of three runner places one hung job would

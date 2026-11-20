@@ -46,7 +46,7 @@ jobs:
   evaluate:
     # The test pool's provider admits only master in the test environment.
     if: github.ref == 'refs/heads/master'
-    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: test
     permissions:

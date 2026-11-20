@@ -73,7 +73,7 @@ describe('ai-evals.yml', () => {
     expect(Object.keys(workflow.jobs)).toEqual(['evaluate']);
     expect(job.if).toBe("github.ref == 'refs/heads/master'");
     expect(job.environment).toBe('test');
-    expect(job['runs-on']).toBe("${{ vars.CI_RUNNER || 'dryscope-linux' }}");
+    expect(job['runs-on']).toBe('ubuntu-latest');
     expect(workflow.concurrency).toEqual({ group: 'ai-evals-test', 'cancel-in-progress': false });
   });
 
@@ -111,10 +111,9 @@ describe('ai-evals.yml', () => {
     }
   });
 
-  it('reads no secret and no setting but the runner, the test provider and its own inputs', () => {
+  it('reads no secret and no setting but the test provider and its own inputs', () => {
     expect(new Set(expressions(workflow).map((e) => e.expression))).toEqual(
       new Set([
-        "vars.CI_RUNNER || 'dryscope-linux'",
         'vars.DRYSCOPE_TEST_WIF_PROVIDER',
         'inputs.feature',
         'inputs.max_usd',
