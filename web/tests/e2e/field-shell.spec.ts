@@ -276,6 +276,9 @@ test.describe('on an iPhone in a Safari tab', () => {
     await expectAccessible(page);
     await sheet.getByRole('button', { name: 'Got it' }).click();
     await expect(sheet).toBeHidden();
+    // The dialog closes at once but the phone saves "seen" from its close event a moment later;
+    // reloading before that would show the sheet again.
+    await expect.poll(() => page.evaluate(() => window.localStorage.getItem('dryscope.homeScreenSheetSeen'))).toBe('1');
 
     await page.reload();
     await expect(page.getByRole('heading', { name: 'Sign in to continue' })).toBeVisible();
