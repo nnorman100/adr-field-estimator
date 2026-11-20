@@ -1,8 +1,9 @@
 import { and, desc, eq, lt, sql } from 'drizzle-orm';
 import { isQueueTimeout } from '@/db/client';
-import { actors, agreements, jobCoordination, jobDrafts, jobs, jobSubmissions } from '@/db/schema';
+import { actors, agreements, companies, jobCoordination, jobDrafts, jobs, jobSubmissions, memberships } from '@/db/schema';
+import { IdentityRefusal } from '@/lib/auth';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
-import { holdDraft, JobError, lockedJob, type JobRow } from './access';
+import { holdDraft, JobError, lockedJob, type JobCaller, type JobRow } from './access';
 import { confirmationPredatesReprice } from '@/lib/estimates/service';
 import type { Fence } from '@/lib/submissions/fence';
 import { SNAPSHOT_FORMAT } from '@/lib/submissions/snapshot';
@@ -137,6 +138,20 @@ async function contentOf(tx: CompanyTransaction, companyId: string, job: { id: s
     return { kind: 'copy', manifest: { draft: manifest.draft, rooms: manifest.rooms } };
   }
   return { kind: 'empty' };
+}
+
+// The caller is still an active member of an active company with the role it signed in with, read again in
+// the snapshot an answer after a field step is built from: a member disabled, or whose role changed,
+// while the request waited on the field database gets no job, customer, claim or staff details.
+export async function stillMember(tx: CompanyTransaction, caller: JobCaller): Promise<void> {
+  // A company suspended meanwhile is refused as a fresh request would be (auth/identity.ts).
+  const [company] = await tx.select({ status: companies.status }).from(companies).where(eq(companies.id, caller.companyId));
+  if (company?.status !== 'active') throw new IdentityRefusal('company_inactive');
+  const [found] = await tx
+    .select({ role: memberships.role })
+    .from(memberships)
+    .where(and(eq(memberships.companyId, caller.companyId), eq(memberships.actorId, caller.actorId), eq(memberships.status, 'active')));
+  if (!found || found.role !== caller.role) throw new JobError('not_allowed');
 }
 
 /** What Postgres holds for the job's drafts, in one read-only snapshot. Null when there is no such job. */
@@ -313,8 +328,10 @@ export async function syncJobDrafts(
       // A current draft that names another job is never this job's, whatever an earlier sync recorded.
       if (found && draftOfOtherJob(found.jobId, jobId)) throw new JobError('conflict');
       // A missing current draft, or a placeholder a previous-version archive or restore left in its
-      // place, is made at a new version: at the version already synced the sync would write nothing.
-      if (!found || found.placeholder) {
+      // place, is made at a new version: at the version already synced the sync would write nothing. So is
+      // the one more try after an error: the failed try may have committed and lost its answer, and its
+      // marker would answer the same version as a retry, with the keys it wrote then.
+      if (!found || found.placeholder || attempt > 0) {
         await withCompany(db, companyId, (tx) =>
           tx
             .update(jobs)

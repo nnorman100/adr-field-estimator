@@ -145,6 +145,10 @@ describe('the draft sync under the field rules', () => {
       await db.doc(GENERATION_PATH).set({ gen: 'two' });
       await expect(raiseGeneration(db)).rejects.toBeInstanceOf(MalformedGenerationError);
       expect((await db.doc(GENERATION_PATH).get()).data()).toEqual({ gen: 'two' });
+      // Never past a generation the sync can read back.
+      await db.doc(GENERATION_PATH).set({ gen: Number.MAX_SAFE_INTEGER });
+      await expect(raiseGeneration(db)).rejects.toThrow('cannot be raised further');
+      expect((await db.doc(GENERATION_PATH).get()).data()).toEqual({ gen: Number.MAX_SAFE_INTEGER });
     } finally {
       await db.doc(GENERATION_PATH).delete();
     }

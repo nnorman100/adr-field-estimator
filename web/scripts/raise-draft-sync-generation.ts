@@ -15,31 +15,12 @@ import { pathToFileURL } from 'node:url';
 import type { Firestore } from 'firebase-admin/firestore';
 import { parseGeneration } from '../src/lib/jobs/draft-lifecycle';
 import { GENERATION_PATH } from '../src/lib/jobs/draft-sync';
-import { PROJECT_ID } from './create-tenant';
+import { parseTargetArgs } from './target-args';
 
 export type RaiseOptions = { project: string; database: string };
 
-// A Firestore database id: lowercase letters, digits and hyphens, or "(default)".
-const DATABASE_ID = /^(?:\(default\)|[a-z][a-z0-9-]{2,62})$/;
-
 export function parseRaiseArgs(argv: string[]): RaiseOptions {
-  const values: Record<string, string> = {};
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i]!;
-    if (arg === '--project' || arg === '--database') {
-      const value = argv[i + 1];
-      if (!value || value.startsWith('--')) throw new Error(`${arg} needs a value`);
-      i++;
-      values[arg.slice(2)] = value;
-    } else if (arg.startsWith('--')) throw new Error(`unknown option ${arg}`);
-    else throw new Error(`unexpected argument ${arg}`);
-  }
-  const { project, database } = values;
-  if (!project) throw new Error('--project is required');
-  if (!PROJECT_ID.test(project)) throw new Error('--project must be a Google Cloud project id');
-  if (!database) throw new Error('--database is required');
-  if (!DATABASE_ID.test(database)) throw new Error('--database must be a Firestore database id');
-  return { project, database };
+  return parseTargetArgs(argv);
 }
 
 /** Raises the stored generation by one, in one transaction; the generation before and after. */
@@ -47,6 +28,8 @@ export async function raiseGeneration(db: Firestore): Promise<{ from: number; to
   const ref = db.doc(GENERATION_PATH);
   return db.runTransaction(async (tx) => {
     const from = parseGeneration((await tx.get(ref)).data());
+    // A generation the sync could not read back (past the largest safe integer) is never written.
+    if (!Number.isSafeInteger(from + 1)) throw new Error('the draft sync generation cannot be raised further');
     tx.set(ref, { gen: from + 1 });
     return { from, to: from + 1 };
   });

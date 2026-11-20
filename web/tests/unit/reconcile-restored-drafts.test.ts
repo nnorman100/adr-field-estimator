@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { draftsToClose, parseClaims, parseReconcileArgs, type FoundDraft } from '../../scripts/reconcile-restored-drafts';
+import { draftsAlreadyClosed, draftsToClose, parseClaims, parseReconcileArgs, type FoundDraft } from '../../scripts/reconcile-restored-drafts';
 
 // The owner-run close of field drafts a restored Postgres no longer gives the job they name
 // (docs/runbook/backups.md). Its Firestore read and write, against the emulator, are in
@@ -54,5 +54,14 @@ describe('draftsToClose', () => {
     const named = draft({ state: 'archived' });
     const submitted = draft({ state: 'submitted', fieldOwnerUid: undefined });
     expect(draftsToClose([closed, named, submitted], new Map([[`${randomUUID()}/${randomUUID()}`, randomUUID()]])).map((one) => one.draftId)).toEqual([named.draftId, submitted.draftId]);
+  });
+
+  it('lists the drafts not given to their job that are closed already, so the owner’s list is whole', () => {
+    const closed = draft({ state: 'archived', fieldOwnerUid: undefined });
+    const claimedClosed = draft({ state: 'archived', fieldOwnerUid: undefined });
+    const open = draft();
+    const claims = new Map([[`${company}/${claimedClosed.draftId}`, claimedClosed.jobId as string]]);
+    expect(draftsAlreadyClosed([closed, claimedClosed, open], claims)).toEqual([{ companyId: company, draftId: closed.draftId, reason: 'unclaimed' }]);
+    expect(draftsToClose([closed, claimedClosed, open], claims).map((one) => one.draftId)).toEqual([open.draftId]);
   });
 });

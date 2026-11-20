@@ -483,6 +483,39 @@ describe('what is refused, and writes nothing', () => {
     expect(row!.behind).toBe(false);
   });
 
+  // R3 (slice 4b review): the sync commits the older job revision's keys and its answer is lost; the one
+  // more try is a new field revision, so it writes the job's revision rather than answering `same`.
+  it('a sync whose answer was lost while a reprice landed is tried again at a new version', async () => {
+    const { jobId, draftId } = await readyToSign();
+    await publish(h.seed.a, '3.00');
+    const open = randomUUID();
+    h.field.failNext.createFrom = true;
+    expect((await f.nextDraft(ESTIMATOR_A, jobId, { draftId: open, fromDraftId: draftId })).status).toBe(503);
+    const sync = h.field.sync;
+    let repriced = false;
+    h.field.sync = (company, job, gen, options = {}) =>
+      sync(company, job, gen, {
+        ...options,
+        stillCurrent: async () => {
+          const current = await options.stillCurrent!();
+          if (current && !repriced) {
+            repriced = true;
+            expect((await reprice(OWNER_A, jobId)).status).toBe(200);
+            // This try commits, and its answer is lost.
+            h.field.loseNext.sync = true;
+          }
+          return current;
+        },
+      });
+    try {
+      const started = await json(fieldOwnerRoute.POST(request(ESTIMATOR_A, `/api/jobs/${jobId}/field-owner`, { method: 'POST' }), params({ jobId })));
+      expect(started.status).toBe(200);
+    } finally {
+      h.field.sync = sync;
+    }
+    expect(h.field.draft(h.seed.a, open)).toMatchObject({ jobId, state: 'editing', archiveRevision: (await f.job(jobId)).revision });
+  });
+
   it('a job never priced has no pin to move', async () => {
     await publish(h.seed.a, '2.00');
     const { jobId } = await submittedJob();

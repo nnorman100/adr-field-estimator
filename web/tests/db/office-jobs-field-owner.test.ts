@@ -686,6 +686,20 @@ describe('moving the field work (owner decision J5)', () => {
     expect(await moving.running).toEqual({ status: 403, body: { error: 'company_inactive' } });
   });
 
+  it('gives an owner of a company suspended while an archive or a restore waited on its field step no job details after it', async () => {
+    const { id } = await claimedJob();
+    const { revision } = (await read(OWNER_A, id)).body.job as { revision: number };
+    const archiving = await heldSync(() => archive(OWNER_A, id, { revision, changeId: randomUUID() }));
+    await h.admin`UPDATE companies SET status = 'suspended' WHERE id = ${h.seed.a}`;
+    archiving.open();
+    expect(await archiving.running).toEqual({ status: 403, body: { error: 'company_inactive' } });
+    await h.admin`UPDATE companies SET status = 'active' WHERE id = ${h.seed.a}`;
+    const restoring = await heldSync(() => restore(OWNER_A, id, { revision: revision + 1, changeId: randomUUID() }));
+    await h.admin`UPDATE companies SET status = 'suspended' WHERE id = ${h.seed.a}`;
+    restoring.open();
+    expect(await restoring.running).toEqual({ status: 403, body: { error: 'company_inactive' } });
+  });
+
   it('answers 503 and records nothing as synced when Postgres moves on after the last try’s commit', async () => {
     const { id } = await claimedJob();
     const { revision } = (await coordination(OWNER_A, id)).body;

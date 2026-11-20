@@ -11,40 +11,20 @@
 //
 // The input is the CSV the runbook's query writes from the restored Postgres: company id, draft id, job
 // id, one job_drafts row per line. Without --apply it only reads, and lists each draft it would close by
-// company and draft id with the reason, then the counts; the owner checks the list before adding
-// --apply. With --apply each one is changed only if it has not changed since it was read (an update
+// company and draft id with the reason, each one not given to its job that is closed already (listed,
+// never written), then the counts; the owner checks the list before adding --apply. With --apply each one is changed only if it has not changed since it was read (an update
 // precondition), so a draft a phone or the sync wrote meanwhile is read again on the next run. It runs
 // with the person's own Google credentials and prints ids and counts, never field data.
 import { pathToFileURL } from 'node:url';
 import type { Firestore, Timestamp } from 'firebase-admin/firestore';
-import { PROJECT_ID } from './create-tenant';
+import { parseTargetArgs } from './target-args';
 
 export type ReconcileOptions = { project: string; database: string; apply: boolean };
 
-// A Firestore database id: lowercase letters, digits and hyphens, or "(default)".
-const DATABASE_ID = /^(?:\(default\)|[a-z][a-z0-9-]{2,62})$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export function parseReconcileArgs(argv: string[]): ReconcileOptions {
-  const values: Record<string, string> = {};
-  let apply = false;
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i]!;
-    if (arg === '--apply') apply = true;
-    else if (arg === '--project' || arg === '--database') {
-      const value = argv[i + 1];
-      if (!value || value.startsWith('--')) throw new Error(`${arg} needs a value`);
-      i++;
-      values[arg.slice(2)] = value;
-    } else if (arg.startsWith('--')) throw new Error(`unknown option ${arg}`);
-    else throw new Error(`unexpected argument ${arg}`);
-  }
-  const { project, database } = values;
-  if (!project) throw new Error('--project is required');
-  if (!PROJECT_ID.test(project)) throw new Error('--project must be a Google Cloud project id');
-  if (!database) throw new Error('--database is required');
-  if (!DATABASE_ID.test(database)) throw new Error('--database must be a Firestore database id');
-  return { project, database, apply };
+  return parseTargetArgs(argv, { apply: true });
 }
 
 /** The restored job_drafts: the job each draft is given to, by "company/draft". */
@@ -73,20 +53,34 @@ export type FoundDraft = { companyId: string; draftId: string; jobId: unknown; s
 
 export type Closing = { companyId: string; draftId: string; reason: 'unclaimed' | 'another_job' };
 
+/** Why the restored Postgres does not give this draft to the job it names, or null when it does. A draft
+ * with no job id is given when Postgres claims it (the sync stamps it). */
+function reasonOf(draft: FoundDraft, claims: Claims): Closing['reason'] | null {
+  const claimed = claims.get(`${draft.companyId}/${draft.draftId}`);
+  if (claimed === undefined) return 'unclaimed';
+  if (draft.jobId !== undefined && draft.jobId !== claimed) return 'another_job';
+  return null;
+}
+
+const closedAlready = (draft: FoundDraft) => draft.state === 'archived' && draft.fieldOwnerUid === undefined;
+
 /** The drafts to close: every one the restored Postgres does not give to the job it names, unless it is
- * already archived naming nobody. A draft with no job id is kept when Postgres claims it (the sync stamps it). */
+ * already archived naming nobody. */
 export function draftsToClose(drafts: FoundDraft[], claims: Claims): Closing[] {
-  const closing: Closing[] = [];
-  for (const draft of drafts) {
-    const claimed = claims.get(`${draft.companyId}/${draft.draftId}`);
-    let reason: Closing['reason'] | null = null;
-    if (claimed === undefined) reason = 'unclaimed';
-    else if (draft.jobId !== undefined && draft.jobId !== claimed) reason = 'another_job';
-    if (reason === null) continue;
-    if (draft.state === 'archived' && draft.fieldOwnerUid === undefined) continue;
-    closing.push({ companyId: draft.companyId, draftId: draft.draftId, reason });
-  }
-  return closing;
+  return drafts.flatMap((draft) => {
+    const reason = reasonOf(draft, claims);
+    return reason === null || closedAlready(draft) ? [] : [{ companyId: draft.companyId, draftId: draft.draftId, reason }];
+  });
+}
+
+/** The drafts the restored Postgres does not give to the job they name that are closed already (the
+ * sync's reset or an earlier run closed them): listed, never written, so the owner's list of field work to
+ * decide on is whole. */
+export function draftsAlreadyClosed(drafts: FoundDraft[], claims: Claims): Closing[] {
+  return drafts.flatMap((draft) => {
+    const reason = reasonOf(draft, claims);
+    return reason !== null && closedAlready(draft) ? [{ companyId: draft.companyId, draftId: draft.draftId, reason }] : [];
+  });
 }
 
 /** Every company's field drafts, with the update time each was read at. */
@@ -136,14 +130,17 @@ async function main() {
   const drafts = await readDrafts(db);
   const byKey = new Map(drafts.map((draft) => [`${draft.companyId}/${draft.draftId}`, draft]));
   const closing = draftsToClose(drafts, claims);
+  const closed = draftsAlreadyClosed(drafts, claims);
+  for (const draft of closed) console.log(`already closed: ${draft.companyId}/${draft.draftId} (${draft.reason})`);
   for (const draft of closing) console.log(`${options.apply ? 'closing' : 'would close'}: ${draft.companyId}/${draft.draftId} (${draft.reason})`);
-  console.log(`read ${drafts.length} drafts against ${claims.size} job_drafts rows: ${closing.length} to close.`);
+  console.log(`read ${drafts.length} drafts against ${claims.size} job_drafts rows: ${closing.length} to close, ${closed.length} closed already.`);
   if (!options.apply) {
     console.log(closing.length === 0 ? 'nothing to close.' : 'check the list, then run again with --apply.');
     return;
   }
-  const { closed, changed } = await closeDrafts(db, closing.map((draft) => ({ ...draft, readAt: byKey.get(`${draft.companyId}/${draft.draftId}`)!.readAt })));
-  console.log(`closed ${closed}; ${changed} changed since they were read: run it again.`);
+  const written = await closeDrafts(db, closing.map((draft) => ({ ...draft, readAt: byKey.get(`${draft.companyId}/${draft.draftId}`)!.readAt })));
+  const changed = written.changed;
+  console.log(`closed ${written.closed}; ${changed} changed since they were read: run it again.`);
   if (changed > 0) process.exitCode = 1;
 }
 
