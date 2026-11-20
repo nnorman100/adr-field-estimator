@@ -518,7 +518,7 @@ describe('every route, called with the other company’s ids', () => {
     for (const row of creates) {
       for (const [attacker, victim] of directions()) {
         const victimBefore = await rowsOf(victim.companyId);
-        const draftsBefore = h.drafts.made.size;
+        const draftsBefore = h.drafts.owners().length;
         for (const [role, claims] of Object.entries(attacker.people)) {
           // The other company's own job and draft ids, in the body.
           const body = { id: victim.ids.jobId, draftId: victim.ids.draftId };
@@ -536,7 +536,7 @@ describe('every route, called with the other company’s ids', () => {
         const own = await h.admin`SELECT company_id FROM jobs WHERE id = ${victim.ids.jobId}`;
         expect(own.map((found) => found.company_id).sort()).toEqual([attacker.companyId, victim.companyId].sort());
         // One draft was made, in the attacker's own company: never a write into the other's.
-        const made = [...h.drafts.made.keys()].slice(draftsBefore);
+        const made = h.drafts.owners().map(([at]) => at).slice(draftsBefore);
         expect(made).toEqual([`${attacker.companyId}/${victim.ids.draftId}`]);
       }
     }

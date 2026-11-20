@@ -3,21 +3,21 @@ import type { JobProjection } from '@/lib/field/job-projection';
 import type { FieldManifest } from '@/lib/field/canonical';
 import { MAX_PHOTO_REFS, MAX_ROOMS } from '@/lib/field/schema';
 import type { ArchiveResult, ArchiveStore } from '@/lib/jobs/archive-store';
+import { assertVersion, planSync, versionRefusal, type StoredDraft, type SyncMarker } from '@/lib/jobs/draft-lifecycle';
+import { draftIdsToRead, draftsToMake, resultOf, type DraftSync } from '@/lib/jobs/draft-sync';
 import { placeholderRefusal as refusalOf, draftOfOtherJob, type DraftMade } from '@/lib/jobs/drafts';
 import type { FenceResult, FenceStore, Provenance } from '@/lib/submissions/fence';
-import type { FakeDrafts } from '../db/draft-fake';
-import type { FakeDraftStates } from '../db/evidence-fake';
 
 // A stand-in for the field database's drafts as Submit sees them (src/lib/submissions/fence.ts):
 // each draft's state, fence, field map and nested documents. It is held to the same contract as
 // the real Firestore writer (fence-contract.ts, run against both), so the database tests cannot pass
 // on a fence the real one would not keep.
 //
-// The data lives behind a backing: in memory for the route tests, or in a file so a separate
-// process (killed mid-Submit, tests/db/submission-crash-child.ts) and the test that killed it see
-// the same drafts, as two server processes see one Firestore. Linked to the jobs and photo stand-ins
-// of tests/db/team-harness.ts, a draft the jobs service made is an empty `editing` draft here, and
-// the photo route reads the state this fake holds.
+// The drafts and the draft sync's markers live in one record behind a backing, in memory for the route
+// tests, or in one file so a separate process (killed mid-Submit, tests/db/submission-crash-child.ts)
+// and the test that killed it see the same drafts, as two server processes see one Firestore. The jobs
+// and photo stand-ins of tests/db/team-harness.ts (draft-fake.ts, evidence-fake.ts) are built over the
+// same backing: what any of them writes, every one of them reads, with nothing copied between them.
 
 export type FakeDraft = {
   fieldOwnerUid: string | null;
@@ -29,6 +29,8 @@ export type FakeDraft = {
   previous: Provenance | null;
   // The job revision of the last archive or restore (S5b-2), absent until one.
   archiveRevision?: number;
+  // The coordination revision the field owner was last named at (src/lib/jobs/drafts.ts), absent until one.
+  fieldOwnerRevision?: number;
   // The job the draft was made for (security audit F1), absent on a draft made before that key.
   jobId?: string;
   // The record an archive or restore leaves for a missing draft (src/lib/jobs/archive-store.ts): its
@@ -37,32 +39,44 @@ export type FakeDraft = {
 };
 export type FieldData = Record<string, FakeDraft>;
 
-export type Backing = { load(): FieldData; save(data: FieldData): void };
+// The draft sync's markers (src/lib/jobs/draft-sync.ts), by "company/job".
+export type Markers = Record<string, SyncMarker>;
+
+/** The one record: every draft, by "company/draft", and every marker, by "company/job". */
+export type FieldRecord = { drafts: FieldData; markers: Markers };
+
+export type Backing = { load(): FieldRecord; save(record: FieldRecord): void };
+
+const emptyRecord = (): FieldRecord => ({ drafts: {}, markers: {} });
 
 export const memoryBacking = (): Backing => {
-  let data: FieldData = {};
+  let record = emptyRecord();
   return {
-    load: () => structuredClone(data),
+    load: () => structuredClone(record),
     save: (next) => {
-      data = structuredClone(next);
+      record = structuredClone(next);
     },
   };
 };
 
-// Written whole and renamed into place, so a reader never sees half a file.
+// The drafts and the markers in one file, written whole and renamed into place in one step, so a reader
+// never sees half a file, nor a marker without the drafts it was written with.
 export const fileBacking = (path: string): Backing => ({
-  load: () => (existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as FieldData) : {}),
+  load: () => (existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as FieldRecord) : emptyRecord()),
   save: (next) => {
     writeFileSync(`${path}.tmp`, JSON.stringify(next));
     renameSync(`${path}.tmp`, path);
   },
 });
 
-type Method = keyof FenceStore | keyof ArchiveStore;
+type Method = keyof FenceStore | keyof ArchiveStore | keyof DraftSync;
 
-// Also the archive, restore and copy writer of S5b-2 (src/lib/jobs/archive-store.ts), on the same
-// drafts, so Submit and the photo route see an archived draft as the real field database holds it.
-export type FakeField = FenceStore & ArchiveStore & {
+// Also the archive, restore and copy writer of S5b-2 (src/lib/jobs/archive-store.ts) and the draft
+// life-cycle sync (src/lib/jobs/draft-sync.ts, the same plan as the real writer, planSync), on the one
+// record, so Submit, the jobs routes and the photo route see every draft as the real field database holds it.
+export type FakeField = FenceStore & ArchiveStore & DraftSync & {
+  // The sync's marker for a job, as the record holds it, or null.
+  marker(companyId: string, jobId: string): SyncMarker | null;
   // The drafts as stored now (a copy).
   data(): FieldData;
   projected: Map<string, JobProjection>;
@@ -70,9 +84,15 @@ export type FakeField = FenceStore & ArchiveStore & {
   // Writes field data as the phone would while the draft is editing (the rules are not modelled:
   // tests/emu/ checks them).
   put(companyId: string, draftId: string, manifest: Partial<FieldManifest>, fieldOwnerUid?: string | null): void;
+  // Puts a draft in a state, as another step (a Submit, an archive) would leave it.
+  lock(companyId: string, draftId: string, state: string): void;
+  // Gives a draft exactly this many photo references, as the phone would have written them.
+  setPhotoRefs(companyId: string, draftId: string, count: number): void;
   // Takes the job id off a draft, as on one the previous version made before drafts carried it
   // (security audit F1).
   unstamp(companyId: string, draftId: string): void;
+  // Removes a draft from the record, as one that is not there.
+  remove(companyId: string, draftId: string): void;
   // Makes the next call of a method fail as if Firestore were unreachable, before it changes anything.
   failNext: Partial<Record<Method, boolean>>;
   // Makes the next call of a method do its work and then fail, as if Firestore's answer were lost.
@@ -85,7 +105,8 @@ export type FakeField = FenceStore & ArchiveStore & {
 
 const key = (companyId: string, draftId: string) => `${companyId}/${draftId}`;
 
-const emptyDraft = (fieldOwnerUid: string | null, jobId?: string): FakeDraft => ({
+/** A new, empty `editing` draft, as the server makes one. */
+export const emptyDraft = (fieldOwnerUid: string | null, jobId?: string): FakeDraft => ({
   fieldOwnerUid,
   state: 'editing',
   fence: null,
@@ -96,38 +117,15 @@ const emptyDraft = (fieldOwnerUid: string | null, jobId?: string): FakeDraft => 
   ...(jobId === undefined ? {} : { jobId }),
 });
 
-export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts: FakeDrafts; states: FakeDraftStates }): FakeField {
-  function load(): FieldData {
-    const data = backing.load();
-    for (const [made, { fieldOwnerUid }] of linked?.drafts.made ?? []) {
-      const left = data[made];
-      // As the real writer: the jobs service made the draft over a restored job's placeholder, which keeps its revision.
-      if (!left || (left.placeholder && !linked?.drafts.placeholders.has(made))) {
-        data[made] = { ...emptyDraft(fieldOwnerUid, linked?.drafts.jobOf.get(made)), ...(left ? { archiveRevision: left.archiveRevision } : {}) };
-      }
-    }
-    return data;
+export function fakeField(backing: Backing = memoryBacking()): FakeField {
+  // Changes the record outside a method call, as a test sets it up.
+  function edit(work: (record: FieldRecord) => void): void {
+    const record = backing.load();
+    work(record);
+    backing.save(record);
   }
-  function save(data: FieldData): void {
-    backing.save(data);
-    if (!linked) return;
-    for (const [at, draft] of Object.entries(data)) {
-      linked.states.set.set(at, draft.state);
-      // A placeholder is no draft to the jobs service (src/lib/jobs/drafts.ts): nobody is named on it.
-      if (draft.placeholder) {
-        linked.drafts.placeholders.set(at, { jobId: draft.jobId, state: draft.state, archiveRevision: draft.archiveRevision ?? null });
-        continue;
-      }
-      linked.drafts.placeholders.delete(at);
-      if (draft.state === 'archived') linked.drafts.archived.add(at);
-      else linked.drafts.archived.delete(at);
-      linked.states.refs.set(at, Object.keys(draft.photos).length);
-      if (!linked.drafts.made.has(at)) linked.drafts.made.set(at, { fieldOwnerUid: draft.fieldOwnerUid });
-      if (draft.jobId !== undefined && !linked.drafts.jobOf.has(at)) linked.drafts.jobOf.set(at, draft.jobId);
-    }
-  }
-  // Each call reads, decides and writes with no await in between: one transaction.
-  async function call<T>(method: Method, work: (data: FieldData) => T): Promise<T> {
+  // Each call reads, decides and writes the record with no await in between: one transaction.
+  async function call<T>(method: Method, work: (record: FieldRecord) => T): Promise<T> {
     fake.calls.push(method);
     const gate = fake.gate[method];
     if (gate) {
@@ -138,9 +136,9 @@ export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts:
       fake.failNext[method] = false;
       throw new Error('field database unreachable');
     }
-    const data = load();
-    const result = work(data);
-    save(data);
+    const record = backing.load();
+    const result = work(record);
+    backing.save(record);
     if (fake.loseNext[method]) {
       fake.loseNext[method] = false;
       throw new Error('field database answer lost');
@@ -149,6 +147,56 @@ export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts:
   }
 
   const fake: FakeField = {
+    marker: (companyId, jobId) => backing.load().markers[key(companyId, jobId)] ?? null,
+    sync: async (companyId, job, gen) => {
+      // As the real writer: refused before any read or write, as a rejected promise.
+      assertVersion(gen, job.v);
+      return call('sync', ({ drafts: data, markers }) => {
+        const marker = markers[key(companyId, job.jobId)] ?? null;
+        // As the real writer: the marker decides first, before any draft is read.
+        const refused = versionRefusal(marker, gen, job.v);
+        if (refused) return refused;
+        const stored = Object.fromEntries(draftIdsToRead(marker, job).map((draftId) => [draftId, storedOf(data[key(companyId, draftId)])]));
+        // Rooms or photos left under a draft to make (only a placeholder can hold them here).
+        const orphans = new Set(
+          draftsToMake(stored, job).filter((draftId) => {
+            const left = data[key(companyId, draftId)];
+            return left !== undefined && (Object.keys(left.rooms).length > 0 || Object.keys(left.photos).length > 0);
+          }),
+        );
+        const plan = planSync(marker, stored, orphans, job, gen);
+        // As Firestore's commit: a create of a room or photo the same write already creates fails the
+        // whole write, and nothing (no draft, no marker) is saved.
+        for (const made of plan.creates) {
+          for (const docs of [made.rooms, made.photos]) {
+            if (new Set(docs.map((doc) => doc.id)).size !== docs.length) throw new Error('a document is created twice in one write');
+          }
+        }
+        for (const made of plan.creates) {
+          const { fence, previous, fieldOwnerUid, field, ...rest } = made.data;
+          data[key(companyId, made.draftId)] = {
+            ...emptyDraft(fieldOwnerUid ?? null, made.data.jobId),
+            ...rest,
+            field,
+            fence: fence ? { submissionId: fence.submissionId, epoch: fence.epoch, expiresAt: fence.expiresAt.toISOString() } : null,
+            previous: previous ? { ...previous } : null,
+            rooms: Object.fromEntries(made.rooms.map((room) => [room.id, room.field ?? {}])),
+            photos: Object.fromEntries(made.photos.map((photo) => [photo.id, photo.field ?? {}])),
+          };
+        }
+        for (const update of plan.updates) {
+          const draft = data[key(companyId, update.draftId)]!;
+          const { fence, ...rest } = update.set;
+          Object.assign(draft, rest);
+          if (fence) draft.fence = { submissionId: fence.submissionId, epoch: fence.epoch, expiresAt: fence.expiresAt.toISOString() };
+          if (update.remove.includes('fieldOwnerUid')) draft.fieldOwnerUid = null;
+          if (update.remove.includes('fence')) draft.fence = null;
+        }
+        // The marker with the drafts it guards, in the same write.
+        markers[key(companyId, job.jobId)] = plan.marker;
+        return resultOf(plan);
+      });
+    },
     failNext: {},
     loseNext: {},
     gate: {},
@@ -159,30 +207,45 @@ export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts:
       if ((fake.projected.get(at)?.revision ?? -1) < projection.revision) fake.projected.set(at, { ...projection });
     }),
     findDraft: (companyId, draftId) =>
-      call('findDraft', (data) => {
+      call('findDraft', ({ drafts: data }) => {
         const found = data[key(companyId, draftId)];
         return found ? { jobId: found.jobId } : null;
       }),
-    data: () => load(),
-    draft: (companyId, draftId) => load()[key(companyId, draftId)] ?? null,
+    data: () => backing.load().drafts,
+    draft: (companyId, draftId) => backing.load().drafts[key(companyId, draftId)] ?? null,
     put(companyId, draftId, manifest, fieldOwnerUid = null) {
-      const data = load();
-      const draft = (data[key(companyId, draftId)] ??= emptyDraft(fieldOwnerUid));
-      if (manifest.draft !== undefined) draft.field = manifest.draft;
-      for (const room of manifest.rooms ?? []) draft.rooms[room.id] = room.field;
-      for (const photo of manifest.photos ?? []) draft.photos[photo.id] = photo.field;
-      save(data);
+      edit(({ drafts: data }) => {
+        const draft = (data[key(companyId, draftId)] ??= emptyDraft(fieldOwnerUid));
+        if (manifest.draft !== undefined) draft.field = manifest.draft;
+        for (const room of manifest.rooms ?? []) draft.rooms[room.id] = room.field;
+        for (const photo of manifest.photos ?? []) draft.photos[photo.id] = photo.field;
+      });
     },
-
+    lock(companyId, draftId, state) {
+      edit(({ drafts: data }) => {
+        const draft = data[key(companyId, draftId)];
+        if (draft) draft.state = state;
+      });
+    },
+    setPhotoRefs(companyId, draftId, count) {
+      edit(({ drafts: data }) => {
+        const draft = data[key(companyId, draftId)];
+        if (draft) draft.photos = Object.fromEntries(Array.from({ length: count }, (_, n) => [`ref-${n}`, {}]));
+      });
+    },
+    remove(companyId, draftId) {
+      edit(({ drafts: data }) => {
+        delete data[key(companyId, draftId)];
+      });
+    },
     unstamp(companyId, draftId) {
-      const data = load();
-      delete data[key(companyId, draftId)]?.jobId;
-      save(data);
-      linked?.drafts.jobOf.delete(key(companyId, draftId));
+      edit(({ drafts: data }) => {
+        delete data[key(companyId, draftId)]?.jobId;
+      });
     },
 
     fence: (companyId, draftId, fence, replacing) =>
-      call('fence', (data): FenceResult => {
+      call('fence', ({ drafts: data }): FenceResult => {
         const draft = data[key(companyId, draftId)];
         if (!draft) return { outcome: 'missing' };
         const close = () => {
@@ -206,7 +269,7 @@ export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts:
       }),
 
     read: (companyId, draftId, epoch) =>
-      call('read', (data) => {
+      call('read', ({ drafts: data }) => {
         const draft = data[key(companyId, draftId)];
         if (!draft || draft.state !== 'submitting' || draft.fence?.epoch !== epoch) return null;
         if (Object.keys(draft.rooms).length > MAX_ROOMS) return 'too_many_rooms' as const;
@@ -219,7 +282,7 @@ export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts:
       }),
 
     markSubmitted: (companyId, draftId, epoch, submissionId) =>
-      call('markSubmitted', (data) => {
+      call('markSubmitted', ({ drafts: data }) => {
         const draft = data[key(companyId, draftId)];
         if (!draft) return 'missing' as const;
         if (!draft.fence || draft.fence.epoch !== epoch || draft.fence.submissionId !== submissionId) return 'conflict' as const;
@@ -230,7 +293,7 @@ export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts:
       }),
 
     release: (companyId, draftId, epoch) =>
-      call('release', (data) => {
+      call('release', ({ drafts: data }) => {
         const draft = data[key(companyId, draftId)];
         if (!draft || draft.state !== 'submitting' || draft.fence?.epoch !== epoch) return 'not_fenced' as const;
         draft.state = 'editing';
@@ -243,15 +306,15 @@ export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts:
     // is. Where the draft is missing, each leaves a placeholder holding the revision (archived, or absent
     // once restored).
     archiveDraft: (companyId, jobId, draftId, revision) =>
-      call('archiveDraft', (data): ArchiveResult => lifecycle(data, companyId, jobId, draftId, revision, 'archived', (current) => (current === 'submitting' ? current : 'archived'))),
+      call('archiveDraft', ({ drafts: data }): ArchiveResult => lifecycle(data, companyId, jobId, draftId, revision, 'archived', (current) => (current === 'submitting' ? current : 'archived'))),
 
     restoreDraft: (companyId, jobId, draftId, state, revision) =>
-      call('restoreDraft', (data): ArchiveResult =>
+      call('restoreDraft', ({ drafts: data }): ArchiveResult =>
         lifecycle(data, companyId, jobId, draftId, revision, 'absent', (current) => (current === 'archived' ? state : current)),
       ),
 
     createCopy: (companyId, jobId, draftId, fieldOwnerUid, manifest) =>
-      call('createCopy', (data): DraftMade => {
+      call('createCopy', ({ drafts: data }): DraftMade => {
         const found = data[key(companyId, draftId)];
         if (found && !found.placeholder) {
           if (draftOfOtherJob(found.jobId, jobId)) return 'taken';
@@ -271,7 +334,7 @@ export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts:
       }),
 
     createFrom: (companyId, jobId, draftId, fieldOwnerUid, manifest, previous) =>
-      call('createFrom', (data): DraftMade => {
+      call('createFrom', ({ drafts: data }): DraftMade => {
         const found = data[key(companyId, draftId)];
         if (found && !found.placeholder) {
           const same = found.previous?.draftId === previous.draftId && found.previous?.submissionId === previous.submissionId;
@@ -324,4 +387,21 @@ function lifecycle(
   draft.state = draft.placeholder ? placeholder : next(draft.state);
   draft.archiveRevision = revision;
   return 'set';
+}
+
+// A stand-in draft as planSync reads it (src/lib/jobs/draft-sync.ts, storedOf): a null field owner is
+// no key, as on the real draft.
+function storedOf(found: FakeDraft | undefined): StoredDraft {
+  if (!found) return null;
+  return {
+    placeholder: found.placeholder === true,
+    jobId: found.jobId,
+    state: found.state,
+    hasFence: found.fence !== null,
+    fenceEpoch: found.fence?.epoch,
+    fence: found.fence ? { submissionId: found.fence.submissionId, epoch: found.fence.epoch, expiresAt: Date.parse(found.fence.expiresAt) } : null,
+    fieldOwnerUid: found.fieldOwnerUid ?? undefined,
+    archiveRevision: found.archiveRevision,
+    fieldOwnerRevision: found.fieldOwnerRevision,
+  };
 }

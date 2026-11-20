@@ -165,8 +165,7 @@ describe('Back to editing', () => {
 
     const foreign = randomUUID();
     const key = `${h.seed.a}/${foreign}`;
-    h.drafts.made.set(key, { fieldOwnerUid: 'estimator-a2' });
-    h.drafts.jobOf.set(key, randomUUID());
+    h.drafts.plant(key, { fieldOwnerUid: 'estimator-a2', jobId: randomUUID() });
     const stored = structuredClone(h.field.draft(h.seed.a, foreign));
     expect(await f.nextDraft(ESTIMATOR_A, jobId, { draftId: foreign, fromDraftId: second })).toMatchObject({ status: 409, body: { error: 'conflict' } });
     expect(h.field.draft(h.seed.a, foreign)).toEqual(stored);
@@ -185,14 +184,14 @@ describe('Back to editing', () => {
     const b = await submittedJob(ESTIMATOR_A2);
     const key = `${h.seed.a}/${a.draftId}`;
     const draft = structuredClone(h.field.draft(h.seed.a, a.draftId));
-    const owner = structuredClone(h.drafts.made.get(key));
+    const owner = structuredClone(h.drafts.owner(key));
     const before = await everything(h.admin);
     expect(await f.nextDraft(ESTIMATOR_A2, b.jobId, { draftId: a.draftId, fromDraftId: b.draftId })).toMatchObject({ status: 409, body: { error: 'conflict' } });
     expect(await everything(h.admin)).toBe(before);
     expect(h.field.draft(h.seed.a, a.draftId)).toEqual(draft);
-    expect(h.drafts.made.get(key)).toEqual(owner);
+    expect(h.drafts.owner(key)).toEqual(owner);
     expect(owner?.fieldOwnerUid).toBe('estimator-a');
-    expect(h.drafts.jobOf.get(key)).toBe(a.jobId);
+    expect(h.drafts.jobOf(key)).toBe(a.jobId);
   });
 
   // Security audit F1: a next draft is never the draft it comes from. Sent with one id as both, even
@@ -218,16 +217,16 @@ describe('Back to editing', () => {
     expect((await f.nextDraft(ESTIMATOR_A, jobId, { draftId: second, fromDraftId: draftId })).status).toBe(201);
     await h.admin`DELETE FROM job_drafts WHERE job_id = ${jobId}`;
     const key = `${h.seed.a}/${draftId}`;
-    h.drafts.jobOf.delete(key);
-    const stored = structuredClone(h.drafts.made.get(key));
+    h.drafts.unstamp(key);
+    const stored = structuredClone(h.drafts.owner(key));
 
     const other = randomUUID();
     const made = await json(jobsRoute.POST(request(ESTIMATOR_A2, '/api/jobs', { method: 'POST', body: { id: other, draftId } }), params({})));
     expect(made).toMatchObject({ status: 409, body: { error: 'conflict' } });
     expect(await h.admin`SELECT id FROM jobs WHERE id = ${other}`).toEqual([]);
     expect(await h.admin`SELECT job_id FROM job_drafts WHERE draft_id = ${draftId}`).toEqual([]);
-    expect(h.drafts.made.get(key)).toEqual(stored);
-    expect(h.drafts.jobOf.has(key)).toBe(false);
+    expect(h.drafts.owner(key)).toEqual(stored);
+    expect(h.drafts.jobOf(key)).toBeUndefined();
 
     h.field.put(h.seed.a, second, manifest);
     expect((await f.submitShown(ESTIMATOR_A, jobId, second, manifest)).answer.status).toBe(201);

@@ -2,7 +2,7 @@ import { and, desc, eq, sql } from 'drizzle-orm';
 import { actors, agreements, jobs, jobSubmissions } from '@/db/schema';
 import { holdAcrossOutsideCall, withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
-import type { FieldDoc } from '@/lib/field/canonical';
+import type { FieldDoc, FieldManifest } from '@/lib/field/canonical';
 import { snapshotManifest } from '@/lib/submissions/snapshot';
 import { canSeeJob, claimDraft, hasAny, holdDraft, jobAccess, JobError, lockedJob, type JobCaller, type JobRow } from './access';
 import type { ArchiveStore } from './archive-store';
@@ -79,12 +79,17 @@ function jobView(detail: JobDetail): { job: JobView } {
   return { job: detail.job };
 }
 
-// The field map and rooms a copy starts from: the signed record's, less COPY_CLEARED_KEYS.
-function copiedField(bytes: Buffer | Uint8Array): { draft: Record<string, unknown>; rooms: FieldDoc[] } {
-  const manifest = snapshotManifest(bytes);
+// The field map and rooms a copy starts from: its source's, in a fresh map less COPY_CLEARED_KEYS
+// (the photos stay the signed job's evidence). Shared with the draft sync (draft-lifecycle.ts).
+export function copiedManifest(manifest: Pick<FieldManifest, 'draft' | 'rooms'>): { draft: Record<string, unknown>; rooms: FieldDoc[] } {
   const draft = { ...((manifest.draft ?? {}) as Record<string, unknown>) };
   for (const key of COPY_CLEARED_KEYS) delete draft[key];
   return { draft, rooms: manifest.rooms };
+}
+
+// The same, from the signed record's snapshot bytes.
+function copiedField(bytes: Buffer | Uint8Array): { draft: Record<string, unknown>; rooms: FieldDoc[] } {
+  return copiedManifest(snapshotManifest(bytes));
 }
 
 export function archiveService(db: Database, store: ArchiveStore): ArchiveService {
