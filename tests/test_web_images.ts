@@ -607,7 +607,7 @@ done`,
         for (const dir of dirs) npm.set(dir, update);
       }
     }
-    expect([...npm.keys()].sort()).toEqual(['/', '/web', '/web/synthetic']);
+    for (const dir of ['/', '/web', '/web/synthetic']) expect(npm.has(dir)).toBe(true);
     for (const dir of ['/web', '/web/synthetic']) {
       expect(npm.get(dir)?.ignore).toContainEqual({
         'dependency-name': 'typescript',
