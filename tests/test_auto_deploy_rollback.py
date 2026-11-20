@@ -134,6 +134,18 @@ def test_next_version_prints_no_number_when_the_tags_cannot_be_fetched(capsys):
     assert capsys.readouterr().out == ''
 
 
+def test_rollback_refuses_a_missing_tag_without_fetch_advice(summary, capsys):
+    runner = rollback_runner()
+    assert auto.main(['--rollback', '2099.01.01-1'], runner=runner) == 1
+    message = "Release version tag '2099.01.01-1' is not in this checkout."
+    stderr = capsys.readouterr().err
+    assert message in stderr
+    assert message in summary.text()
+    assert 'git fetch --tags' not in stderr
+    assert 'git fetch --tags' not in summary.text()
+    assert not {'stage', 'traffic', 'stamp', 'hosting-deploy'} & set(runner.keys())
+
+
 def test_rollback_past_a_migration_warns_and_stops_before_staging(summary, capsys):
     runner = rollback_runner(
         migrations=[ledger_doc('workspaces', OLD), ledger_doc('price-books-v1', NEW)]
