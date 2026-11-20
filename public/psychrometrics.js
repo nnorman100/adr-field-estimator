@@ -6,7 +6,8 @@
   // saturation vapor pressure (Bolton 1980 coefficients, Buck's 6.1121 hPa constant), the ASHRAE
   // humidity ratio W = 0.62198·e/(P − e) at 1013.25 hPa with 7000 grains per pound, dew point by
   // inverting Magnus, and enthalpy h = 0.24·t + W·(1061 + 0.444·t) BTU/lb. Pinned values are in
-  // tests/test_frontend.js and tests/test_psychrometrics.py.
+  // tests/test_psychrometrics.py (the earlier tests/test_frontend.js pins were removed with the first
+  // company's price book files).
   const PRESSURE_HPA = 1013.25,
     HPA_TO_INHG = 0.02953;
   const OPTIMAL_GPP = 20,
