@@ -91,6 +91,7 @@ describe('API sign-in gate', () => {
       '/api/prices/versions',
       '/api/prices/versions/:id',
       '/api/prices/versions/:id/restore',
+      '/api/estimate-accuracy',
       '/api/jobs',
       '/api/jobs/:id',
       '/api/jobs/:id/customer',

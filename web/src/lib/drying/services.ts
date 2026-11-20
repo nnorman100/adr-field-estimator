@@ -3,6 +3,7 @@ import { parseProjectionConfig } from '@/lib/config';
 import { firestoreFor } from '@/lib/projection/firestore';
 import { firestoreReadinessReader } from '@/lib/readiness/reader';
 import { readingsService, type ReadingsService } from './readings';
+import { accuracyService, type AccuracyService } from './accuracy-service';
 import { outcomeService, type OutcomeService } from './outcome';
 import { watchService, type WatchService } from './watch-service';
 
@@ -10,7 +11,7 @@ import { watchService, type WatchService } from './watch-service';
 // from the checked server configuration only when a room reading of a job being edited needs its
 // draft's rooms, after Postgres has decided who may write the job; a missing setting then fails that
 // request closed.
-export function dryingServices(): { readings: ReadingsService; watch: WatchService; outcome: OutcomeService } {
+export function dryingServices(): { readings: ReadingsService; watch: WatchService; outcome: OutcomeService; accuracy: AccuracyService } {
   const db = serverDatabase();
-  return { readings: readingsService(db, () => firestoreReadinessReader(firestoreFor(parseProjectionConfig(process.env)))), watch: watchService(db), outcome: outcomeService(db) };
+  return { readings: readingsService(db, () => firestoreReadinessReader(firestoreFor(parseProjectionConfig(process.env)))), watch: watchService(db), outcome: outcomeService(db), accuracy: accuracyService(db) };
 }

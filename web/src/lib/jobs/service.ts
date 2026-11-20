@@ -9,6 +9,7 @@ import { afterFieldStep, stillMember, syncJobDrafts } from './sync-job';
 import { IdentityRefusal } from '@/lib/auth';
 import { isQueueTimeout } from '@/db/client';
 import { createDigest, type ClaimInput, type CreateJobInput, type CustomerInput, type ListQuery } from './schema';
+import { signedRowProjections } from '@/lib/drying/projection';
 
 // The jobs of a company (S5a-3). Every function runs inside withCompany for the company of the
 // verified sign-in, and every write adds one audit row (ids and revisions only, never a name, an
@@ -409,10 +410,12 @@ export function jobsService(db: Database, drafts: DraftStore, sync: DraftSync): 
         const where: SQL[] = [eq(jobs.companyId, caller.companyId), archived ? eq(jobs.status, 'archived') : ne(jobs.status, 'archived')];
         if (!company) where.push(or(eq(jobs.createdByActorId, caller.actorId), eq(jobs.fieldOwnerActorId, caller.actorId), assigned)!);
         const { entries, nextCursor } = await jobPage(tx, where, after, query.limit);
+        // A signed row's close status and drying watch status, under their switches (S5b-10).
+        const outcomes = await signedRowProjections(tx, caller.companyId, entries.map(({ job }) => job), caller);
         return {
           // Every row of a caller's own list is theirs (made, owned in the field or assigned); in the
           // company list only an estimator is ever assigned, and they never get that list.
-          jobs: entries.map(({ job, item }) => ({ ...item, mine: !company || isOwnJob(caller, job) })),
+          jobs: entries.map(({ job, item }) => ({ ...item, mine: !company || isOwnJob(caller, job), ...outcomes.get(job.id) })),
           nextCursor,
         };
       });

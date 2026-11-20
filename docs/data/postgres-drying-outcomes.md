@@ -6,8 +6,8 @@ Part of [Data](../DATA.md).
 `job_coordination` (S5b-10 slice 10A, [S5b-10](../plans/S5/S5b-10.md)). The drying log routes read and write
 `drying_readings`, the drying watch routes read the log and read and write `job_coordination.drying_watch`, signing
 writes each agreement's `estimate_history` sample, and the job close routes read and write `job_closes` (writing a
-missing sample of the original agreement) (slice 10B, [Drying log](../access/drying.md)); the estimate accuracy numbers
-that read the history are the rest of slice 10B, and the screens are slice 10C. All three tables hold a company's rows only inside `withCompany`, with forced
+missing sample of the original agreement), and the owner's estimate accuracy numbers read the closes with their
+baseline samples (slice 10B, [Drying log](../access/drying.md)); the screens are slice 10C. All three tables hold a company's rows only inside `withCompany`, with forced
 row-level security. A key between rows always carries `company_id`, so a row can never point at another company's
 job, agreement or person. A platform operator reads them only through `withOperator` with the company set, and every
 write policy refuses an operator. The runtime has no `DELETE` or `TRUNCATE` on any of them.

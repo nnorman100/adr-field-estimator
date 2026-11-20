@@ -150,6 +150,10 @@ export const MATRIX: readonly MatrixRow[] = [
   row(`${PRICES}/versions`, 'GET', 'company', { self: true, own: 'list' }),
   row(`${PRICES}/versions/[versionId]`, 'GET', 'company', { own: 'cross' }),
   row(`${PRICES}/versions/[versionId]/restore`, 'POST', 'company', { body: { expectedRevision: STALE }, own: 'cross' }),
+  // S5b-10: the owner's estimate accuracy numbers, behind `estimate_assist` (off in this suite, so the
+  // route is refused); the company is the sign-in's, and estimate-accuracy-api.test.ts checks each
+  // company's owner gets only its own numbers.
+  row('api/estimate-accuracy', 'GET', 'company'),
   row('api/jobs', 'GET', 'company', { self: true, own: 'list' }),
   row('api/jobs', 'POST', 'company', { body: { id: '3c9a6e12-84d1-4f0b-b7a3-52e8d1c04f96', draftId: 'a1f0d7b4-2e65-4c39-8b1a-9d3e6f20c578' }, own: 'create' }),
   row('api/jobs/[jobId]', 'GET', 'company', { own: 'cross' }),

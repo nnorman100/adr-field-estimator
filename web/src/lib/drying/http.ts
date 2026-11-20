@@ -131,3 +131,15 @@ export async function closeJob(request: Request, identity: Identity, context: Ro
     return json({ close }, created ? 201 : 200);
   });
 }
+
+// GET /api/estimate-accuracy (behind `estimate_assist`): the owner's accuracy numbers. Price books must
+// be on (404, as every price route) and the caller must hold `prices_manage` (403), both before anything
+// is read; no query is accepted.
+export async function readAccuracy(request: Request, identity: Identity): Promise<Response> {
+  return respond(async () => {
+    if (identity.flags?.price_books !== true) throw new JobError('not_found');
+    if (!identity.capabilities.includes('prices_manage')) throw new JobError('not_allowed');
+    if ([...new URL(request.url).searchParams.keys()].length > 0) throw new DryingError('invalid_request');
+    return json(await dryingServices().accuracy.read(identity));
+  });
+}
