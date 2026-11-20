@@ -65,11 +65,14 @@ export function startDraft(tx: Transaction, ref: DocumentReference, left: Placeh
   else tx.create(ref, data);
 }
 
+export type DraftFound = { jobId: unknown; placeholder?: true };
+
 export type DraftLookup = {
-  // The draft under this id, with the job id written on it (undefined on a draft made before
-  // `jobId`), or null when there is none. Read before a request commits a draft id in Postgres, so a
-  // draft id the field database refuses is never committed.
-  findDraft(companyId: string, draftId: string): Promise<{ jobId: unknown } | null>;
+  // The document under this id, with the job id written on it (undefined on a draft made before
+  // `jobId`), and `placeholder: true` when it is a placeholder a previous-version archive or restore left
+  // where a draft was missing (no draft yet); null when there is none. Read before a request commits a
+  // draft id in Postgres, so a draft id the field database refuses is never committed.
+  findDraft(companyId: string, draftId: string): Promise<DraftFound | null>;
 };
 
 export function firestoreDraftLookup(db: Firestore): DraftLookup {
@@ -77,7 +80,8 @@ export function firestoreDraftLookup(db: Firestore): DraftLookup {
     async findDraft(companyId, draftId) {
       const draft = db.collection('companies').doc(companyId).collection('drafts').doc(draftId);
       const found = await firestoreSpan('get', 'drafts', () => draft.get());
-      return found.exists ? { jobId: found.get('jobId') } : null;
+      if (!found.exists) return null;
+      return placeholderOf(found) ? { jobId: found.get('jobId'), placeholder: true } : { jobId: found.get('jobId') };
     },
   };
 }

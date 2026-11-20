@@ -125,8 +125,8 @@ describe('the draft sync stand-in', () => {
     const { drafts, states, field } = linked();
     const [company, job, draft] = [randomUUID(), randomUUID(), randomUUID()];
     await field.archiveDraft(company, job, draft, 2);
-    expect(await drafts.findDraft(company, draft)).toEqual({ jobId: job });
-    expect(await field.findDraft(company, draft)).toEqual({ jobId: job });
+    expect(await drafts.findDraft(company, draft)).toEqual({ jobId: job, placeholder: true });
+    expect(await field.findDraft(company, draft)).toEqual({ jobId: job, placeholder: true });
     expect(await states.state(company, draft)).toBe('archived');
     // A placeholder is no draft to name an owner on.
     expect(drafts.owner(`${company}/${draft}`)).toBeUndefined();

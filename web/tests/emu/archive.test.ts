@@ -308,6 +308,18 @@ describe('a missing draft of an archived job', () => {
     expect(await updateDoc(a.estimator.caller, at, { field: { notes: 'mine' } })).toBe(200);
   });
 
+  it('is reported by the draft lookup as a placeholder, and a draft as none', async () => {
+    const a = await company('lookup-placeholder');
+    const draft = randomUUID();
+    expect(await store.restoreDraft(a.id, a.job, draft, 'editing', 6)).toBe('set');
+    expect(await store.findDraft(a.id, draft)).toEqual({ jobId: a.job, placeholder: true });
+    expect(await firestoreDraftStore(db).ensure(a.id, a.job, draft, a.estimator.uid)).toBe(
+      'created',
+    );
+    expect(await store.findDraft(a.id, draft)).toEqual({ jobId: a.job });
+    expect(await store.findDraft(a.id, randomUUID())).toBeNull();
+  });
+
   it('gives way only to a restored placeholder of the same job that holds its revision', async () => {
     const company = randomUUID();
     const job = randomUUID();

@@ -231,7 +231,9 @@ export async function syncJobDrafts(db: Database, store: DraftSync, lookup: Draf
       const found = await lookup.findDraft(companyId, claimed);
       // A current draft that names another job is never this job's, whatever an earlier sync recorded.
       if (found && draftOfOtherJob(found.jobId, jobId)) throw new JobError('conflict');
-      if (!found) {
+      // A missing current draft, or a placeholder a previous-version archive or restore left in its
+      // place, is made at a new version: at the version already synced the sync would write nothing.
+      if (!found || found.placeholder) {
         await withCompany(db, companyId, (tx) =>
           tx
             .update(jobs)

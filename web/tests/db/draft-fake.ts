@@ -74,7 +74,8 @@ export function fakeDrafts(backing: Backing): FakeDrafts {
     // As the real reader: whatever document is under the id, a placeholder too.
     async findDraft(companyId, draftId) {
       const found = backing.load().drafts[`${companyId}/${draftId}`];
-      return found ? { jobId: found.jobId } : null;
+      if (!found) return null;
+      return found.placeholder ? { jobId: found.jobId, placeholder: true as const } : { jobId: found.jobId };
     },
     owner(at) {
       const found = draftOf(at);

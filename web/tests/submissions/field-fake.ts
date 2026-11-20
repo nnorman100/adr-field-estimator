@@ -232,7 +232,8 @@ export function fakeField(backing: Backing = memoryBacking()): FakeField {
     findDraft: (companyId, draftId) =>
       call('findDraft', ({ drafts: data }) => {
         const found = data[key(companyId, draftId)];
-        return found ? { jobId: found.jobId } : null;
+        if (!found) return null;
+        return found.placeholder ? { jobId: found.jobId, placeholder: true as const } : { jobId: found.jobId };
       }),
     data: () => backing.load().drafts,
     draft: (companyId, draftId) => backing.load().drafts[key(companyId, draftId)] ?? null,

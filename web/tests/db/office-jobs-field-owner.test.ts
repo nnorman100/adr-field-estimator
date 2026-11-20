@@ -640,6 +640,21 @@ describe('moving the field work (owner decision J5)', () => {
     expect(await archive(OWNER_A, id, body)).toEqual({ status: 409, body: { error: 'conflict' } });
   });
 
+  // The sync wrote the job's version, the field database then lost the current draft, and a restore retry
+  // on the previous version left a placeholder in its place without changing Postgres: Start field work
+  // makes the draft again at a new version, never answering 'same' over the placeholder.
+  it('makes the current draft again over a placeholder a previous-version restore left after the field database lost it', async () => {
+    const { id, draftId } = await claimedJob();
+    const { revision } = (await read(OWNER_A, id)).body.job as { revision: number };
+    h.field.remove(h.seed.a, draftId);
+    expect(await h.field.restoreDraft(h.seed.a, id, draftId, 'editing', revision)).toBeDefined();
+    expect(h.field.draft(h.seed.a, draftId)).toMatchObject({ placeholder: true, jobId: id });
+    expect((await claim(ESTIMATOR_A, id)).status).toBe(200);
+    const made = h.field.draft(h.seed.a, draftId);
+    expect(made?.placeholder).toBeUndefined();
+    expect(made).toMatchObject({ jobId: id, state: 'editing', fieldOwnerUid: 'estimator-a' });
+  });
+
   it('refuses the company owner field work they do not own, until they move it to themself', async () => {
     const { id, draftId } = await claimedJob();
     h.field.put(h.seed.a, draftId, MANIFEST);
