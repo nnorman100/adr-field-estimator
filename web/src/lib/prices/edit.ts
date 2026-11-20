@@ -1,5 +1,5 @@
-import type { Item, PriceBand, PriceRow, Table, Trade } from '@/engine/table';
-import { CATEGORIES, OTHER_TYPE, categoryOrder, type Category, type SizeTier } from '@/engine/values';
+import type { Item, NamedAdjustment, PriceBand, PriceRow, Table, Trade } from '@/engine/table';
+import { CATEGORIES, OTHER_TYPE, categoryOrder, chars, type Category, type SizeTier } from '@/engine/values';
 import { itemCategories } from './screen';
 
 // The Prices editor's changes to the working copy it has open, as pure functions so they are
@@ -142,12 +142,12 @@ export function idFromName(name: string, taken: ReadonlySet<string>, max: number
       .normalize('NFKD')
       .replace(/[^a-z0-9]+/g, '_')
       .replace(/^[^a-z]+/, '')
-      .replace(/_+$/, '')
-      .slice(0, max - 3) || 'new';
+      .replace(/_+$/, '') || 'new';
   const start = base.length < 2 ? `${base}_x` : base;
-  if (!taken.has(start)) return start;
+  const fit = (suffix: string) => `${start.slice(0, max - suffix.length)}${suffix}`;
+  if (!taken.has(fit(''))) return fit('');
   for (let n = 2; ; n += 1) {
-    const candidate = `${start}_${n}`;
+    const candidate = fit(`_${n}`);
     if (!taken.has(candidate)) return candidate;
   }
 }
@@ -229,4 +229,42 @@ function sortedText(value: unknown): string {
 // Whether the editor holds changes the server does not have yet.
 export function changed(saved: Table, draft: Table): boolean {
   return sortedText(saved) !== sortedText(draft);
+}
+
+// Whether an adjustment name is within the most it holds, counted in characters the way the schema counts them.
+export function adjustmentNameFits(value: string): boolean {
+  return chars(value) <= 60;
+}
+
+// Named adjustments (S5b-7): the company's own discounts and charges. None are seeded; a new one is a
+// percent discount with no value yet, which blocks saving until the owner enters one.
+export function addAdjustment(table: Table, name: string): Table {
+  const adjustments = table.adjustments ?? [];
+  const adjustment: NamedAdjustment = {
+    adjustment_id: idFromName(name, new Set(adjustments.map((row) => row.adjustment_id)), 40),
+    name,
+    kind: 'percent',
+    direction: 'discount',
+    value: '',
+  };
+  return { ...table, adjustments: [...adjustments, adjustment] };
+}
+
+export function setAdjustment(
+  table: Table,
+  adjustmentId: string,
+  change: Partial<Pick<NamedAdjustment, 'name' | 'kind' | 'direction' | 'value'>>,
+): Table {
+  if (change.name !== undefined && (change.name.trim() === '' || !adjustmentNameFits(change.name))) return table;
+  return {
+    ...table,
+    adjustments: (table.adjustments ?? []).map((row) => (row.adjustment_id === adjustmentId ? { ...row, ...change } : row)),
+  };
+}
+
+export function removeAdjustment(table: Table, adjustmentId: string): Table {
+  const adjustments = (table.adjustments ?? []).filter((row) => row.adjustment_id !== adjustmentId);
+  const { adjustments: _old, ...rest } = table;
+  void _old;
+  return adjustments.length ? { ...rest, adjustments } : (rest as Table);
 }
