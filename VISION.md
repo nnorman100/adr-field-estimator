@@ -59,7 +59,7 @@ The frontend stays a static web app with no build step and same-origin vendored 
 
 Every fix lands with a test that fails without it.
 Mock results, real-service checks and physical device observations are recorded separately, and a device behavior stays open until it is observed on a device.
-The retired legacy app is off. The owner-only manual release procedure is recorded in `RELEASES.md`. DryScope releases use the [rebuilt app release workflow](docs/runbook/test-release.md).
+The retired legacy app is off and its project is never deployed to or changed (`docs/architecture/product-rules.md`). Its historical release record is `RELEASES.md`. DryScope releases use the [rebuilt app release workflow](docs/runbook/test-release.md).
 Firestore rules, indexes, secret bindings and IAM grants are declared in the repo and applied by the same pipeline, never by hand in the console.
 Each release carries its source commit, and `RELEASES.md` is the one record of what is serving (partly built; today releases made by the stamping scripts carry their commit, but several older `RELEASES.md` rows show `unknown`, per `docs/firebase-isolation.md`).
 

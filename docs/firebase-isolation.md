@@ -79,6 +79,8 @@ Other sites and databases in `mitigation-project` are unchanged. The old backend
 
 ## Deployment
 
+> **Historical.** The old app is retired and switched off, and its project is never deployed to or changed (`architecture/product-rules.md`). The commands in this section are kept as a record, not as instructions.
+
 Never use a blanket `firebase deploy`. Keep both `index.html` copies (the landing page) identical; the app shell is `public/app.html`, served at `/app`. Deploy indexes separately and verify they are READY before enabling paginated queries.
 
 Deploy the backend only with `scripts/deploy_backend.py`. Cloud Run copies environment variables from the latest service template, which can be a staged revision with no traffic, so a raw `gcloud run deploy` can silently inherit `WORKSPACES_ENABLED`, `AI_FEATURES`, `PRICE_BOOKS_ENABLED` or `RETENTION_ENABLED` from that revision. The script requires `--workspaces on|off` and always sets `WORKSPACES_ENABLED`, `AI_FEATURES`, `PRICE_BOOKS_ENABLED` and `RETENTION_ENABLED`. The defaults are the repository baseline, today `AI_FEATURES=readiness`, price books off (`PRICE_BOOKS_ENABLED=false`) and record retention off (`RETENTION_ENABLED=false`); see [Turning a feature on or off](#turning-a-feature-on-or-off). `--ai-features` and `--price-books on|off` set one revision only, such as a staged 0% check, and are not how a feature is turned on. The script prints the baseline, always mounts the Maps key secret (`--update-secrets`, see [Address suggestions and the job map](#address-suggestions-and-the-job-map)), keeps the other existing variables (model settings, and the staff list unless `--staff-emails` sets it on purpose; it refuses, `--dry-run` included, when the flag is omitted and the service template has no `STAFF_EMAILS`), and stages a tagged revision with `--no-traffic`. Review the command with `--dry-run`, then rerun with `--yes`.
@@ -119,12 +121,12 @@ The backend rejects a different project ID or evidence bucket. Production never 
 ### Retired deployment workflow
 
 The legacy Deploy workflow and its setup script have been removed. Past runs remain in GitHub
-Actions history. Use the owner-run [release and rollback runbook](runbook/releases.md) for the
-legacy commands retained in this repository. The rebuilt app has its own [release workflow](runbook/test-release.md).
+Actions history. The old app's project is never deployed to or changed (`architecture/product-rules.md`), so the
+legacy commands kept in this repository ([release and rollback runbook](runbook/releases.md)) are historical records. The rebuilt app has its own [release workflow](runbook/test-release.md).
 
 ### Turning a feature on or off
 
-Three constants in `scripts/deploy_backend.py` define the legacy release baseline.
+Historical (retired old app). Three constants in `scripts/deploy_backend.py` define the legacy release baseline.
 `DEFAULT_PRICE_BOOKS` sets `PRICE_BOOKS_ENABLED`, `DEFAULT_RETENTION` sets `RETENTION_ENABLED`
 ([record retention](company-workspaces.md#record-retention)), and `DEFAULT_AI_FEATURES` sets
 `AI_FEATURES`. Their defaults are off, off and `readiness`.
@@ -171,7 +173,7 @@ The [original review](https://chatgpt.com/space/page_4a5293fc2ec481918bd32e5c78f
 
 ## Rollback
 
-The owner can fetch tags with `git fetch --tags` and run
+Historical (retired old app; its project is never deployed to or changed, `architecture/product-rules.md`). The owner could fetch tags with `git fetch --tags` and run
 `python3 scripts/auto_deploy.py --rollback <YYYY.MM.DD-N>`. Record the result in
 [RELEASES.md](../RELEASES.md).
 

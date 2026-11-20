@@ -6,8 +6,10 @@ never rewrite earlier rows; add a correcting row instead.
 
 Historical automated releases made by the retired `deploy.yml` workflow are recorded in their
 GitHub Actions job summaries. Each summary records the source commit, backend revision and tag,
-Hosting version and release, rollback pair and check results. Record any owner-run legacy release
-in this log. The [release runbook](docs/runbook/releases.md) describes the retained manual commands.
+Hosting version and release, rollback pair and check results. The old app is retired and
+switched off, and the product rule in `docs/architecture/product-rules.md` says its project is never
+deployed to or changed, so the manual commands in the [release runbook](docs/runbook/releases.md)
+are historical records, not current instructions. This log stays as provenance.
 
 - **Date (UTC)**: day of the deploy or traffic change.
 - **Backend revision (tag)**: Cloud Run revision suffix of `alert-disaster-field-estimator` and its URL tag;
@@ -41,8 +43,8 @@ the revision that serves traffic instead.
     both the frontend displayed version and backend `version`.
   - **GitHub Releases**: the repository's Releases page lists each production version tag and the merged
     pull requests in plain words.
-- **One-step rollback to a version**: `python3 scripts/auto_deploy.py --rollback <YYYY.MM.DD-N>` or the
-  **Deploy** workflow's `version` input. See [Rollback](docs/firebase-isolation.md#rollback), including
+- **One-step rollback to a version (historical; the retired project is never deployed or changed)**:
+  `python3 scripts/auto_deploy.py --rollback <YYYY.MM.DD-N>`. See [Rollback](docs/firebase-isolation.md#rollback), including
   when it stops for a data migration, a rules or index change, or a baseline that would turn off a
   feature now serving.
 

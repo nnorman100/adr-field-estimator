@@ -2,22 +2,23 @@
 
 ## Release
 
-The old app is retired. Any manual legacy release is an owner-only operation. The retained
-procedure is in [RELEASES.md](../../RELEASES.md), [the checklist](../SHIP-CHECKLIST.md) and
-[the deployment guide](../firebase-isolation.md#deployment). For the rebuilt app, see
-[the release workflow](test-release.md).
+The old app is retired and switched off. The product rule ([`docs/architecture/product-rules.md`](../architecture/product-rules.md)) says its project is never deployed to or changed, so the
+legacy commands in [RELEASES.md](../../RELEASES.md), [the checklist](../SHIP-CHECKLIST.md) and
+[the deployment guide](../firebase-isolation.md#deployment) are historical records, not current
+instructions. They are kept only for provenance; reopening the project needs the owner's explicit
+authorization. For the rebuilt app, see [the release workflow](test-release.md).
 
 ## Roll back
 
-The owner can run `python3 scripts/auto_deploy.py --rollback <YYYY.MM.DD-N>`. It redeploys that
-version's backend and Hosting and checks health. It stops before staging if the target predates a
+Historical, for the retired old app only (never run while the project is switched off): the
+command was `python3 scripts/auto_deploy.py --rollback <YYYY.MM.DD-N>`. It redeployed that
+version's backend and Hosting and checked health. It stopped before staging if the target predated a
 data migration or rules or index change, or if the baseline would turn off a serving feature. The
-[rollback guide](../firebase-isolation.md#rollback) lists the explicit confirmations. Fix or revert
-the bad change before the next manual release.
+[rollback guide](../firebase-isolation.md#rollback) lists the explicit confirmations.
 
-For an immediate traffic-only restore, point Cloud Run traffic to the recorded rollback revision (explicit project and region), clone the recorded rollback Hosting version to the live channel, read back both, and append rows to `RELEASES.md`. Do not retry a failed deploy immediately.
+Historical traffic-only restore: point Cloud Run traffic to the recorded rollback revision (explicit project and region), clone the recorded rollback Hosting version to the live channel, read back both, and append rows to `RELEASES.md`. A failed deploy was not retried immediately.
 
-### Turning company prices off
+### Turning company prices off (historical)
 
 Change `DEFAULT_PRICE_BOOKS` back to `off` in a reviewed PR, then release that commit with `--confirm-baseline` (`docs/firebase-isolation.md#turning-a-feature-on-or-off`). That hides the price editor, the **Switch to v2** card and the estimator's item list, and the app shows the v1 form, including for a draft a phone already holds. It does not touch the data or the calculation, so nothing already priced moves:
 
