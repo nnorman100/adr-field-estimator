@@ -27,23 +27,27 @@ const NONBLANK = /[^ \t\n\v\f\r\u0085\u00a0\u1680\u180e\u2000-\u200b\u2028\u2029
 const LINE_CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 const NOTE_CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
 
+// Half of a UTF-16 surrogate pair on its own, which jsonb cannot store.
+const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
+
 /** Characters as the database counts them (code points, not UTF-16 units). */
 const characters = (value: string) => [...value].length;
 
 /** One line a person reads back: 1 to `max` characters, not blank, no control character. */
 export const lineText = (max: number) =>
-  z.string().refine((value) => characters(value) >= 1 && characters(value) <= max && NONBLANK.test(value) && !LINE_CONTROL.test(value));
+  z.string().refine((value) => characters(value) >= 1 && characters(value) <= max && NONBLANK.test(value) && !LINE_CONTROL.test(value) && !LONE_SURROGATE.test(value));
 
 /** A note: at most `max` characters, line breaks and tabs allowed, no other control character. */
-export const noteText = (max: number) => z.string().refine((value) => characters(value) <= max && !NOTE_CONTROL.test(value));
+export const noteText = (max: number) => z.string().refine((value) => characters(value) <= max && !NOTE_CONTROL.test(value) && !LONE_SURROGATE.test(value));
 
 /** Whether a room's name can be kept as a reading's room label (0020, drying_readings.room_label). */
 export function roomLabelOk(value: unknown): value is string {
-  return typeof value === 'string' && characters(value) >= 1 && characters(value) <= MAX_ROOM_LABEL && NONBLANK.test(value) && !NOTE_CONTROL.test(value);
+  return typeof value === 'string' && characters(value) >= 1 && characters(value) <= MAX_ROOM_LABEL && NONBLANK.test(value) && !NOTE_CONTROL.test(value) && !LONE_SURROGATE.test(value);
 }
 
 const number = (min: number, max: number) => z.number().min(min).max(max);
-const uuid = z.uuid();
+// Lower-cased, as the database holds and returns a uuid: the digest and every comparison use one form.
+const uuid = z.uuid().transform((value) => value.toLowerCase());
 
 // Every reading: the phone's own id (so a resend finds its row), the room's stable field id (none for a
 // whole-job or outside reading) and when it was taken, with its offset as the phone recorded it.
@@ -88,8 +92,8 @@ export const readingBody = z
 
 export type ReadingInput = z.infer<typeof readingBody>;
 
-/** Voids one reading: the phone's own id for the void, so a resend finds its receipt. */
-export const voidBody = z.strictObject({ changeId: uuid });
+/** Voids one reading: the phone's own id for the void, so a resend finds its receipt, and the state it expects the reading in. */
+export const voidBody = z.strictObject({ changeId: uuid, expectedState: z.literal('active') });
 export type VoidInput = z.infer<typeof voidBody>;
 
 export const MAX_PAGE = 200;
@@ -140,5 +144,5 @@ export function readingDigest(input: ReadingInput): string {
 
 /** SHA-256 of a void request: the same change of the same reading is the same void. */
 export function voidDigest(readingId: string, input: VoidInput): string {
-  return sha256({ readingId, changeId: input.changeId });
+  return sha256({ readingId, changeId: input.changeId, expectedState: input.expectedState });
 }

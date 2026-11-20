@@ -145,11 +145,13 @@ type Side = {
     photoId: string;
     signatureId: string;
     assignmentId: string;
+    // The drying-log reading seeded on the job (S5b-10).
+    readingId: string;
     homeowner: { id: string; token: string };
     adjuster: { id: string; token: string };
     usedToken: string;
   };
-  pending: { jobId: string; photoId: string; assignmentId: string; token: string };
+  pending: { jobId: string; photoId: string; assignmentId: string; readingId: string; token: string };
   // Every id, hash and name of the company's rows that the other company's rows do not share, its
   // live tokens and its customers' names: what would show the company in an answer or a row.
   markers: string[];
@@ -216,8 +218,10 @@ async function signedSide(name: 'A' | 'B', companyId: string, estimator: FakeCla
   // S5b-10 (0020, no routes yet): a drying reading on each job, and on the signed job a close, its
   // estimate history sample (the close's baseline) and a drying watch action, written as slice 10B will.
   const [agreement] = await h.admin<{ id: string }[]>`SELECT id::text FROM agreements WHERE job_id = ${linked.jobId}`;
+  const readingIds: Record<string, string> = {};
   for (const jobId of [linked.jobId, pending.jobId]) {
     const readingId = randomUUID();
+    readingIds[jobId] = readingId;
     await h.admin`
       INSERT INTO drying_readings (id, company_id, job_id, kind, room_id, room_label, taken_at, payload, request_digest, created_by_actor_id)
       VALUES (${readingId}, ${companyId}, ${jobId}, 'material', 'room-1', ${`Drying Room ${name}`}, now(),
@@ -248,11 +252,12 @@ async function signedSide(name: 'A' | 'B', companyId: string, estimator: FakeCla
       photoId: linked.photoId,
       signatureId: signed.signatureId,
       assignmentId: signedAssignment,
+      readingId: readingIds[linked.jobId]!,
       homeowner: issued.homeowner,
       adjuster: issued.adjuster,
       usedToken: linked.token,
     },
-    pending: { jobId: pending.jobId, photoId: pending.photoId, assignmentId: pendingAssignment, token: pending.token },
+    pending: { jobId: pending.jobId, photoId: pending.photoId, assignmentId: pendingAssignment, readingId: readingIds[pending.jobId]!, token: pending.token },
     names: [
       customer.name,
       customer.address,
@@ -369,9 +374,8 @@ const idsOf = (victim: Side, job: 'signed' | 'pending', company: Side = victim):
   assignmentId: victim[job].assignmentId,
   // No proposal is seeded here; the job's photo id stands in (approvals-api.test.ts uses real ones).
   approvalId: victim[job].photoId,
-  // A drying-log reading (S5b-10): none is seeded here, the job's photo id stands in (a reading of
-  // another job or company is 404 to the void route); drying-readings-api.test.ts uses real readings.
-  readingId: victim[job].photoId,
+  // The drying-log reading seeded on the job (S5b-10).
+  readingId: victim[job].readingId,
 });
 
 const directions = (): [Side, Side][] => [
@@ -420,9 +424,14 @@ describe('the S5a routes', () => {
   // Reads and deletes: a photo stored under the caller's own job is the caller's own, whatever its id.
   it('refuse the caller’s own job with the other company’s link, photo or signature ids', async () => {
     const before = await everything(h.admin);
-    const rows = s5aRows().filter((row) => row.kind === 'company' && row.own === 'cross' && row.method !== 'PUT' && /\[(linkId|photoId|signatureId|assignmentId)\]/.test(row.route));
+    const rows = s5aRows().filter((row) => row.kind === 'company' && row.own === 'cross' && row.method !== 'PUT' && /\[(linkId|photoId|signatureId|assignmentId|readingId)\]/.test(row.route));
     expect(rows.map(matrixKey)).toEqual(
-      expect.arrayContaining(['DELETE api/jobs/[jobId]/document-links/[linkId]', 'GET api/jobs/[jobId]/photos/[photoId]', 'DELETE api/jobs/[jobId]/assignments/[assignmentId]']),
+      expect.arrayContaining([
+        'DELETE api/jobs/[jobId]/document-links/[linkId]',
+        'GET api/jobs/[jobId]/photos/[photoId]',
+        'DELETE api/jobs/[jobId]/assignments/[assignmentId]',
+        'POST api/jobs/[jobId]/drying-readings/[readingId]/void',
+      ]),
     );
     for (const [attacker, victim] of directions()) {
       for (const [role, claims] of Object.entries(attacker.people)) {

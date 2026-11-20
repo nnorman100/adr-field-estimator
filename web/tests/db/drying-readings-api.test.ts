@@ -40,6 +40,7 @@ const readingsRoute = await import('@/app/api/jobs/[jobId]/drying-readings/route
 const voidRoute = await import('@/app/api/jobs/[jobId]/drying-readings/[readingId]/void/route');
 const { readinessService } = await import('@/lib/readiness/service');
 const { dryingSetupReadings } = await import('@/lib/drying/setup');
+const { readingsService } = await import('@/lib/drying/readings');
 const { params, request, resetTeamDatabase, startTeamServer } = await import('./team-harness');
 
 let base: Awaited<ReturnType<typeof startTeamServer>>;
@@ -91,6 +92,9 @@ const voidOf = (claims: FakeClaims | null, jobId: string, readingId: string, bod
 const TAKEN = '2026-11-12T09:30:00-08:00';
 const air = (extra: Body = {}): Body => ({ id: randomUUID(), kind: 'air', takenAt: TAKEN, temperatureF: 70, relativeHumidity: 50, ...extra });
 const material = (extra: Body = {}): Body => ({ id: randomUUID(), kind: 'material', takenAt: TAKEN, roomId: 'kitchen', material: 'Drywall', moisture: 22, unit: '%MC', dryStandard: 12, ...extra });
+
+// A void request as the phone sends it: its own change id and the state it expects the reading in.
+const fresh = () => ({ changeId: randomUUID(), expectedState: 'active' });
 
 const rows = (jobId: string) =>
   h.admin<{ id: string; voided: boolean; room_id: string | null; room_label: string | null }[]>`
@@ -244,7 +248,7 @@ describe('a reading’s room', () => {
     const assigned = await assignmentsRoute.POST(request(OWNER_A, `/api/jobs/${jobId}/assignments`, { method: 'POST', body: { id: randomUUID(), estimatorActorId: estimatorA2 } }), params({ jobId }));
     expect(assigned.status).toBe(201);
     expect((await add(ESTIMATOR_A2, jobId, air())).status).toBe(201);
-    const voided = await voidOf(ESTIMATOR_A2, jobId, made.body.reading.id, { changeId: randomUUID() });
+    const voided = await voidOf(ESTIMATOR_A2, jobId, made.body.reading.id, fresh());
     expect(voided.status).toBe(200);
     expect(await h.admin`SELECT j.revision, j.field_revision, a.documents_bytes, a.proposal_sha256, a.content_hash FROM jobs j JOIN agreements a ON a.job_id = j.id WHERE j.id = ${jobId}`).toEqual(before);
   });
@@ -255,12 +259,12 @@ describe('voiding a reading', () => {
     const { jobId } = await draftJob();
     const reading = air();
     expect((await add(OWNER_A, jobId, reading)).status).toBe(201);
-    const change = { changeId: randomUUID() };
+    const change = fresh();
     const done = await voidOf(ESTIMATOR_A, jobId, reading.id, change);
     expect(done.status).toBe(200);
     expect(done.body.void).toMatchObject({ id: reading.id, voided: true, changeId: change.changeId });
     expect(await voidOf(ESTIMATOR_A, jobId, reading.id, change)).toEqual(done);
-    expect(await voidOf(OWNER_A, jobId, reading.id, { changeId: randomUUID() })).toEqual({ status: 409, body: { error: 'already_voided' } });
+    expect(await voidOf(OWNER_A, jobId, reading.id, fresh())).toEqual({ status: 409, body: { error: 'already_voided' } });
     const [row] = await h.admin<{ by: string }[]>`SELECT voided_by_actor_id::text AS by FROM drying_readings WHERE id = ${reading.id}`;
     expect(row!.by).toBe(h.seed.estimatorA.actor);
     // The log lists active readings only.
@@ -277,13 +281,13 @@ describe('voiding a reading', () => {
     const two = air();
     const elsewhere = air();
     for (const [job, reading] of [[jobId, one], [jobId, two], [other, elsewhere]] as const) expect((await add(OWNER_A, job, reading)).status).toBe(201);
-    const change = { changeId: randomUUID() };
+    const change = fresh();
     expect((await voidOf(OWNER_A, jobId, one.id, change)).status).toBe(200);
     expect(await voidOf(OWNER_A, jobId, two.id, change)).toEqual({ status: 409, body: { error: 'conflict' } });
-    expect(await voidOf(OWNER_A, jobId, elsewhere.id, { changeId: randomUUID() })).toEqual({ status: 404, body: { error: 'reading_not_found' } });
-    expect(await voidOf(OWNER_A, jobId, randomUUID(), { changeId: randomUUID() })).toEqual({ status: 404, body: { error: 'reading_not_found' } });
-    expect(await voidOf(OWNER_A, jobId, 'not-a-uuid', { changeId: randomUUID() })).toEqual({ status: 404, body: { error: 'reading_not_found' } });
-    expect(await voidOf(OWNER_A, jobId, two.id, { changeId: 'x' })).toEqual({ status: 400, body: { error: 'invalid_request' } });
+    expect(await voidOf(OWNER_A, jobId, elsewhere.id, fresh())).toEqual({ status: 404, body: { error: 'reading_not_found' } });
+    expect(await voidOf(OWNER_A, jobId, randomUUID(), fresh())).toEqual({ status: 404, body: { error: 'reading_not_found' } });
+    expect(await voidOf(OWNER_A, jobId, 'not-a-uuid', fresh())).toEqual({ status: 404, body: { error: 'reading_not_found' } });
+    expect(await voidOf(OWNER_A, jobId, two.id, { changeId: 'x', expectedState: 'active' })).toEqual({ status: 400, body: { error: 'invalid_request' } });
     expect((await rows(jobId)).map((row) => row.voided).sort()).toEqual([false, true]);
     expect((await rows(other)).map((row) => row.voided)).toEqual([false]);
   });
@@ -303,7 +307,7 @@ describe('the 400-reading limit', () => {
     expect(await add(OWNER_A, jobId, extra)).toEqual({ status: 409, body: { error: 'reading_limit' } });
     // A reading already stored is still answered: the replay comes before the limit.
     expect((await add(OWNER_A, jobId, kept)).status).toBe(200);
-    expect((await voidOf(OWNER_A, jobId, kept.id, { changeId: randomUUID() })).status).toBe(200);
+    expect((await voidOf(OWNER_A, jobId, kept.id, fresh())).status).toBe(200);
     expect((await add(OWNER_A, jobId, extra)).status).toBe(201);
     expect(await add(OWNER_A, jobId, air())).toEqual({ status: 409, body: { error: 'reading_limit' } });
   });
@@ -334,7 +338,7 @@ describe('who may read and change the log', () => {
     expect((await add(OWNER_A, jobId, reading)).status).toBe(201);
     expect((await list(OFFICE_A, jobId)).body.readings.length).toBe(1);
     for (const body of [air(), { nonsense: true }]) expect(await add(OFFICE_A, jobId, body)).toEqual({ status: 403, body: { error: 'not_allowed' } });
-    expect(await voidOf(OFFICE_A, jobId, reading.id, { changeId: randomUUID() })).toEqual({ status: 403, body: { error: 'not_allowed' } });
+    expect(await voidOf(OFFICE_A, jobId, reading.id, fresh())).toEqual({ status: 403, body: { error: 'not_allowed' } });
     expect((await rows(jobId)).map((row) => row.voided)).toEqual([false]);
   });
 
@@ -345,7 +349,7 @@ describe('who may read and change the log', () => {
     for (const other of [ESTIMATOR_A2, OWNER_B, ESTIMATOR_B]) {
       expect(await list(other, jobId)).toEqual({ status: 404, body: { error: 'not_found' } });
       expect(await add(other, jobId, air())).toEqual({ status: 404, body: { error: 'not_found' } });
-      expect(await voidOf(other, jobId, reading.id, { changeId: randomUUID() })).toEqual({ status: 404, body: { error: 'not_found' } });
+      expect(await voidOf(other, jobId, reading.id, fresh())).toEqual({ status: 404, body: { error: 'not_found' } });
     }
     expect((await list(DISABLED_A, jobId)).status).toBe(403);
     expect((await list(null, jobId)).status).toBe(401);
@@ -371,7 +375,7 @@ describe('who may read and change the log', () => {
     for (const claims of [OWNER_A, ESTIMATOR_A, OFFICE_A]) {
       expect(await list(claims, jobId)).toEqual({ status: 410, body: { error: 'archived' } });
       expect(await add(claims, jobId, air())).toEqual({ status: 410, body: { error: 'archived' } });
-      expect(await voidOf(claims, jobId, reading.id, { changeId: randomUUID() })).toEqual({ status: 410, body: { error: 'archived' } });
+      expect(await voidOf(claims, jobId, reading.id, fresh())).toEqual({ status: 410, body: { error: 'archived' } });
     }
   });
 });
@@ -391,7 +395,7 @@ describe('the setup reading for Ready to review?', () => {
     expect((await add(OWNER_A, jobId, reading)).status).toBe(201);
     expect(await setup(jobId)).toBe('present');
     // A voided one is not.
-    expect((await voidOf(OWNER_A, jobId, reading.id, { changeId: randomUUID() })).status).toBe(200);
+    expect((await voidOf(OWNER_A, jobId, reading.id, fresh())).status).toBe(200);
     expect(await setup(jobId)).toBe('absent');
     expect((await add(OWNER_A, jobId, air())).status).toBe(201);
     expect(await setup(jobId)).toBe('present');
@@ -412,5 +416,132 @@ describe('the setup reading for Ready to review?', () => {
     if (after.status !== 'checked') throw new Error('expected a checked answer');
     expect(after.gaps.map((gap) => gap.code)).not.toContain('setupReadings');
     expect(after.unavailable).not.toContain('setupReadings');
+  });
+});
+
+describe('what is refused, and in which order', () => {
+  const audits = async () => (await h.admin<{ n: number }[]>`SELECT count(*)::int AS n FROM audit_events WHERE action LIKE 'drying_%'`)[0]!.n;
+
+  it('decides the job and the role before the body: office, a foreign job and an archived job are refused whatever is sent', async () => {
+    const { jobId } = await draftJob();
+    const reading = air();
+    expect((await add(OWNER_A, jobId, reading)).status).toBe(201);
+    const before = await audits();
+    const huge = { ...air(), note: 'x'.repeat(20_000) };
+    for (const body of ['{not json', huge, { nonsense: true }]) {
+      expect(await add(OFFICE_A, jobId, body)).toEqual({ status: 403, body: { error: 'not_allowed' } });
+      expect(await voidOf(OFFICE_A, jobId, reading.id, body)).toEqual({ status: 403, body: { error: 'not_allowed' } });
+      expect(await add(OWNER_B, jobId, body)).toEqual({ status: 404, body: { error: 'not_found' } });
+    }
+    expect(await list(OWNER_B, jobId, '?limit=0')).toEqual({ status: 404, body: { error: 'not_found' } });
+    expect(await list(OFFICE_A, jobId, '?other=1')).toEqual({ status: 400, body: { error: 'invalid_request' } });
+    const archived = await archiveRoute.POST(request(OWNER_A, `/api/jobs/${jobId}/archive`, { method: 'POST', body: { revision: 1, changeId: randomUUID() } }), params({ jobId }));
+    expect(archived.status).toBe(200);
+    for (const body of ['{not json', huge]) {
+      expect(await add(OWNER_A, jobId, body)).toEqual({ status: 410, body: { error: 'archived' } });
+      expect(await voidOf(OWNER_A, jobId, reading.id, body)).toEqual({ status: 410, body: { error: 'archived' } });
+    }
+    expect(await list(OWNER_A, jobId, '?limit=0')).toEqual({ status: 410, body: { error: 'archived' } });
+    expect(await audits()).toBe(before);
+    expect((await rows(jobId)).map((row) => row.voided)).toEqual([false]);
+  });
+
+  it('refuses an oversized body (400) on a job the caller may write, and stores nothing', async () => {
+    const { jobId } = await draftJob();
+    expect(await add(OWNER_A, jobId, { ...air(), note: 'x'.repeat(20_000) })).toEqual({ status: 400, body: { error: 'invalid_request' } });
+    expect(await rows(jobId)).toEqual([]);
+  });
+
+  it('needs the void to name the active state it expects', async () => {
+    const { jobId } = await draftJob();
+    const reading = air();
+    expect((await add(OWNER_A, jobId, reading)).status).toBe(201);
+    for (const body of [{ changeId: randomUUID() }, { changeId: randomUUID(), expectedState: 'voided' }, { changeId: randomUUID(), expectedState: 'active', extra: 1 }]) {
+      expect(await voidOf(OWNER_A, jobId, reading.id, body)).toEqual({ status: 400, body: { error: 'invalid_request' } });
+    }
+    expect((await rows(jobId)).map((row) => row.voided)).toEqual([false]);
+    // The same void in upper case is the same void.
+    const change = fresh();
+    expect((await voidOf(OWNER_A, jobId, reading.id, change)).status).toBe(200);
+    const again = await voidOf(OWNER_A, jobId, reading.id.toUpperCase(), { ...change, changeId: change.changeId.toUpperCase() });
+    expect(again.status).toBe(200);
+    expect(again.body.void).toMatchObject({ id: reading.id, changeId: change.changeId });
+  });
+
+  it('answers text the database cannot hold, and a time offset it cannot read, with 400 rather than 503', async () => {
+    const { jobId } = await draftJob();
+    for (const body of [air({ note: 'half \ud800 a pair' }), material({ material: 'Dry\udfffwall' }), air({ takenAt: '2026-11-12T09:30:00+16:00' })]) {
+      expect(await add(OWNER_A, jobId, body)).toEqual({ status: 400, body: { error: 'invalid_request' } });
+    }
+    expect(await rows(jobId)).toEqual([]);
+  });
+
+  it('never voids another company’s reading through the caller’s own job', async () => {
+    const { jobId: ownB } = await f.newJob(ESTIMATOR_B);
+    const theirs = air();
+    expect((await add(OWNER_B, ownB, theirs)).status).toBe(201);
+    const { jobId } = await draftJob();
+    const before = await audits();
+    expect(await voidOf(OWNER_A, jobId, theirs.id, fresh())).toEqual({ status: 404, body: { error: 'reading_not_found' } });
+    expect((await rows(ownB)).map((row) => row.voided)).toEqual([false]);
+    expect(await audits()).toBe(before);
+  });
+});
+
+describe('the caller as they are when the log is read or written', () => {
+  // The caller as their sign-in resolved them when the request started (src/lib/auth), to stand for a
+  // request that waited on its body, the job lock or the field database while the owner changed them.
+  const estimatorA = () => ({ companyId: h.seed.a, actorId: h.seed.estimatorA.actor, uid: 'estimator-a', role: 'estimator' as const, capabilities: ['jobs_read' as const, 'scope' as const] });
+  const service = () => readingsService(h.handle.db, () => live.reader!);
+  const refusal = async (run: Promise<unknown>) => {
+    try {
+      await run;
+    } catch (error) {
+      return (error as { code?: string }).code;
+    }
+    return 'answered';
+  };
+
+  it('refuses a member moved to office or disabled meanwhile, and stores and voids nothing', async () => {
+    const { jobId } = await draftJob();
+    const reading = air();
+    expect((await add(ESTIMATOR_A, jobId, reading)).status).toBe(201);
+    await h.admin`UPDATE memberships SET role = 'office' WHERE actor_id = ${h.seed.estimatorA.actor}`;
+    expect(await refusal(service().list(estimatorA(), jobId, {}))).toBe('not_allowed');
+    expect(await refusal(service().add(estimatorA(), jobId, JSON.stringify(air())))).toBe('not_allowed');
+    // Even the stored reading's replay is not answered.
+    expect(await refusal(service().add(estimatorA(), jobId, JSON.stringify(reading)))).toBe('not_allowed');
+    expect(await refusal(service().void(estimatorA(), jobId, reading.id, JSON.stringify(fresh())))).toBe('not_allowed');
+    await h.admin`UPDATE memberships SET role = 'estimator', status = 'disabled' WHERE actor_id = ${h.seed.estimatorA.actor}`;
+    expect(await refusal(service().add(estimatorA(), jobId, JSON.stringify(air())))).toBe('not_allowed');
+    expect((await rows(jobId)).map((row) => row.voided)).toEqual([false]);
+    expect(await readingAudits(jobId)).toEqual(['drying_reading_added']);
+  });
+
+  it('refuses a write once the company is suspended', async () => {
+    const { jobId } = await draftJob();
+    await h.admin`UPDATE companies SET status = 'suspended' WHERE id = ${h.seed.a}`;
+    expect(await refusal(service().add(estimatorA(), jobId, JSON.stringify(air())))).toBe('company_inactive');
+    expect(await rows(jobId)).toEqual([]);
+  });
+
+  it('checks the member again after the field database read of a room reading', async () => {
+    const { jobId } = await draftJob();
+    live.reader!.during = async () => {
+      await h.admin`UPDATE memberships SET role = 'office' WHERE actor_id = ${h.seed.estimatorA.actor}`;
+    };
+    expect(await add(ESTIMATOR_A, jobId, material())).toEqual({ status: 403, body: { error: 'not_allowed' } });
+    expect(live.reader!.reads).toBe(1);
+    expect(await rows(jobId)).toEqual([]);
+  });
+
+  it('refuses a body that is not UTF-8 (400) instead of storing a replacement character', async () => {
+    const { jobId } = await draftJob();
+    const text = JSON.stringify(air({ note: 'caf_' }));
+    const bytes = Buffer.from(text, 'utf8');
+    bytes[bytes.indexOf(Buffer.from('_'))] = 0xe9;
+    const made = await json(readingsRoute.POST(request(OWNER_A, `/api/jobs/${jobId}/drying-readings`, { method: 'POST', body: new Uint8Array(bytes) }), params({ jobId })));
+    expect(made).toEqual({ status: 400, body: { error: 'invalid_request' } });
+    expect(await rows(jobId)).toEqual([]);
   });
 });

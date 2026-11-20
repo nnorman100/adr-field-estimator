@@ -92,10 +92,15 @@ describe('every reading', () => {
 });
 
 describe('voids and pages', () => {
-  it('voids with the phone own change id only', () => {
-    expect(voidBody.safeParse({ changeId: ID }).success).toBe(true);
-    expect(voidBody.safeParse({ changeId: ID, reason: 'x' }).success).toBe(false);
-    expect(voidDigest('r1', { changeId: ID })).not.toBe(voidDigest('r2', { changeId: ID }));
+  it('voids with the phone own change id and the active state it expects, nothing else', () => {
+    expect(voidBody.safeParse({ changeId: ID, expectedState: 'active' }).success).toBe(true);
+    for (const body of [{ changeId: ID }, { changeId: ID, expectedState: 'voided' }, { changeId: ID, expectedState: 'active', reason: 'x' }]) {
+      expect(voidBody.safeParse(body).success).toBe(false);
+    }
+    const change = voidBody.parse({ changeId: ID, expectedState: 'active' });
+    expect(voidDigest('r1', change)).not.toBe(voidDigest('r2', change));
+    // The same ids in another letter case are the same void.
+    expect(voidDigest('r1', voidBody.parse({ changeId: ID.toUpperCase(), expectedState: 'active' }))).toBe(voidDigest('r1', change));
   });
 
   it('takes a limit of 1 to 200 and an opaque cursor, nothing else', () => {

@@ -3,8 +3,6 @@
 // job-access function as JobError (src/lib/jobs/access.ts), with the same statuses.
 export const DRYING_ERRORS = {
   invalid_request: 400,
-  // The role cannot do this (office adds no reading).
-  not_allowed: 403,
   // No such reading on this job.
   reading_not_found: 404,
   // The id is taken by another request or another job.

@@ -75,7 +75,7 @@ const JOB_PROPOSAL = { id: '7a3c9e15-2b84-4d60-9f17-3e6a8c2d5b41', revision: 1, 
 const JOB_APPROVE = { revision: 1, approverName: 'Pat' };
 // A drying-log reading and a void (S5b-10): the suite's own ids, an air reading with no room.
 const JOB_READING = { id: '7e3c9a51-4b28-4d6f-8a10-2c5e7b9d3f46', kind: 'air', takenAt: '2026-11-20T09:30:00Z', temperatureF: 70, relativeHumidity: 50 };
-const JOB_READING_VOID = { changeId: '0f6b2d84-9a3c-4e71-b5d2-8c1e4a7f9b30' };
+const JOB_READING_VOID = { changeId: '0f6b2d84-9a3c-4e71-b5d2-8c1e4a7f9b30', expectedState: 'active' };
 const JOB_SIGN = {
   id: '2d7f4a91-6c3b-4e85-9a12-7b5c8e0f3d64',
   estimateId: '5b8e1c47-3f2a-4d96-8e01-4c7a9b2d6f15',

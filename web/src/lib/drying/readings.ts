@@ -1,16 +1,19 @@
 import { and, asc, count, eq, isNull, sql } from 'drizzle-orm';
 import { dryingReadings } from '@/db/drying-schema';
+import { companies, memberships } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
-import { hasAny, jobAccess, type JobCaller, type JobRow } from '@/lib/jobs/access';
-import { audit, CHECK_VIOLATION, errorCode } from '@/lib/jobs/service';
+import { IdentityRefusal } from '@/lib/auth';
+import { hasAny, jobAccess, JobError, type JobCaller, type JobRow } from '@/lib/jobs/access';
+import { audit, CHECK_VIOLATION, decodeCursor, encodeCursor, errorCode } from '@/lib/jobs/service';
 import type { ReadinessReader } from '@/lib/readiness/reader';
-import { draftIsJobs } from '@/lib/readiness/service';
+import { draftIsJobs, hasPendingSubmission } from '@/lib/readiness/service';
 import { DryingError } from './errors';
 import { psychrometrics } from './psychrometrics';
 import { draftRoom, submittedRoom, type ReadingRoom } from './rooms';
 import {
   DEFAULT_PAGE,
+  listQuery,
   MAX_READINGS,
   payloadView,
   readingBody,
@@ -42,7 +45,7 @@ const READ: readonly Capability[] = ['jobs_read'];
 const WRITE: readonly Capability[] = ['scope'];
 
 const UNIQUE_VIOLATION = '23505';
-const INVALID_DATETIME = new Set(['22007', '22008']);
+const INVALID_DATETIME = new Set(['22007', '22008', '22009']);
 
 // Times as the database holds them (microseconds, UTC), so a cursor names a reading exactly.
 const micros = (column: unknown) => sql<string>`to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
@@ -54,6 +57,7 @@ const readingColumns = {
   roomId: dryingReadings.roomId,
   roomLabel: dryingReadings.roomLabel,
   takenAt: micros(dryingReadings.takenAt),
+  takenKey: sql<string>`${dryingReadings.takenAt}::text`,
   receivedAt: micros(dryingReadings.receivedAt),
   payload: dryingReadings.payload,
   gpp: dryingReadings.gpp,
@@ -74,6 +78,7 @@ type ReadingRow = {
   roomId: string | null;
   roomLabel: string | null;
   takenAt: string;
+  takenKey: string;
   receivedAt: string;
   payload: Record<string, unknown>;
   gpp: number | null;
@@ -134,25 +139,10 @@ function viewOf(row: ReadingRow): ReadingView {
 
 const voidReceiptOf = (row: ReadingRow): VoidReceipt => ({ id: row.id, voided: true, changeId: row.voidChangeId!, voidedAt: row.voidedAt! });
 
-// The cursor names the last reading of a page: its time (microseconds) and id, opaque to the phone.
-function cursorOf(row: ReadingRow): string {
-  return Buffer.from(JSON.stringify([row.takenAt, row.id]), 'utf8').toString('base64url');
-}
+// The cursor names the last reading of a page: its time as the database holds it (microseconds) and id, opaque to the phone.
+const cursorOf = (row: ReadingRow): string => encodeCursor(row.takenKey, row.id);
 
-const CURSOR_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-
-function parseCursor(cursor: string): { takenAt: string; id: string } {
-  try {
-    const value: unknown = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
-    if (Array.isArray(value) && value.length === 2 && typeof value[0] === 'string' && typeof value[1] === 'string' && CURSOR_TIME.test(value[0]) && UUID.test(value[1])) {
-      return { takenAt: value[0], id: value[1] };
-    }
-  } catch {
-    // Not a cursor this route made.
-  }
-  throw new DryingError('invalid_request');
-}
 
 async function readingById(tx: CompanyTransaction, companyId: string, id: string): Promise<ReadingRow | undefined> {
   const [row] = await tx
@@ -172,23 +162,25 @@ async function activeCount(tx: CompanyTransaction, job: JobRow): Promise<number>
 }
 
 // The draft the job is being edited on, read before the write (rooms.ts), for a room reading on it.
-type DraftRead = { draftId: string; read: Awaited<ReturnType<ReadinessReader['readEditing']>> };
+// `read` is null when the field database could not be read.
+type DraftRead = { draftId: string; read: Awaited<ReturnType<ReadinessReader['readEditing']>> | null };
 
 // A room reading of a job being edited needs its draft's rooms from the field database, which is read
-// with no Postgres transaction open. The write's transaction ends with this, the read is made, and
-// the write runs again with it.
-class NeedsDraft {
-  constructor(readonly draftId: string) {}
-}
+// with no Postgres transaction open. The write's transaction ends with the id of the draft to read, the
+// read is made, and the write runs again with it.
+type NeedsDraft = { needsDraft: string };
 
-async function roomOf(tx: CompanyTransaction, job: JobRow, roomId: string, draft: DraftRead | null): Promise<ReadingRoom> {
+async function roomOf(tx: CompanyTransaction, job: JobRow, roomId: string, draft: DraftRead | null): Promise<{ room: ReadingRoom } | NeedsDraft> {
   if (job.status !== 'draft') {
     const room = await submittedRoom(tx, job, roomId);
     if (!room) throw new DryingError('unknown_room');
-    return room;
+    return { room };
   }
-  if (draft?.draftId !== job.currentDraftId) throw new NeedsDraft(job.currentDraftId);
+  // A Submit of the current draft already committed its pending row: checked under the job lock, whatever the field draft says.
+  if (await hasPendingSubmission(tx, job)) throw new DryingError('submission_in_progress');
+  if (draft?.draftId !== job.currentDraftId) return { needsDraft: job.currentDraftId };
   const { read } = draft;
+  if (read === null) throw new DryingError('draft_unavailable');
   // A Submit is deciding the draft: its rooms are about to be the submitted record's.
   if (read.outcome === 'not_editing') throw new DryingError('submission_in_progress');
   if (read.outcome !== 'read') throw new DryingError('unknown_room');
@@ -196,13 +188,44 @@ async function roomOf(tx: CompanyTransaction, job: JobRow, roomId: string, draft
   if (!read.stamped && !(await draftIsJobs(tx, job.companyId, job.id, draft.draftId))) throw new DryingError('unknown_room');
   const room = draftRoom(read.manifest, roomId);
   if (!room) throw new DryingError('unknown_room');
-  return room;
+  return { room };
+}
+
+// The caller as Postgres holds them now, read first in every transaction of this log: the company
+// still active and the caller still an active member with the role they signed in with (the request's
+// sign-in passed that role's session rules, so a changed role is refused, never taken on). In a write
+// both rows are locked FOR SHARE, before the job, so a suspension, a disable or a role change waits for
+// the write's commit, and a write that waited for one of them sees it.
+async function currentCaller(tx: CompanyTransaction, caller: JobCaller, lock: boolean): Promise<void> {
+  const company = tx.select({ status: companies.status }).from(companies).where(eq(companies.id, caller.companyId));
+  const [found] = await (lock ? company.for('share') : company);
+  if (found?.status !== 'active') throw new IdentityRefusal('company_inactive');
+  const membership = tx
+    .select({ role: memberships.role })
+    .from(memberships)
+    .where(and(eq(memberships.companyId, caller.companyId), eq(memberships.actorId, caller.actorId), eq(memberships.status, 'active')))
+    .limit(1);
+  const [member] = await (lock ? membership.for('share') : membership);
+  if (member?.role !== caller.role) throw new JobError('not_allowed');
 }
 
 function parse<T>(schema: { safeParse(value: unknown): { success: true; data: T } | { success: false } }, raw: unknown): T {
   const parsed = schema.safeParse(raw);
   if (!parsed.success) throw new DryingError('invalid_request');
   return parsed.data;
+}
+
+// The request body's text (null: over the size limit or not UTF-8) as JSON, checked against the schema: only after
+// the job's access is decided.
+function parseBody<T>(schema: { safeParse(value: unknown): { success: true; data: T } | { success: false } }, text: string | null): T {
+  if (text === null) throw new DryingError('invalid_request');
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    throw new DryingError('invalid_request');
+  }
+  return parse(schema, raw);
 }
 
 // A refusal the database makes of a value the schema let through is a bad request; the same id taken
@@ -215,38 +238,47 @@ function refusedByDatabase(error: unknown): never {
 }
 
 export type ReadingsService = {
-  list(caller: JobCaller, jobId: string, query: { limit?: number; cursor?: string }): Promise<ReadingsPage>;
-  add(caller: JobCaller, jobId: string, raw: unknown): Promise<{ created: boolean; reading: ReadingView }>;
-  void(caller: JobCaller, jobId: string, readingId: string, raw: unknown): Promise<VoidReceipt>;
+  list(caller: JobCaller, jobId: string, query: Record<string, string>): Promise<ReadingsPage>;
+  add(caller: JobCaller, jobId: string, body: string | null): Promise<{ created: boolean; reading: ReadingView }>;
+  void(caller: JobCaller, jobId: string, readingId: string, body: string | null): Promise<VoidReceipt>;
 };
 
 export function readingsService(db: Database, reader: () => ReadinessReader): ReadingsService {
-  async function attempt(caller: JobCaller, jobId: string, raw: unknown, draft: DraftRead | null) {
+  async function attempt(
+    caller: JobCaller,
+    jobId: string,
+    body: string | null,
+    draft: DraftRead | null,
+  ): Promise<{ created: boolean; reading: ReadingView } | NeedsDraft> {
     return withCompany(db, caller.companyId, async (tx) => {
+      await currentCaller(tx, caller, true);
       const job = await jobAccess(tx, caller, jobId, WRITE, { lock: true });
-      const input: ReadingInput = parse(readingBody, raw);
+      const input: ReadingInput = parseBody(readingBody, body);
       const digest = readingDigest(input);
       const stored = await readingById(tx, caller.companyId, input.id);
       if (stored) {
         if (stored.jobId !== job.id || stored.requestDigest !== digest) throw new DryingError('conflict');
         return { created: false, reading: viewOf(stored) };
       }
-      const room = input.roomId ? await roomOf(tx, job, input.roomId, draft) : null;
+      let room: ReadingRoom | null = null;
+      if (input.roomId) {
+        const found = await roomOf(tx, job, input.roomId, draft);
+        if ('needsDraft' in found) return found;
+        room = found.room;
+      }
       if ((await activeCount(tx, job)) >= MAX_READINGS) throw new DryingError('reading_limit');
       const air = input.kind === 'air' ? psychrometrics(input.temperatureF, input.relativeHumidity) : null;
       try {
         // The columns named one by one: the runtime may insert only these (0020), and the receive
         // time and the void are the guard's.
-        await tx.transaction(async (savepoint) => {
-          await savepoint.execute(sql`
-            INSERT INTO drying_readings (id, company_id, job_id, kind, room_id, room_label, taken_at, payload, gpp, dew_point_f,
-                                         dew_point_depression_f, vapor_pressure_inhg, enthalpy_btu_lb, request_digest, created_by_actor_id)
-            VALUES (${input.id}::uuid, ${caller.companyId}::uuid, ${job.id}::uuid, ${input.kind}, ${room?.id ?? null}, ${room?.label ?? null},
-                    ${input.takenAt}::timestamptz, ${JSON.stringify(storedPayload(input))}::jsonb, ${air?.gpp ?? null}, ${air?.dewPointF ?? null},
-                    ${air?.dewPointDepressionF ?? null}, ${air === null ? null : String(air.vaporPressureInhg)}::numeric,
-                    ${air === null ? null : String(air.enthalpyBtuLb)}::numeric, ${digest}, ${caller.actorId}::uuid)
-          `);
-        });
+        await tx.execute(sql`
+          INSERT INTO drying_readings (id, company_id, job_id, kind, room_id, room_label, taken_at, payload, gpp, dew_point_f,
+                                       dew_point_depression_f, vapor_pressure_inhg, enthalpy_btu_lb, request_digest, created_by_actor_id)
+          VALUES (${input.id}::uuid, ${caller.companyId}::uuid, ${job.id}::uuid, ${input.kind}, ${room?.id ?? null}, ${room?.label ?? null},
+                  ${input.takenAt}::timestamptz, ${JSON.stringify(storedPayload(input))}::jsonb, ${air?.gpp ?? null}, ${air?.dewPointF ?? null},
+                  ${air?.dewPointDepressionF ?? null}, ${air === null ? null : String(air.vaporPressureInhg)}::numeric,
+                  ${air === null ? null : String(air.enthalpyBtuLb)}::numeric, ${digest}, ${caller.actorId}::uuid)
+        `);
       } catch (error) {
         refusedByDatabase(error);
       }
@@ -261,9 +293,11 @@ export function readingsService(db: Database, reader: () => ReadinessReader): Re
         db,
         caller.companyId,
         async (tx) => {
+          await currentCaller(tx, caller, false);
           await jobAccess(tx, caller, jobId, READ);
-          const after = query.cursor === undefined ? null : parseCursor(query.cursor);
-          const limit = query.limit ?? DEFAULT_PAGE;
+          const checked = parse(listQuery, query);
+          const after = checked.cursor === undefined ? null : decodeCursor(checked.cursor);
+          const limit = checked.limit ?? DEFAULT_PAGE;
           const rows = (await tx
             .select(readingColumns)
             .from(dryingReadings)
@@ -272,7 +306,7 @@ export function readingsService(db: Database, reader: () => ReadinessReader): Re
                 eq(dryingReadings.companyId, caller.companyId),
                 eq(dryingReadings.jobId, jobId),
                 isNull(dryingReadings.voidedAt),
-                after === null ? undefined : sql`(${dryingReadings.takenAt}, ${dryingReadings.id}) > (${after.takenAt}::timestamptz, ${after.id}::uuid)`,
+                after === null ? undefined : sql`(${dryingReadings.takenAt}, ${dryingReadings.id}) > (${after.time}::timestamptz, ${after.id}::uuid)`,
               ),
             )
             .orderBy(asc(dryingReadings.takenAt), asc(dryingReadings.id))
@@ -289,33 +323,27 @@ export function readingsService(db: Database, reader: () => ReadinessReader): Re
       );
     },
 
-    async add(caller, jobId, raw) {
+    async add(caller, jobId, body) {
+      const first = await attempt(caller, jobId, body, null);
+      if (!('needsDraft' in first)) return first;
+      let read: DraftRead['read'] = null;
       try {
-        return await attempt(caller, jobId, raw, null);
-      } catch (error) {
-        if (!(error instanceof NeedsDraft)) throw error;
-        let read: DraftRead['read'];
-        try {
-          read = await reader().readEditing(caller.companyId, jobId, error.draftId);
-        } catch (failure) {
-          // Fixed text only: the SDK's message may quote a path.
-          console.error('drying reading draft unavailable', failure instanceof Error ? failure.name : 'unknown');
-          throw new DryingError('draft_unavailable');
-        }
-        try {
-          return await attempt(caller, jobId, raw, { draftId: error.draftId, read });
-        } catch (again) {
-          // The job moved to another draft while its rooms were read: the phone reads the job again.
-          if (again instanceof NeedsDraft) throw new DryingError('conflict');
-          throw again;
-        }
+        read = await reader().readEditing(caller.companyId, jobId, first.needsDraft);
+      } catch (failure) {
+        // Fixed text only: the SDK's message may quote a path.
+        console.error('drying reading draft unavailable', failure instanceof Error ? failure.name : 'unknown');
       }
+      const second = await attempt(caller, jobId, body, { draftId: first.needsDraft, read });
+      // The job moved to another draft while its rooms were read: the phone reads the job again.
+      if ('needsDraft' in second) throw new DryingError('conflict');
+      return second;
     },
 
-    async void(caller, jobId, readingId, raw) {
+    async void(caller, jobId, readingId, body) {
       return withCompany(db, caller.companyId, async (tx) => {
+        await currentCaller(tx, caller, true);
         const job = await jobAccess(tx, caller, jobId, WRITE, { lock: true });
-        const input = parse(voidBody, raw);
+        const input = parseBody(voidBody, body);
         const digest = voidDigest(readingId, input);
         const stored = UUID.test(readingId) ? await readingById(tx, caller.companyId, readingId) : undefined;
         if (!stored || stored.jobId !== job.id) throw new DryingError('reading_not_found');
@@ -326,12 +354,10 @@ export function readingsService(db: Database, reader: () => ReadinessReader): Re
           throw new DryingError('already_voided');
         }
         try {
-          await tx.transaction(async (savepoint) => {
-            await savepoint
-              .update(dryingReadings)
-              .set({ voidedByActorId: caller.actorId, voidChangeId: input.changeId, voidDigest: digest })
-              .where(and(eq(dryingReadings.companyId, caller.companyId), eq(dryingReadings.id, readingId), isNull(dryingReadings.voidChangeId)));
-          });
+          await tx
+            .update(dryingReadings)
+            .set({ voidedByActorId: caller.actorId, voidChangeId: input.changeId, voidDigest: digest })
+            .where(and(eq(dryingReadings.companyId, caller.companyId), eq(dryingReadings.id, readingId), isNull(dryingReadings.voidChangeId)));
         } catch (error) {
           // The change id already voided another reading.
           refusedByDatabase(error);

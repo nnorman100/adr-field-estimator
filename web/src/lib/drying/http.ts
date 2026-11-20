@@ -1,7 +1,7 @@
 import { IdentityRefusal, type Identity } from '@/lib/auth';
 import { JobError } from '@/lib/jobs/access';
+import { readBody, TooLarge } from '@/lib/photos/image';
 import { DryingError } from './errors';
-import { listQuery } from './schema';
 import { dryingServices } from './services';
 
 // The drying log routes (src/app/api/jobs/[jobId]/drying-readings/). Each route file wraps one of these
@@ -12,9 +12,9 @@ type RouteContext = { params: Promise<Record<string, string | string[] | undefin
 
 const NO_STORE = { 'Cache-Control': 'no-store' };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-// The largest valid reading is a few thousand characters even with every character of its notes
-// written as a \u escape; a body over this is refused before it is parsed.
-const MAX_BODY_LENGTH = 16_384;
+// The largest valid reading is a few thousand bytes even with every character of its notes written as
+// a \u escape; a body over this is refused as it arrives.
+const MAX_BODY_BYTES = 16_384;
 
 function json(body: unknown, status = 200): Response {
   return Response.json(body, { status, headers: NO_STORE });
@@ -46,22 +46,21 @@ async function readingPathId(context: RouteContext): Promise<string> {
   return typeof value === 'string' ? value.toLowerCase() : '';
 }
 
-// The body as JSON, unchecked: the service checks the caller's access to the job before it checks the
-// body's fields.
-async function rawBody(request: Request): Promise<unknown> {
-  const declared = Number(request.headers.get('content-length') ?? '0');
-  if (Number.isFinite(declared) && declared > MAX_BODY_LENGTH) throw new DryingError('invalid_request');
-  let text: string;
+// The body's text, bounded as it arrives and not parsed, or null when it is over the limit or is not
+// UTF-8 (never repaired, so a malformed byte is not stored as a replacement character): the service
+// checks the caller's access to the job before it refuses a body or parses it.
+async function bodyText(request: Request): Promise<string | null> {
+  let bytes: Uint8Array;
   try {
-    text = await request.text();
-  } catch {
-    throw new DryingError('invalid_request');
+    bytes = await readBody(request, MAX_BODY_BYTES);
+  } catch (error) {
+    if (error instanceof TooLarge) return null;
+    throw error;
   }
-  if (text.length > MAX_BODY_LENGTH) throw new DryingError('invalid_request');
   try {
-    return JSON.parse(text);
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   } catch {
-    throw new DryingError('invalid_request');
+    return null;
   }
 }
 
@@ -69,9 +68,7 @@ async function rawBody(request: Request): Promise<unknown> {
 export async function listReadings(request: Request, identity: Identity, context: RouteContext): Promise<Response> {
   return respond(async () => {
     const id = await jobPathId(context);
-    const query = listQuery.safeParse(Object.fromEntries(new URL(request.url).searchParams));
-    if (!query.success) throw new DryingError('invalid_request');
-    return json(await dryingServices().readings.list(identity, id, query.data));
+    return json(await dryingServices().readings.list(identity, id, Object.fromEntries(new URL(request.url).searchParams)));
   });
 }
 
@@ -80,19 +77,17 @@ export async function listReadings(request: Request, identity: Identity, context
 export async function addReading(request: Request, identity: Identity, context: RouteContext): Promise<Response> {
   return respond(async () => {
     const id = await jobPathId(context);
-    const raw = await rawBody(request);
-    const { created, reading } = await dryingServices().readings.add(identity, id, raw);
+    const { created, reading } = await dryingServices().readings.add(identity, id, await bodyText(request));
     return json({ reading }, created ? 201 : 200);
   });
 }
 
-// POST /api/jobs/{jobId}/drying-readings/{readingId}/void  { changeId }: the void's receipt, the same
+// POST /api/jobs/{jobId}/drying-readings/{readingId}/void  { changeId, expectedState: 'active' }: the void's receipt, the same
 // for the same request again.
 export async function voidReading(request: Request, identity: Identity, context: RouteContext): Promise<Response> {
   return respond(async () => {
     const id = await jobPathId(context);
     const readingId = await readingPathId(context);
-    const raw = await rawBody(request);
-    return json({ void: await dryingServices().readings.void(identity, id, readingId, raw) });
+    return json({ void: await dryingServices().readings.void(identity, id, readingId, await bodyText(request)) });
   });
 }
