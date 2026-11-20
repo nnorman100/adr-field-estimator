@@ -1,4 +1,5 @@
-import type { EstimateEnd } from '@/engine/estimate';
+import type { ProposalEnd } from '@/engine/estimate';
+import { dollars } from '@/engine/values';
 import type { EstimateView } from './result';
 
 // What the Review before signing screen decides in the browser, as pure functions so they are
@@ -39,12 +40,7 @@ export function reviewAnswerOf(body: unknown): ReviewAnswer | null {
 }
 
 /** A money string from the server ("1234.50") as the documents print it ("$1,234.50"). No arithmetic. */
-export function dollars(amount: string): string {
-  const match = /^(-?)(\d+)\.(\d{2})$/.exec(amount);
-  if (!match) return amount;
-  const [, sign, whole, cents] = match;
-  return `${sign}$${whole!.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${cents}`;
-}
+export { dollars };
 
 /** The customer price, and the itemized total beside it (ARCHITECTURE.md, Product rules §2). */
 export function priceLines(totals: EstimateView['totals']): { customer: string; itemized: string } {
@@ -54,15 +50,20 @@ export function priceLines(totals: EstimateView['totals']): { customer: string; 
 }
 
 /** The price-point adjustment of each end the customer price shows, untaxed (S4-4e); null when neither end has one. */
-export function pricePointLine(low: EstimateEnd, high: EstimateEnd | null): string | null {
+export function pricePointLine(low: ProposalEnd, high: ProposalEnd | null): string | null {
   if (!low.price_point && !high?.price_point) return null;
-  const amount = (end: EstimateEnd): string => dollars(end.price_point ?? '0.00');
+  const amount = (end: ProposalEnd): string => dollars(end.price_point ?? '0.00');
   if (!high) return `Price-point adjustment (not taxed): ${amount(low)}`;
   return `Price-point adjustment (not taxed): ${amount(low)} at the low end, ${amount(high)} at the high end`;
 }
 
 /** One end's charges in the order the engine adds them into its total: the subtotal, then each adjustment it charged. */
-export function chargeRows(end: EstimateEnd, afterHoursLabel: string, withPricePoint = true): Array<{ label: string; amount: string }> {
+export function chargeRows(
+  end: ProposalEnd,
+  afterHoursLabel: string,
+  withPricePoint = true,
+  withNamed = true,
+): Array<{ label: string; amount: string; spaced?: true }> {
   const adjustments = [
     { label: afterHoursLabel, amount: end.after_hours },
     ...end.trade_minimums.map((row) => ({ label: `${row.name} trade minimum`, amount: row.amount })),
@@ -72,7 +73,13 @@ export function chargeRows(end: EstimateEnd, afterHoursLabel: string, withPriceP
     // Rounding up to the company's price point comes last, outside every bucket and untaxed (S4-4e).
     { label: 'Price-point adjustment', amount: withPricePoint ? (end.price_point ?? '0.00') : '0.00' },
   ];
-  return [{ label: 'Subtotal', amount: end.subtotal }, ...adjustments.filter((row) => row.amount !== '0.00')];
+  // The named adjustment comes after rounding (S5b-7): a discount as a negative amount, and no row when it came to nothing.
+  const named = withNamed && end.adjustment && end.adjustment.amount !== '0.00' ? [end.adjustment] : [];
+  return [
+    { label: 'Subtotal', amount: end.subtotal },
+    ...adjustments.filter((row) => row.amount !== '0.00'),
+    ...named.map((row) => ({ label: row.name, amount: row.direction === 'discount' ? `-${row.amount}` : row.amount, spaced: true as const })),
+  ];
 }
 
 // The engine's pricing warnings by code (src/engine/price-v2.ts), in plain words. The advisory

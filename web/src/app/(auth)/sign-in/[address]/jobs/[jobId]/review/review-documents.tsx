@@ -1,5 +1,6 @@
 import { LinkPhoto } from '@/components/links/link-photo';
-import type { EstimateEnd, LetterLine, ProposalLetter } from '@/engine/estimate';
+import type { ProposalEnd, LetterLine, ProposalLetter } from '@/engine/estimate';
+import { adjustmentLines } from '@/engine/values';
 import type { EstimateView } from '@/lib/estimates/result';
 import { chargeRows, dollars, photoAlbums, priceLines, pricePointLine, quantityNoteLine, warningText } from '@/lib/estimates/screen';
 
@@ -15,10 +16,20 @@ function text(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
-function Charges({ end, afterHoursLabel, withPricePoint = true }: { end: EstimateEnd; afterHoursLabel: string; withPricePoint?: boolean }) {
-  return chargeRows(end, afterHoursLabel, withPricePoint).map((row, index) => (
+function Charges({
+  end,
+  afterHoursLabel,
+  withPricePoint = true,
+  withNamed = true,
+}: {
+  end: ProposalEnd;
+  afterHoursLabel: string;
+  withPricePoint?: boolean;
+  withNamed?: boolean;
+}) {
+  return chargeRows(end, afterHoursLabel, withPricePoint, withNamed).map((row, index) => (
     <li key={`${index}-${row.label}`} className={ROW}>
-      <span className="min-w-0 break-words">{row.label}</span>
+      <span className={row.spaced ? 'min-w-0 break-words whitespace-pre-wrap' : 'min-w-0 break-words'}>{row.label}</span>
       <span className="shrink-0 tabular-nums">{dollars(row.amount)}</span>
     </li>
   ));
@@ -137,12 +148,18 @@ function CompanyClauses({ clauses }: { clauses: Array<{ title: string; text: str
 export function Proposal({ proposal }: { proposal: NonNullable<EstimateView['proposal']> }) {
   const price = proposal.price;
   const adjustment = pricePointLine(price.low, price.mode === 'range' ? price.high : null);
+  const named = adjustmentLines(price.low, price.mode === 'range' ? price.high : null);
   const priceLine = (
     <>
       <p className="font-semibold">
         {price.mode === 'range' && price.high ? `Customer estimate range: ${dollars(price.low.total)} to ${dollars(price.high.total)}` : `Price: ${dollars(price.low.total)}`}
       </p>
       {adjustment ? <p>{adjustment}</p> : null}
+      {named.map((line, index) => (
+        <p key={index} className="whitespace-pre-wrap break-words tabular-nums" data-testid="named-adjustment">
+          {line}
+        </p>
+      ))}
       {price.explanation ? <p className="text-sm">{price.explanation}</p> : null}
     </>
   );
@@ -160,7 +177,7 @@ export function Proposal({ proposal }: { proposal: NonNullable<EstimateView['pro
           <List items={proposal.disclaimers} />
           {price.charge_rows ? (
             <ul className="flex flex-col gap-1">
-              <Charges end={price.low} afterHoursLabel={price.after_hours_label} withPricePoint={false} />
+              <Charges end={price.low} afterHoursLabel={price.after_hours_label} withPricePoint={false} withNamed={false} />
             </ul>
           ) : null}
           {priceLine}
@@ -175,7 +192,7 @@ export function Proposal({ proposal }: { proposal: NonNullable<EstimateView['pro
                   <span className="shrink-0 tabular-nums">{dollars(line.total)}</span>
                 </li>
               ))}
-              <Charges end={price.low} afterHoursLabel={price.after_hours_label} withPricePoint={false} />
+              <Charges end={price.low} afterHoursLabel={price.after_hours_label} withPricePoint={false} withNamed={false} />
             </ul>
           ) : null}
           {priceLine}
@@ -208,7 +225,7 @@ export function Proposal({ proposal }: { proposal: NonNullable<EstimateView['pro
 }
 
 /** The itemized claim's lines, then the charges and the itemized total of the end given. */
-export function ItemizedClaim({ rows, end, afterHoursLabel }: { rows: unknown[]; end: EstimateEnd; afterHoursLabel: string }) {
+export function ItemizedClaim({ rows, end, afterHoursLabel }: { rows: unknown[]; end: ProposalEnd; afterHoursLabel: string }) {
   return (
     <ul className="flex flex-col gap-2 pt-3">
       {rows.map((row, index) => {

@@ -26,6 +26,16 @@ const endSchema = z.strictObject({
   tax: money,
   price_point: money.optional(),
   total: money,
+  adjustment: z
+    .strictObject({
+      adjustment_id: z.string(),
+      name: z.string(),
+      direction: z.enum(['discount', 'charge']),
+      before: money,
+      amount: money,
+      after: money,
+    })
+    .optional(),
 }) satisfies z.ZodType<EstimateEnd>;
 
 const lineSchema = z.strictObject({

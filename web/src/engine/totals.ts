@@ -23,6 +23,7 @@ import {
   hasCushionBrackets,
   type CushionBand,
   type Item,
+  type NamedAdjustment,
   type Policy,
   type Table,
   type Trade,
@@ -47,7 +48,20 @@ export type End = {
   tax: Dec;
   /** What price-point rounding added, untaxed and outside every bucket; zero when off or already a price point. */
   pricePoint: Dec;
+  /** The price: the lines and charges above, then the approved named adjustment. */
   total: Dec;
+  /** The approved named adjustment applied to this end; absent when none applies (S5b-7). */
+  adjustment?: AppliedAdjustment;
+};
+
+/** The named adjustment applied to an end's price: `before` ∓ `amount` = `after`. */
+export type AppliedAdjustment = {
+  adjustmentId: string;
+  name: string;
+  direction: 'discount' | 'charge';
+  before: Dec;
+  amount: Dec;
+  after: Dec;
 };
 
 export type Totals = {
@@ -558,9 +572,43 @@ export function explanation(policy: Policy, data: Inspection, items: Item[]): st
   return sentences.join(' ');
 }
 
-/** Price a saved draft from a parsed table with the dryscope-v3 formulas. */
-export function priceAndRange(data: Inspection, table: Table): Priced {
+/**
+ * The named adjustment (S5b-7), when one is approved on the job: it changes each end's price after price-point
+ * rounding and the result is not rounded again. A percent is of the price before it, rounded to cents once; a
+ * discount larger than the price is refused rather than quoting below zero, and so is an id the table does not
+ * have. Only an adjustment approved on the job is passed in (S5b-8); none by default.
+ */
+export function applyAdjustment(totals: Totals, defined: NamedAdjustment[], approved: string | undefined): Totals {
+  if (approved === undefined) return totals;
+  const chosen = defined.find((adjustment) => adjustment.adjustment_id === approved);
+  if (!chosen) throw new Error('The approved adjustment is not in the price table.');
+  const value = Dec.parse(chosen.value);
+  const discount = chosen.direction === 'discount';
+  const adjust = (end: End): End => {
+    const before = end.total;
+    const amount = chosen.kind === 'percent' ? money(before.mul(value).div(HUNDRED)) : money(value);
+    if (discount && amount.cmp(before) > 0) throw new Error(`The discount "${chosen.name}" is larger than the price.`);
+    const after = discount ? before.sub(amount) : before.add(amount);
+    const adjustment: AppliedAdjustment = {
+      adjustmentId: chosen.adjustment_id,
+      name: chosen.name,
+      direction: chosen.direction,
+      before,
+      amount,
+      after,
+    };
+    return { ...end, total: after, adjustment };
+  };
+  return { ...totals, low: adjust(totals.low), high: totals.high ? adjust(totals.high) : null };
+}
+
+/** Price a saved draft from a parsed table with the dryscope-v3 formulas. `approved`: the id of the named adjustment approved on this job (S5b-7). */
+export function priceAndRange(data: Inspection, table: Table, approved?: string): Priced {
   const scoped = priceScopeV2(data, table.items, table.policy);
-  const totals = computeTotals(data, scoped.lines, table.policy, table.items, table.trades ?? []);
+  const totals = applyAdjustment(
+    computeTotals(data, scoped.lines, table.policy, table.items, table.trades ?? []),
+    table.adjustments ?? [],
+    approved,
+  );
   return { lines: scoped.lines, totals, warnings: scoped.warnings, calculationVersion: ENGINE_VERSION };
 }
