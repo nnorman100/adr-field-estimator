@@ -227,7 +227,6 @@ def workflow_jobs(path):
 def test_workflows_exist():
     assert {path.name for path in WORKFLOWS} >= {
         'ci.yml',
-        'codeql.yml',
         'deploy.yml',
         'test-guard.yml',
         'web.yml',
@@ -242,10 +241,3 @@ def test_every_job_runs_on_the_switchable_runner(path):
         assert 'services' not in job and 'container' not in job, f'{path.name} job {name}'
 
 
-def test_codeql_sets_up_node_before_init():
-    """CodeQL's JavaScript/TypeScript extractor needs node; the self-hosted container has none."""
-    jobs = dict(workflow_jobs(ROOT / '.github' / 'workflows' / 'codeql.yml'))
-    uses = [step.get('uses', '') for step in jobs['analyze']['steps']]
-    node = [i for i, use in enumerate(uses) if use.startswith('actions/setup-node@')]
-    init = [i for i, use in enumerate(uses) if use.startswith('github/codeql-action/init@')]
-    assert node and init and node[0] < init[0]

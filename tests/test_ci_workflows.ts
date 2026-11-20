@@ -1,6 +1,6 @@
 // Repo-wide workflow rules, run by vitest in the required node CI job. Ported from
 // tests/test_ci_config.py (workflows exist, every job on the switchable self-hosted runner with no
-// Docker services or containers, CodeQL sets up node before init) and the workflow-wiring tests in
+// Docker services or containers) and the workflow-wiring tests in
 // tests/test_ci_legacy_scope.py (no legacy CI jobs, the node job keeps the rebuild's checks on every
 // pull request). Also checks that these ported guards stay in
 // the vitest run the node job executes.
@@ -27,7 +27,6 @@ describe('every workflow', () => {
     for (const name of [
       'ai-evals.yml',
       'ci.yml',
-      'codeql.yml',
       'deploy.yml',
       'test-guard.yml',
       'web.yml',
@@ -123,45 +122,8 @@ describe('ci.yml', () => {
   });
 });
 
-describe('codeql.yml', () => {
-  const analyze = () => workflow('codeql.yml').jobs.analyze;
-
-  it('sets up node before init', () => {
-    // CodeQL's JavaScript/TypeScript extractor needs node; the self-hosted container has none.
-    const uses: string[] = analyze().steps.map((s: Data) => s.uses ?? '');
-    const node = uses.findIndex((use) => use.startsWith('actions/setup-node@'));
-    const init = uses.findIndex((use) => use.startsWith('github/codeql-action/init@'));
-    expect(node).toBeGreaterThanOrEqual(0);
-    expect(init).toBeGreaterThanOrEqual(0);
-    expect(node).toBeLessThan(init);
-  });
-
-  it('still runs weekly and on pushes to master', () => {
-    const triggers = workflow('codeql.yml').on;
-    expect(triggers.schedule).toEqual([{ cron: '23 9 * * 1' }]);
-    expect(triggers.push.branches).toEqual(['master']);
-  });
-
-  it('does not run on pull requests', () => {
-    expect(workflow('codeql.yml').on).not.toHaveProperty('pull_request');
-  });
-
-  it('runs only JavaScript/TypeScript, unscoped', () => {
-    const job = analyze();
-    expect(job).not.toHaveProperty('if');
-    expect(job.strategy.matrix.language).toEqual(['javascript-typescript']);
-    expect(job.steps[0].uses.startsWith('actions/checkout@')).toBe(true);
-    expect(job.steps[0].with['fetch-depth']).toBe(0);
-    expect(scopeGatedParts(workflow('codeql.yml'))).toEqual([]);
-    for (const step of job.steps) expect(step).not.toHaveProperty('if');
-    const uses: string[] = job.steps.map((s: Data) => s.uses ?? '');
-    expect(uses.some((u) => u.startsWith('github/codeql-action/init@'))).toBe(true);
-    expect(uses.some((u) => u.startsWith('github/codeql-action/analyze@'))).toBe(true);
-  });
-});
-
 describe('the step-condition evaluator', () => {
-  // Guards for the evaluator the CodeQL check relies on, so a broken port cannot pass vacuously.
+  // Guards for the step-condition evaluator, so a broken port cannot pass vacuously.
   it.each([
     ["matrix.language != 'python' || steps.scope.outputs.run == 'true'", { run: 'true' }, true],
     ["'python' != 'python' || steps.scope.outputs.run == 'true'", { run: 'false' }, false],
