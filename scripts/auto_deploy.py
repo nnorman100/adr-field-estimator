@@ -589,9 +589,7 @@ def resolve_rollback_version(runner, version):
     )
     commit = (resolved.stdout or '').strip() if resolved.returncode == 0 else ''
     if not COMMIT.fullmatch(commit):
-        raise Refused(
-            f'Release version tag {version!r} is not in this checkout. Run git fetch --tags if it is new.'
-        )
+        raise Refused(f'Release version tag {version!r} is not in this checkout.')
     if git(runner, 'merge-base', '--is-ancestor', commit, 'origin/master', check=False).returncode:
         raise Refused(f'Release version {version} ({commit[:12]}) is not on master.')
     return commit
