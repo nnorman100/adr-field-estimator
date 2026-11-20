@@ -38,7 +38,7 @@ export function readReadiness(user: User, jobId: string, signal: AbortSignal): P
 type DraftBasis = MarkerRow & { currentDraftId: string };
 type Checked = Extract<ReadinessAnswer, { status: 'checked' }>;
 
-export function useDraftReadiness(user: User, job: DraftBasis | null, manifest: FieldManifest | null, recheck = 0, onArchived?: () => void) {
+export function useDraftReadiness(user: User, job: DraftBasis | null, manifest: FieldManifest | null, recheck: number, onArchived: () => void) {
   const basis = useMemo(() => (job && manifest ? { user, job, manifest, recheck } : null), [user, job, manifest, recheck]);
   const archived = useRef(onArchived);
   useEffect(() => {
@@ -51,7 +51,7 @@ export function useDraftReadiness(user: User, job: DraftBasis | null, manifest: 
     const { user, job, manifest } = basis;
     void Promise.all([readReadiness(user, job.id, controller.signal), manifestDigest(manifest).catch(() => null)]).then(([answer, digest]) => {
       if (controller.signal.aborted) return;
-      if (answer === ARCHIVED) archived.current?.();
+      if (answer === ARCHIVED) archived.current();
       const current =
         typeof answer === 'object' && answer?.status === 'checked' && answer.jobId === job.id && answer.jobRevision === job.revision &&
         answer.draftId === job.currentDraftId && answer.fieldSha256 === digest;

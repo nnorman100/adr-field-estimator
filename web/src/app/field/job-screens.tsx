@@ -1,10 +1,11 @@
 'use client';
 
-import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { readJob, type JobDetail, type Refusal } from '@/lib/field/api';
 import { loadJobProjection, type JobProjection } from '@/lib/field/job-projection';
+import { watchJournal } from '@/lib/field/journal';
+import { journalFailed, readEntries } from '@/lib/field/journal-sync';
 import { newerDetail, pending, usePending } from '@/lib/field/pending';
 import type { FieldSession } from '@/lib/field/session';
 import { canEditDraft, draftReads, fieldRefusal, IncompleteFieldData, InvalidFieldData, SUPERSEDED, type DraftRef, type FieldDraft } from '@/lib/field/store';
@@ -389,17 +390,58 @@ export function JobScreens({
   // Once a Fix brought the person here, the way back to Finish stays for this job's other tabs too.
   const [fromFinish, setFromFinish] = useState(false);
   if (fix && !fromFinish) setFromFinish(true);
-  const [leaving, setLeaving] = useState(false);
-  if (!unsaved && leaving) setLeaving(false);
+  const finishHref = `/sign-in/${address}/jobs/${jobId}/finish`;
+  const returnGuarded = fromFinish && readinessOn;
+  // Back to Finish asks to save or discard while any form holds unsaved input, then waits until this
+  // job's field writes and photo sends have the server's acknowledgement: Finish reads the manifest
+  // from the field database, not from this phone.
+  const [leaving, setLeaving] = useState<'no' | 'choosing' | 'going'>('no');
+  if (leaving === 'choosing' && !unsaved) setLeaving('no');
+  const recordInFlight = usePending(() => pending.record(jobId)?.sending === true || pending.coordWrite(jobId)?.sending === true);
+  const photosInFlight = usePending(() => pending.photos(jobId)).some((photo) => photo.step === 'sending' || photo.step === 'saving');
+  const [journalBusy, setJournalBusy] = useState<boolean | null>(null);
+  const fieldClient = session.client;
+  useEffect(() => {
+    if (!returnGuarded || leaving !== 'going') return;
+    let live = true;
+    let reads = 0;
+    const load = async () => {
+      const mine = ++reads;
+      try {
+        const entries = await readEntries(fieldClient);
+        if (live && mine === reads) setJournalBusy(entries.some((entry) => entry.state === 'pending' && entry.jobId === jobId));
+      } catch (error) {
+        journalFailed(fieldClient, error);
+      }
+    };
+    void Promise.resolve().then(load);
+    const stop = watchJournal({ tenantId: fieldClient.person.tenantId, uid: fieldClient.person.uid }, () => void load());
+    return () => {
+      live = false;
+      stop();
+    };
+  }, [returnGuarded, leaving, fieldClient, jobId]);
+  const writing = journalBusy !== false || recordInFlight || photosInFlight;
+  const returnToFinish = () => {
+    setJournalBusy(null);
+    setLeaving('going');
+  };
+  useEffect(() => {
+    // Finish uses a separate Firestore client. End the field document after its writes settle.
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- The browser must load a separate document to release the field client's connections.
+    if (returnGuarded && leaving === 'going' && !writing) window.location.assign(finishHref);
+  }, [returnGuarded, leaving, writing, finishHref]);
   useEffect(() => {
     if (!fix) {
       focusedFix.current = null;
       return;
     }
     if (focusedFix.current === readinessFix) return;
+    const usable = (found: HTMLElement) =>
+      !found.closest('[hidden]') && !found.matches(':disabled') && !((found instanceof HTMLInputElement || found instanceof HTMLTextAreaElement) && found.readOnly);
     const fallbackId = FIX_FALLBACKS[fix] ?? (view === 'scope' ? 'readiness-scope' : null);
     const element = [fix, fallbackId].map((id) => (id ? document.getElementById(id) : null)).find(
-      (found): found is HTMLElement => found instanceof HTMLElement && !found.closest('[hidden]') && !found.matches(':disabled'),
+      (found): found is HTMLElement => found instanceof HTMLElement && usable(found),
     );
     if (!element) return;
     element.focus();
@@ -482,28 +524,45 @@ export function JobScreens({
           </FieldLink>
         ))}
       </nav>
-      {fromFinish && readinessOn ? (
+      {returnGuarded ? (
         <div className="flex flex-col gap-2">
-          {unsaved ? (
-            <Button variant="outline" className="self-start" onClick={() => setLeaving(true)}>
-              Back to Finish and review
-            </Button>
-          ) : (
-            <Link className="inline-flex min-h-11 items-center underline" href={`/sign-in/${address}/jobs/${jobId}/finish`}>
-              Back to Finish and review
-            </Link>
-          )}
-          {unsaved && leaving ? (
+          <a
+            className="inline-flex min-h-11 items-center self-start underline"
+            href={finishHref}
+            onClick={(event) => {
+              event.preventDefault();
+              if (leaving === 'going') return;
+              if (unsaved) setLeaving('choosing');
+              else returnToFinish();
+            }}
+          >
+            Back to Finish and review
+          </a>
+          {leaving === 'choosing' ? (
             <div role="alert" className="flex flex-col gap-2 rounded-md border border-foreground/40 p-3 text-sm">
               <p>Some changes are not saved. Save them first, or discard them and go back to Finish and review.</p>
               <div className="flex flex-wrap gap-2">
-                <Button variant="outline" onClick={() => setLeaving(false)}>
+                <Button variant="outline" onClick={() => setLeaving('no')}>
                   Keep editing
                 </Button>
-                <Link className="inline-flex min-h-11 items-center underline" href={`/sign-in/${address}/jobs/${jobId}/finish`}>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    if (currentRefId) pending.discardUnsent(jobId, currentRefId);
+                    returnToFinish();
+                  }}
+                >
                   Discard changes and go back
-                </Link>
+                </Button>
               </div>
+            </div>
+          ) : null}
+          {leaving === 'going' && writing ? (
+            <div className="flex flex-col gap-2 text-sm">
+              <p role="status">Saving…</p>
+              <Button variant="outline" className="self-start" onClick={() => setLeaving('no')}>
+                Keep editing
+              </Button>
             </div>
           ) : null}
         </div>

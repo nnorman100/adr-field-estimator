@@ -19,7 +19,10 @@ lists gaps in checklist order and links to the relevant job field, room or photo
 suggestions use the room's existing overview, affected surface and moisture meter tags. The owner
 can open Prices from the checklist's price row only when `/api/me` grants `prices_manage`; that link
 is labelled Open Prices, not Fix. Everyone else is directed to their company owner. A confirmed
-archive (HTTP 410) reads the job again instead of showing the prompt.
+archive (HTTP 410), from the check or from Submit, shows the archived state
+instead of the prompt. Any other definitive Submit refusal also ends the prompt for that checklist.
+A gap for a scope that is already confirmed (confirmed before a reprice) is explained as Finish, Back
+to editing, then confirm again, with no link.
 
 ## Who may see it and do what
 

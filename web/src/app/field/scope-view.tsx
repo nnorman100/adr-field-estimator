@@ -86,7 +86,7 @@ export function ScopeView({ job, draft, open, readinessFix }: { job: JobContext;
 
   return (
     <div className="flex flex-col gap-4">
-      <h3 id="readiness-scope" tabIndex={-1} className="sr-only">Check Scope</h3>
+      <h3 id="readiness-scope" tabIndex={-1} className="sr-only focus:not-sr-only focus:text-lg focus:font-semibold">Check Scope</h3>
       {checking ? (
         <p role="status" className="text-sm empty:hidden">
           {marker ? markerText(marker) : answer !== undefined ? 'Readiness check unavailable.' : ''}

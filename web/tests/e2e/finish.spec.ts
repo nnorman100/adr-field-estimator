@@ -1,13 +1,14 @@
-import { test as base, expect as baseExpect, type Page, type Request, type Route } from '@playwright/test';
+import { test as base, expect as baseExpect, type APIRequestContext, type Page, type Request, type Route } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { manifestDigest, type FieldManifest } from '@/lib/field/canonical';
 import { expectNoAxeViolations } from './a11y';
 import { JOBS_BASE_URL } from './jobs/backend';
 import { completeJob } from './jobs/complete-job';
-import { adminSql, currentDraftOf, seedCompany } from './jobs/seed';
+import { adminSql, currentDraftOf, seedCompany, type Company } from './jobs/seed';
 import { adminDb } from './offline/world';
-import { APP_CODE, fakeSecondStep } from './second-step/fake-totp';
+import { APP_CODE, fakeSecondStep, withSecondFactor } from './second-step/fake-totp';
+import { idTokenFor } from './sign-in/emulator';
 import { PASSWORD, readSeed, type TeamAccount, type TeamSeed } from './sign-in/seed';
 
 // The Finish and review screen (S5a-8) in Chromium and WebKit at phone width. It signs in to the
@@ -297,9 +298,29 @@ test.describe('Ready to review', () => {
     await expect(page.getByLabel('Shot')).toHaveValue('meter');
     await page.getByLabel('Shot').selectOption('overview');
 
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    await page.route(`**/api/jobs/${jobId}/photos/*?kind=photo`, async (route) => {
+      if (route.request().method() !== 'PUT') return route.continue();
+      started.resolve();
+      await release.promise;
+      await route.continue();
+    });
     const checkedAgain = checked(page, jobId, finishPath);
-    await page.getByRole('link', { name: 'Back to Finish and review' }).click();
-    await (await checkedAgain).finished();
+    try {
+      await page.getByLabel('Take photo').setInputFiles({
+        name: 'overview.png',
+        mimeType: 'image/png',
+        buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAZ0lEQVR4nBWMQQ0AQAyDqmRKqgQlU1IlU1JFl+NJCBIaZARaFHSoSGKGMQOzTJhjykh4sDF4cfDhYokfm89C4KAgscP6y1027LFlJTLEP82SkCMlEjec/+CWC3dcOYkO9d92aejR0gf/sEsBLaIzfQAAAABJRU5ErkJggg==', 'base64'),
+      });
+      await started.promise;
+      await page.getByRole('link', { name: 'Back to Finish and review' }).click();
+      await expect(page.getByText('Saving…', { exact: true })).toBeVisible();
+      await expect(page).toHaveURL(/\/field\?/);
+    } finally {
+      release.resolve();
+    }
+    expect((await (await checkedAgain).json()).gaps.map((gap: { code: string }) => gap.code)).not.toContain('shot:overview');
     await button.click();
     await dialog.getByRole('button', { name: 'Continue anyway' }).click();
     await expect(page.getByRole('heading', { name: 'Finished', exact: true })).toBeVisible();
@@ -321,15 +342,15 @@ test.describe('Ready to review', () => {
           await pending.promise;
           return route.abort();
         }
-        if (mode === 'failure') return route.fulfill({ status: 503 });
+        if (mode === 'failure') return route.abort('failed');
         await route.continue();
       });
-      const answered = mode === 'failure'
-        ? page.waitForResponse((response) => new URL(response.url()).pathname === `/api/jobs/${jobId}/readiness`)
+      const failed = mode === 'failure'
+        ? page.waitForEvent('requestfailed', (request) => new URL(request.url()).pathname === `/api/jobs/${jobId}/readiness`)
         : null;
       try {
         await page.goto(finishPath);
-        if (answered) await (await answered).finished();
+        if (failed) await failed;
         if (mode === 'pending') await requested.promise;
         await page.getByRole('button', { name: 'Finish and review' }).click();
         await expect(page.getByRole('heading', { name: 'Finished', exact: true })).toBeVisible();
@@ -341,8 +362,8 @@ test.describe('Ready to review', () => {
     });
   }
 
-  async function openField(page: Page, jobId: string, view = '') {
-    await page.goto(`/field?job=${jobId}${view}`);
+  async function openField(page: Page, jobId: string) {
+    await page.goto(`/field?job=${jobId}`);
     const choice = page.getByRole('button', { name: 'Online only', exact: true });
     const year = page.getByLabel('Year built');
     await expect(year.or(choice)).toBeVisible();
@@ -417,16 +438,16 @@ test.describe('Ready to review', () => {
     await page.getByRole('link', { name: 'Photos' }).click();
     await page.getByRole('link', { name: 'Check Scope' }).click();
     await expect(year).toHaveValue('1985');
-    await page.getByRole('button', { name: 'Back to Finish and review' }).click();
+    await page.getByRole('link', { name: 'Back to Finish and review' }).click();
     const warning = page.getByRole('alert').filter({ hasText: 'Some changes are not saved' });
     await expect(warning).toBeVisible();
     await warning.getByRole('button', { name: 'Keep editing' }).click();
     await expect(warning).toHaveCount(0);
     await expect(year).toHaveValue('1985');
 
-    await page.getByRole('button', { name: 'Back to Finish and review' }).click();
+    await page.getByRole('link', { name: 'Back to Finish and review' }).click();
     const again = checked(page, jobId, finishPath);
-    await page.getByRole('link', { name: 'Discard changes and go back' }).click();
+    await page.getByRole('button', { name: 'Discard changes and go back' }).click();
     await expect(page).toHaveURL(new RegExp(`${finishPath}$`));
     await (await again).finished();
     await page.getByRole('button', { name: 'Finish and review' }).click();
@@ -454,24 +475,100 @@ test.describe('Ready to review', () => {
     await expect(rooms).toBeFocused();
   });
 
-  test('a confirmed archive replaces the readiness text', async ({ page }) => {
-    const { jobId } = await openJob(page);
-    let archived = false;
-    await page.route(`**/api/jobs/${jobId}`, async (route) => {
-      if (archived) return route.fulfill({ status: 410, json: { error: 'archived' } });
-      await route.continue();
+  // The owner archives the job through the app's own route.
+  async function archiveAsOwner(request: APIRequestContext, company: Company, jobId: string) {
+    const token = await idTokenFor(company.tenantId, company.people.owner!.email, PASSWORD);
+    const archived = await request.post(`${JOBS_BASE_URL}/api/jobs/${jobId}/archive`, {
+      headers: { Authorization: `Bearer ${withSecondFactor(token)}` },
+      data: { revision: 1, changeId: randomUUID() },
     });
-    await page.route(`**/api/jobs/${jobId}/readiness`, (route) => {
-      archived = true;
-      return route.fulfill({ status: 410, json: { error: 'archived' } });
+    expect(archived.status()).toBe(200);
+  }
+
+  test('a job archived while its readiness check is pending shows the archived notice, not an unavailable check', async ({ page, request }) => {
+    const { company, jobId } = await openJob(page);
+    const requested = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    await page.route(`**/api/jobs/${jobId}/readiness`, async (route) => {
+      requested.resolve();
+      await release.promise;
+      await route.continue().catch(() => undefined);
     });
-    await page.goto(`/field?job=${jobId}`);
-    const choice = page.getByRole('button', { name: 'Online only', exact: true });
-    const notice = page.getByRole('heading', { name: 'This job is archived' });
-    await expect(notice.or(choice)).toBeVisible();
-    if (await choice.isVisible()) await choice.click();
-    await expect(notice).toBeVisible();
+    try {
+      await page.goto(`/field?job=${jobId}`);
+      const choice = page.getByRole('button', { name: 'Online only', exact: true });
+      await expect(page.getByLabel('Year built').or(choice)).toBeVisible();
+      if (await choice.isVisible()) await choice.click();
+      await requested.promise;
+      await archiveAsOwner(request, company, jobId);
+    } finally {
+      release.resolve();
+    }
+    await expect(page.getByRole('heading', { name: 'This job is archived' })).toBeVisible();
     await expect(page.getByText('Readiness check unavailable.')).toHaveCount(0);
+    await expect(page.getByRole('link', { name: 'Back to Finish and review' })).toHaveCount(0);
+  });
+
+  test('Continue anyway on a job archived meanwhile shows the archived state and no checklist', async ({ page, request }) => {
+    const { company, jobId, finishPath } = await openJob(page);
+    const first = checked(page, jobId, finishPath);
+    await page.goto(finishPath);
+    await (await first).finished();
+    const button = page.getByRole('button', { name: 'Finish and review' });
+    const dialog = page.getByRole('dialog', { name: 'Ready to review?' });
+    await button.click();
+    await expect(dialog).toBeVisible();
+    await archiveAsOwner(request, company, jobId);
+    await dialog.getByRole('button', { name: 'Continue anyway' }).click();
+    await expect(page.getByRole('heading', { name: 'This job is archived', exact: true })).toBeVisible();
+    await expect(dialog).toHaveCount(0);
+    await expect(button).toHaveCount(0);
+  });
+
+  test('a room name typed and discarded does not come back with the next Fix', async ({ page }) => {
+    const { jobId, finishPath } = await openJob(page);
+    const first = checked(page, jobId, finishPath);
+    await page.goto(finishPath);
+    await (await first).finished();
+    await page.getByRole('button', { name: 'Finish and review' }).click();
+    await page.getByRole('dialog', { name: 'Ready to review?' }).getByRole('link', { name: 'Fix: Add an affected room' }).click();
+    const name = page.getByLabel('New room name');
+    await name.fill('Garage');
+    await page.getByRole('link', { name: 'Back to Finish and review' }).click();
+    const returned = checked(page, jobId, finishPath);
+    await page.getByRole('button', { name: 'Discard changes and go back' }).click();
+    await expect(page).toHaveURL(new RegExp(`${finishPath}$`));
+    await (await returned).finished();
+    await page.getByRole('button', { name: 'Finish and review' }).click();
+    await page.getByRole('dialog', { name: 'Ready to review?' }).getByRole('link', { name: 'Fix: Add an affected room' }).click();
+    await expect(page.getByLabel('New room name')).toHaveValue('');
+  });
+
+  test('Office notes typed and not saved ask before the way back to Finish', async ({ page }) => {
+    const { company, jobId, finishPath, signIn } = await openJob(page);
+    await page.goto(`/sign-in/${company.address}`);
+    await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+    await expect(page.getByRole('heading', { name: `Sign in to ${company.name}` })).toBeVisible();
+    await signIn('owner');
+    const answered = checked(page, jobId, finishPath);
+    await page.goto(finishPath);
+    await (await answered).finished();
+    await page.getByRole('button', { name: 'Finish and review' }).click();
+    await page.getByRole('dialog', { name: 'Ready to review?' }).getByRole('link', { name: 'Fix: Add the year built' }).click();
+    const choice = page.getByRole('button', { name: 'Online only', exact: true });
+    const heading = page.getByRole('heading', { name: 'Check Scope', exact: true });
+    await expect(heading.or(choice)).toBeAttached();
+    if (await choice.isVisible()) await choice.click();
+    await page.getByRole('link', { name: 'Job coordination' }).click();
+    const notes = page.getByRole('textbox', { name: 'Office notes', exact: true });
+    await expect(notes).toBeEditable();
+    await notes.fill('Call the adjuster');
+    await page.getByRole('link', { name: 'Back to Finish and review' }).click();
+    const warning = page.getByRole('alert').filter({ hasText: 'Some changes are not saved' });
+    await expect(warning).toBeVisible();
+    await expect(page).not.toHaveURL(new RegExp(`${finishPath}$`));
+    await warning.getByRole('button', { name: 'Keep editing' }).click();
+    await expect(notes).toHaveValue('Call the adjuster');
   });
 
   test('a late readiness answer is dropped on sign-out', async ({ page, context }) => {

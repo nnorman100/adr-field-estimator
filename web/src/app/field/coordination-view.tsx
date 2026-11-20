@@ -181,6 +181,12 @@ function Coordination({ job, view, setView, reread }: { job: JobContext & { deta
   const archived = job.held;
   const mayMove = caps.includes('field_owner_transfer') && view.status !== 'signed' && view.status !== 'archived' && !archived && (targets.length > 0 || heldMove !== null);
   const notesHeld = held?.request.kind === 'notes';
+  const { markUnsaved } = job;
+  const notesUnsaved = notes !== null && notes !== view.notes;
+  useEffect(() => {
+    markUnsaved('notes', notesUnsaved);
+    return () => markUnsaved('notes', false);
+  }, [markUnsaved, notesUnsaved]);
 
   return (
     <div className="flex flex-col gap-4">

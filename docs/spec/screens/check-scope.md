@@ -29,8 +29,10 @@ control is not usable. Room links use the stable room ID. Photo links select the
 and keep them for the capture. Photos lists the baseline shots (overview, affected surface, moisture
 meter) the readiness check still lacks for the chosen room, each selecting that shot. **Back to
 Finish and review** stays on every tab of the job after a Fix and reopens Finish with current data;
-with unsaved changes it offers Keep editing or Discard changes and go back. An accepted save asks
-the check again. A confirmed archive replaces the readiness text and link with the archived notice.
+with any unsaved input (Office notes included) it offers Keep editing or Discard changes and go back,
+and it waits, showing "Saving…", until this job's pending saves and photo sends are acknowledged
+before it leaves. Discard clears only the unsent typed values; browser Back is not guarded (follow-up).
+An accepted save asks the check again. A confirmed archive replaces the readiness text and link with the archived notice.
 The summary of findings gap points to guidance in Check Scope while the separate summary editor is
 pending.
 

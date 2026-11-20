@@ -37,7 +37,7 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
   // does not show them before its own answer.
   const denied = usePending(() => pending.listDenied());
   const rows = denied ? null : jobs;
-  // Changes each time the list is read again from its first page, which ends every readiness check made.
+  // Changes each time the list starts to be read again from its first page, which ends every readiness check made.
   const [generation, setGeneration] = useState(0);
   const markers = useReadinessMarkers(session.user, session.online && session.readiness && !archivedList ? rows : null, session.capabilities, generation);
   // Only the newest request answers: a page asked for before the list was read again from its first
@@ -59,7 +59,6 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
       return;
     }
     setError(null);
-    if (from === null) setGeneration((count) => count + 1);
     setJobs((current) => (from === null ? answer.value.jobs : [...(current ?? []), ...answer.value.jobs]));
     setCursor(answer.value.nextCursor);
   }
@@ -67,6 +66,7 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
   async function load(from: string | null) {
     if (!session.online) return;
     const mine = ++latest.current;
+    if (from === null) setGeneration((count) => count + 1);
     const sent = pending.listSend();
     const answer = await listJobs(session.user, shown, from);
     if (answer.ok || answer.denied) pending.listAnswered(sent, !answer.ok);
@@ -77,8 +77,12 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
   // again from its first page each time the connection comes back.
   useEffect(() => {
     if (!session.online) return;
-    void load(null);
+    let live = true;
+    void Promise.resolve().then(() => {
+      if (live) void load(null);
+    });
     return () => {
+      live = false;
       latest.current += 1;
       setBusy(true);
     };

@@ -189,7 +189,8 @@ function FinishActions({
       : null,
     [readinessRevision, current, job.currentDraftId],
   );
-  const advisory = useDraftReadiness(user, readinessJob, manifest, 0, reload);
+  const showArchived = () => setCurrent({ ...current, status: 'archived' });
+  const advisory = useDraftReadiness(user, readinessJob, manifest, 0, showArchived);
   const items = useMemo(
     () => (manifest && advisory ? advisory.gaps.flatMap((gap) => {
       const fix = fixFor(gap, job.id, manifest, pricesManage ? `/sign-in/${address}/prices` : null, owner);
@@ -197,6 +198,9 @@ function FinishActions({
     }) : []),
     [advisory, manifest, job.id, pricesManage, owner, address],
   );
+
+  // A refusal that says the job moved on (not a lost answer) ends the checklist it was read for.
+  const prompted = problem && problem.next !== 'retry' ? [] : items;
 
   async function finish() {
     if (!manifest) return;
@@ -206,6 +210,7 @@ function FinishActions({
     pendingSubmit.current ??= { id: crypto.randomUUID(), digest: await manifestDigest(manifest), draftId: current.currentDraftId };
     const answer = await callApi(user, `/api/jobs/${encodeURIComponent(current.id)}/submissions`, { method: 'POST', json: pendingSubmit.current });
     setBusy(false);
+    if (answer.status === 410) return showArchived();
     const next = answer.status === 200 || answer.status === 201 ? jobOf(answer.body) : null;
     if (next) {
       pendingSubmit.current = null;
@@ -240,7 +245,7 @@ function FinishActions({
   const summary = manifest ? draftSummary(manifest) : null;
   const editing = current.status === 'draft';
   const submitted = current.status === 'submitted';
-  const title = editing ? 'Finish and review' : submitted ? 'Finished' : 'This job is signed';
+  const title = editing ? 'Finish and review' : submitted ? 'Finished' : current.status === 'archived' ? 'This job is archived' : 'This job is signed';
 
   return (
     <FocusedPanel title={title}>
@@ -288,7 +293,7 @@ function FinishActions({
             disabled={busy}
             onClick={(event) => {
               const prompt = dialog.current;
-              if (!prompt || items.length === 0) return void finish();
+              if (!prompt || prompted.length === 0) return void finish();
               // Some touch browsers do not focus a tapped button. Make it the focus return target.
               event.currentTarget.focus();
               prompt.showModal();
@@ -297,7 +302,7 @@ function FinishActions({
           >
             Finish and review
           </Button>
-          {items.length ? (
+          {prompted.length ? (
             <dialog
               ref={dialog}
               aria-labelledby="readiness-heading"
@@ -307,13 +312,14 @@ function FinishActions({
                 <h2 id="readiness-heading" className="text-lg font-semibold">Ready to review?</h2>
                 <p className="mt-2 text-sm">Check these items now or continue to save the draft for review.</p>
                 <ul className="mt-3 min-h-0 divide-y divide-foreground/20 overflow-y-auto overscroll-contain">
-                  {items.map((fix) => (
+                  {prompted.map((fix) => (
                     <li key={fix.key} className="flex items-center justify-between gap-3 py-1 text-sm">
                       <span className="min-w-0 break-words">{fix.label}</span>
                       {fix.href ? (
-                        <Link href={fix.href} aria-label={`${fix.action ?? 'Fix'}: ${fix.label}`} className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center underline">
+                        // Leaving Finish releases its Firestore connections before the next document loads.
+                        <a href={fix.href} aria-label={`${fix.action ?? 'Fix'}: ${fix.label}`} className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center underline">
                           {fix.action ?? 'Fix'}
-                        </Link>
+                        </a>
                       ) : null}
                     </li>
                   ))}

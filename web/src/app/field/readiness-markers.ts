@@ -15,7 +15,8 @@ type Run = {
   active: number;
 };
 
-// One run per sign-in and list `generation` (the list read again from its first page). Rows added by
+// One run per sign-in and list `generation` (bumped when the list starts to be read again from its
+// first page); a run's answers are shown only while it is the live run. Rows added by
 // "Show more jobs" join the run's queue; rows it already asked about keep their request and marker,
 // unless their revision changed.
 export function useReadinessMarkers(user: User, rows: readonly MarkerRow[] | null, capabilities: readonly string[], generation: number) {
@@ -28,12 +29,15 @@ export function useReadinessMarkers(user: User, rows: readonly MarkerRow[] | nul
     if (!live) {
       run.current?.controller.abort();
       run.current = null;
+      // The answers of the run that ended are not shown again when a new one starts.
+      void Promise.resolve().then(() => setResult(null));
       return;
     }
     let batch = run.current;
     if (!batch || batch.user !== user || batch.generation !== generation || batch.controller.signal.aborted) {
       batch?.controller.abort();
       batch = run.current = { user, generation, controller: new AbortController(), markers: new Map(), asked: new Map(), queue: [], active: 0 };
+      void Promise.resolve().then(() => setResult(null));
     }
     const current = batch;
     for (const row of editing) {

@@ -79,6 +79,10 @@ export function fixFor(gap: ReadinessGap, jobId: string, manifest: FieldManifest
     if (roomGaps[gap.code]) return { label: `${name}: ${roomGaps[gap.code]}`, href: fieldFix(jobId, 'scope', `room-${room.id}-heading`) };
   }
 
+  if (gap.code === 'scopeConfirmed' && (manifest.draft as { scopeConfirmed?: unknown } | null)?.scopeConfirmed === true) {
+    return { label: 'The scope was confirmed before prices changed. Finish this draft, choose Back to editing, then confirm the scope again.' };
+  }
+
   const fix = general[gap.code as keyof typeof general];
   return fix ? { label: fix[0], href: fieldFix(jobId, fix[1], fix[2]) } : null;
 }

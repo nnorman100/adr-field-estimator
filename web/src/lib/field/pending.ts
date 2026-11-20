@@ -265,6 +265,13 @@ export const pending = {
     delete refusals[key];
     change({ refusals });
   },
+  // The person chose to discard what they typed and did not send for this job: the text typed on
+  // `draftId` and the refused customer and claim changes go; writes already in flight stay.
+  discardUnsent(jobId: string, draftId: string) {
+    putTyped(jobId, Object.fromEntries(Object.entries(state.typed[jobId] ?? NO_DRAFTS).filter(([id]) => id !== draftId)));
+    pending.dropRefusal(jobId, 'customer');
+    pending.dropRefusal(jobId, 'claim');
+  },
   photos: (jobId: string): PendingPhoto[] => state.photos[jobId] ?? NO_PHOTOS,
   addPhoto(jobId: string, photo: PendingPhoto) {
     change({ photos: { ...state.photos, [jobId]: [...pending.photos(jobId), photo] } });

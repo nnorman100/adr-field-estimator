@@ -12,6 +12,8 @@ import { KEEP_YES } from '../../src/app/field/field-store-text';
 import { JOBS_BASE_URL } from './jobs/backend';
 import { adminSql, seedCompany } from './jobs/seed';
 import { expectWorkerRuns } from './service-workers';
+import { randomUUID } from 'node:crypto';
+import { idTokenFor } from './sign-in/emulator';
 import { PASSWORD, readSeed, type ProjectSeed } from './sign-in/seed';
 
 // The field shell's own screens (S6-2) in Chromium and WebKit at phone width: it starts from the
@@ -481,8 +483,10 @@ test.describe('field readiness markers', () => {
     await addJob('20 Example Street');
     await expect(page.getByText(/\d+ items to check/)).toBeVisible();
 
-    await page.route(`**/api/jobs/${failed}/readiness`, (route) => route.fulfill({ status: 503 }));
+    await page.route(`**/api/jobs/${failed}/readiness`, (route) => route.abort('failed'));
+    const refused = page.waitForEvent('requestfailed', (request) => new URL(request.url()).pathname === `/api/jobs/${failed}/readiness`);
     await page.getByRole('link', { name: 'Back to jobs' }).click();
+    await refused;
     const failedRow = page.getByRole('listitem').filter({ hasText: '10 Example Street' });
     const workingRow = page.getByRole('listitem').filter({ hasText: '20 Example Street' });
     await expect(workingRow.getByText(/\d+ items to check/)).toBeVisible();
@@ -490,31 +494,21 @@ test.describe('field readiness markers', () => {
     await expect(failedRow.getByText(/items? to check|Ready to review/)).toHaveCount(0);
   });
 
-  test('Show more jobs checks only the rows added, not the ones already checked', async ({ page }) => {
+  test('Show more jobs checks only the rows added and keeps the markers already shown', async ({ page, request }) => {
     const company = await seedCompany('readiness-pages', { estimator: 'estimator' });
     await adminSql()`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${company.id}, 'readiness', true)`;
-    const row = (index: number) => ({
-      id: crypto.randomUUID(),
-      status: 'draft',
-      propertyAddress: `${index} Paging Street`,
-      revision: 1,
-      createdAt: '2026-11-14T18:00:00.000Z',
-      updatedAt: '2026-11-14T18:00:00.000Z',
-      customerName: '',
-      mine: true,
-    });
-    const first = Array.from({ length: 25 }, (_, index) => row(index + 1));
-    const second = Array.from({ length: 5 }, (_, index) => row(index + 26));
-    await page.route((url) => url.pathname === '/api/jobs', (route) =>
-      route.request().method() !== 'GET'
-        ? route.continue()
-        : route.fulfill({ json: new URL(route.request().url()).searchParams.has('cursor') ? { jobs: second, nextCursor: null } : { jobs: first, nextCursor: 'more' } }),
-    );
+    const token = await idTokenFor(company.tenantId, company.people.estimator!.email, PASSWORD);
+    for (let start = 1; start <= 30; start += 5) {
+      const replies = await Promise.all(Array.from({ length: 5 }, (_, offset) => request.post(`${JOBS_BASE_URL}/api/jobs`, {
+        headers: { Authorization: `Bearer ${token}` },
+        data: { id: randomUUID(), draftId: randomUUID(), propertyAddress: `${start + offset} Paging Street` },
+      })));
+      expect(replies.map((reply) => reply.status())).toEqual([201, 201, 201, 201, 201]);
+    }
     const asked = new Map<string, number>();
-    await page.route((url) => /^\/api\/jobs\/[^/]+\/readiness$/.test(url.pathname), (route) => {
-      const id = new URL(route.request().url()).pathname.split('/')[3]!;
-      asked.set(id, (asked.get(id) ?? 0) + 1);
-      return route.fulfill({ status: 503 });
+    page.on('request', (sent) => {
+      const found = /^\/api\/jobs\/([^/]+)\/readiness$/.exec(new URL(sent.url()).pathname);
+      if (found) asked.set(found[1]!, (asked.get(found[1]!) ?? 0) + 1);
     });
 
     await page.goto(`/sign-in/${company.address}`);
@@ -523,10 +517,12 @@ test.describe('field readiness markers', () => {
     await page.getByRole('button', { name: 'Sign in', exact: true }).click();
     await page.getByRole('link', { name: 'Open the field app' }).click();
     await page.getByRole('button', { name: 'Online only', exact: true }).click();
-    await expect.poll(() => asked.size).toBe(25);
+    const markers = page.getByText(/\d+ items? to check/);
+    await expect(markers).toHaveCount(25);
+    expect(asked.size).toBe(25);
     await page.getByRole('button', { name: 'Show more jobs' }).click();
-    await expect.poll(() => asked.size).toBe(30);
-    await expect(page.getByRole('listitem').filter({ hasText: '30 Paging Street' })).toBeVisible();
+    await expect(markers).toHaveCount(30);
+    expect(asked.size).toBe(30);
     expect([...asked.values()].every((count) => count === 1)).toBe(true);
   });
 });
