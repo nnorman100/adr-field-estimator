@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import type { Table } from '@/engine/table';
-import { addAdjustment, adjustmentNameInput, removeAdjustment, setAdjustment } from '@/lib/prices/edit';
+import { addAdjustment, adjustmentNameFits, removeAdjustment, setAdjustment } from '@/lib/prices/edit';
 import { DecimalField, Hint, RadioGroup, Section, TextField } from './ui';
 
 // The company's own named adjustments (S5b-7): a discount or a charge, a percent of the price or a
@@ -25,11 +25,11 @@ export function AdjustmentsSection({ table, onChange }: Edit) {
       {adjustments.length === 0 ? <Hint>No adjustments yet.</Hint> : null}
       {adjustments.map((adjustment) => (
         <fieldset key={adjustment.adjustment_id} className="flex flex-col gap-3 rounded-md border border-foreground/20 p-3">
-          <legend className="px-1 text-sm font-medium break-words">{adjustment.name}</legend>
+          <legend className="px-1 text-sm font-medium [overflow-wrap:anywhere]">{adjustment.name}</legend>
           <TextField
             label="Adjustment name"
             value={adjustment.name}
-            onChange={(value) => onChange(setAdjustment(table, adjustment.adjustment_id, { name: adjustmentNameInput(value) }))}
+            onChange={(value) => onChange(setAdjustment(table, adjustment.adjustment_id, { name: value }))}
           />
           <RadioGroup
             legend="This adjustment is a"
@@ -69,7 +69,9 @@ export function AdjustmentsSection({ table, onChange }: Edit) {
         </fieldset>
       ))}
       <div className="flex flex-col gap-2">
-        <TextField label="New adjustment" value={name} onChange={(value) => setName(adjustmentNameInput(value))} />
+        <TextField label="New adjustment" value={name} onChange={(value) => {
+            if (adjustmentNameFits(value)) setName(value);
+          }} />
         <Button
           type="button"
           variant="outline"

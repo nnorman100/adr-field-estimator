@@ -1,5 +1,5 @@
 import type { Item, NamedAdjustment, PriceBand, PriceRow, Table, Trade } from '@/engine/table';
-import { CATEGORIES, OTHER_TYPE, categoryOrder, type Category, type SizeTier } from '@/engine/values';
+import { CATEGORIES, OTHER_TYPE, categoryOrder, chars, type Category, type SizeTier } from '@/engine/values';
 import { itemCategories } from './screen';
 
 // The Prices editor's changes to the working copy it has open, as pure functions so they are
@@ -231,9 +231,9 @@ export function changed(saved: Table, draft: Table): boolean {
   return sortedText(saved) !== sortedText(draft);
 }
 
-// The most an adjustment name holds, counted in characters the way the schema counts them.
-export function adjustmentNameInput(value: string): string {
-  return Array.from(value).slice(0, 60).join('');
+// Whether an adjustment name is within the most it holds, counted in characters the way the schema counts them.
+export function adjustmentNameFits(value: string): boolean {
+  return chars(value) <= 60;
 }
 
 // Named adjustments (S5b-7): the company's own discounts and charges. None are seeded; a new one is a
@@ -255,9 +255,11 @@ export function setAdjustment(
   adjustmentId: string,
   change: Partial<Pick<NamedAdjustment, 'name' | 'kind' | 'direction' | 'value'>>,
 ): Table {
+  const { name, ...rest } = change;
+  const accepted = name === undefined || name.trim() === '' || !adjustmentNameFits(name) ? rest : change;
   return {
     ...table,
-    adjustments: (table.adjustments ?? []).map((row) => (row.adjustment_id === adjustmentId ? { ...row, ...change } : row)),
+    adjustments: (table.adjustments ?? []).map((row) => (row.adjustment_id === adjustmentId ? { ...row, ...accepted } : row)),
   };
 }
 

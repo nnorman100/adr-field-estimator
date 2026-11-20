@@ -8,7 +8,7 @@ import {
   addRoomType,
   addRoomTypeRow,
   addAdjustment,
-  adjustmentNameInput,
+  adjustmentNameFits,
   addTrade,
   categoryPricingOn,
   changed,
@@ -242,14 +242,25 @@ describe('the editor changes', () => {
     expect(added.adjustments![0]).toMatchObject({ adjustment_id: 'weekend_start', name: ' Weekend start ' });
   });
 
-  it('holds an adjustment name to 60 characters counted the way the schema counts them', () => {
+  it('holds an adjustment name to 60 characters counted the way the schema counts them, refusing an edit past it', () => {
     const house = '\u{1F3E0}';
     const full = `${'a'.repeat(59)}${house}`;
-    expect(adjustmentNameInput(full)).toBe(full);
-    expect(adjustmentNameInput(`${full}b`)).toBe(full);
-    const added = addAdjustment(priced(), full);
-    expect(setAdjustment(added, added.adjustments![0]!.adjustment_id, { value: '5' }).adjustments![0]!.name).toBe(full);
-    expect(parseTable(setAdjustment(added, added.adjustments![0]!.adjustment_id, { value: '5' })).adjustments).toHaveLength(1);
+    expect(adjustmentNameFits(full)).toBe(true);
+    expect(adjustmentNameFits(`${full}b`)).toBe(false);
+    const created = addAdjustment(priced(), full);
+    const id = created.adjustments![0]!.adjustment_id;
+    const added = setAdjustment(created, id, { value: '5' });
+    expect(parseTable(added).adjustments).toHaveLength(1);
+    expect(setAdjustment(added, id, { name: `x${full}` }).adjustments![0]!.name).toBe(full);
+    expect(setAdjustment(added, id, { name: ` ${full.slice(1)}` }).adjustments![0]!.name).toBe(` ${full.slice(1)}`);
+  });
+
+  it('refuses a rename that is empty once trimmed and keeps the padding of a valid one', () => {
+    const added = addAdjustment(priced(), 'Weekend start');
+    const id = added.adjustments![0]!.adjustment_id;
+    for (const blank of ['', '   ']) expect(setAdjustment(added, id, { name: blank }).adjustments![0]!.name).toBe('Weekend start');
+    expect(setAdjustment(added, id, { name: ' After hours ', value: '5' }).adjustments![0]).toMatchObject({ name: ' After hours ', value: '5' });
+    expect(setAdjustment(added, id, { name: '  ', value: '7' }).adjustments![0]).toMatchObject({ name: 'Weekend start', value: '7' });
   });
 
   it('makes an id that fits the schema even when a numbered suffix is needed', () => {

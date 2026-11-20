@@ -20,7 +20,7 @@ current version read only.
 
 | Role | Sees | Can do |
 |---|---|---|
-| Owner | the editor: "Estimates use version {n}, published {date}." (or "No prices are published yet…"), Items, What does this room pay?, Settings, Named adjustments, Publish, Versions, Price-list file | save or undo the working copy, preview, publish (sign-in under 15 minutes), restore a version into the working copy, download and import the CSV price list |
+| Owner | the editor: "Estimates use version {n}, published {date}." (or "No prices are published yet…"), Items, What does this room pay?, Settings, Named adjustments, Publish, Versions, Price-list file | save or undo the working copy, add, edit and remove named adjustments in the working copy, preview, publish (sign-in under 15 minutes), restore a version into the working copy, download and import the CSV price list |
 | Estimator | "Version {n}, published {date}. Only the owner can change the prices." with the items and room pays read only; or "The owner has not published any prices yet, so estimates cannot be priced." | nothing |
 | Office | the same as an estimator | nothing |
 | Superadmin support | nothing here; the operator's read-only prices route has no screen yet | nothing |
