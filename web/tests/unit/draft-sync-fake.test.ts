@@ -21,7 +21,7 @@ draftSyncContract('in-memory', () => {
         fence: seed.fence ? { submissionId: seed.fence.submissionId, epoch: seed.fence.epoch, expiresAt: seed.fence.expiresAt.toISOString() } : null,
         field: seed.field ?? {},
         rooms: Object.fromEntries((seed.rooms ?? []).map((room) => [room.id, room.field])),
-        photos: {},
+        photos: Object.fromEntries((seed.photos ?? []).map((photo) => [photo.id, photo.field])),
         previous: null,
         ...(seed.jobId === undefined ? {} : { jobId: seed.jobId }),
         ...(seed.placeholder ? { placeholder: true as const } : {}),
@@ -58,6 +58,9 @@ draftSyncContract('in-memory', () => {
       const record = backing.load();
       record.markers[`${company}/${job}`] = data as unknown as SyncMarker;
       backing.save(record);
+    },
+    async seedGeneration(data) {
+      store.setGeneration(data);
     },
   };
 });

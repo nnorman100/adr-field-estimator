@@ -668,6 +668,24 @@ describe('moving the field work (owner decision J5)', () => {
     expect(await moving.running).toEqual({ status: 403, body: { error: 'not_allowed' } });
   });
 
+  // suspended-company-response: a company suspended while Start field work or a Move waited on the field
+  // database is refused as a fresh request would be: no job, customer, claim or staff details.
+  it('gives a caller of a company suspended while its field step waited no job, customer or staff details after it', async () => {
+    const { id } = await officeJob();
+    await assign(OFFICE_A, id, h.seed.estimatorA.actor);
+    const started = await heldSync(() => claim(ESTIMATOR_A, id));
+    await h.admin`UPDATE companies SET status = 'suspended' WHERE id = ${h.seed.a}`;
+    started.open();
+    expect(await started.running).toEqual({ status: 403, body: { error: 'company_inactive' } });
+    await h.admin`UPDATE companies SET status = 'active' WHERE id = ${h.seed.a}`;
+    const moved = await claimedJob();
+    const { revision } = (await coordination(OWNER_A, moved.id)).body;
+    const moving = await heldSync(() => transfer(OWNER_A, moved.id, { revision, changeId: randomUUID(), toActorId: estimatorA2 }));
+    await h.admin`UPDATE companies SET status = 'suspended' WHERE id = ${h.seed.a}`;
+    moving.open();
+    expect(await moving.running).toEqual({ status: 403, body: { error: 'company_inactive' } });
+  });
+
   it('answers 503 and records nothing as synced when Postgres moves on after the last try’s commit', async () => {
     const { id } = await claimedJob();
     const { revision } = (await coordination(OWNER_A, id)).body;

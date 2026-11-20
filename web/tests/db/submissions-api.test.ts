@@ -839,6 +839,31 @@ describe('the worker', () => {
     expect((await f.job(jobId)).status).toBe('archived');
   });
 
+  // cross-store-connection-wait: the version check inside the Firestore transaction never waits out the
+  // pool's queue while Firestore holds the job's drafts; past a short wait the snapshot counts as moved,
+  // nothing is written, and the sync tries again.
+  it('a sync whose version check cannot get a database connection writes nothing and tries again, without waiting out the queue', async () => {
+    const { jobId, draftId } = await f.readyJob(ESTIMATOR_A, h.seed.a);
+    await h.admin`UPDATE jobs SET field_revision = field_revision + 1 WHERE id = ${jobId}`;
+    // The second transaction (the first try's version check) never gets a connection.
+    let transactions = 0;
+    const db = new Proxy(h.handle.db, {
+      get: (target, key) => {
+        if (key !== 'transaction') return Reflect.get(target, key);
+        transactions += 1;
+        if (transactions === 2) return () => new Promise(() => {});
+        return Reflect.get(target, key);
+      },
+    });
+    const writes = h.field.stateWrites.length;
+    const began = Date.now();
+    const synced = await syncJob(db, h.field, h.seed.a, jobId);
+    expect(synced).toMatchObject({ result: { outcome: 'synced' }, currentDraftId: draftId });
+    expect(Date.now() - began).toBeLessThan(8_000);
+    expect(h.field.calls.filter((call) => call === 'sync').length).toBeGreaterThanOrEqual(2);
+    expect(h.field.stateWrites.length).toBe(writes);
+  });
+
   it('a retry of a decided submission writes its missing marker', async () => {
     const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
     afterTheRead(() => (h.field.failNext.sync = 2));

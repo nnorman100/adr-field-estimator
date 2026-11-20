@@ -206,6 +206,13 @@ async function versionOf(db: Database, companyId: string, jobId: string): Promis
 // How many times one call syncs again when Postgres moved on while it was syncing.
 const CATCH_UP = 3;
 
+// How long the version check inside the Firestore transaction waits for its Postgres read. It runs while
+// Firestore holds the job's drafts, so it never waits out the pool's queue (QUEUE_TIMEOUT_SECONDS,
+// db/client.ts) behind a request that holds a connection and waits on those same drafts (a Submit):
+// past this, the snapshot counts as moved, the transaction writes nothing and ends, and the sync tries
+// again.
+export const STILL_CURRENT_WAIT_MS = 2_000;
+
 /**
  * Syncs every draft of the job to what Postgres holds now, then records the version as synced, unless a
  * draft is to be written again (one held back by a newer legacy write, or a current draft it could not
@@ -220,11 +227,37 @@ export async function syncJob(db: Database, store: DraftSync, companyId: string,
   if (!snapshot) return null;
   const current = (now: { fieldRevision: number; revision: number } | null) =>
     now !== null && now.fieldRevision === snapshot.fieldRevision && now.revision === snapshot.revision;
-  const stillCurrent = async () => current(await versionOf(db, companyId, jobId));
+  const stillCurrent = async () => {
+    let timer: NodeJS.Timeout | undefined;
+    const waited = new Promise<'waited'>((resolve) => {
+      timer = setTimeout(() => resolve('waited'), STILL_CURRENT_WAIT_MS);
+    });
+    // A read that answers late is dropped (it only reads).
+    const read = versionOf(db, companyId, jobId);
+    read.catch(() => {});
+    try {
+      const now = await Promise.race([read, waited]);
+      return now !== 'waited' && current(now);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
   const result = await store.sync(companyId, desired(snapshot), 0, { stillCurrent });
   // Read again after the commit, the last try included: a snapshot Postgres moved on from is synced again,
   // and once the tries are used up it is answered as not written (the same request again), never synced.
-  if (result.outcome === 'moved' || !current(await versionOf(db, companyId, jobId))) {
+  const after = result.outcome === 'moved' ? null : await versionOf(db, companyId, jobId);
+  if (result.outcome === 'moved' || !current(after)) {
+    // Written at this field revision while only the job revision moved (an owner reprice): the field
+    // revision is raised, so the catch-up is a new version and writes the keys that follow the job
+    // revision (the legacy archiveRevision), rather than meeting its own marker as a retry.
+    if (after !== null && after.fieldRevision === snapshot.fieldRevision) {
+      await withCompany(db, companyId, (tx) =>
+        tx
+          .update(jobs)
+          .set({ fieldRevision: sql`${jobs.fieldRevision} + 1` })
+          .where(and(eq(jobs.companyId, companyId), eq(jobs.id, jobId), eq(jobs.fieldRevision, snapshot.fieldRevision))),
+      );
+    }
     if (round < CATCH_UP) return syncJob(db, store, companyId, jobId, round + 1);
     return { result: { outcome: 'moved' }, currentDraftId: snapshot.currentDraftId };
   }

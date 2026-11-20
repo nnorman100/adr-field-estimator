@@ -448,6 +448,41 @@ describe('what is refused, and writes nothing', () => {
     expect(h.field.draft(h.seed.a, open)?.field).not.toHaveProperty('scopeConfirmed');
   });
 
+  // reprice-after-version-check: the reprice commits after the sync's version check passed and before its
+  // Firestore commit, so the draft is written at the older job revision. The catch-up is then a new field
+  // revision, not a retry at the same one, and writes the draft's legacy archive revision to the job's.
+  it('a reprice between the sync’s version check and its commit is caught up at a new version', async () => {
+    const { jobId, draftId } = await readyToSign();
+    await publish(h.seed.a, '3.00');
+    const open = randomUUID();
+    h.field.failNext.createFrom = true;
+    expect((await f.nextDraft(ESTIMATOR_A, jobId, { draftId: open, fromDraftId: draftId })).status).toBe(503);
+    const sync = h.field.sync;
+    let repriced = false;
+    h.field.sync = (company, job, gen, options = {}) =>
+      sync(company, job, gen, {
+        ...options,
+        stillCurrent: async () => {
+          const current = await options.stillCurrent!();
+          if (current && !repriced) {
+            repriced = true;
+            expect((await reprice(OWNER_A, jobId)).status).toBe(200);
+          }
+          return current;
+        },
+      });
+    try {
+      const started = await json(fieldOwnerRoute.POST(request(ESTIMATOR_A, `/api/jobs/${jobId}/field-owner`, { method: 'POST' }), params({ jobId })));
+      expect(started.status).toBe(200);
+    } finally {
+      h.field.sync = sync;
+    }
+    expect(repriced).toBe(true);
+    expect(h.field.draft(h.seed.a, open)).toMatchObject({ jobId, state: 'editing', archiveRevision: (await f.job(jobId)).revision });
+    const [row] = await h.admin<{ behind: boolean }[]>`SELECT field_synced_revision < field_revision AS behind FROM jobs WHERE id = ${jobId}`;
+    expect(row!.behind).toBe(false);
+  });
+
   it('a job never priced has no pin to move', async () => {
     await publish(h.seed.a, '2.00');
     const { jobId } = await submittedJob();

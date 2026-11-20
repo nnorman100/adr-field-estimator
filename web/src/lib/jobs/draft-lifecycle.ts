@@ -170,6 +170,21 @@ export function assertVersion(gen: unknown, v: unknown): void {
   if (!version(gen) || !version(v)) throw new RangeError('a draft sync version is a non-negative integer generation and field revision');
 }
 
+/** A generation document that is there but not `{ gen }` with a non-negative integer: the sync stops. */
+export class MalformedGenerationError extends Error {
+  constructor() {
+    super('the draft sync generation document is not in the shape the operator script writes');
+    this.name = 'MalformedGenerationError';
+  }
+}
+
+/** The operator's generation as stored (`draftSyncGeneration/current`), checked; 0 when there is none. */
+export function parseGeneration(data: Record<string, unknown> | undefined): number {
+  if (data === undefined) return 0;
+  if (!version(data.gen)) throw new MalformedGenerationError();
+  return data.gen as number;
+}
+
 /** A stored marker's fields, checked. Only a missing document is "no version applied". */
 export function parseMarker(data: Record<string, unknown>): SyncMarker {
   const { gen, v, draftIds, skipped } = data;

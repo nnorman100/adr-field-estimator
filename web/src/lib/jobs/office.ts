@@ -1,7 +1,8 @@
 import { and, asc, eq, isNull, sql } from 'drizzle-orm';
-import { actors, jobAssignments, jobCoordination, jobs, memberships } from '@/db/schema';
+import { actors, companies, jobAssignments, jobCoordination, jobs, memberships } from '@/db/schema';
 import { holdAcrossOutsideCall, withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
+import { IdentityRefusal } from '@/lib/auth';
 import { hasAny, jobAccess, JobError, type JobCaller, type JobRow } from './access';
 import type { DraftSync } from './draft-sync';
 import { draftOfOtherJob, type DraftStore } from './drafts';
@@ -157,10 +158,13 @@ async function viewOf(tx: CompanyTransaction, row: JobRow): Promise<Coordination
 }
 
 
-// The caller is still an active member of the company with the role it signed in with, read again in
+// The caller is still an active member of an active company with the role it signed in with, read again in
 // the snapshot an answer after a field step is built from: a member disabled, or whose role changed,
 // while the request waited on the field database gets no job, customer, claim or staff details.
 async function stillMember(tx: CompanyTransaction, caller: JobCaller): Promise<void> {
+  // A company suspended meanwhile is refused as a fresh request would be (auth/identity.ts).
+  const [company] = await tx.select({ status: companies.status }).from(companies).where(eq(companies.id, caller.companyId));
+  if (company?.status !== 'active') throw new IdentityRefusal('company_inactive');
   const [found] = await tx
     .select({ role: memberships.role })
     .from(memberships)

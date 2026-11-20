@@ -1,7 +1,7 @@
 import { FieldValue, Timestamp, type DocumentSnapshot, type Firestore } from 'firebase-admin/firestore';
 import { firestoreSpan } from '@/lib/telemetry/spans';
 import type { Fence } from '@/lib/submissions/fence';
-import { assertVersion, parseMarker, planSync, versionRefusal, type DesiredJob, type StoredDraft, type SyncMarker, type SyncPlan, type SyncSkips } from './draft-lifecycle';
+import { assertVersion, parseGeneration, parseMarker, planSync, versionRefusal, type DesiredJob, type StoredDraft, type SyncMarker, type SyncPlan, type SyncSkips } from './draft-lifecycle';
 import { placeholderOf } from './drafts';
 
 // The sync's Firestore writer (the draft life-cycle redesign, Design 2): in one transaction it reads
@@ -36,11 +36,18 @@ export type SyncResult =
 /** Asked inside the transaction, after its reads and before its writes: whether the snapshot is still Postgres's latest. */
 export type SyncOptions = { stillCurrent?: () => Promise<boolean> };
 
+/** The operator's generation (one server-only document for the whole field database, raised by
+ * scripts/raise-draft-sync-generation.ts after a Postgres restore lowers field revisions). */
+export const GENERATION_PATH = 'draftSyncGeneration/current';
+
 export type DraftSync = {
   // Writes the job's desired drafts at version (gen, desired.v) unless its marker holds that version
-  // or a newer one. `gen` is raised by an operator after a database restore lowers field revisions.
+  // or a newer one. The generation written is the higher of `gen` and the operator's stored one
+  // (GENERATION_PATH), read inside the same transaction, so a raise and a sync never interleave: after
+  // a raise, every job's next sync is the reset that writes over what a restore left behind.
   // Throws, before any read or write, when gen or desired.v is not a non-negative integer, and before
-  // any change when the marker is there but not in its shape (MalformedMarkerError).
+  // any change when the marker or the generation document is there but not in its shape
+  // (MalformedMarkerError, MalformedGenerationError).
   sync(companyId: string, desired: DesiredJob, gen: number, options?: SyncOptions): Promise<SyncResult>;
 };
 
@@ -105,9 +112,11 @@ export function firestoreDraftSync(db: Firestore): DraftSync {
       const draftRef = (draftId: string) => company(companyId).collection('drafts').doc(draftId);
       return firestoreSpan('runTransaction', 'drafts', () =>
         db.runTransaction(async (tx): Promise<SyncResult> => {
-          // The marker first: a stale sync or a retry has its answer before any draft is read.
+          // The operator's generation and the marker first: a stale sync or a retry has its answer before
+          // any draft is read.
+          const generation = Math.max(gen, parseGeneration((await tx.get(db.doc(GENERATION_PATH))).data()));
           const marker = markerOf(await tx.get(markerRef));
-          const refused = versionRefusal(marker, gen, job.v);
+          const refused = versionRefusal(marker, generation, job.v);
           if (refused) return refused;
           // Then every draft at once (a transaction reads before it writes).
           const refs = draftIdsToRead(marker, job).map(draftRef);
@@ -121,7 +130,7 @@ export function firestoreDraftSync(db: Firestore): DraftSync {
               if (!(await tx.get(draftRef(draftId).collection(name).limit(1))).empty) orphans.add(draftId);
             }
           }
-          const plan = planSync(marker, current, orphans, job, gen);
+          const plan = planSync(marker, current, orphans, job, generation);
           // One read of Postgres's version, recomputing nothing: a snapshot older than Postgres writes
           // nothing, so no draft is ever handed to an owner Postgres has since replaced.
           if (options.stillCurrent && !(await options.stillCurrent())) return { outcome: 'moved' };

@@ -68,14 +68,35 @@ Use this when `us-central1` is down. `restore-drill.sh --env live --recovery --s
 3. Check it through the Auth Proxy on the restored copy, never the source, as your own account added to the copy with the migrator's role for the check only: `migration_ledger` holds the first migrations of `web/migrations` with their checksums, no gap and nothing unknown (the backup can predate a release), and the row counts per table.
 4. Record the copy's name, region, the backup used and its age in the incident record. Leave Terraform alone until the region is back: the data root still names the original. Importing the copy or rebuilding is a separate owner decision.
 
-## Draft sync markers after a Postgres restore
+## Draft sync after a Postgres restore
 
-Archive, Restore, Start field work and Move write a job's field drafts through the draft sync (`web/src/lib/jobs/sync-job.ts`), which keeps the version it last wrote on one server-only document per job, `companies/<company id>/draftLifecycle/<job id>` (`{ gen, v, draftIds, skipped }`; `v` is the job's `jobs.field_revision`). Restoring Postgres to an earlier point lowers `field_revision`, so every later sync of that job is refused as older than its marker and the drafts stop following Postgres. Until the operator's generation source exists (draft life-cycle redesign, slice 4; the routes pass generation 0 now), after any Postgres restore that the app serves from, and before it serves requests:
+Every field step writes a job's field drafts through the draft sync (`web/src/lib/jobs/sync-job.ts`). That covers Archive, Restore, Start field work, Move and Submit, and the worker's repair passes. The sync keeps the version it last wrote on one server-only document per job, `companies/<company id>/draftLifecycle/<job id>` (`{ gen, v, draftIds, skipped }`; `v` is the job's `jobs.field_revision`). Restoring Postgres to an earlier point lowers `field_revision`, so every later sync of that job would be refused as older than its marker, and the drafts would stop following Postgres. The generation fixes that. It is one server-only document for the whole field database, `draftSyncGeneration/current` (`{ gen }`), which every sync reads in its own transaction. Once it is raised, each job's next sync is the reset: it writes Postgres's restored state over whatever the field database holds for the job, the later owners, states and fences a restore leaves behind included.
 
-1. Raise every job's field revision by one in the restored Postgres, as the migrator with row-level security lifted inside that transaction (`UPDATE jobs SET field_revision = field_revision + 1`), so every later sync is a newer version than the reset markers below, a job restored at field revision 0 included.
-2. In the field database the app uses, set `v` to `0` on every document of each company's `draftLifecycle` collection, and change nothing else on it: keep `gen`, `draftIds` and `skipped` as they are. Do not delete the markers: their `draftIds` are how the next sync finds drafts made after the restore point (which the restored Postgres no longer gives the job) and closes them, archived and naming nobody, their field work kept. Write each one with an update mask of `v` only.
-3. Check every draft the markers name, not only those in `skipped.superseded` (a Move after the restore point, for one, leaves its new owner on the draft with nothing skipped). For each, compare against the restored Postgres: its job binding (`jobId`), its state, its field owner and its Submit fence. A draft whose `fieldOwnerRevision` is above the job's restored coordination revision (`job_coordination.revision`), or whose `archiveRevision` is above the job's restored `jobs.revision`, is held back by the sync's legacy guard and keeps its later owner or state: set those two keys to the restored values (an update mask of those keys only, never the field work), so the next sync writes Postgres's owner and state over it. A fence whose Submit the restored Postgres has no row for (pending, committed or aborted) holds the draft back the same way: remove the fence with an update mask of `fence` only. Until slice 4 adds the operator's generation, which resets all of this in one sync, this check is by hand.
-4. Sync each job (any field step does: Start field work, a Move, an Archive or a Restore), check that every draft of the job names the field owner Postgres holds and is in the state Postgres gives it, then run the records check for each company.
+After any Postgres restore that the app serves from, and before it serves requests:
+
+1. **Raise the generation.** From `web/`, with your own `gcloud auth application-default login`, run `npm run platform:raise-draft-sync-generation -- --project dryscope --database dryscope-field-test` (`dryscope-field-live` in project `dryscope-live` for live). It prints the generation before and after. The marker documents stay as they are: their `draftIds` are how each job's next sync finds the drafts made after the restore point, which the restored Postgres no longer gives the job, and closes them.
+2. **Make every job due.** Raise every job's field revision by one in the restored Postgres, as the migrator with row-level security lifted inside that transaction:
+
+   ```sql
+   BEGIN;
+   ALTER TABLE jobs NO FORCE ROW LEVEL SECURITY;
+   UPDATE jobs SET field_revision = field_revision + 1;
+   ALTER TABLE jobs FORCE ROW LEVEL SECURITY;
+   COMMIT;
+   ```
+
+   The draft sync's repair pass then syncs every job, at the raised generation, within a few worker periods (100 companies and 200 jobs in each, per period), with no request from a phone.
+3. **Close the drafts no sync reaches.** Drafts that no marker lists are never synced: those made after the restore point by a writer that kept no marker, and those of jobs the restored Postgres does not have. Export the restored `job_drafts`, as the migrator, with row-level security unforced only inside a transaction that is rolled back:
+
+   ```sql
+   BEGIN;
+   ALTER TABLE job_drafts NO FORCE ROW LEVEL SECURITY;
+   \copy (SELECT company_id, draft_id, job_id FROM job_drafts ORDER BY 1, 2) TO 'job-drafts.csv' CSV
+   ROLLBACK;
+   ```
+
+   Then, from `web/`, run `npm run platform:reconcile-restored-drafts -- --project dryscope --database dryscope-field-test < job-drafts.csv`. It only reads, and lists each draft (company and draft id) that the restored Postgres does not give to the job the draft names, with the reason. Check the list, then run it again with `--apply`. That closes each one, archived and naming nobody, with its field work kept, and only if it has not changed since it was read. A draft that changed meanwhile is counted, and the command exits 1, so run it again until it closes nothing. What becomes of the closed drafts' field work is the owner's decision.
+4. **Check, with reads only.** Once the repair pass has run, the draft sync repair counts in the scheduled worker's answer (`drafts`) fall to zero. For a sample of jobs, the field draft's state and owner in the console match the restored Postgres: every draft names the job's field owner and is in Postgres's state, and the current draft is `archived` for an archived job. Do not use a field step to check: Start field work on an unowned job assigns it, and an Archive or a Restore changes the job, so a check made that way passes against the values it just wrote. Then run the records check for each company.
 
 ## Field database
 
