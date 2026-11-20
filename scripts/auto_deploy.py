@@ -683,7 +683,7 @@ def roll_back(runner, record, previous, hosting_before, hosting_deployed):
             record.note(problems[-1])
     record.set(
         'Rollback (historical procedure)',
-        'completed' if not problems else 'FAILED, restore by hand',
+        'completed' if not problems else 'FAILED, the old app was not restored',
     )
     return problems
 
