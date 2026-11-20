@@ -33,7 +33,7 @@ describe('an office user starts a job', () => {
     expect(await count('jobs')).toBe(1);
     expect(await audits('job_created')).toBe(1);
     // The draft is made empty, with no field owner: an office user never captures field work.
-    expect(h.drafts.made.get(`${h.seed.a}/${ids.draftId}`)).toEqual({ fieldOwnerUid: null });
+    expect(h.drafts.owner(`${h.seed.a}/${ids.draftId}`)).toEqual({ fieldOwnerUid: null });
     expect(h.drafts.calls.every((call) => call.fieldOwnerUid === null)).toBe(true);
   });
 });
@@ -302,7 +302,7 @@ describe('the first capture', () => {
     const { id } = await officeJob();
     await assign(OFFICE_A, id, h.seed.estimatorA.actor);
     await h.admin`UPDATE jobs SET current_draft_id = ${victim.draftId}, revision = revision + 1 WHERE id = ${id}`;
-    h.drafts.jobOf.delete(`${h.seed.a}/${victim.draftId}`);
+    h.drafts.unstamp(`${h.seed.a}/${victim.draftId}`);
     const before = structuredClone(draftOf(victim.draftId));
     expect(await claim(ESTIMATOR_A, id)).toEqual({ status: 409, body: { error: 'conflict' } });
     expect(draftOf(victim.draftId)).toEqual(before);
@@ -312,7 +312,7 @@ describe('the first capture', () => {
   it('refuses a first capture on a job whose current draft the field database holds for another job, and changes nothing', async () => {
     const { id, draftId } = await officeJob();
     await assign(OFFICE_A, id, h.seed.estimatorA.actor);
-    h.drafts.jobOf.set(`${h.seed.a}/${draftId}`, randomUUID());
+    h.drafts.stamp(`${h.seed.a}/${draftId}`, randomUUID());
     const before = await everything(h.admin);
     const stored = structuredClone(draftOf(draftId));
     expect(await claim(ESTIMATOR_A, id)).toEqual({ status: 409, body: { error: 'conflict' } });
@@ -329,8 +329,8 @@ describe('the first capture', () => {
     expect((await claim(ESTIMATOR_B, other.id)).status).toBe(200);
     expect(await claim(ESTIMATOR_B, ids.id)).toEqual({ status: 404, body: { error: 'not_found' } });
     expect(draftOf(ids.draftId)).toEqual(before);
-    expect(h.drafts.jobOf.get(`${h.seed.a}/${ids.draftId}`)).toBe(ids.id);
-    expect(h.drafts.jobOf.get(`${h.seed.b}/${ids.draftId}`)).toBe(other.id);
-    expect(h.drafts.made.get(`${h.seed.b}/${ids.draftId}`)?.fieldOwnerUid).toBe('estimator-b');
+    expect(h.drafts.jobOf(`${h.seed.a}/${ids.draftId}`)).toBe(ids.id);
+    expect(h.drafts.jobOf(`${h.seed.b}/${ids.draftId}`)).toBe(other.id);
+    expect(h.drafts.owner(`${h.seed.b}/${ids.draftId}`)?.fieldOwnerUid).toBe('estimator-b');
   });
 });

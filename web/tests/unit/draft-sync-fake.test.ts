@@ -14,7 +14,7 @@ draftSyncContract('in-memory', () => {
   return {
     store,
     async seed(company, draft, seed) {
-      const data = backing.load();
+      const record = backing.load();
       const made: FakeDraft = {
         fieldOwnerUid: seed.fieldOwnerUid ?? null,
         state: seed.state,
@@ -28,8 +28,8 @@ draftSyncContract('in-memory', () => {
         ...(seed.archiveRevision === undefined ? {} : { archiveRevision: seed.archiveRevision }),
         ...(seed.fieldOwnerRevision === undefined ? {} : { fieldOwnerRevision: seed.fieldOwnerRevision }),
       };
-      data[`${company}/${draft}`] = made;
-      backing.save(data);
+      record.drafts[`${company}/${draft}`] = made;
+      backing.save(record);
     },
     async peek(company, draft) {
       const found = store.draft(company, draft);
@@ -56,12 +56,10 @@ draftSyncContract('in-memory', () => {
 
 // The r11 fake split: the jobs, photo and sync stand-ins all see one record, in both directions.
 describe('the draft sync stand-in', () => {
+  // The jobs, photo and field stand-ins over one backing, as tests/db/team-harness.ts builds them.
   function linked() {
-    const drafts = fakeDrafts();
-    const states = fakeDraftStates(drafts);
     const backing = memoryBacking();
-    const field = fakeField(backing, { drafts, states });
-    return { drafts, states, backing, field };
+    return { drafts: fakeDrafts(backing), states: fakeDraftStates(backing), backing, field: fakeField(backing) };
   }
   const snapshotOf = (job: string, draft: string, extra: Partial<JobDraftSnapshot> = {}): JobDraftSnapshot => ({
     jobId: job,
@@ -88,7 +86,7 @@ describe('the draft sync stand-in', () => {
     expect(await drafts.findDraft(company, draft)).toEqual({ jobId: job });
     // The owner moves, at a coordination revision: the jobs stand-in names the new owner with it.
     await field.sync(company, desired(snapshotOf(job, draft, { fieldRevision: 4, coordinationRevision: 2, fieldOwnerUid: 'estimator-2' })));
-    expect(drafts.made.get(`${company}/${draft}`)).toEqual({ fieldOwnerUid: 'estimator-2', fieldOwnerRevision: 2 });
+    expect(drafts.owner(`${company}/${draft}`)).toEqual({ fieldOwnerUid: 'estimator-2', fieldOwnerRevision: 2 });
     expect(await drafts.setFieldOwner(company, job, draft, 'estimator-1', 1)).toBe('newer');
   });
 
@@ -112,5 +110,17 @@ describe('the draft sync stand-in', () => {
     const again = fakeField(backing);
     expect(again.marker(company, job)).toMatchObject({ gen: 0, v: 3, draftIds: [draft] });
     expect(await again.sync(company, desired(snapshotOf(job, draft)))).toMatchObject({ outcome: 'same' });
+  });
+
+  it('answers every caller alike from the one record: a placeholder is under the id for the jobs and field stand-ins', async () => {
+    const { drafts, states, field } = linked();
+    const [company, job, draft] = [randomUUID(), randomUUID(), randomUUID()];
+    await field.archiveDraft(company, job, draft, 2);
+    expect(await drafts.findDraft(company, draft)).toEqual({ jobId: job });
+    expect(await field.findDraft(company, draft)).toEqual({ jobId: job });
+    expect(await states.state(company, draft)).toBe('archived');
+    // A placeholder is no draft to name an owner on.
+    expect(drafts.owner(`${company}/${draft}`)).toBeUndefined();
+    expect(await drafts.setFieldOwner(company, job, draft, 'estimator-1', 1)).toBe('missing');
   });
 });

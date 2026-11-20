@@ -160,19 +160,23 @@ describe('the draft sync under the field rules', () => {
     const company = randomUUID();
     const [earlier, current] = [randomUUID(), randomUUID()];
     await db.doc(draftPath(company, earlier)).set({ state: 'submitted', fieldOwnerUid: 'old-owner', field: {} });
-    // A room left under the new draft's id (no draft above it): creating that room fails the transaction.
-    await db.doc(`${draftPath(company, current)}/rooms/kitchen`).set({ field: { name: 'Left over' } });
+    // A manifest naming one room twice: the second create of that room fails the transaction at commit,
+    // after the earlier draft's update and the new draft were already written into it.
     const job = snapshotOf({
       currentDraftId: current,
       draftIds: [earlier, current],
       fieldOwnerUid: 'estimator-1',
-      content: { kind: 'next', manifest: { draft: {}, rooms: [{ id: 'kitchen', field: { name: 'Kitchen' } }], photos: [] }, previous: { draftId: earlier, submissionId: randomUUID() } },
+      content: {
+        kind: 'next',
+        manifest: { draft: {}, rooms: [{ id: 'kitchen', field: { name: 'Kitchen' } }, { id: 'kitchen', field: { name: 'Again' } }], photos: [] },
+        previous: { draftId: earlier, submissionId: randomUUID() },
+      },
     });
     await expect(store.sync(company, desired(job))).rejects.toThrow();
     expect((await db.doc(draftPath(company, current)).get()).exists).toBe(false);
     expect((await db.doc(draftPath(company, earlier)).get()).data()).toEqual({ state: 'submitted', fieldOwnerUid: 'old-owner', field: {} });
     expect((await db.doc(markerPath(company, job.jobId)).get()).exists).toBe(false);
-    expect((await db.doc(`${draftPath(company, current)}/rooms/kitchen`).get()).data()).toEqual({ field: { name: 'Left over' } });
+    expect((await db.doc(`${draftPath(company, current)}/rooms/kitchen`).get()).exists).toBe(false);
   });
 
   it('stops, changing nothing, when the job’s marker is there but not in the shape the sync writes', async () => {
@@ -183,5 +187,33 @@ describe('the draft sync under the field rules', () => {
     await expect(store.sync(company, desired(job))).rejects.toBeInstanceOf(MalformedMarkerError);
     expect((await db.doc(draftPath(company, draft)).get()).exists).toBe(false);
     expect((await db.doc(markerPath(company, job.jobId)).get()).data()).toEqual({ gen: 0, v: 'one' });
+  });
+
+  it('never makes a draft over rooms or photos left under its id, whatever their ids: it reports a conflict and hands them to nobody', async () => {
+    const company = randomUUID();
+    for (const name of ['rooms', 'photos']) {
+      const draft = randomUUID();
+      await db.doc(`${draftPath(company, draft)}/${name}/left-over`).set({ field: {} });
+      const job = snapshotOf({
+        currentDraftId: draft,
+        draftIds: [draft],
+        fieldOwnerUid: 'estimator-1',
+        content: { kind: 'next', manifest: { draft: {}, rooms: [{ id: 'kitchen', field: {} }], photos: [] }, previous: { draftId: randomUUID(), submissionId: randomUUID() } },
+      });
+      expect(await store.sync(company, desired(job))).toMatchObject({ outcome: 'synced', created: [], conflicts: [draft] });
+      expect((await db.doc(draftPath(company, draft)).get()).exists).toBe(false);
+      expect((await db.doc(`${draftPath(company, draft)}/rooms/kitchen`).get()).exists).toBe(false);
+    }
+  });
+
+  it('removes a fence the sync cannot read (no expiry) when Postgres says the draft is editing', async () => {
+    const company = randomUUID();
+    const draft = randomUUID();
+    const job = snapshotOf({ currentDraftId: draft, draftIds: [draft], fieldOwnerUid: 'estimator-1' });
+    await db.doc(draftPath(company, draft)).set({ jobId: job.jobId, state: 'submitting', fieldOwnerUid: 'estimator-1', fence: { submissionId: randomUUID(), epoch: randomUUID() }, field: {} });
+    expect(await store.sync(company, desired(job))).toMatchObject({ changed: [draft] });
+    const found = (await db.doc(draftPath(company, draft)).get()).data()!;
+    expect(found.state).toBe('editing');
+    expect('fence' in found).toBe(false);
   });
 });

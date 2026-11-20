@@ -1,7 +1,7 @@
 import type { JobStatus } from '@/db/schema';
 import type { FieldManifest } from '@/lib/field/canonical';
 import type { Fence, Provenance } from '@/lib/submissions/fence';
-import { COPY_CLEARED_KEYS } from './archive';
+import { copiedManifest } from './archive';
 import { draftOfOtherJob } from './drafts';
 
 // The draft life cycle as Postgres decides it (the draft life-cycle redesign, Design 2): one sync step
@@ -10,9 +10,11 @@ import { draftOfOtherJob } from './drafts';
 //
 // - desired(snapshot): what every draft of one job should hold, from one Postgres snapshot of the job
 //   taken with its field revision (jobs.field_revision, migration 0018), the version the sync writes at;
-// - planSync(marker, stored, desired, gen): what one sync transaction writes, given what Firestore holds
-//   now. The job's marker document holds the version last written; a version that is not newer is
-//   refused, so a sync that read Postgres before a later change can never land after that change's sync.
+// - versionRefusal(marker, gen, v): the job's marker document holds the version last written; a version
+//   that is not newer is refused before any draft is read, so a sync that read Postgres before a later
+//   change can never land after that change's sync;
+// - planSync(marker, stored, orphans, desired, gen): what one sync transaction writes, given what
+//   Firestore holds now, once the version is known to be newer.
 //
 // The sync never touches a draft's field work (its `field` map, rooms and photos) once the draft
 // exists; it writes the server's keys only, and makes a missing current draft from `content`.
@@ -116,29 +118,38 @@ export function desired(snapshot: JobDraftSnapshot): DesiredJob {
 export type SyncSkips = {
   // Drafts that name another job (security audit F1).
   conflicts: string[];
-  // Missing drafts the sync has no content for (an earlier draft).
+  // Missing drafts the sync has no content for (an earlier draft), or that it will not make because
+  // rooms or photos are left under the id (never handed to a new owner): those are conflicts.
   missing: string[];
   // Drafts holding a newer legacy revision (archiveRevision or fieldOwnerRevision) than this
-  // snapshot: an older writer changed them after Postgres was read, so a sync at a newer version
-  // handles them.
+  // snapshot: an older writer changed them after Postgres was read. The keys that revision guards
+  // are left as they are (state, fence and archiveRevision; or the owner and fieldOwnerRevision);
+  // every other key is written, and a sync at a newer version handles the rest.
   superseded: string[];
   // Drafts an earlier sync wrote that Postgres no longer gives the job (after a database restore):
   // closed to field access (archived, nobody named), their field work kept.
   unmatched: string[];
 };
 
-/** The sync's marker for a job: the version last written, the drafts written at it, and the skips. */
+/** The sync's marker for a job: the version last written, every draft of the job it has seen, and the skips. */
 export type SyncMarker = { gen: number; v: number; draftIds: string[]; skipped: SyncSkips };
 
 const ids = (value: unknown): value is string[] => Array.isArray(value) && value.every((id) => typeof id === 'string');
+
+const version = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0;
+
+/** A version a sync is asked to write at, checked before any read or write. */
+export function assertVersion(gen: unknown, v: unknown): void {
+  if (!version(gen) || !version(v)) throw new RangeError('a draft sync version is a non-negative integer generation and field revision');
+}
 
 /** A stored marker's fields, checked. Only a missing document is "no version applied". */
 export function parseMarker(data: Record<string, unknown>): SyncMarker {
   const { gen, v, draftIds, skipped } = data;
   const skips = skipped as Record<string, unknown> | undefined;
   if (
-    !Number.isInteger(gen) ||
-    !Number.isInteger(v) ||
+    !version(gen) ||
+    !version(v) ||
     !ids(draftIds) ||
     typeof skips !== 'object' ||
     skips === null ||
@@ -163,6 +174,8 @@ export type StoredDraft = {
   placeholder: boolean;
   jobId: unknown;
   state: unknown;
+  // Whether a `fence` key is there at all, and the fence it holds when it is one the sync can read.
+  hasFence: boolean;
   fence: { submissionId: string; epoch: string; expiresAt: number } | null;
   fieldOwnerUid: unknown;
   archiveRevision: unknown;
@@ -194,12 +207,11 @@ export type DraftUpdate = {
   remove: ('fieldOwnerUid' | 'fence')[];
 };
 
-export type SyncPlan =
-  // The marker holds this version already (a retry): nothing is written; the skips are reported again.
-  | ({ outcome: 'same' } & SyncSkips)
-  // The marker holds a newer version: nothing is written.
-  | { outcome: 'stale'; stored: SyncMarker }
-  | ({ outcome: 'synced'; marker: SyncMarker; creates: DraftCreate[]; updates: DraftUpdate[] } & SyncSkips);
+/** What the marker alone decides: the marker holds this version already (a retry; the skips it recorded
+ * are reported again), or a newer one. */
+export type VersionRefusal = ({ outcome: 'same' } & SyncSkips) | { outcome: 'stale'; stored: SyncMarker };
+
+export type SyncPlan = { outcome: 'synced'; marker: SyncMarker; creates: DraftCreate[]; updates: DraftUpdate[] } & SyncSkips;
 
 /** Whether (gen, v) is newer than the stored marker, the same, or older. */
 export function compareVersion(stored: SyncMarker | null, gen: number, v: number): 'newer' | 'same' | 'older' {
@@ -210,7 +222,7 @@ export function compareVersion(stored: SyncMarker | null, gen: number, v: number
 }
 
 /** What the marker alone decides, before any draft is read: refused, a retry, or to be planned. */
-export function versionRefusal(marker: SyncMarker | null, gen: number, v: number): Exclude<SyncPlan, { outcome: 'synced' }> | null {
+export function versionRefusal(marker: SyncMarker | null, gen: number, v: number): VersionRefusal | null {
   const order = compareVersion(marker, gen, v);
   if (order === 'same') return { outcome: 'same', ...marker!.skipped };
   if (order === 'older') return { outcome: 'stale', stored: marker! };
@@ -231,30 +243,35 @@ function contentOf(content: DraftContent): { field: unknown; rooms: FieldManifes
     case 'next':
       return { field: content.manifest.draft ?? {}, rooms: content.manifest.rooms, photos: content.manifest.photos, previous: content.previous };
     case 'copy': {
-      // A fresh map: the copy starts with what its source's record had, less COPY_CLEARED_KEYS.
-      const field = { ...((content.manifest.draft ?? {}) as Record<string, unknown>) };
-      for (const key of COPY_CLEARED_KEYS) delete field[key];
-      return { field, rooms: content.manifest.rooms, photos: [] };
+      // As Copy makes it (archive.ts): a fresh map less COPY_CLEARED_KEYS, the rooms, no photos.
+      const copied = copiedManifest(content.manifest);
+      return { field: copied.draft, rooms: copied.rooms, photos: [] };
     }
   }
 }
 
 /**
- * What one sync transaction writes, from the marker and every draft the job has or an earlier sync
- * wrote. Nothing when the marker is not older than (gen, v); otherwise the marker, a missing current
- * draft made from its content, and on every other draft only the server keys that differ. A draft of
- * another job, or one holding a newer legacy revision (unless the generation changed, the reset an
- * operator makes after a database restore), is left as it is and reported. Pure: the Firestore store
+ * What one sync transaction writes, once versionRefusal has found (gen, v) newer than the marker, from
+ * the marker and every draft the job has or an earlier sync saw: the marker, a missing current draft
+ * made from its content, and on every other draft only the server keys that differ. Another job's
+ * draft is left as it is and reported. A newer legacy revision (unless the generation changed, the
+ * reset an operator makes after a database restore) holds back only the keys it guards. `orphans`
+ * are missing drafts with rooms or photos left under their id: never made. Pure: the Firestore store
  * and the database tests' stand-in both apply it.
  */
-export function planSync(marker: SyncMarker | null, stored: Record<string, StoredDraft>, job: DesiredJob, gen: number): SyncPlan {
-  const refused = versionRefusal(marker, gen, job.v);
-  if (refused) return refused;
+export function planSync(
+  marker: SyncMarker | null,
+  stored: Record<string, StoredDraft>,
+  orphans: ReadonlySet<string>,
+  job: DesiredJob,
+  gen: number,
+): SyncPlan {
   const reset = marker !== null && gen > marker.gen;
   const creates: DraftCreate[] = [];
   const updates: DraftUpdate[] = [];
   const skips: SyncSkips = { conflicts: [], missing: [], superseded: [], unmatched: [] };
-  const synced: string[] = [];
+  // Every draft of this job the sync has seen: kept on the marker (not another job's, not missing).
+  const seen: string[] = [];
   for (const [draftId, want] of Object.entries(job.drafts)) {
     const found = stored[draftId] ?? null;
     // Another job's draft or placeholder is that job's, whatever this job wants of it.
@@ -263,11 +280,19 @@ export function planSync(marker: SyncMarker | null, stored: Record<string, Store
       continue;
     }
     // Never lower a legacy revision an older writer set after Postgres was read.
-    if (found && !reset && (revisionOf(found.archiveRevision) > want.archiveRevision || revisionOf(found.fieldOwnerRevision) > want.fieldOwnerRevision)) {
-      skips.superseded.push(draftId);
-      continue;
-    }
+    const holdState = found !== null && !reset && revisionOf(found.archiveRevision) > want.archiveRevision;
+    const holdOwner = found !== null && !reset && revisionOf(found.fieldOwnerRevision) > want.fieldOwnerRevision;
     if (!found || found.placeholder) {
+      if (holdState) {
+        // A newer archive or restore left this placeholder: not made over now.
+        skips.superseded.push(draftId);
+        seen.push(draftId);
+        continue;
+      }
+      if (orphans.has(draftId)) {
+        skips.conflicts.push(draftId);
+        continue;
+      }
       if (!want.content) {
         skips.missing.push(draftId);
         continue;
@@ -289,32 +314,42 @@ export function planSync(marker: SyncMarker | null, stored: Record<string, Store
         photos: made.photos,
         replaces: found !== null,
       });
-      synced.push(draftId);
+      seen.push(draftId);
       continue;
     }
     const update: DraftUpdate = { draftId, set: {}, remove: [] };
     // A draft made before `jobId` takes it (the job holds the draft id in Postgres, job_drafts).
     if (found.jobId === undefined) update.set.jobId = job.jobId;
-    if (found.state !== want.state) update.set.state = want.state;
-    if (want.fieldOwnerUid === null) {
-      if (found.fieldOwnerUid !== undefined) update.remove.push('fieldOwnerUid');
-    } else if (found.fieldOwnerUid !== want.fieldOwnerUid) update.set.fieldOwnerUid = want.fieldOwnerUid;
-    if (want.fence === null) {
-      if (found.fence !== null) update.remove.push('fence');
-    } else if (want.fence !== undefined && !sameFence(found, want.fence)) update.set.fence = want.fence;
-    if (found.archiveRevision !== want.archiveRevision) update.set.archiveRevision = want.archiveRevision;
-    if (found.fieldOwnerRevision !== want.fieldOwnerRevision) update.set.fieldOwnerRevision = want.fieldOwnerRevision;
+    if (!holdState) {
+      if (found.state !== want.state) update.set.state = want.state;
+      if (want.fence === null) {
+        if (found.hasFence) update.remove.push('fence');
+      } else if (want.fence !== undefined && !sameFence(found, want.fence)) update.set.fence = want.fence;
+      if (found.archiveRevision !== want.archiveRevision) update.set.archiveRevision = want.archiveRevision;
+    }
+    if (!holdOwner) {
+      if (want.fieldOwnerUid === null) {
+        if (found.fieldOwnerUid !== undefined) update.remove.push('fieldOwnerUid');
+      } else if (found.fieldOwnerUid !== want.fieldOwnerUid) update.set.fieldOwnerUid = want.fieldOwnerUid;
+      if (found.fieldOwnerRevision !== want.fieldOwnerRevision) update.set.fieldOwnerRevision = want.fieldOwnerRevision;
+    }
+    if (holdState || holdOwner) skips.superseded.push(draftId);
     if (Object.keys(update.set).length > 0 || update.remove.length > 0) updates.push(update);
-    synced.push(draftId);
+    seen.push(draftId);
   }
-  // Drafts an earlier sync wrote that this snapshot no longer gives the job: kept on the marker, and
+  // Drafts an earlier sync saw that this snapshot no longer gives the job: kept on the marker, and
   // closed to field access (archived, nobody named), never deleted. What becomes of their field work
-  // is not the sync's to decide.
+  // is not the sync's to decide. Another job's draft there is a conflict, and leaves the marker.
   for (const draftId of marker?.draftIds ?? []) {
     if (draftId in job.drafts) continue;
-    skips.unmatched.push(draftId);
     const found = stored[draftId] ?? null;
-    if (!found || found.placeholder || draftOfOtherJob(found.jobId, job.jobId)) continue;
+    if (found && draftOfOtherJob(found.jobId, job.jobId)) {
+      skips.conflicts.push(draftId);
+      continue;
+    }
+    skips.unmatched.push(draftId);
+    seen.push(draftId);
+    if (!found || found.placeholder) continue;
     const update: DraftUpdate = { draftId, set: {}, remove: [] };
     if (found.state !== 'archived') update.set.state = 'archived';
     if (found.fieldOwnerUid !== undefined) update.remove.push('fieldOwnerUid');
@@ -323,9 +358,8 @@ export function planSync(marker: SyncMarker | null, stored: Record<string, Store
   for (const list of Object.values(skips)) list.sort();
   return {
     outcome: 'synced',
-    // The drafts this sync left as Postgres says, and the unmatched ones; the skips, so a retry at the
-    // same version reports them again.
-    marker: { gen, v: job.v, draftIds: [...synced, ...skips.unmatched].sort(), skipped: skips },
+    // Every draft of this job the sync has seen; the skips, so a retry at the same version reports them again.
+    marker: { gen, v: job.v, draftIds: seen.sort(), skipped: skips },
     creates,
     updates,
     ...skips,

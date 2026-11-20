@@ -139,7 +139,7 @@ export const nextDraft = (claims: FakeClaims, jobId: string, body: { draftId: st
 export const count = async (table: string, where = 'true') => Number((await h.admin.unsafe(`SELECT count(*) AS n FROM ${table} WHERE ${where}`))[0]!.n);
 export const audits = (action: string) => count('audit_events', `action = '${action}'`);
 // Company A's draft in the field-draft stand-in.
-export const draftOf = (draftId: string) => h.drafts.made.get(`${h.seed.a}/${draftId}`);
+export const draftOf = (draftId: string) => h.drafts.owner(`${h.seed.a}/${draftId}`);
 
 // An office user starts a job: the empty scope only, and nobody owns its field work yet.
 export async function officeJob(): Promise<{ id: string; draftId: string }> {

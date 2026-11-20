@@ -106,12 +106,12 @@ describe('moving the field work (owner decision J5)', () => {
     const later = randomUUID();
     expect((await nextDraft(ESTIMATOR_A, id, { draftId: later, fromDraftId: draftId })).status).toBe(201);
     await h.admin`DELETE FROM job_drafts WHERE job_id = ${id}`;
-    h.drafts.jobOf.delete(`${h.seed.a}/${draftId}`);
+    h.drafts.unstamp(`${h.seed.a}/${draftId}`);
     const { revision } = (await coordination(OWNER_A, id)).body;
     expect((await transfer(OWNER_A, id, { revision, changeId: randomUUID(), toActorId: estimatorA2 })).status).toBe(200);
     expect(draftOf(later)).toEqual({ fieldOwnerUid: 'estimator-a2', fieldOwnerRevision: revision + 1 });
     expect(draftOf(draftId)).toEqual({ fieldOwnerUid: 'estimator-a2', fieldOwnerRevision: revision + 1 });
-    expect(h.drafts.jobOf.get(`${h.seed.a}/${draftId}`)).toBe(id);
+    expect(h.drafts.jobOf(`${h.seed.a}/${draftId}`)).toBe(id);
     // Postgres first: the draft is claimed for the job, not only stamped in the field database.
     expect(await h.admin`SELECT job_id::text AS job FROM job_drafts WHERE draft_id = ${draftId}`).toEqual([{ job: id }]);
   });
@@ -132,7 +132,7 @@ describe('moving the field work (owner decision J5)', () => {
     const { revision } = (await coordination(OWNER_A, id)).body;
     expect((await transfer(OWNER_A, id, { revision, changeId: randomUUID(), toActorId: estimatorA2 })).status).toBe(200);
     expect(draftOf(draftId)).toEqual(stored);
-    expect(h.drafts.jobOf.has(`${h.seed.a}/${draftId}`)).toBe(false);
+    expect(h.drafts.jobOf(`${h.seed.a}/${draftId}`)).toBeUndefined();
     expect(await h.admin`SELECT job_id::text AS job FROM job_drafts WHERE draft_id = ${draftId}`).toEqual([{ job: other.id }]);
     expect(draftOf(later)).toEqual({ fieldOwnerUid: 'estimator-a2', fieldOwnerRevision: revision + 1 });
     expect(await h.admin`SELECT job_id::text AS job FROM job_drafts WHERE draft_id = ${later}`).toEqual([{ job: id }]);
@@ -252,7 +252,7 @@ describe('moving the field work (owner decision J5)', () => {
 
   it('does not tell of a missing first draft, which Start field work has no record to make', async () => {
     const { id, draftId } = await claimedJob();
-    h.drafts.made.delete(`${h.seed.a}/${draftId}`);
+    h.drafts.remove(`${h.seed.a}/${draftId}`);
     const lost = await read(ESTIMATOR_A, id);
     expect(lost.status).toBe(200);
     expect(lost.body.draftMissing).toBeUndefined();

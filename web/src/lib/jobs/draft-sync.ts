@@ -1,7 +1,7 @@
 import { FieldValue, Timestamp, type DocumentSnapshot, type Firestore } from 'firebase-admin/firestore';
 import { firestoreSpan } from '@/lib/telemetry/spans';
 import type { Fence } from '@/lib/submissions/fence';
-import { parseMarker, planSync, versionRefusal, type DesiredJob, type StoredDraft, type SyncMarker, type SyncPlan, type SyncSkips } from './draft-lifecycle';
+import { assertVersion, parseMarker, planSync, versionRefusal, type DesiredJob, type StoredDraft, type SyncMarker, type SyncPlan, type SyncSkips } from './draft-lifecycle';
 import { placeholderOf } from './drafts';
 
 // The sync's Firestore writer (the draft life-cycle redesign, Design 2): in one transaction it reads
@@ -33,13 +33,13 @@ export type SyncResult =
 export type DraftSync = {
   // Writes the job's desired drafts at version (gen, desired.v) unless its marker holds that version
   // or a newer one. `gen` is raised by an operator after a database restore lowers field revisions.
-  // Throws MalformedMarkerError, before any change, when the marker is there but not in its shape.
+  // Throws, before any read or write, when gen or desired.v is not a non-negative integer, and before
+  // any change when the marker is there but not in its shape (MalformedMarkerError).
   sync(companyId: string, desired: DesiredJob, gen?: number): Promise<SyncResult>;
 };
 
 /** The result a plan reports once applied. */
 export function resultOf(plan: SyncPlan): SyncResult {
-  if (plan.outcome !== 'synced') return plan;
   return {
     outcome: 'synced',
     created: plan.creates.map((made) => made.draftId).sort(),
@@ -64,6 +64,7 @@ export function storedOf(found: DocumentSnapshot): StoredDraft {
     placeholder: placeholderOf(found) !== null,
     jobId: found.get('jobId'),
     state: found.get('state'),
+    hasFence: fence !== undefined,
     fence:
       fence && typeof fence.submissionId === 'string' && typeof fence.epoch === 'string' && expiresAt instanceof Timestamp
         ? { submissionId: fence.submissionId, epoch: fence.epoch, expiresAt: expiresAt.toMillis() }
@@ -76,6 +77,13 @@ export function storedOf(found: DocumentSnapshot): StoredDraft {
 
 const stored = (fence: Fence) => ({ submissionId: fence.submissionId, epoch: fence.epoch, expiresAt: Timestamp.fromDate(fence.expiresAt) });
 
+/** The drafts a sync would make (missing, or a placeholder, with content to make them from). */
+export function draftsToMake(stored: Record<string, StoredDraft>, job: DesiredJob): string[] {
+  return Object.entries(job.drafts)
+    .filter(([draftId, want]) => want.content !== undefined && (stored[draftId] === null || stored[draftId] === undefined || stored[draftId]!.placeholder))
+    .map(([draftId]) => draftId);
+}
+
 /** Every draft one sync reads: the job's desired drafts and the ones its marker lists. */
 export function draftIdsToRead(marker: SyncMarker | null, job: DesiredJob): string[] {
   return [...new Set([...Object.keys(job.drafts), ...(marker?.draftIds ?? [])])].sort();
@@ -85,6 +93,7 @@ export function firestoreDraftSync(db: Firestore): DraftSync {
   const company = (companyId: string) => db.collection('companies').doc(companyId);
   return {
     async sync(companyId, job, gen = 0) {
+      assertVersion(gen, job.v);
       const markerRef = company(companyId).collection('draftLifecycle').doc(job.jobId);
       const draftRef = (draftId: string) => company(companyId).collection('drafts').doc(draftId);
       return firestoreSpan('runTransaction', 'drafts', () =>
@@ -96,8 +105,16 @@ export function firestoreDraftSync(db: Firestore): DraftSync {
           // Then every draft at once (a transaction reads before it writes).
           const refs = draftIdsToRead(marker, job).map(draftRef);
           const found = refs.length > 0 ? await tx.getAll(...refs) : [];
-          const plan = planSync(marker, Object.fromEntries(found.map((doc) => [doc.id, storedOf(doc)])), job, gen);
-          if (plan.outcome !== 'synced') return plan;
+          const current = Object.fromEntries(found.map((doc) => [doc.id, storedOf(doc)]));
+          // Rooms or photos left under a draft it would make are never handed to a new owner: one read
+          // of each collection per draft to make, still before any write.
+          const orphans = new Set<string>();
+          for (const draftId of draftsToMake(current, job)) {
+            for (const name of ['rooms', 'photos']) {
+              if (!(await tx.get(draftRef(draftId).collection(name).limit(1))).empty) orphans.add(draftId);
+            }
+          }
+          const plan = planSync(marker, current, orphans, job, gen);
           for (const made of plan.creates) {
             const ref = draftRef(made.draftId);
             const data = { ...made.data, ...(made.data.fence ? { fence: stored(made.data.fence) } : {}) };

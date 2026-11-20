@@ -221,8 +221,8 @@ export function draftSyncContract(name: string, probe: () => SyncProbe): void {
       expect((await peek(company, old.currentDraftId))?.jobId).toBe(old.jobId);
     });
 
-    it('never lowers a newer legacy revision an older writer set: that draft is left and reported, until a generation reset', async () => {
-      const { store, seed, peek } = probe();
+    it('never lowers a newer legacy revision an older writer set: the keys it guards are left and reported, until a generation reset', async () => {
+      const { store, seed, peek, marker } = probe();
       const company = randomUUID();
       const job = snapshotOf({ revision: 3, coordinationRevision: 4 });
       // The sync read estimator-1 at coordination revision 4; an older writer then named estimator-2 at 5.
@@ -231,6 +231,8 @@ export function draftSyncContract(name: string, probe: () => SyncProbe): void {
       expect(await store.sync(company, desired(job))).toEqual({ outcome: 'synced', created: [], changed: [], ...superseded });
       expect(await peek(company, job.currentDraftId)).toMatchObject({ fieldOwnerUid: 'estimator-2', fieldOwnerRevision: 5 });
       expect(await store.sync(company, desired(job))).toEqual({ outcome: 'same', ...superseded });
+      // The marker keeps the superseded draft: it is this job's, so a later restore still finds it.
+      expect((await marker(company, job.jobId))?.draftIds).toEqual([job.currentDraftId]);
       // A sync at a newer version that read that revision handles the draft.
       expect(await store.sync(company, desired({ ...job, fieldRevision: 2, coordinationRevision: 5, fieldOwnerUid: 'estimator-2' }))).toEqual({
         outcome: 'synced',
@@ -239,11 +241,11 @@ export function draftSyncContract(name: string, probe: () => SyncProbe): void {
         ...NONE,
       });
 
-      // A newer archive by an older writer is kept the same way, and only a generation reset writes over it.
+      // A newer archive by an older writer holds back the state it guards; the owner, which it does not, is written.
       const archived = snapshotOf({ revision: 2 });
       await seed(company, archived.currentDraftId, { jobId: archived.jobId, state: 'archived', archiveRevision: 3 });
-      expect(await store.sync(company, desired(archived))).toMatchObject({ changed: [], superseded: [archived.currentDraftId] });
-      expect((await peek(company, archived.currentDraftId))?.state).toBe('archived');
+      expect(await store.sync(company, desired(archived))).toMatchObject({ changed: [archived.currentDraftId], superseded: [archived.currentDraftId] });
+      expect(await peek(company, archived.currentDraftId)).toMatchObject({ state: 'archived', archiveRevision: 3, fieldOwnerUid: 'estimator-1' });
       expect(await store.sync(company, desired({ ...archived, revision: 1 }), 1)).toMatchObject({ changed: [archived.currentDraftId], superseded: [] });
       expect(await peek(company, archived.currentDraftId)).toMatchObject({ state: 'editing', archiveRevision: 1 });
     });
@@ -265,6 +267,43 @@ export function draftSyncContract(name: string, probe: () => SyncProbe): void {
       // A later sync of the job (a Move) keeps it closed and still reports it.
       expect(await store.sync(company, desired({ ...restored, fieldRevision: 3, fieldOwnerUid: 'estimator-2' }), 1)).toMatchObject({ changed: [first], unmatched: [second] });
       expect(await peek(company, second)).toMatchObject({ state: 'archived', fieldOwnerUid: null });
+    });
+
+    it('moves the field work even when an older writer left a newer archive revision: only the state it guards is held back', async () => {
+      const { store, seed, peek } = probe();
+      const company = randomUUID();
+      const job = snapshotOf({ revision: 3, coordinationRevision: 2, fieldOwnerUid: 'estimator-2' });
+      // A Restore retry by an older writer stamped archive revision 4 after the Move's snapshot was read.
+      await seed(company, job.currentDraftId, { jobId: job.jobId, state: 'editing', fieldOwnerUid: 'estimator-1', fieldOwnerRevision: 1, archiveRevision: 4 });
+      expect(await store.sync(company, desired(job))).toEqual({ outcome: 'synced', created: [], changed: [job.currentDraftId], ...NONE, superseded: [job.currentDraftId] });
+      expect(await peek(company, job.currentDraftId)).toMatchObject({ fieldOwnerUid: 'estimator-2', fieldOwnerRevision: 2, archiveRevision: 4, state: 'editing' });
+    });
+
+    it('reports another job’s draft listed only on the marker as a conflict, and leaves it off the marker', async () => {
+      const { store, seed, peek, marker } = probe();
+      const company = randomUUID();
+      const [earlier, current] = [randomUUID(), randomUUID()];
+      const job = snapshotOf({ currentDraftId: current, draftIds: [earlier, current] });
+      await seed(company, earlier, { jobId: job.jobId, state: 'submitted' });
+      await store.sync(company, desired(job));
+      expect((await marker(company, job.jobId))?.draftIds).toEqual([earlier, current].sort());
+      // The earlier id now holds another job's draft, and the restored database no longer gives it to this job.
+      const other = randomUUID();
+      await seed(company, earlier, { jobId: other, state: 'editing', fieldOwnerUid: 'theirs' });
+      expect(await store.sync(company, desired({ ...job, draftIds: [current] }), 1)).toEqual({ outcome: 'synced', created: [], changed: [], ...NONE, conflicts: [earlier] });
+      expect(await peek(company, earlier)).toMatchObject({ jobId: other, state: 'editing', fieldOwnerUid: 'theirs' });
+      expect((await marker(company, job.jobId))?.draftIds).toEqual([current]);
+    });
+
+    it('refuses a generation or field revision that is not a non-negative integer, before any write', async () => {
+      const { store, peek, marker } = probe();
+      const company = randomUUID();
+      const job = snapshotOf();
+      for (const [gen, v] of [[1.5, 1], [-1, 1], [0, 2.5], [0, -3]] as const) {
+        await expect(store.sync(company, { ...desired(job), v }, gen)).rejects.toThrow(RangeError);
+      }
+      expect(await peek(company, job.currentDraftId)).toBeNull();
+      expect(await marker(company, job.jobId)).toBeNull();
     });
   });
 }
