@@ -1,6 +1,8 @@
 """Release a CI-tested master commit to production with the manual release flow's safety.
 
-This is the retained CLI for owner-run legacy releases. It uses the manual release path:
+Historical: this CLI released the retired old app. That project is switched off and is never deployed
+to or changed (docs/architecture/product-rules.md); the CLI is kept only as a record. It used the manual
+release path:
 scripts/deploy_backend.py stages a tagged 0% revision with the
 production baseline, the staged health and signed-out refusal checks run against the tagged URL,
 traffic is promoted only if they pass, then the Hosting shell is stamped, only hosting:alert-disaster
@@ -8,7 +10,7 @@ is deployed and scripts/verify_hosting.js verifies it. A failure before promotio
 failure after promotion puts traffic back on the revision that was serving (and Hosting back on its
 previous version) and fails the run.
 
-It refuses, with a message, anything the owner must release by hand: a merge that changed
+It refused, with a message, anything that historically had to be released by hand: a merge that changed
 firestore.rules or firestore.indexes.json since the serving commit, a serving revision whose commit is
 unknown or not an ancestor of the candidate, a staged revision whose environment, secrets or limits
 differ from the serving one beyond the three baseline flags, a service without the one-instance minimum,
@@ -20,13 +22,13 @@ overlapping runs and manual releases never move production backwards. So is a ca
 since the serving commit touch no file the legacy app is built from (LEGACY_PREFIXES and LEGACY_FILES
 in auto_deploy_helpers.py): DryScope rebuild merges (web/, infra/, docs) never release it.
 
-The CLI writes to GITHUB_STEP_SUMMARY when present. The owner records manual releases in RELEASES.md.
+The CLI writes to GITHUB_STEP_SUMMARY when present. Historical manual releases were recorded in RELEASES.md.
 
 --publish creates the git tag and GitHub Release for the version the live backend reports. --rollback
 redeploys an earlier version and stops before staging when a data migration is newer than that version,
 or Firestore rules or indexes changed since it, unless --confirm-past-migration is given. It stages the
 target's code with the baseline of the checkout running it.
---next-version prints the number a hand release should use.
+--next-version prints the number a historical hand release used.
 """
 
 import argparse
@@ -81,7 +83,7 @@ PRICE_BOOKS = DEFAULT_PRICE_BOOKS
 RETENTION = DEFAULT_RETENTION
 # The firebase-tools version CI already uses.
 FIREBASE_TOOLS = 'firebase-tools@15.31.0'
-# Handle changed rules or indexes separately before releasing with the CLI.
+# Historically, changed rules or indexes were handled separately from the CLI release.
 HAND_RELEASED = ('firestore.rules', 'firestore.indexes.json')
 # deploy_backend.py sets these on every revision; any other difference from the serving revision is a bug.
 BASELINE_KEYS = tuple(env_assignments(WORKSPACES, AI_FEATURES, PRICE_BOOKS, RETENTION))
@@ -148,7 +150,7 @@ def serving_revision(service):
         raise Refused(
             'Traffic is not 100% on one named revision, so the rollback target is ambiguous: '
             + json.dumps(traffic)
-            + '. Release by hand.'
+            + '. The CLI does not proceed; this was historically a by-hand release.'
         )
     return traffic[0]['revisionName']
 
@@ -179,7 +181,7 @@ def revision_commit(revision):
     if not COMMIT.fullmatch(label):
         raise Refused(
             f'The serving revision reports source-commit {label!r}, not a clean commit, so '
-            'what changed since it cannot be judged. Release by hand.'
+            'what changed since it cannot be judged. The CLI does not proceed; this was historically a by-hand release.'
         )
     return label
 
@@ -220,8 +222,7 @@ def serving_staff_emails(summary):
     except argparse.ArgumentTypeError as error:
         raise Refused(
             f'The serving revision has no usable STAFF_EMAILS ({error}). Releasing without it would '
-            'leave the legacy workspaces-off mode admitting nobody; set STAFF_EMAILS on the service '
-            'by hand, then rerun. Nothing was staged or deployed.'
+            'leave the legacy workspaces-off mode admitting nobody. Nothing was staged or deployed.'
         ) from None
     summary['env']['STAFF_EMAILS'] = value
     return value
@@ -348,7 +349,7 @@ def check_candidate(runner, commit, serving_commit):
         raise Skipped(f'{commit[:12]} is already serving.')
     if git(runner, 'cat-file', '-e', serving_commit + '^{commit}', check=False).returncode:
         raise Refused(
-            f'Serving commit {serving_commit[:12]} is not in this checkout. Release by hand.'
+            f'Serving commit {serving_commit[:12]} is not in this checkout. The CLI does not proceed; this was historically a by-hand release.'
         )
     if (
         git(runner, 'merge-base', '--is-ancestor', commit, serving_commit, check=False).returncode
@@ -359,7 +360,7 @@ def check_candidate(runner, commit, serving_commit):
         )
     if git(runner, 'merge-base', '--is-ancestor', serving_commit, commit, check=False).returncode:
         raise Refused(
-            f'Serving commit {serving_commit[:12]} is not an ancestor of {commit[:12]}. Release by hand.'
+            f'Serving commit {serving_commit[:12]} is not an ancestor of {commit[:12]}. The CLI does not proceed; this was historically a by-hand release.'
         )
     # No rename detection, so a file moved out of a legacy directory still shows its old path.
     names = git(
@@ -373,9 +374,9 @@ def check_hand_released(names):
     if changed:
         raise Refused(
             f'{", ".join(changed)} changed since the serving commit. '
-            'The release CLI leaves Firestore rules and indexes to the owner. '
-            'Deploy the changes by hand (docs/firebase-isolation.md, Deployment), '
-            'confirm the indexes are READY, then release this commit by hand.'
+            'The release CLI never handled Firestore rules and indexes: historically they were '
+            'changed by hand (docs/firebase-isolation.md, Deployment) before the commit was released. '
+            'The CLI does not proceed.'
         )
 
 
@@ -386,7 +387,7 @@ def check_ttls(runner):
             'The read-only Firestore TTL check failed:\n'
             + (result.stdout or '')
             + (result.stderr or '')
-            + '\nRun scripts/ensure_firestore_ttls.py --apply by hand if a policy is missing.'
+            + '\nHistorically a missing policy was enabled by hand with scripts/ensure_firestore_ttls.py --apply.'
         )
 
 
@@ -790,8 +791,8 @@ def release(runner, record, commit, tag, check_only=False, confirm_baseline=Fals
         raise Refused(
             baseline_refusal(
                 reductions,
-                f'release this commit by hand: scripts/auto_deploy.py --commit {commit} '
-                '--confirm-baseline.',
+                f'historically the owner confirmed it with --confirm-baseline on '
+                f'scripts/auto_deploy.py --commit {commit}.',
             )
         )
     note_lowered(record, reductions)
@@ -832,7 +833,7 @@ def rollback_to_version(
         raise Skipped(f'Version {version} ({target_commit[:12]}) is already serving.')
     if git(runner, 'cat-file', '-e', serving_commit + '^{commit}', check=False).returncode:
         raise Refused(
-            f'Serving commit {serving_commit[:12]} is not in this checkout. Release by hand.'
+            f'Serving commit {serving_commit[:12]} is not in this checkout. The CLI does not proceed; this was historically a by-hand release.'
         )
     names = git(runner, 'diff', '--name-only', f'{target_commit}..{serving_commit}').stdout.split()
     check_ttls(runner)
@@ -843,10 +844,10 @@ def rollback_to_version(
     reductions = baseline_reductions(serving_summary)
     refusals = []
     if reductions and not confirm_baseline:
-        refusals.append(baseline_refusal(reductions, 'rerun with --confirm-baseline.'))
+        refusals.append(baseline_refusal(reductions, 'it was historically confirmed with --confirm-baseline.'))
     if (rules_warning or migration_warning) and not confirm_past_migration:
         refusals.append(
-            f'Rollback to {version} stopped; nothing was staged. To roll back anyway, rerun with '
+            f'Rollback to {version} stopped; nothing was staged. Historically it was confirmed with '
             '--confirm-past-migration.'
         )
     if refusals:
@@ -869,9 +870,9 @@ def rollback_to_version(
         )
     finally:
         if moved and git(runner, 'checkout', original or head, check=False).returncode:
-            record.note(f'Could not return this checkout to {original or head}; do that by hand.')
+            record.note(f'Could not return this checkout to {original or head}; it is still on the target commit.')
     record.note(f'Rolled production back to version {version} ({target_commit[:12]}).')
-    record.note('Fix or revert the bad change before the next manual release.')
+    record.note('Historically the bad change had to be fixed or reverted before the next manual release.')
 
 
 def main(argv=None, runner=None):

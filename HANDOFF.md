@@ -1,8 +1,9 @@
 # Handoff
 
 Current state of DryScope for whoever picks the work up next. It points at the records that
-stay current instead of copying them: **what is serving** is read from `RELEASES.md`, the
-Deploy run history and `/api/health`, never from this file.
+stay current instead of copying them: **what is serving** of the rebuilt app is read as
+`docs/runbook/where-things-run.md` describes, never from this file. `RELEASES.md` and the Deploy run
+history are historical records of the retired old app.
 
 Read in this order: `CLAUDE.md` and `AGENTS.md` (rules), `VISION.md` (what the product is),
 this file, `docs/STATUS.md` (each feature: built, on, checked on a phone), `docs/spec.md`,
@@ -12,8 +13,8 @@ this file, `docs/STATUS.md` (each feature: built, on, checked on a phone), `docs
 
 | Item | Where to read it |
 |---|---|
-| Serving backend revision, version (`YYYY.MM.DD-N`) and source commit | `GET /api/health`, the app footer or Account menu, `node scripts/verify_hosting.js` |
-| Release history | `RELEASES.md` (manual releases) and the archived **Deploy** run summaries in GitHub Actions (historical automated releases) |
+| Old app (retired, historical): serving backend revision, version (`YYYY.MM.DD-N`) and source commit | `GET /api/health`, the app footer or Account menu, `node scripts/verify_hosting.js` |
+| Release history | Rebuilt app: `docs/runbook/where-things-run.md`. Historical, retired old app only: `RELEASES.md` (manual releases) and the archived **Deploy** run summaries in GitHub Actions (automated releases) |
 | Cloud Run service | `alert-disaster-field-estimator`, `us-west2`, project `alert-disaster-field-2026` |
 | Hosting | target `alert-disaster`, site `alert-disaster-field-2026`; app at `https://alert-disaster-field-2026.web.app/app` |
 | Latest release row in `RELEASES.md` when this file was written (2026-11-06) | 2026-11-04, version `2026.11.04-5`, commit `22b3a509`, promoted to 100% with Hosting released. Automatic deploys after that date appear only in the Actions history, so recheck before relying on this row |

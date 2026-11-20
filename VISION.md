@@ -61,7 +61,7 @@ Every fix lands with a test that fails without it.
 Mock results, real-service checks and physical device observations are recorded separately, and a device behavior stays open until it is observed on a device.
 The retired legacy app is off and its project is never deployed to or changed (`docs/architecture/product-rules.md`). Its historical release record is `RELEASES.md`. DryScope releases use the [rebuilt app release workflow](docs/runbook/test-release.md).
 Firestore rules, indexes, secret bindings and IAM grants are declared in the repo and applied by the same pipeline, never by hand in the console.
-Each release carries its source commit, and `RELEASES.md` is the one record of what is serving (partly built; today releases made by the stamping scripts carry their commit, but several older `RELEASES.md` rows show `unknown`, per `docs/firebase-isolation.md`).
+Each release carries its source commit, and what is serving the rebuilt app is read as `docs/runbook/where-things-run.md` describes. `RELEASES.md` is the historical record of the retired old app (several of its older rows show `unknown`, per `docs/firebase-isolation.md`).
 
 ## Scope
 
