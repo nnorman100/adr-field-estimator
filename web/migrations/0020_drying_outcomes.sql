@@ -494,8 +494,10 @@ CREATE TRIGGER job_coordination_field_revision_insert
 -- A new receipt names an agreement of this job and an actor of this company, and the guard stamps its
 -- time (UTC) from the database's clock, over any time the writer sent. A change that leaves the watch as it was
 -- (an office change) is not the watch's concern. A row of a job the caller cannot see is left to the
--- keys and the policy. The job row is locked first, before the insert can claim the coordination key,
--- the order an office save takes, so the two first writes of one job wait for each other and never deadlock. Runs as the caller, under the caller's row-level security.
+-- keys and the policy. An insert locks the job row first, before it can claim the coordination key,
+-- the order an office save takes, so the two first writes of one job wait for each other and never deadlock.
+-- An update has its coordination row locked already and changes no key, so it only reads the job, never waiting
+-- on a job lock an office save holds while it waits for that row. Runs as the caller, under the caller's row-level security.
 CREATE FUNCTION job_coordination_drying_watch_guard() RETURNS trigger
   LANGUAGE plpgsql
   SET search_path = pg_catalog
@@ -513,7 +515,11 @@ BEGIN
   IF TG_OP = 'INSERT' AND NEW.drying_watch IS NULL THEN
     RETURN NEW;
   END IF;
-  PERFORM 1 FROM public.jobs j WHERE j.company_id = NEW.company_id AND j.id = NEW.job_id FOR UPDATE;
+  IF TG_OP = 'INSERT' THEN
+    PERFORM 1 FROM public.jobs j WHERE j.company_id = NEW.company_id AND j.id = NEW.job_id FOR UPDATE;
+  ELSE
+    PERFORM 1 FROM public.jobs j WHERE j.company_id = NEW.company_id AND j.id = NEW.job_id;
+  END IF;
   IF NOT FOUND THEN
     RETURN NEW;
   END IF;

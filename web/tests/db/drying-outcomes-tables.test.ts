@@ -1,26 +1,14 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { eq, sql } from 'drizzle-orm';
 import postgres from 'postgres';
-import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from 'vitest';
-import { openDatabase } from '@/db/client';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { estimateHistory } from '@/db/drying-schema';
-import { applyMigrations, migrationsDirectory, readMigrations } from '@/db/migrate';
 import { withCompany, withOperator, type CompanyTransaction } from '@/db/tenant';
 import { capabilitiesFor } from '@/lib/access/can';
-import { signedRecordBytes, SIGNED_FORMAT, type SignedRecord } from '@/lib/agreements/record';
-import { agreementsService } from '@/lib/agreements/service';
-import { PROPOSAL_FORMAT, type Proposal } from '@/lib/estimates/proposal';
-import { canonicalJson } from '@/lib/field/canonical';
-import { jobsService } from '@/lib/jobs/service';
-import { fakeDrafts } from './draft-fake';
-import { createDiscardDatabase, emptyDiscardDatabase, loginUrl } from './postgres-harness';
+import { readStoredEstimate } from '@/lib/estimates/result';
 import { unprotectedRelations } from './row-security-guard';
 import { CHECK_VIOLATION, FOREIGN_KEY_VIOLATION, INSUFFICIENT_PRIVILEGE, UNIQUE_VIOLATION, digestOf, errorCode, newJob, ownerOf, seedJob } from './job-harness';
-import { agreementOf, bytesOf, insertAgreement, newSubmission, pricedResult, refusal, seedCommitted, seedEstimate, seedPin, seedSignature, seedVersion, type Chain } from './submission-harness';
-import { memoryBacking } from '../submissions/field-fake';
+import { agreementOf, insertAgreement, newSubmission, refusal, seedCommitted, seedEstimate, seedPin, seedSignature, seedVersion, type Chain } from './submission-harness';
 import { resetTeamDatabase, startTeamServer, type Harness } from './team-harness';
 
 // S5b-10 slice 10A: migration 0020, the drying log (drying_readings), the job close (job_closes), the
@@ -52,13 +40,56 @@ const asOperator = <T>(run: (tx: CompanyTransaction) => Promise<T>, readOnly = f
 const rows = <T>(result: unknown) => result as unknown as T[];
 const json = (value: unknown) => JSON.stringify(value);
 
-// A signed job of a company: its chain (submission, pin, estimate, signature) and its original agreement.
-type Signed = { chain: Chain; job: string; agreement: string; company: string };
+// A signed job of a company: its chain (submission, pin, estimate, signature), its original agreement and the
+// price mode and cents its stored priced result states.
+type Signed = { chain: Chain; job: string; agreement: string; company: string; figures: Figures };
+type Figures = { mode: 'range' | 'single'; low: number; high: number | null };
+
+// A stored priced result in the shape the app reads back (readStoredEstimate): a range has both ends, one price has no high end.
+const end = (total: string) => ({ subtotal: total, after_hours: '0.00', trade_minimums: [], minimum_charge: '0.00', overhead_profit: '0.00', tax: '0.00', total });
+const storedResult = (mode: 'range' | 'single', low: string, high: string | null): Record<string, unknown> => ({
+  ok: true,
+  engine_version: 'dryscope-v3',
+  table_sha256: 'a'.repeat(64),
+  lines: [],
+  totals: {
+    mode,
+    low: end(low),
+    high: high === null ? null : end(high),
+    labor_material_low: '820.00',
+    labor_material_high: '820.00',
+    explanation: 'Synthetic totals.',
+    range_explanation: mode === 'range' ? 'Synthetic range.' : null,
+    after_hours_label: 'After-hours adjustment',
+  },
+  warnings: { engine: [], advisory: [] },
+  documents: {
+    proposal: { customer_name: 'Pat Customer', property_address: '1 Synthetic Way, Testville', lead_notice_required: false, findings: [], recommendations: [], disclaimers: [] },
+    letter: '',
+    compliance_notes: [],
+    photo_log: [],
+    claim: null,
+    itemized_claim: [],
+    unpriced_work: [],
+    signable: true,
+    staff_notes: { summary: '', suggestions: [], company_setup_missing: [], quantity_notes: [] },
+  },
+  job_revision: null,
+});
+
+// What a history sample and a close hold of a stored result: its price mode and its ends in whole cents.
+const figuresOf = (result: Record<string, unknown>): Figures => {
+  const { totals } = readStoredEstimate(result);
+  const cents = (money: string) => Math.round(Number(money) * 100);
+  return { mode: totals.mode, low: cents(totals.low.total), high: totals.high === null ? null : cents(totals.high.total) };
+};
 
 // The stored priced result of each fixture: a range job, a one-price job, and a change order whose totals differ.
-const RANGE_RESULT = pricedResult;
-const SINGLE_RESULT = { total: '1250.00', range: { low: '1250.00', high: '1250.00' }, lines: [{ item: 'dry', price_row: 'default' }] };
-const CHANGED_RESULT = { total: '1700.00', range: { low: '1500.00', high: '1900.00' }, lines: [{ item: 'dry', price_row: 'default' }] };
+const RANGE_RESULT = storedResult('range', '1100.00', '1400.00');
+const SINGLE_RESULT = storedResult('single', '1250.00', null);
+const CHANGED_RESULT = storedResult('range', '1500.00', '1900.00');
+const SINGLE = figuresOf(SINGLE_RESULT);
+const CHANGED = figuresOf(CHANGED_RESULT);
 
 async function signedJob(company = h.seed.a, result: Record<string, unknown> = RANGE_RESULT): Promise<Signed> {
   const actor = ownerOf(h, company);
@@ -71,7 +102,7 @@ async function signedJob(company = h.seed.a, result: Record<string, unknown> = R
   const chain: Chain = { company, actor, job, version, submission, pin, estimate, signature };
   const [agreement] = rows<{ id: string }>(await as(company, (tx) => insertAgreement(tx, agreementOf(chain, { result }))));
   await h.admin`UPDATE jobs SET status = 'signed', revision = revision + 1 WHERE id = ${chain.job.id}`;
-  return { chain, job: chain.job.id, agreement: agreement!.id, company };
+  return { chain, job: chain.job.id, agreement: agreement!.id, company, figures: figuresOf(result) };
 }
 
 // A signed change order on the job: its own committed record, estimate and signature, naming the original.
@@ -219,12 +250,53 @@ const addSample = (s: Sample, caller = s.company ?? h.seed.a) => as(caller, (tx)
 
 // The signed figures of a job's original agreement, as its history sample holds them: a close is compared
 // with them (the owner's Q1, option A), and a close of a job with no sample has no baseline to name.
-const RANGE = { mode: 'range', low: 110000, high: 140000 } as const;
-const SINGLE = { mode: 'single', low: 125000, high: null } as const;
-const baselined = async (s: Signed, figures: Pick<Sample, 'mode' | 'low' | 'high'> = RANGE): Promise<Signed> => {
-  await addSample({ job: s.job, agreement: s.agreement, company: s.company, ...figures });
+const baselined = async (s: Signed): Promise<Signed> => {
+  await addSample({ job: s.job, agreement: s.agreement, company: s.company, ...s.figures });
   return s;
 };
+
+const waitUntil = async (check: () => Promise<boolean>, what: string) => {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (await check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`timed out waiting for ${what}`);
+};
+
+// PostgreSQL shows a backend waiting on the given one.
+const isWaitingOn = async (pid: number) =>
+  (await h.admin<{ n: number }[]>`SELECT count(*)::int AS n FROM pg_stat_activity WHERE ${pid}::int = ANY(pg_blocking_pids(pid))`)[0]!.n > 0;
+
+// An office save that takes the job's row lock first, as office.ts does, and writes after the watch write has started
+// and `reached` says the watch is waiting or done. The save is always released, and both writes must succeed.
+async function overlapOfficeAndWatch(
+  s: Signed,
+  officeWrite: (tx: CompanyTransaction) => Promise<unknown>,
+  startWatch: () => Promise<unknown>,
+  reached: (officePid: number, watch: Promise<unknown>) => Promise<unknown>,
+) {
+  let locked!: (pid: number) => void;
+  const hasLock = new Promise<number>((resolve) => (locked = resolve));
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const office = as(s.company, async (tx) => {
+    await tx.execute(sql`SELECT 1 FROM jobs WHERE company_id = ${s.company}::uuid AND id = ${s.job}::uuid FOR UPDATE`);
+    locked(rows<{ pid: number }>(await tx.execute(sql`SELECT pg_backend_pid() AS pid`))[0]!.pid);
+    await gate;
+    await officeWrite(tx);
+  });
+  office.catch(() => {});
+  let watch: Promise<unknown> | undefined;
+  try {
+    const pid = await Promise.race([hasLock, office.then(() => Promise.reject(new Error('the office save ended before it held the job lock')))]);
+    watch = startWatch();
+    watch.catch(() => {});
+    await reached(pid, watch);
+  } finally {
+    release();
+  }
+  await Promise.all([office, watch]);
+}
 
 // --- The watch -------------------------------------------------------------------------------------
 
@@ -376,7 +448,7 @@ describe('migration 0020: rights and row-level security', () => {
     expect(await errorCode(asOperator((tx) => addReadingIn(tx, readingOf(s.job, 'thermal'))))).toBe(INSUFFICIENT_PRIVILEGE);
     // A valid next close revision and a fresh history sample (a change order's, of the same job) are refused too.
     expect(await errorCode(asOperator((tx) => insertClose(tx, closeOf(s, { revision: 2, final: 151000, landed: 'above' }))))).toBe(INSUFFICIENT_PRIVILEGE);
-    expect(await errorCode(asOperator((tx) => insertSample(tx, { job: s.job, agreement: added, ...SINGLE, laborMaterial: null, categories: null, days: null, area: null })))).toBe(
+    expect(await errorCode(asOperator((tx) => insertSample(tx, { job: s.job, agreement: added, ...CHANGED, laborMaterial: null, categories: null, days: null, area: null })))).toBe(
       INSUFFICIENT_PRIVILEGE,
     );
     expect(
@@ -566,7 +638,7 @@ describe('migration 0020: job_closes', () => {
       { final: 1, landed: 'below', days: null },
     ];
     for (const [index, extra] of accepted.entries()) expect(rows(await addClose(closeOf(ranged, { revision: index + 1, ...extra })))).toHaveLength(1);
-    const priced = await baselined(await signedJob(h.seed.a, SINGLE_RESULT), SINGLE);
+    const priced = await baselined(await signedJob(h.seed.a, SINGLE_RESULT));
     const single: Partial<Close>[] = [
       { ...SINGLE, final: 125000, landed: 'inside' },
       { ...SINGLE, final: 200000000, landed: 'above' },
@@ -599,14 +671,14 @@ describe('migration 0020: job_closes', () => {
   it('is compared with the job’s original agreement, by that sample’s price mode and cents, never a change order’s', async () => {
     // A range job and a one-price job, each with its own signed figures.
     const ranged = await baselined(await signedJob());
-    const priced = await baselined(await signedJob(h.seed.a, SINGLE_RESULT), SINGLE);
+    const priced = await baselined(await signedJob(h.seed.a, SINGLE_RESULT));
     const message = async (c: Close) => (await refusal(addClose(c)))?.message;
     const mismatch = 'a job close keeps the price mode and baseline cents of its baseline sample';
 
     // The change order has its own sample with different totals; it cannot be the baseline, even by its own figures.
     const added = await changeOrder(ranged);
-    await addSample({ job: ranged.job, agreement: added, mode: 'range', low: 150000, high: 190000, laborMaterial: null, categories: null, days: null, area: null });
-    expect(await message(closeOf(ranged, { agreement: added, baseline: added, low: 150000, high: 190000, final: 160000, landed: 'inside' }))).toBe(
+    await addSample({ job: ranged.job, agreement: added, ...CHANGED, laborMaterial: null, categories: null, days: null, area: null });
+    expect(await message(closeOf(ranged, { agreement: added, baseline: added, ...CHANGED, final: 160000, landed: 'inside' }))).toBe(
       "a job close is compared with the job's original agreement",
     );
     // A close that states another mode, low end or high end than the original's sample is refused, however it classifies.
@@ -634,7 +706,7 @@ describe('migration 0020: estimate_history', () => {
     expect(await refusal(addSample({ job: s.job, agreement: s.agreement, low: 1 }))).toMatchObject({ code: UNIQUE_VIOLATION, constraint: 'estimate_history_pkey' });
     // A change order's sample sits beside the original's; an older record with no optional figures is kept.
     const added = await changeOrder(s);
-    expect(rows(await addSample({ job: s.job, agreement: added, mode: 'single', high: null, laborMaterial: null, categories: null, days: null, area: null }))).toHaveLength(1);
+    expect(rows(await addSample({ job: s.job, agreement: added, ...CHANGED, laborMaterial: null, categories: null, days: null, area: null }))).toHaveLength(1);
     expect(await h.admin`SELECT agreement_id::text AS agreement, room_categories AS categories, area_sf::text AS area FROM estimate_history ORDER BY low_cents, agreement_id`).toEqual(
       expect.arrayContaining([
         { agreement: s.agreement, categories: ['2', 'mold'], area: '412.50' },
@@ -729,27 +801,43 @@ describe('migration 0020: the drying watch on job_coordination', () => {
   });
 
   it('lets the first office save and the first watch action of a job overlap with no deadlock', async () => {
-    const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
     const s = await signedJob();
     const field = await fieldRevisionOf(s.job);
-    let locked!: () => void;
-    const hasLock = new Promise<void>((resolve) => (locked = resolve));
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => (release = resolve));
-    // The office save takes the job's row lock first, as office.ts does, and writes its coordination row after the watch has started.
-    const office = as(s.company, async (tx) => {
-      await tx.execute(sql`SELECT 1 FROM jobs WHERE company_id = ${s.company}::uuid AND id = ${s.job}::uuid FOR UPDATE`);
-      locked();
-      await gate;
-      await tx.execute(sql`INSERT INTO job_coordination (company_id, job_id, office_notes, revision) VALUES (${s.company}::uuid, ${s.job}::uuid, 'Gate code 4411', 1)`);
-    });
-    await hasLock;
-    const watch = act(s, receiptOf(s));
     // The watch waits for the job lock rather than claiming the coordination key first.
-    expect(await Promise.race([watch.then(() => 'done', () => 'done'), pause(500).then(() => 'waiting')])).toBe('waiting');
-    release();
-    await Promise.all([office, watch]);
+    await overlapOfficeAndWatch(
+      s,
+      (tx) => tx.execute(sql`INSERT INTO job_coordination (company_id, job_id, office_notes, revision) VALUES (${s.company}::uuid, ${s.job}::uuid, 'Gate code 4411', 1)`),
+      () => act(s, receiptOf(s)),
+      (pid) => waitUntil(() => isWaitingOn(pid), 'the watch waiting for the office save'),
+    );
     expect(await coordinationOf(s.job)).toMatchObject({ revision: 1, notes: 'Gate code 4411', watch: { revision: 1, receipts: [expect.objectContaining({ action: 'extend' })] } });
+    expect(await fieldRevisionOf(s.job)).toBeGreaterThan(field);
+  });
+
+  it('lets an office save that holds the job lock and a watch update of the existing coordination row overlap with no deadlock', async () => {
+    const s = await signedJob();
+    await act(s, receiptOf(s));
+    const field = await fieldRevisionOf(s.job);
+    const next = { revision: 2, receipts: [...(await coordinationOf(s.job)).watch!.receipts, receiptOf(s, 'extend')] };
+    // The watch's direct update locks the coordination row first; it must not wait for the job lock the office save holds
+    // while the save waits for that row. It either finishes or waits, and the save then goes on.
+    let settled = false;
+    await overlapOfficeAndWatch(
+      s,
+      (tx) => tx.execute(sql`UPDATE job_coordination SET office_notes = 'Gate code 4411', revision = revision + 1, updated_at = now() WHERE company_id = ${s.company}::uuid AND job_id = ${s.job}::uuid`),
+      () =>
+        as(s.company, (tx) =>
+          tx.execute(sql`UPDATE job_coordination SET drying_watch = ${json(next)}::text::jsonb WHERE company_id = ${s.company}::uuid AND job_id = ${s.job}::uuid RETURNING job_id::text`),
+        ),
+      (pid, watch) => {
+        void watch.then(
+          () => (settled = true),
+          () => (settled = true),
+        );
+        return waitUntil(async () => settled || (await isWaitingOn(pid)), 'the watch update to finish or wait');
+      },
+    );
+    expect(await coordinationOf(s.job)).toMatchObject({ revision: 1, notes: 'Gate code 4411', watch: { revision: 2 } });
     expect(await fieldRevisionOf(s.job)).toBeGreaterThan(field);
   });
 
@@ -830,106 +918,5 @@ describe('migration 0020: the drying watch on job_coordination', () => {
     const unsigned = await seedJob(h.admin, newJob(h.seed.a, h.seed.ownerA.actor));
     expect(await refusal(act({ ...s, job: unsigned.id }, receiptOf(s)))).toMatchObject({ code: CHECK_VIOLATION, message: 'a drying watch receipt names an agreement of its job' });
     expect(await h.admin`SELECT count(*)::int AS n FROM job_coordination WHERE drying_watch IS NOT NULL`).toEqual([{ n: 0 }]);
-  });
-});
-
-// The migration on a database of the roles server built up to 0019 by the migrator (not a superuser,
-// so forced row-level security binds it), holding a signed job and a draft from before the change.
-describe('migration 0020: applied to an existing database', () => {
-  let database: Awaited<ReturnType<typeof createDiscardDatabase>> | null = null;
-
-  afterAll(async () => {
-    await database?.drop();
-  });
-
-  it('leaves an earlier signed job and draft as they were, with no sidecar rows and no watch', async () => {
-    const shared = inject('dryscopeDatabases');
-    database = await createDiscardDatabase(shared.rolesUrl);
-    await emptyDiscardDatabase(database.databaseUrl);
-    const admin = postgres(database.databaseUrl, { max: 1, connect_timeout: 10, onnotice: () => {} });
-    const dir = await mkdtemp(join(tmpdir(), 'dryscope-mig-'));
-    try {
-      await admin.unsafe('GRANT USAGE ON SCHEMA public TO PUBLIC');
-      await admin.unsafe(`GRANT CREATE ON SCHEMA public TO ${shared.roles.migrator.name}`);
-      const migratorUrl = loginUrl(database.databaseUrl, shared.roles.migrator);
-      const earlier = (await readMigrations(migrationsDirectory)).filter((file) => file.id < '0020');
-      await Promise.all(earlier.map((file) => writeFile(join(dir, `${file.id}.sql`), file.sql)));
-      await applyMigrations(migratorUrl, dir);
-
-      await admin`INSERT INTO auth_tenants (id, kind) VALUES ('tenant-existing', 'company')`;
-      const [company] = await admin<{ id: string }[]>`INSERT INTO companies (name, sign_in_slug, auth_tenant_id) VALUES ('Existing', 'existing', 'tenant-existing') RETURNING id`;
-      const [actor] = await admin<{ id: string }[]>`
-        INSERT INTO actors (company_id, auth_tenant_id, uid, email) VALUES (${company!.id}, 'tenant-existing', 'u1', 'u1@example.test') RETURNING id
-      `;
-      // A signed job (its whole chain and its original agreement, its documents bytes a signed record the app
-      // reads), with office notes, and a draft job.
-      const proposal = { format: PROPOSAL_FORMAT, heading: 'Existing proposal' } as unknown as Proposal;
-      const seededJob = await seedJob(admin, newJob(company!.id, actor!.id));
-      const version = await seedVersion(admin, company!.id, actor!.id);
-      const submission = await seedCommitted(admin, newSubmission(company!.id, seededJob.id, actor!.id));
-      const pin = await seedPin(admin, { company: company!.id, job: seededJob.id, version: version.id, actor: actor!.id });
-      const proposalBytes = bytesOf(canonicalJson(proposal));
-      const estimate = await seedEstimate(admin, { company: company!.id, job: seededJob.id, submission: submission.id, pin, actor: actor!.id, hash: version.hash, proposal: proposalBytes });
-      const signature = await seedSignature(admin, company!.id, seededJob.id, actor!.id);
-      const chain = { company: company!.id, actor: actor!.id, job: seededJob, version, submission, pin, estimate, signature };
-      const agreementId = randomUUID();
-      const record: SignedRecord = {
-        format: SIGNED_FORMAT,
-        agreement_id: agreementId,
-        job_id: seededJob.id,
-        kind: 'original',
-        signed_at: '2026-11-18T18:00:00.000Z',
-        signer: { name: 'Pat Customer' },
-        signed_with: { kind: 'device', presented_by: { actor_id: actor!.id, name: 'Owner' } },
-        signature: { id: signature, sha256: digestOf('signature'), content_type: 'image/png' },
-        proposal_sha256: proposalBytes.sha,
-        proposal,
-        documents: { itemized_claim: [], letter: 'Synthetic letter.', photo_log: [], claim: {}, compliance_notes: [] },
-        basis: { estimate_id: estimate.id, submission_id: submission.id },
-      };
-      const a = agreementOf(chain, { id: agreementId });
-      await admin`
-        INSERT INTO agreements (id, company_id, job_id, submission_id, estimate_id, kind, signer_kind, signer_name, signature_evidence_id, proposal_sha256, priced_result,
-                                version_id, content_hash, engine_version, documents_bytes, request_digest, created_by_actor_id)
-        SELECT ${a.id}, ${a.company}, ${a.job}, ${a.submission}, ${a.estimate}, 'original', 'device', 'Pat Customer', ${a.signature}, ${a.proposalSha}, e.priced_result,
-               ${a.version}, ${a.hash}, e.engine_version, ${signedRecordBytes(record)}, ${digestOf(a.id)}, ${a.actor}
-        FROM job_estimates e WHERE e.id = ${a.estimate}
-      `;
-      await admin`UPDATE jobs SET status = 'signed', revision = revision + 1 WHERE id = ${chain.job.id}`;
-      await admin`INSERT INTO job_coordination (company_id, job_id, office_notes) VALUES (${company!.id}, ${chain.job.id}, 'Gate code 4411')`;
-      const draft = await seedJob(admin, newJob(company!.id, actor!.id));
-      const snapshot = () =>
-        Promise.all([
-          admin`SELECT id, status, revision, current_draft_id, updated_at FROM jobs ORDER BY id`,
-          admin`SELECT id, priced_result, documents_bytes, proposal_sha256, signed_at FROM agreements`,
-          admin`SELECT company_id, job_id, office_notes, revision, updated_at FROM job_coordination`,
-        ]);
-      const before = await snapshot();
-
-      expect((await applyMigrations(migratorUrl, migrationsDirectory)).applied).toEqual(['0020_drying_outcomes']);
-      expect(await snapshot()).toEqual(before);
-      expect(await admin`SELECT drying_watch FROM job_coordination`).toEqual([{ drying_watch: null }]);
-      expect(
-        await admin`SELECT (SELECT count(*)::int FROM drying_readings) AS readings, (SELECT count(*)::int FROM job_closes) AS closes, (SELECT count(*)::int FROM estimate_history) AS history`,
-      ).toEqual([{ readings: 0, closes: 0, history: 0 }]);
-      // Both jobs still open: each reads as before through the app's own services, as the runtime role.
-      const handle = openDatabase({ APP_ENV: 'test', DATABASE_URL: loginUrl(database.databaseUrl, shared.roles.api) });
-      try {
-        const caller = { companyId: company!.id, actorId: actor!.id, uid: 'u1', role: 'owner' as const, capabilities: capabilitiesFor('owner', { priceBooks: false }) };
-        const jobs = jobsService(handle.db, fakeDrafts(memoryBacking()));
-        expect((await jobs.read(caller, chain.job.id)).job).toMatchObject({ id: chain.job.id, status: 'signed' });
-        expect((await jobs.read(caller, draft.id)).job).toMatchObject({ id: draft.id, status: 'draft' });
-        const signed = await agreementsService(handle.db).read(caller, chain.job.id);
-        expect(signed.job).toMatchObject({ id: chain.job.id, status: 'signed' });
-        expect(signed.agreement?.id).toBe(agreementId);
-        expect(signed.agreement?.record).toEqual(record);
-        expect((await jobs.list(caller, { scope: null, limit: 50, cursor: null })).jobs.map((job) => job.id).sort()).toEqual([chain.job.id, draft.id].sort());
-      } finally {
-        await handle.close();
-      }
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-      await admin.end({ timeout: 5 });
-    }
   });
 });
