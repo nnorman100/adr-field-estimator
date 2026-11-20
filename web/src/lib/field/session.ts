@@ -16,6 +16,7 @@ export type FieldSession = {
   actorId: string;
   role: string;
   capabilities: string[];
+  readiness: boolean;
   online: boolean;
   offlineCapture: boolean;
 };

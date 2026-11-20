@@ -3,7 +3,7 @@
 Part of [Screen specs](README.md). Addresses: `/field` (the role's default list),
 `/field?list=company`, `/field?list=mine`, `/field?list=archived`. Built in:
 `web/src/app/field/jobs-view.tsx`, `job-actions.tsx` (restore and unfinished archives),
-`web/src/lib/field/views.ts`. Stages S5a-6, S5b-1, S5b-2.
+`web/src/lib/field/views.ts`. Stages S5a-6, S5b-1, S5b-2, S5b-11.
 
 ## Purpose
 
@@ -37,12 +37,18 @@ Status labels (`JOB_STATUS_LABELS` in `src/lib/jobs/status-labels.ts`): "In prog
   again".
 - After a restore: a link to open the restored job.
 - A job with no address shows "No address yet".
+- When the current sign-in has `scope` and the company has enabled `readiness`, visible editing rows
+  can show a count of items to check or **Ready to review**. The row needs a current check matching
+  its ID and revision. A slow or failed check leaves the row usable with its regular status.
+  The list asks for up to three checks at once and cancels them when the displayed rows or sign-in
+  change. Office, submitted, signed and archived rows have no readiness marker.
 
 ## Key actions and server routes
 
 | Action | Route | Key |
 |---|---|---|
 | Read a list, paged | `GET /api/jobs?scope=company\|mine` (estimator: `mine` only, `company` is 403) | `jobs_read` |
+| Read readiness for a visible editing row | `GET /api/jobs/{id}/readiness` | `scope`, flag `readiness` |
 | Read archived drafts | `GET /api/jobs?scope=archived` | `jobs_archive` |
 | Restore an archived draft | `POST /api/jobs/{id}/restore` | `jobs_archive` |
 | New job | opens [New job](new-job.md) | `jobs_create` |
@@ -51,8 +57,7 @@ Rules: `docs/access/jobs.md` ("Jobs routes", "Archive, restore and copy").
 
 ## Not built yet
 
-- Signed-job close, drying-watch state and "Ready to review?" markers on list rows (S5b-10,
-  S5b-11 in `docs/plans/S5.md`).
+- Signed-job close and drying-watch state on list rows (S5b-10 in `docs/plans/S5.md`).
 - Search or filters on the list: not in any plan.
 
 ## Mismatches to check

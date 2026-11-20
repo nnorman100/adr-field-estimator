@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { readJob, type JobDetail, type Refusal } from '@/lib/field/api';
 import { loadJobProjection, type JobProjection } from '@/lib/field/job-projection';
@@ -8,6 +9,7 @@ import { newerDetail, pending, usePending } from '@/lib/field/pending';
 import type { FieldSession } from '@/lib/field/session';
 import { canEditDraft, draftReads, fieldRefusal, IncompleteFieldData, InvalidFieldData, SUPERSEDED, type DraftRef, type FieldDraft } from '@/lib/field/store';
 import type { JobView } from '@/lib/field/views';
+import { fixTarget } from '@/lib/readiness/fix';
 import { CustomerView } from './customer-view';
 import { PhotosView } from './photos-view';
 import { ScopeView } from './scope-view';
@@ -86,7 +88,10 @@ export type JobContext = {
 // draft from the field database, read once and again after each save, so what is on screen is what
 // is stored. Office, the owner who is not the field owner, and anyone once the draft is no longer
 // being edited see the field work read-only, as the rules hold it.
-export function JobScreens({ session, jobId, view }: { session: FieldSession; jobId: string; view: JobView }) {
+export function JobScreens({
+  session, jobId, view, readinessFix, address,
+}: { session: FieldSession; jobId: string; view: JobView; readinessFix: string | null; address: string }) {
+  const focusedFix = useRef<string | null>(null);
   const [read, setRead] = useState<{ detail: JobDetail; mark: number } | null>(null);
   // A save that settled after an earlier screen of this job closed posts the job it got back
   // (src/lib/field/pending.ts); the newer of that and this screen's own read is the job shown. Once
@@ -360,6 +365,21 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     if (movedState && draft && (draftAt ?? draftId)) pending.keepDraft(jobId, draft, (draftAt ?? draftId)!);
   }, [movedState, draft, draftAt, draftId, jobId]);
 
+  const fix = session.readiness && session.capabilities.includes('scope') && detail?.job.status === 'draft' && !archived && !movedState && !archiveChecking
+    ? fixTarget(readinessFix, view)
+    : null;
+  useEffect(() => {
+    if (!fix) {
+      focusedFix.current = null;
+      return;
+    }
+    if (focusedFix.current === readinessFix) return;
+    const element = document.getElementById(fix) ?? (view === 'photos' ? document.getElementById('readiness-photos') : null);
+    if (!(element instanceof HTMLElement) || element.closest('[hidden]')) return;
+    element.focus();
+    if (document.activeElement === element) focusedFix.current = readinessFix;
+  }, [readinessFix, fix, draft, view]);
+
   // An archived job (an old link, or archived here) shows that it is archived: every job route answers
   // it 410, and the field rules refuse every write to its draft. Screens of the job as read here stay,
   // read only, with whatever the person changed and did not save. A job opened from this phone's saved
@@ -435,6 +455,11 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
           </FieldLink>
         ))}
       </nav>
+      {fix ? (
+        <Link className="inline-flex min-h-11 items-center underline" href={`/sign-in/${address}/jobs/${jobId}/finish`}>
+          Back to Finish and review
+        </Link>
+      ) : null}
       {archived ? <ArchivedNotice session={session} jobId={jobId} /> : null}
       {moved ? (
         <p role="alert" className="rounded-md bg-foreground/5 p-3 text-sm">
@@ -460,8 +485,8 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       {onDraftViews && !draft && !draftError && cachedError ? <p role="status">{cachedError}</p> : null}
       {/* The views of one job stay mounted and only the open one shows, so moving between them
           keeps what the person has typed and not saved. */}
-      <div hidden={view !== 'scope'}>{draft ? <ScopeView key={draftAt} job={context} draft={draft} open={view === 'scope'} /> : null}</div>
-      <div hidden={view !== 'photos'}>{draft ? <PhotosView key={draftAt} job={context} draft={draft} open={view === 'photos'} /> : null}</div>
+      <div hidden={view !== 'scope'}>{draft ? <ScopeView key={draftAt} job={context} draft={draft} open={view === 'scope'} readinessFix={fix ? readinessFix : null} /> : null}</div>
+      <div hidden={view !== 'photos'}>{draft ? <PhotosView key={draftAt} job={context} draft={draft} open={view === 'photos'} readinessFix={fix ? readinessFix : null} /> : null}</div>
       <div hidden={view !== 'customer'}>
         {detail ? (
           <CustomerView job={{ ...context, detail }} />

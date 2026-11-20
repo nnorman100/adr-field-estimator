@@ -2,7 +2,7 @@
 
 Part of [Screen specs](README.md). Address: `/sign-in/{address}/jobs/{id}/finish`. Built in:
 `web/src/app/(auth)/sign-in/[address]/jobs/[jobId]/finish/finish-screen.tsx`,
-`web/src/lib/submissions/screen.ts`. Stage S5a-8.
+`web/src/lib/submissions/screen.ts`. Stages S5a-8 and S5b-11.
 
 ## Purpose
 
@@ -10,7 +10,15 @@ Turn the job's draft into its record and lock it on every phone ("Finish and rev
 finished job, make a new draft version from the record ("Back to editing"). Before Finish it lists
 "What will be recorded": the rooms (and how many have no name), the photo count, and whether the
 summary of findings is written (the draft's `summary` key, not the Notes box on Check Scope: no field
-screen edits it, see [Check Scope](check-scope.md)). Online only: it is not part of the kept field shell.
+screen edits it, see [Check Scope](check-scope.md)). Finish needs a connection.
+
+With the company's `readiness` flag on, the page checks the saved draft in the background. It
+compares the answer's job, revision, draft ID and field digest with what the page shows. If the
+matching answer has gaps, choosing **Finish and review** opens **Ready to review?**. The prompt
+lists gaps in checklist order and links to the relevant job field, room or photo controls. Photo
+suggestions use the room's existing overview, affected surface and moisture meter tags. The owner
+can open Prices when the checklist finds no usable published price. Estimators are directed to
+their company owner.
 
 ## Who may see it and do what
 
@@ -36,6 +44,11 @@ button can show and its request still be refused with 403 `not_field_owner`.
   connection…") with "Try again".
 - Being edited: the summary and, for `scope`, "Finish and review" (refused unless the caller owns the
   field work); a newer draft appeared: "Show the new draft".
+- Readiness prompt: focus starts on **Back**. Back or Escape closes it and returns focus to
+  **Finish and review**. **Continue anyway** sends the ordinary Finish request once. A Fix link
+  opens the appropriate field view. Returning to Finish reads the job, the draft and the flag again.
+- Finish goes ahead directly when the check has no matching gaps or is still pending. An unavailable
+  or timed-out check and the flag being off leave the Finish action available.
 - Finished: "Finished", "This draft is recorded and locked. Nobody can change it.", "Review the
   estimate" and, for `scope`, "Back to editing" (shown to the owner and to a visible non-owning
   estimator alike, refused unless the caller owns the field work).
@@ -55,19 +68,19 @@ button can show and its request still be refused with 403 `not_field_owner`.
 |---|---|---|
 | Who is signed in | `GET /api/me` | member |
 | Read the job | `GET /api/jobs/{id}`; for a draft, the shown draft from the field database | `jobs_read` |
+| Readiness advice | `GET /api/jobs/{id}/readiness` | `scope`, flag `readiness`, editing draft |
 | Finish and review | `POST /api/jobs/{id}/submissions` | `scope`, field owner |
 | Back to editing | `POST /api/jobs/{id}/drafts` | `scope`, field owner |
 | Review the estimate | opens [Review](review.md) | |
 
 Rules: `docs/access/submit.md`.
 
-## Not built yet
-
-- "Ready to review?" checks before Finish (S5b-11).
+Readiness is advisory and never stores an acknowledgement. Office, submitted, signed and archived
+views have no readiness controls.
 
 ## Mismatches to check
 
-- No Check Scope action opens this screen. It is reached from two places. The sync chip's "Changes not
+- Outside the return link after Fix, Check Scope has no direct action that opens this screen. The sync chip's "Changes not
   saved" sheet offers "Go to Finish and review" only for a write refused because the draft was locked
   (the draft was being finished, or finished, before the write; this can be before any submission
   commits), with a signal and once the job reads (`web/src/app/field/sync-chip.tsx`,

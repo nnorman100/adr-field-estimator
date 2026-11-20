@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   CHARGE_FIELDS,
@@ -17,6 +17,8 @@ import {
 } from '@/lib/field/forms';
 import { MAX_NOTES } from '@/lib/field/schema';
 import { draftFieldWrites, type FieldDraft } from '@/lib/field/store';
+import { markerText, useDraftReadiness } from '@/lib/readiness/client';
+import { readinessMarker } from '@/lib/readiness/marker';
 import { EquipmentSuggestion } from './equipment-suggestion';
 import type { JobContext } from './job-screens';
 import { PublishedItemList } from './published-item-list';
@@ -30,13 +32,20 @@ import { Box, Outcome, READ_AGAIN, Section, Tick } from './ui';
 // person changed over the draft as last read; Save writes only those, and the screen then reads the
 // draft back, so a save never writes back a value someone else has since changed. The
 // pre-1978 wording itself comes from the server with the estimate (S5a-9), never from here.
-export function ScopeView({ job, draft, open }: { job: JobContext; draft: FieldDraft; open: boolean }) {
+export function ScopeView({ job, draft, open, readinessFix }: { job: JobContext; draft: FieldDraft; open: boolean; readinessFix: string | null }) {
   // Only the boxes the person changed; the rest always show the draft as last read.
   const [edits, setEdits] = useState<FormValues>({});
   const values = withEdits(FACT_FIELDS, draft.field, edits);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const { busy, error, notice, setError, setNotice, save: saveEdit } = useFieldEdit(job);
   const readOnly = !job.editable;
+  const row = job.detail?.job;
+  const mayCheck =
+    open && job.session.online && job.session.readiness && job.session.capabilities.includes('scope') && !job.held && !job.moved &&
+    !job.stale && draft.state === 'editing' && row?.status === 'draft' && row.currentDraftId === job.draftRef.draftId;
+  const manifest = useMemo(() => ({ draft: draft.field, rooms: draft.rooms, photos: draft.photos }), [draft]);
+  const advisory = useDraftReadiness(job.session.user, mayCheck ? row : null, manifest);
+  const marker = mayCheck ? readinessMarker(row, advisory, job.session.capabilities) : null;
   const { markUnsaved } = job;
   const unsaved = Object.keys(edits).length > 0;
   useEffect(() => {
@@ -81,7 +90,18 @@ export function ScopeView({ job, draft, open }: { job: JobContext; draft: FieldD
 
   return (
     <div className="flex flex-col gap-4">
-      <h3 className="sr-only">Check Scope</h3>
+      <h3 id="readiness-scope" tabIndex={-1} className={readinessFix === 'readiness-scope' ? 'text-lg font-semibold' : 'sr-only'}>Check Scope</h3>
+      {mayCheck ? (
+        <p role="status" className="text-sm empty:hidden">
+          {marker ? markerText(marker) : advisory !== undefined ? 'Readiness check unavailable.' : ''}
+        </p>
+      ) : null}
+      {readinessFix === 'readiness-findings' ? (
+        <p id="readiness-findings" tabIndex={-1} className="text-sm">The summary of findings is separate from job notes. Ask your company for help adding it.</p>
+      ) : null}
+      {readinessFix === 'readiness-setup' ? (
+        <p id="readiness-setup" tabIndex={-1} className="text-sm">Record an affected air or material setup reading in the drying log when available.</p>
+      ) : null}
       {open ? <PublishedItemList session={job.session} /> : null}
       {box(YEAR_FIELD)}
       <RoomsSection job={job} draft={draft} />

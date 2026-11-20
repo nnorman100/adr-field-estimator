@@ -9,6 +9,8 @@ import { ME_DB, ME_DB_VERSION, ME_STORE } from '../../src/lib/field/ds-me';
 import { sessionValid } from '../../src/lib/field/sync-gate';
 import { unsentKey } from '../../src/lib/field/unsent';
 import { KEEP_YES } from '../../src/app/field/field-store-text';
+import { JOBS_BASE_URL } from './jobs/backend';
+import { adminSql, seedCompany } from './jobs/seed';
 import { expectWorkerRuns } from './service-workers';
 import { PASSWORD, readSeed, type ProjectSeed } from './sign-in/seed';
 
@@ -451,4 +453,40 @@ test('signing out with unsent work asks to keep or discard it', async ({ page })
   await expect(page.getByRole('heading', { name: `Sign in to ${A}` })).toBeVisible();
   await expect(dialog).toBeHidden();
   await expect(page.getByText('kept on this phone')).toHaveCount(0);
+});
+
+test.describe('field readiness markers', () => {
+  test.use({ baseURL: JOBS_BASE_URL, viewport: { width: 320, height: 720 }, serviceWorkers: 'block' });
+
+  test('a failed row stays usable while another row and Check Scope show their counts', async ({ page }) => {
+    const company = await seedCompany('readiness-list', { estimator: 'estimator' });
+    await adminSql()`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${company.id}, 'readiness', true)`;
+    await page.goto(`/sign-in/${company.address}`);
+    await page.getByLabel('Email').fill(company.people.estimator!.email);
+    await page.getByLabel('Password').fill(PASSWORD);
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await page.getByRole('link', { name: 'Open the field app' }).click();
+    await page.getByRole('button', { name: 'Online only', exact: true }).click();
+
+    async function addJob(address: string) {
+      await page.getByRole('link', { name: 'New job' }).click();
+      await page.getByLabel('Property address').fill(address);
+      await page.getByRole('button', { name: 'Start job' }).click();
+      await expect(page.getByLabel('Year built')).toBeEditable();
+      return new URL(page.url()).searchParams.get('job')!;
+    }
+
+    const failed = await addJob('10 Example Street');
+    await page.getByRole('link', { name: 'Back to jobs' }).click();
+    await addJob('20 Example Street');
+    await expect(page.getByText(/\d+ items to check/)).toBeVisible();
+
+    await page.route(`**/api/jobs/${failed}/readiness`, (route) => route.fulfill({ status: 503 }));
+    await page.getByRole('link', { name: 'Back to jobs' }).click();
+    const failedRow = page.getByRole('listitem').filter({ hasText: '10 Example Street' });
+    const workingRow = page.getByRole('listitem').filter({ hasText: '20 Example Street' });
+    await expect(workingRow.getByText(/\d+ items to check/)).toBeVisible();
+    await expect(failedRow.getByRole('link', { name: '10 Example Street' })).toBeVisible();
+    await expect(failedRow.getByText(/items? to check|Ready to review/)).toHaveCount(0);
+  });
 });
