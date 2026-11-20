@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { appCheckHeaders } from '@/lib/app-check-client';
 import { callApi } from '@/lib/firebase-client';
 import type { ClaimView, CustomerView, JobDetail, JobListItem, JobPage } from '@/lib/jobs/service';
+import { itemListResponseSchema } from '@/lib/prices/item-list';
 import { MAX_PHOTO_REFS } from './schema';
 import type { JobsList } from './views';
 
@@ -282,6 +283,11 @@ export type ScopeLists = z.infer<typeof scopeLists>;
 export async function readScopeLists(user: User, jobId: string): Promise<Answer<ScopeLists>> {
   const { status, body } = await callApi(user, `/api/jobs/${jobId}/scope-lists`);
   return answerOf(status, body, scopeLists);
+}
+
+export async function readPublishedItemList(user: User, signal: AbortSignal) {
+  const { status, body } = await callApi(user, '/api/prices/item-list', { signal });
+  return answerOf(status, body, itemListResponseSchema);
 }
 
 export { SHOT_NAMES } from './schema';

@@ -54,7 +54,9 @@ export type JobDraftSnapshot = {
   committed: Fence | null;
   // The epochs of the current draft's aborted submissions: fences Postgres knows were released.
   abortedEpochs: readonly string[];
-  content: DraftContent;
+  // How to make the current draft when it is missing; null when the record it would be made from cannot
+  // be read now (the draft is then not made, and every other key of every draft is still written).
+  content: DraftContent | null;
 };
 
 export type DraftState = 'editing' | 'submitting' | 'submitted' | 'archived';
@@ -78,6 +80,9 @@ export type DesiredJob = {
   // aborted rows): a stored fence of any other epoch was closed by a writer Postgres had not told this
   // sync about.
   knownEpochs: string[];
+  // The epoch of the current draft's committed submission (its record), when it has one: a draft
+  // fenced by it holds a recorded Submit, whatever state Postgres's job row is in.
+  recordedEpoch?: string;
 };
 
 /** A snapshot whose current draft job_drafts does not give the job: it is never synced. */
@@ -124,9 +129,15 @@ export function desired(snapshot: JobDraftSnapshot): DesiredJob {
   // Every earlier draft is submitted (Back to editing moves on only from a submitted one); its own
   // fence stays as its Submit left it.
   for (const draftId of snapshot.draftIds) drafts[draftId] = { ...common, state: 'submitted' };
-  drafts[snapshot.currentDraftId] = { ...common, ...currentDraft(snapshot), content: snapshot.content };
+  drafts[snapshot.currentDraftId] = { ...common, ...currentDraft(snapshot), ...(snapshot.content ? { content: snapshot.content } : {}) };
   const knownEpochs = [snapshot.pending?.epoch, snapshot.committed?.epoch, ...snapshot.abortedEpochs].filter((epoch): epoch is string => epoch !== undefined);
-  return { jobId: snapshot.jobId, v: snapshot.fieldRevision, drafts, knownEpochs };
+  return {
+    jobId: snapshot.jobId,
+    v: snapshot.fieldRevision,
+    drafts,
+    knownEpochs,
+    ...(snapshot.committed ? { recordedEpoch: snapshot.committed.epoch } : {}),
+  };
 }
 
 /** The drafts one sync left as they were, and why. A retry at the same version reports them again. */
@@ -314,7 +325,16 @@ export function planSync(
       want.fence !== undefined &&
       found.hasFence &&
       !(typeof found.fenceEpoch === 'string' && job.knownEpochs.includes(found.fenceEpoch));
-    const holdState = found !== null && !reset && (revisionOf(found.archiveRevision) > want.archiveRevision || unknownFence);
+    // A draft the field database holds as submitted, or fenced by its recorded Submit, is never opened or
+    // fenced again: a record is final, and only a Submit that committed (this one's, or a previous-version
+    // writer's, whose marker no sync saw) leaves a draft so. A snapshot read before that commit
+    // (draft-sync-02) would otherwise reverse it.
+    const recorded =
+      found !== null &&
+      !found.placeholder &&
+      (want.state === 'editing' || want.state === 'submitting') &&
+      (found.state === 'submitted' || (job.recordedEpoch !== undefined && found.fenceEpoch === job.recordedEpoch));
+    const holdState = found !== null && !reset && (revisionOf(found.archiveRevision) > want.archiveRevision || unknownFence || recorded);
     const holdOwner = found !== null && !reset && revisionOf(found.fieldOwnerRevision) > want.fieldOwnerRevision;
     if (!found || found.placeholder) {
       // Rooms or photos left under the id are never handed to an owner, whatever else holds.
@@ -328,7 +348,9 @@ export function planSync(
         seen.push(draftId);
         continue;
       }
-      if (!want.content) {
+      // No content, or a Submit deciding now (Postgres's pending row): a draft made now would be fenced
+      // field work no phone wrote, which that attempt could record. It is made once the row is decided.
+      if (!want.content || want.state === 'submitting') {
         skips.missing.push(draftId);
         continue;
       }

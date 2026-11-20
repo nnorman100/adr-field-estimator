@@ -5,6 +5,7 @@ import { GENERATED_API_ROUTES } from '@/lib/api-routes.generated';
 import { linkFlow, type Body } from './link-flow';
 import type { FakeClaims, Harness } from './team-harness';
 import { callKey, handlersOf, MATRIX, matrixKey, pathFor, routeModules, uncalled, type MatrixRow, type RouteModule } from './isolation-matrix';
+import { digestOf } from './job-harness';
 
 // S5a-12, the S5a half of the company-isolation gate (`npm run test:isolation`, beside
 // company-isolation.test.ts; docs/access/isolation-gate.md). That suite calls every route with ids
@@ -28,8 +29,17 @@ vi.mock('@/lib/auth/services', () => ({
   serverDatabase: () => live.harness!.handle.db,
 }));
 vi.mock('@/lib/team/services', () => ({ teamServices: () => live.harness!.team }));
+// The readiness check (S5b-11) reads the field drafts through the shared field stand-in.
+vi.mock('@/lib/readiness/services', async () => {
+  const { readinessService } = await import('@/lib/readiness/service');
+  const { standIn } = await import('./readiness-fake');
+  return { readinessServices: () => readinessService(live.harness!.handle.db, () => standIn(live.harness!.field)) };
+});
 vi.mock('@/lib/prices/services', () => ({ pricesServices: () => live.harness!.prices }));
-vi.mock('@/lib/jobs/services', () => ({ jobsServices: () => live.harness!.jobs }));
+vi.mock('@/lib/jobs/services', () => ({
+  jobsServices: () => live.harness!.jobs,
+  runQueuedDraftSyncRepair: async () => ({ synced: 0, failed: 0 }),
+}));
 vi.mock('@/lib/photos/services', () => ({ photosServices: () => live.harness!.photos }));
 vi.mock('@/lib/submissions/services', () => ({
   submissionsServices: () => live.harness!.submissions,
@@ -203,6 +213,35 @@ async function signedSide(name: 'A' | 'B', companyId: string, estimator: FakeCla
   };
   const signedAssignment = await coordinate(linked.jobId, `Office Notes Line ${name}`);
   const pendingAssignment = await coordinate(pending.jobId, `Office Notes Second ${name}`);
+  // S5b-10 (0020, no routes yet): a drying reading on each job, and on the signed job a close, its
+  // estimate history sample (the close's baseline) and a drying watch action, written as slice 10B will.
+  const [agreement] = await h.admin<{ id: string }[]>`SELECT id::text FROM agreements WHERE job_id = ${linked.jobId}`;
+  for (const jobId of [linked.jobId, pending.jobId]) {
+    const readingId = randomUUID();
+    await h.admin`
+      INSERT INTO drying_readings (id, company_id, job_id, kind, room_id, room_label, taken_at, payload, request_digest, created_by_actor_id)
+      VALUES (${readingId}, ${companyId}, ${jobId}, 'material', 'room-1', ${`Drying Room ${name}`}, now(),
+              ${h.admin.json({ material: 'Drywall', moisture: 18, unit: '%WME', dry_standard: 12, affected: true, note: `Drying Note ${name}` })},
+              ${digestOf(readingId)}, ${estimatorActorId})
+    `;
+  }
+  await h.admin`
+    INSERT INTO estimate_history (company_id, job_id, agreement_id, signed_at, price_mode, low_cents, high_cents)
+    VALUES (${companyId}, ${linked.jobId}, ${agreement!.id}, now(), 'range', 110000, 140000)
+  `;
+  const closeId = randomUUID();
+  await h.admin`
+    INSERT INTO job_closes (id, company_id, job_id, agreement_id, revision, request_digest, final_cents, actual_days, note, baseline_agreement_id, price_mode,
+                            baseline_low_cents, baseline_high_cents, landed, closed_by_actor_id)
+    VALUES (${closeId}, ${companyId}, ${linked.jobId}, ${agreement!.id}, 1, ${digestOf(closeId)}, 125000, 4, ${`Close Note ${name}`}, ${agreement!.id}, 'range',
+            110000, 140000, 'inside', ${estimatorActorId})
+  `;
+  const watchRequest = randomUUID();
+  const watch = {
+    revision: 1,
+    receipts: [{ action: 'extend', agreement_id: agreement!.id, reason: `Watch Reason ${name}`, actor_id: estimatorActorId, request_id: watchRequest, request_digest: digestOf(watchRequest) }],
+  };
+  await h.admin`UPDATE job_coordination SET drying_watch = ${h.admin.json(watch)} WHERE job_id = ${linked.jobId}`;
   return {
     signed: {
       jobId: linked.jobId,
@@ -224,6 +263,10 @@ async function signedSide(name: 'A' | 'B', companyId: string, estimator: FakeCla
       `Terms Line ${name}`,
       `Office Notes Line ${name}`,
       `Office Notes Second ${name}`,
+      `Drying Room ${name}`,
+      `Drying Note ${name}`,
+      `Close Note ${name}`,
+      `Watch Reason ${name}`,
     ],
     tokens: [linked.token, pending.token, issued.homeowner.token, issued.adjuster.token],
   };
@@ -282,6 +325,8 @@ beforeEach(async () => {
   live.harness = h;
   made = new Set();
   await seedSides();
+  // Readiness on in both companies, so its route answers by job access, not only by its switch.
+  await h.admin`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${h.seed.a}, 'readiness', true), (${h.seed.b}, 'readiness', true)`;
 });
 
 afterAll(async () => {
@@ -406,6 +451,18 @@ describe('the S5a routes', () => {
       for (const route of ['api/jobs', 'api/jobs/[jobId]/estimate', 'api/jobs/[jobId]/agreements', 'api/jobs/[jobId]/document-links', 'api/jobs/[jobId]/coordination']) {
         const answer = await call({ route, method: 'GET' }, 'owner', self.people.owner, idsOf(self, 'signed'));
         expect({ route, as: self.name, status: answer.status, own: leaks(answer.text, self).length > 0 }).toEqual({ route, as: self.name, status: 200, own: true });
+      }
+      // Readiness answers the company's own owner about both of its jobs (neither is editing now), so its
+      // refusals above are job access, not the switch.
+      for (const job of ['signed', 'pending'] as const) {
+        const ids = idsOf(self, job);
+        const answer = await call({ route: 'api/jobs/[jobId]/readiness', method: 'GET' }, 'owner', self.people.owner, ids);
+        expect({ as: self.name, job, status: answer.status, body: JSON.parse(answer.text) as unknown }).toEqual({
+          as: self.name,
+          job,
+          status: 200,
+          body: { status: 'unavailable', jobId: ids.jobId, reason: 'not_editing' },
+        });
       }
       const link = await call({ route: 'api/jobs/[jobId]/signing-link', method: 'GET' }, 'owner', self.people.owner, idsOf(self, 'pending'));
       expect({ as: self.name, status: link.status, own: leaks(link.text, self).length > 0 }).toEqual({ as: self.name, status: 200, own: true });

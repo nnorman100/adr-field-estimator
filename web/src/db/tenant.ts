@@ -1,9 +1,10 @@
 import { sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { transactionSpan } from '../lib/telemetry/spans';
+import type { dryingSchema } from './drying-schema';
 import type { schema } from './schema';
 
-export type Database = PostgresJsDatabase<typeof schema>;
+export type Database = PostgresJsDatabase<typeof schema & typeof dryingSchema>;
 export type CompanyTransaction = Parameters<Parameters<Database['transaction']>[0]>[0];
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

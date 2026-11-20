@@ -864,6 +864,9 @@ export const jobCoordination = pgTable(
     lastChangeId: uuid('last_change_id'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
+    // The drying watch's accepted actions (0020, S5b-10): its own revision and receipts, apart from the
+    // coordination revision; null until the first action.
+    dryingWatch: jsonb('drying_watch').$type<DryingWatch>(),
   },
   (t) => [primaryKey({ columns: [t.companyId, t.jobId] })],
 );
@@ -903,6 +906,20 @@ export const agreementCorrections = pgTable(
   },
   (t) => [primaryKey({ columns: [t.companyId, t.id] })],
 );
+
+export const dryingWatchActions = ['mark_dry', 'extend', 'close'] as const;
+
+// One accepted drying watch action (0020); the database stamps `at` (UTC) over any time the writer sends.
+export type DryingWatchReceipt = {
+  action: (typeof dryingWatchActions)[number];
+  agreement_id: string;
+  reason: string;
+  actor_id: string;
+  at: string;
+  request_id: string;
+  request_digest: string;
+};
+export type DryingWatch = { revision: number; receipts: DryingWatchReceipt[] };
 
 export const schema = {
   migrationLedger,

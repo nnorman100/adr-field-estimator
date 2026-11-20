@@ -19,6 +19,7 @@ The sections of this document, one file per area (each keeps its original headin
 - [Proposals and approvals](access/approvals.md): proposals and approvals on a job (rebuilt app, S5b-8), key `additions_approve`, switch `priced_extras`.
 - [Signing on the phone](access/signing.md): Signing on the phone (rebuilt app, S5a-11).
 - [Check Scope lists](access/scope-lists.md): Check Scope lists (rebuilt app, S5a-10).
+- [Ready to review?](access/readiness.md): Ready to review? (rebuilt app, S5b-11): the advisory gaps before Finish.
 - [Signing links and document links](access/signing-links.md): Signing links and document links (rebuilt app, S5a-11b), including "Homeowner signing link".
 - [Company isolation gate](access/isolation-gate.md): Company isolation gate.
 - [Rules for adding a feature](access/adding-a-feature.md): Rules for adding a feature.

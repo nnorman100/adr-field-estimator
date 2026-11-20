@@ -45,7 +45,7 @@ Sign-out, app updates, reloads and reconnects stop before discarding unsynced wo
 
 ## Private, isolated and bounded
 
-Everything lives in the dedicated `alert-disaster-field-2026` project; peer sites and shared databases are never touched, and every deploy is target-scoped.
+The rebuilt app uses dedicated DryScope projects. Each release targets its own environment, and peer sites and shared databases are never touched. See [where things run](docs/runbook/where-things-run.md).
 Browsers never reach the database or the model directly; the backend checks identity, company membership and job access on every call.
 Each company sees only its own jobs, recordings and uploaded prices.
 Owners may see how their prices compare with anonymized aggregates drawn from five or more companies, never another company's name or jobs (not built yet; today the app computes no cross-company aggregates or price comparisons).
@@ -59,9 +59,9 @@ The frontend stays a static web app with no build step and same-origin vendored 
 
 Every fix lands with a test that fails without it.
 Mock results, real-service checks and physical device observations are recorded separately, and a device behavior stays open until it is observed on a device.
-Every merge that passes CI and changes the legacy app is deployed automatically (rebuild merges in `web/`, `infra/` and docs skip the release): the backend is staged and verified, then promoted, then only `hosting:alert-disaster` is deployed, with automatic rollback on a failed health check (built in `.github/workflows/deploy.yml` and active once the owner completes its one-time setup in `docs/firebase-isolation.md#automatic-deploys`; until then, and for a rules or index change, a release is a hand release the owner runs, per `RELEASES.md`).
+The retired legacy app is off and its project is never deployed to or changed (`docs/architecture/product-rules.md`). Its historical release record is `RELEASES.md`. DryScope releases use the [rebuilt app release workflow](docs/runbook/test-release.md).
 Firestore rules, indexes, secret bindings and IAM grants are declared in the repo and applied by the same pipeline, never by hand in the console.
-Each release carries its source commit, and `RELEASES.md` is the one record of what is serving (partly built; today releases made by the stamping scripts carry their commit, but several older `RELEASES.md` rows show `unknown`, per `docs/firebase-isolation.md`).
+Each release carries its source commit, and what is serving the rebuilt app is read as `docs/runbook/where-things-run.md` describes. `RELEASES.md` is the historical record of the retired old app (several of its older rows show `unknown`, per `docs/firebase-isolation.md`).
 
 ## Scope
 

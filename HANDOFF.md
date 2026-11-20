@@ -1,22 +1,27 @@
 # Handoff
 
 Current state of DryScope for whoever picks the work up next. It points at the records that
-stay current instead of copying them: **what is serving** is read from `RELEASES.md`, the
-Deploy run history and `/api/health`, never from this file.
+stay current instead of copying them: **what is serving** of the rebuilt app is read as
+`docs/runbook/where-things-run.md` describes, never from this file. `RELEASES.md` and the Deploy run
+history are historical records of the retired old app.
 
 Read in this order: `CLAUDE.md` and `AGENTS.md` (rules), `VISION.md` (what the product is),
 this file, `docs/STATUS.md` (each feature: built, on, checked on a phone), `docs/spec.md`,
 `docs/phone-acceptance.md`.
 
-## What is live
+## Where to check the rebuilt app
 
-| Item | Where to read it |
+See [Where things run and what is serving](docs/runbook/where-things-run.md) for the rebuilt app.
+
+## Historical operations of the retired app
+
+| Item | Historical record |
 |---|---|
-| Serving backend revision, version (`YYYY.MM.DD-N`) and source commit | `GET /api/health`, the app footer or Account menu, `node scripts/verify_hosting.js` |
-| Release history | `RELEASES.md` (manual releases) and the newest **Deploy** run in GitHub Actions (automatic releases are recorded in the job summary, not in `RELEASES.md`) |
-| Cloud Run service | `alert-disaster-field-estimator`, `us-west2`, project `alert-disaster-field-2026` |
-| Hosting | target `alert-disaster`, site `alert-disaster-field-2026`; app at `https://alert-disaster-field-2026.web.app/app` |
-| Latest release row in `RELEASES.md` when this file was written (2026-11-06) | 2026-11-04, version `2026.11.04-5`, commit `22b3a509`, promoted to 100% with Hosting released. Automatic deploys after that date appear only in the Actions history, so recheck before relying on this row |
+| Backend revision, version (`YYYY.MM.DD-N`) and source commit | Operators used `GET /api/health`, the app footer or Account menu, and `node scripts/verify_hosting.js` |
+| Release history | `RELEASES.md` (manual releases) and the archived **Deploy** run summaries in GitHub Actions (automated releases) |
+| Former Cloud Run service | `alert-disaster-field-estimator`, `us-west2`, project `alert-disaster-field-2026` |
+| Former Hosting site | Target `alert-disaster`, site `alert-disaster-field-2026`, former app URL `https://alert-disaster-field-2026.web.app/app` |
+| Latest release row in `RELEASES.md` when this file was written (2026-11-06) | 2026-11-04, version `2026.11.04-5`, commit `22b3a509`, promoted to 100% with Hosting released. Later automatic deploys were recorded in the Actions history |
 
 ## Feature switches
 
@@ -31,7 +36,6 @@ owner's word, never by a flag on the deploy command (`docs/firebase-isolation.md
 | `PRICE_BOOKS_ENABLED` | `false` | the price editor, the `prices_read`/`prices_manage` capabilities, the estimator item list, Switch to v2 |
 | `RETENTION_ENABLED` | `false` (`DEFAULT_RETENTION = 'off'` in `scripts/deploy_backend.py`) | the record-retention deletion sweep; the owner's retention setting works with it off, and nothing is deleted (`docs/company-workspaces.md#record-retention`) |
 | `APPCHECK_MODE` | `monitor` by default; only `off` or `monitor` are accepted, enforcement is not built | App Check (`docs/app-check.md`) |
-| `AUTO_DEPLOY_ENABLED` (GitHub repository variable) | owner-set | automatic deploys after CI; anything but `true` pauses them |
 
 `AUDIT_MODEL`, `OCR_MODEL`, `LIVE_MODEL`, `GOOGLE_CLOUD_LOCATION` and `LIVE_LOCATION` are not set by
 the deploy script, so the code defaults apply unless the service already carries them. The serving

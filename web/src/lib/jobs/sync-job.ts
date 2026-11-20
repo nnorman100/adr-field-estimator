@@ -1,10 +1,13 @@
 import { and, desc, eq, lt, sql } from 'drizzle-orm';
+import { isQueueTimeout } from '@/db/client';
 import { actors, agreements, jobCoordination, jobDrafts, jobs, jobSubmissions } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import { holdDraft, JobError, lockedJob, type JobRow } from './access';
 import { confirmationPredatesReprice } from '@/lib/estimates/service';
 import type { Fence } from '@/lib/submissions/fence';
-import { snapshotManifest } from '@/lib/submissions/snapshot';
+import { SNAPSHOT_FORMAT } from '@/lib/submissions/snapshot';
+import type { FieldManifest } from '@/lib/field/canonical';
+import { fieldId } from '@/lib/field/schema';
 import { desired, UnclaimedDraftError, type DraftContent, type JobDraftSnapshot } from './draft-lifecycle';
 import type { DraftSync, SyncResult } from './draft-sync';
 import { draftOfOtherJob, type DraftLookup } from './drafts';
@@ -44,6 +47,40 @@ export async function claimJobDrafts(tx: CompanyTransaction, row: JobRow): Promi
   }
 }
 
+// A stored record's field work, or null when there are no bytes or they are not a whole record: its
+// format, a `field` holding a `draft` map and `rooms` and `photos` lists, every entry an id the field rules
+// accept (fieldId) with a `field` map, no id twice in one list, and every value one Firestore stores (JSON
+// scalars, maps and lists, never a list directly inside a list): a draft made from anything else would fail
+// its create, and with it the whole sync, owner changes on every other draft included. A draft is never
+// made from part of a record.
+const isMap = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
+function storable(value: unknown, inList = false): boolean {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return true;
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (Array.isArray(value)) return !inList && value.every((item) => storable(item, true));
+  return isMap(value) && Object.values(value).every((item) => storable(item));
+}
+const isFieldMap = (value: unknown): value is Record<string, unknown> => isMap(value) && storable(value);
+const isDocs = (value: unknown): value is { id: string; field: Record<string, unknown> }[] =>
+  Array.isArray(value) &&
+  value.every((entry) => isMap(entry) && fieldId.safeParse(entry.id).success && isFieldMap(entry.field)) &&
+  new Set(value.map((entry) => (entry as { id: string }).id)).size === value.length;
+
+function manifestOf(bytes: Buffer | null | undefined): FieldManifest | null {
+  if (!bytes) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(bytes).toString('utf8'));
+  } catch {
+    return null;
+  }
+  if (!isMap(parsed) || parsed.format !== SNAPSHOT_FORMAT || !isMap(parsed.field)) return null;
+  const { draft, rooms, photos } = parsed.field;
+  if (!isFieldMap(draft) || !isDocs(rooms) || !isDocs(photos)) return null;
+  // The record already read and checked: decoded once.
+  return { draft, rooms, photos };
+}
+
 const fenceOf = (row: { id: string; epoch: string; expiresAt: Date }): Fence => ({ submissionId: row.id, epoch: row.epoch, expiresAt: row.expiresAt });
 
 // How the job's current draft is made when the field database does not hold it. Back to editing: from
@@ -51,8 +88,11 @@ const fenceOf = (row: { id: string; epoch: string; expiresAt: Date }): Fence => 
 // confirmation after an owner reprice (as submissions/service.ts backToEditing makes it). A current draft
 // that was itself submitted: its own committed record, with where it came from (the committed record of
 // the draft before it, when there is one). A copy that never submitted: from its source's signed record
-// (as archive.ts copy makes it). Only a draft no record holds at all starts empty.
-async function contentOf(tx: CompanyTransaction, companyId: string, job: { id: string; currentDraftId: string; copiedFromJobId: string | null }): Promise<DraftContent> {
+// (as archive.ts copy makes it). Only a draft no record holds at all starts empty. Null when the record
+// it would be made from cannot be read (no bytes, or bytes that are not a record): the draft is not made
+// then, and the sync still writes every draft that exists, so an owner change or an archive is never
+// held up by a record only a missing draft needs.
+async function contentOf(tx: CompanyTransaction, companyId: string, job: { id: string; currentDraftId: string; copiedFromJobId: string | null }): Promise<DraftContent | null> {
   // The job's committed records, newest first, by id only: a record's bytes (up to 8 MiB) are read for the
   // newest one alone.
   const committed = await tx
@@ -66,8 +106,8 @@ async function contentOf(tx: CompanyTransaction, companyId: string, job: { id: s
       .select({ snapshotBytes: jobSubmissions.snapshotBytes })
       .from(jobSubmissions)
       .where(and(eq(jobSubmissions.companyId, companyId), eq(jobSubmissions.id, latest.id)));
-    if (!record?.snapshotBytes) throw new Error('a committed record has no snapshot');
-    const manifest = snapshotManifest(record.snapshotBytes);
+    const manifest = manifestOf(record?.snapshotBytes);
+    if (!manifest) return null;
     if (latest.draftId !== job.currentDraftId) {
       // An owner reprice after the confirmation, of the record's draft or of the draft Back to editing
       // made from it (the reprice names whichever was current), clears it (pricing plan 3).
@@ -92,8 +132,8 @@ async function contentOf(tx: CompanyTransaction, companyId: string, job: { id: s
       )
       .where(and(eq(agreements.companyId, companyId), eq(agreements.jobId, job.copiedFromJobId), eq(agreements.kind, 'original')));
     // A copy is never made empty: until its source's signed record can be read, no draft is made.
-    if (!signed?.bytes) throw new Error('a copy’s signed source record cannot be read');
-    const manifest = snapshotManifest(signed.bytes);
+    const manifest = manifestOf(signed?.bytes);
+    if (!manifest) return null;
     return { kind: 'copy', manifest: { draft: manifest.draft, rooms: manifest.rooms } };
   }
   return { kind: 'empty' };
@@ -210,9 +250,17 @@ export async function syncJob(db: Database, store: DraftSync, companyId: string,
  * 409 `conflict` when the job's current draft is another job's (or rooms or photos are left under its id,
  * which no owner is handed); and 503 `draft_unavailable`, the same request again, when the field database
  * cannot be reached (after one more try, as its answer may have been lost) or the current draft could not
- * be made.
+ * be made. Answers the sync's result and the job's current draft id, for a caller (Submit) that reads
+ * what it held back. A database connection that did not come free in time (isQueueTimeout) is thrown as
+ * it is, never tried again: the route answers 503, and the worker's pass ends there.
  */
-export async function syncJobDrafts(db: Database, store: DraftSync, lookup: DraftLookup, companyId: string, jobId: string): Promise<void> {
+export async function syncJobDrafts(
+  db: Database,
+  store: DraftSync,
+  lookup: DraftLookup,
+  companyId: string,
+  jobId: string,
+): Promise<{ result: SyncResult; currentDraftId: string }> {
   const claimed = await withCompany(db, companyId, async (tx) => {
     const row = await lockedJob(tx, companyId, jobId);
     try {
@@ -245,7 +293,7 @@ export async function syncJobDrafts(db: Database, store: DraftSync, lookup: Draf
       break;
     } catch (error) {
       if (error instanceof UnclaimedDraftError) throw new JobError('conflict');
-      if (error instanceof JobError) throw error;
+      if (error instanceof JobError || isQueueTimeout(error)) throw error;
       // Fixed text only: the SDK's message may quote a path.
       console.error('job draft sync unavailable', error instanceof Error ? error.name : 'unknown');
       // The answer may have been lost after the write: once more, from a fresh read of Postgres.
@@ -255,7 +303,7 @@ export async function syncJobDrafts(db: Database, store: DraftSync, lookup: Draf
   if (!synced) throw new JobError('not_found');
   const { result, currentDraftId: current } = synced;
   // A newer version is already written: that sync answered for the current state.
-  if (result.outcome === 'stale') return;
+  if (result.outcome === 'stale') return synced;
   // Postgres kept moving through every try and nothing was written: the same request again.
   if (result.outcome === 'moved') throw new JobError('draft_unavailable');
   // A retry at the same version reports what that sync skipped, so it answers the same.
@@ -264,4 +312,5 @@ export async function syncJobDrafts(db: Database, store: DraftSync, lookup: Draf
   // no failure of this request: that newer change, or the repair pass, writes the rest (the version is
   // not recorded as synced, syncJob).
   if (result.missing.includes(current)) throw new JobError('draft_unavailable');
+  return synced;
 }

@@ -15,7 +15,7 @@ import { emptyDiscardDatabase, startDisposablePostgres, type DisposablePostgres 
 const exec = promisify(execFile);
 const webRoot = fileURLToPath(new URL('../..', import.meta.url));
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const SHIPPED = ['0001_foundation', '0002_identity', '0003_runtime_role', '0004_sign_in_lookup', '0005_access_projection', '0006_platform_operator', '0007_sign_in_address', '0008_feature_flag_writes', '0009_price_tables', '0010_core_job_tables', '0011_submissions_agreements', '0012_ai_live_tables', '0013_company_documents', '0014_signing_links', '0015_office_jobs', '0016_job_drafts', '0017_definer_search_path', '0018_field_revision', '0019_price_approvals'];
+const SHIPPED = ['0001_foundation', '0002_identity', '0003_runtime_role', '0004_sign_in_lookup', '0005_access_projection', '0006_platform_operator', '0007_sign_in_address', '0008_feature_flag_writes', '0009_price_tables', '0010_core_job_tables', '0011_submissions_agreements', '0012_ai_live_tables', '0013_company_documents', '0014_signing_links', '0015_office_jobs', '0016_job_drafts', '0017_definer_search_path', '0018_field_revision', '0019_price_approvals', '0020_drying_outcomes'];
 const SHIPPED_TABLES = [
   'access_projection_outbox',
   'actors',
@@ -29,10 +29,13 @@ const SHIPPED_TABLES = [
   'company_ai_settings',
   'company_feature_flags',
   'document_links',
+  'drying_readings',
+  'estimate_history',
   'evidence_objects',
   'invitations',
   'job_assignments',
   'job_claims',
+  'job_closes',
   'job_coordination',
   'job_customers',
   'job_drafts',
@@ -53,8 +56,8 @@ const SHIPPED_TABLES = [
   'signing_links',
   'voice_notes',
 ];
-// The tables as of 0015, for the test of that file, which later files (0016, 0019) add a table after.
-const TABLES_TO_0015 = SHIPPED_TABLES.filter((table) => table !== 'job_drafts' && table !== 'job_price_approvals');
+// The tables as of 0015, for the test of that file, which later files (0016, 0019, 0020) add tables after.
+const TABLES_TO_0015 = SHIPPED_TABLES.filter((table) => !['job_drafts', 'job_price_approvals', 'drying_readings', 'job_closes', 'estimate_history'].includes(table));
 // The tables as of 0014, for the test of that file, which a later file (0015) adds tables after.
 const TABLES_TO_0014 = TABLES_TO_0015.filter((table) => !['agreement_corrections', 'job_assignments', 'job_coordination'].includes(table));
 // The tables as of 0013, for the test of that file, which a later file (0014) adds tables after.

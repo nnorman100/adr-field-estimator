@@ -125,8 +125,7 @@ def main(argv=None):
         print(f'Stopped: {str(detail).strip()}', file=sys.stderr)
         return 2
     if missing:
-        hint = '' if args.apply else ' Run again with --apply to enable them.'
-        print(f'{missing} policy(ies) not in place.{hint}')
+        print(f'{missing} policy(ies) not in place.')
         return 1
     print('All TTL policies are in place.')
     return 0

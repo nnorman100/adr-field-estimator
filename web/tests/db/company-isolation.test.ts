@@ -27,13 +27,22 @@ vi.mock('@/lib/auth/services', () => ({
 }));
 vi.mock('@/lib/team/services', () => ({ teamServices: () => live.harness!.team }));
 vi.mock('@/lib/prices/services', () => ({ pricesServices: () => live.harness!.prices }));
-vi.mock('@/lib/jobs/services', () => ({ jobsServices: () => live.harness!.jobs }));
+vi.mock('@/lib/jobs/services', () => ({
+  jobsServices: () => live.harness!.jobs,
+  runQueuedDraftSyncRepair: async () => ({ synced: 0, failed: 0 }),
+}));
 vi.mock('@/lib/photos/services', () => ({ photosServices: () => live.harness!.photos }));
 vi.mock('@/lib/submissions/services', () => ({
   submissionsServices: () => live.harness!.submissions,
   runQueuedSubmissionRepair: async () => ({ aborted: 0, marked: 0, failed: 0 }),
 }));
 vi.mock('@/lib/platform/services', () => ({ platformServices: () => live.harness!.platform }));
+// The readiness check (S5b-11) reads the field drafts through the shared field stand-in.
+vi.mock('@/lib/readiness/services', async () => {
+  const { readinessService } = await import('@/lib/readiness/service');
+  const { standIn } = await import('./readiness-fake');
+  return { readinessServices: () => readinessService(live.harness!.handle.db, () => standIn(live.harness!.field)) };
+});
 vi.mock('@/lib/estimates/services', async () => {
   const { estimatesService } = await import('@/lib/estimates/service');
   return { estimatesServices: () => estimatesService(live.harness!.handle.db) };
@@ -128,6 +137,8 @@ async function seedSides(): Promise<void> {
     await h.admin`INSERT INTO audit_events (company_id, actor_id, action, target) VALUES (${company}, ${by}, 'seeded_event', ${company})`;
     // Priced extras too (S5b-8), so the proposal and approval routes are reached and refused by their access rule, not the switch.
     await h.admin`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${company}, 'price_books', true), (${company}, 'priced_extras', true)`;
+    // Readiness on, so its route is refused by job access and not only by its switch.
+    await h.admin`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${company}, 'readiness', true)`;
     await h.admin`INSERT INTO access_projection_outbox (company_id, actor_id) VALUES (${company}, ${by})`;
   }
   // Each company has a working copy and a published version, named so a leak of either shows.

@@ -77,7 +77,9 @@ Every screen below is at `/app` unless noted. "Data" is what the screen captures
 | QR tags | any signed-in user with an editable draft | C: scan or enter a code, print a sheet | |
 | Help, remove-room, archive and reset-password dialogs | per role | | help lines for a switched-off feature are hidden |
 
-Check Scope's dated, price-free item list comes from `GET /api/prices/item-list`; see [Prices API](access/prices.md).
+Check Scope's dated, price-free reference comes from `GET /api/prices/item-list`. Phones that
+keep jobs can reopen it offline, and Check Scope refreshes it when connected. Before the first
+publication it shows "Prices not set". See [Check Scope](spec/screens/check-scope.md).
 
 ### 2.4 Platform administration (superadmin)
 

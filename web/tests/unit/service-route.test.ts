@@ -121,14 +121,17 @@ describe('POST /api/internal/access-projection', () => {
     }
   });
 
-  it('runs one outbox pass and one Submit repair pass for the scheduler and answers their counts', async () => {
+  it('runs one outbox pass, one Submit repair pass and one draft sync repair pass for the scheduler and answers their counts', async () => {
     vi.resetModules();
     const summary = { granted: 2, removed: 1, busy: 0, nothing_due: 0, failed: 0 };
     const repaired = { aborted: 1, marked: 3, failed: 0 };
+    const resynced = { synced: 4, failed: 1 };
     const run = vi.fn(async () => summary);
     const repair = vi.fn(async () => repaired);
+    const resync = vi.fn(async () => resynced);
     vi.doMock('@/lib/projection/services', () => ({ runQueuedProjection: run }));
     vi.doMock('@/lib/submissions/services', () => ({ runQueuedSubmissionRepair: repair }));
+    vi.doMock('@/lib/jobs/services', () => ({ runQueuedDraftSyncRepair: resync }));
     vi.doMock('@/lib/auth/service-caller', () => ({
       serviceCallerServices: () => ({
         caller: { email: SCHEDULER, audienceFor: (job: string) => `dryscope-test-${job}` },
@@ -139,13 +142,15 @@ describe('POST /api/internal/access-projection', () => {
     const res = await POST(call(), context);
     expect(res.status).toBe(200);
     expect(res.headers.get('cache-control')).toBe('no-store');
-    expect(await res.json()).toEqual({ ...summary, submissions: repaired });
+    expect(await res.json()).toEqual({ ...summary, submissions: repaired, drafts: resynced });
     expect(run).toHaveBeenCalledTimes(1);
     expect(repair).toHaveBeenCalledTimes(1);
+    expect(resync).toHaveBeenCalledTimes(1);
 
     expect((await POST(call({}), context)).status).toBe(401);
     expect(run).toHaveBeenCalledTimes(1);
     expect(repair).toHaveBeenCalledTimes(1);
+    expect(resync).toHaveBeenCalledTimes(1);
   });
 
   // Security audit F5: a pass the full pool could not serve within its queue limit.

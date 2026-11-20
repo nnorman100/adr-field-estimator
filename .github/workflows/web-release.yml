@@ -436,8 +436,7 @@ jobs:
       - if: needs.deploy.result == 'success'
         run: npm ci
         working-directory: web
-      # The self-hosted runner's container has no gh, so install a pinned, checksum-checked release
-      # (as deploy.yml does).
+      # If gh is absent, install the pinned release and verify its checksum.
       - name: Install GitHub CLI
         if: needs.deploy.result == 'success'
         env:
