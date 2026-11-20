@@ -113,7 +113,6 @@ def test_scope_skips_rebuild_and_doc_only_changes(tmp_path, event_name, changed_
         'scripts/file_length_baselines.json',
         'ops/vault-backup/vault_backup.py',
         'docs/ai-inventory.md',
-        'docs/adr-pricing-source.md',
         'docs/pricing-source.md',
         'pyproject.toml',
         'eslint.config.js',

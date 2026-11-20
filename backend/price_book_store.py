@@ -490,8 +490,8 @@ class PriceBookStore:
         """The book used for a new pin or a new additional-work approval.
 
         A company with no published book has no prices: every row is blank and pricing is
-        blocked. ADR alone starts from its own book in adr_price_book.py until its migrated
-        version exists.
+        blocked. ADR alone started from its own book until its migrated version existed; the
+        file that held that book was removed from the repository.
         """
         company_id = company['company_id']
         head = self._head(company_id, tx)

@@ -1,4 +1,4 @@
-/* Routing guards for verify_live_browser.js: every /api request and Live socket of a run must reach the selected backend. */
+/* Routing guards for the retired live browser verifier: every /api request and Live socket of a run must reach the selected backend. */
 const PRODUCTION_LIVE =
   'wss://alert-disaster-field-estimator-545776254070.us-west2.run.app/api/live';
 const FETCH_TIMEOUT_MS = 115000;
