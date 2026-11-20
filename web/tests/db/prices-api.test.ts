@@ -25,6 +25,8 @@ const { POST: restore } = await import('@/app/api/prices/versions/[versionId]/re
 const { GET: exportList } = await import('@/app/api/prices/export/route');
 const { GET: supportPrices } = await import('@/app/api/platform/companies/[companyId]/prices/route');
 const { contentHash, parseTable } = await import('@/engine/table');
+const { resolveIdentity } = await import('@/lib/auth/identity');
+const { readPublishedItemList } = await import('@/lib/prices/http');
 const { starterTable } = await import('@/lib/prices/starter');
 const { everything, operatorClaims, owner, params, request, resetTeamDatabase, startTeamServer } = await import('./team-harness');
 type FakeClaims = import('./team-harness').FakeClaims;
@@ -170,6 +172,20 @@ describe('the published item list for Check Scope', () => {
     expect(await everything(h.admin)).toBe(before);
   });
 
+  it('refuses a verified company member without prices_read', async () => {
+    const readRequest = request(estimator, '/api/prices/item-list');
+    const { verifier, directory } = h.identity;
+    const identity = await resolveIdentity(readRequest, verifier, directory);
+    expect(identity.capabilities).toContain('prices_read');
+
+    // All current member roles have this capability when price books are enabled.
+    // Remove it after resolving the member to exercise the handler's access check.
+    const capabilities = identity.capabilities.filter((key) => key !== 'prices_read');
+    const response = await readPublishedItemList(readRequest, { ...identity, capabilities });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: 'not_allowed' });
+  });
+
   it('exposes only enabled items, units, room types and suggestions from the latest publication', async () => {
     const table = smallTable();
     table.items.push({ ...table.items[0], item_id: 'disabled', name: 'Disabled item', enabled: false });
@@ -186,7 +202,8 @@ describe('the published item list for Check Scope', () => {
     const before = await everything(h.admin);
 
     for (const claims of [owner(), estimator, office]) {
-      const { status, body } = await call(readItemList, claims);
+      const { status, body, response } = await call(readItemList, claims);
+      expect(response.headers.get('cache-control')).toBe('no-store');
       expect({ status, body }).toEqual({
         status: 200,
         body: {
