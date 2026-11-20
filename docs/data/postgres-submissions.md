@@ -78,9 +78,14 @@ under the same names; no stored row changes). No route uses the table yet.
   draft and submission. Only the end as `repriced` skips the binding checks, and it is refused unless the
   row's pin is no longer the job's newest and the newest was added by a reprice.
 - What a row says never changes. It is approved once and ended once, in separate changes, and the database
-  sets both times. An edit ends the row (`edited`) and proposes a new one with no approval, so an approved
+  sets all three times (`proposed_at`, `approved_at`, `ended_at`) from `clock_timestamp()` after the job row
+  lock is held, so a change that waited for a reprice or another change is stamped after it (a reprice's end
+  of a row proposed while it was under way is never dated before the proposal), and a caller's `proposed_at`
+  is never kept. An edit ends the row (`edited`) and proposes a new one with no approval, so an approved
   hourly rate stays as saved. Approving a named adjustment while another is approved first ends that one
   (`replaced`); only an approved named adjustment is replaced.
+- A partial index on `(company_id, job_id)` for open rows serves the reprice's end of a job's rows, which
+  reads only that job's rows while it holds the job lock.
 - One open custom multiplier per line (item and room, or job-wide item) per submission and job revision; at
   most one approved named adjustment in force per submission and job revision.
 - Personal data: `description` (as typed, printed on the proposal) and `approved_by_name` (the approver's name). The other columns are ids, kinds,

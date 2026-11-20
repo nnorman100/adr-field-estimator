@@ -27,7 +27,7 @@
 --    that pin, which makes no second one. What a row says never changes: an edit ends the row
 --    (`edited`) and proposes a new one, which has no approval; a newly approved named adjustment
 --    ends the approved one it replaces (`replaced`). A row is approved once and ended once, and the
---    database takes both times from its clock. Who may propose and approve is the route's check
+--    database takes all three times from its clock. Who may propose and approve is the route's check
 --    (`additions_approve`, today the owner).
 --    A reprice moves the job's pin onto a newer version (S5b-6), and the estimate service then refuses
 --    to price any record of the draft that was current at the move (confirmationPredatesReprice: the
@@ -100,7 +100,7 @@ CREATE TABLE job_price_approvals (
   -- SHA-256 of the propose request: the same id and body is the same proposal.
   request_digest text NOT NULL CHECK (request_digest ~ '^[0-9a-f]{64}$'),
   proposed_by_actor_id uuid NOT NULL,
-  proposed_at timestamptz NOT NULL DEFAULT now(),
+  proposed_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   approved_by_actor_id uuid,
   approved_at timestamptz,
   -- An hourly addition: the approver's name as entered at approval, kept exactly as entered.
@@ -168,9 +168,15 @@ CREATE UNIQUE INDEX job_price_approvals_one_named_adjustment
 -- A submission's open rows, as the estimate reads them (those at the job's revision and pin are in force).
 CREATE INDEX job_price_approvals_submission ON job_price_approvals (company_id, submission_id, job_revision) WHERE ended_at IS NULL;
 
+-- A job's open rows, as a reprice ends them while it holds the job lock: it reads this job's rows only,
+-- however many rows the company's other jobs keep open.
+CREATE INDEX job_price_approvals_job_open ON job_price_approvals (company_id, job_id) WHERE ended_at IS NULL;
+
 -- What a row may do. It is made proposed (no approval, not ended), bound to the job as it is now. It
 -- then may be approved once and ended once, each in its own change, each only while the binding
--- still holds and before an estimate is made; the database takes each time from its clock. Nothing
+-- still holds and before an estimate is made; the database takes each time from its clock
+-- (clock_timestamp(), after the job row lock is held, so a change that waited for a reprice or another
+-- change is stamped after what it waited for, never with its transaction's earlier start). Nothing
 -- else of a row ever changes, and an ended row changes no more. Runs as the caller, under the
 -- caller's row-level security. A column added later is frozen until this list names it
 -- (tests/db/price-approvals-table.test.ts checks the list).
@@ -189,6 +195,8 @@ DECLARE
   current_pin_id uuid;
   current_pin_sequence integer;
   current_pin_reason text;
+  stamp_approval boolean := false;
+  stamp_end boolean := false;
 BEGIN
   IF TG_OP = 'INSERT' THEN
     IF NEW.approved_by_actor_id IS NOT NULL OR NEW.approved_at IS NOT NULL OR NEW.approved_by_name IS NOT NULL
@@ -219,14 +227,14 @@ BEGIN
       IF NEW.ended_by_actor_id IS NOT NULL OR NEW.ended_reason IS NOT NULL THEN
         RAISE EXCEPTION 'a price approval is approved and ended in separate changes' USING ERRCODE = '23514';
       END IF;
-      NEW.approved_at := now();
+      stamp_approval := true;
     ELSIF NEW.approved_at IS DISTINCT FROM OLD.approved_at THEN
       RAISE EXCEPTION 'a price approval takes its approval time from the database' USING ERRCODE = '23514';
     ELSIF NEW.ended_by_actor_id IS NOT NULL OR NEW.ended_reason IS NOT NULL THEN
       IF NEW.ended_by_actor_id IS NULL OR NEW.ended_reason IS NULL THEN
         RAISE EXCEPTION 'a price approval ends by someone, for a reason' USING ERRCODE = '23514';
       END IF;
-      NEW.ended_at := now();
+      stamp_end := true;
     ELSIF OLD.approved_by_actor_id IS NOT NULL THEN
       RAISE EXCEPTION 'a price approval is approved once' USING ERRCODE = '23514';
     ELSE
@@ -243,6 +251,7 @@ BEGIN
     IF current_pin_reason IS DISTINCT FROM 'owner_reprice' OR NEW.pin_id = current_pin_id THEN
       RAISE EXCEPTION 'a price approval ends as repriced only when its job was repriced onto a newer pin' USING ERRCODE = '23514';
     END IF;
+    NEW.ended_at := clock_timestamp();
     RETURN NEW;
   END IF;
 
@@ -252,6 +261,13 @@ BEGIN
   FROM public.jobs j WHERE j.company_id = NEW.company_id AND j.id = NEW.job_id FOR UPDATE;
   IF NOT FOUND THEN
     RETURN NEW;
+  END IF;
+  IF TG_OP = 'INSERT' THEN
+    NEW.proposed_at := clock_timestamp();
+  ELSIF stamp_approval THEN
+    NEW.approved_at := clock_timestamp();
+  ELSIF stamp_end THEN
+    NEW.ended_at := clock_timestamp();
   END IF;
   IF job_status <> 'submitted' THEN
     RAISE EXCEPTION 'a price approval is made on a submitted job' USING ERRCODE = '23514';
@@ -355,6 +371,6 @@ CREATE POLICY job_price_approvals_update ON job_price_approvals
   WITH CHECK (company_id = app_company_id() AND NOT (SELECT app_operator_active()));
 
 -- Table rights. No DELETE and no TRUNCATE. Only who approved (and the name they entered) and who
--- ended it, and why, may be set (the trigger sets both times); never what the row says.
+-- ended it, and why, may be set (the trigger sets the times); never what the row says.
 GRANT SELECT, INSERT ON job_price_approvals TO dryscope_runtime;
 GRANT UPDATE (approved_by_actor_id, approved_by_name, ended_by_actor_id, ended_reason) ON job_price_approvals TO dryscope_runtime;

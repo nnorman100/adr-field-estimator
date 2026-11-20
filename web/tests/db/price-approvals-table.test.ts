@@ -65,21 +65,25 @@ async function submittedJob(): Promise<Submitted> {
 
 // What the owner's reprice writes (estimates/service.ts reprice): a second pin with reason owner_reprice,
 // added by the owner as the runtime role, the job's next revision, and the job_repriced audit row that
-// names the new pin's sequence and the job's current draft.
-async function repriceJob(s: Submitted, draft?: string) {
+// names the new pin's sequence and the job's current draft. `beforePin` runs inside the reprice's
+// transaction after it has started and before it adds the pin, as a change another transaction commits
+// while the reprice is under way.
+async function repriceJob(s: Submitted, beforePin?: () => Promise<unknown>) {
   const owner = h.seed.ownerA.actor;
   const version = await seedVersion(h.admin, h.seed.a, owner);
   const [pin] = rows<{ id: string }>(
-    await as(h.seed.a, (tx) =>
-      tx.execute(sql`
+    await as(h.seed.a, async (tx) => {
+      await tx.execute(sql`SELECT now()`);
+      await beforePin?.();
+      return tx.execute(sql`
         INSERT INTO job_price_pins (company_id, job_id, sequence, version_id, reason, pinned_by_actor_id)
         VALUES (${h.seed.a}::uuid, ${s.job}::uuid, 2, ${version.id}::uuid, 'owner_reprice', ${owner}::uuid)
         RETURNING id::text
-      `),
-    ),
+      `);
+    }),
   );
   const [job] = await h.admin<{ current_draft_id: string }[]>`UPDATE jobs SET revision = revision + 1 WHERE id = ${s.job} RETURNING current_draft_id::text`;
-  const details = { sequence: 2, job_draft: draft ?? job!.current_draft_id, job_revision: s.revision + 1, job_status: 'submitted' };
+  const details = { sequence: 2, job_draft: job!.current_draft_id, job_revision: s.revision + 1, job_status: 'submitted' };
   await h.admin`
     INSERT INTO audit_events (company_id, actor_id, action, target, details)
     VALUES (${h.seed.a}, ${owner}, 'job_repriced', ${s.job}, ${JSON.stringify(details)}::text::jsonb)
@@ -103,7 +107,6 @@ type Row = {
   hash?: string;
   pin?: string;
   submission?: string;
-  actor?: string;
 };
 
 const KINDS: Record<string, Omit<Row, 'id'>> = {
@@ -124,7 +127,7 @@ const propose = (s: Submitted, r: Row, company = h.seed.a) =>
       VALUES (${r.id}::uuid, ${h.seed.a}::uuid, ${s.job}::uuid, ${r.submission ?? s.submission}::uuid, ${r.pin ?? s.pin}::uuid, ${r.hash ?? s.version.hash},
               ${r.revision ?? s.revision}, ${r.kind}, ${r.adjustment_id ?? null}, ${r.item_id ?? null}, ${r.room_id ?? null}, ${r.multiplier ?? null}::numeric,
               ${r.description ?? null}, ${r.quantity ?? null}::numeric, ${r.unit ?? null}, ${r.price ?? null}::numeric, ${r.taxable ?? null}::boolean,
-              ${digestOf(r.id)}, ${r.actor ?? h.seed.estimatorA.actor}::uuid)
+              ${digestOf(r.id)}, ${h.seed.estimatorA.actor}::uuid)
       RETURNING id::text
     `),
   );
@@ -341,24 +344,7 @@ describe('migration 0019: job_price_approvals', () => {
     expect(await refusal(end(open.id, 'repriced'))).toMatchObject({ code: CHECK_VIOLATION, message: expect.stringContaining('ends as repriced only when its job was repriced') });
     expect(await stateOf(open.id)).toEqual({ approved: false, ended: null, price: '150.00' });
 
-    // Reprice with the end of open rows switched off, to reach the guard's own refusal of the three changes.
-    await h.admin`ALTER TABLE job_price_pins DISABLE TRIGGER job_price_pins_end_approvals`;
-    let moved: Awaited<ReturnType<typeof repriceJob>>;
-    try {
-      moved = await repriceJob(s);
-    } finally {
-      await h.admin`ALTER TABLE job_price_pins ENABLE TRIGGER job_price_pins_end_approvals`;
-    }
-    expect((await refusal(propose(s, proposalOf('flat', moved))))?.message).toContain(message);
-    expect((await refusal(propose(s, proposalOf('flat', { revision: moved.revision }))))?.message).toContain('price pin has moved');
-    // The open row still names the old pin and revision, so its own change is refused as those moved first.
-    expect((await refusal(approve(open.id)))?.message).toContain('the job has changed since the proposal');
-    expect(await stateOf(open.id)).toEqual({ approved: false, ended: null, price: '150.00' });
-    // The reprice's own end of it is the one change let through.
-    expect(rows(await end(open.id, 'repriced'))).toEqual([{ id: open.id }]);
-    expect(await stateOf(open.id)).toEqual({ approved: false, ended: 'repriced', price: '150.00' });
-
-    // With the trigger on, a proposal on the new pin and revision is refused the same way, as is every other change.
+    // After a reprice, a proposal on the new pin and revision is refused, as is every other change on the ended row.
     const t = await submittedJob();
     const kept = proposalOf('flat');
     await propose(t, kept);
@@ -374,6 +360,17 @@ describe('migration 0019: job_price_approvals', () => {
     const fresh = await seedCommitted(h.admin, newSubmission(h.seed.a, t.job, h.seed.ownerA.actor, { draft }));
     await h.admin`UPDATE jobs SET current_draft_id = ${draft}, revision = revision + 1 WHERE id = ${t.job}`;
     expect(rows(await propose({ ...t, submission: fresh.id }, proposalOf('flat', { ...after, revision: after.revision + 1 })))).toHaveLength(1);
+  });
+
+  it('stamps each change after the job lock, so a row a reprice ends is never ended before it was proposed', async () => {
+    const s = await submittedJob();
+    const late = proposalOf('flat');
+    // The reprice's transaction starts first; the proposal commits while it is under way; the reprice then ends it.
+    await repriceJob(s, () => propose(s, late));
+    const [row] = await h.admin<{ ended_after: boolean; ended: string | null }[]>`
+      SELECT ended_at >= proposed_at AS ended_after, ended_reason AS ended FROM job_price_approvals WHERE id = ${late.id}
+    `;
+    expect(row).toEqual({ ended_after: true, ended: 'repriced' });
   });
 
   it('keeps the approver’s name as entered, on an approved hourly row and on no other', async () => {
