@@ -27,7 +27,10 @@ export type DraftContent =
   // Back to editing: from the job's latest committed record, with where it came from.
   | { kind: 'next'; manifest: FieldManifest; previous: Provenance }
   // A copy: from its source's signed record; COPY_CLEARED_KEYS are cleared from it here.
-  | { kind: 'copy'; manifest: Pick<FieldManifest, 'draft' | 'rooms'> };
+  | { kind: 'copy'; manifest: Pick<FieldManifest, 'draft' | 'rooms'> }
+  // A submitted draft the field database lost: its own committed record, with where it came from when
+  // Back to editing made it.
+  | { kind: 'record'; manifest: FieldManifest; previous: Provenance | null };
 
 /** One Postgres snapshot of a job, read in one statement with its field revision. */
 export type JobDraftSnapshot = {
@@ -257,6 +260,13 @@ function contentOf(content: DraftContent): { field: unknown; rooms: FieldManifes
       return { field: {}, rooms: [], photos: [] };
     case 'next':
       return { field: content.manifest.draft ?? {}, rooms: content.manifest.rooms, photos: content.manifest.photos, previous: content.previous };
+    case 'record':
+      return {
+        field: content.manifest.draft ?? {},
+        rooms: content.manifest.rooms,
+        photos: content.manifest.photos,
+        ...(content.previous ? { previous: content.previous } : {}),
+      };
     case 'copy': {
       // As Copy makes it (archive.ts): a fresh map less COPY_CLEARED_KEYS, the rooms, no photos.
       const copied = copiedManifest(content.manifest);

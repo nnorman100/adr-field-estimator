@@ -117,7 +117,7 @@ export function archiveService(db: Database, store: ArchiveStore, sync: DraftSyn
   // archive or restore never lands after a newer change, whatever it is (the job's marker refuses it),
   // and no Postgres transaction waits on the field database.
   async function settle(companyId: string, jobId: string): Promise<void> {
-    await syncJobDrafts(db, sync, companyId, jobId, { conflictOk: true });
+    await syncJobDrafts(db, sync, store, companyId, jobId);
   }
 
   // The answer of an archive or restore, once the field draft is settled after it.

@@ -28,14 +28,20 @@ export type SyncResult =
   | ({ outcome: 'synced'; created: string[]; changed: string[] } & SyncSkips)
   // A retry at the version the marker holds: nothing is written, and what that sync skipped is reported again.
   | ({ outcome: 'same' } & SyncSkips)
-  | { outcome: 'stale' };
+  | { outcome: 'stale' }
+  // Postgres moved on after the snapshot was read (stillCurrent said so): nothing is written, and the
+  // caller syncs again at the newer version.
+  | { outcome: 'moved' };
+
+/** Asked inside the transaction, after its reads and before its writes: whether the snapshot is still Postgres's latest. */
+export type SyncOptions = { stillCurrent?: () => Promise<boolean> };
 
 export type DraftSync = {
   // Writes the job's desired drafts at version (gen, desired.v) unless its marker holds that version
   // or a newer one. `gen` is raised by an operator after a database restore lowers field revisions.
   // Throws, before any read or write, when gen or desired.v is not a non-negative integer, and before
   // any change when the marker is there but not in its shape (MalformedMarkerError).
-  sync(companyId: string, desired: DesiredJob, gen: number): Promise<SyncResult>;
+  sync(companyId: string, desired: DesiredJob, gen: number, options?: SyncOptions): Promise<SyncResult>;
 };
 
 /** The result a plan reports once applied. */
@@ -93,7 +99,7 @@ export function draftIdsToRead(marker: SyncMarker | null, job: DesiredJob): stri
 export function firestoreDraftSync(db: Firestore): DraftSync {
   const company = (companyId: string) => db.collection('companies').doc(companyId);
   return {
-    async sync(companyId, job, gen) {
+    async sync(companyId, job, gen, options = {}) {
       assertVersion(gen, job.v);
       const markerRef = company(companyId).collection('draftLifecycle').doc(job.jobId);
       const draftRef = (draftId: string) => company(companyId).collection('drafts').doc(draftId);
@@ -116,6 +122,9 @@ export function firestoreDraftSync(db: Firestore): DraftSync {
             }
           }
           const plan = planSync(marker, current, orphans, job, gen);
+          // One read of Postgres's version, recomputing nothing: a snapshot older than Postgres writes
+          // nothing, so no draft is ever handed to an owner Postgres has since replaced.
+          if (options.stillCurrent && !(await options.stillCurrent())) return { outcome: 'moved' };
           for (const made of plan.creates) {
             const ref = draftRef(made.draftId);
             const data = { ...made.data, ...(made.data.fence ? { fence: stored(made.data.fence) } : {}) };

@@ -77,7 +77,8 @@ describe('moving the field work (owner decision J5)', () => {
   it('keeps the move when the draft could not be updated, and sets the draft when the same change is sent again', async () => {
     const { id, draftId } = await claimedJob();
     const body = { revision: 1, changeId: randomUUID(), toActorId: estimatorA2 };
-    h.field.failNext.sync = true;
+    // Unreachable for the request and its one try again.
+    h.field.failNext.sync = 2;
     expect(await transfer(OWNER_A, id, body)).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
     expect((await read(OWNER_A, id)).body.job.fieldOwnerActorId).toBe(estimatorA2);
     expect(draftOf(draftId)?.fieldOwnerUid).toBe('estimator-a');
@@ -183,7 +184,8 @@ describe('moving the field work (owner decision J5)', () => {
     expect((await nextDraft(ESTIMATOR_A, id, { draftId: later, fromDraftId: draftId })).status).toBe(201);
     const { revision } = (await coordination(OWNER_A, id)).body;
     // The field database does not answer: no draft is set (they are written in one transaction).
-    h.field.failNext.sync = true;
+    // Unreachable for the request and its one try again.
+    h.field.failNext.sync = 2;
     expect(await transfer(OWNER_A, id, { revision, changeId: randomUUID(), toActorId: estimatorA2 })).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
     expect(draftOf(later)?.fieldOwnerUid).toBe('estimator-a');
     expect((await claim(ESTIMATOR_A2, id)).status).toBe(200);
@@ -284,12 +286,33 @@ describe('moving the field work (owner decision J5)', () => {
   // No transaction or lock waits on the field database: a request's draft sync is paused after it read
   // Postgres, so a later change's sync, at a newer version, lands first and the paused one is refused.
   async function pausedRemake<T>(start: () => Promise<T>) {
-    const hold = latch();
-    const before = h.field.calls.filter((call) => call === 'sync').length;
-    h.field.gate.sync = () => hold.wait;
+    const step = holdStep(['createFrom', 'archiveDraft', 'restoreDraft']);
     const running = start();
-    await until(() => h.field.calls.filter((call) => call === 'sync').length > before, 'the draft being made');
-    return { running, resume: hold.open };
+    await until(() => step.reached(), 'the draft being made');
+    return { running, resume: step.open };
+  }
+
+  // Holds the next field step of a request at the field database, whichever writer reaches it: the draft
+  // sync, or the previous writers it replaces (the named field-database calls and the owner stamp), so a
+  // sequence is held at the same step on either. The first to arrive is held; the other gates go.
+  function holdStep(methods: (keyof Harness['field']['gate'])[]) {
+    const hold = latch();
+    let arrived = false;
+    const named = h.drafts.setFieldOwner;
+    const all = ['sync', ...methods] as (keyof Harness['field']['gate'])[];
+    const gate = async () => {
+      if (arrived) return;
+      arrived = true;
+      for (const method of all) delete h.field.gate[method];
+      h.drafts.setFieldOwner = named;
+      await hold.wait;
+    };
+    for (const method of all) h.field.gate[method] = gate;
+    h.drafts.setFieldOwner = async (...args) => {
+      await gate();
+      return named(...args);
+    };
+    return { reached: () => arrived, open: hold.open };
   }
 
   // The archive's sync, at a newer version than a Start field work paused after it read Postgres, makes
@@ -303,7 +326,8 @@ describe('moving the field work (owner decision J5)', () => {
     // Made from the job's latest record, archived: every phone write is refused (web/firestore.rules).
     expect(h.field.draft(h.seed.a, later)).toMatchObject({ jobId: id, state: 'archived', field: MANIFEST.draft });
     paused.resume();
-    expect((await paused.running).status).toBe(200);
+    // Its answer is the job as Postgres holds it after its field step: archived.
+    expect(await paused.running).toEqual({ status: 410, body: { error: 'archived' } });
     expect(h.field.draft(h.seed.a, later)).toMatchObject({ jobId: id, state: 'archived', field: MANIFEST.draft });
     expect(await claim(ESTIMATOR_A, id)).toEqual({ status: 410, body: { error: 'archived' } });
   });
@@ -317,9 +341,9 @@ describe('moving the field work (owner decision J5)', () => {
     const { revision } = (await read(OWNER_A, id)).body.job as { revision: number };
     expect((await archive(OWNER_A, id, { revision, changeId: randomUUID() })).status).toBe(200);
     first.resume();
-    expect((await first.running).status).toBe(200);
+    expect(await first.running).toEqual({ status: 410, body: { error: 'archived' } });
     second.resume();
-    expect((await second.running).status).toBe(200);
+    expect(await second.running).toEqual({ status: 410, body: { error: 'archived' } });
     expect(h.field.draft(h.seed.a, later)).toMatchObject({ state: 'archived', jobId: id });
   });
 
@@ -333,9 +357,10 @@ describe('moving the field work (owner decision J5)', () => {
     expect((await archive(OWNER_A, id, { revision, changeId: randomUUID() })).status).toBe(200);
     h.field.loseNext.sync = true;
     first.resume();
-    expect(await first.running).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
+    // Its lost answer is tried once more, and the job is archived: that is its answer.
+    expect(await first.running).toEqual({ status: 410, body: { error: 'archived' } });
     second.resume();
-    expect((await second.running).status).toBe(200);
+    expect(await second.running).toEqual({ status: 410, body: { error: 'archived' } });
     expect(h.field.draft(h.seed.a, later)).toMatchObject({ jobId: id, state: 'archived', field: MANIFEST.draft });
     // Archived drafts keep naming their field owner, who reads them and cannot change them.
     expect(draftOf(later)?.fieldOwnerUid).toBe('estimator-a');
@@ -378,7 +403,8 @@ describe('moving the field work (owner decision J5)', () => {
     const { id, draftId, later, submissionId } = await draftNeverMade();
     const { revision } = (await read(OWNER_A, id)).body.job as { revision: number };
     expect((await archive(OWNER_A, id, { revision, changeId: randomUUID() })).status).toBe(200);
-    h.field.failNext.sync = true;
+    // Unreachable for the request and its one try again.
+    h.field.failNext.sync = 2;
     const once = { revision: revision + 1, changeId: randomUUID() };
     expect(await restore(OWNER_A, id, once)).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
     expect((await nextDraft(ESTIMATOR_A, id, { draftId: later, fromDraftId: draftId })).status).toBe(200);
@@ -421,7 +447,8 @@ describe('moving the field work (owner decision J5)', () => {
     const { revision } = (await read(OWNER_A, id)).body.job as { revision: number };
     expect((await archive(OWNER_A, id, { revision, changeId: randomUUID() })).status).toBe(200);
     expect(h.field.draft(h.seed.a, draftId)).toMatchObject({ state: 'archived' });
-    h.field.failNext.sync = true;
+    // Unreachable for the request and its one try again.
+    h.field.failNext.sync = 2;
     const once = { revision: revision + 1, changeId: randomUUID() };
     expect(await restore(OWNER_A, id, once)).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
     // The first capture claims the field work (201), and its sync writes the restored job's state.
@@ -438,12 +465,16 @@ describe('moving the field work (owner decision J5)', () => {
     const { id, later } = await draftNeverMade();
     const { revision } = (await coordination(OWNER_A, id)).body;
     const paused = await pausedRemake(() => claim(ESTIMATOR_A, id));
-    // The move commits, then its own field step fails before it writes anything.
-    h.field.failNext.sync = true;
+    // The move commits, then its own field step fails before it writes anything (for its one try again
+    // too), under the sync or the previous owner stamp alike.
+    h.field.failNext.sync = 2;
+    h.drafts.failNext = { on: true, afterWrite: false };
     expect(await transfer(OWNER_A, id, { revision, changeId: randomUUID(), toActorId: estimatorA2 })).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
     expect(h.field.draft(h.seed.a, later)).toBeNull();
     paused.resume();
     expect((await paused.running).status).toBe(200);
+    // The held request's sync found Postgres moved on before it wrote: no draft ever named estimator-a.
+    expect(h.field.ownerWrites.filter((write) => write.at === `${h.seed.a}/${later}` && write.fieldOwnerUid === 'estimator-a')).toEqual([]);
     expect(h.field.draft(h.seed.a, later)).toMatchObject({ jobId: id, state: 'editing', fieldOwnerUid: 'estimator-a2' });
     expect(draftOf(later)?.fieldOwnerUid).toBe('estimator-a2');
     expect((await claim(ESTIMATOR_A2, id)).status).toBe(200);
@@ -463,22 +494,60 @@ describe('moving the field work (owner decision J5)', () => {
     return { id, earlier: draftId, later };
   }
 
+  // The restore's field step is held while the job's field owner starts field work; the held step lands
+  // last. Every draft of the job ends as Postgres says, the earlier one no longer archived.
   it('brings every draft of the job to its state on a restore, not only the current one', async () => {
     const { id, earlier, later } = await earlierLeftArchived();
     const { revision } = (await read(OWNER_A, id)).body.job as { revision: number };
     expect((await archive(OWNER_A, id, { revision, changeId: randomUUID() })).status).toBe(200);
-    expect((await restore(OWNER_A, id, { revision: revision + 1, changeId: randomUUID() })).status).toBe(200);
+    const held = await pausedRemake(() => restore(OWNER_A, id, { revision: revision + 1, changeId: randomUUID() }));
+    expect((await claim(ESTIMATOR_A, id)).status).toBe(200);
+    held.resume();
+    expect((await held.running).status).toBe(200);
     expect(h.field.draft(h.seed.a, earlier)).toMatchObject({ state: 'submitted', fieldOwnerUid: 'estimator-a' });
     expect(h.field.draft(h.seed.a, later)).toMatchObject({ state: 'editing', fieldOwnerUid: 'estimator-a' });
   });
 
+  // The move's field step is held while the new owner starts field work; the held step lands last. The
+  // estimator who lost the field work is named on no draft of the job, archived ones included.
   it('names the new owner on every earlier draft when the field work moves, archived ones included', async () => {
     const { id, earlier, later } = await earlierLeftArchived();
     const { revision } = (await coordination(OWNER_A, id)).body;
-    expect((await transfer(OWNER_A, id, { revision, changeId: randomUUID(), toActorId: estimatorA2 })).status).toBe(200);
+    const held = await pausedRemake(() => transfer(OWNER_A, id, { revision, changeId: randomUUID(), toActorId: estimatorA2 }));
+    expect((await claim(ESTIMATOR_A2, id)).status).toBe(200);
+    held.resume();
+    expect((await held.running).status).toBe(200);
     // The estimator who lost the field work is named on no draft of the job, so reads none (web/firestore.rules).
     expect(h.field.draft(h.seed.a, earlier)).toMatchObject({ state: 'submitted', fieldOwnerUid: 'estimator-a2' });
     expect(h.field.draft(h.seed.a, later)).toMatchObject({ state: 'editing', fieldOwnerUid: 'estimator-a2' });
+  });
+
+  it('makes the current draft again when the field database lost it after a sync, on the same request again', async () => {
+    const { id, draftId } = await claimedJob();
+    h.field.remove(h.seed.a, draftId);
+    // Nothing changed in Postgres: the job is synced at a new field revision, so its draft is made again.
+    expect((await claim(ESTIMATOR_A, id)).status).toBe(200);
+    expect(h.field.draft(h.seed.a, draftId)).toMatchObject({ jobId: id, state: 'editing', fieldOwnerUid: 'estimator-a' });
+  });
+
+  it('makes a submitted current draft the field database lost from its own record, never empty', async () => {
+    const { id, draftId } = await claimedJob();
+    h.field.put(h.seed.a, draftId, MANIFEST);
+    expect((await submitDraft(ESTIMATOR_A, id, { id: randomUUID(), draftId, digest: await manifestDigest(MANIFEST) })).status).toBe(201);
+    h.field.remove(h.seed.a, draftId);
+    expect((await claim(ESTIMATOR_A, id)).status).toBe(200);
+    expect(h.field.draft(h.seed.a, draftId)).toMatchObject({ jobId: id, state: 'submitted', field: MANIFEST.draft, rooms: { kitchen: { name: 'Kitchen' } } });
+  });
+
+  it('answers an archive whose current draft is another job’s with 409, and leaves its version unsynced', async () => {
+    const { id, draftId } = await claimedJob();
+    // The field database holds another job's draft under the id (as security audit F1 guards against).
+    h.drafts.stamp(`${h.seed.a}/${draftId}`, randomUUID());
+    const { revision } = (await read(OWNER_A, id)).body.job as { revision: number };
+    expect(await archive(OWNER_A, id, { revision, changeId: randomUUID() })).toEqual({ status: 409, body: { error: 'conflict' } });
+    expect((await read(OWNER_A, id)).status).toBe(410);
+    const [row] = await h.admin<{ behind: boolean }[]>`SELECT field_synced_revision < field_revision AS behind FROM jobs WHERE id = ${id}`;
+    expect(row!.behind).toBe(true);
   });
 
   it('refuses the company owner field work they do not own, until they move it to themself', async () => {
@@ -505,7 +574,8 @@ describe('moving the field work (owner decision J5)', () => {
     h.field.put(h.seed.a, draftId, MANIFEST);
     expect((await submitDraft(ESTIMATOR_A, id, { id: randomUUID(), draftId, digest: await manifestDigest(MANIFEST) })).status).toBe(201);
     // The move's draft step does not get through, then the job is signed before it is sent again.
-    h.field.failNext.sync = true;
+    // Unreachable for the request and its one try again.
+    h.field.failNext.sync = 2;
     expect(await transfer(OWNER_A, id, { revision: 1, changeId: randomUUID(), toActorId: estimatorA2 })).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
     await h.admin`UPDATE jobs SET status = 'signed', revision = revision + 1 WHERE id = ${id}`;
     expect(draftOf(draftId)?.fieldOwnerUid).toBe('estimator-a');
@@ -520,7 +590,8 @@ describe('moving the field work (owner decision J5)', () => {
 
   it('sends the field owner to the drafts again after they lost their estimator role, which no move to them would allow', async () => {
     const { id, draftId } = await claimedJob();
-    h.field.failNext.sync = true;
+    // Unreachable for the request and its one try again.
+    h.field.failNext.sync = 2;
     expect(await transfer(OWNER_A, id, { revision: 1, changeId: randomUUID(), toActorId: estimatorA2 })).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
     await h.admin`UPDATE jobs SET status = 'signed', revision = revision + 1 WHERE id = ${id}`;
     await h.admin`UPDATE memberships SET status = 'disabled' WHERE company_id = ${h.seed.a} AND actor_id = ${estimatorA2}`;

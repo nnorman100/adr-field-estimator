@@ -390,5 +390,22 @@ export function draftSyncContract(name: string, probe: () => SyncProbe): void {
       await expect(store.sync(company, desired(job), 0)).rejects.toBeInstanceOf(MalformedMarkerError);
       expect(await peek(company, job.currentDraftId)).toBeNull();
     });
+
+    it('writes nothing when Postgres moved on after the snapshot was read, and says so', async () => {
+      const { store, peek, marker } = probe();
+      const company = randomUUID();
+      const job = snapshotOf();
+      let asked = 0;
+      const moved = async () => {
+        asked += 1;
+        return false;
+      };
+      expect(await store.sync(company, desired(job), 0, { stillCurrent: moved })).toEqual({ outcome: 'moved' });
+      expect(asked).toBe(1);
+      expect(await peek(company, job.currentDraftId)).toBeNull();
+      expect(await marker(company, job.jobId)).toBeNull();
+      // Still current: written as usual.
+      expect(await store.sync(company, desired(job), 0, { stillCurrent: async () => true })).toMatchObject({ outcome: 'synced', created: [job.currentDraftId] });
+    });
   });
 }
