@@ -255,11 +255,10 @@ export function setAdjustment(
   adjustmentId: string,
   change: Partial<Pick<NamedAdjustment, 'name' | 'kind' | 'direction' | 'value'>>,
 ): Table {
-  const { name, ...rest } = change;
-  const accepted = name === undefined || name.trim() === '' || !adjustmentNameFits(name) ? rest : change;
+  if (change.name !== undefined && (change.name.trim() === '' || !adjustmentNameFits(change.name))) return table;
   return {
     ...table,
-    adjustments: (table.adjustments ?? []).map((row) => (row.adjustment_id === adjustmentId ? { ...row, ...accepted } : row)),
+    adjustments: (table.adjustments ?? []).map((row) => (row.adjustment_id === adjustmentId ? { ...row, ...change } : row)),
   };
 }
 

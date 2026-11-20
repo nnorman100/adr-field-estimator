@@ -260,7 +260,7 @@ describe('the editor changes', () => {
     const id = added.adjustments![0]!.adjustment_id;
     for (const blank of ['', '   ']) expect(setAdjustment(added, id, { name: blank }).adjustments![0]!.name).toBe('Weekend start');
     expect(setAdjustment(added, id, { name: ' After hours ', value: '5' }).adjustments![0]).toMatchObject({ name: ' After hours ', value: '5' });
-    expect(setAdjustment(added, id, { name: '  ', value: '7' }).adjustments![0]).toMatchObject({ name: 'Weekend start', value: '7' });
+    expect(setAdjustment(added, id, { name: '  ' })).toBe(added);
   });
 
   it('makes an id that fits the schema even when a numbered suffix is needed', () => {

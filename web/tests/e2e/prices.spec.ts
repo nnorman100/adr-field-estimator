@@ -529,29 +529,33 @@ test('the Add and Rename fields keep a name as typed, count 60 characters, refus
     return adjustments.map((row) => row.name);
   };
 
+  const saved = page.getByText('Saved. The prices are not published until you publish them.');
   const house = '\u{1F3E0}';
   const full = `${'a'.repeat(59)}${house}`;
-  await section.getByLabel('New adjustment', { exact: true }).fill(`${full}b`);
-  await expect(section.getByLabel('New adjustment', { exact: true })).toHaveValue('');
-  await section.getByLabel('New adjustment', { exact: true }).fill(' Weekend start ');
+  const add = section.getByLabel('New adjustment', { exact: true });
+  await add.fill(`${full}b`);
+  await expect(add).toHaveValue('');
+  await add.fill(full);
   await section.getByRole('button', { name: 'Add the adjustment' }).click();
   const name = section.getByLabel('Adjustment name', { exact: true });
-  await expect(name).toHaveValue(' Weekend start ');
+  await expect(name).toHaveValue(full);
   await section.getByRole('textbox', { name: 'Percent (%)' }).fill('5');
   await page.getByRole('button', { name: 'Save changes' }).click();
-  await expect.poll(savedNames).toEqual([' Weekend start ']);
+  await expect(saved).toBeVisible();
+  expect(await savedNames()).toEqual([full]);
 
   await name.fill('   ');
-  await expect(name).toHaveValue(' Weekend start ');
+  await expect(name).toHaveValue(full);
   await name.fill('');
-  await expect(name).toHaveValue(' Weekend start ');
-
-  await name.fill(full);
   await expect(name).toHaveValue(full);
   await name.pressSequentially('b');
   await expect(name).toHaveValue(full);
+
+  await name.fill(' Weekend start ');
+  await expect(name).toHaveValue(' Weekend start ');
   await page.getByRole('button', { name: 'Save changes' }).click();
-  await expect.poll(savedNames).toEqual([full]);
+  await expect(saved).toBeVisible();
+  expect(await savedNames()).toEqual([' Weekend start ']);
 
   await name.fill('W'.repeat(60));
   await expect(name).toHaveValue('W'.repeat(60));
