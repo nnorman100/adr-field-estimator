@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { companyAuth } from '@/lib/firebase-client';
 import { readPublishedItemList } from '@/lib/field/api';
 import type { User } from 'firebase/auth';
-import { readItemList, replaceItemList, revokeItemList, type ItemList, type SavedList } from '@/lib/field/ds-prices';
+import { eraseItemList, governing, readItemList, replaceItemList, type ItemList, type SavedList } from '@/lib/field/ds-prices';
 import { ReopenTheApp } from '@/lib/field/idb';
 import type { FieldSession } from '@/lib/field/session';
 import { signInOf, stillSameSignIn, type SignIn } from '@/lib/field/sign-out';
@@ -23,6 +23,36 @@ const TOKEN_TIMEOUT_MS = 10_000;
 
 type Display = { list: ItemList | null; notes: readonly string[] };
 type Answer = { list: ItemList | null } | 'refused';
+
+// What one open view knows. It outlives the effect below, which restarts when the connection
+// changes. `answer` is the newest the server gave this view (a list, no list, or a refusal) and
+// `saved` what the phone holds; the screen shows the answer when there is one and the saved copy
+// otherwise. A save changes only `saved` and `warning`.
+type View = {
+  loaded: boolean;
+  online: boolean;
+  saved: SavedList;
+  answer: Answer | null;
+  warning: string | null;
+  readProblem: string | null;
+  fetchProblem: string | null;
+  shownList: ItemList | null;
+  updated: boolean;
+  saving: Promise<void>;
+};
+
+function display(view: View): Display {
+  const current = view.answer ?? view.saved;
+  if (typeof current === 'string') return { list: null, notes: [UNAVAILABLE] };
+  if (!current) return { list: null, notes: [view.readProblem ?? view.fetchProblem ?? (view.loaded && !view.online ? NEEDS_SIGNAL : READING)] };
+  if (!current.list) return { list: null, notes: [NOT_SET, ...(view.warning ? [view.warning] : [])] };
+  const note = view.warning ?? (view.updated ? UPDATED : null);
+  return { list: current.list, notes: note ? [note] : [] };
+}
+
+function definitiveRefusal(answer: { status: number; code?: string }): boolean {
+  return answer.status === 403 || answer.status === 404 || (answer.status === 401 && answer.code === 'sign_in_revoked');
+}
 
 export function PublishedItemList({ session }: { session: FieldSession }) {
   const { companyId, user, capabilities, client } = session;
@@ -43,67 +73,63 @@ function PublishedList({ session }: { session: FieldSession }) {
   const { person } = client;
   const { uid, tenantId } = person;
   const keep = offlineCapture && client.cache === 'persistent';
-  const [display, setDisplay] = useState<Display>({ list: null, notes: [READING] });
+  const [shown, setShown] = useState<Display>({ list: null, notes: [READING] });
+  const mounted = useRef(true);
+  const open = useRef<View>({
+    loaded: false, online, saved: null, answer: null, warning: null, readProblem: null, fetchProblem: null,
+    shownList: null, updated: false, saving: Promise.resolve(),
+  });
 
   useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const view = open.current;
+    view.online = online;
     const owner = { companyId, tenantId, uid };
     const auth = companyAuth(person);
     let disposed = false;
-    let loaded = false;
-    // What the phone holds on disk (the last value that committed, or was read), the newest answer
-    // the server gave this open view, and what is wrong with either. The screen renders the answer
-    // when there is one, else the disk copy; a save only changes `saved` and `warning`.
-    let saved: SavedList = null;
-    let answer: Answer | null = null;
-    let warning: string | null = null;
-    let failure: string | null = null;
-    let shownList: ItemList | null = null;
-    let updated = false;
     let request: AbortController | null = null;
-    let saving: Promise<void> = Promise.resolve();
     const signedIn = () => {
       const now = signInOf(auth.currentUser);
       return now.user?.uid === uid ? now : null;
     };
 
     function render() {
-      if (disposed) return;
-      const current = answer ?? saved;
-      let next: Display;
-      if (current === 'refused') next = { list: null, notes: [UNAVAILABLE] };
-      else if (current) {
-        const note = current.list ? warning ?? (updated ? UPDATED : null) : null;
-        next = { list: current.list, notes: current.list ? (note ? [note] : []) : [NOT_SET, ...(warning ? [warning] : [])] };
-      }
-      else next = { list: null, notes: [failure ?? (loaded && !online ? NEEDS_SIGNAL : READING)] };
-      setDisplay((before) => before.list?.versionId === next.list?.versionId && before.notes.join('\n') === next.notes.join('\n') ? before : next);
+      if (!mounted.current) return;
+      const next = display(view);
+      setShown((before) => before.list?.versionId === next.list?.versionId && before.notes.join('\n') === next.notes.join('\n') ? before : next);
     }
 
-    function save(mine: { list: ItemList | null }, from: SignIn, user: User) {
-      const active = () => !disposed && stillSameSignIn(auth, from);
-      saving = saving.then(async () => {
-        if (answer !== mine || !active()) return;
-        if (saved !== null && saved !== 'refused' && saved.list?.versionId === mine.list?.versionId) {
-          warning = null;
+    function save(mine: { list: ItemList | null }, governs: () => boolean, from: SignIn, signedInUser: User) {
+      const active = () => governs() && stillSameSignIn(auth, from);
+      view.saving = view.saving.then(async () => {
+        if (!active()) return;
+        if (view.saved !== null && view.saved !== 'withheld' && view.saved.list?.versionId === mine.list?.versionId) {
+          view.warning = null;
           return render();
         }
-        const authTime = await authTimeOf(user);
+        const authTime = await authTimeOf(signedInUser);
         let problem: string | null = null;
         const committed = await replaceItemList(owner, mine.list, authTime, active).catch((error: unknown) => {
           problem = error instanceof ReopenTheApp ? error.message : null;
           return false;
         });
-        if (!active()) return;
-        if (committed) saved = { list: mine.list };
-        if (answer !== mine) return;
-        warning = committed ? null : problem ?? NOT_SAVED;
+        if (!governs()) return;
+        if (committed) view.saved = { list: mine.list };
+        else if (!active()) return;
+        view.warning = committed ? null : problem ?? NOT_SAVED;
         render();
       });
     }
 
     async function refresh() {
       const from = signedIn();
-      if (!loaded || !online || !from?.user || request || document.visibilityState === 'hidden') return;
+      if (!view.loaded || !online || !from?.user || request || document.visibilityState === 'hidden') return;
       const { user: current } = from;
       const sameSignIn = () => stillSameSignIn(auth, from);
       const pending = new AbortController();
@@ -118,49 +144,57 @@ function PublishedList({ session }: { session: FieldSession }) {
         request = null;
       }
       if (!sameSignIn()) return;
-      if (!result || !result.ok) {
-        if (result && (result.status === 403 || result.status === 404)) {
-          answer = 'refused';
-          shownList = null;
-          warning = null;
+      if (!result?.ok) {
+        if (result && definitiveRefusal(result)) {
+          const governs = governing(owner);
+          view.answer = 'refused';
+          view.shownList = null;
+          view.warning = null;
           render();
-          if (offlineCapture) await revokeItemList(owner, sameSignIn).then(() => { saved = 'refused'; }, () => undefined);
+          if (offlineCapture) void eraseItemList(owner, () => governs() && sameSignIn());
         } else {
-          failure = UNAVAILABLE;
+          view.fetchProblem = UNAVAILABLE;
           render();
         }
         return;
       }
 
       const list = result.value.current;
+      const governs = governing(owner);
+      const before = view.answer;
+      if (!before || before === 'refused' || before.list?.versionId !== list?.versionId) view.warning = null;
+      view.updated = view.shownList !== null && list !== null && view.shownList.versionId !== list.versionId;
+      view.shownList = list;
+      view.fetchProblem = null;
+      view.readProblem = null;
       const mine = { list };
-      updated = shownList !== null && list !== null && shownList.versionId !== list.versionId;
-      shownList = list;
-      answer = mine;
-      failure = null;
-      warning = null;
+      view.answer = mine;
       render();
-      if (keep) save(mine, from, current);
+      if (keep) save(mine, governs, from, current);
     }
 
-    async function load() {
-      const from = signedIn();
-      if (!from) return;
-      let read: SavedList = null;
-      let problem: string | null = null;
-      if (keep) {
-        try {
-          read = await readItemList(owner);
-        } catch (error) {
-          problem = error instanceof ReopenTheApp ? error.message : UNAVAILABLE;
+    async function load(): Promise<void> {
+      if (view.answer === null) {
+        const from = signedIn();
+        if (!from) return;
+        let read: SavedList = null;
+        let problem: string | null = null;
+        if (keep) {
+          try {
+            read = await readItemList(owner);
+          } catch (error) {
+            problem = error instanceof ReopenTheApp ? error.message : UNAVAILABLE;
+          }
+        }
+        if (disposed) return;
+        if (!stillSameSignIn(auth, from)) return load();
+        if (view.answer === null) {
+          view.saved = read;
+          view.readProblem = problem;
+          view.shownList = read && read !== 'withheld' ? read.list : null;
         }
       }
-      if (disposed) return;
-      if (!stillSameSignIn(auth, from)) return void load();
-      saved = read;
-      failure = problem;
-      shownList = read && read !== 'refused' ? read.list : null;
-      loaded = true;
+      view.loaded = true;
       render();
       void refresh();
     }
@@ -179,7 +213,7 @@ function PublishedList({ session }: { session: FieldSession }) {
     };
   }, [companyId, keep, offlineCapture, online, person, tenantId, uid, user]);
 
-  const { list, notes } = display;
+  const { list, notes } = shown;
   return (
     <section aria-label="Published item list" className="rounded-md border border-foreground/20 px-3">
       {list ? <ListContents list={list} /> : null}

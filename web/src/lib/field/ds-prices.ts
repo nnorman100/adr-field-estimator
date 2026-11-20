@@ -1,23 +1,35 @@
 import type { z } from 'zod';
 import { itemListResponseSchema } from '@/lib/prices/item-list';
-import { readMe } from './ds-me';
-import { transact, withDatabase, type DbSpec } from './idb';
+import { readMe, updateMe } from './ds-me';
+import { ReopenTheApp, transact, withDatabase, type DbSpec } from './idb';
 
 export type ItemList = NonNullable<z.infer<typeof itemListResponseSchema>['current']>;
 type Person = { tenantId: string; uid: string };
 type ListOwner = Person & { companyId: string };
 // What a phone knows of one company's published list: null when it never asked, `{ list: null }`
-// when the server last said the company has none.
-export type SavedList = { list: ItemList | null } | 'refused' | null;
+// when the server last said the company has none, 'withheld' while a refused copy could not be erased.
+export type SavedList = { list: ItemList | null } | 'withheld' | null;
 
-// Stored in the version part of the key for a confirmed "no published list", and for the server's
-// refusal of this company's list. Neither is a UUID, so neither matches a version id. A refusal row
-// outranks every list row of its company, whether or not those rows could be erased.
+// Stored in the version part of the key for a confirmed "no published list". It is no UUID, so it
+// never matches a version id.
 const NONE = 'none';
-const REFUSED = 'refused';
 
-// The phone's storage could not be opened at all: no copy can be on it.
+// The browser's storage policy refuses to open the database: no copy can have been saved on it.
 class ListsUnavailable extends Error {}
+
+const ownerKey = ({ tenantId, uid, companyId }: ListOwner) => JSON.stringify([tenantId, uid, companyId]);
+// Copies whose erasure after a refusal failed; each is erased before anything reads it.
+const unerased = new Set<string>();
+const newest = new Map<string, symbol>();
+
+// Registers the answer the server has just given for this owner and returns whether it still is the
+// newest one. A save or an erase made for an older answer asks this inside its own transaction.
+export function governing(owner: ListOwner): () => boolean {
+  const mine = Symbol('answer');
+  const key = ownerKey(owner);
+  newest.set(key, mine);
+  return () => newest.get(key) === mine;
+}
 
 const STORE = 'item-lists';
 const SPEC: DbSpec = {
@@ -69,7 +81,8 @@ function onLists<T>(
     });
   })
     .catch((error: unknown) => {
-      throw opened ? error : new ListsUnavailable();
+      const name = (error as { name?: unknown } | null)?.name;
+      throw !opened && !(error instanceof ReopenTheApp) && (name === 'SecurityError' || name === 'InvalidStateError') ? new ListsUnavailable() : error;
     })
     .finally(() => signal.removeEventListener('abort', abort));
 }
@@ -83,13 +96,12 @@ function changing<T>({ tenantId, uid }: Person, work: (signal: AbortSignal) => P
   });
 }
 
-export function readItemList(owner: ListOwner): Promise<SavedList> {
+export async function readItemList(owner: ListOwner): Promise<SavedList> {
+  if (unerased.has(ownerKey(owner)) && !(await eraseItemList(owner, () => true))) return 'withheld';
   return within((signal) => onLists('readonly', signal, (store) => {
-    const request = store.getAll(range(owner, owner.companyId));
+    const request = store.get(range(owner, owner.companyId));
     return () => {
-      const rows = request.result as { versionId?: unknown; list?: unknown }[];
-      if (rows.some((row) => row.versionId === REFUSED)) return 'refused';
-      const row = rows[0];
+      const row = request.result as { versionId?: unknown; list?: unknown } | undefined;
       if (!row) return null;
       if (row.versionId === NONE) return { list: null };
       const parsed = itemListResponseSchema.safeParse({ current: row.list });
@@ -109,43 +121,66 @@ export function replaceItemList(owner: ListOwner, list: ItemList | null, authTim
       store.delete(range(owner, owner.companyId));
       store.put({ ...owner, versionId: list?.versionId ?? NONE, list });
       return () => true;
+    }).then((committed) => {
+      if (committed) unerased.delete(ownerKey(owner));
+      return committed;
     });
   });
 }
 
-function forget(person: Person, companyId: string | undefined, active: () => boolean): Promise<void> {
-  return changing(person, (signal) => onLists('readwrite', signal, (store) => {
-    if (active()) store.delete(range(person, companyId));
-    return () => undefined;
+// The server refused this company's list for this person. `active` is asked inside the erase: it
+// says the refusal still governs and the sign-in it answered is still this one. True when the copy
+// is gone. When the erase fails twice, the copy is erased before its next read, and the saved
+// sign-in stops offering `prices_read` (the next online check gives it back) so that a reload
+// before then shows nothing either.
+export async function eraseItemList(owner: ListOwner, active: () => boolean): Promise<boolean> {
+  const attempt = () => changing(owner, (signal) => onLists('readwrite', signal, (store) => {
+    if (!active()) return () => false;
+    store.delete(range(owner, owner.companyId));
+    return () => true;
   }));
+  const key = ownerKey(owner);
+  try {
+    const ran = await attempt().catch(attempt);
+    if (ran) unerased.delete(key);
+    return ran;
+  } catch (error) {
+    if (error instanceof ListsUnavailable) {
+      unerased.delete(key);
+      return true;
+    }
+    if (active()) {
+      unerased.add(key);
+      await withdrawPricesRead(owner, active).catch(() => undefined);
+    }
+    return false;
+  }
 }
 
-// The server refused this company's item list for this person (403, or the price books are off).
-// A refusal row is saved first, so the list stays unavailable offline even when the list rows cannot
-// be erased. The next successful read replaces both (replaceItemList). `active` is the exact
-// sign-in the refusal answered; it is not tied to any screen. Throws only when neither step held.
-export async function revokeItemList(owner: ListOwner, active: () => boolean): Promise<void> {
-  const prefix = [owner.tenantId, owner.uid, owner.companyId];
-  const write = (change: (store: IDBObjectStore) => void) => changing(owner, (signal) => onLists('readwrite', signal, (store) => {
-    if (!active()) return () => undefined;
-    change(store);
-    return () => undefined;
-  }));
-  const marked = await write((store) => store.put({ ...owner, versionId: REFUSED, list: null })).then(() => true, () => false);
-  const erase = () => write((store) => {
-    store.delete(IDBKeyRange.bound([...prefix, ''], [...prefix, REFUSED], false, true));
-    store.delete(IDBKeyRange.bound([...prefix, REFUSED], [...prefix, []], true, false));
-  });
-  const erased = await erase().catch(erase).then(() => true, () => false);
-  if (!marked && !erased) throw new Error('the item list refusal could not be saved');
+async function withdrawPricesRead(owner: ListOwner, active: () => boolean): Promise<void> {
+  const me = await readMe(owner.tenantId, owner.uid);
+  if (!me || me.companyId !== owner.companyId || !me.capabilities?.includes('prices_read') || !active()) return;
+  const { savedAt: _savedAt, ...rest } = me;
+  void _savedAt;
+  await updateMe({ ...rest, capabilities: me.capabilities.filter((capability) => capability !== 'prices_read') });
 }
 
 export async function forgetItemLists(person: Person, active: () => boolean = () => true): Promise<void> {
   if (typeof indexedDB === 'undefined') return;
+  let erased = false;
   try {
-    await forget(person, undefined, active);
+    await changing(person, (signal) => onLists('readwrite', signal, (store) => {
+      erased = active();
+      if (erased) store.delete(range(person));
+      return () => undefined;
+    }));
   } catch (error) {
-    // Storage that cannot be opened holds no copy; any other failure may have left one.
     if (!(error instanceof ListsUnavailable)) throw error;
+    return;
+  }
+  if (!erased) return;
+  for (const key of unerased) {
+    const [tenantId, uid] = JSON.parse(key) as string[];
+    if (tenantId === person.tenantId && uid === person.uid) unerased.delete(key);
   }
 }

@@ -66,9 +66,11 @@ job's field work is no longer yours…" (unsent changes stay on the phone, read 
   checks for a new publication on online open, reconnect and foreground refresh. It identifies an
   older copy when it finds a newer version, and shows the newer list with a warning when the phone
   cannot save it. A company without a publication sees "Prices not set", also offline once the
-  phone has seen that answer. When the server refuses the list (403, or price books off), the list is
-  hidden at once, a refusal is saved for that person and company, and the saved copy is removed. The
-  list stays unavailable offline, even if removal failed, until a later read succeeds.
+  phone has seen that answer. When the server refuses the list (403, price books off, or a revoked sign-in), the list is
+  hidden at once and the saved copy for that person and company is erased. If the erase fails, it is
+  retried before the copy is next read, and the saved sign-in stops offering `prices_read` until the
+  next online check, so nothing shows meanwhile. A lost connection is not a refusal: the last
+  readable list stays.
 - Offline with jobs kept: edits save on the phone (the shell's "No signal: your work is saved on
   this phone"); offline with Online only, nothing opens without a signal.
 - Draft unreadable: the error with "Try again".
