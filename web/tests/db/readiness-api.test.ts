@@ -3,7 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { manifestDigest, type FieldManifest } from '@/lib/field/canonical';
 import type { SetupReadingSource } from '@/lib/readiness/readings';
 import { standIn } from './readiness-fake';
-import { flow, image, json, type Answer } from './submission-flow';
+import { flow, image, json, latch, until, type Answer } from './submission-flow';
 import type { FakeClaims, Harness } from './team-harness';
 
 // S5b-11 slice 11A, "Ready to review?": GET /api/jobs/{jobId}/readiness through the real route file as
@@ -113,8 +113,9 @@ async function saveClaim(jobId: string, claim: Record<string, string | null>) {
 }
 
 // Publishes company A's next price version, as S4-6's publish stores it; `wetFloor` prices rooms by
-// wet floor area, and `badHash` stores it under another table's hash, as a version that cannot be read.
-async function publish(options: { wetFloor?: boolean; badHash?: boolean } = {}) {
+// wet floor area, `badHash` stores it under another table's hash, as a version that cannot be read, and
+// `engine` records it for another engine version, one this server cannot price.
+async function publish(options: { wetFloor?: boolean; badHash?: boolean; engine?: string } = {}) {
   const policy = {
     estimate_mode: 'single',
     range: { first_sf: 1000, first_percent: '0', beyond_percent: '0' },
@@ -128,7 +129,7 @@ async function publish(options: { wetFloor?: boolean; badHash?: boolean } = {}) 
   const other = parseTable({ items: [], policy });
   await h.admin`
     INSERT INTO price_table_versions (company_id, sequence, content, content_hash, engine_version, reason, source, published_by_actor_id, publish_key)
-    SELECT ${h.seed.a}, coalesce(max(sequence), 0) + 1, ${JSON.stringify(table)}::text::jsonb, ${contentHash(options.badHash ? other : table)}, ${ENGINE_VERSION}, 'Prices for a test', 'blank', ${h.seed.ownerA.actor}, ${`key-${randomUUID()}`}
+    SELECT ${h.seed.a}, coalesce(max(sequence), 0) + 1, ${JSON.stringify(table)}::text::jsonb, ${contentHash(options.badHash ? other : table)}, ${options.engine ?? ENGINE_VERSION}, 'Prices for a test', 'blank', ${h.seed.ownerA.actor}, ${`key-${randomUUID()}`}
     FROM price_table_versions WHERE company_id = ${h.seed.a}
   `;
 }
@@ -421,5 +422,59 @@ describe('GET /api/jobs/{jobId}/readiness: the second Postgres read decides', ()
     const { jobId } = await unreadable();
     live.reader!.during = () => publish();
     expect(await readiness(OWNER_A, jobId)).toEqual({ status: 200, body: { status: 'unavailable', jobId, reason: 'draft_changed' } });
+  });
+});
+
+describe('GET /api/jobs/{jobId}/readiness: round 2 rules', () => {
+  // Submit's intent row is committed before its fence closes (src/lib/submissions/service.ts): hold it at
+  // the fence, so Postgres has a pending submission while the field draft still says editing.
+  async function heldSubmit(jobId: string, draftId: string, manifest: FieldManifest) {
+    const hold = latch();
+    h.field.gate.fence = () => hold.wait;
+    const submit = f.submitShown(ESTIMATOR_A, jobId, draftId, manifest);
+    await until(async () => (await f.submissions(jobId)).some((row) => row.status === 'pending'), 'the pending submission');
+    expect(h.field.draft(h.seed.a, draftId)?.state).toBe('editing');
+    return { release: async () => (hold.open(), (await submit).answer.status) };
+  }
+
+  it('answers not editing while a Submit of the draft is pending, before and during the read', async () => {
+    const { jobId, draftId, manifest } = await job();
+    const held = await heldSubmit(jobId, draftId, manifest);
+    expect(await readiness(OWNER_A, jobId)).toEqual({ status: 200, body: { status: 'unavailable', jobId, reason: 'not_editing' } });
+    expect(await held.release()).toBe(201);
+
+    const other = await job();
+    let during: Awaited<ReturnType<typeof heldSubmit>> | null = null;
+    live.reader!.during = async () => {
+      during = await heldSubmit(other.jobId, other.draftId, other.manifest);
+    };
+    expect(await readiness(OWNER_A, other.jobId)).toEqual({ status: 200, body: { status: 'unavailable', jobId: other.jobId, reason: 'not_editing' } });
+    expect(await during!.release()).toBe(201);
+  });
+
+  it('refuses office with 403 on an archived and a missing job, and a member made office during the read', async () => {
+    const { jobId } = await job();
+    const archived = await archiveRoute.POST(request(OWNER_A, `/api/jobs/${jobId}/archive`, { method: 'POST', body: { revision: await revision(jobId), changeId: randomUUID() } }), params({ jobId }));
+    expect(archived.status).toBe(200);
+    expect(await readiness(OFFICE_A, jobId)).toEqual({ status: 403, body: { error: 'not_allowed' } });
+    expect(await readiness(OFFICE_A, randomUUID())).toEqual({ status: 403, body: { error: 'not_allowed' } });
+    const live2 = await job();
+    live.reader!.during = async () => {
+      await h.admin`UPDATE memberships SET role = 'office' WHERE id = ${h.seed.estimatorA.membership}`;
+    };
+    expect(await readiness(ESTIMATOR_A, live2.jobId)).toEqual({ status: 403, body: { error: 'not_allowed' } });
+  });
+
+  it('reads prices published for another engine as unavailable, pinned or current', async () => {
+    const { jobId } = await job();
+    await publish({ engine: 'dryscope-v2' });
+    const current = await readiness(OWNER_A, jobId);
+    expect(current.body.unavailable).toEqual(['roomArea', 'setupReadings', 'ocr', 'prices']);
+    expect(codes(current.body)).not.toContain('prices');
+    await publish();
+    expect((await readiness(OWNER_A, jobId)).body.unavailable).toEqual(['setupReadings', 'ocr']);
+    const [old] = await h.admin<{ id: string }[]>`SELECT id::text FROM price_table_versions WHERE company_id = ${h.seed.a} AND sequence = 1`;
+    await h.admin`INSERT INTO job_price_pins (company_id, job_id, sequence, version_id, reason, pinned_by_actor_id) VALUES (${h.seed.a}, ${jobId}, 1, ${old!.id}, 'first_price', ${h.seed.ownerA.actor})`;
+    expect((await readiness(OWNER_A, jobId)).body.unavailable).toEqual(['roomArea', 'setupReadings', 'ocr', 'prices']);
   });
 });
