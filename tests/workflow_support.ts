@@ -35,8 +35,22 @@ export function splitlines(text: string): string[] {
   return lines;
 }
 
+/** Whether a `uses` reference is owner/name (or a path inside it) at a full lowercase commit SHA. */
+export function isPinnedUses(ref: unknown, nameShape: RegExp = /^[\w.-]+\/[\w./-]+$/): boolean {
+  if (typeof ref !== 'string') return false;
+  const match = /^(.+)@[0-9a-f]{40}$/.exec(ref);
+  return match !== null && nameShape.test(match[1]);
+}
+
 export function steps(job: Data): Data[] {
   return job.steps ?? [];
+}
+
+/** Every step of a job that can name an action: direct steps plus the children of `parallel` groups. */
+export function actionSteps(job: Data): Data[] {
+  const flatten = (list: Data[]): Data[] =>
+    list.flatMap((s) => (Array.isArray(s.parallel) ? flatten(s.parallel) : [s]));
+  return flatten(steps(job));
 }
 
 /** The shell a step runs, without comment lines, so a comment never satisfies a check. */

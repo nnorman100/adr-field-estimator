@@ -7,7 +7,15 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { evaluateStep, load, ROOT, WORKFLOWS, type Data } from './workflow_support.ts';
+import {
+  actionSteps,
+  evaluateStep,
+  isPinnedUses,
+  load,
+  ROOT,
+  WORKFLOWS,
+  type Data,
+} from './workflow_support.ts';
 
 // The repository is public, so every job runs on a fixed standard GitHub-hosted runner (free for
 // public repositories) and never on a self-hosted one, which a pull request could compromise. No
@@ -38,6 +46,32 @@ describe('every workflow', () => {
 
   it('has no CodeQL workflow, because code scanning default setup replaces it', () => {
     expect(WORKFLOW_FILES).not.toContain('codeql.yml');
+  });
+
+  it.each(WORKFLOW_FILES)('%s pins every action step to a full commit SHA', (name) => {
+    for (const [job, config] of Object.entries(workflow(name).jobs)) {
+      actionSteps(config).forEach((step, index) => {
+        if (Object.hasOwn(step, 'uses')) {
+          expect(
+            isPinnedUses(step.uses),
+            `${name} job ${job} step ${index + 1} must use a full commit SHA`,
+          ).toBe(true);
+        }
+      });
+    }
+  });
+
+  it('rejects a tagged action inside a parallel step group', () => {
+    const pinned = `actions/checkout@${'a'.repeat(40)}`;
+    const job = {
+      steps: [
+        { uses: pinned },
+        { parallel: [{ uses: pinned }, { uses: 'actions/setup-node@v7' }] },
+      ],
+    };
+    const refs = actionSteps(job).map((step) => step.uses);
+    expect(refs).toEqual([pinned, pinned, 'actions/setup-node@v7']);
+    expect(refs.map((ref) => isPinnedUses(ref))).toEqual([true, true, false]);
   });
 
   it.each(WORKFLOW_FILES)(

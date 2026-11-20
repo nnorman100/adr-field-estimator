@@ -9,7 +9,9 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { SUITES } from '../web/tests/ai-evals/suites.ts';
 import {
+  actionSteps,
   allSteps,
+  isPinnedUses,
   load,
   Shell,
   splitlines,
@@ -123,8 +125,8 @@ describe('ai-evals.yml', () => {
   });
 
   it('pins every action by commit and installs before signing in', () => {
-    for (const s of allSteps(workflow)) {
-      if (s.uses) expect(s.uses, s.uses).toMatch(/^[\w.-]+\/[\w.-]+@[0-9a-f]{40}$/);
+    for (const s of Object.values(workflow.jobs as Record<string, Data>).flatMap(actionSteps)) {
+      if (s.uses) expect(isPinnedUses(s.uses, /^[\w.-]+\/[\w.-]+$/), s.uses).toBe(true);
     }
     const all = steps(job);
     const npm = all.map((s: Data) => {

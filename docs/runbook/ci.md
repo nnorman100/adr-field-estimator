@@ -28,6 +28,10 @@ On PR #414 the two-shard `e2e` job hit its 20-minute limit three times: about 8 
 - **Caches were not the cause.** The npm cache hit on every `e2e` job checked. Actions cache storage is at its 10 GB limit (least recently used entries are evicted), but the hot web npm key is used every run; artifact storage is only 26 MB.
 - **Possible follow-ups (not done):** firebase-tools is fetched with `npx --yes` on every run (about 50 s; it could be a pinned dev dependency covered by `npm ci` and its cache). There is no Playwright browser cache, so each job downloads Chromium and WebKit (about 25 s); a cache entry would be about 300-400 MB per branch, into a cache already at its limit.
 
+## Pinned actions
+
+Every `uses:` step in `.github/workflows/` pins its action to a full-length lowercase commit SHA, with the release tag in a trailing comment (for example `actions/checkout@<sha> # v7.0.1`); Dependabot's monthly GitHub Actions pull request updates both. Owner decision, 2026-11-19: this lets the owner then switch the repository's Actions setting to allow only selected actions with SHA pinning required. That settings switch is the owner's, after merge; agents never change it. `tests/test_ci_workflows.ts` checks every workflow step, using the shared predicate in `tests/workflow_support.ts`.
+
 ## Legacy CI retired
 
 The old Python app (`backend/`, `public/`, `tests/` and their tooling) is frozen reference code for the TypeScript rebuild in `web/` and `infra/dryscope/`. Nobody uses it and it is deleted in S8, so as of 2026-11-10 none of its tests run in CI. **Do not change legacy files except through S8**; the old app keeps serving until then, and no check now guards those edits. Run a legacy suite by hand with the commands in `CLAUDE.md` when a legacy change needs one.
