@@ -66,6 +66,9 @@ disabled.
   version ID. A row carries the publish date, enabled item IDs, names and units, and room types
   with their suggestion IDs. Amounts stay on the server. Refresh replaces the prior copy in one
   transaction. Sign-out clears this person's item list even when they keep unsent field work.
+  An erase the phone still owes (after a refusal or sign-out) is kept in the localStorage key
+  `ds-prices-erase/<tenant, person[, company]>` with a random token and a time, until the erase
+  commits. Only a save creates the database.
 - A draft's local copy, photos and resolved voice notes are also removed when the job is signed
   and the signed agreement opens on the phone, when sync finds the job signed, and when the owner
   archives it with no unsynced work. Voice notes still waiting to be resolved stay until resolved,

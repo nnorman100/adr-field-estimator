@@ -88,10 +88,14 @@ job's field work is no longer yours…" (unsent changes stay on the phone, read 
   older copy when it finds a newer version, and shows the newer list with a warning when the phone
   cannot save it. A company without a publication sees "Prices not set", also offline once the
   phone has seen that answer. When the server refuses the list (403, price books off, or a revoked sign-in), the list is
-  hidden at once and the saved copy for that person and company is erased. If the erase fails, it is
-  retried before the copy is next read, and the saved sign-in stops offering `prices_read` until the
-  next online check, so nothing shows meanwhile. A lost connection is not a refusal: the last
-  readable list stays.
+  hidden at once and the saved copy for that person and company is erased. The same erase runs when
+  the field gate's `GET /api/me` lets the person in without `prices_read`, whether or not Check
+  Scope is open. The erase is recorded in localStorage before it is tried and stays until it has
+  committed, so every read of the copy, in any tab and after a reload, makes it first and shows
+  nothing until it has. A copy saved from an answer asked for after the refusal arrived is kept.
+  A refusal that only asks the person to sign in again hides the list and keeps the copy. A lost
+  connection, or a 403 or 404 page without the server's error code (a captive portal), is not a
+  refusal: the last readable list stays.
 - Offline with jobs kept: edits save on the phone (the shell's "No signal: your work is saved on
   this phone"); offline with Online only, nothing opens without a signal.
 - Draft unreadable: the error with "Try again".

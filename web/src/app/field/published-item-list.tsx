@@ -50,8 +50,15 @@ function display(view: View): Display {
   return { list: current.list, notes: note ? [note] : [] };
 }
 
-function definitiveRefusal(answer: { status: number; code?: string }): boolean {
-  return answer.status === 403 || answer.status === 404 || (answer.status === 401 && answer.code === 'sign_in_revoked');
+// What a refusal from the item-list route means for the copy on this phone. Only the server's own
+// refusals count, and every one of them carries a JSON error code: a 403 or 404 page from a captive
+// portal or a proxy has none and is no answer. 'erase': the person may no longer see this company's
+// list. 'hide': the sign-in must be renewed; the list is hidden now and the copy kept for after it.
+function refusalOf(answer: { status: number; code?: string }): 'erase' | 'hide' | null {
+  if (answer.code === undefined) return null;
+  if (answer.status === 403 || answer.status === 404 || (answer.status === 401 && answer.code === 'sign_in_revoked')) return 'erase';
+  if (answer.status === 401 && answer.code === 'sign_in_again') return 'hide';
+  return null;
 }
 
 export function PublishedItemList({ session }: { session: FieldSession }) {
@@ -105,17 +112,15 @@ function PublishedList({ session }: { session: FieldSession }) {
       setShown((before) => before.list?.versionId === next.list?.versionId && before.notes.join('\n') === next.notes.join('\n') ? before : next);
     }
 
-    function save(mine: { list: ItemList | null }, governs: () => boolean, from: SignIn, signedInUser: User) {
+    function save(mine: { list: ItemList | null }, asOf: number, governs: () => boolean, from: SignIn, signedInUser: User) {
       const active = () => governs() && stillSameSignIn(auth, from);
       view.saving = view.saving.then(async () => {
         if (!active()) return;
-        if (view.saved !== null && view.saved !== 'withheld' && view.saved.list?.versionId === mine.list?.versionId) {
-          view.warning = null;
-          return render();
-        }
+        // Saved every time, the same version too: the copy may have been erased since (here, in
+        // another tab or by the field gate), and a save renews the time an erase owed is judged by.
         const authTime = await authTimeOf(signedInUser);
         let problem: string | null = null;
-        const committed = await replaceItemList(owner, mine.list, authTime, active).catch((error: unknown) => {
+        const committed = await replaceItemList(owner, mine.list, authTime, asOf, active).catch((error: unknown) => {
           problem = error instanceof ReopenTheApp ? error.message : null;
           return false;
         });
@@ -134,6 +139,9 @@ function PublishedList({ session }: { session: FieldSession }) {
       const sameSignIn = () => stillSameSignIn(auth, from);
       const pending = new AbortController();
       request = pending;
+      // When this answer was asked for: a list is saved only when no refusal that arrived since is
+      // owed (ds-prices.ts).
+      const asOf = Date.now();
       const timeout = window.setTimeout(() => pending.abort(), REQUEST_TIMEOUT_MS);
       const stopped = new Promise<null>((resolve) => pending.signal.addEventListener('abort', () => resolve(null), { once: true }));
       let result: Awaited<ReturnType<typeof readPublishedItemList>> | null;
@@ -145,13 +153,19 @@ function PublishedList({ session }: { session: FieldSession }) {
       }
       if (!sameSignIn()) return;
       if (!result?.ok) {
-        if (result && definitiveRefusal(result)) {
-          const governs = governing(owner);
+        const refusal = result ? refusalOf(result) : null;
+        if (refusal) {
+          // A save still queued for an earlier answer of this view is dropped.
+          governing(owner);
           view.answer = 'refused';
           view.shownList = null;
           view.warning = null;
           render();
-          if (offlineCapture) void eraseItemList(owner, () => governs() && sameSignIn());
+          if (refusal === 'erase') {
+            view.saved = null;
+            // Also on a phone that now keeps nothing: one that kept a copy earlier still holds it.
+            void eraseItemList(owner, Date.now());
+          }
         } else {
           view.fetchProblem = UNAVAILABLE;
           render();
@@ -170,7 +184,7 @@ function PublishedList({ session }: { session: FieldSession }) {
       const mine = { list };
       view.answer = mine;
       render();
-      if (keep) save(mine, governs, from, current);
+      if (keep) save(mine, asOf, governs, from, current);
     }
 
     async function load(): Promise<void> {

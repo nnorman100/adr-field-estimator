@@ -10,6 +10,7 @@ import type { BrowserSignInConfig } from '../../../../src/lib/config';
 import { companyAuth } from '../../../../src/lib/firebase-client';
 import { fieldWrite, mirrorSignIn, setAppCheckSeam, startFieldClient, stopFieldClient, type CacheKind, type FieldClient } from '../../../../src/lib/field-db';
 import { readLatestMe, saveMe, updateMe, type DsMe } from '../../../../src/lib/field/ds-me';
+import { readItemList } from '../../../../src/lib/field/ds-prices';
 import { runFieldSync } from '../../../../src/lib/field/field-sync';
 import { openDatabase, transact, withDatabase, type DbSpec } from '../../../../src/lib/field/idb';
 import { appendEntry, forgetJournal, readJournal } from '../../../../src/lib/field/journal';
@@ -294,6 +295,13 @@ const f = {
   },
 
   unsent: (person: Pick<Person, 'tenantId' | 'uid'>) => readUnsent(person.tenantId, person.uid),
+
+  // What Check Scope's read of the saved item list answers (ds-prices.ts): the saved version id,
+  // 'none' for a saved "no published list", 'withheld' or null.
+  async savedItemList(person: Pick<Person, 'tenantId' | 'uid'>, companyId: string): Promise<string | null> {
+    const saved = await readItemList({ tenantId: person.tenantId, uid: person.uid, companyId });
+    return saved === null || saved === 'withheld' ? saved : (saved.list?.versionId ?? 'none');
+  },
 
   // The saved sign-in rows (ds-me): the sign-in page's save, the field check's update, and which
   // (tenant/person) row the shell would start from.
