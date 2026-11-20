@@ -73,7 +73,10 @@ draftSyncContract('Firestore', () => ({
     return found.exists ? (found.data() as SyncMarker) : null;
   },
   async remove(company, draft) {
-    await db.doc(draftPath(company, draft)).delete();
+    await db.recursiveDelete(db.doc(draftPath(company, draft)));
+  },
+  async seedMarker(company, job, data) {
+    await db.doc(markerPath(company, job)).set(data);
   },
 }));
 

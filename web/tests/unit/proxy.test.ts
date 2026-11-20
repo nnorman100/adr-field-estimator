@@ -82,6 +82,7 @@ describe('API sign-in gate', () => {
       '/api/invitations/:id',
       '/api/invitations/:id/accept',
       '/api/prices',
+      '/api/prices/item-list',
       '/api/prices/working-copy',
       '/api/prices/preview',
       '/api/prices/publish',

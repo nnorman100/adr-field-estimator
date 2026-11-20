@@ -1,9 +1,9 @@
 import { serverDatabase } from '@/lib/auth/services';
 import { parseProjectionConfig } from '@/lib/config';
 import { firestoreFor } from '@/lib/projection/firestore';
-import { firestoreFenceStore } from '@/lib/submissions/fence';
 import { archiveService, type ArchiveService } from './archive';
 import { firestoreArchiveStore } from './archive-store';
+import { firestoreDraftSync } from './draft-sync';
 import { firestoreDraftStore } from './drafts';
 import { officeService, type OfficeService } from './office';
 import { jobsService, type JobsService } from './service';
@@ -24,10 +24,11 @@ export function jobsServices(): JobRoutesService {
     const db = serverDatabase();
     const firestore = firestoreFor(config);
     const drafts = firestoreDraftStore(firestore);
+    const sync = firestoreDraftSync(firestore);
     service = {
       ...jobsService(db, drafts),
-      ...officeService(db, drafts, firestoreFenceStore(firestore)),
-      ...archiveService(db, firestoreArchiveStore(firestore)),
+      ...officeService(db, drafts, sync),
+      ...archiveService(db, firestoreArchiveStore(firestore), sync),
     };
   }
   return service;

@@ -48,7 +48,6 @@ legacy_paths=(
   scripts/
   ops/
   docs/ai-inventory.md
-  docs/adr-pricing-source.md
   docs/pricing-source.md
   pyproject.toml
   eslint.config.js

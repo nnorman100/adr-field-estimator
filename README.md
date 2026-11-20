@@ -33,7 +33,7 @@ Use the persistent **1. Walk & Photo / 2. Check Scope / 3. Review & Sign** step 
 
 ## Pricing and evidence
 
-`backend/claims.py` calculates money with Decimal and cent rounding. Each company sets its own prices and there is no default price list ([pricing source](docs/pricing-source.md)); a company without published prices cannot price an estimate. The populated default job charges appear exactly once. Waste increases applicable demolition item totals. After-hours estimates add the company's after-hours job charge and apply the labor/material factor. ADR's rates and source notes are in [ADR pricing source](docs/adr-pricing-source.md).
+`backend/claims.py` calculates money with Decimal and cent rounding. Each company sets its own prices and there is no default price list ([pricing source](docs/pricing-source.md)); a company without published prices cannot price an estimate. The populated default job charges appear exactly once. Waste increases applicable demolition item totals. After-hours estimates add the company's after-hours job charge and apply the labor/material factor.
 
 The customer proposal shows the low–high estimate, with itemized base-rate charges shown separately as its calculation detail. ADR package tiers are not in the supplied sheet and are no longer accepted for new audits. Models cannot supply prices, override totals or remove conditional clauses. AI summaries and suggestions are labeled for technician review; suggestions do not become observed evidence or authorized work.
 
@@ -92,7 +92,6 @@ See [CSP sources, private reporting and the phone check before enforcement](docs
 | `backend/document_links.py` | Read-only document-link tokens for one signed agreement and one document set (stored as digests) |
 | `backend/tags.py` | The shared QR tag code format and the printed-sheet QR images |
 | `tests/` | Synthetic behavioral tests; browser harness never ships |
-| `scripts/verify_live_release.py`, `verify_live_browser.js` | Real dedicated infrastructure acceptance with normal staff sign-in and scoped synthetic cleanup |
 | `scripts/deploy_backend.py`, `stamp_hosting.py`, `RELEASES.md` | Source-commit stamping of each release and the release log |
 | `scripts/verify_live_reliability.py` | Optional manual check: runs a synthetic Live session directly against Vertex in the dedicated project (reads `tests/fixtures/live-prompt.wav`; needs Google Cloud credentials and makes billable model calls; takes an optional duration in seconds, default 135) and prints counts of audio, checkpoints and the natural reconnect notice. No customer data; not run by CI |
 | `scripts/ensure_firestore_ttls.py` | [Firestore TTL policy checks and setup](docs/firebase-isolation.md#firestore-ttl-policies) |
@@ -104,13 +103,12 @@ The scripts under `scripts/` run on Linux, macOS and Windows and resolve tools f
 
 | Variable | Used by | Resolution when unset |
 | --- | --- | --- |
-| `ADR_GCLOUD` | `verify_live_release.py`, `record_live_release.py`, `ensure_firestore_ttls.py` | `gcloud` on `PATH` (including `gcloud.cmd` on Windows) |
-| `ADR_TEST_PYTHON` | `verify_live_browser.js` | `.venv` in the repository, then `python3` (`python` on Windows) |
-| `ADR_CHROME_PATH` | `manual_chrome.js` (used by `verify_live_browser.js`) | Platform install locations, then `google-chrome`/`chromium` on `PATH` |
+| `ADR_GCLOUD` | `ensure_firestore_ttls.py` | `gcloud` on `PATH` (including `gcloud.cmd` on Windows) |
+| `ADR_CHROME_PATH` | `manual_chrome.js` | Platform install locations, then `google-chrome`/`chromium` on `PATH` |
 
-From WSL2, `PATH` may resolve `gcloud` to the Windows SDK's shell wrapper, which takes roughly 30 seconds per call through Windows interop; point `ADR_GCLOUD` at a native Linux gcloud for a fast check. `verify_live_release.py` caches the access token until two minutes before gcloud says it expires (at most 45 minutes) and reads the Live checkpoint off the socket's event loop, so a slow lookup can no longer miss the relay's keepalive pings (uvicorn closes with 1011 "keepalive ping timeout" after 20 s + 20 s).
+From WSL2, `PATH` may resolve `gcloud` to the Windows SDK's shell wrapper, which takes roughly 30 seconds per call through Windows interop; point `ADR_GCLOUD` at a native Linux gcloud for a fast check.
 
-When gcloud or Chrome cannot be found, the helper stops with a message naming its variable. The release helper bridges the app's Live socket with Node's built-in WebSocket client, so run it with Node 22 or newer. Review evidence (screenshots, traces, logs) is local only: keep it in the gitignored `review-artifacts/` directory, and attach archives to a GitHub Release rather than committing them.
+When gcloud or Chrome cannot be found, the helper stops with a message naming its variable. Review evidence (screenshots, traces, logs) is local only: keep it in the gitignored `review-artifacts/` directory, and attach archives to a GitHub Release rather than committing them.
 
 ```powershell
 python -m pip install --require-hashes -r backend/requirements.txt -r backend/requirements-dev.txt
@@ -159,10 +157,10 @@ The `audit` job runs `npm audit` on the root and `web/` lockfiles and fails on h
 
 Code scanning uses GitHub's CodeQL default setup (Settings > Advanced Security, owner-held), which scans pushes to `master` and other protected branches, same-repository pull requests against them, and weekly (conditions in D-037, `docs/DECISIONS.md`); results are under Security > Code scanning. There is no CodeQL workflow file (`docs/DECISIONS.md`, D-037).
 
-`tests/test_firestore_emulator.py` (quota, Live lease, signing and workspace transactions) and `tests/test_firestore_emulator_operations.py` (delivery, monitoring, extras, insight, price-book, retention and spending transactions) run the real store classes against the Firestore emulator, with concurrent callers standing in for separate Cloud Run instances. They are skipped unless `FIRESTORE_EMULATOR_HOST` is set; CI no longer runs them (the `firestore-emulator` job was removed; see `docs/runbook/ci.md`, "Legacy CI retired"). Locally, with Java 21 or later:
+`tests/test_firestore_emulator.py` (quota, Live lease, signing and workspace transactions) runs the real store classes against the Firestore emulator, with concurrent callers standing in for separate Cloud Run instances. It is skipped unless `FIRESTORE_EMULATOR_HOST` is set; CI no longer runs it (the `firestore-emulator` job was removed; see `docs/runbook/ci.md`, "Legacy CI retired"). **Historical:** the suite no longer collects, because it imports the removed first-company price book (`backend/adr_price_book.py`) and the retired backend; it stays as reference until S8 deletes it. The command below is how it ran:
 
 ```powershell
-npx firebase-tools emulators:exec --only firestore --project demo-adr-emulator "python -m pytest tests/test_firestore_emulator.py tests/test_firestore_emulator_operations.py -q -p no:cacheprovider"
+npx firebase-tools emulators:exec --only firestore --project demo-adr-emulator "python -m pytest tests/test_firestore_emulator.py -q -p no:cacheprovider"
 ```
 
 The `demo-` project ID keeps the emulator and client offline; never point these tests at a real project.

@@ -8,10 +8,12 @@ import { readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  actionSteps,
   allSteps,
   commands,
   evaluate,
   isOperator,
+  isPinnedUses,
   load,
   RELEASE,
   Shell,
@@ -97,11 +99,12 @@ describe('triggers and gate', () => {
   });
 
   it.each([RELEASE, WEB])('%s pins every action to a full commit', (file) => {
-    const uses = allSteps(load(file))
+    const uses = Object.values(load(file).jobs as Record<string, Data>)
+      .flatMap((job) => actionSteps(job))
       .filter((s) => 'uses' in s)
       .map((s) => s.uses);
     expect(uses.length).toBeGreaterThan(0);
-    for (const ref of uses) expect(ref).toMatch(/^[\w.-]+\/[\w./-]+@[0-9a-f]{40}$/);
+    for (const ref of uses) expect(isPinnedUses(ref), ref).toBe(true);
   });
 
   it.each([RELEASE, WEB])('%s gives every job a time limit', (file) => {

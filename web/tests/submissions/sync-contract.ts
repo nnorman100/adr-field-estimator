@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import type { FieldDoc } from '@/lib/field/canonical';
-import { desired, type JobDraftSnapshot, type SyncMarker } from '@/lib/jobs/draft-lifecycle';
+import { desired, MalformedMarkerError, type JobDraftSnapshot, type SyncMarker } from '@/lib/jobs/draft-lifecycle';
 import type { DraftSync } from '@/lib/jobs/draft-sync';
 import type { Fence } from '@/lib/submissions/fence';
 
@@ -40,8 +40,10 @@ export type SyncProbe = {
   store: DraftSync;
   seed(companyId: string, draftId: string, draft: SeedDraft): Promise<void>;
   peek(companyId: string, draftId: string): Promise<SyncPeek | null>;
-  // Deletes a draft document (its rooms and photos stay), as one lost between two syncs.
+  // Deletes a draft document with its rooms and photos, as one lost between two syncs.
   remove(companyId: string, draftId: string): Promise<void>;
+  // Leaves a marker document as given, as another writer or a damaged copy would.
+  seedMarker(companyId: string, jobId: string, data: Record<string, unknown>): Promise<void>;
   marker(companyId: string, jobId: string): Promise<SyncMarker | null>;
 };
 
@@ -106,7 +108,7 @@ export function draftSyncContract(name: string, probe: () => SyncProbe): void {
       const other = randomUUID();
       // A sync that read Postgres before the change synced at 5: refused, and its new draft never made.
       const late = desired({ ...job, fieldRevision: 3, fieldOwnerUid: 'old-owner', currentDraftId: other, draftIds: [job.currentDraftId, other] });
-      expect(await store.sync(company, late, 0)).toEqual({ outcome: 'stale', stored: { gen: 0, v: 5, draftIds: [job.currentDraftId], skipped: NONE } });
+      expect(await store.sync(company, late, 0)).toEqual({ outcome: 'stale' });
       expect(await peek(company, other)).toBeNull();
       expect((await peek(company, job.currentDraftId))?.fieldOwnerUid).toBe('estimator-1');
       // After a database restore lowers the field revision, the operator raises the generation.
@@ -378,6 +380,32 @@ export function draftSyncContract(name: string, probe: () => SyncProbe): void {
       expect(await peek(company, current)).toBeNull();
       expect(await peek(company, earlier)).toMatchObject({ jobId: null, fieldOwnerUid: 'old-owner' });
       expect(await marker(company, job.jobId)).toBeNull();
+    });
+
+    it('stops, changing nothing, when the job’s marker is there but not in the shape the sync writes', async () => {
+      const { store, peek, seedMarker } = probe();
+      const company = randomUUID();
+      const job = snapshotOf();
+      await seedMarker(company, job.jobId, { gen: 0, v: -1, draftIds: [], skipped: NONE });
+      await expect(store.sync(company, desired(job), 0)).rejects.toBeInstanceOf(MalformedMarkerError);
+      expect(await peek(company, job.currentDraftId)).toBeNull();
+    });
+
+    it('writes nothing when Postgres moved on after the snapshot was read, and says so', async () => {
+      const { store, peek, marker } = probe();
+      const company = randomUUID();
+      const job = snapshotOf();
+      let asked = 0;
+      const moved = async () => {
+        asked += 1;
+        return false;
+      };
+      expect(await store.sync(company, desired(job), 0, { stillCurrent: moved })).toEqual({ outcome: 'moved' });
+      expect(asked).toBe(1);
+      expect(await peek(company, job.currentDraftId)).toBeNull();
+      expect(await marker(company, job.jobId)).toBeNull();
+      // Still current: written as usual.
+      expect(await store.sync(company, desired(job), 0, { stillCurrent: async () => true })).toMatchObject({ outcome: 'synced', created: [job.currentDraftId] });
     });
   });
 }

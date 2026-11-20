@@ -330,6 +330,20 @@ test('a job archived on another phone shows archived on the save that meets it, 
   await expectNoAxeViolations(page);
 });
 
+// Runs a request whose Postgres change commits, then leaves the field database's record of the job's draft
+// sync as it was before it (the job's sync marker, web/src/lib/jobs/draft-sync.ts, and the version Postgres
+// records as synced), as a field step that did not get through leaves them; the caller puts the draft back.
+async function asIfFieldStepFailed(company: Company, jobId: string, send: () => Promise<unknown>): Promise<void> {
+  const marker = adminDb().doc(`companies/${company.id}/draftLifecycle/${jobId}`);
+  const before = (await marker.get()).data();
+  const [row] = await adminSql()<{ synced: number }[]>`SELECT field_synced_revision AS synced FROM jobs WHERE id = ${jobId}::uuid`;
+  const synced = row!.synced;
+  await send();
+  if (before) await marker.set(before);
+  else await marker.delete();
+  await adminSql()`UPDATE jobs SET field_synced_revision = ${synced} WHERE id = ${jobId}::uuid`;
+}
+
 test('a restore whose field step did not get through is sent again from the jobs list once the job has left Archived drafts', async ({ page, request }) => {
   test.setTimeout(150_000);
   const company = await seedCompany('restore-retry', { owner: 'owner' });
@@ -350,7 +364,7 @@ test('a restore whose field step did not get through is sent again from the jobs
     if (!failing) return route.continue();
     const draft = adminDb().doc(`companies/${company.id}/drafts/${await currentDraftOf(company.id, jobId)}`);
     const before = (await draft.get()).data()!;
-    await route.fetch();
+    await asIfFieldStepFailed(company, jobId, () => route.fetch());
     await draft.update({ state: before.state, archiveRevision: before.archiveRevision });
     return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'draft_unavailable' }) });
   });
@@ -431,7 +445,7 @@ for (const code of ['draft_unavailable', 'jobs_unavailable']) {
       if (!failing) return route.continue();
       const draft = adminDb().doc(`companies/${company.id}/drafts/${await currentDraftOf(company.id, jobId)}`);
       const before = (await draft.get()).data()!;
-      await route.fetch();
+      await asIfFieldStepFailed(company, jobId, () => route.fetch());
       await draft.update({ state: before.state, archiveRevision: before.archiveRevision ?? FieldValue.delete() });
       return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: code }) });
     });

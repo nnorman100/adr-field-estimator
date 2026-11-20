@@ -21,19 +21,26 @@ export class CompanyContextError extends Error {
 // connection used next for another company, or for no company, carries nothing over.
 //
 // The company id must come from the verified sign-in, never from a URL, header or body.
+//
+// `snapshot`: a read-only transaction that reads one snapshot (repeatable read), so several queries in
+// it never see a commit made between them (the draft sync's read of a job, jobs/sync-job.ts).
 export async function withCompany<T>(
   db: Database,
   companyId: string,
   run: (tx: CompanyTransaction) => Promise<T>,
+  options: { snapshot?: boolean } = {},
 ): Promise<T> {
   if (typeof companyId !== 'string' || !UUID.test(companyId)) {
     throw new CompanyContextError('withCompany needs a company id that is a uuid');
   }
   return transactionSpan(() =>
-    db.transaction(async (tx) => {
-      await tx.execute(sql`SELECT set_config('app.company_id', ${companyId.toLowerCase()}, true)`);
-      return run(tx);
-    }),
+    db.transaction(
+      async (tx) => {
+        await tx.execute(sql`SELECT set_config('app.company_id', ${companyId.toLowerCase()}, true)`);
+        return run(tx);
+      },
+      options.snapshot === true ? { accessMode: 'read only', isolationLevel: 'repeatable read' } : undefined,
+    ),
   );
 }
 

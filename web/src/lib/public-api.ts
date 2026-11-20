@@ -30,6 +30,7 @@ export const memberApiPaths: readonly string[] = [
   '/api/invitations/:id/accept',
   // The company's prices (S4-6): the company is the sign-in's, so no id is in the path.
   '/api/prices',
+  '/api/prices/item-list',
   '/api/prices/working-copy',
   '/api/prices/preview',
   '/api/prices/publish',

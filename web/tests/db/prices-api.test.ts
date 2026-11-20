@@ -15,6 +15,7 @@ vi.mock('@/lib/prices/services', () => ({ pricesServices: () => live.harness!.pr
 vi.mock('@/lib/platform/services', () => ({ platformServices: () => live.harness!.platform }));
 
 const { GET: readPrices } = await import('@/app/api/prices/route');
+const { GET: readItemList } = await import('@/app/api/prices/item-list/route');
 const { PUT: saveWorkingCopy } = await import('@/app/api/prices/working-copy/route');
 const { POST: preview } = await import('@/app/api/prices/preview/route');
 const { POST: publish } = await import('@/app/api/prices/publish/route');
@@ -24,6 +25,8 @@ const { POST: restore } = await import('@/app/api/prices/versions/[versionId]/re
 const { GET: exportList } = await import('@/app/api/prices/export/route');
 const { GET: supportPrices } = await import('@/app/api/platform/companies/[companyId]/prices/route');
 const { contentHash, parseTable } = await import('@/engine/table');
+const { resolveIdentity } = await import('@/lib/auth/identity');
+const { readPublishedItemList } = await import('@/lib/prices/http');
 const { starterTable } = await import('@/lib/prices/starter');
 const { everything, operatorClaims, owner, params, request, resetTeamDatabase, startTeamServer } = await import('./team-harness');
 type FakeClaims = import('./team-harness').FakeClaims;
@@ -151,6 +154,96 @@ describe('reading the prices', () => {
   it('refuses a call with no sign-in', async () => {
     expect((await read(null)).status).toBe(401);
     expect((await save(0, starterTable(), null as never)).status).toBe(401);
+  });
+});
+
+describe('the published item list for Check Scope', () => {
+  it('reports no publication even if the owner has saved a working copy', async () => {
+    expect((await save(0, smallTable())).status).toBe(200);
+    const before = await everything(h.admin);
+    for (const claims of [owner(), estimator, office]) {
+      const { status, body, response } = await call(readItemList, claims);
+      expect({ status, body }).toEqual({ status: 200, body: { current: null } });
+      expect(response.headers.get('cache-control')).toBe('no-store');
+    }
+    expect((await call(readItemList, null)).status).toBe(401);
+    expect((await call(readItemList, operatorClaims())).status).toBe(403);
+    expect((await call(readItemList, owner('owner-b', 'tenant-b'))).status).toBe(404);
+    expect(await everything(h.admin)).toBe(before);
+  });
+
+  it('refuses a verified company member without prices_read', async () => {
+    const readRequest = request(estimator, '/api/prices/item-list');
+    const { verifier, directory } = h.identity;
+    const identity = await resolveIdentity(readRequest, verifier, directory);
+    expect(identity.capabilities).toContain('prices_read');
+
+    // All current member roles have this capability when price books are enabled.
+    // Remove it after resolving the member to exercise the handler's access check.
+    const capabilities = identity.capabilities.filter((key) => key !== 'prices_read');
+    const response = await readPublishedItemList(readRequest, { ...identity, capabilities });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: 'not_allowed' });
+  });
+
+  it('exposes only enabled items, units, room types and suggestions from the latest publication', async () => {
+    const table = smallTable();
+    table.items.push({ ...table.items[0], item_id: 'disabled', name: 'Disabled item', enabled: false });
+    table.policy.room_types = [{ id: 'utility', name: 'Utility room', suggested_items: ['disabled', 'extraction'] }];
+    expect((await save(0, table)).status).toBe(200);
+    const first = await publishAs({ expectedRevision: 1, reason: 'First prices', publishKey: KEY, rangeChoice: 'single' });
+    expect(first.status).toBe(201);
+    table.items[0].name = 'Water extraction';
+    expect((await save(2, table)).status).toBe(200);
+    const latest = await publishAs({ expectedRevision: 3, reason: 'Renamed item', publishKey: 'publish-key-0002' });
+    expect(latest.status).toBe(201);
+    table.items[0].name = 'Working copy name';
+    expect((await save(4, table)).status).toBe(200);
+    const before = await everything(h.admin);
+
+    for (const claims of [owner(), estimator, office]) {
+      const { status, body, response } = await call(readItemList, claims);
+      expect(response.headers.get('cache-control')).toBe('no-store');
+      expect({ status, body }).toEqual({
+        status: 200,
+        body: {
+          current: {
+            versionId: latest.body!.version.id,
+            publishedAt: latest.body!.version.publishedAt,
+            items: [{ itemId: 'extraction', name: 'Water extraction', unit: 'sf' }],
+            roomTypes: [{ id: 'utility', name: 'Utility room', suggestedItemIds: ['extraction'] }],
+          },
+        },
+      });
+    }
+    expect(await everything(h.admin)).toBe(before);
+  });
+
+  it('reads each company’s own version, including a table saved without room types', async () => {
+    const b = owner('owner-b', 'tenant-b');
+    await h.admin`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${h.seed.b}, 'price_books', true)`;
+    const input = { expectedRevision: 1, reason: 'First prices', publishKey: KEY, rangeChoice: 'single' };
+    expect((await save(0, smallTable())).status).toBe(200);
+    const aVersion = await publishAs(input);
+    expect(aVersion.status).toBe(201);
+    expect((await call(readItemList, b)).body).toEqual({ current: null });
+
+    const bTable = smallTable();
+    bTable.items[0].name = 'Pumping';
+    expect((await save(0, bTable, b)).status).toBe(200);
+    const bVersion = await publishAs(input, b);
+    expect(bVersion.status).toBe(201);
+
+    expect((await call(readItemList, owner())).body!.current).toMatchObject({
+      versionId: aVersion.body!.version.id,
+      items: [{ itemId: 'extraction', name: 'Extraction', unit: 'sf' }],
+    });
+    expect((await call(readItemList, b)).body!.current).toEqual({
+      versionId: bVersion.body!.version.id,
+      publishedAt: bVersion.body!.version.publishedAt,
+      items: [{ itemId: 'extraction', name: 'Pumping', unit: 'sf' }],
+      roomTypes: [],
+    });
   });
 });
 

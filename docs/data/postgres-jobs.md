@@ -103,8 +103,11 @@ owner's decisions, made before the file runs again. The table holds ids only.
 
 `0018_field_revision` adds four columns to `jobs` and one lookup; no table, row or policy is removed. They
 are the database part of the draft life-cycle redesign (Design 2): one sync step will write every Firestore
-draft of a job from Postgres, guarded by one version number. Copy already records `copied_from_job_id`; the
-sync that reads these columns comes in a later slice.
+draft of a job from Postgres, guarded by one version number. Copy records `copied_from_job_id`. Archive, Restore,
+Start field work and Move sync the job's drafts after their commit (`web/src/lib/jobs/sync-job.ts`): one read-only
+snapshot of the job with its `field_revision`, the sync, then `field_synced_revision` raised to that version
+(`WHERE field_synced_revision < v`) unless a draft is to be written again. Submit, Back to editing, New job and
+Copy switch to it in later slices.
 
 - `field_revision` (starts at 0) rises by exactly one, inside the database, every time an input of the
   drafts' life cycle changes: the job's `status`, `current_draft_id`, `field_owner_actor_id` or `copied_from_job_id`; its

@@ -1,4 +1,4 @@
-/* Real-browser guards for scripts/verify_live_browser.js: the automated tab's navigation, assets, API calls and Live socket must reach the selected backend. */
+/* Real-browser guards for the retired live browser verifier: the automated tab's navigation, assets, API calls and Live socket must reach the selected backend. */
 const { test, expect, chromium } = require('@playwright/test');
 const http = require('node:http'),
   fs = require('node:fs'),
