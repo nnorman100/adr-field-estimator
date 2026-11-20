@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Builds a production image for the rebuilt app WITHOUT a Docker daemon (the self-hosted CI pool has
-# none; owner decision 2026-11-10). The app goes into one layer under /app, owned by root and
+# Builds a production image for the rebuilt app WITHOUT a Docker daemon (owner decision 2026-11-10,
+# made for the former self-hosted CI pool; kept so the build does not depend on the runner image). The app goes into one layer under /app, owned by root and
 # read-only to the image's unprivileged node user, appended with crane onto the base image pinned
 # in web/Dockerfile. The image holds no environment-specific values and no secrets: Cloud Run
 # supplies APP_ENV and the rest, and the app refuses to start without them.

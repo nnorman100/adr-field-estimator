@@ -171,7 +171,7 @@ describe('the e2e job', () => {
     expect(e2e.strategy.matrix.shard).toEqual([1, 2, 3, 4]);
     expect(e2e.strategy['fail-fast']).toBe(false);
     expect(e2e['timeout-minutes']).toBe(35);
-    expect(e2e['runs-on']).toBe("${{ vars.CI_RUNNER || 'dryscope-linux' }}");
+    expect(e2e['runs-on']).toBe('ubuntu-latest');
   });
 
   it('gives each shard its own slice of a total that is the matrix length', () => {

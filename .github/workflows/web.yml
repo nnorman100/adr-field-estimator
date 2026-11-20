@@ -34,7 +34,7 @@ jobs:
   # Throwaway Postgres, then migrations from empty. `check` below fails when this job does,
   # so the existing web check cannot pass without it.
   database:
-    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
       APP_ENV: test
@@ -83,7 +83,7 @@ jobs:
   # Firebase Auth and Firestore emulators under a demo- project id only (tests/emu/run.ts
   # refuses any other id). `check` below fails when this job does.
   emulators:
-    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
+    runs-on: ubuntu-latest
     # Picks free emulator ports for each run (web/tests/emu/ports.ts), so jobs on runners that share a
     # machine never collide on 9399 or 8399. Only here: `npm test` in `check` must see the default ports.
     env:
@@ -127,7 +127,7 @@ jobs:
   # gate"). It also runs inside `database` and `emulators`; this job gives it a check of its own.
   # `check` below fails when this job does, so that check cannot pass without it.
   company-isolation:
-    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 25
     # EMU_PORTS: free emulator ports per run (web/tests/emu/ports.ts); only in the jobs that start emulators.
     env:
@@ -185,7 +185,7 @@ jobs:
   check:
     needs: [database, emulators, company-isolation, e2e, image]
     if: always() && !cancelled()
-    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -224,7 +224,7 @@ jobs:
   # runner's 2 CPUs: its default is half of os.cpus(), which in the container reports the host's 8,
   # so it ran 4 workers on 2 CPUs and single tests crept toward their 60-second timeout.
   e2e:
-    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
+    runs-on: ubuntu-latest
     # Picks free emulator ports for each run (web/tests/emu/ports.ts), so jobs on runners that share a
     # machine never collide on 9399 or 8399. Only here: `npm test` in `check` must see the default ports.
     env:
@@ -310,7 +310,7 @@ jobs:
   # web/scripts/build-image.sh: check its configuration, run its /app tree the way the image does and
   # run the release smoke check against it, so a broken build or start fails here, not at release.
   image:
-    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       # A release version for this check build only (releases number theirs in web-release.yml); the

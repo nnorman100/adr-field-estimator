@@ -213,10 +213,10 @@ def init_scope_repo(tmp_path):
     return repo, base_sha
 
 
-# The Actions budget stop blocks GitHub-hosted jobs, so every job defaults to the self-hosted pool
-# and the repository variable CI_RUNNER (for example ubuntu-latest) switches it back. See
-# docs/runbook/ci.md, "CI runners".
-RUNNER = "${{ vars.CI_RUNNER || 'dryscope-linux' }}"
+# The repository is public, so every job runs on a fixed standard GitHub-hosted runner (free for
+# public repositories) and never on a self-hosted one, which a pull request could compromise. No
+# variable switches it. See docs/runbook/ci.md, "CI runners".
+RUNNER = 'ubuntu-latest'
 WORKFLOWS = sorted((ROOT / '.github' / 'workflows').glob('*.y*ml'))
 
 
@@ -234,7 +234,7 @@ def test_workflows_exist():
 
 
 @pytest.mark.parametrize('path', WORKFLOWS, ids=lambda path: path.name)
-def test_every_job_runs_on_the_switchable_runner(path):
+def test_every_job_runs_on_the_github_hosted_runner(path):
     for name, job in workflow_jobs(path):
         assert job.get('runs-on') == RUNNER, f'{path.name} job {name}'
         # The self-hosted job container has no Docker daemon for service or job containers.
