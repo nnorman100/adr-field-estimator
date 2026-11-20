@@ -1,0 +1,158 @@
+import { randomUUID } from 'node:crypto';
+import { Timestamp, type Firestore } from 'firebase-admin/firestore';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { parseProjectionConfig } from '@/lib/config';
+import { MAX_PHOTO_REFS, MAX_ROOMS } from '@/lib/field/schema';
+import { desired, type JobDraftSnapshot, type SyncMarker } from '@/lib/jobs/draft-lifecycle';
+import { firestoreDraftSync, type DraftSync } from '@/lib/jobs/draft-sync';
+import { firestoreAccessStore, firestoreFor } from '@/lib/projection/firestore';
+import { draftSyncContract } from '../submissions/sync-contract';
+import { createTenant, projectId, signIn, signUp, withSecondFactor } from './auth-emulator';
+import { createDoc, getDoc, updateDoc, type Caller } from './rules/firestore-rest';
+
+// The draft life-cycle sync (src/lib/jobs/draft-sync.ts) against the emulator: held to the same
+// contract as the database tests' stand-in, then used the way the phone would, under
+// web/firestore.rules with real Auth emulator tokens. No client reads or writes the job's marker; after
+// a sync moves the field work, the old owner reads none of the job's drafts. One sync makes a Back to
+// editing draft at the room and photo caps, beside earlier drafts, in one transaction. Nothing calls the
+// sync yet (slice 2 of the redesign).
+
+let db: Firestore;
+let store: DraftSync;
+let grants: ReturnType<typeof firestoreAccessStore>;
+
+beforeAll(() => {
+  const config = parseProjectionConfig({
+    APP_ENV: 'local',
+    GOOGLE_CLOUD_PROJECT: projectId,
+    FIRESTORE_DATABASE_ID: '(default)',
+    FIRESTORE_EMULATOR_HOST: process.env.FIRESTORE_EMULATOR_HOST,
+  });
+  db = firestoreFor(config);
+  store = firestoreDraftSync(db);
+  grants = firestoreAccessStore(db);
+});
+
+const draftPath = (company: string, draft: string) => `companies/${company}/drafts/${draft}`;
+const markerPath = (company: string, job: string) => `companies/${company}/draftLifecycle/${job}`;
+const nested = async (path: string, name: string) => (await db.doc(path).collection(name).get()).docs.map((doc) => ({ id: doc.id, field: doc.get('field') }));
+
+draftSyncContract('Firestore', () => ({
+  store,
+  async seed(company, draft, seed) {
+    const ref = db.doc(draftPath(company, draft));
+    const { rooms, fence, ...data } = seed;
+    await ref.set({
+      ...data,
+      ...(fence ? { fence: { submissionId: fence.submissionId, epoch: fence.epoch, expiresAt: Timestamp.fromDate(fence.expiresAt) } } : {}),
+    });
+    for (const room of rooms ?? []) await ref.collection('rooms').doc(room.id).set({ field: room.field });
+  },
+  async peek(company, draft) {
+    const path = draftPath(company, draft);
+    const doc = await db.doc(path).get();
+    if (!doc.exists) return null;
+    const data = doc.data()!;
+    const fence = data.fence as { submissionId: string; epoch: string; expiresAt: Timestamp } | undefined;
+    return {
+      jobId: (data.jobId as string | undefined) ?? null,
+      state: data.state as string,
+      fieldOwnerUid: (data.fieldOwnerUid as string | undefined) ?? null,
+      fence: fence ? { submissionId: fence.submissionId, epoch: fence.epoch, expiresAt: fence.expiresAt.toMillis() } : null,
+      previous: (data.previous as { draftId: string; submissionId: string } | undefined) ?? null,
+      archiveRevision: (data.archiveRevision as number | undefined) ?? null,
+      fieldOwnerRevision: (data.fieldOwnerRevision as number | undefined) ?? null,
+      placeholder: data.placeholder === true,
+      field: data.field,
+      rooms: await nested(path, 'rooms'),
+      photos: await nested(path, 'photos'),
+    };
+  },
+  async marker(company, job) {
+    const found = await db.doc(markerPath(company, job)).get();
+    return found.exists ? (found.data() as SyncMarker) : null;
+  },
+}));
+
+const DAY = 24 * 60 * 60 * 1000;
+
+async function member(tenantId: string, company: string, role: 'owner' | 'estimator' | 'office'): Promise<{ uid: string; caller: Caller }> {
+  const email = `${role}-${randomUUID().slice(0, 8)}@sync.example.test`;
+  const password = `synthetic-password-${role}`;
+  const uid = await signUp(tenantId, email, password);
+  await grants.grant({ companyId: company, authTenantId: tenantId, uid, role, expiresAt: new Date(Date.now() + DAY), version: 1 });
+  const idToken = await signIn(tenantId, email, password);
+  return { uid, caller: { idToken: role === 'estimator' ? idToken : withSecondFactor(idToken) } };
+}
+
+function snapshotOf(extra: Partial<JobDraftSnapshot> & Pick<JobDraftSnapshot, 'currentDraftId' | 'draftIds'>): JobDraftSnapshot {
+  return {
+    jobId: randomUUID(),
+    status: 'draft',
+    fieldOwnerUid: null,
+    fieldRevision: 1,
+    revision: 1,
+    coordinationRevision: 0,
+    pending: null,
+    committed: null,
+    content: { kind: 'empty' },
+    ...extra,
+  };
+}
+
+describe('the draft sync under the field rules', () => {
+  it('keeps the job’s marker closed to every client, owner included', async () => {
+    const tenant = await createTenant(`sync-m-${randomUUID().slice(0, 6)}`);
+    const company = randomUUID();
+    const [owner, estimator] = [await member(tenant, company, 'owner'), await member(tenant, company, 'estimator')];
+    const draft = randomUUID();
+    const job = snapshotOf({ currentDraftId: draft, draftIds: [draft], fieldOwnerUid: estimator.uid });
+    expect(await store.sync(company, desired(job))).toMatchObject({ outcome: 'synced' });
+    for (const who of [owner, estimator]) {
+      expect(await getDoc(who.caller, markerPath(company, job.jobId))).toBe(403);
+      expect(await updateDoc(who.caller, markerPath(company, job.jobId), { gen: 9, v: 99 })).toBe(403);
+      expect(await createDoc(who.caller, markerPath(company, randomUUID()), { gen: 9, v: 99 })).toBe(403);
+    }
+    // The estimator works on the draft the sync made, as the phone does.
+    expect(await updateDoc(estimator.caller, draftPath(company, draft), { field: { notes: 'wet carpet' } })).toBe(200);
+  });
+
+  it('after a sync moves the field work, the old owner reads none of the job’s drafts and the new owner reads all', async () => {
+    const tenant = await createTenant(`sync-o-${randomUUID().slice(0, 6)}`);
+    const company = randomUUID();
+    const [first, second] = [await member(tenant, company, 'estimator'), await member(tenant, company, 'estimator')];
+    const [earlier, current] = [randomUUID(), randomUUID()];
+    // An earlier, submitted draft (made by Back to editing's predecessor) and the current one.
+    await db.doc(draftPath(company, earlier)).set({ state: 'submitted', fieldOwnerUid: first.uid, field: { notes: 'first visit' } });
+    const job = snapshotOf({ currentDraftId: current, draftIds: [earlier, current], fieldOwnerUid: first.uid });
+    await store.sync(company, desired(job));
+    for (const draft of [earlier, current]) expect(await getDoc(first.caller, draftPath(company, draft))).toBe(200);
+
+    await store.sync(company, desired({ ...job, fieldRevision: 2, fieldOwnerUid: second.uid }));
+    for (const draft of [earlier, current]) {
+      expect(await getDoc(first.caller, draftPath(company, draft))).toBe(403);
+      expect(await getDoc(second.caller, draftPath(company, draft))).toBe(200);
+    }
+    expect(await updateDoc(first.caller, draftPath(company, current), { field: { notes: 'late edit' } })).toBe(403);
+    expect(await updateDoc(second.caller, draftPath(company, current), { field: { notes: 'taken over' } })).toBe(200);
+  });
+
+  it('makes a Back to editing draft at the room and photo caps, beside earlier drafts, in one transaction', async () => {
+    const company = randomUUID();
+    const earlier = Array.from({ length: 20 }, () => randomUUID());
+    for (const draft of earlier) await db.doc(draftPath(company, draft)).set({ state: 'submitted', fieldOwnerUid: 'old-owner', field: {} });
+    const rooms = Array.from({ length: MAX_ROOMS }, (_, i) => ({ id: `room-${i}`, field: { name: `Room ${i}`, notes: 'x'.repeat(2000) } }));
+    const photos = Array.from({ length: MAX_PHOTO_REFS }, () => ({ id: randomUUID(), field: { roomId: 'room-0', shotTag: 'overview', capturedAt: '2026-11-20T09:00:00.000Z' } }));
+    const current = randomUUID();
+    const job = snapshotOf({
+      currentDraftId: current,
+      draftIds: [...earlier, current],
+      fieldOwnerUid: 'estimator-1',
+      content: { kind: 'next', manifest: { draft: { roomOrder: rooms.map((room) => room.id) }, rooms, photos }, previous: { draftId: earlier[0]!, submissionId: randomUUID() } },
+    });
+    expect(await store.sync(company, desired(job))).toEqual({ outcome: 'synced', created: [current], changed: [...earlier].sort(), conflicts: [], missing: [] });
+    expect((await db.doc(draftPath(company, current)).collection('rooms').count().get()).data().count).toBe(MAX_ROOMS);
+    expect((await db.doc(draftPath(company, current)).collection('photos').count().get()).data().count).toBe(MAX_PHOTO_REFS);
+    for (const draft of earlier) expect((await db.doc(draftPath(company, draft)).get()).get('fieldOwnerUid')).toBe('estimator-1');
+  });
+});

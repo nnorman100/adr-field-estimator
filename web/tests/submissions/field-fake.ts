@@ -3,6 +3,8 @@ import type { JobProjection } from '@/lib/field/job-projection';
 import type { FieldManifest } from '@/lib/field/canonical';
 import { MAX_PHOTO_REFS, MAX_ROOMS } from '@/lib/field/schema';
 import type { ArchiveResult, ArchiveStore } from '@/lib/jobs/archive-store';
+import { planSync, type StoredDraft, type SyncMarker } from '@/lib/jobs/draft-lifecycle';
+import { resultOf, type DraftSync } from '@/lib/jobs/draft-sync';
 import { placeholderRefusal as refusalOf, draftOfOtherJob, type DraftMade } from '@/lib/jobs/drafts';
 import type { FenceResult, FenceStore, Provenance } from '@/lib/submissions/fence';
 import type { FakeDrafts } from '../db/draft-fake';
@@ -29,6 +31,8 @@ export type FakeDraft = {
   previous: Provenance | null;
   // The job revision of the last archive or restore (S5b-2), absent until one.
   archiveRevision?: number;
+  // The coordination revision the field owner was last named at (src/lib/jobs/drafts.ts), absent until one.
+  fieldOwnerRevision?: number;
   // The job the draft was made for (security audit F1), absent on a draft made before that key.
   jobId?: string;
   // The record an archive or restore leaves for a missing draft (src/lib/jobs/archive-store.ts): its
@@ -58,11 +62,16 @@ export const fileBacking = (path: string): Backing => ({
   },
 });
 
-type Method = keyof FenceStore | keyof ArchiveStore;
+type Method = keyof FenceStore | keyof ArchiveStore | keyof DraftSync;
 
 // Also the archive, restore and copy writer of S5b-2 (src/lib/jobs/archive-store.ts), on the same
-// drafts, so Submit and the photo route see an archived draft as the real field database holds it.
-export type FakeField = FenceStore & ArchiveStore & {
+// drafts, so Submit and the photo route see an archived draft as the real field database holds it,
+// and the draft life-cycle sync (src/lib/jobs/draft-sync.ts), which applies the same plan
+// (planSync) to this one shared record, so the jobs and photo stand-ins linked to it see every
+// draft it makes or changes (the r11 fake split).
+export type FakeField = FenceStore & ArchiveStore & DraftSync & {
+  // The sync's marker per job, by "company/job".
+  markers: Map<string, SyncMarker>;
   // The drafts as stored now (a copy).
   data(): FieldData;
   projected: Map<string, JobProjection>;
@@ -149,6 +158,35 @@ export function fakeField(backing: Backing = memoryBacking(), linked?: { drafts:
   }
 
   const fake: FakeField = {
+    markers: new Map(),
+    sync: (companyId, job, gen = 0) =>
+      call('sync', (data) => {
+        const stored = Object.fromEntries(Object.keys(job.drafts).map((draftId) => [draftId, storedOf(data[key(companyId, draftId)])]));
+        const plan = planSync(fake.markers.get(key(companyId, job.jobId)) ?? null, stored, job, gen);
+        if (plan.outcome !== 'synced') return resultOf(plan);
+        for (const made of plan.creates) {
+          const { fence, previous, fieldOwnerUid, field, ...rest } = made.data;
+          data[key(companyId, made.draftId)] = {
+            ...emptyDraft(fieldOwnerUid ?? null, made.data.jobId),
+            ...rest,
+            field,
+            fence: fence ? { submissionId: fence.submissionId, epoch: fence.epoch, expiresAt: fence.expiresAt.toISOString() } : null,
+            previous: previous ? { ...previous } : null,
+            rooms: Object.fromEntries(made.rooms.map((room) => [room.id, room.field ?? {}])),
+            photos: Object.fromEntries(made.photos.map((photo) => [photo.id, photo.field ?? {}])),
+          };
+        }
+        for (const update of plan.updates) {
+          const draft = data[key(companyId, update.draftId)]!;
+          const { fence, ...rest } = update.set;
+          Object.assign(draft, rest);
+          if (fence) draft.fence = { submissionId: fence.submissionId, epoch: fence.epoch, expiresAt: fence.expiresAt.toISOString() };
+          if (update.remove.includes('fieldOwnerUid')) draft.fieldOwnerUid = null;
+          if (update.remove.includes('fence')) draft.fence = null;
+        }
+        fake.markers.set(key(companyId, job.jobId), plan.marker);
+        return resultOf(plan);
+      }),
     failNext: {},
     loseNext: {},
     gate: {},
@@ -324,4 +362,19 @@ function lifecycle(
   draft.state = draft.placeholder ? placeholder : next(draft.state);
   draft.archiveRevision = revision;
   return 'set';
+}
+
+// A stand-in draft as planSync reads it (src/lib/jobs/draft-sync.ts, storedOf): a null field owner is
+// no key, as on the real draft.
+function storedOf(found: FakeDraft | undefined): StoredDraft {
+  if (!found) return null;
+  return {
+    placeholder: found.placeholder === true,
+    jobId: found.jobId,
+    state: found.state,
+    fence: found.fence ? { submissionId: found.fence.submissionId, epoch: found.fence.epoch, expiresAt: Date.parse(found.fence.expiresAt) } : null,
+    fieldOwnerUid: found.fieldOwnerUid ?? undefined,
+    archiveRevision: found.archiveRevision,
+    fieldOwnerRevision: found.fieldOwnerRevision,
+  };
 }
