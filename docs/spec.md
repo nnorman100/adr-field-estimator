@@ -77,10 +77,7 @@ Every screen below is at `/app` unless noted. "Data" is what the screen captures
 | QR tags | any signed-in user with an editable draft | C: scan or enter a code, print a sheet | |
 | Help, remove-room, archive and reset-password dialogs | per role | | help lines for a switched-off feature are hidden |
 
-The Check Scope reference endpoint (`GET /api/prices/item-list`) serves the current publication's
-date, item names and units, room types and suggestions to company members with `prices_read`.
-Before the first publication it returns an empty result. The job's item picker uses its own
-job-scoped endpoint, which reads the job's pinned version when it has one.
+Check Scope's dated, price-free item list comes from `GET /api/prices/item-list`; see [Prices API](access/prices.md).
 
 ### 2.4 Platform administration (superadmin)
 

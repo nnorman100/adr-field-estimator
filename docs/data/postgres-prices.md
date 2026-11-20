@@ -24,6 +24,5 @@ Part of [Data](../DATA.md).
   `withOperator` with that company set, and can never change them.
 - `content` is `jsonb`, so SQL checks only that it is an object. The `PriceTableV3` schema checks the
   prices when a table is written and read, and the hash is checked again on read.
-- The Check Scope reference endpoint (S6-8) reads from the current published row. It sends the
-  version ID, publish date, enabled item IDs, names and units, and room types with suggestion IDs.
-  The amounts stay in the published table.
+- The Check Scope item list (S6-8) is read from the current published row; its response is described in
+  [Prices API](../access/prices.md).
