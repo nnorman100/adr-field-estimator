@@ -40,7 +40,7 @@ jobs:
           github.event.workflow_run.head_repository.full_name == github.repository
         )
       )
-    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     # One release at a time. A newer merge waits for the running one and replaces any older waiting
     # run; the script skips a commit that is not newer than what is serving.

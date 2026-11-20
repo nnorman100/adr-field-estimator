@@ -83,6 +83,7 @@ Status: accepted (owner, Nov 10, 2026). Exception to Technology Standard 2.2.
 Reason: the standard puts the build server and CI runner on a Google Cloud VM with no public IP. That needs the company domain and Google Cloud organization, which do not exist yet. Until they do, the build server and CI runner stay on a Hostinger VPS.
 Known effect: this server cannot reach the test Cloud SQL address, so release migrations are moving inside Google (a Cloud Run job, PR #297). Until that lands, the `migrate` job in `.github/workflows/web-release.yml` runs them from the self-hosted runner through the Cloud SQL Auth Proxy.
 Ends when the company domain and Google Cloud organization exist.
+Superseded in part (Nov 20, 2026): the CI runner part. The repository is public, and GitHub advises against self-hosted runners for public repositories, so every workflow job runs on GitHub-hosted `ubuntu-latest` and the `CI_RUNNER` fallback to the self-hosted pool is removed (`docs/runbook/ci.md`). The `migrate` job's self-hosted runner and Cloud SQL Auth Proxy path no longer exists. The build server part of this decision stands.
 
 ### D-014: DryScope may use more than three agents (Nov 6, 2026)
 
@@ -144,10 +145,12 @@ Decision: the Standard's 35 days is made true, not reworded. On evidence buckets
 Basis: Google's own suggested setup is Object Versioning and soft delete on the same bucket, with Object Lifecycle Management deleting noncurrent versions after a number of days (`documents/docs.cloud.google.com/storage/docs/object-versioning`). DryScope never overwrites evidence (uploads use `ifGenerationMatch=0` and the app role cannot delete), so old versions arise only from deliberate deletion.
 Consequences: small Terraform change in the data root, High risk, owner-applied, together with the missing Firestore backup schedule (`docs/plans/TC.md`). `docs/DATA.md` records the window as planned until it is applied.
 
-### D-024: GitHub keyless sign-in trusts the numeric repository id only (Nov 12, 2026, G7)
+### D-024: GitHub keyless sign-in binds the deploy account by numeric repository ID (Nov 12, 2026, G7)
 
 Status: accepted (owner, Nov 12, 2026).
 Decision: DryScope keeps service-account impersonation for now, and its deploy principal is restricted to the numeric `repository_id`; the repository-name form is dropped. The starter template uses direct resource access for new projects. Terraform validation change, High risk, owner-applied (`docs/plans/TC.md`).
+
+On Nov 19, 2026, the owner also tightened the test provider's condition to require the repository and owner IDs, ref, environment, workflow ref and event name. The full condition and mapping are in the [test release runbook](runbook/test-release.md).
 
 ### D-025: Offline capture on iPhone needs the installed Home Screen app (Nov 12, 2026, G8)
 
