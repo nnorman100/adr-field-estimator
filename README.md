@@ -159,10 +159,10 @@ The `audit` job runs `npm audit` on the root and `web/` lockfiles and fails on h
 
 Code scanning uses GitHub's CodeQL default setup (Settings > Advanced Security, owner-held), which scans pushes to `master` and other protected branches, same-repository pull requests against them, and weekly (conditions in D-037, `docs/DECISIONS.md`); results are under Security > Code scanning. There is no CodeQL workflow file (`docs/DECISIONS.md`, D-037).
 
-`tests/test_firestore_emulator.py` (quota, Live lease, signing and workspace transactions) and `tests/test_firestore_emulator_operations.py` (delivery, monitoring, extras, insight, price-book, retention and spending transactions) run the real store classes against the Firestore emulator, with concurrent callers standing in for separate Cloud Run instances. They are skipped unless `FIRESTORE_EMULATOR_HOST` is set; CI no longer runs them (the `firestore-emulator` job was removed; see `docs/runbook/ci.md`, "Legacy CI retired"). Locally, with Java 21 or later:
+`tests/test_firestore_emulator.py` (quota, Live lease, signing and workspace transactions) runs the real store classes against the Firestore emulator, with concurrent callers standing in for separate Cloud Run instances. It is skipped unless `FIRESTORE_EMULATOR_HOST` is set; CI no longer runs it (the `firestore-emulator` job was removed; see `docs/runbook/ci.md`, "Legacy CI retired"). Locally, with Java 21 or later:
 
 ```powershell
-npx firebase-tools emulators:exec --only firestore --project demo-adr-emulator "python -m pytest tests/test_firestore_emulator.py tests/test_firestore_emulator_operations.py -q -p no:cacheprovider"
+npx firebase-tools emulators:exec --only firestore --project demo-adr-emulator "python -m pytest tests/test_firestore_emulator.py -q -p no:cacheprovider"
 ```
 
 The `demo-` project ID keeps the emulator and client offline; never point these tests at a real project.

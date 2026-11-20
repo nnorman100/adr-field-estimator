@@ -80,7 +80,7 @@ and ceilings".
 
 ## Evaluation tests
 
-Run by CI (provider-free, `python -m pytest tests`, `npm test`): `test_audit_retry.py`,
+Provider-free legacy tests (the legacy Python suite is retired from CI as of 2026-11-10; it is not run there): `test_audit_retry.py`,
 `test_live*.py`, `test_voice_notes.py`, `test_voice_note_gate.py`, `test_late_transcript_gate.py`,
 `test_scope.py`, `test_insights.py`,
 `test_drying_watch.py`, `test_readiness.py` (includes the `scripts/readiness_eval.py` accept and
@@ -90,7 +90,7 @@ reject cases), `test_sizing.py`, `test_estimate_warnings.py`, `test_outcomes.py`
 Real-service checks, run by hand with synthetic data and **not** in CI: `scripts/verify_scope_extraction.py`,
 `verify_estimate_batch3.py`, `verify_job_summaries.py` and
 `verify_drying_summaries.py` (`--live` is a separate release gate), `verify_live_reliability.py`,
-`verify_live_release.py`, `verify_workspace_database.py`. Record their results separately from
+`verify_live_release.py`. Record their results separately from
 mock tests.
 
 There is no automatic accuracy or hallucination score on the audit or scope prompts gating a

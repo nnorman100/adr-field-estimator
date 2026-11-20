@@ -67,7 +67,7 @@ returns 429 before any model call.
   unreadable results are never treated as verified.
 - **Limits:** thinking level provider default; call timeout 50 s (the 55 s REST deadline less its 5 s save reserve); no retry.
 - **Budget hooks:** 20 a minute, 400 a day (`ocr`). `Vertex AI call` log line with model, operation, time and outcome only.
-- **Evals:** none in CI beyond fakes (`tests/test_image_handling.py`, `tests/test_backend.py`). Real-service check: the
+- **Evals:** none in CI beyond fakes (`tests/test_image_handling.py`). Real-service check: the
   `ocr_case` in `scripts/verify_estimate_batch3.py` (non-meter image must give `meter_detected=false` and an empty value).
 - **Switch:** none.
 
@@ -171,11 +171,13 @@ returns 429 before any model call.
 - **Spend budget:** a shared per-company monthly AI allowance applies to every path above ([ai-spending.md](ai-spending.md)),
   beside the per-user per-minute and daily counts. `ai_usage` reports those counts per company and enforces nothing.
 - **Gating evals:** no numeric score or threshold gates a release. The thresholds that exist are exact-match assertions in
-  the hand-run real-service scripts and the fixed pass bars named above (job and drying summaries 5 of 5, readiness 3 of 3,
-  priced-extra audit 3 of 3). Provider-free tests run in CI; real-service checks are run by hand and recorded apart from
-  mock tests. Physical iPhone, Bluetooth, interruption, reconnect and sub-second latency stay open until observed on a device.
+  the hand-run real-service scripts and the fixed pass bars named above (job and drying summaries 5 of 5, readiness 3 of 3).
+  The earlier priced-extra audit bar (3 of 3) is historical: its cases were removed with the first company's price book
+  files. The legacy Python suite is retired from CI (2026-11-10); the DryScope rebuild's provider-free tests run in CI, and
+  real-service checks are run by hand and recorded apart from mock tests. Physical iPhone, Bluetooth, interruption, reconnect and sub-second latency stay open until observed on a device.
 - **Known gap:** `scripts/verify_estimate_batch3.py` calls `generate()` without the `operation` and `inspection_id`
-  arguments the function now requires, so it fails with a `TypeError` before reaching the model. It is a protected script;
+  arguments the function now requires, and it imports the removed `backend/adr_price_book.py`, so it stops at import before
+  reaching the model. It is a protected script;
   the port's parity run needs its cases rewritten against the new signature with the owner's approval.
 
 ## Pinned prompts and requests

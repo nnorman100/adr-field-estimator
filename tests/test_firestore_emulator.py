@@ -2,7 +2,7 @@
 
 Skipped unless FIRESTORE_EMULATOR_HOST is set. Run locally from the repository root:
     npx firebase-tools emulators:exec --only firestore --project demo-adr-emulator \
-        "python -m pytest tests/test_firestore_emulator.py tests/test_firestore_emulator_operations.py -q -p no:cacheprovider"
+        "python -m pytest tests/test_firestore_emulator.py -q -p no:cacheprovider"
 Evidence objects use the in-memory bucket; only Firestore is real here.
 
 The emulator resolves lock conflicts by timeout rather than production's wound-wait, so
