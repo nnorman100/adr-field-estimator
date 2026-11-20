@@ -123,7 +123,8 @@ export async function mirrorSignIn(person: FieldPerson): Promise<boolean> {
   await Promise.all([company.authStateReady(), auth.authStateReady()]);
   const user = company.currentUser;
   if (user && user.uid === person.uid) {
-    if (auth.currentUser?.uid !== user.uid) await updateCurrentUser(auth, user);
+    const mirrored = auth.currentUser;
+    if (mirrored?.uid !== user.uid || mirrored.metadata.lastSignInTime !== user.metadata.lastSignInTime) await updateCurrentUser(auth, user);
     return true;
   }
   if (auth.currentUser) await signOut(auth);

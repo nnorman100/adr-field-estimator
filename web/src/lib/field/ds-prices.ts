@@ -8,11 +8,16 @@ type Person = { tenantId: string; uid: string };
 type ListOwner = Person & { companyId: string };
 // What a phone knows of one company's published list: null when it never asked, `{ list: null }`
 // when the server last said the company has none.
-export type SavedList = { list: ItemList | null } | null;
+export type SavedList = { list: ItemList | null } | 'refused' | null;
 
-// Stored in the version part of the key for a confirmed "no published list". It is no UUID, so it
-// never matches a version id.
+// Stored in the version part of the key for a confirmed "no published list", and for the server's
+// refusal of this company's list. Neither is a UUID, so neither matches a version id. A refusal row
+// outranks every list row of its company, whether or not those rows could be erased.
 const NONE = 'none';
+const REFUSED = 'refused';
+
+// The phone's storage could not be opened at all: no copy can be on it.
+class ListsUnavailable extends Error {}
 
 const STORE = 'item-lists';
 const SPEC: DbSpec = {
@@ -46,6 +51,7 @@ function onLists<T>(
   change: (store: IDBObjectStore) => () => T,
 ): Promise<T> {
   let openTransaction: IDBTransaction | undefined;
+  let opened = false;
   const abort = () => {
     try {
       openTransaction?.abort();
@@ -55,12 +61,17 @@ function onLists<T>(
   };
   signal.addEventListener('abort', abort);
   return withDatabase(SPEC, (db) => {
+    opened = true;
     signal.throwIfAborted();
     return transact(db, STORE, mode, (transaction) => {
       openTransaction = transaction;
       return change(transaction.objectStore(STORE));
     });
-  }).finally(() => signal.removeEventListener('abort', abort));
+  })
+    .catch((error: unknown) => {
+      throw opened ? error : new ListsUnavailable();
+    })
+    .finally(() => signal.removeEventListener('abort', abort));
 }
 
 function changing<T>({ tenantId, uid }: Person, work: (signal: AbortSignal) => Promise<T>): Promise<T> {
@@ -74,9 +85,11 @@ function changing<T>({ tenantId, uid }: Person, work: (signal: AbortSignal) => P
 
 export function readItemList(owner: ListOwner): Promise<SavedList> {
   return within((signal) => onLists('readonly', signal, (store) => {
-    const request = store.get(range(owner, owner.companyId));
+    const request = store.getAll(range(owner, owner.companyId));
     return () => {
-      const row = request.result as { versionId?: unknown; list?: unknown } | undefined;
+      const rows = request.result as { versionId?: unknown; list?: unknown }[];
+      if (rows.some((row) => row.versionId === REFUSED)) return 'refused';
+      const row = rows[0];
       if (!row) return null;
       if (row.versionId === NONE) return { list: null };
       const parsed = itemListResponseSchema.safeParse({ current: row.list });
@@ -107,12 +120,32 @@ function forget(person: Person, companyId: string | undefined, active: () => boo
   }));
 }
 
-// The server refused this company's item list: only that company's copy for this person goes.
-export function forgetItemList(owner: ListOwner, active: () => boolean): Promise<void> {
-  return forget(owner, owner.companyId, active);
+// The server refused this company's item list for this person (403, or the price books are off).
+// A refusal row is saved first, so the list stays unavailable offline even when the list rows cannot
+// be erased. The next successful read replaces both (replaceItemList). `active` is the exact
+// sign-in the refusal answered; it is not tied to any screen. Throws only when neither step held.
+export async function revokeItemList(owner: ListOwner, active: () => boolean): Promise<void> {
+  const prefix = [owner.tenantId, owner.uid, owner.companyId];
+  const write = (change: (store: IDBObjectStore) => void) => changing(owner, (signal) => onLists('readwrite', signal, (store) => {
+    if (!active()) return () => undefined;
+    change(store);
+    return () => undefined;
+  }));
+  const marked = await write((store) => store.put({ ...owner, versionId: REFUSED, list: null })).then(() => true, () => false);
+  const erase = () => write((store) => {
+    store.delete(IDBKeyRange.bound([...prefix, ''], [...prefix, REFUSED], false, true));
+    store.delete(IDBKeyRange.bound([...prefix, REFUSED], [...prefix, []], true, false));
+  });
+  const erased = await erase().catch(erase).then(() => true, () => false);
+  if (!marked && !erased) throw new Error('the item list refusal could not be saved');
 }
 
 export async function forgetItemLists(person: Person, active: () => boolean = () => true): Promise<void> {
   if (typeof indexedDB === 'undefined') return;
-  await forget(person, undefined, active);
+  try {
+    await forget(person, undefined, active);
+  } catch (error) {
+    // Storage that cannot be opened holds no copy; any other failure may have left one.
+    if (!(error instanceof ListsUnavailable)) throw error;
+  }
 }
