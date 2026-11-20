@@ -24,6 +24,8 @@ A refused request writes nothing, audit row included. Audit details hold ids, se
 The S6-8 item list serves the company's current publication with `Cache-Control: no-store`.
 It returns the version ID, publish date, enabled item IDs, names and units, and room types with
 their suggested item IDs. It returns `current: null` until the first publication.
+Check Scope shows the reference to members with `prices_read` who can open the job's scope.
+Phones that keep jobs can read their own saved copy offline.
 
 The import (S4-7) reads a CSV price list in the export's own columns and changes prices only: a line is matched to one price of the working copy by item, row, room type, band limit and tier, and its name, unit, trade, group and on/off columns must still match the working copy (those change in the editor). A cell starting with `=`, `+`, `-`, `@` or a tab is refused; every refusal names the line and column and never repeats the cell.
 

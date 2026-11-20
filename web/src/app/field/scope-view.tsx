@@ -19,6 +19,7 @@ import { MAX_NOTES } from '@/lib/field/schema';
 import { draftFieldWrites, type FieldDraft } from '@/lib/field/store';
 import { EquipmentSuggestion } from './equipment-suggestion';
 import type { JobContext } from './job-screens';
+import { PublishedItemList } from './published-item-list';
 import { RoomsSection } from './rooms-section';
 import { useFieldEdit } from './use-field-edit';
 import { Box, Outcome, READ_AGAIN, Section, Tick } from './ui';
@@ -81,6 +82,7 @@ export function ScopeView({ job, draft }: { job: JobContext; draft: FieldDraft }
   return (
     <div className="flex flex-col gap-4">
       <h3 className="sr-only">Check Scope</h3>
+      <PublishedItemList session={job.session} />
       {box(YEAR_FIELD)}
       <RoomsSection job={job} draft={draft} />
       <form

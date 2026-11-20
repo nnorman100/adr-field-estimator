@@ -3,7 +3,7 @@
 Part of [Screen specs](README.md). Address: `/field?job={id}` (the default job view). Built in:
 `web/src/app/field/job-screens.tsx` (the job frame and its tabs), `scope-view.tsx`,
 `rooms-section.tsx`, `room-card.tsx`, `room-lists.tsx`, `equipment-suggestion.tsx`,
-`start-field-work.tsx`, `use-field-edit.ts`. Stages S5a-6, S5a-10, S5b-1, S6-3, S6-4.
+`start-field-work.tsx`, `use-field-edit.ts`, `published-item-list.tsx`. Stages S5a-6, S5a-10, S5b-1, S6-3, S6-4, S6-8.
 
 ## Purpose
 
@@ -60,6 +60,11 @@ job's field work is no longer yours…" (unsent changes stay on the phone, read 
 - Loading: "Opening the job…", or offline "Opening saved field work…".
 - Empty: "No rooms yet.".
 - Lists not readable: "The room types, items and prep tasks could not be read." with the reason.
+- Company members with `prices_read` can expand "Item list as of {date}" to read the latest
+  published item names, units, room types and suggestions. The reference contains no prices
+  or totals. If the phone keeps jobs, the list reopens offline from `ds-prices`. Check Scope
+  checks for a new publication on online open, reconnect and foreground refresh. It identifies an
+  older copy when it finds a newer version. A company without a publication sees "Prices not set".
 - Offline with jobs kept: edits save on the phone (the shell's "No signal: your work is saved on
   this phone"); offline with Online only, nothing opens without a signal.
 - Draft unreadable: the error with "Try again".
@@ -74,6 +79,7 @@ job's field work is no longer yours…" (unsent changes stay on the phone, read 
 |---|---|---|
 | Read the job | `GET /api/jobs/{id}` | `jobs_read` |
 | Read the room types, items and prep tasks | `GET /api/jobs/{id}/scope-lists` | `jobs_read` |
+| Read the company's published reference item list | `GET /api/prices/item-list`, offline copy in `ds-prices` | `prices_read` |
 | Start field work (become field owner) | `POST /api/jobs/{id}/field-owner` ("Nobody has started this job's field work yet. Whoever starts it owns it…"). Also shown, as "This job's field work is yours, but this phone cannot open it yet. Start field work again to finish.", when the job already names this person but its draft does not (`ownerUnset` in `job-screens.tsx`; Offered on Check Scope and on [Photos](photos.md), `startable` in `job-screens.tsx`, `start-field-work.tsx`). The prompt is shown for more causes than Start can repair. **Start repairs** (it finishes the field database step again): the first Start request committed the owner and did not update an existing draft; the owner moved the field work to this estimator (or to themself) in [Job coordination](job-coordination.md), the move committed and the existing draft still names the former owner (for example a 503 before the draft named them); and the field owner, an estimator or the company owner, used "Back to editing" on [Finish](finish.md), got a 503 after Postgres committed the new draft ID, and the new draft is missing (Start rebuilds the draft from the last submission, `remakeCurrentDraft` in `web/src/lib/jobs/office.ts`). The prompt for that case comes from the job read: `GET /api/jobs/{id}` answers `draftMissing: true`, to the job's field owner only, while the job is `draft`, the field database holds no draft under the current draft ID and a committed submission exists to rebuild it from (`rebuildableRecord` in `web/src/lib/jobs/service.ts`); a lookup that does not get through leaves the flag out and never fails the read. The screens (`openDraft` in `job-screens.tsx`) then read no locator or draft, whose reads the rules refuse for a missing draft, and offer Start; Start, or another draft ID, clears the marker (`pending.missingDraft`). **Start cannot repair** a job whose first draft was never made: a job made by New job, by Copy of a signed job or by Save as new draft is committed in Postgres before its draft is made in the field database, so after a failed draft step (503) the job can be opened from Jobs. What shows depends on who is named: an estimator named as the job's field owner (for example its creator) gets the prompt, because their read of the missing draft is refused, and Start answers 503 again because there is no submission to rebuild from; a company owner named as field owner gets no prompt, because the read of the missing draft finds nothing and `ownerUnset` stays false, so the screens show "The field work of this job is not there yet. Try again in a moment."; a job made with no field owner shows the ordinary Start prompt ("Nobody has started this job's field work yet…") to an estimator. The repair is to send the original action again with its original IDs ("Try again" on [New job](new-job.md), the job actions' "Try copying again" on [Job actions](job-actions.md), Save as new draft's own retry on the [sync chip](field-shell.md)). | `scope` |
 | Save rooms, scope, counts, notes | the field database draft (`draftFieldWrites`), checked by `web/firestore.rules`; no server route | field owner with `scope` |
 

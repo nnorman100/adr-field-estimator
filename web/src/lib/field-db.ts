@@ -25,6 +25,7 @@ import {
 import { appCheckSettings, startAppCheck } from '@/lib/app-check-client';
 import type { BrowserSignInConfig } from '@/lib/config';
 import { companyAuth } from '@/lib/firebase-client';
+import { forgetItemLists } from '@/lib/field/ds-prices';
 import { forgetUnsent, keepPhotosHere, mayHaveUnsent, noteWrite, settled, writesNow } from '@/lib/field/unsent';
 import { addingEntries, forgetJournal, journalInMemory, readJournal } from '@/lib/field/journal';
 import type { AppCheckSeam } from '@/lib/field/sync-gate';
@@ -263,6 +264,8 @@ export async function discardFieldWork(
 ): Promise<DiscardResult> {
   const work = async (): Promise<DiscardResult> => {
     await stopFieldClient(person);
+    if (stillWanted && !stillWanted()) return 'kept';
+    if (!(await forgetItemLists(person, stillWanted).then(() => true, () => false))) return 'failed';
     if (stillWanted && !stillWanted()) return 'kept';
     // The recovery journal first: kept beside an emptied cache, its entries would be sent again at the
     // next start. Removed while the cache stays (a failure below), the phone is as it was before S6-4.
