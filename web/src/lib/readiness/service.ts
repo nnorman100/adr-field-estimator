@@ -1,12 +1,13 @@
-import { and, eq, inArray, ne } from 'drizzle-orm';
-import { evidenceObjects, jobDrafts, jobSubmissions } from '@/db/schema';
+import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm';
+import { companyFeatureFlags, evidenceObjects, jobClaims, jobDrafts, jobSubmissions, memberships } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
-import type { Capability } from '@/lib/access';
+import { capabilitiesFor, type Capability } from '@/lib/access';
+import { accessFlags, flagsFromRows } from '@/lib/flags';
+import { confirmationPredatesReprice } from '@/lib/estimates/service';
 import { CanonicalFormError, manifestDigest } from '@/lib/field/canonical';
-import { jobAccess, type JobCaller, type JobRow } from '@/lib/jobs/access';
+import { jobAccess, JobError, type JobCaller, type JobRow } from '@/lib/jobs/access';
 import { jobPriceTable, PricesUnreadable } from '@/lib/scope-lists/version';
-import { readJobDetails, type JobDetails } from '@/lib/submissions/details';
-import { checkReadiness, parseDraft, type PriceState } from './check';
+import { checkReadiness, countsEquipment, parseDraft, type ParsedDraft, type PriceState, type ReadinessFacts, type SetupReadings } from './check';
 import type { ReadinessReader } from './reader';
 import { noDryingLog, type SetupReadingSource } from './readings';
 import type { ReadinessAnswer, UnavailableReason } from './schema';
@@ -19,11 +20,14 @@ import type { ReadinessAnswer, UnavailableReason } from './schema';
 // 1. Postgres, one read-only snapshot: the caller's access to the job (scope work, as Submit), its
 //    state and current draft, its property address and claim, and its price version's area basis.
 // 2. The field database: the current draft, its rooms and photo references in one read-only read
-//    (reader.ts), only while the draft is this job's and open for editing.
-// 3. Postgres again, one read-only snapshot: the access check again and the job unchanged (state,
-//    current draft, revision, life-cycle version), so the gaps are never those of another draft or
-//    for a caller who lost the job meanwhile; the draft id this job's when the draft names no job;
-//    which photo references name a stored photo; the drying log's setup reading.
+//    (reader.ts), only while the draft is this job's and open for editing. The reader is built only
+//    now, so a missing field database setting cannot change what step 1 decided.
+// 3. Postgres again, one read-only snapshot, after every outcome of step 2: the caller's membership,
+//    role and the company's `readiness` switch read again, the access check again and the job
+//    unchanged (state, current draft, revision, life-cycle version), the price version unchanged, so
+//    the gaps are never those of another draft, other prices or for a caller who lost the job or the
+//    switch meanwhile; the draft id this job's when the draft names no job; which photo references name
+//    a stored photo; whether the scope confirmation predates a reprice; the drying log's setup reading.
 //
 // No Postgres transaction is held across the field database read.
 
@@ -38,13 +42,64 @@ export type ReadinessService = { read(caller: JobCaller, jobId: string): Promise
 const basisOf = (job: JobRow) => ({ status: job.status, currentDraftId: job.currentDraftId, revision: job.revision, fieldRevision: job.fieldRevision });
 const sameBasis = (a: JobRow, b: JobRow) => JSON.stringify(basisOf(a)) === JSON.stringify(basisOf(b));
 
-async function priceState(tx: CompanyTransaction, companyId: string, jobId: string): Promise<PriceState> {
+type JobPrices = { prices: PriceState; sequence: number | null };
+
+// The job's applicable price version (its pin, else the company's current one) and what the check needs
+// of it. A version that cannot be read is "unavailable"; a database failure is not caught.
+async function jobPrices(tx: CompanyTransaction, companyId: string, jobId: string): Promise<JobPrices> {
   try {
     const found = await jobPriceTable(tx, companyId, jobId);
-    return found ? { state: 'published', areaBasis: found.table.policy.area_basis } : { state: 'none' };
+    return found ? { prices: { state: 'published', areaBasis: found.table.policy.area_basis }, sequence: found.sequence } : { prices: { state: 'none' }, sequence: null };
   } catch (error) {
-    if (error instanceof PricesUnreadable) return { state: 'unavailable' };
+    if (error instanceof PricesUnreadable) return { prices: { state: 'unavailable' }, sequence: null };
     throw error;
+  }
+}
+
+const sameJobPrices = (a: JobPrices, b: JobPrices) => JSON.stringify(a) === JSON.stringify(b);
+
+// The caller as they are now: the company's `readiness` switch (off: 404 as the route's switch), their
+// membership active (else 403) and the keys of the role they hold now.
+async function currentCaller(tx: CompanyTransaction, caller: JobCaller): Promise<JobCaller> {
+  const flags = flagsFromRows(
+    await tx.select({ flag: companyFeatureFlags.flag, enabled: companyFeatureFlags.enabled }).from(companyFeatureFlags).where(eq(companyFeatureFlags.companyId, caller.companyId)),
+  );
+  if (!flags.readiness) throw new JobError('not_found');
+  const [membership] = await tx
+    .select({ role: memberships.role, status: memberships.status })
+    .from(memberships)
+    .where(and(eq(memberships.companyId, caller.companyId), eq(memberships.actorId, caller.actorId)))
+    .orderBy(sql`${memberships.status} = 'active' DESC`, desc(memberships.updatedAt))
+    .limit(1);
+  if (membership?.status !== 'active') throw new JobError('not_allowed');
+  return { ...caller, role: membership.role, capabilities: capabilitiesFor(membership.role, accessFlags(flags)) };
+}
+
+async function jobClaim(tx: CompanyTransaction, companyId: string, jobId: string): Promise<ReadinessFacts['claim']> {
+  const [claim] = await tx
+    .select({
+      carrier: jobClaims.carrier,
+      claimNumber: jobClaims.claimNumber,
+      policyNumber: jobClaims.policyNumber,
+      dateOfLoss: jobClaims.dateOfLoss,
+      lossCause: jobClaims.lossCause,
+      adjusterName: jobClaims.adjusterName,
+      adjusterEmail: jobClaims.adjusterEmail,
+      adjusterPhone: jobClaims.adjusterPhone,
+      deductible: jobClaims.deductible,
+    })
+    .from(jobClaims)
+    .where(and(eq(jobClaims.companyId, companyId), eq(jobClaims.jobId, jobId)));
+  return claim ?? {};
+}
+
+// The drying log's setup reading, only when equipment is counted. A read that fails is not known.
+async function setupReading(tx: CompanyTransaction, readings: SetupReadingSource, draft: ParsedDraft['draft'], companyId: string, jobId: string): Promise<SetupReadings> {
+  if (!countsEquipment(draft)) return 'unavailable';
+  try {
+    return await tx.transaction((savepoint) => readings.setupReading(savepoint, companyId, jobId));
+  } catch {
+    return 'unavailable';
   }
 }
 
@@ -74,7 +129,9 @@ async function storedPhotoIds(tx: CompanyTransaction, companyId: string, jobId: 
   return new Set(rows.map((row) => row.objectId));
 }
 
-export function readinessService(db: Database, reader: ReadinessReader, readings: SetupReadingSource = noDryingLog): ReadinessService {
+type FieldOutcome = { answer: ReadinessAnswer } | { parsed: ParsedDraft; fieldSha256: string; stamped: boolean };
+
+export function readinessService(db: Database, reader: () => ReadinessReader, readings: SetupReadingSource = noDryingLog): ReadinessService {
   return {
     async read(caller, jobId) {
       const companyId = caller.companyId;
@@ -83,63 +140,77 @@ export function readinessService(db: Database, reader: ReadinessReader, readings
       const before = await withCompany(
         db,
         companyId,
-        async (tx): Promise<{ job: JobRow; details: JobDetails; prices: PriceState } | { job: JobRow; details: null; prices: null }> => {
+        async (tx) => {
           const job = await jobAccess(tx, caller, jobId, READINESS_NEEDS);
-          if (job.status !== 'draft') return { job, details: null, prices: null };
-          return { job, details: await readJobDetails(tx, companyId, job), prices: await priceState(tx, companyId, jobId) };
+          if (job.status !== 'draft') return { job, facts: null };
+          return {
+            job,
+            facts: { propertyAddress: job.propertyAddress, claim: await jobClaim(tx, companyId, jobId), price: await jobPrices(tx, companyId, jobId) },
+          };
         },
         { snapshot: true },
       );
-      if (before.details === null) return unavailable('not_editing');
-      const { job, details, prices } = before;
+      if (before.facts === null) return unavailable('not_editing');
+      const { job, facts } = before;
       const draftId = job.currentDraftId;
 
-      let read;
-      try {
-        read = await reader.readEditing(companyId, jobId, draftId);
-      } catch (error) {
-        // Fixed text only: the SDK's message may quote a path.
-        console.error('readiness field read unavailable', error instanceof Error ? error.name : 'unknown');
-        return unavailable('field_unavailable');
-      }
-      if (read.outcome === 'not_editing') return unavailable('not_editing');
-      if (read.outcome !== 'read') return unavailable('draft_unreadable');
-      const parsed = parseDraft(read.manifest);
-      if (!parsed) return unavailable('draft_unreadable');
-      let fieldSha256: string;
-      try {
-        fieldSha256 = await manifestDigest(read.manifest);
-      } catch (error) {
-        if (error instanceof CanonicalFormError) return unavailable('draft_unreadable');
-        throw error;
-      }
-      const stamped = read.stamped;
-      const photoIds = parsed.photos.map((photo) => photo.id).filter((id) => UUID.test(id));
+      const field = await (async (): Promise<FieldOutcome> => {
+        let read;
+        try {
+          read = await reader().readEditing(companyId, jobId, draftId);
+        } catch (error) {
+          // Fixed text only: the SDK's message may quote a path.
+          console.error('readiness field read unavailable', error instanceof Error ? error.name : 'unknown');
+          return { answer: unavailable('field_unavailable') };
+        }
+        if (read.outcome === 'not_editing') return { answer: unavailable('not_editing') };
+        if (read.outcome !== 'read') return { answer: unavailable('draft_unreadable') };
+        const parsed = parseDraft(read.manifest);
+        if (!parsed) return { answer: unavailable('draft_unreadable') };
+        try {
+          return { parsed, fieldSha256: await manifestDigest(read.manifest), stamped: read.stamped };
+        } catch (error) {
+          if (error instanceof CanonicalFormError) return { answer: unavailable('draft_unreadable') };
+          throw error;
+        }
+      })();
 
       const after = await withCompany(
         db,
         companyId,
         async (tx) => {
-          const now = await jobAccess(tx, caller, jobId, READINESS_NEEDS);
+          const now = await jobAccess(tx, await currentCaller(tx, caller), jobId, READINESS_NEEDS);
           if (!sameBasis(job, now)) return 'changed' as const;
+          if ('answer' in field) return field.answer;
+          if (!sameJobPrices(facts.price, await jobPrices(tx, companyId, jobId))) return 'changed' as const;
+          const { parsed, stamped } = field;
           if (!stamped && !(await draftIsJobs(tx, companyId, jobId, draftId))) return 'unreadable' as const;
-          return { stored: await storedPhotoIds(tx, companyId, jobId, photoIds), setup: await readings.setupReading(tx, companyId, jobId) };
+          const photoIds = parsed.photos.map((photo) => photo.id).filter((id) => UUID.test(id));
+          return {
+            stored: await storedPhotoIds(tx, companyId, jobId, photoIds),
+            scopeStale: await confirmationPredatesReprice(tx, companyId, jobId, draftId),
+            setup: await setupReading(tx, readings, parsed.draft, companyId, jobId),
+          };
         },
         { snapshot: true },
       );
       if (after === 'changed') return unavailable('draft_changed');
       if (after === 'unreadable') return unavailable('draft_unreadable');
+      if ('status' in after) return after;
+      if ('answer' in field) return field.answer;
 
+      const { parsed, fieldSha256 } = field;
       const result = checkReadiness({
-        propertyAddress: details.job.propertyAddress,
-        claim: details.claim,
-        prices,
-        draft: parsed.draft,
+        propertyAddress: facts.propertyAddress,
+        claim: facts.claim,
+        prices: facts.price.prices,
+        draft: after.scopeStale ? { ...parsed.draft, scopeConfirmed: false } : parsed.draft,
         rooms: parsed.rooms,
         photos: parsed.photos.filter((photo) => after.stored.has(photo.id)).map((photo) => photo.field),
         setupReadings: after.setup,
       });
-      return { status: 'checked', jobId, draftId, jobRevision: job.revision, fieldSha256, ready: result.gaps.length === 0, ...result };
+      const ready = result.gaps.length === 0 && result.unavailable.every((check) => check === 'ocr');
+      return { status: 'checked', jobId, draftId, jobRevision: job.revision, fieldSha256, ready, ...result };
     },
   };
 }

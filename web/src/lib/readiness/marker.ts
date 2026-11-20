@@ -6,7 +6,8 @@ import { readinessAnswerSchema } from './schema';
 // route for each visible editing row and shows a marker only for a current answer about that row.
 // No marker (null) is the answer whenever that cannot be shown: another role, a row that is not an
 // editing draft, an answer that is missing, of another shape, about another job or another revision
-// of it, or one that says the check was unavailable. Shared with the screens, so it holds no server code.
+// of it, one that says the check was unavailable, or one with no gap that is not `ready` (a check it
+// could not run is not a pass). Shared with the screens, so it holds no server code.
 
 export type ReadinessMarker = { kind: 'ready' } | { kind: 'gaps'; count: number };
 
@@ -18,5 +19,6 @@ export function readinessMarker(row: MarkerRow, answer: unknown, capabilities: r
   if (!parsed.success || parsed.data.status !== 'checked') return null;
   const checked = parsed.data;
   if (checked.jobId !== row.id || checked.jobRevision !== row.revision) return null;
-  return checked.gaps.length === 0 ? { kind: 'ready' } : { kind: 'gaps', count: checked.gaps.length };
+  if (checked.gaps.length > 0) return { kind: 'gaps', count: checked.gaps.length };
+  return checked.ready ? { kind: 'ready' } : null;
 }

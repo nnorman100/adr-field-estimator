@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { ReadinessGap, UnavailableCheck } from './check';
+import { isReadinessCode, type ReadinessGap, type UnavailableCheck } from './check';
 
 // The contract of GET /api/jobs/{jobId}/readiness (S5b-11): the request takes no query and no body,
 // and the answer is one of two closed shapes. The screens (S5b-11B) parse the answer with
@@ -31,6 +31,7 @@ export type ReadinessAnswer =
       jobRevision: number;
       /** The canonical digest (src/lib/field/canonical.ts) of the draft the gaps were worked out from. */
       fieldSha256: string;
+      /** True only with no gap and no unavailable check other than the meter reading (`ocr`, never stored yet). */
       ready: boolean;
       gaps: ReadinessGap[];
       unavailable: UnavailableCheck[];
@@ -39,7 +40,7 @@ export type ReadinessAnswer =
 
 const id = z.string().min(1).max(64);
 const gap = z.strictObject({
-  code: z.string().min(1).max(64),
+  code: z.string().max(64).refine(isReadinessCode),
   roomId: id.optional(),
   count: z.int().min(1).max(1000).optional(),
 });

@@ -133,9 +133,19 @@ export function newestTerraformTag(root: string, tags: readonly string[]): strin
   return best?.tag ?? null;
 }
 
+// A manifest recorded before a switch existed lists the switches of its time. It is read as that
+// switch being off, which is what a release lists for a new switch; a name that is no switch still fails.
+function withLaterSwitches(manifest: unknown): unknown {
+  if (typeof manifest !== 'object' || manifest === null || Array.isArray(manifest)) return manifest;
+  const listed = (manifest as { switchDefaults?: unknown }).switchDefaults;
+  if (typeof listed !== 'object' || listed === null || Array.isArray(listed)) return manifest;
+  const off = Object.fromEntries(FLAG_NAMES.map((name) => [name, false]));
+  return { ...manifest, switchDefaults: { ...off, ...listed } };
+}
+
 /** The revision the previous published release put out, as the whole of the traffic to restore. */
 export function releasedBefore(previous: unknown, input: Pick<ManifestInput, 'version' | 'revision'>) {
-  const parsed = ReleaseManifest.safeParse(previous);
+  const parsed = ReleaseManifest.safeParse(withLaterSwitches(previous));
   if (!parsed.success) throw new Error('the previous release manifest is not valid');
   if (parsed.data.version === input.version || parsed.data.revision === input.revision) {
     throw new Error('the previous release manifest is this release, not an earlier one');

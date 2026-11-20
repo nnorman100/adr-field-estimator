@@ -12,7 +12,8 @@ import { draftFieldSchema, fieldId, photoFieldSchema, roomFieldSchema, type Draf
 //   category gets a category gap and no guess at which kind it is.
 // - A water room needs the area its price basis uses: the demolition area (finished or unfinished,
 //   above zero) unless the job's price version prices by wet floor area, which a wet floor area or,
-//   failing that, a floor area gives (an entered 0 counts). Its drying check needs a floor area,
+//   failing that, a floor area gives (an entered 0 counts). With no published price version there is
+//   no basis: that area check is listed as unavailable and the prices gap is raised. Its drying check needs a floor area,
 //   ceiling height and water class, and a wet floor area no larger than the floor area.
 // - A mold room needs its affected area (an entered 0 counts) and condition, and no water sizing.
 // - Every room needs the baseline photos: one overview, one affected surface and one moisture meter
@@ -24,7 +25,7 @@ import { draftFieldSchema, fieldId, photoFieldSchema, roomFieldSchema, type Draf
 //   to set prices.
 // - A check the server cannot run is listed as unavailable, never as a gap: the setup reading while
 //   the drying log is not there (S5b-10) or could not be read, the meter-photo reading status (the S7
-//   meter workflow stores none yet), and the price basis while the price version cannot be read.
+//   meter workflow stores none yet), and the price basis while there is no readable price version.
 
 /** The area a company's price version prices a water room's per-room items by (src/engine/table.ts). */
 export type AreaBasis = 'demolition' | 'demolition_with_waste' | 'wet_floor';
@@ -46,7 +47,7 @@ export type ReadinessFacts = {
   claim: Readonly<Record<string, string | null | undefined>>;
   prices: PriceState;
   draft: DraftField;
-  /** The draft's rooms; the gaps follow the draft's room order. */
+  /** The draft's rooms, in the draft's room order (parseDraft gives them so): the gaps follow it. */
   rooms: readonly { id: string; field: RoomField }[];
   /** The draft's photo references whose photo is stored (the evidence registry holds it). */
   photos: readonly PhotoField[];
@@ -102,12 +103,25 @@ export const READINESS_CODES: ReadonlySet<string> = new Set([
   'scopeConfirmed',
 ]);
 
+/** Whether a gap code is one the check gives: `claim:<key>` of CLAIM_KEYS, `shot:<shot>` of BASELINE_SHOTS, or a listed code. */
+export function isReadinessCode(code: string): boolean {
+  const at = code.indexOf(':');
+  if (at === -1) return code !== 'claim' && code !== 'shot' && READINESS_CODES.has(code);
+  const stem = code.slice(0, at);
+  const rest = code.slice(at + 1);
+  if (stem === 'claim') return (CLAIM_KEYS as readonly string[]).includes(rest);
+  if (stem === 'shot') return (BASELINE_SHOTS as readonly string[]).includes(rest);
+  return false;
+}
+
+/** Whether the draft counts drying equipment: air movers, dehumidifiers or wood floor systems. */
+export const countsEquipment = (draft: DraftField): boolean => positive(draft.airMovers) || positive(draft.dehumidifiers) || positive(draft.woodFloorSystems);
+
 const filled = (value: unknown): boolean => typeof value === 'string' && value.trim() !== '';
 const positive = (value: number | undefined): boolean => value !== undefined && value > 0;
 
 function waterRoomGaps(room: RoomField, prices: PriceState, add: (code: string) => void, unavailable: (check: UnavailableCheck) => void): void {
-  // No published version: the engine's default basis, the demolition area.
-  const basis: AreaBasis | null = prices.state === 'published' ? prices.areaBasis : prices.state === 'none' ? 'demolition' : null;
+  const basis: AreaBasis | null = prices.state === 'published' ? prices.areaBasis : null;
   if (basis === null) unavailable('roomArea');
   else if (basis === 'wet_floor') {
     if (room.wetFloorSf === undefined && room.floorSf === undefined) add('wetFloorArea');
@@ -123,12 +137,7 @@ export function checkReadiness(facts: ReadinessFacts): ReadinessResult {
   const gaps: ReadinessGap[] = [];
   const unavailable = new Set<UnavailableCheck>();
   const { draft } = facts;
-  // The canonical room order: the draft's own; a room it does not list (parseDraft gives none) last.
-  const place = (id: string) => {
-    const at = (draft.roomOrder ?? []).indexOf(id);
-    return at === -1 ? Number.MAX_SAFE_INTEGER : at;
-  };
-  const rooms = [...facts.rooms].sort((a, b) => place(a.id) - place(b.id));
+  const { rooms } = facts;
 
   if (!filled(facts.propertyAddress)) gaps.push({ code: 'propertyAddress' });
   if (draft.yearBuilt === undefined) gaps.push({ code: 'yearBuilt' });
@@ -148,7 +157,7 @@ export function checkReadiness(facts: ReadinessFacts): ReadinessResult {
   }
 
   const water = rooms.some(({ field }) => field.category !== undefined && field.category !== 'mold');
-  const equipment = positive(draft.airMovers) || positive(draft.dehumidifiers) || positive(draft.woodFloorSystems);
+  const equipment = countsEquipment(draft);
   if (water && !equipment) gaps.push({ code: 'equipment' });
 
   if (CLAIM_KEYS.some((key) => filled(facts.claim[key]))) {
