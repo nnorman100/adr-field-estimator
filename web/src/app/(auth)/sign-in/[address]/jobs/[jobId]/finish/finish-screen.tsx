@@ -34,6 +34,7 @@ type Ready = {
   job: JobOnScreen;
   manifest: FieldManifest | null;
   readinessRevision: number | null;
+  pricesManage: boolean;
   owner: boolean;
 };
 
@@ -97,7 +98,7 @@ function Finish({ address, companyName, tenantId, jobId, config }: FinishScreenP
       }
       const revision = (answer.body as { job?: { revision?: unknown } } | null)?.job?.revision;
       const readinessRevision = who.canFinish && readinessEnabled(me.body) && typeof revision === 'number' ? revision : null;
-      setPhase({ name: 'ready', user, canFinish: who.canFinish, job, manifest, readinessRevision, owner: outcome.role === 'owner' });
+      setPhase({ name: 'ready', user, canFinish: who.canFinish, job, manifest, readinessRevision, pricesManage: (me.body as { capabilities: unknown[] }).capabilities.includes('prices_manage'), owner: outcome.role === 'owner' });
     },
     [config, jobId, tenantId],
   );
@@ -170,7 +171,7 @@ function Finish({ address, companyName, tenantId, jobId, config }: FinishScreenP
 }
 
 function FinishActions({
-  user, canFinish, job, manifest, readinessRevision, owner, address, reviewHref, reload,
+  user, canFinish, job, manifest, readinessRevision, pricesManage, owner, address, reviewHref, reload,
 }: Ready & { address: string; reviewHref: string; reload: () => void }) {
   const [current, setCurrent] = useState<JobOnScreen>(job);
   const [busy, setBusy] = useState(false);
@@ -188,8 +189,14 @@ function FinishActions({
       : null,
     [readinessRevision, current, job.currentDraftId],
   );
-  const advisory = useDraftReadiness(user, readinessJob, manifest);
-  const gaps = advisory?.gaps ?? [];
+  const advisory = useDraftReadiness(user, readinessJob, manifest, 0, reload);
+  const items = useMemo(
+    () => (manifest && advisory ? advisory.gaps.flatMap((gap) => {
+      const fix = fixFor(gap, job.id, manifest, pricesManage ? `/sign-in/${address}/prices` : null, owner);
+      return fix ? [{ key: `${gap.code}/${gap.roomId ?? ''}`, ...fix }] : [];
+    }) : []),
+    [advisory, manifest, job.id, pricesManage, owner, address],
+  );
 
   async function finish() {
     if (!manifest) return;
@@ -281,7 +288,7 @@ function FinishActions({
             disabled={busy}
             onClick={(event) => {
               const prompt = dialog.current;
-              if (!prompt || gaps.length === 0) return void finish();
+              if (!prompt || items.length === 0) return void finish();
               // Some touch browsers do not focus a tapped button. Make it the focus return target.
               event.currentTarget.focus();
               prompt.showModal();
@@ -290,7 +297,7 @@ function FinishActions({
           >
             Finish and review
           </Button>
-          {gaps.length ? (
+          {items.length ? (
             <dialog
               ref={dialog}
               aria-labelledby="readiness-heading"
@@ -300,19 +307,16 @@ function FinishActions({
                 <h2 id="readiness-heading" className="text-lg font-semibold">Ready to review?</h2>
                 <p className="mt-2 text-sm">Check these items now or continue to save the draft for review.</p>
                 <ul className="mt-3 min-h-0 divide-y divide-foreground/20 overflow-y-auto overscroll-contain">
-                  {gaps.map((gap) => {
-                    const fix = fixFor(gap, job.id, manifest, owner ? `/sign-in/${address}/prices` : null);
-                    return (
-                      <li key={`${gap.code}/${gap.roomId ?? ''}`} className="flex items-center justify-between gap-3 py-1 text-sm">
-                        <span className="min-w-0 break-words">{fix.label}</span>
-                        {fix.href ? (
-                          <Link href={fix.href} aria-label={`Fix: ${fix.label}`} className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center underline">
-                            Fix
-                          </Link>
-                        ) : null}
-                      </li>
-                    );
-                  })}
+                  {items.map((fix) => (
+                    <li key={fix.key} className="flex items-center justify-between gap-3 py-1 text-sm">
+                      <span className="min-w-0 break-words">{fix.label}</span>
+                      {fix.href ? (
+                        <Link href={fix.href} aria-label={`${fix.action ?? 'Fix'}: ${fix.label}`} className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center underline">
+                          {fix.action ?? 'Fix'}
+                        </Link>
+                      ) : null}
+                    </li>
+                  ))}
                 </ul>
                 <form method="dialog" className="mt-3 flex flex-wrap gap-2">
                   <Button ref={back} type="submit" variant="outline">Back</Button>

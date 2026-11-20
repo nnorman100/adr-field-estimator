@@ -489,4 +489,44 @@ test.describe('field readiness markers', () => {
     await expect(failedRow.getByRole('link', { name: '10 Example Street' })).toBeVisible();
     await expect(failedRow.getByText(/items? to check|Ready to review/)).toHaveCount(0);
   });
+
+  test('Show more jobs checks only the rows added, not the ones already checked', async ({ page }) => {
+    const company = await seedCompany('readiness-pages', { estimator: 'estimator' });
+    await adminSql()`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${company.id}, 'readiness', true)`;
+    const row = (index: number) => ({
+      id: crypto.randomUUID(),
+      status: 'draft',
+      propertyAddress: `${index} Paging Street`,
+      revision: 1,
+      createdAt: '2026-11-14T18:00:00.000Z',
+      updatedAt: '2026-11-14T18:00:00.000Z',
+      customerName: '',
+      mine: true,
+    });
+    const first = Array.from({ length: 25 }, (_, index) => row(index + 1));
+    const second = Array.from({ length: 5 }, (_, index) => row(index + 26));
+    await page.route((url) => url.pathname === '/api/jobs', (route) =>
+      route.request().method() !== 'GET'
+        ? route.continue()
+        : route.fulfill({ json: new URL(route.request().url()).searchParams.has('cursor') ? { jobs: second, nextCursor: null } : { jobs: first, nextCursor: 'more' } }),
+    );
+    const asked = new Map<string, number>();
+    await page.route((url) => /^\/api\/jobs\/[^/]+\/readiness$/.test(url.pathname), (route) => {
+      const id = new URL(route.request().url()).pathname.split('/')[3]!;
+      asked.set(id, (asked.get(id) ?? 0) + 1);
+      return route.fulfill({ status: 503 });
+    });
+
+    await page.goto(`/sign-in/${company.address}`);
+    await page.getByLabel('Email').fill(company.people.estimator!.email);
+    await page.getByLabel('Password').fill(PASSWORD);
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await page.getByRole('link', { name: 'Open the field app' }).click();
+    await page.getByRole('button', { name: 'Online only', exact: true }).click();
+    await expect.poll(() => asked.size).toBe(25);
+    await page.getByRole('button', { name: 'Show more jobs' }).click();
+    await expect.poll(() => asked.size).toBe(30);
+    await expect(page.getByRole('listitem').filter({ hasText: '30 Paging Street' })).toBeVisible();
+    expect([...asked.values()].every((count) => count === 1)).toBe(true);
+  });
 });

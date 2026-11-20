@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   CHARGE_FIELDS,
@@ -17,7 +17,7 @@ import {
 } from '@/lib/field/forms';
 import { MAX_NOTES } from '@/lib/field/schema';
 import { draftFieldWrites, type FieldDraft } from '@/lib/field/store';
-import { markerText, useDraftReadiness } from '@/lib/readiness/client';
+import { markerText } from '@/lib/readiness/client';
 import { readinessMarker } from '@/lib/readiness/marker';
 import { EquipmentSuggestion } from './equipment-suggestion';
 import type { JobContext } from './job-screens';
@@ -40,12 +40,8 @@ export function ScopeView({ job, draft, open, readinessFix }: { job: JobContext;
   const { busy, error, notice, setError, setNotice, save: saveEdit } = useFieldEdit(job);
   const readOnly = !job.editable;
   const row = job.detail?.job;
-  const mayCheck =
-    open && job.session.online && job.session.readiness && job.session.capabilities.includes('scope') && !job.held && !job.moved &&
-    !job.stale && draft.state === 'editing' && row?.status === 'draft' && row.currentDraftId === job.draftRef.draftId;
-  const manifest = useMemo(() => ({ draft: draft.field, rooms: draft.rooms, photos: draft.photos }), [draft]);
-  const advisory = useDraftReadiness(job.session.user, mayCheck ? row : null, manifest);
-  const marker = mayCheck ? readinessMarker(row, advisory, job.session.capabilities) : null;
+  const { checking, answer } = job.readiness;
+  const marker = checking && row ? readinessMarker(row, answer, job.session.capabilities) : null;
   const { markUnsaved } = job;
   const unsaved = Object.keys(edits).length > 0;
   useEffect(() => {
@@ -90,17 +86,14 @@ export function ScopeView({ job, draft, open, readinessFix }: { job: JobContext;
 
   return (
     <div className="flex flex-col gap-4">
-      <h3 id="readiness-scope" tabIndex={-1} className={readinessFix === 'readiness-scope' ? 'text-lg font-semibold' : 'sr-only'}>Check Scope</h3>
-      {mayCheck ? (
+      <h3 id="readiness-scope" tabIndex={-1} className="sr-only">Check Scope</h3>
+      {checking ? (
         <p role="status" className="text-sm empty:hidden">
-          {marker ? markerText(marker) : advisory !== undefined ? 'Readiness check unavailable.' : ''}
+          {marker ? markerText(marker) : answer !== undefined ? 'Readiness check unavailable.' : ''}
         </p>
       ) : null}
       {readinessFix === 'readiness-findings' ? (
         <p id="readiness-findings" tabIndex={-1} className="text-sm">The summary of findings is separate from job notes. Ask your company for help adding it.</p>
-      ) : null}
-      {readinessFix === 'readiness-setup' ? (
-        <p id="readiness-setup" tabIndex={-1} className="text-sm">Record an affected air or material setup reading in the drying log when available.</p>
       ) : null}
       {open ? <PublishedItemList session={job.session} /> : null}
       {box(YEAR_FIELD)}

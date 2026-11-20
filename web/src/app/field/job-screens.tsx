@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { readJob, type JobDetail, type Refusal } from '@/lib/field/api';
 import { loadJobProjection, type JobProjection } from '@/lib/field/job-projection';
@@ -9,7 +9,9 @@ import { newerDetail, pending, usePending } from '@/lib/field/pending';
 import type { FieldSession } from '@/lib/field/session';
 import { canEditDraft, draftReads, fieldRefusal, IncompleteFieldData, InvalidFieldData, SUPERSEDED, type DraftRef, type FieldDraft } from '@/lib/field/store';
 import type { JobView } from '@/lib/field/views';
+import { useDraftReadiness } from '@/lib/readiness/client';
 import { fixTarget } from '@/lib/readiness/fix';
+import type { ReadinessAnswer } from '@/lib/readiness/schema';
 import { CustomerView } from './customer-view';
 import { PhotosView } from './photos-view';
 import { ScopeView } from './scope-view';
@@ -36,6 +38,9 @@ function fieldWorkOf(session: FieldSession, detail: JobDetail): FieldWork {
   if (owner === null) return 'nobody';
   return owner === session.actorId ? 'mine' : 'other';
 }
+
+// Where a Fix lands when its own control is not there or not usable, as for a read-only draft.
+const FIX_FALLBACKS: Record<string, string> = { 'new-room-name': 'readiness-rooms', 'photo-room': 'readiness-photos' };
 
 const readsEveryDraft = (session: FieldSession) => session.role === 'owner' || session.role === 'office';
 const draftReadable = (session: FieldSession, detail: JobDetail) => readsEveryDraft(session) || fieldWorkOf(session, detail) === 'mine';
@@ -81,6 +86,9 @@ export type JobContext = {
   // The last read of the draft did not get through, so the draft on screen may be older than what is
   // stored: boxes stay open, but nothing is saved over it until it is read again.
   stale: boolean;
+  // The advisory readiness answer for this draft: `checking` while this screen asks for it, `answer`
+  // undefined until it is back and null when it is unusable; `recheck` asks again after an accepted save.
+  readiness: { checking: boolean; answer: Extract<ReadinessAnswer, { status: 'checked' }> | null | undefined; recheck: () => void };
 };
 
 
@@ -359,23 +367,41 @@ export function JobScreens({
   useEffect(() => pending.hold(jobId, held), [jobId, held]);
   // Archived as the newest answer about the job said, or as its field draft on screen says.
   const archived = archivedSaid || draft?.state === 'archived';
+  const [rechecks, setRechecks] = useState(0);
+  const recheck = useCallback(() => setRechecks((count) => count + 1), []);
+  const currentRefId = draftAt ?? locator?.currentDraftId ?? detail?.job.currentDraftId;
+  const row = detail?.job;
+  const checking =
+    (view === 'scope' || view === 'photos') && session.online && session.readiness && session.capabilities.includes('scope') &&
+    !archived && !archiveChecking && movedState === null && draft !== null && draftError === null && draft.state === 'editing' &&
+    row?.status === 'draft' && row.currentDraftId === currentRefId;
+  const manifest = useMemo(() => (draft ? { draft: draft.field, rooms: draft.rooms, photos: draft.photos } : null), [draft]);
+  const archiveSeen = useCallback(() => checkAccess({ status: 410, message: 'This job is archived.' }), [checkAccess]);
+  const advisory = useDraftReadiness(session.user, checking ? row! : null, manifest, rechecks, archiveSeen);
   // The draft as last read goes with a moved job, for a screen of it opened again on this page.
   const draftId = locator?.currentDraftId ?? detail?.job.currentDraftId ?? null;
   useEffect(() => {
     if (movedState && draft && (draftAt ?? draftId)) pending.keepDraft(jobId, draft, (draftAt ?? draftId)!);
   }, [movedState, draft, draftAt, draftId, jobId]);
 
-  const fix = session.readiness && session.capabilities.includes('scope') && detail?.job.status === 'draft' && !archived && !movedState && !archiveChecking
-    ? fixTarget(readinessFix, view)
-    : null;
+  const readinessOn = session.readiness && session.capabilities.includes('scope') && detail?.job.status === 'draft' && !archived && !movedState && !archiveChecking;
+  const fix = readinessOn ? fixTarget(readinessFix, view) : null;
+  // Once a Fix brought the person here, the way back to Finish stays for this job's other tabs too.
+  const [fromFinish, setFromFinish] = useState(false);
+  if (fix && !fromFinish) setFromFinish(true);
+  const [leaving, setLeaving] = useState(false);
+  if (!unsaved && leaving) setLeaving(false);
   useEffect(() => {
     if (!fix) {
       focusedFix.current = null;
       return;
     }
     if (focusedFix.current === readinessFix) return;
-    const element = document.getElementById(fix) ?? (view === 'photos' ? document.getElementById('readiness-photos') : null);
-    if (!(element instanceof HTMLElement) || element.closest('[hidden]')) return;
+    const fallbackId = FIX_FALLBACKS[fix] ?? (view === 'scope' ? 'readiness-scope' : null);
+    const element = [fix, fallbackId].map((id) => (id ? document.getElementById(id) : null)).find(
+      (found): found is HTMLElement => found instanceof HTMLElement && !found.closest('[hidden]') && !found.matches(':disabled'),
+    );
+    if (!element) return;
     element.focus();
     if (document.activeElement === element) focusedFix.current = readinessFix;
   }, [readinessFix, fix, draft, view]);
@@ -441,6 +467,7 @@ export function JobScreens({
     held: archived || archiveChecking,
     markUnsaved,
     stale: draft !== null && draftError !== null,
+    readiness: { checking, answer: checking ? advisory : undefined, recheck },
   };
   const onDraftViews = view === 'scope' || view === 'photos';
 
@@ -455,10 +482,31 @@ export function JobScreens({
           </FieldLink>
         ))}
       </nav>
-      {fix ? (
-        <Link className="inline-flex min-h-11 items-center underline" href={`/sign-in/${address}/jobs/${jobId}/finish`}>
-          Back to Finish and review
-        </Link>
+      {fromFinish && readinessOn ? (
+        <div className="flex flex-col gap-2">
+          {unsaved ? (
+            <Button variant="outline" className="self-start" onClick={() => setLeaving(true)}>
+              Back to Finish and review
+            </Button>
+          ) : (
+            <Link className="inline-flex min-h-11 items-center underline" href={`/sign-in/${address}/jobs/${jobId}/finish`}>
+              Back to Finish and review
+            </Link>
+          )}
+          {unsaved && leaving ? (
+            <div role="alert" className="flex flex-col gap-2 rounded-md border border-foreground/40 p-3 text-sm">
+              <p>Some changes are not saved. Save them first, or discard them and go back to Finish and review.</p>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" onClick={() => setLeaving(false)}>
+                  Keep editing
+                </Button>
+                <Link className="inline-flex min-h-11 items-center underline" href={`/sign-in/${address}/jobs/${jobId}/finish`}>
+                  Discard changes and go back
+                </Link>
+              </div>
+            </div>
+          ) : null}
+        </div>
       ) : null}
       {archived ? <ArchivedNotice session={session} jobId={jobId} /> : null}
       {moved ? (

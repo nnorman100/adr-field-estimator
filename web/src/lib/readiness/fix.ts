@@ -10,7 +10,6 @@ const general = {
   equipment: ['Enter the drying equipment counts', 'scope', 'fact-airMovers'],
   summary: ['No summary of findings yet', 'scope', 'readiness-findings'],
   scopeConfirmed: ['Confirm the scope', 'scope', 'fact-scopeConfirmed'],
-  setupReadings: ['Add an affected air or material setup reading', 'scope', 'readiness-setup'],
 } as const;
 
 const roomGaps: Record<string, string> = {
@@ -50,7 +49,6 @@ export function fixTarget(target: string | null, view: JobView): string | null {
   if (view === 'photos') return photoFix(target) ? 'photo-room' : null;
   if (Object.values(general).some(([, area, id]) => area === view && id === target)) return target;
   if (view === 'customer' && CLAIM_KEYS.some((key) => target === `claim-${key}`)) return target;
-  if (view === 'scope' && target === 'readiness-scope') return target;
   const room = /^room-(.+)-heading$/.exec(target);
   if (view === 'scope' && room && fieldId.safeParse(room[1]).success) return target;
   return null;
@@ -61,9 +59,12 @@ function fieldFix(jobId: string, view: JobView, target: string) {
   return `${href}&fix=${encodeURIComponent(target)}`;
 }
 
-export function fixFor(gap: ReadinessGap, jobId: string, manifest: FieldManifest, pricesHref: string | null): { label: string; href?: string } {
+export type FixItem = { label: string; href?: string; action?: string };
+
+export function fixFor(gap: ReadinessGap, jobId: string, manifest: FieldManifest, pricesHref: string | null, owner: boolean): FixItem | null {
   if (gap.code === 'prices') {
-    return pricesHref ? { label: 'Set up company prices', href: pricesHref } : { label: 'Ask your company owner to set up prices.' };
+    if (pricesHref) return { label: 'Set up company prices', href: pricesHref, action: 'Open Prices' };
+    return { label: owner ? 'Publish company prices before pricing this job.' : 'Ask your company owner to set up prices.' };
   }
 
   const claim = CLAIM_KEYS.find((key) => gap.code === `claim:${key}`);
@@ -79,5 +80,5 @@ export function fixFor(gap: ReadinessGap, jobId: string, manifest: FieldManifest
   }
 
   const fix = general[gap.code as keyof typeof general];
-  return fix ? { label: fix[0], href: fieldFix(jobId, fix[1], fix[2]) } : { label: 'Check this room’s saved field work', href: fieldFix(jobId, 'scope', 'readiness-scope') };
+  return fix ? { label: fix[0], href: fieldFix(jobId, fix[1], fix[2]) } : null;
 }

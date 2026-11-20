@@ -117,7 +117,7 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
   ].filter((room, at, all) => !draft.rooms.some((listed) => listed.id === room.id) && all.findIndex((one) => one.id === room.id) === at);
 
   return (
-    <Section title="Rooms">
+    <Section title="Rooms" headingId="readiness-rooms">
       {listsError ? (
         <div className="flex flex-col gap-2">
           <p role="alert">{listsError}</p>

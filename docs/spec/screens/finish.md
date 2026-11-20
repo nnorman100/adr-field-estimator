@@ -17,8 +17,9 @@ compares the answer's job, revision, draft ID and field digest with what the pag
 matching answer has gaps, choosing **Finish and review** opens **Ready to review?**. The prompt
 lists gaps in checklist order and links to the relevant job field, room or photo controls. Photo
 suggestions use the room's existing overview, affected surface and moisture meter tags. The owner
-can open Prices when the checklist finds no usable published price. Estimators are directed to
-their company owner.
+can open Prices from the checklist's price row only when `/api/me` grants `prices_manage`; that link
+is labelled Open Prices, not Fix. Everyone else is directed to their company owner. A confirmed
+archive (HTTP 410) reads the job again instead of showing the prompt.
 
 ## Who may see it and do what
 

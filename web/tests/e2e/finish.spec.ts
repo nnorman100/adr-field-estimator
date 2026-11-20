@@ -1,10 +1,11 @@
 import { test as base, expect as baseExpect, type Page, type Request, type Route } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
-import { Timestamp } from 'firebase-admin/firestore';
+import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { manifestDigest, type FieldManifest } from '@/lib/field/canonical';
 import { expectNoAxeViolations } from './a11y';
 import { JOBS_BASE_URL } from './jobs/backend';
-import { adminSql, seedCompany } from './jobs/seed';
+import { completeJob } from './jobs/complete-job';
+import { adminSql, currentDraftOf, seedCompany } from './jobs/seed';
 import { adminDb } from './offline/world';
 import { APP_CODE, fakeSecondStep } from './second-step/fake-totp';
 import { PASSWORD, readSeed, type TeamAccount, type TeamSeed } from './sign-in/seed';
@@ -205,15 +206,16 @@ test.describe('Ready to review', () => {
   test.use({ baseURL: JOBS_BASE_URL, viewport: { width: 320, height: 720 } });
 
   async function openJob(page: Page, flag = true) {
-    const company = await seedCompany('readiness', { estimator: 'estimator', office: 'office' });
+    const company = await seedCompany('readiness', { estimator: 'estimator', office: 'office', owner: 'owner' });
     if (flag) await adminSql()`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${company.id}, 'readiness', true)`;
-    const signIn = async (role: 'estimator' | 'office') => {
-      if (role === 'office') await fakeSecondStep(page, { factors: ['Authenticator app'] });
+    const signIn = async (role: 'estimator' | 'office' | 'owner') => {
+      const secondStep = role !== 'estimator';
+      if (secondStep) await fakeSecondStep(page, { factors: ['Authenticator app'] });
       await page.goto(`/sign-in/${company.address}`);
       await page.getByLabel('Email').fill(company.people[role]!.email);
       await page.getByLabel('Password').fill(PASSWORD);
       await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-      if (role === 'office') {
+      if (secondStep) {
         await page.getByLabel('6-digit code').fill(APP_CODE);
         await page.getByRole('button', { name: 'Sign in', exact: true }).click();
       }
@@ -289,6 +291,11 @@ test.describe('Ready to review', () => {
     await expect(room).toBeFocused();
     await expect(room.locator('option:checked')).toHaveText('Kitchen');
     await expect(page.getByLabel('Shot')).toHaveValue('overview');
+    const needed = page.getByRole('list', { name: 'Baseline photos still needed' });
+    await expect(needed.getByRole('button')).toHaveText(['Add an overview photo', 'Add an affected surface photo', 'Add a moisture meter photo']);
+    await needed.getByRole('button', { name: 'Add a moisture meter photo' }).click();
+    await expect(page.getByLabel('Shot')).toHaveValue('meter');
+    await page.getByLabel('Shot').selectOption('overview');
 
     const checkedAgain = checked(page, jobId, finishPath);
     await page.getByRole('link', { name: 'Back to Finish and review' }).click();
@@ -301,7 +308,7 @@ test.describe('Ready to review', () => {
     expect(await (await sent[0]?.response())?.status()).toBe(201);
   });
 
-  for (const mode of ['flag off', 'no gaps', 'stale digest', 'failure', 'pending'] as const) {
+  for (const mode of ['flag off', 'failure', 'pending'] as const) {
     test(`${mode} leaves Finish available without a prompt`, async ({ page }) => {
       const { jobId, finishPath } = await openJob(page, mode !== 'flag off');
       let calls = 0;
@@ -315,13 +322,9 @@ test.describe('Ready to review', () => {
           return route.abort();
         }
         if (mode === 'failure') return route.fulfill({ status: 503 });
-        const response = await route.fetch();
-        const json = await response.json();
-        if (mode === 'no gaps') Object.assign(json, { ready: true, gaps: [], unavailable: ['ocr'] });
-        if (mode === 'stale digest') json.fieldSha256 = 'f'.repeat(64);
-        await route.fulfill({ response, json });
+        await route.continue();
       });
-      const answered = mode === 'no gaps' || mode === 'stale digest' || mode === 'failure'
+      const answered = mode === 'failure'
         ? page.waitForResponse((response) => new URL(response.url()).pathname === `/api/jobs/${jobId}/readiness`)
         : null;
       try {
@@ -337,6 +340,139 @@ test.describe('Ready to review', () => {
       }
     });
   }
+
+  async function openField(page: Page, jobId: string, view = '') {
+    await page.goto(`/field?job=${jobId}${view}`);
+    const choice = page.getByRole('button', { name: 'Online only', exact: true });
+    const year = page.getByLabel('Year built');
+    await expect(year.or(choice)).toBeVisible();
+    if (await choice.isVisible()) await choice.click();
+    await expect(year).toBeEditable();
+  }
+
+  test('a complete job shows Ready to review on the field screens and Finish submits it directly', async ({ page }) => {
+    const { company, jobId, finishPath } = await openJob(page);
+    await completeJob(company, jobId);
+    const sent: Request[] = [];
+    page.on('request', (request) => {
+      if (new URL(request.url()).pathname === `/api/jobs/${jobId}/submissions`) sent.push(request);
+    });
+
+    await openField(page, jobId);
+    await expect(page.getByRole('status').filter({ hasText: 'Ready to review' })).toBeVisible();
+    await page.getByRole('link', { name: 'Back to jobs' }).click();
+    await expect(page.getByRole('listitem').filter({ hasText: '15 Example Street' }).getByText('Ready to review', { exact: true })).toBeVisible();
+
+    const answered = checked(page, jobId, finishPath);
+    await page.goto(finishPath);
+    expect(await (await answered).json()).toMatchObject({ status: 'checked', ready: true, gaps: [] });
+    await page.getByRole('button', { name: 'Finish and review' }).click();
+    await expect(page.getByRole('heading', { name: 'Finished', exact: true })).toBeVisible();
+    await expect(page.getByRole('dialog', { name: 'Ready to review?' })).toHaveCount(0);
+    expect(sent).toHaveLength(1);
+  });
+
+  test('an answer about a newer version of the draft is not trusted and Finish is sent as it is', async ({ page }) => {
+    const { company, jobId, finishPath } = await openJob(page);
+    const { draftId } = await completeJob(company, jobId);
+    const sent: Request[] = [];
+    page.on('request', (request) => {
+      if (new URL(request.url()).pathname === `/api/jobs/${jobId}/submissions`) sent.push(request);
+    });
+    const requested = Promise.withResolvers<void>();
+    const changed = Promise.withResolvers<void>();
+    await page.route(`**/api/jobs/${jobId}/readiness`, async (route) => {
+      requested.resolve();
+      await changed.promise;
+      await route.continue();
+    });
+    const answered = page.waitForResponse((response) => new URL(response.url()).pathname === `/api/jobs/${jobId}/readiness`);
+    try {
+      await page.goto(finishPath);
+      await requested.promise;
+      expect(await currentDraftOf(company.id, jobId)).toBe(draftId);
+      await adminDb().doc(`companies/${company.id}/drafts/${draftId}`).update({ 'field.yearBuilt': FieldValue.delete() });
+    } finally {
+      changed.resolve();
+    }
+    expect(await (await answered).json()).toMatchObject({ status: 'checked', ready: false, gaps: [{ code: 'yearBuilt' }] });
+    await (await answered).finished();
+    await page.getByRole('button', { name: 'Finish and review' }).click();
+    await expect(page.getByRole('dialog', { name: 'Ready to review?' })).toHaveCount(0);
+    await expect.poll(() => sent.length).toBe(1);
+    expect((await sent[0]!.response())?.status()).toBe(409);
+  });
+
+  test('the way back to Finish keeps unsaved edits until the person chooses and stays on every tab', async ({ page }) => {
+    const { jobId, finishPath } = await openJob(page);
+    const first = checked(page, jobId, finishPath);
+    await page.goto(finishPath);
+    await (await first).finished();
+    await page.getByRole('button', { name: 'Finish and review' }).click();
+    await page.getByRole('dialog', { name: 'Ready to review?' }).getByRole('link', { name: 'Fix: Add the year built' }).click();
+    const year = page.getByLabel('Year built');
+    await expect(year).toBeFocused();
+    await year.fill('1985');
+
+    await page.getByRole('link', { name: 'Photos' }).click();
+    await page.getByRole('link', { name: 'Check Scope' }).click();
+    await expect(year).toHaveValue('1985');
+    await page.getByRole('button', { name: 'Back to Finish and review' }).click();
+    const warning = page.getByRole('alert').filter({ hasText: 'Some changes are not saved' });
+    await expect(warning).toBeVisible();
+    await warning.getByRole('button', { name: 'Keep editing' }).click();
+    await expect(warning).toHaveCount(0);
+    await expect(year).toHaveValue('1985');
+
+    await page.getByRole('button', { name: 'Back to Finish and review' }).click();
+    const again = checked(page, jobId, finishPath);
+    await page.getByRole('link', { name: 'Discard changes and go back' }).click();
+    await expect(page).toHaveURL(new RegExp(`${finishPath}$`));
+    await (await again).finished();
+    await page.getByRole('button', { name: 'Finish and review' }).click();
+    await expect(page.getByRole('dialog', { name: 'Ready to review?' }).getByText('Add the year built')).toBeVisible();
+  });
+
+  test('an owner reading an estimator’s job with no rooms lands on the Rooms heading, and the price link needs prices_manage', async ({ page }) => {
+    const { company, jobId, finishPath, signIn } = await openJob(page);
+    await page.goto(`/sign-in/${company.address}`);
+    await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+    await expect(page.getByRole('heading', { name: `Sign in to ${company.name}` })).toBeVisible();
+    await signIn('owner');
+    const answered = checked(page, jobId, finishPath);
+    await page.goto(finishPath);
+    await (await answered).finished();
+    await page.getByRole('button', { name: 'Finish and review' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Ready to review?' });
+    await expect(dialog.getByRole('link', { name: /^Open Prices:/ })).toHaveCount(0);
+    await expect(dialog.getByText('Publish company prices before pricing this job.')).toBeVisible();
+    await dialog.getByRole('link', { name: 'Fix: Add an affected room' }).click();
+    const choice = page.getByRole('button', { name: 'Online only', exact: true });
+    const rooms = page.getByRole('heading', { name: 'Rooms', exact: true });
+    await expect(rooms.or(choice)).toBeVisible();
+    if (await choice.isVisible()) await choice.click();
+    await expect(rooms).toBeFocused();
+  });
+
+  test('a confirmed archive replaces the readiness text', async ({ page }) => {
+    const { jobId } = await openJob(page);
+    let archived = false;
+    await page.route(`**/api/jobs/${jobId}`, async (route) => {
+      if (archived) return route.fulfill({ status: 410, json: { error: 'archived' } });
+      await route.continue();
+    });
+    await page.route(`**/api/jobs/${jobId}/readiness`, (route) => {
+      archived = true;
+      return route.fulfill({ status: 410, json: { error: 'archived' } });
+    });
+    await page.goto(`/field?job=${jobId}`);
+    const choice = page.getByRole('button', { name: 'Online only', exact: true });
+    const notice = page.getByRole('heading', { name: 'This job is archived' });
+    await expect(notice.or(choice)).toBeVisible();
+    if (await choice.isVisible()) await choice.click();
+    await expect(notice).toBeVisible();
+    await expect(page.getByText('Readiness check unavailable.')).toHaveCount(0);
+  });
 
   test('a late readiness answer is dropped on sign-out', async ({ page, context }) => {
     const { company, jobId, finishPath } = await openJob(page);

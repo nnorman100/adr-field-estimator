@@ -24,10 +24,15 @@ signed and archived views have no readiness controls. The check has no effect on
 including work kept on the phone when the connection drops.
 
 A Fix link from [Finish](finish.md) opens Check Scope, Customer and claim, or Photos and focuses the
-matching control or section. Room links use the stable room ID. Photo links select the room and
-shot tag. **Back to Finish and review** reopens Finish with current data. The summary of findings
-gap points to guidance in Check Scope while the separate summary editor is pending. The setup
-reading check stays unavailable until the drying log is wired in.
+matching control or section. A read-only draft focuses the Rooms or Check Scope heading when the
+control is not usable. Room links use the stable room ID. Photo links select the room and shot tag
+and keep them for the capture. Photos lists the baseline shots (overview, affected surface, moisture
+meter) the readiness check still lacks for the chosen room, each selecting that shot. **Back to
+Finish and review** stays on every tab of the job after a Fix and reopens Finish with current data;
+with unsaved changes it offers Keep editing or Discard changes and go back. An accepted save asks
+the check again. A confirmed archive replaces the readiness text and link with the archived notice.
+The summary of findings gap points to guidance in Check Scope while the separate summary editor is
+pending.
 
 ## Who may see it and do what
 

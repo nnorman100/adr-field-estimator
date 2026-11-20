@@ -37,7 +37,9 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
   // does not show them before its own answer.
   const denied = usePending(() => pending.listDenied());
   const rows = denied ? null : jobs;
-  const markers = useReadinessMarkers(session.user, session.online && session.readiness && !archivedList ? rows : null, session.capabilities);
+  // Changes each time the list is read again from its first page, which ends every readiness check made.
+  const [generation, setGeneration] = useState(0);
+  const markers = useReadinessMarkers(session.user, session.online && session.readiness && !archivedList ? rows : null, session.capabilities, generation);
   // Only the newest request answers: a page asked for before the list was read again from its first
   // page is not added to it, and no page is asked for until that first page is back.
   const latest = useRef(0);
@@ -57,6 +59,7 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
       return;
     }
     setError(null);
+    if (from === null) setGeneration((count) => count + 1);
     setJobs((current) => (from === null ? answer.value.jobs : [...(current ?? []), ...answer.value.jobs]));
     setCursor(answer.value.nextCursor);
   }
