@@ -486,3 +486,35 @@ for (const role of ['estimator', 'office'] as const) {
     expect(save.status).toBe(403);
   });
 }
+
+test('the owner adds, edits and removes a named adjustment, and none is seeded', async ({ page, request }) => {
+  await resetPrices();
+  await openPricesAsOwner(page);
+  const section = page.getByRole('region', { name: 'Named adjustments' });
+  await expect(section.getByText('No adjustments yet.')).toBeVisible();
+
+  await section.getByLabel('New adjustment').fill('Weekend start');
+  await section.getByRole('button', { name: 'Add the adjustment' }).click();
+  const card = section.getByRole('group', { name: 'Weekend start' });
+  await card.getByLabel('Charge (raises the price)').check();
+  await card.getByLabel('A fixed dollar amount').check();
+  await card.getByRole('textbox', { name: 'Amount' }).fill('125');
+  await expectNoAxeViolations(page);
+  await expectNoSideways(page);
+  await page.getByRole('button', { name: 'Save changes' }).click();
+  await expect(page.getByText('Saved.', { exact: false })).toBeVisible();
+
+  // What the server holds is what a reload shows.
+  const saved = await call(request, company.owner, 'GET', '/api/prices');
+  expect((saved.body.workingCopy as { table: Json }).table.adjustments).toEqual([
+    { adjustment_id: 'weekend_start', name: 'Weekend start', kind: 'amount', direction: 'charge', value: '125' },
+  ]);
+  await page.reload();
+  await expect(section.getByRole('group', { name: 'Weekend start' }).getByRole('textbox', { name: 'Amount' })).toHaveValue('125');
+
+  await section.getByRole('button', { name: 'Remove the Weekend start adjustment' }).click();
+  await page.getByRole('button', { name: 'Save changes' }).click();
+  await expect(page.getByText('Saved.', { exact: false })).toBeVisible();
+  const removed = await call(request, company.owner, 'GET', '/api/prices');
+  expect((removed.body.workingCopy as { table: Json }).table).not.toHaveProperty('adjustments');
+});

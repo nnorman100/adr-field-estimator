@@ -7,6 +7,7 @@ import {
   addBand,
   addRoomType,
   addRoomTypeRow,
+  addAdjustment,
   addTrade,
   categoryPricingOn,
   changed,
@@ -14,7 +15,9 @@ import {
   idFromName,
   removeBand,
   removeRoomType,
+  removeAdjustment,
   removeTrade,
+  setAdjustment,
   rowId,
   setCategoryPricing,
   setDefaultForm,
@@ -221,6 +224,16 @@ describe('the editor changes', () => {
     expect(removeTrade(table, 'contents_pack_out').trades!.some((trade) => trade.trade_id === 'contents_pack_out')).toBe(false);
     expect(idFromName('Kitchen', new Set(['kitchen', 'kitchen_2']), 30)).toBe('kitchen_3');
     expect(idFromName('!', new Set(), 30)).toBe('new');
+  });
+
+  it('adds, edits and removes a named adjustment with an id the schema accepts; a new one needs a value before it saves', () => {
+    const added = addAdjustment(priced(), 'Returning customer');
+    expect(added.adjustments).toEqual([{ adjustment_id: 'returning_customer', name: 'Returning customer', kind: 'percent', direction: 'discount', value: '' }]);
+    expect(() => parseTable(added)).toThrow();
+    const edited = setAdjustment(added, 'returning_customer', { kind: 'amount', direction: 'charge', value: '50' });
+    expect(parseTable(edited).adjustments).toEqual([{ adjustment_id: 'returning_customer', name: 'Returning customer', kind: 'amount', direction: 'charge', value: '50' }]);
+    expect(addAdjustment(edited, 'Returning customer').adjustments!.map((row) => row.adjustment_id)).toEqual(['returning_customer', 'returning_customer_2']);
+    expect(removeAdjustment(edited, 'returning_customer')).not.toHaveProperty('adjustments');
   });
 
   it('counts two tables that differ only in key order as unchanged', () => {

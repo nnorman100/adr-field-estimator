@@ -1,4 +1,4 @@
-import type { Item, PriceBand, PriceRow, Table, Trade } from '@/engine/table';
+import type { Item, NamedAdjustment, PriceBand, PriceRow, Table, Trade } from '@/engine/table';
 import { CATEGORIES, OTHER_TYPE, categoryOrder, type Category, type SizeTier } from '@/engine/values';
 import { itemCategories } from './screen';
 
@@ -229,4 +229,36 @@ function sortedText(value: unknown): string {
 // Whether the editor holds changes the server does not have yet.
 export function changed(saved: Table, draft: Table): boolean {
   return sortedText(saved) !== sortedText(draft);
+}
+
+// Named adjustments (S5b-7): the company's own discounts and charges. None are seeded; a new one is a
+// percent discount with no value yet, which blocks saving until the owner enters one.
+export function addAdjustment(table: Table, name: string): Table {
+  const adjustments = table.adjustments ?? [];
+  const adjustment: NamedAdjustment = {
+    adjustment_id: idFromName(name, new Set(adjustments.map((row) => row.adjustment_id)), 40),
+    name,
+    kind: 'percent',
+    direction: 'discount',
+    value: '',
+  };
+  return { ...table, adjustments: [...adjustments, adjustment] };
+}
+
+export function setAdjustment(
+  table: Table,
+  adjustmentId: string,
+  change: Partial<Pick<NamedAdjustment, 'name' | 'kind' | 'direction' | 'value'>>,
+): Table {
+  return {
+    ...table,
+    adjustments: (table.adjustments ?? []).map((row) => (row.adjustment_id === adjustmentId ? { ...row, ...change } : row)),
+  };
+}
+
+export function removeAdjustment(table: Table, adjustmentId: string): Table {
+  const adjustments = (table.adjustments ?? []).filter((row) => row.adjustment_id !== adjustmentId);
+  const { adjustments: _old, ...rest } = table;
+  void _old;
+  return adjustments.length ? { ...rest, adjustments } : (rest as Table);
 }
