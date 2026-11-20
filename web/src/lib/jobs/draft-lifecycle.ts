@@ -1,7 +1,8 @@
 import type { JobStatus } from '@/db/schema';
 import type { FieldManifest } from '@/lib/field/canonical';
+import { fieldId } from '@/lib/field/schema';
 import type { Fence, Provenance } from '@/lib/submissions/fence';
-import { copiedManifest } from './archive';
+import { copiedManifest } from './copy-rule';
 import { draftOfOtherJob } from './drafts';
 
 // The draft life cycle as Postgres decides it (the draft life-cycle redesign, Design 2): one sync step
@@ -26,7 +27,10 @@ export type DraftContent =
   // Back to editing: from the job's latest committed record, with where it came from.
   | { kind: 'next'; manifest: FieldManifest; previous: Provenance }
   // A copy: from its source's signed record; COPY_CLEARED_KEYS are cleared from it here.
-  | { kind: 'copy'; manifest: Pick<FieldManifest, 'draft' | 'rooms'> };
+  | { kind: 'copy'; manifest: Pick<FieldManifest, 'draft' | 'rooms'> }
+  // A submitted draft the field database lost: its own committed record, with where it came from when
+  // Back to editing made it.
+  | { kind: 'record'; manifest: FieldManifest; previous: Provenance | null };
 
 /** One Postgres snapshot of a job, read in one statement with its field revision. */
 export type JobDraftSnapshot = {
@@ -145,9 +149,8 @@ export type SyncSkips = {
 /** The sync's marker for a job: the version last written, every draft of the job it has seen, and the skips. */
 export type SyncMarker = { gen: number; v: number; draftIds: string[]; skipped: SyncSkips };
 
-// A draft id as the field rules accept one for a document (web/firestore.rules): no empty id, no path.
-const DRAFT_ID = /^[A-Za-z0-9_-]{1,64}$/;
-const ids = (value: unknown): value is string[] => Array.isArray(value) && value.every((id) => typeof id === 'string' && DRAFT_ID.test(id));
+// A draft id as the field rules accept one for a document (fieldId, field/schema.ts): no empty id, no path.
+const ids = (value: unknown): value is string[] => Array.isArray(value) && value.every((id) => fieldId.safeParse(id).success);
 
 const version = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0;
 
@@ -224,7 +227,7 @@ export type DraftUpdate = {
 
 /** What the marker alone decides: the marker holds this version already (a retry; the skips it recorded
  * are reported again), or a newer one. */
-export type VersionRefusal = ({ outcome: 'same' } & SyncSkips) | { outcome: 'stale'; stored: SyncMarker };
+export type VersionRefusal = ({ outcome: 'same' } & SyncSkips) | { outcome: 'stale' };
 
 export type SyncPlan = { outcome: 'synced'; marker: SyncMarker; creates: DraftCreate[]; updates: DraftUpdate[] } & SyncSkips;
 
@@ -240,7 +243,7 @@ export function compareVersion(stored: SyncMarker | null, gen: number, v: number
 export function versionRefusal(marker: SyncMarker | null, gen: number, v: number): VersionRefusal | null {
   const order = compareVersion(marker, gen, v);
   if (order === 'same') return { outcome: 'same', ...marker!.skipped };
-  if (order === 'older') return { outcome: 'stale', stored: marker! };
+  if (order === 'older') return { outcome: 'stale' };
   return null;
 }
 
@@ -257,6 +260,13 @@ function contentOf(content: DraftContent): { field: unknown; rooms: FieldManifes
       return { field: {}, rooms: [], photos: [] };
     case 'next':
       return { field: content.manifest.draft ?? {}, rooms: content.manifest.rooms, photos: content.manifest.photos, previous: content.previous };
+    case 'record':
+      return {
+        field: content.manifest.draft ?? {},
+        rooms: content.manifest.rooms,
+        photos: content.manifest.photos,
+        ...(content.previous ? { previous: content.previous } : {}),
+      };
     case 'copy': {
       // As Copy makes it (archive.ts): a fresh map less COPY_CLEARED_KEYS, the rooms, no photos.
       const copied = copiedManifest(content.manifest);
@@ -374,7 +384,10 @@ export function planSync(
     }
     skips.unmatched.push(draftId);
     seen.push(draftId);
-    if (!found || found.placeholder) continue;
+    // Only a draft that names this job is closed: one with no job id (made before drafts carried it)
+    // may be another job's in Postgres now, and the sync never touches what it cannot show is its own.
+    // A placeholder of this job is closed too (archived), so no previous-version writer makes a draft over it.
+    if (!found || found.jobId !== job.jobId) continue;
     const update: DraftUpdate = { draftId, set: {}, remove: [] };
     if (found.state !== 'archived') update.set.state = 'archived';
     if (found.fieldOwnerUid !== undefined) update.remove.push('fieldOwnerUid');

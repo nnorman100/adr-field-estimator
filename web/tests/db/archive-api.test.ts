@@ -202,7 +202,8 @@ describe('archive', () => {
 
   it('answers 503 when the field draft is not reached, and the same request again archives it', async () => {
     const { jobId, draftId } = await draftJob();
-    h.field.failNext.archiveDraft = true;
+    // Unreachable for the request and its one try again.
+    h.field.failNext.sync = 2;
     const once = change(1);
     expect(await archive(OWNER_A, jobId, once)).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
     expect(h.field.draft(h.seed.a, draftId)?.state).toBe('editing');
@@ -392,6 +393,22 @@ function hold(method: keyof FakeField['gate']): { arrived: Promise<void>; open: 
   return { arrived, open };
 }
 
+// Holds the next call of whichever of these methods comes first (the draft sync, or the previous writer
+// it replaces), so a sequence is held at the same step on either; the other gates go.
+function holdEither(methods: (keyof FakeField['gate'])[]): { arrived: Promise<void>; open: () => void } {
+  let open!: () => void;
+  const opened = new Promise<void>((resolve) => (open = resolve));
+  let arrive!: () => void;
+  const arrived = new Promise<void>((resolve) => (arrive = resolve));
+  const gate = async () => {
+    for (const method of methods) delete h.field.gate[method];
+    arrive();
+    await opened;
+  };
+  for (const method of methods) h.field.gate[method] = gate;
+  return { arrived, open };
+}
+
 // Waits for a step that may instead be waiting on a lock another held request has.
 const briefly = (step: Promise<unknown>) => Promise.race([step, new Promise((resolve) => setTimeout(resolve, 1000))]);
 
@@ -425,34 +442,34 @@ describe('overlapping requests', () => {
     expect(h.field.draft(h.seed.a, next)?.state).toBe('archived');
   });
 
+  // r4 (a) of the draft life-cycle redesign: an archive and a restore are held at the field database (the
+  // draft sync, or the previous archive and restore writers alike); Submit then commits and marks the
+  // draft submitted; the late archive and restore land after it and must not reopen it.
   it('never leaves a submitted job’s draft open when an archive and a restore land after a Submit', async () => {
     const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
     const revision = (await f.job(jobId)).revision;
-    const archived = hold('archiveDraft');
-    const restored = hold('restoreDraft');
-    const marked = hold('markSubmitted');
+    const archived = holdEither(['sync', 'archiveDraft']);
     const archiving = archive(OWNER_A, jobId, change(revision));
     await archived.arrived;
+    const restored = holdEither(['sync', 'restoreDraft']);
     const restoring = restore(OWNER_A, jobId, change(revision + 1));
-    await briefly(restored.arrived);
-    const submitting = f.submitShown(ESTIMATOR_A, jobId, draftId, manifest);
-    await briefly(marked.arrived);
+    await restored.arrived;
+    expect((await f.submitShown(ESTIMATOR_A, jobId, draftId, manifest)).answer.status).toBe(201);
+    expect(h.field.draft(h.seed.a, draftId)?.state).toBe('submitted');
     archived.open();
     expect((await archiving).status).toBe(200);
     restored.open();
     expect((await restoring).status).toBe(200);
-    marked.open();
-    await submitting;
-    // Whichever way the requests met, the draft holds the job's state and no marker is left unwritten.
-    const { status } = await f.job(jobId);
-    expect(h.field.draft(h.seed.a, draftId)?.state).toBe(status === 'submitted' ? 'submitted' : 'editing');
+    expect((await f.job(jobId)).status).toBe('submitted');
+    expect(h.field.draft(h.seed.a, draftId)?.state).toBe('submitted');
     expect((await f.submissions(jobId)).filter((row) => row.marker_state === 'pending')).toEqual([]);
   });
 
   it('opens the field draft on the restore sent again after the job was saved meanwhile', async () => {
     const { jobId, draftId } = await draftJob();
     await archive(OWNER_A, jobId, change(1));
-    h.field.failNext.restoreDraft = true;
+    // Unreachable for the request and its one try again.
+    h.field.failNext.sync = 2;
     const once = change(2);
     expect(await restore(OWNER_A, jobId, once)).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
     expect(h.field.draft(h.seed.a, draftId)?.state).toBe('archived');

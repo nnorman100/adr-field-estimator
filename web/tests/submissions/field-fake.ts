@@ -3,8 +3,8 @@ import type { JobProjection } from '@/lib/field/job-projection';
 import type { FieldManifest } from '@/lib/field/canonical';
 import { MAX_PHOTO_REFS, MAX_ROOMS } from '@/lib/field/schema';
 import type { ArchiveResult, ArchiveStore } from '@/lib/jobs/archive-store';
-import { assertVersion, planSync, versionRefusal, type StoredDraft, type SyncMarker } from '@/lib/jobs/draft-lifecycle';
-import { draftIdsToRead, draftsToMake, resultOf, type DraftSync } from '@/lib/jobs/draft-sync';
+import { assertVersion, parseMarker, planSync, versionRefusal, type StoredDraft, type SyncMarker } from '@/lib/jobs/draft-lifecycle';
+import { draftIdsToRead, draftsToMake, resultOf, type DraftSync, type SyncResult } from '@/lib/jobs/draft-sync';
 import { placeholderRefusal as refusalOf, draftOfOtherJob, type DraftMade } from '@/lib/jobs/drafts';
 import type { FenceResult, FenceStore, Provenance } from '@/lib/submissions/fence';
 
@@ -77,6 +77,8 @@ type Method = keyof FenceStore | keyof ArchiveStore | keyof DraftSync;
 export type FakeField = FenceStore & ArchiveStore & DraftSync & {
   // The sync's marker for a job, as the record holds it, or null.
   marker(companyId: string, jobId: string): SyncMarker | null;
+  // Every field owner the sync wrote on a draft, by "company/draft", in order.
+  ownerWrites: { at: string; fieldOwnerUid: string | null }[];
   // The drafts as stored now (a copy).
   data(): FieldData;
   projected: Map<string, JobProjection>;
@@ -93,8 +95,9 @@ export type FakeField = FenceStore & ArchiveStore & DraftSync & {
   unstamp(companyId: string, draftId: string): void;
   // Removes a draft from the record, as one that is not there.
   remove(companyId: string, draftId: string): void;
-  // Makes the next call of a method fail as if Firestore were unreachable, before it changes anything.
-  failNext: Partial<Record<Method, boolean>>;
+  // Makes the next call of a method fail as if Firestore were unreachable, before it changes anything;
+  // a number makes that many calls in a row fail (a request that tries again meets it again).
+  failNext: Partial<Record<Method, boolean | number>>;
   // Makes the next call of a method do its work and then fail, as if Firestore's answer were lost.
   loseNext: Partial<Record<Method, boolean>>;
   // Awaited at the start of the next call of a method, so a test can hold one attempt mid-way.
@@ -125,17 +128,22 @@ export function fakeField(backing: Backing = memoryBacking()): FakeField {
     backing.save(record);
   }
   // Each call reads, decides and writes the record with no await in between: one transaction.
-  async function call<T>(method: Method, work: (record: FieldRecord) => T): Promise<T> {
+  // `ready`, when given, runs after the gate and before the record is read and written: an answer it
+  // returns ends the call there, writing nothing (the draft sync's check of Postgres's version).
+  async function call<T>(method: Method, work: (record: FieldRecord) => T, ready?: () => Promise<T | undefined>): Promise<T> {
     fake.calls.push(method);
     const gate = fake.gate[method];
     if (gate) {
       delete fake.gate[method];
       await gate();
     }
-    if (fake.failNext[method]) {
-      fake.failNext[method] = false;
+    const failing = fake.failNext[method];
+    if (failing) {
+      fake.failNext[method] = typeof failing === 'number' && failing > 1 ? failing - 1 : false;
       throw new Error('field database unreachable');
     }
+    const early = ready ? await ready() : undefined;
+    if (early !== undefined) return early;
     const record = backing.load();
     const result = work(record);
     backing.save(record);
@@ -148,12 +156,23 @@ export function fakeField(backing: Backing = memoryBacking()): FakeField {
 
   const fake: FakeField = {
     marker: (companyId, jobId) => backing.load().markers[key(companyId, jobId)] ?? null,
-    sync: async (companyId, job, gen) => {
+    ownerWrites: [],
+    sync: async (companyId, job, gen, options = {}) => {
       // As the real writer: refused before any read or write, as a rejected promise.
       assertVersion(gen, job.v);
+      // As the real writer: once the marker lets the version through, Postgres's version is checked
+      // before anything is written, and a snapshot Postgres moved on from writes nothing.
+      const ready = async (): Promise<SyncResult | undefined> => {
+        const left = backing.load().markers[key(companyId, job.jobId)];
+        const marker = left === undefined ? null : parseMarker(left as unknown as Record<string, unknown>);
+        if (versionRefusal(marker, gen, job.v)) return undefined;
+        return options.stillCurrent && !(await options.stillCurrent()) ? { outcome: 'moved' } : undefined;
+      };
       return call('sync', ({ drafts: data, markers }) => {
-        const marker = markers[key(companyId, job.jobId)] ?? null;
-        // As the real writer: the marker decides first, before any draft is read.
+        // As the real writer: a marker there is read in its shape or the sync stops (MalformedMarkerError),
+        // and it decides first, before any draft is read.
+        const left = markers[key(companyId, job.jobId)];
+        const marker = left === undefined ? null : parseMarker(left as unknown as Record<string, unknown>);
         const refused = versionRefusal(marker, gen, job.v);
         if (refused) return refused;
         const stored = Object.fromEntries(draftIdsToRead(marker, job).map((draftId) => [draftId, storedOf(data[key(companyId, draftId)])]));
@@ -171,6 +190,10 @@ export function fakeField(backing: Backing = memoryBacking()): FakeField {
           for (const docs of [made.rooms, made.photos]) {
             if (new Set(docs.map((doc) => doc.id)).size !== docs.length) throw new Error('a document is created twice in one write');
           }
+        }
+        for (const made of plan.creates) fake.ownerWrites.push({ at: key(companyId, made.draftId), fieldOwnerUid: made.data.fieldOwnerUid ?? null });
+        for (const update of plan.updates) {
+          if (update.set.fieldOwnerUid !== undefined) fake.ownerWrites.push({ at: key(companyId, update.draftId), fieldOwnerUid: update.set.fieldOwnerUid });
         }
         for (const made of plan.creates) {
           const { fence, previous, fieldOwnerUid, field, ...rest } = made.data;
@@ -195,7 +218,7 @@ export function fakeField(backing: Backing = memoryBacking()): FakeField {
         // The marker with the drafts it guards, in the same write.
         markers[key(companyId, job.jobId)] = plan.marker;
         return resultOf(plan);
-      });
+      }, ready);
     },
     failNext: {},
     loseNext: {},
@@ -209,7 +232,8 @@ export function fakeField(backing: Backing = memoryBacking()): FakeField {
     findDraft: (companyId, draftId) =>
       call('findDraft', ({ drafts: data }) => {
         const found = data[key(companyId, draftId)];
-        return found ? { jobId: found.jobId } : null;
+        if (!found) return null;
+        return found.placeholder ? { jobId: found.jobId, placeholder: true as const } : { jobId: found.jobId };
       }),
     data: () => backing.load().drafts,
     draft: (companyId, draftId) => backing.load().drafts[key(companyId, draftId)] ?? null,

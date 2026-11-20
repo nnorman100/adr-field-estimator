@@ -3,7 +3,7 @@ import { actors, auditEvents, jobAssignments, jobClaims, jobCustomers, jobs, job
 import { holdAcrossOutsideCall, withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
 import { canSeeJob, claimDraft, hasAny, holdDraft, isOwnJob, jobAccess, JobError, lockedJob, ownsFieldWork, seesEveryJob, type JobCaller, type JobRow } from './access';
-import type { DraftLookup, DraftStore } from './drafts';
+import type { DraftFound, DraftLookup, DraftStore } from './drafts';
 import { createDigest, type ClaimInput, type CreateJobInput, type CustomerInput, type ListQuery } from './schema';
 
 // The jobs of a company (S5a-3). Every function runs inside withCompany for the company of the
@@ -243,7 +243,7 @@ export async function jobPage(
 }
 
 // The field database's draft under this id, read before the request commits it (security audit F1).
-export async function findDraft(drafts: DraftLookup, companyId: string, draftId: string): Promise<{ jobId: unknown } | null> {
+export async function findDraft(drafts: DraftLookup, companyId: string, draftId: string): Promise<DraftFound | null> {
   try {
     return await drafts.findDraft(companyId, draftId);
   } catch (error) {
