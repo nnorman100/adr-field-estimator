@@ -4,10 +4,11 @@
 // tests/test_ci_legacy_scope.py (no legacy CI jobs, the node job keeps the rebuild's checks on every
 // pull request). Also checks that these ported guards stay in
 // the vitest run the node job executes.
+import { execFileSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { evaluateStep, load, ROOT, WORKFLOWS, type Data } from './workflow_support.ts';
+import { evaluateStep, load, ROOT, steps, WORKFLOWS, type Data } from './workflow_support.ts';
 
 // The repository is public, so every job runs on a fixed standard GitHub-hosted runner (free for
 // public repositories) and never on a self-hosted one, which a pull request could compromise. No
@@ -21,6 +22,18 @@ const workflow = (name: string): Data => load(path.join(WORKFLOWS, name));
 const ci = () => workflow('ci.yml');
 const lintScript = (): string =>
   JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')).scripts.lint;
+
+function expectPinnedUses(config: Data, location: string): void {
+  if (Object.hasOwn(config, 'uses')) {
+    expect(config.uses, `${location} must use a full commit SHA`).toMatch(
+      /^[\w.-]+\/[\w./-]+@[0-9a-f]{40}$/i,
+    );
+  }
+}
+
+function expectPinnedSteps(config: Data, location: string): void {
+  steps(config).forEach((step, index) => expectPinnedUses(step, `${location} step ${index + 1}`));
+}
 
 describe('every workflow', () => {
   it('includes the expected workflows', () => {
@@ -40,6 +53,14 @@ describe('every workflow', () => {
     expect(WORKFLOW_FILES).not.toContain('codeql.yml');
   });
 
+  it.each(WORKFLOW_FILES)('%s pins every uses reference to a full commit SHA', (name) => {
+    for (const [job, config] of Object.entries(workflow(name).jobs)) {
+      const location = `${name} job ${job}`;
+      expectPinnedUses(config, location);
+      expectPinnedSteps(config, location);
+    }
+  });
+
   it.each(WORKFLOW_FILES)(
     '%s runs every job on the fixed GitHub-hosted runner, without Docker',
     (name) => {
@@ -53,6 +74,27 @@ describe('every workflow', () => {
       }
     },
   );
+});
+
+it('pins every composite action uses reference to a full commit SHA', () => {
+  const actionFiles = execFileSync(
+    'git',
+    [
+      'ls-files',
+      '-z',
+      '--cached',
+      '--others',
+      '--exclude-standard',
+      '--',
+      ':(glob)**/action.yml',
+      ':(glob)**/action.yaml',
+    ],
+    { cwd: ROOT, encoding: 'utf8' },
+  );
+  for (const file of actionFiles.split('\0').filter(Boolean)) {
+    const { runs } = load(path.join(ROOT, file));
+    if (runs?.using === 'composite') expectPinnedSteps(runs, file);
+  }
 });
 
 // GitHub's default job limit is 360 minutes; on a pool of three runner places one hung job would
