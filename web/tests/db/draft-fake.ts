@@ -1,24 +1,31 @@
 import type { JobProjection } from '@/lib/field/job-projection';
-import { draftOfOtherJob, placeholderRefusal, type DraftStore, type Placeholder } from '@/lib/jobs/drafts';
+import { draftOfOtherJob, placeholderRefusal, type DraftStore } from '@/lib/jobs/drafts';
+import { emptyDraft, type Backing } from '../submissions/field-fake';
 
-// A stand-in for the field database's drafts: what the jobs service writes, kept in memory, with a
-// switch to make the next write fail as if Firestore were unreachable. tests/emu/ checks the real
-// writer (src/lib/jobs/drafts.ts) against the emulator and the field rules.
+// A stand-in for the field database's drafts as the jobs service writes them (src/lib/jobs/drafts.ts),
+// over the one record every field stand-in shares (`Backing`, tests/submissions/field-fake.ts): the
+// drafts it makes or names an owner on are the drafts Submit, archive, the photo route and the draft
+// sync see, and the other way round. A switch makes the next write fail as if Firestore were
+// unreachable. tests/emu/ checks the real writer against the emulator and the field rules.
+
+/** A draft's field owner as the record holds it. */
+export type DraftOwner = { fieldOwnerUid: string | null; fieldOwnerRevision?: number };
+
 export type FakeDrafts = DraftStore & {
   // The jobs projected (#407), by "company/job".
   projected: Map<string, JobProjection>;
-  // The drafts made, by "company/draft", with the field owner's uid (null while nobody owns it) and
-  // the job revision at which the server last set it (absent for a draft made with its job).
-  made: Map<string, { fieldOwnerUid: string | null; fieldOwnerRevision?: number }>;
-  // The job each draft was made for, by "company/draft" (`jobId`, security audit F1); a draft with
-  // none was made before that key.
-  jobOf: Map<string, string>;
-  // The drafts that are archived, by "company/draft" (kept by tests/submissions/field-fake.ts): no
-  // field owner is named on one (src/lib/jobs/drafts.ts).
-  archived: Set<string>;
-  // The placeholders an archive or restore left where a draft is missing, by "company/draft" (kept by
-  // tests/submissions/field-fake.ts): ensure consumes a restored job's one and refuses an archived job's.
-  placeholders: Map<string, Placeholder>;
+  // Readers over the record, by "company/draft". A placeholder an archive or restore left is no
+  // draft here (src/lib/jobs/drafts.ts).
+  owner(at: string): DraftOwner | undefined;
+  // Every draft and its owner, in the order they were made.
+  owners(): [string, DraftOwner][];
+  // The job a draft was made for (`jobId`, security audit F1); undefined on one made before that key.
+  jobOf(at: string): string | undefined;
+  // Writers a test uses to leave the record as another version or another job would.
+  plant(at: string, draft: { fieldOwnerUid: string | null; jobId?: string }): void;
+  stamp(at: string, jobId: string): void;
+  unstamp(at: string): void;
+  remove(at: string): void;
   // Every call to ensure, in order, including the ones that found the draft there.
   calls: { companyId: string; draftId: string; fieldOwnerUid: string | null }[];
   // Every call to setFieldOwner, in order (S5b-1).
@@ -28,76 +35,123 @@ export type FakeDrafts = DraftStore & {
   failNext: { on: boolean; afterWrite: boolean };
 };
 
-export function fakeDrafts(): FakeDrafts {
+export function fakeDrafts(backing: Backing): FakeDrafts {
+  const draftOf = (at: string) => {
+    const found = backing.load().drafts[at];
+    return found && !found.placeholder ? found : undefined;
+  };
+  // Changes one draft in the record, whole or not at all.
+  function change(at: string, work: (draft: NonNullable<ReturnType<typeof draftOf>>) => void): void {
+    const record = backing.load();
+    const found = record.drafts[at];
+    if (!found || found.placeholder) return;
+    work(found);
+    backing.save(record);
+  }
+  // A failure before the write, or (afterWrite) the write done and its answer lost.
+  function before(): void {
+    const fail = store.failNext;
+    if (fail.on && !fail.afterWrite) {
+      fail.on = false;
+      throw new Error('field database unreachable');
+    }
+  }
+  function after(): void {
+    const fail = store.failNext;
+    if (fail.on) {
+      fail.on = false;
+      fail.afterWrite = false;
+      throw new Error('field database answer lost');
+    }
+  }
+
   const store: FakeDrafts = {
-    made: new Map(),
-    jobOf: new Map(),
-    archived: new Set(),
-    placeholders: new Map(),
     projected: new Map(),
     async projectJob(companyId, jobId, projection) {
       const key = `${companyId}/${jobId}`;
       if ((store.projected.get(key)?.revision ?? -1) < projection.revision) store.projected.set(key, { ...projection });
     },
+    // As the real reader: whatever document is under the id, a placeholder too.
     async findDraft(companyId, draftId) {
-      const key = `${companyId}/${draftId}`;
-      return store.made.has(key) ? { jobId: store.jobOf.get(key) } : null;
+      const found = backing.load().drafts[`${companyId}/${draftId}`];
+      return found ? { jobId: found.jobId } : null;
+    },
+    owner(at) {
+      const found = draftOf(at);
+      if (!found) return undefined;
+      return { fieldOwnerUid: found.fieldOwnerUid, ...(found.fieldOwnerRevision === undefined ? {} : { fieldOwnerRevision: found.fieldOwnerRevision }) };
+    },
+    owners() {
+      return Object.keys(backing.load().drafts)
+        .map((at): [string, DraftOwner | undefined] => [at, store.owner(at)])
+        .filter((entry): entry is [string, DraftOwner] => entry[1] !== undefined);
+    },
+    jobOf: (at) => draftOf(at)?.jobId,
+    plant(at, draft) {
+      const record = backing.load();
+      record.drafts[at] = emptyDraft(draft.fieldOwnerUid, draft.jobId);
+      backing.save(record);
+    },
+    stamp: (at, jobId) =>
+      change(at, (draft) => {
+        draft.jobId = jobId;
+      }),
+    unstamp: (at) =>
+      change(at, (draft) => {
+        delete draft.jobId;
+      }),
+    remove(at) {
+      const record = backing.load();
+      delete record.drafts[at];
+      backing.save(record);
     },
     calls: [],
     ownerCalls: [],
     failNext: { on: false, afterWrite: false },
     async ensure(companyId, jobId, draftId, fieldOwnerUid) {
       store.calls.push({ companyId, draftId, fieldOwnerUid });
-      const key = `${companyId}/${draftId}`;
-      const fail = store.failNext;
-      if (fail.on && !fail.afterWrite) {
-        fail.on = false;
-        throw new Error('field database unreachable');
-      }
-      const left = store.placeholders.get(key);
-      if (left) {
-        const refused = placeholderRefusal(left, jobId);
+      before();
+      const at = `${companyId}/${draftId}`;
+      const record = backing.load();
+      const found = record.drafts[at];
+      let made: 'created' | 'exists' = 'created';
+      if (found?.placeholder) {
+        const refused = placeholderRefusal({ jobId: found.jobId, state: found.state, archiveRevision: found.archiveRevision ?? null }, jobId);
         if (refused) return refused;
-        store.placeholders.delete(key);
+        // As the real writer: a restored job's placeholder gives way to the draft, which keeps its revision.
+        record.drafts[at] = { ...emptyDraft(fieldOwnerUid, jobId), archiveRevision: found.archiveRevision };
+      } else if (found) {
+        if (draftOfOtherJob(found.jobId, jobId)) return 'taken';
+        // As the real writer: one made before `jobId` takes it.
+        found.jobId ??= jobId;
+        made = 'exists';
+      } else {
+        record.drafts[at] = emptyDraft(fieldOwnerUid, jobId);
       }
-      const existed = store.made.has(key);
-      if (existed && draftOfOtherJob(store.jobOf.get(key), jobId)) return 'taken';
-      if (!existed) store.made.set(key, { fieldOwnerUid });
-      // As the real writer: a new draft, or one made before `jobId`, carries this job's id.
-      if (!store.jobOf.has(key)) store.jobOf.set(key, jobId);
-      if (fail.on) {
-        fail.on = false;
-        fail.afterWrite = false;
-        throw new Error('field database answer lost');
-      }
-      return existed ? 'exists' : 'created';
+      backing.save(record);
+      after();
+      return made;
     },
     // As the real writer (src/lib/jobs/drafts.ts): a newer owner on the draft is never overwritten,
-    // nor is a draft made for another job.
+    // nor is a draft made for another job, nor is anyone named on an archived one.
     async setFieldOwner(companyId, jobId, draftId, fieldOwnerUid, revision) {
       store.ownerCalls.push({ companyId, draftId, fieldOwnerUid, revision });
-      const fail = store.failNext;
-      if (fail.on && !fail.afterWrite) {
-        fail.on = false;
-        throw new Error('field database unreachable');
-      }
-      const key = `${companyId}/${draftId}`;
-      const draft = store.made.get(key);
-      if (!draft) return 'missing';
-      if (draftOfOtherJob(store.jobOf.get(key), jobId)) return 'taken';
-      if (store.archived.has(key)) return 'archived';
+      before();
+      const at = `${companyId}/${draftId}`;
+      const record = backing.load();
+      const draft = record.drafts[at];
+      if (!draft || draft.placeholder) return 'missing';
+      if (draftOfOtherJob(draft.jobId, jobId)) return 'taken';
+      if (draft.state === 'archived') return 'archived';
       const stored = draft.fieldOwnerRevision ?? 0;
       let result: 'set' | 'same' | 'newer' = 'set';
       if (stored > revision) result = 'newer';
       else if (draft.fieldOwnerUid === fieldOwnerUid && stored === revision) result = 'same';
       else Object.assign(draft, { fieldOwnerUid, fieldOwnerRevision: revision });
       // A draft made before `jobId` takes it, whatever the owner answer is.
-      if (!store.jobOf.has(key)) store.jobOf.set(key, jobId);
-      if (fail.on) {
-        fail.on = false;
-        fail.afterWrite = false;
-        throw new Error('field database answer lost');
-      }
+      draft.jobId ??= jobId;
+      backing.save(record);
+      after();
       return result;
     },
   };

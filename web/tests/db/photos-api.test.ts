@@ -92,7 +92,7 @@ async function newJob(claims: FakeClaims): Promise<{ jobId: string; draftId: str
 
 const rows = () => h.admin`SELECT job_id, object_id, kind, object_name, sha256, size_bytes, content_type, created_by_actor_id FROM evidence_objects ORDER BY created_at, kind`;
 const auditCount = async (action: string) => Number((await h.admin`SELECT count(*) AS n FROM audit_events WHERE action = ${action}`)[0]!.n);
-const lockDraft = (companyId: string, draftId: string, state: string) => h.draftStates.set.set(`${companyId}/${draftId}`, state);
+const lockDraft = (companyId: string, draftId: string, state: string) => h.field.lock(companyId, draftId, state);
 
 describe('storing a photo', () => {
   it('stores the bytes once under the job’s own path and answers the receipt', async () => {
@@ -269,7 +269,7 @@ describe('a photo and the draft', () => {
 
   it('takes the photo that brings the draft to its cap, then refuses a new one and still settles a sent one', async () => {
     const { jobId, draftId } = await newJob(ESTIMATOR_A);
-    const refs = (count: number) => h.draftStates.refs.set(`${h.seed.a}/${draftId}`, count);
+    const refs = (count: number) => h.field.setPhotoRefs(h.seed.a, draftId, count);
     const last = { id: randomUUID(), bytes: image('three hundredth') };
     refs(MAX_PHOTO_REFS - 1);
     const kept = await sendPhoto(ESTIMATOR_A, jobId, last.id, last.bytes);
@@ -330,7 +330,7 @@ describe('a photo and the draft', () => {
     h.draftStates.fail = true;
     expect(await sendPhoto(ESTIMATOR_A, jobId, randomUUID(), image('a'))).toEqual({ status: 503, body: { error: 'photos_unavailable' } });
     h.draftStates.fail = false;
-    h.drafts.made.delete(`${h.seed.a}/${draftId}`);
+    h.field.remove(h.seed.a, draftId);
     expect(await sendPhoto(ESTIMATOR_A, jobId, randomUUID(), image('b'))).toEqual({ status: 503, body: { error: 'photos_unavailable' } });
     expect(h.evidence.creates).toEqual([]);
   });

@@ -368,8 +368,7 @@ describe('copy', () => {
     const { jobId: source } = await signedJob();
     const foreign = randomUUID();
     const key = `${h.seed.a}/${foreign}`;
-    h.drafts.made.set(key, { fieldOwnerUid: 'estimator-a2' });
-    h.drafts.jobOf.set(key, randomUUID());
+    h.drafts.plant(key, { fieldOwnerUid: 'estimator-a2', jobId: randomUUID() });
     const before = await everything(h.admin);
     const stored = structuredClone(h.field.draft(h.seed.a, foreign));
     const id = randomUUID();
