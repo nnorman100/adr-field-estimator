@@ -5,6 +5,7 @@ import { GENERATED_API_ROUTES } from '@/lib/api-routes.generated';
 import { linkFlow, type Body } from './link-flow';
 import type { FakeClaims, Harness } from './team-harness';
 import { callKey, handlersOf, MATRIX, matrixKey, pathFor, routeModules, uncalled, type MatrixRow, type RouteModule } from './isolation-matrix';
+import { digestOf } from './job-harness';
 
 // S5a-12, the S5a half of the company-isolation gate (`npm run test:isolation`, beside
 // company-isolation.test.ts; docs/access/isolation-gate.md). That suite calls every route with ids
@@ -199,6 +200,35 @@ async function signedSide(name: 'A' | 'B', companyId: string, estimator: FakeCla
   };
   const signedAssignment = await coordinate(linked.jobId, `Office Notes Line ${name}`);
   const pendingAssignment = await coordinate(pending.jobId, `Office Notes Second ${name}`);
+  // S5b-10 (0020, no routes yet): a drying reading on each job, and on the signed job a close, its
+  // estimate history sample and a drying watch action, written as slice 10B will.
+  const [agreement] = await h.admin<{ id: string }[]>`SELECT id::text FROM agreements WHERE job_id = ${linked.jobId}`;
+  for (const jobId of [linked.jobId, pending.jobId]) {
+    const readingId = randomUUID();
+    await h.admin`
+      INSERT INTO drying_readings (id, company_id, job_id, kind, room_id, room_label, taken_at, payload, request_digest, created_by_actor_id)
+      VALUES (${readingId}, ${companyId}, ${jobId}, 'material', 'room-1', ${`Drying Room ${name}`}, now(),
+              ${h.admin.json({ material: 'Drywall', moisture: 18, unit: '%WME', dry_standard: 12, affected: true, note: `Drying Note ${name}` })},
+              ${digestOf(readingId)}, ${estimatorActorId})
+    `;
+  }
+  const closeId = randomUUID();
+  await h.admin`
+    INSERT INTO job_closes (id, company_id, job_id, agreement_id, revision, request_digest, final_cents, actual_days, note, baseline_agreement_id, price_mode,
+                            baseline_low_cents, baseline_high_cents, landed, closed_by_actor_id)
+    VALUES (${closeId}, ${companyId}, ${linked.jobId}, ${agreement!.id}, 1, ${digestOf(closeId)}, 125000, 4, ${`Close Note ${name}`}, ${agreement!.id}, 'range',
+            110000, 140000, 'inside', ${estimatorActorId})
+  `;
+  await h.admin`
+    INSERT INTO estimate_history (company_id, job_id, agreement_id, signed_at, price_mode, low_cents, high_cents)
+    VALUES (${companyId}, ${linked.jobId}, ${agreement!.id}, now(), 'range', 110000, 140000)
+  `;
+  const watchRequest = randomUUID();
+  const watch = {
+    revision: 1,
+    receipts: [{ action: 'extend', agreement_id: agreement!.id, reason: `Watch Reason ${name}`, actor_id: estimatorActorId, request_id: watchRequest, request_digest: digestOf(watchRequest) }],
+  };
+  await h.admin`UPDATE job_coordination SET drying_watch = ${h.admin.json(watch)} WHERE job_id = ${linked.jobId}`;
   return {
     signed: {
       jobId: linked.jobId,
@@ -220,6 +250,10 @@ async function signedSide(name: 'A' | 'B', companyId: string, estimator: FakeCla
       `Terms Line ${name}`,
       `Office Notes Line ${name}`,
       `Office Notes Second ${name}`,
+      `Drying Room ${name}`,
+      `Drying Note ${name}`,
+      `Close Note ${name}`,
+      `Watch Reason ${name}`,
     ],
     tokens: [linked.token, pending.token, issued.homeowner.token, issued.adjuster.token],
   };

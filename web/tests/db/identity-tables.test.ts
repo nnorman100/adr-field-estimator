@@ -7,6 +7,7 @@ import postgres from 'postgres';
 import { openDatabase } from '@/db/client';
 import { applyMigrations, migrationsDirectory } from '@/db/migrate';
 import { aiSchema } from '@/db/ai-schema';
+import { dryingSchema } from '@/db/drying-schema';
 import { actors, authTenants, companies, memberships, schema } from '@/db/schema';
 import { emptyDiscardDatabase, startDisposablePostgres, type DisposablePostgres } from './postgres-harness';
 
@@ -113,6 +114,7 @@ describe('identity tables (migration 0002)', () => {
       '0017_definer_search_path',
       '0018_field_revision',
       '0019_price_approvals',
+      '0020_drying_outcomes',
     ]);
 
     const rows = await sql<
@@ -387,8 +389,8 @@ describe('identity tables (migration 0002)', () => {
       ORDER BY table_name, column_name
     `;
     const database = rows.map((row) => `${row.table_name}.${row.column_name}:${row.is_nullable === 'NO'}`).sort();
-    // Every typed table: the main view and the AI and Live view (0012) beside it.
-    const typed = Object.values({ ...schema, ...aiSchema } as Record<string, PgTable>)
+    // Every typed table: the main view, and the AI and Live view (0012) and the drying and outcomes view (0020) beside it.
+    const typed = Object.values({ ...schema, ...aiSchema, ...dryingSchema } as Record<string, PgTable>)
       .flatMap((table) => {
         const config = getTableConfig(table);
         return config.columns.map((column) => `${config.name}.${column.name}:${column.notNull}`);
