@@ -10,7 +10,7 @@ Access is by invitation. Owners manage their company and team, estimators work o
 
 ## Inspection workflow
 
-Technicians capture rooms, measurements, photos and walkthrough notes, then confirm the scope before generating documents. The server prices the estimate from the company's published price book. The intended result of a confirmed inspection is a proposal, an itemized claim, a scope defense letter and a photo moisture log. A homeowner can sign on site or through a private link. Signing binds the agreement to the saved revision.
+Technicians capture rooms, measurements, photos and walkthrough notes, then confirm the scope before generating documents. The server prices the estimate from the company's published price book. The intended result of a confirmed inspection is a proposal, an itemized claim, a scope defense letter and a photo moisture log. A homeowner can sign on site or through a private link. Signing binds the agreement to the saved revision. Saving a draft does not dispatch technicians or send email.
 
 Current limitation: pricing requires a separate summary of findings, and no field screen writes one yet. A technician can confirm the scope and finish a job that has only Notes, then be refused at "Price this job" with `summary_missing`. See the [review screen spec](docs/spec/screens/review.md) for details.
 
