@@ -122,6 +122,13 @@ export const emptyDraft = (fieldOwnerUid: string | null, jobId?: string): FakeDr
   ...(jobId === undefined ? {} : { jobId }),
 });
 
+// Whether a value holds a list directly inside a list, which Firestore refuses to store.
+function holdsNestedList(value: unknown, inList = false): boolean {
+  if (Array.isArray(value)) return inList || value.some((item) => holdsNestedList(item, true));
+  if (typeof value === 'object' && value !== null) return Object.values(value).some((item) => holdsNestedList(item));
+  return false;
+}
+
 export function fakeField(backing: Backing = memoryBacking()): FakeField {
   // Changes the record outside a method call, as a test sets it up.
   function edit(work: (record: FieldRecord) => void): void {
@@ -189,9 +196,13 @@ export function fakeField(backing: Backing = memoryBacking()): FakeField {
         const plan = planSync(marker, stored, orphans, job, gen);
         // As Firestore's commit: a create of a room or photo the same write already creates fails the
         // whole write, and nothing (no draft, no marker) is saved.
+        // And Firestore stores no list directly inside a list: a value holding one fails the write.
         for (const made of plan.creates) {
           for (const docs of [made.rooms, made.photos]) {
             if (new Set(docs.map((doc) => doc.id)).size !== docs.length) throw new Error('a document is created twice in one write');
+          }
+          for (const value of [made.data.field, ...made.rooms.map((doc) => doc.field), ...made.photos.map((doc) => doc.field)]) {
+            if (holdsNestedList(value)) throw new Error('Cannot convert an array value in an array value');
           }
         }
         for (const made of plan.creates) fake.ownerWrites.push({ at: key(companyId, made.draftId), fieldOwnerUid: made.data.fieldOwnerUid ?? null });

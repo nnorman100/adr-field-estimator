@@ -11,17 +11,17 @@ import { syncJobDrafts } from './sync-job';
 // past (jobs.field_synced_revision below jobs.field_revision, migration 0018), and whose last change is
 // older than the grace, is synced again. A field step that failed, or whose request was abandoned
 // (the phone closed after the Postgres commit), so heals with no client action: within one worker
-// period while one pass's bounds hold every due job (below). The grace leaves a job alone while the request that changed it is still syncing it.
+// period while one pass's bounds hold every due job and none of them fails (below). The grace leaves a job alone while the request that changed it is still syncing it.
 //
-// Each pass is bounded (at most maxCompanies companies, 100 being the most 0018's lookup returns, and
+// Each pass is bounded (at most 100 companies, the most 0018's lookup returns, and
 // maxJobsPerCompany jobs in each). Within a company the due jobs are taken in order of their last change
 // (then id, a keyset), read in one snapshot, from a starting place that moves on by one page each
 // scheduler period and wraps around, so no fixed set of jobs that keep failing (and stay the oldest) can
 // hold the front of the list. A job counts as synced only once its watermark covers the version it was
 // due at (its own sync, or a newer one); a job a newer write held back counts as failed and stays due. A
 // company backlog beyond one pass drains over the following passes. Companies past the lookup's 100 wait
-// for a later pass, the one waiting longest first: a company can wait only while more than 100 others
-// each hold a job that keeps failing (a lookup paged across companies needs a migration).
+// for a later pass, the one waiting longest first: a company can wait while 100 or more others each hold
+// an older job that keeps failing (a lookup paged across companies needs a migration).
 //
 // Only finding the companies with work crosses companies, through job_field_sync_due_companies
 // (migration 0018), which returns company ids and nothing else; every job is read and synced inside
@@ -35,16 +35,19 @@ export const PASS_PERIOD_SECONDS = 300;
 
 export type DraftRepairSummary = { synced: number; failed: number };
 
-export type DraftRepairOptions = { maxCompanies?: number; maxJobsPerCompany?: number; graceSeconds?: number; now?: () => Date };
+// The most companies 0018's lookup returns: every pass asks for that many.
+const MAX_COMPANIES = 100;
+
+export type DraftRepairOptions = { maxJobsPerCompany?: number; graceSeconds?: number; now?: () => Date };
 
 export async function runDraftSyncRepair(
   db: Database,
   store: DraftSync & DraftLookup,
-  { maxCompanies = 100, maxJobsPerCompany = 200, graceSeconds = SYNC_GRACE_SECONDS, now = () => new Date() }: DraftRepairOptions = {},
+  { maxJobsPerCompany = 200, graceSeconds = SYNC_GRACE_SECONDS, now = () => new Date() }: DraftRepairOptions = {},
 ): Promise<DraftRepairSummary> {
   const companies = await db.transaction(async (tx) => {
     const found = (await tx.execute(
-      sql`SELECT job_field_sync_due_companies(${maxCompanies}::int, ${graceSeconds}::int)::text AS id`,
+      sql`SELECT job_field_sync_due_companies(${MAX_COMPANIES}::int, ${graceSeconds}::int)::text AS id`,
     )) as unknown as { id: string }[];
     return found.map((row) => row.id);
   });
@@ -72,8 +75,8 @@ export async function runDraftSyncRepair(
           .limit(limit);
       const first = await page(start, maxJobsPerCompany);
       const rest = first.length < maxJobsPerCompany && start > 0 ? await page(0, Math.min(maxJobsPerCompany - first.length, start)) : [];
-      // Each job once, however the two pages meet.
-      return [...new Map([...first, ...rest].map((job) => [job.id, job])).values()];
+      // One snapshot, one order: the wrapped page ends before the first one starts, so each job once.
+      return [...first, ...rest];
     }, { snapshot: true });
     for (const job of due) {
       try {

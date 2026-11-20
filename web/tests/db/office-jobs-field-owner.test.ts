@@ -569,9 +569,19 @@ describe('moving the field work (owner decision J5)', () => {
 
   // A record that repeats a room id is not whole: a draft made from it would fail its create and roll back
   // the whole sync, the owner change on every other draft with it.
-  it('moves the field work on the earlier draft when the lost current draft’s record repeats a room id, and makes no draft from it', async () => {
+  it('moves the field work on the earlier draft when the lost current draft’s record repeats a room id, or holds a value Firestore cannot store, and makes no draft from it', async () => {
+    const records = [
+      { format: 'dryscope-submission-v1', field: { draft: {}, rooms: [{ id: 'kitchen', field: {} }, { id: 'kitchen', field: {} }], photos: [] } },
+      { format: 'dryscope-submission-v1', field: { draft: { roomOrder: [['kitchen']] }, rooms: [], photos: [] } },
+      { format: 'dryscope-submission-v1', field: { draft: {}, rooms: [{ id: 'kitchen', field: { readings: [[1, 2]] } }], photos: [] } },
+    ];
+    for (const repeated of records) {
+      await movedPastRecord(repeated);
+    }
+  });
+
+  async function movedPastRecord(repeated: unknown) {
     const { id, draftId: first } = await claimedJob();
-    const repeated = { format: 'dryscope-submission-v1', field: { draft: {}, rooms: [{ id: 'kitchen', field: {} }, { id: 'kitchen', field: {} }], photos: [] } };
     const bytes = Buffer.from(JSON.stringify(repeated));
     const row = { id: randomUUID(), epoch: randomUUID() };
     await h.admin`
@@ -585,9 +595,9 @@ describe('moving the field work (owner decision J5)', () => {
     h.field.remove(h.seed.a, second);
     const { revision } = (await coordination(OWNER_A, id)).body;
     expect(await transfer(OWNER_A, id, { revision, changeId: randomUUID(), toActorId: estimatorA2 })).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
-    expect(h.field.draft(h.seed.a, first)).toMatchObject({ jobId: id, fieldOwnerUid: 'estimator-a2' });
+    expect({ repeated, first: h.field.draft(h.seed.a, first) }).toMatchObject({ repeated, first: { jobId: id, fieldOwnerUid: 'estimator-a2' } });
     expect(h.field.draft(h.seed.a, second)).toBeNull();
-  });
+  }
 
   it('answers an archive whose current draft is another job’s with 409, and leaves its version unsynced', async () => {
     const { id, draftId } = await claimedJob();

@@ -49,12 +49,21 @@ export async function claimJobDrafts(tx: CompanyTransaction, row: JobRow): Promi
 
 // A stored record's field work, or null when there are no bytes or they are not a whole record: its
 // format, a `field` holding a `draft` map and `rooms` and `photos` lists, every entry an id the field rules
-// accept (fieldId) with a `field` map, and no id twice in one list (a draft made from it would fail its
-// create, and with it the whole sync). A draft is never made from part of a record.
+// accept (fieldId) with a `field` map, no id twice in one list, and every value one Firestore stores (JSON
+// scalars, maps and lists, never a list directly inside a list): a draft made from anything else would fail
+// its create, and with it the whole sync, owner changes on every other draft included. A draft is never
+// made from part of a record.
 const isMap = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
+function storable(value: unknown, inList = false): boolean {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return true;
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (Array.isArray(value)) return !inList && value.every((item) => storable(item, true));
+  return isMap(value) && Object.values(value).every((item) => storable(item));
+}
+const isFieldMap = (value: unknown): value is Record<string, unknown> => isMap(value) && storable(value);
 const isDocs = (value: unknown): value is { id: string; field: Record<string, unknown> }[] =>
   Array.isArray(value) &&
-  value.every((entry) => isMap(entry) && fieldId.safeParse(entry.id).success && isMap(entry.field)) &&
+  value.every((entry) => isMap(entry) && fieldId.safeParse(entry.id).success && isFieldMap(entry.field)) &&
   new Set(value.map((entry) => (entry as { id: string }).id)).size === value.length;
 
 function manifestOf(bytes: Buffer | null | undefined): FieldManifest | null {
@@ -67,7 +76,7 @@ function manifestOf(bytes: Buffer | null | undefined): FieldManifest | null {
   }
   if (!isMap(parsed) || parsed.format !== SNAPSHOT_FORMAT || !isMap(parsed.field)) return null;
   const { draft, rooms, photos } = parsed.field;
-  if (!isMap(draft) || !isDocs(rooms) || !isDocs(photos)) return null;
+  if (!isFieldMap(draft) || !isDocs(rooms) || !isDocs(photos)) return null;
   // The record already read and checked: decoded once.
   return { draft, rooms, photos };
 }

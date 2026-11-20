@@ -429,6 +429,22 @@ export function draftSyncContract(name: string, probe: () => SyncProbe): void {
       expect(await marker(company, job.jobId)).toBeNull();
     });
 
+    it('writes nothing at all when the draft it makes holds a list directly inside a list, which Firestore does not store', async () => {
+      const { store, seed, peek, marker } = probe();
+      const company = randomUUID();
+      const [earlier, current] = [randomUUID(), randomUUID()];
+      await seed(company, earlier, { state: 'submitted', fieldOwnerUid: 'old-owner' });
+      const job = snapshotOf({
+        currentDraftId: current,
+        draftIds: [earlier, current],
+        content: { kind: 'next', manifest: { draft: { roomOrder: [['kitchen']] }, rooms: [], photos: [] }, previous: { draftId: earlier, submissionId: randomUUID() } },
+      });
+      await expect(store.sync(company, desired(job), 0)).rejects.toThrow();
+      expect(await peek(company, current)).toBeNull();
+      expect(await peek(company, earlier)).toMatchObject({ fieldOwnerUid: 'old-owner' });
+      expect(await marker(company, job.jobId)).toBeNull();
+    });
+
     it('stops, changing nothing, when the job’s marker is there but not in the shape the sync writes', async () => {
       const { store, peek, seedMarker } = probe();
       const company = randomUUID();

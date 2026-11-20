@@ -807,6 +807,38 @@ describe('the worker', () => {
     expect((await f.submissions(jobId)).map((row) => row.status)).toEqual(['aborted']);
   });
 
+  // The draft's parent gone between Submit's lookup and its fence, with its rooms left under the id (a
+  // conflict for the sync): still draft_missing, as when the lookup finds it gone.
+  it('answers draft_missing when the draft goes between its lookup and its fence and leaves its rooms', async () => {
+    const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
+    const { revision } = await f.job(jobId);
+    h.field.gate.sync = async () => {
+      h.field.remove(h.seed.a, draftId);
+      await h.field.restoreDraft(h.seed.a, jobId, draftId, 'editing', revision);
+      h.field.put(h.seed.a, draftId, manifest);
+    };
+    expect((await f.submitShown(ESTIMATOR_A, jobId, draftId, manifest)).answer).toMatchObject({ status: 409, body: { error: 'draft_missing' } });
+    expect((await f.submissions(jobId)).map((row) => row.status)).toEqual(['aborted']);
+  });
+
+  // A copy whose draft is lost and whose source's signed record cannot be read: no draft can be made, so
+  // the attempt is aborted (draft_missing) and settled, with nothing to release; Archive is not refused.
+  it('settles an attempt whose lost draft cannot be made again, so the job can still be archived', async () => {
+    const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
+    const source = await f.readyJob(ESTIMATOR_A, h.seed.a);
+    await h.admin`UPDATE jobs SET copied_from_job_id = ${source.jobId} WHERE id = ${jobId}`;
+    h.field.remove(h.seed.a, draftId);
+    expect((await f.submitShown(ESTIMATOR_A, jobId, draftId, manifest)).answer).toMatchObject({ status: 409, body: { error: 'draft_missing' } });
+    expect(await f.submissions(jobId)).toEqual([expect.objectContaining({ status: 'aborted', marker_state: 'done' })]);
+    const archived = await archiveRoute.POST(
+      request(OWNER_A, `/api/jobs/${jobId}/archive`, { method: 'POST', body: { revision: (await f.job(jobId)).revision, changeId: randomUUID() } }),
+      params({ jobId }),
+    );
+    // Archived in Postgres; its own field step still cannot make the draft (503), never the Submit.
+    expect({ status: archived.status, body: await archived.json() }).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
+    expect((await f.job(jobId)).status).toBe('archived');
+  });
+
   it('a retry of a decided submission writes its missing marker', async () => {
     const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
     afterTheRead(() => (h.field.failNext.sync = 2));

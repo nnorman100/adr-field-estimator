@@ -167,9 +167,25 @@ export async function writeMarker(db: Database, store: SubmitStore, companyId: s
     // job's, or rooms or photos are left under its id) leaves nothing this row could still release or
     // mark: the decision is final, so the row's marker is done, and the job stays due for the draft
     // sync's repair pass, which reports it.
-    await syncJobDrafts(db, store, store, companyId, row.jobId).catch((error: unknown) => {
-      if (!(error instanceof JobError && error.code === 'conflict')) throw error;
-      console.error('submission marker refused', 'conflict');
+    // A current draft that is missing and cannot be made now (JobError draft_unavailable, with the
+    // draft not there) leaves nothing to release or mark either: settled, and the repair pass makes the
+    // draft once its content can be read. The field database failing leaves the row for the next pass.
+    await syncJobDrafts(db, store, store, companyId, row.jobId).catch(async (error: unknown) => {
+      if (error instanceof JobError && error.code === 'conflict') {
+        console.error('submission marker refused', 'conflict');
+        return;
+      }
+      if (error instanceof JobError && error.code === 'draft_unavailable') {
+        const [job] = await withCompany(db, companyId, (tx) =>
+          tx.select({ currentDraftId: jobs.currentDraftId }).from(jobs).where(and(eq(jobs.companyId, companyId), eq(jobs.id, row.jobId))),
+        );
+        const found = job ? await store.findDraft(companyId, job.currentDraftId) : null;
+        if (job && (!found || found.placeholder)) {
+          console.error('submission marker refused', 'draft_missing');
+          return;
+        }
+      }
+      throw error;
     });
     await withCompany(db, companyId, async (tx) => {
       await tx
@@ -383,13 +399,13 @@ export function submissionsService(db: Database, store: SubmitStore, options: Su
     try {
       synced = await syncJobDrafts(db, store, store, caller.companyId, row.jobId);
     } catch (error) {
-      if (error instanceof JobError && error.code === 'conflict') throw new SubmissionError('conflict');
-      if (!(error instanceof JobError && error.code === 'draft_unavailable')) throw error;
-      // The draft gone since the lookup above (the sync would not make it for a fence): draft_missing,
-      // as if the lookup had found it gone; otherwise the field database is unavailable.
+      if (!(error instanceof JobError && (error.code === 'conflict' || error.code === 'draft_unavailable'))) throw error;
+      // The draft gone since the lookup above (the sync would not make it for a fence, and rooms or
+      // photos left under its id are a conflict): draft_missing, as if the lookup had found it gone;
+      // otherwise the draft's conflict, or the field database unavailable.
       const again = await field(() => store.findDraft(caller.companyId, row.draftId));
       if (!again || again.placeholder) return 'draft_missing';
-      throw new SubmissionError('submissions_unavailable');
+      throw new SubmissionError(error.code === 'conflict' ? 'conflict' : 'submissions_unavailable');
     }
     const { result } = synced;
     if ((result.outcome === 'synced' || result.outcome === 'same') && result.superseded.includes(row.draftId)) return 'submission_in_progress';
