@@ -19,8 +19,8 @@ export const AI_FLAG_NAMES = Object.freeze([
 ] as const);
 export type AiFlagName = (typeof AI_FLAG_NAMES)[number];
 
-// priced_extras (S5b-8): an estimator's proposals and the owner's approvals on a job (named adjustments,
-// custom multipliers, hourly, unit and flat additions). Off: every propose and approve route answers 404 and
+// priced_extras (S5b-8): an estimator's proposals and the owner's approvals on a job (today named adjustments
+// and hourly additions; see docs/access/approvals.md). Off: every propose and approve route answers 404 and
 // the estimate ignores approvals.
 export const FLAG_NAMES = Object.freeze(['price_books', 'priced_extras', ...AI_FLAG_NAMES] as const);
 export type FlagName = (typeof FLAG_NAMES)[number];
