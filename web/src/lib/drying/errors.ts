@@ -15,6 +15,14 @@ export const DRYING_ERRORS = {
   already_voided: 409,
   // A Submit of the job's draft is deciding: its rooms are about to be the submitted record's.
   submission_in_progress: 409,
+  // The drying watch (S5b-10): the signed record keeps no drying plan, so there is nothing to watch.
+  no_plan: 409,
+  // The facts the person reviewed changed before the action landed; read the watch again and confirm.
+  stale_facts: 409,
+  // The watch was marked dry or closed; it takes no more actions.
+  watch_closed: 409,
+  // The watch already holds its 100 plan extensions.
+  extension_limit: 409,
   // The job's field draft could not be read; the same request again reads it.
   draft_unavailable: 503,
 } as const;

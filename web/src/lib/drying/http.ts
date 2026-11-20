@@ -91,3 +91,18 @@ export async function voidReading(request: Request, identity: Identity, context:
     return json({ void: await dryingServices().readings.void(identity, id, readingId, await bodyText(request)) });
   });
 }
+
+// GET /api/jobs/{jobId}/drying-watch (behind `drying_watch`): the watch of a signed job.
+export async function readWatch(_request: Request, identity: Identity, context: RouteContext): Promise<Response> {
+  return respond(async () => json(await dryingServices().watch.read(identity, await jobPathId(context))));
+}
+
+// POST /api/jobs/{jobId}/drying-watch/actions  { id, action, factsHash, confirmed: true, reason }: 201
+// with the new receipt and the watch, 200 with the accepted receipt for the same request again.
+export async function actOnWatch(request: Request, identity: Identity, context: RouteContext): Promise<Response> {
+  return respond(async () => {
+    const id = await jobPathId(context);
+    const { created, receipt, watch } = await dryingServices().watch.act(identity, id, await bodyText(request));
+    return json({ receipt, watch }, created ? 201 : 200);
+  });
+}
