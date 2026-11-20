@@ -69,8 +69,9 @@ beforeAll(async () => {
 beforeEach(async () => {
   h = await resetTeamDatabase(base, live.harness);
   live.harness = h;
-  // The estimate, signing and link routes are behind price books; every job route must answer.
-  await h.admin`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${h.seed.a}, 'price_books', true)`;
+  // The estimate, signing and link routes are behind price books and the readiness route behind its
+  // own switch; every job route must answer.
+  await h.admin`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${h.seed.a}, 'price_books', true), (${h.seed.a}, 'readiness', true)`;
 });
 
 afterAll(async () => {
