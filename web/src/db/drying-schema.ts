@@ -96,7 +96,7 @@ export const jobCloses = pgTable(
     foreignKey({
       name: 'job_closes_baseline_agreement_fkey',
       columns: [t.companyId, t.jobId, t.baselineAgreementId],
-      foreignColumns: [agreements.companyId, agreements.jobId, agreements.id],
+      foreignColumns: [estimateHistory.companyId, estimateHistory.jobId, estimateHistory.agreementId],
     }),
     foreignKey({ name: 'job_closes_closed_by_fkey', columns: [t.companyId, t.closedByActorId], foreignColumns: [actors.companyId, actors.id] }),
   ],

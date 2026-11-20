@@ -19,7 +19,7 @@ import { fakeDrafts } from './draft-fake';
 import { createDiscardDatabase, emptyDiscardDatabase, loginUrl } from './postgres-harness';
 import { unprotectedRelations } from './row-security-guard';
 import { CHECK_VIOLATION, FOREIGN_KEY_VIOLATION, INSUFFICIENT_PRIVILEGE, UNIQUE_VIOLATION, digestOf, errorCode, newJob, ownerOf, seedJob } from './job-harness';
-import { agreementOf, bytesOf, insertAgreement, newSubmission, refusal, seedChain, seedCommitted, seedEstimate, seedPin, seedSignature, seedVersion, type Chain } from './submission-harness';
+import { agreementOf, bytesOf, insertAgreement, newSubmission, pricedResult, refusal, seedCommitted, seedEstimate, seedPin, seedSignature, seedVersion, type Chain } from './submission-harness';
 import { memoryBacking } from '../submissions/field-fake';
 import { resetTeamDatabase, startTeamServer, type Harness } from './team-harness';
 
@@ -55,24 +55,36 @@ const json = (value: unknown) => JSON.stringify(value);
 // A signed job of a company: its chain (submission, pin, estimate, signature) and its original agreement.
 type Signed = { chain: Chain; job: string; agreement: string; company: string };
 
-async function signedJob(company = h.seed.a): Promise<Signed> {
-  const chain = await seedChain(h.admin, company, ownerOf(h, company));
-  const [agreement] = rows<{ id: string }>(await as(company, (tx) => insertAgreement(tx, agreementOf(chain))));
+// The stored priced result of each fixture: a range job, a one-price job, and a change order whose totals differ.
+const RANGE_RESULT = pricedResult;
+const SINGLE_RESULT = { total: '1250.00', range: { low: '1250.00', high: '1250.00' }, lines: [{ item: 'dry', price_row: 'default' }] };
+const CHANGED_RESULT = { total: '1700.00', range: { low: '1500.00', high: '1900.00' }, lines: [{ item: 'dry', price_row: 'default' }] };
+
+async function signedJob(company = h.seed.a, result: Record<string, unknown> = RANGE_RESULT): Promise<Signed> {
+  const actor = ownerOf(h, company);
+  const job = await seedJob(h.admin, newJob(company, actor));
+  const version = await seedVersion(h.admin, company, actor);
+  const submission = await seedCommitted(h.admin, newSubmission(company, job.id, actor));
+  const pin = await seedPin(h.admin, { company, job: job.id, version: version.id, actor });
+  const estimate = await seedEstimate(h.admin, { company, job: job.id, submission: submission.id, pin, actor, hash: version.hash, result });
+  const signature = await seedSignature(h.admin, company, job.id, actor);
+  const chain: Chain = { company, actor, job, version, submission, pin, estimate, signature };
+  const [agreement] = rows<{ id: string }>(await as(company, (tx) => insertAgreement(tx, agreementOf(chain, { result }))));
   await h.admin`UPDATE jobs SET status = 'signed', revision = revision + 1 WHERE id = ${chain.job.id}`;
   return { chain, job: chain.job.id, agreement: agreement!.id, company };
 }
 
 // A signed change order on the job: its own committed record, estimate and signature, naming the original.
-async function changeOrder(s: Signed): Promise<string> {
+async function changeOrder(s: Signed, result: Record<string, unknown> = CHANGED_RESULT): Promise<string> {
   const { chain } = s;
   const submission = await seedCommitted(h.admin, newSubmission(s.company, s.job, chain.actor, { kind: 'change_order', parent: s.agreement }));
-  const estimate = await seedEstimate(h.admin, { company: s.company, job: s.job, submission: submission.id, pin: chain.pin, actor: chain.actor, hash: chain.version.hash });
+  const estimate = await seedEstimate(h.admin, { company: s.company, job: s.job, submission: submission.id, pin: chain.pin, actor: chain.actor, hash: chain.version.hash, result });
   const signature = await seedSignature(h.admin, s.company, s.job, chain.actor);
   const [made] = rows<{ id: string }>(
     await as(s.company, (tx) =>
       insertAgreement(
         tx,
-        agreementOf(chain, { submission: submission.id, estimate: estimate.id, signature, proposalSha: estimate.proposal.sha, kind: 'change_order', parent: s.agreement }),
+        agreementOf(chain, { submission: submission.id, estimate: estimate.id, signature, proposalSha: estimate.proposal.sha, kind: 'change_order', parent: s.agreement, result }),
       ),
     ),
   );
@@ -413,10 +425,15 @@ describe('migration 0020: drying_readings', () => {
     expect(await refused(readingOf(s.job, 'air', { air: null }))).toBe('drying_readings_air_values_check');
     expect(await refused(readingOf(s.job, 'material', { air: AIR_70_50 }))).toBe('drying_readings_air_values_check');
     expect(await refused(readingOf(s.job, 'air', { air: { ...AIR_70_50, vapor: '0.3701' } }))).toBe('drying_readings_vapor_pressure_inhg_check');
-    // A room has its id and label together; outside air has no room; a label is one line.
+    // A room has its id and label together; outside air has no room; a label is 1 to 100 characters, not blank.
     expect(await refused(readingOf(s.job, 'material', { label: null }))).toBe('drying_readings_room_check');
     expect(await refused(readingOf(s.job, 'air', { payload: { ...PAYLOADS.air, zone: 'outside' } }))).toBe('drying_readings_outside_check');
-    expect(await refused(readingOf(s.job, 'material', { label: 'Kitchen\nand hall' }))).toBe('drying_readings_room_label_check');
+    expect(await refused(readingOf(s.job, 'material', { label: 'Kitchen\u0007' }))).toBe('drying_readings_room_label_check');
+    expect(await refused(readingOf(s.job, 'material', { label: ' \t ' }))).toBe('drying_readings_room_label_check');
+    expect(await refused(readingOf(s.job, 'material', { label: 'k'.repeat(101) }))).toBe('drying_readings_room_label_check');
+    // The label is the room's name as captured, which may hold a tab or a line break.
+    expect(rows(await addReading(readingOf(s.job, 'material', { label: 'Hall\tEast' })))).toHaveLength(1);
+    expect(rows(await addReading(readingOf(s.job, 'material', { label: 'Kitchen\nand hall' })))).toHaveLength(1);
     expect(await refused(readingOf(s.job, 'material', { room: 'room/1' }))).toBe('drying_readings_room_id_check');
   });
 
@@ -549,7 +566,7 @@ describe('migration 0020: job_closes', () => {
       { final: 1, landed: 'below', days: null },
     ];
     for (const [index, extra] of accepted.entries()) expect(rows(await addClose(closeOf(ranged, { revision: index + 1, ...extra })))).toHaveLength(1);
-    const priced = await baselined(await signedJob(), SINGLE);
+    const priced = await baselined(await signedJob(h.seed.a, SINGLE_RESULT), SINGLE);
     const single: Partial<Close>[] = [
       { ...SINGLE, final: 125000, landed: 'inside' },
       { ...SINGLE, final: 200000000, landed: 'above' },
@@ -582,7 +599,7 @@ describe('migration 0020: job_closes', () => {
   it('is compared with the job’s original agreement, by that sample’s price mode and cents, never a change order’s', async () => {
     // A range job and a one-price job, each with its own signed figures.
     const ranged = await baselined(await signedJob());
-    const priced = await baselined(await signedJob(), SINGLE);
+    const priced = await baselined(await signedJob(h.seed.a, SINGLE_RESULT), SINGLE);
     const message = async (c: Close) => (await refusal(addClose(c)))?.message;
     const mismatch = 'a job close keeps the price mode and baseline cents of its baseline sample';
 
@@ -708,6 +725,31 @@ describe('migration 0020: the drying watch on job_coordination', () => {
     const saved = await h.jobs.saveCoordination(owner, s.job, { changeId: randomUUID(), revision: 0, notes: 'Gate code 4411' });
     expect(saved).toMatchObject({ revision: 1, notes: 'Gate code 4411' });
     expect(await coordinationOf(s.job)).toMatchObject({ revision: 1, notes: 'Gate code 4411', watch: { revision: 1 } });
+    expect(await fieldRevisionOf(s.job)).toBeGreaterThan(field);
+  });
+
+  it('lets the first office save and the first watch action of a job overlap with no deadlock', async () => {
+    const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    const s = await signedJob();
+    const field = await fieldRevisionOf(s.job);
+    let locked!: () => void;
+    const hasLock = new Promise<void>((resolve) => (locked = resolve));
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    // The office save takes the job's row lock first, as office.ts does, and writes its coordination row after the watch has started.
+    const office = as(s.company, async (tx) => {
+      await tx.execute(sql`SELECT 1 FROM jobs WHERE company_id = ${s.company}::uuid AND id = ${s.job}::uuid FOR UPDATE`);
+      locked();
+      await gate;
+      await tx.execute(sql`INSERT INTO job_coordination (company_id, job_id, office_notes, revision) VALUES (${s.company}::uuid, ${s.job}::uuid, 'Gate code 4411', 1)`);
+    });
+    await hasLock;
+    const watch = act(s, receiptOf(s));
+    // The watch waits for the job lock rather than claiming the coordination key first.
+    expect(await Promise.race([watch.then(() => 'done', () => 'done'), pause(500).then(() => 'waiting')])).toBe('waiting');
+    release();
+    await Promise.all([office, watch]);
+    expect(await coordinationOf(s.job)).toMatchObject({ revision: 1, notes: 'Gate code 4411', watch: { revision: 1, receipts: [expect.objectContaining({ action: 'extend' })] } });
     expect(await fieldRevisionOf(s.job)).toBeGreaterThan(field);
   });
 

@@ -247,7 +247,7 @@ CREATE TABLE drying_readings (
   kind text NOT NULL CHECK (kind IN ('air', 'material', 'thermal')),
   -- The room's stable field id and its label as captured, or neither for a whole-job or outside reading.
   room_id text CHECK (char_length(room_id) BETWEEN 1 AND 64 AND room_id ~ '^[A-Za-z0-9_-]+$'),
-  room_label text CHECK (room_label IS NULL OR drying_line_ok(room_label, 100)),
+  room_label text CHECK (room_label IS NULL OR (char_length(room_label) BETWEEN 1 AND 100 AND drying_nonblank(room_label) AND drying_note_ok(room_label, 100))),
   -- When the technician took it (as sent), and when the server received it (the database's clock).
   taken_at timestamptz NOT NULL,
   received_at timestamptz NOT NULL DEFAULT clock_timestamp(),
@@ -494,7 +494,8 @@ CREATE TRIGGER job_coordination_field_revision_insert
 -- A new receipt names an agreement of this job and an actor of this company, and the guard stamps its
 -- time (UTC) from the database's clock, over any time the writer sent. A change that leaves the watch as it was
 -- (an office change) is not the watch's concern. A row of a job the caller cannot see is left to the
--- keys and the policy. Runs as the caller, under the caller's row-level security.
+-- keys and the policy. The job row is locked first, before the insert can claim the coordination key,
+-- the order an office save takes, so the two first writes of one job wait for each other and never deadlock. Runs as the caller, under the caller's row-level security.
 CREATE FUNCTION job_coordination_drying_watch_guard() RETURNS trigger
   LANGUAGE plpgsql
   SET search_path = pg_catalog
@@ -512,7 +513,7 @@ BEGIN
   IF TG_OP = 'INSERT' AND NEW.drying_watch IS NULL THEN
     RETURN NEW;
   END IF;
-  PERFORM 1 FROM public.jobs j WHERE j.company_id = NEW.company_id AND j.id = NEW.job_id;
+  PERFORM 1 FROM public.jobs j WHERE j.company_id = NEW.company_id AND j.id = NEW.job_id FOR UPDATE;
   IF NOT FOUND THEN
     RETURN NEW;
   END IF;
