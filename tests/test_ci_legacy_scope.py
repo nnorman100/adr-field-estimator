@@ -1,9 +1,9 @@
-"""The shared legacy scope script, which only the CodeQL Python analysis still uses, and ci.yml.
+"""The shared legacy scope script, which no workflow calls any more, and ci.yml.
 
 As of 2026-11-10 the legacy Python suite, the legacy Playwright browser suite and the legacy
-Firestore emulator tests are retired from CI and their jobs are removed from ci.yml. CodeQL keeps scanning the legacy Python, scoped
-by scripts/ci_legacy_scope.sh. The DryScope rebuild's checks (web/, infra/dryscope, required docs,
-file length, test guard, audit) must keep running on every PR.
+Firestore emulator tests are retired from CI and their jobs are removed from ci.yml. The CodeQL
+workflow that last called scripts/ci_legacy_scope.sh is removed too (D-037). The DryScope rebuild's checks (web/, infra/dryscope, required docs, file
+length, test guard, audit) must keep running on every PR.
 """
 
 import json

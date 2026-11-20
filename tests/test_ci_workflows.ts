@@ -36,6 +36,10 @@ describe('every workflow', () => {
     }
   });
 
+  it('has no CodeQL workflow, because code scanning default setup replaces it', () => {
+    expect(WORKFLOW_FILES).not.toContain('codeql.yml');
+  });
+
   it.each(WORKFLOW_FILES)('%s runs every job on the switchable runner, without Docker', (name) => {
     const jobs = Object.entries(workflow(name).jobs as Record<string, Data>);
     expect(jobs.length).toBeGreaterThan(0);
