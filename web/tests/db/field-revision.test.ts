@@ -407,7 +407,7 @@ describe('migration 0018: the copy source of existing copies', () => {
       await a.copied(malformed, 'not-a-job');
       const before = await admin`SELECT id, revision, status, updated_at FROM jobs ORDER BY id`;
 
-      expect((await applyMigrations(migratorUrl, migrationsDirectory)).applied).toEqual(['0018_field_revision']);
+      expect((await applyMigrations(migratorUrl, migrationsDirectory)).applied).toEqual(['0018_field_revision', '0019_price_approvals']);
       const filled = await admin<{ id: string; source: string | null; field: number }[]>`
         SELECT id::text, copied_from_job_id::text AS source, field_revision::int AS field FROM jobs ORDER BY id
       `;
@@ -483,7 +483,7 @@ describe('migration 0018: a blocked run', () => {
         release();
         await Promise.allSettled([request]);
       }
-      expect((await applyMigrations(migratorUrl, migrationsDirectory)).applied).toEqual(['0018_field_revision']);
+      expect((await applyMigrations(migratorUrl, migrationsDirectory)).applied).toEqual(['0018_field_revision', '0019_price_approvals']);
     } finally {
       await rm(dir, { recursive: true, force: true });
       await holder.end({ timeout: 5 });
