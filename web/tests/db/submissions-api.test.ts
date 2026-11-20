@@ -2,8 +2,7 @@ import { randomUUID } from 'node:crypto';
 import postgres from 'postgres';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { canonicalManifest, manifestDigest } from '@/lib/field/canonical';
-import type { FenceStore } from '@/lib/submissions/fence';
-import type { SubmissionsService } from '@/lib/submissions/service';
+import type { SubmissionsService, SubmitStore } from '@/lib/submissions/service';
 import { flow, latch, sha256, until } from './submission-flow';
 import type { FakeClaims, Harness } from './team-harness';
 
@@ -27,8 +26,10 @@ const jobsRoute = await import('@/app/api/jobs/route');
 const photoRoute = await import('@/app/api/jobs/[jobId]/photos/[photoId]/route');
 const submissionsRoute = await import('@/app/api/jobs/[jobId]/submissions/route');
 const draftsRoute = await import('@/app/api/jobs/[jobId]/drafts/route');
+const archiveRoute = await import('@/app/api/jobs/[jobId]/archive/route');
 const { submissionsService } = await import('@/lib/submissions/service');
 const { runSubmissionRepair } = await import('@/lib/submissions/repair');
+const { syncJob } = await import('@/lib/jobs/sync-job');
 const { everything, params, request, resetTeamDatabase, startTeamServer } = await import('./team-harness');
 
 let base: Awaited<ReturnType<typeof startTeamServer>>;
@@ -73,6 +74,13 @@ afterAll(async () => {
 // A service with a short window, so an attempt can expire within a test.
 const shortWindow = (windowMs = 1500) => submissionsService(h.handle.db, h.field, { windowMs, fenceMarginMs: 200 });
 const expire = (ms = 1600) => new Promise((resolve) => setTimeout(resolve, ms));
+// Runs `then` once the attempt reaches its read of the fenced draft: after its fence, before its
+// decision, so only the marker's draft sync (after the decision) meets what `then` sets up.
+const afterTheRead = (then: () => void) => {
+  h.field.gate.read = async () => {
+    then();
+  };
+};
 
 describe('Submit', () => {
   it('records the draft once as an immutable snapshot and marks the draft submitted', async () => {
@@ -217,15 +225,16 @@ describe('Submit', () => {
       const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
       // The phone's digest is not what the draft holds, so whichever attempt reads the draft aborts.
       const body = { id: randomUUID(), draftId, digest: await manifestDigest({ ...manifest, photos: [] }) };
-      // The first attempt waits at its fence, then closes it and dies before deciding.
+      // The first attempt waits at its fence (the draft sync that writes it), then closes it and dies
+      // before deciding.
       const hold = latch();
       let reached = false;
-      const delayed: FenceStore = {
+      const delayed: SubmitStore = {
         ...h.field,
-        fence: async (...args) => {
+        sync: async (...args) => {
           reached = true;
           await hold.wait;
-          return h.field.fence(...args);
+          return h.field.sync(...args);
         },
         read: () => new Promise(() => {}),
       };
@@ -253,7 +262,9 @@ describe('Submit', () => {
       expect((await f.submit(ESTIMATOR_A, jobId, body)).status).toBe(201);
       hold.open();
       expect((await first).status).toBe(200);
-      expect(h.field.calls.filter((call) => call === 'release')).toEqual([]);
+      // The draft is never opened again once recorded: no sync writes it back to editing after `submitted`.
+      const states = h.field.stateWrites.filter((write) => write.at === `${h.seed.a}/${draftId}`).map((write) => write.state);
+      expect(states.slice(states.indexOf('submitted'))).not.toContain('editing');
       expect(await f.expectOneOutcome(h.seed.a, jobId, draftId)).toBe('committed');
     });
   });
@@ -359,7 +370,8 @@ describe('Submit', () => {
 
   it('leaves the attempt pending when the field database cannot be reached, and the same request then records', async () => {
     const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
-    h.field.failNext.fence = true;
+    // The fence's sync and its one more try both fail.
+    h.field.failNext.sync = 2;
     const { body, answer } = await f.submitShown(ESTIMATOR_A, jobId, draftId, manifest);
     expect(answer).toMatchObject({ status: 503, body: { error: 'submissions_unavailable' } });
     expect(await f.submissions(jobId)).toEqual([expect.objectContaining({ status: 'pending' })]);
@@ -410,6 +422,8 @@ describe('Submit', () => {
     const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
     expect((await f.submitShown(ESTIMATOR_A, jobId, draftId, manifest)).answer).toMatchObject({ status: 409, body: { error: 'submission_aborted' } });
     expect(h.field.calls).not.toContain('fence');
+    // No sync fenced the draft either.
+    expect(h.field.stateWrites.filter((write) => write.at === `${h.seed.a}/${draftId}`).map((write) => write.state)).not.toContain('submitting');
     expect(await f.expectOneOutcome(h.seed.a, jobId, draftId)).toBe('aborted');
   });
 });
@@ -553,7 +567,7 @@ describe('the worker', () => {
 
   it('writes a submitted marker the request could not, after the grace', async () => {
     const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
-    h.field.failNext.markSubmitted = true;
+    afterTheRead(() => (h.field.failNext.sync = 2));
     expect((await f.submitShown(ESTIMATOR_A, jobId, draftId, manifest)).answer.status).toBe(201);
     expect(h.field.draft(h.seed.a, draftId)?.state).toBe('submitting');
     expect((await f.submissions(jobId))[0]).toMatchObject({ status: 'committed', marker_state: 'pending' });
@@ -568,10 +582,47 @@ describe('the worker', () => {
   // ends there, so the scheduled caller sees 503, and the row waits for the next pass.
   it('ends the worker pass when the marker acknowledgement finds no free database connection', async () => {
     const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
-    h.field.failNext.markSubmitted = true;
+    afterTheRead(() => (h.field.failNext.sync = 2));
     expect((await f.submitShown(ESTIMATOR_A, jobId, draftId, manifest)).answer.status).toBe(201);
     const refused = Object.assign(new Error('QUEUE_TIMEOUT: Waited more than 10 seconds for a connection'), { code: 'QUEUE_TIMEOUT' });
-    // Full for the one transaction after the marker write: the acknowledgement.
+    // Full for the acknowledgement only: after the marker's sync, its two short transactions (the
+    // version read again, and the watermark) find a connection; the third, the acknowledgement, does not.
+    let since = -1;
+    const db = new Proxy(h.handle.db, {
+      get: (target, key) => {
+        if (key !== 'transaction' || since < 0) return Reflect.get(target, key);
+        since += 1;
+        if (since < 3) return Reflect.get(target, key);
+        since = -1;
+        return () => Promise.reject(refused);
+      },
+    });
+    const store = new Proxy(h.field, {
+      get: (target, key) =>
+        key === 'sync'
+          ? async (...args: Parameters<SubmitStore['sync']>) => {
+              const synced = await target.sync(...args);
+              since = 0;
+              return synced;
+            }
+          : Reflect.get(target, key),
+    });
+    await expect(runSubmissionRepair(db, store, { markerGraceSeconds: 0 })).rejects.toMatchObject({ code: 'QUEUE_TIMEOUT' });
+    // The drafts are synced and the version recorded; only the row's acknowledgement waits.
+    expect(h.field.draft(h.seed.a, draftId)?.state).toBe('submitted');
+    const [job] = await h.admin<{ behind: boolean }[]>`SELECT field_synced_revision < field_revision AS behind FROM jobs WHERE id = ${jobId}`;
+    expect(job!.behind).toBe(false);
+    expect((await f.submissions(jobId))[0]).toMatchObject({ status: 'committed', marker_state: 'pending' });
+    expect(await runSubmissionRepair(h.handle.db, h.field, { markerGraceSeconds: 0 })).toEqual({ aborted: 0, marked: 1, failed: 0 });
+  });
+
+  // Security audit F5: a request whose marker found no free database connection answers 503, never
+  // 201 with its marker unwritten; the record stands, and the same request again writes the marker.
+  it('answers 503 when the marker finds no free database connection after the record, and the same request then answers it', async () => {
+    const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
+    const refused = Object.assign(new Error('QUEUE_TIMEOUT: Waited more than 10 seconds for a connection'), { code: 'QUEUE_TIMEOUT' });
+    // Full once, for the first transaction after the attempt's second sync (the marker's).
+    let syncs = 0;
     let full = false;
     const db = new Proxy(h.handle.db, {
       get: (target, key) => {
@@ -582,25 +633,30 @@ describe('the worker', () => {
     });
     const store = new Proxy(h.field, {
       get: (target, key) =>
-        key === 'markSubmitted'
-          ? async (...args: Parameters<FenceStore['markSubmitted']>) => {
-              const marked = await target.markSubmitted(...args);
-              full = true;
-              return marked;
+        key === 'sync'
+          ? async (...args: Parameters<SubmitStore['sync']>) => {
+              const synced = await target.sync(...args);
+              syncs += 1;
+              if (syncs === 2) full = true;
+              return synced;
             }
           : Reflect.get(target, key),
     });
-    await expect(runSubmissionRepair(db, store, { markerGraceSeconds: 0 })).rejects.toMatchObject({ code: 'QUEUE_TIMEOUT' });
+    live.service = submissionsService(db, store);
+    const { body, answer } = await f.submitShown(ESTIMATOR_A, jobId, draftId, manifest);
+    expect(answer).toMatchObject({ status: 503, body: { error: 'submissions_unavailable' } });
     expect((await f.submissions(jobId))[0]).toMatchObject({ status: 'committed', marker_state: 'pending' });
-    expect(await runSubmissionRepair(h.handle.db, h.field, { markerGraceSeconds: 0 })).toEqual({ aborted: 0, marked: 1, failed: 0 });
+    live.service = null;
+    expect((await f.submit(ESTIMATOR_A, jobId, body)).status).toBe(200);
+    expect(await f.expectOneOutcome(h.seed.a, jobId, draftId)).toBe('committed');
   });
 
   it('writes a release the request could not after an abort, and leaves a marker it cannot write for the next run', async () => {
     const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
-    h.field.failNext.release = true;
+    afterTheRead(() => (h.field.failNext.sync = 2));
     expect((await f.submitShown(ESTIMATOR_A, jobId, draftId, { ...manifest, photos: [] })).answer.body.error).toBe('digest_mismatch');
     expect(h.field.draft(h.seed.a, draftId)?.state).toBe('submitting');
-    h.field.failNext.release = true;
+    h.field.failNext.sync = 2;
     expect(await runSubmissionRepair(h.handle.db, h.field, { markerGraceSeconds: 0 })).toEqual({ aborted: 0, marked: 0, failed: 1 });
     expect((await f.submissions(jobId))[0]).toMatchObject({ status: 'aborted', marker_state: 'pending' });
     expect(await runSubmissionRepair(h.handle.db, h.field, { markerGraceSeconds: 0 })).toEqual({ aborted: 0, marked: 1, failed: 0 });
@@ -629,9 +685,163 @@ describe('the worker', () => {
     expect(await f.expectOneOutcome(h.seed.a, stalled.jobId, stalled.draftId)).toBe('aborted');
   });
 
+  // r4 (b): an attempt's fence held at the field database (the draft sync, or the previous fence writer)
+  // past its expiry; the worker aborts it and releases the draft, the owner archives the job, then the
+  // held fence goes on. It is refused at the job's marker: the archived draft is never fenced.
+  it('never fences a draft after its attempt was aborted and the job archived: the late fence is refused (r4 b)', async () => {
+    live.service = shortWindow();
+    const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
+    const hold = latch();
+    let reached = false;
+    const held = async () => {
+      delete h.field.gate.sync;
+      delete h.field.gate.fence;
+      reached = true;
+      await hold.wait;
+    };
+    h.field.gate.sync = held;
+    h.field.gate.fence = held;
+    const attempt = f.submitShown(ESTIMATOR_A, jobId, draftId, manifest);
+    await until(() => reached, 'the held fence');
+    await expire();
+    expect(await runSubmissionRepair(h.handle.db, h.field, { markerGraceSeconds: 0 })).toEqual({ aborted: 1, marked: 1, failed: 0 });
+    const { revision } = await f.job(jobId);
+    const archived = await archiveRoute.POST(
+      request(OWNER_A, `/api/jobs/${jobId}/archive`, { method: 'POST', body: { revision, changeId: randomUUID() } }),
+      params({ jobId }),
+    );
+    expect(archived.status).toBe(200);
+    hold.open();
+    // Its job is archived now: every job route answers 410.
+    expect((await attempt).answer).toMatchObject({ status: 410, body: { error: 'archived' } });
+    expect(h.field.draft(h.seed.a, draftId)).toMatchObject({ state: 'archived', fence: null });
+    expect((await f.submissions(jobId)).map((row) => row.status)).toEqual(['aborted']);
+  });
+
+  // draft-sync-02: a sync that read the job while an attempt was pending, held at the field database
+  // while a previous-version Submit (which moves no marker) decides that attempt, writes nothing when
+  // it goes on, and the job is synced again as Postgres now says: never fenced again after the
+  // release, never opened after the record.
+  it('a sync that read a pending attempt writes nothing after a previous-version Submit decides it, in either order', async () => {
+    for (const decision of ['aborted', 'committed'] as const) {
+      const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
+      // The attempt fenced the draft and stalls before its read.
+      const stall = latch();
+      h.field.gate.read = () => stall.wait;
+      const attempt = f.submitShown(ESTIMATOR_A, jobId, draftId, manifest);
+      await until(() => h.field.draft(h.seed.a, draftId)?.state === 'submitting', 'the fence');
+      const [row] = await f.submissions(jobId);
+      // A later sync of the job reads it pending, and is held at the field database.
+      const hold = latch();
+      let reached = false;
+      h.field.gate.sync = async () => {
+        reached = true;
+        await hold.wait;
+      };
+      // What the held sync's own transaction answers and leaves, before any catch-up runs.
+      const sync = h.field.sync;
+      let resumed: { outcome: string; draft: unknown; writes: number } | null = null;
+      h.field.sync = async (...args) => {
+        const result = await sync(...args);
+        resumed ??= { outcome: result.outcome, draft: structuredClone(h.field.draft(h.seed.a, draftId)), writes: h.field.stateWrites.length };
+        return result;
+      };
+      await h.admin`UPDATE jobs SET field_revision = field_revision + 1 WHERE id = ${jobId}`;
+      const delayed = syncJob(h.handle.db, h.field, h.seed.a, jobId);
+      await until(() => reached, 'the held sync');
+      // The previous version decides the attempt and writes its own marker.
+      if (decision === 'aborted') {
+        await h.admin`UPDATE job_submissions SET status = 'aborted' WHERE id = ${row!.id}`;
+        expect(await h.field.release(h.seed.a, draftId, row!.epoch)).toBe('released');
+      } else {
+        const bytes = Buffer.from('{}');
+        await h.admin`UPDATE job_submissions SET status = 'committed', snapshot_bytes = ${bytes}, snapshot_sha256 = ${sha256(bytes)} WHERE id = ${row!.id}`;
+        await h.admin`UPDATE jobs SET status = 'submitted', revision = revision + 1 WHERE id = ${jobId}`;
+        expect(await h.field.markSubmitted(h.seed.a, draftId, row!.epoch, row!.id)).toBe('marked');
+      }
+      const decided = structuredClone(h.field.draft(h.seed.a, draftId));
+      const writes = h.field.stateWrites.length;
+      hold.open();
+      await delayed;
+      h.field.sync = sync;
+      // The held sync wrote nothing: Postgres had moved on.
+      expect(resumed).toEqual({ outcome: 'moved', draft: decided, writes });
+      expect({ decision, draft: h.field.draft(h.seed.a, draftId) }).toMatchObject({
+        decision,
+        draft: decision === 'aborted' ? { state: 'editing', fence: null } : { state: 'submitted', fence: { epoch: row!.epoch } },
+      });
+      stall.open();
+      await attempt;
+    }
+  });
+
+  // The draft's parent lost with its rooms left under its id: the attempt is aborted (draft_missing), and
+  // the decision's sync can write nothing there (rooms under a missing draft are a conflict). The row is
+  // settled all the same, so Archive is not refused as if a Submit were still in flight.
+  it('settles an attempt whose draft was lost with its rooms left, so the job can still be archived', async () => {
+    const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
+    const { revision } = await f.job(jobId);
+    h.field.remove(h.seed.a, draftId);
+    expect(await h.field.restoreDraft(h.seed.a, jobId, draftId, 'editing', revision)).toBe('set');
+    h.field.put(h.seed.a, draftId, manifest);
+    expect(h.field.draft(h.seed.a, draftId)).toMatchObject({ placeholder: true });
+    expect((await f.submitShown(ESTIMATOR_A, jobId, draftId, manifest)).answer).toMatchObject({ status: 409, body: { error: 'draft_missing' } });
+    expect(await f.submissions(jobId)).toEqual([expect.objectContaining({ status: 'aborted', marker_state: 'done' })]);
+    const archived = await archiveRoute.POST(
+      request(OWNER_A, `/api/jobs/${jobId}/archive`, { method: 'POST', body: { revision: (await f.job(jobId)).revision, changeId: randomUUID() } }),
+      params({ jobId }),
+    );
+    // Archived in Postgres; its own field step meets the same leftover rooms (409), never the Submit.
+    expect({ status: archived.status, body: await archived.json() }).toEqual({ status: 409, body: { error: 'conflict' } });
+    expect((await f.job(jobId)).status).toBe('archived');
+  });
+
+  // The draft gone between Submit's lookup and its fence: the fence's sync cannot make it (it never makes
+  // a draft for a fence), so the answer is draft_missing, as when the lookup finds it gone, not 503.
+  it('answers draft_missing when the draft goes between its lookup and its fence', async () => {
+    const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
+    h.field.gate.sync = async () => {
+      h.field.remove(h.seed.a, draftId);
+    };
+    expect((await f.submitShown(ESTIMATOR_A, jobId, draftId, manifest)).answer).toMatchObject({ status: 409, body: { error: 'draft_missing' } });
+    expect((await f.submissions(jobId)).map((row) => row.status)).toEqual(['aborted']);
+  });
+
+  // The draft's parent gone between Submit's lookup and its fence, with its rooms left under the id (a
+  // conflict for the sync): still draft_missing, as when the lookup finds it gone.
+  it('answers draft_missing when the draft goes between its lookup and its fence and leaves its rooms', async () => {
+    const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
+    const { revision } = await f.job(jobId);
+    h.field.gate.sync = async () => {
+      h.field.remove(h.seed.a, draftId);
+      await h.field.restoreDraft(h.seed.a, jobId, draftId, 'editing', revision);
+      h.field.put(h.seed.a, draftId, manifest);
+    };
+    expect((await f.submitShown(ESTIMATOR_A, jobId, draftId, manifest)).answer).toMatchObject({ status: 409, body: { error: 'draft_missing' } });
+    expect((await f.submissions(jobId)).map((row) => row.status)).toEqual(['aborted']);
+  });
+
+  // A copy whose draft is lost and whose source's signed record cannot be read: no draft can be made, so
+  // the attempt is aborted (draft_missing) and settled, with nothing to release; Archive is not refused.
+  it('settles an attempt whose lost draft cannot be made again, so the job can still be archived', async () => {
+    const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
+    const source = await f.readyJob(ESTIMATOR_A, h.seed.a);
+    await h.admin`UPDATE jobs SET copied_from_job_id = ${source.jobId} WHERE id = ${jobId}`;
+    h.field.remove(h.seed.a, draftId);
+    expect((await f.submitShown(ESTIMATOR_A, jobId, draftId, manifest)).answer).toMatchObject({ status: 409, body: { error: 'draft_missing' } });
+    expect(await f.submissions(jobId)).toEqual([expect.objectContaining({ status: 'aborted', marker_state: 'done' })]);
+    const archived = await archiveRoute.POST(
+      request(OWNER_A, `/api/jobs/${jobId}/archive`, { method: 'POST', body: { revision: (await f.job(jobId)).revision, changeId: randomUUID() } }),
+      params({ jobId }),
+    );
+    // Archived in Postgres; its own field step still cannot make the draft (503), never the Submit.
+    expect({ status: archived.status, body: await archived.json() }).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
+    expect((await f.job(jobId)).status).toBe('archived');
+  });
+
   it('a retry of a decided submission writes its missing marker', async () => {
     const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
-    h.field.failNext.markSubmitted = true;
+    afterTheRead(() => (h.field.failNext.sync = 2));
     const { body } = await f.submitShown(ESTIMATOR_A, jobId, draftId, manifest);
     expect(h.field.draft(h.seed.a, draftId)?.state).toBe('submitting');
     expect((await f.submit(ESTIMATOR_A, jobId, body)).status).toBe(200);

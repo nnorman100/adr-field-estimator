@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { manifestDigest } from '@/lib/field/canonical';
 import { latch, until } from './submission-flow';
@@ -542,6 +542,63 @@ describe('moving the field work (owner decision J5)', () => {
     expect(h.field.draft(h.seed.a, draftId)).toMatchObject({ jobId: id, state: 'submitted', field: MANIFEST.draft, rooms: { kitchen: { name: 'Kitchen' } } });
   });
 
+  // unreadable-reconstruction: a draft is made only from a whole record (its format, the draft map, and
+  // rooms and photos lists of ids the field rules accept, each with a field map), never from part of one.
+  it('makes no draft from a record that is not whole: the same request again', async () => {
+    const shapes = [
+      { format: 'dryscope-submission-v1', field: true },
+      { format: 'dryscope-submission-v1', field: { draft: {}, rooms: [{ id: 'a/b', field: {} }], photos: [] } },
+      { format: 'dryscope-submission-v1', field: { draft: {}, rooms: [{ id: 'kitchen' }], photos: [] } },
+      { format: 'dryscope-submission-v1', field: { draft: [], rooms: [], photos: [] } },
+    ];
+    for (const shape of shapes) {
+      const { id, draftId } = await claimedJob();
+      const bytes = Buffer.from(JSON.stringify(shape));
+      const row = { id: randomUUID(), epoch: randomUUID() };
+      await h.admin`
+        INSERT INTO job_submissions (id, company_id, job_id, draft_id, epoch, kind, request_digest, expires_at, created_by_actor_id)
+        VALUES (${row.id}, ${h.seed.a}, ${id}, ${draftId}, ${row.epoch}, 'original', ${'a'.repeat(64)}, now() + interval '1 minute', ${h.seed.estimatorA.actor})
+      `;
+      await h.admin`UPDATE job_submissions SET status = 'committed', snapshot_bytes = ${bytes}, snapshot_sha256 = ${createHash('sha256').update(bytes).digest('hex')} WHERE id = ${row.id}`;
+      await h.admin`UPDATE jobs SET status = 'submitted', revision = revision + 1 WHERE id = ${id}`;
+      h.field.remove(h.seed.a, draftId);
+      expect({ shape, answer: await claim(ESTIMATOR_A, id) }).toEqual({ shape, answer: { status: 503, body: { error: 'draft_unavailable' } } });
+      expect(h.field.draft(h.seed.a, draftId)).toBeNull();
+    }
+  });
+
+  // A record that repeats a room id is not whole: a draft made from it would fail its create and roll back
+  // the whole sync, the owner change on every other draft with it.
+  it('moves the field work on the earlier draft when the lost current draft’s record repeats a room id, or holds a value Firestore cannot store, and makes no draft from it', async () => {
+    const records = [
+      { format: 'dryscope-submission-v1', field: { draft: {}, rooms: [{ id: 'kitchen', field: {} }, { id: 'kitchen', field: {} }], photos: [] } },
+      { format: 'dryscope-submission-v1', field: { draft: { roomOrder: [['kitchen']] }, rooms: [], photos: [] } },
+      { format: 'dryscope-submission-v1', field: { draft: {}, rooms: [{ id: 'kitchen', field: { readings: [[1, 2]] } }], photos: [] } },
+    ];
+    for (const repeated of records) {
+      await movedPastRecord(repeated);
+    }
+  });
+
+  async function movedPastRecord(repeated: unknown) {
+    const { id, draftId: first } = await claimedJob();
+    const bytes = Buffer.from(JSON.stringify(repeated));
+    const row = { id: randomUUID(), epoch: randomUUID() };
+    await h.admin`
+      INSERT INTO job_submissions (id, company_id, job_id, draft_id, epoch, kind, request_digest, expires_at, created_by_actor_id)
+      VALUES (${row.id}, ${h.seed.a}, ${id}, ${first}, ${row.epoch}, 'original', ${'a'.repeat(64)}, now() + interval '1 minute', ${h.seed.estimatorA.actor})
+    `;
+    await h.admin`UPDATE job_submissions SET status = 'committed', snapshot_bytes = ${bytes}, snapshot_sha256 = ${createHash('sha256').update(bytes).digest('hex')} WHERE id = ${row.id}`;
+    await h.admin`UPDATE jobs SET status = 'submitted', revision = revision + 1 WHERE id = ${id}`;
+    const second = randomUUID();
+    expect((await nextDraft(ESTIMATOR_A, id, { draftId: second, fromDraftId: first })).status).toBe(201);
+    h.field.remove(h.seed.a, second);
+    const { revision } = (await coordination(OWNER_A, id)).body;
+    expect(await transfer(OWNER_A, id, { revision, changeId: randomUUID(), toActorId: estimatorA2 })).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
+    expect({ repeated, first: h.field.draft(h.seed.a, first) }).toMatchObject({ repeated, first: { jobId: id, fieldOwnerUid: 'estimator-a2' } });
+    expect(h.field.draft(h.seed.a, second)).toBeNull();
+  }
+
   it('answers an archive whose current draft is another job’s with 409, and leaves its version unsynced', async () => {
     const { id, draftId } = await claimedJob();
     // The field database holds another job's draft under the id (as security audit F1 guards against).
@@ -653,6 +710,17 @@ describe('moving the field work (owner decision J5)', () => {
     const made = h.field.draft(h.seed.a, draftId);
     expect(made?.placeholder).toBeUndefined();
     expect(made).toMatchObject({ jobId: id, state: 'editing', fieldOwnerUid: 'estimator-a' });
+  });
+
+  // reconstruction-blocks-revocation (PR 504 follow-up): the record a missing draft would be made from is
+  // read only to make it; one that cannot be read never holds up a move of the field work on a draft that exists.
+  it('moves the field work on a copy’s draft that exists even when its source’s signed record cannot be read', async () => {
+    const { id, draftId } = await claimedJob();
+    const source = await officeJob();
+    await h.admin`UPDATE jobs SET copied_from_job_id = ${source.id} WHERE id = ${id}`;
+    const { revision } = (await coordination(OWNER_A, id)).body;
+    expect((await transfer(OWNER_A, id, { revision, changeId: randomUUID(), toActorId: estimatorA2 })).status).toBe(200);
+    expect(h.field.draft(h.seed.a, draftId)).toMatchObject({ jobId: id, state: 'editing', fieldOwnerUid: 'estimator-a2' });
   });
 
   it('refuses the company owner field work they do not own, until they move it to themself', async () => {

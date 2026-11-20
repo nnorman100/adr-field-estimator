@@ -79,6 +79,8 @@ export type FakeField = FenceStore & ArchiveStore & DraftSync & {
   marker(companyId: string, jobId: string): SyncMarker | null;
   // Every field owner the sync wrote on a draft, by "company/draft", in order.
   ownerWrites: { at: string; fieldOwnerUid: string | null }[];
+  // Every state the sync writes, in order: on a draft it makes, and each change of a draft's state.
+  stateWrites: { at: string; state: string }[];
   // The drafts as stored now (a copy).
   data(): FieldData;
   projected: Map<string, JobProjection>;
@@ -120,6 +122,13 @@ export const emptyDraft = (fieldOwnerUid: string | null, jobId?: string): FakeDr
   ...(jobId === undefined ? {} : { jobId }),
 });
 
+// Whether a value holds a list directly inside a list, which Firestore refuses to store.
+function holdsNestedList(value: unknown, inList = false): boolean {
+  if (Array.isArray(value)) return inList || value.some((item) => holdsNestedList(item, true));
+  if (typeof value === 'object' && value !== null) return Object.values(value).some((item) => holdsNestedList(item));
+  return false;
+}
+
 export function fakeField(backing: Backing = memoryBacking()): FakeField {
   // Changes the record outside a method call, as a test sets it up.
   function edit(work: (record: FieldRecord) => void): void {
@@ -157,6 +166,7 @@ export function fakeField(backing: Backing = memoryBacking()): FakeField {
   const fake: FakeField = {
     marker: (companyId, jobId) => backing.load().markers[key(companyId, jobId)] ?? null,
     ownerWrites: [],
+    stateWrites: [],
     sync: async (companyId, job, gen, options = {}) => {
       // As the real writer: refused before any read or write, as a rejected promise.
       assertVersion(gen, job.v);
@@ -186,14 +196,22 @@ export function fakeField(backing: Backing = memoryBacking()): FakeField {
         const plan = planSync(marker, stored, orphans, job, gen);
         // As Firestore's commit: a create of a room or photo the same write already creates fails the
         // whole write, and nothing (no draft, no marker) is saved.
+        // And Firestore stores no list directly inside a list: a value holding one fails the write.
         for (const made of plan.creates) {
           for (const docs of [made.rooms, made.photos]) {
             if (new Set(docs.map((doc) => doc.id)).size !== docs.length) throw new Error('a document is created twice in one write');
+          }
+          for (const value of [made.data.field, ...made.rooms.map((doc) => doc.field), ...made.photos.map((doc) => doc.field)]) {
+            if (holdsNestedList(value)) throw new Error('Cannot convert an array value in an array value');
           }
         }
         for (const made of plan.creates) fake.ownerWrites.push({ at: key(companyId, made.draftId), fieldOwnerUid: made.data.fieldOwnerUid ?? null });
         for (const update of plan.updates) {
           if (update.set.fieldOwnerUid !== undefined) fake.ownerWrites.push({ at: key(companyId, update.draftId), fieldOwnerUid: update.set.fieldOwnerUid });
+        }
+        for (const made of plan.creates) fake.stateWrites.push({ at: key(companyId, made.draftId), state: made.data.state });
+        for (const update of plan.updates) {
+          if (update.set.state !== undefined) fake.stateWrites.push({ at: key(companyId, update.draftId), state: update.set.state });
         }
         for (const made of plan.creates) {
           const { fence, previous, fieldOwnerUid, field, ...rest } = made.data;
