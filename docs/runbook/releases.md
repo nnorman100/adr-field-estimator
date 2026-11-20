@@ -2,17 +2,23 @@
 
 ## Release
 
-Follow the recipe at the top of `RELEASES.md` and `docs/SHIP-CHECKLIST.md`. A hand release is a production step the owner runs (`HANDOFF.md`, "Rules that decide what you may do"). Full commands: `docs/firebase-isolation.md`. The legacy `.github/workflows/deploy.yml` is manual-only; it no longer releases master commits automatically.
+The old app is retired and switched off. The product rule ([`docs/architecture/product-rules.md`](../architecture/product-rules.md)) says its project is never deployed to or changed, so the
+legacy commands in [RELEASES.md](../../RELEASES.md), [the checklist](../SHIP-CHECKLIST.md) and
+[the deployment guide](../firebase-isolation.md#deployment) are historical records, not current
+instructions. They are kept only for provenance; reopening the project needs the owner's explicit
+authorization. For the rebuilt app, see [the release workflow](test-release.md).
 
 ## Roll back
 
-For a one-step rollback to an earlier `YYYY.MM.DD-N` version, run `python3 scripts/auto_deploy.py --rollback <YYYY.MM.DD-N>` or trigger **Deploy** in GitHub Actions with the `version` input (it needs `AUTO_DEPLOY_ENABLED` set to `true`; while paused, use the command). It redeploys that version's backend and Hosting and verifies health, but stops first when the target is older than a data migration, rules or indexes changed since it, or the repository baseline would turn off a feature now serving; `docs/firebase-isolation.md#rollback` has the confirmations and what stays unchanged.
+Historical, for the retired old app only (never run while the project is switched off): the
+command was `python3 scripts/auto_deploy.py --rollback <YYYY.MM.DD-N>`. It redeployed that
+version's backend and Hosting and checked health. It stopped before staging if the target predated a
+data migration or rules or index change, or if the baseline would turn off a serving feature. The
+[rollback guide](../firebase-isolation.md#rollback) lists the explicit confirmations.
 
-**After a rollback, pause automatic deploys (`AUTO_DEPLOY_ENABLED`) or revert the bad change before the next merge. Otherwise the next release brings it back.**
+Historical traffic-only restore: point Cloud Run traffic to the recorded rollback revision (explicit project and region), clone the recorded rollback Hosting version to the live channel, read back both, and append rows to `RELEASES.md`. A failed deploy was not retried immediately.
 
-For an immediate traffic-only restore, point Cloud Run traffic to the recorded rollback revision (explicit project and region), clone the recorded rollback Hosting version to the live channel, read back both, and append rows to `RELEASES.md`. Do not retry a failed deploy immediately.
-
-### Turning company prices off
+### Turning company prices off (historical)
 
 Change `DEFAULT_PRICE_BOOKS` back to `off` in a reviewed PR, then release that commit with `--confirm-baseline` (`docs/firebase-isolation.md#turning-a-feature-on-or-off`). That hides the price editor, the **Switch to v2** card and the estimator's item list, and the app shows the v1 form, including for a draft a phone already holds. It does not touch the data or the calculation, so nothing already priced moves:
 

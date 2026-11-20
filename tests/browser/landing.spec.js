@@ -295,7 +295,7 @@ test('the read-only document page keeps its route, noindex and no tools', async 
   );
 });
 
-test('crawling files: robots.txt, the one-page sitemap and the 404 page', async ({ page }) => {
+test('robots.txt, the retired sitemap and the 404 page', async ({ page }) => {
   const robots = await page.request.get('/robots.txt');
   expect(robots.status()).toBe(200);
   const directives = (await robots.text())
@@ -306,25 +306,12 @@ test('crawling files: robots.txt, the one-page sitemap and the 404 page', async 
       const at = line.indexOf(':');
       return [line.slice(0, at).trim().toLowerCase(), line.slice(at + 1).trim()];
     });
-  expect(directives.filter(([key]) => key === 'sitemap').map(([, value]) => value)).toEqual([
-    'https://alert-disaster-field-2026.web.app/sitemap.xml',
-  ]);
+  expect(directives.some(([key]) => key === 'sitemap')).toBe(false);
   const disallowed = directives.filter(([key]) => key === 'disallow').map(([, value]) => value);
   for (const path of ['/', '/app'])
     expect(disallowed.some((rule) => path.startsWith(rule))).toBe(false);
   const sitemap = await page.request.get('/sitemap.xml');
-  expect(sitemap.status()).toBe(200);
-  await page.goto('/');
-  const locations = await page.evaluate(
-    (xml) => {
-      const doc = new DOMParser().parseFromString(xml, 'application/xml');
-      if (doc.querySelector('parsererror')) return null;
-      const ns = 'http://www.sitemaps.org/schemas/sitemap/0.9';
-      return Array.from(doc.getElementsByTagNameNS(ns, 'loc'), (loc) => loc.textContent.trim());
-    },
-    await sitemap.text(),
-  );
-  expect(locations).toEqual(['https://alert-disaster-field-2026.web.app/']);
+  expect(sitemap.status()).toBe(404);
   const missing = await page.goto('/no-such-page');
   expect(missing.status()).toBe(404);
   await expect(page.locator('h1')).toHaveText('There is nothing at this address.');

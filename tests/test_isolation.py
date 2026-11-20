@@ -2,7 +2,6 @@
 
 import json
 import runpy
-import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
 from pathlib import Path
 from unittest.mock import patch
@@ -77,11 +76,8 @@ def test_hosting_and_database_use_dedicated_project():
     robots.parse((ROOT / 'public/robots.txt').read_text(encoding='utf8').splitlines())
     assert robots.can_fetch('*', SITE + '/') and robots.can_fetch('*', SITE + '/app')
     assert not robots.can_fetch('*', SITE + '/api/audit')
-    assert robots.site_maps() == [SITE + '/sitemap.xml']
-    urls = ET.parse(ROOT / 'public/sitemap.xml').getroot()
-    namespace = '{http://www.sitemaps.org/schemas/sitemap/0.9}'
-    assert urls.tag == namespace + 'urlset'
-    assert [loc.text for loc in urls.iter(namespace + 'loc')] == [SITE + '/']
+    assert not robots.site_maps()
+    assert not (ROOT / 'public/sitemap.xml').exists()
     manifest = json.loads((ROOT / 'public/manifest.webmanifest').read_text(encoding='utf8'))
     assert (manifest['id'], manifest['start_url'], manifest['scope']) == ('/', '/app', '/')
     policy = next(

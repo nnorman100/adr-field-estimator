@@ -448,12 +448,12 @@ esac`,
     expect(existsSync(path.join(sh.tmp, 'manifest.json'))).toBe(false);
   });
 
-  it('installs the same pinned gh as deploy.yml, only after a release', () => {
-    const old = steps(load(path.join(path.dirname(RELEASE), 'deploy.yml')).jobs.deploy).find(
-      (s: Data) => s.name === 'Install GitHub CLI',
-    );
+  it('installs the pinned GitHub CLI only after a successful release', () => {
     const install = recordStep('Install GitHub CLI');
-    expect(install.env).toEqual(old.env);
+    expect(install.env).toEqual({
+      GH_VERSION: '2.103.2',
+      GH_SHA256: '62ccf747115ddc61237efffdde66a3c8f70ba249433dc64f70801089b59c59c8',
+    });
     expect(install.env.GH_SHA256).toMatch(/^[0-9a-f]{64}$/);
     expect(install.if).toBe(SUCCESS);
   });
