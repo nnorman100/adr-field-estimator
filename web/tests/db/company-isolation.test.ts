@@ -37,6 +37,12 @@ vi.mock('@/lib/submissions/services', () => ({
   runQueuedSubmissionRepair: async () => ({ aborted: 0, marked: 0, failed: 0 }),
 }));
 vi.mock('@/lib/platform/services', () => ({ platformServices: () => live.harness!.platform }));
+// The readiness check (S5b-11) reads the field drafts through the shared field stand-in.
+vi.mock('@/lib/readiness/services', async () => {
+  const { readinessService } = await import('@/lib/readiness/service');
+  const { standIn } = await import('./readiness-fake');
+  return { readinessServices: () => readinessService(live.harness!.handle.db, () => standIn(live.harness!.field)) };
+});
 vi.mock('@/lib/estimates/services', async () => {
   const { estimatesService } = await import('@/lib/estimates/service');
   return { estimatesServices: () => estimatesService(live.harness!.handle.db) };
@@ -126,6 +132,8 @@ async function seedSides(): Promise<void> {
   ] as const) {
     await h.admin`INSERT INTO audit_events (company_id, actor_id, action, target) VALUES (${company}, ${by}, 'seeded_event', ${company})`;
     await h.admin`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${company}, 'price_books', true)`;
+    // Readiness on, so its route is refused by job access and not only by its switch.
+    await h.admin`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${company}, 'readiness', true)`;
     await h.admin`INSERT INTO access_projection_outbox (company_id, actor_id) VALUES (${company}, ${by})`;
   }
   // Each company has a working copy and a published version, named so a leak of either shows.

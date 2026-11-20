@@ -18,11 +18,11 @@ export class PricesUnreadable extends Error {
   }
 }
 
-export type JobTable = { sequence: number; table: Table };
+export type JobTable = { sequence: number; engineVersion: string; table: Table };
 
 /** The job's price table, read through the one schema with its hash checked; null with no version. */
 export async function jobPriceTable(tx: CompanyTransaction, companyId: string, jobId: string): Promise<JobTable | null> {
-  const columns = { sequence: priceTableVersions.sequence, content: priceTableVersions.content, contentHash: priceTableVersions.contentHash };
+  const columns = { sequence: priceTableVersions.sequence, engineVersion: priceTableVersions.engineVersion, content: priceTableVersions.content, contentHash: priceTableVersions.contentHash };
   const [pinned] = await tx
     .select(columns)
     .from(jobPricePins)
@@ -41,7 +41,7 @@ export async function jobPriceTable(tx: CompanyTransaction, companyId: string, j
     throw new PricesUnreadable();
   }
   if (contentHash(table) !== version.contentHash) throw new PricesUnreadable();
-  return { sequence: version.sequence, table };
+  return { sequence: version.sequence, engineVersion: version.engineVersion, table };
 }
 
 /** The items a room may list: those priced by a room's typed quantity (the engine's own rule). */

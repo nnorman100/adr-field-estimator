@@ -708,7 +708,7 @@ def test_failed_hosting_deploy_rolls_traffic_back(summary):
 def test_rollback_failure_is_reported_loudly(summary):
     runner = FakeRunner(fail={'verify', 'clone'})
     assert release(runner) == 1
-    assert 'FAILED, restore by hand' in summary.text()
+    assert 'FAILED, the old app was not restored' in summary.text()
 
 
 def test_stamp_is_reset_even_when_staging_fails():

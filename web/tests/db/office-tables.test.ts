@@ -74,6 +74,7 @@ describe('migration 0015: the office tables', () => {
     expect(updates).toEqual([
       { table: 'job_assignments', column: 'ended_at' },
       { table: 'job_assignments', column: 'ended_by_actor_id' },
+      { table: 'job_coordination', column: 'drying_watch' },
       { table: 'job_coordination', column: 'last_change_id' },
       { table: 'job_coordination', column: 'office_notes' },
       { table: 'job_coordination', column: 'revision' },

@@ -45,7 +45,7 @@ Sign-out, app updates, reloads and reconnects stop before discarding unsynced wo
 
 ## Private, isolated and bounded
 
-Everything lives in the dedicated `alert-disaster-field-2026` project; peer sites and shared databases are never touched, and every deploy is target-scoped.
+The rebuilt app uses dedicated DryScope projects. Each release targets its own environment, and peer sites and shared databases are never touched. See [where things run](docs/runbook/where-things-run.md).
 Browsers never reach the database or the model directly; the backend checks identity, company membership and job access on every call.
 Each company sees only its own jobs, recordings and uploaded prices.
 Owners may see how their prices compare with anonymized aggregates drawn from five or more companies, never another company's name or jobs (not built yet; today the app computes no cross-company aggregates or price comparisons).

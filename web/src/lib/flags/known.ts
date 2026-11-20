@@ -19,7 +19,13 @@ export const AI_FLAG_NAMES = Object.freeze([
 ] as const);
 export type AiFlagName = (typeof AI_FLAG_NAMES)[number];
 
-export const FLAG_NAMES = Object.freeze(['price_books', ...AI_FLAG_NAMES] as const);
+// The switches of deterministic features (no AI): each turns on one feature for a company while it
+// is checked with that company. `readiness` is "Ready to review?" (S5b-11): the advisory gaps before
+// Finish, which never block Finish or Submit.
+export const FEATURE_FLAG_NAMES = Object.freeze(['readiness'] as const);
+export type FeatureFlagName = (typeof FEATURE_FLAG_NAMES)[number];
+
+export const FLAG_NAMES = Object.freeze(['price_books', ...AI_FLAG_NAMES, ...FEATURE_FLAG_NAMES] as const);
 export type FlagName = (typeof FLAG_NAMES)[number];
 
 // Every AI switch's owner, purpose and removal date (the Standard's feature-switch rule). The owner
@@ -59,6 +65,15 @@ export const AI_FLAG_DETAILS: Readonly<Record<AiFlagName, FlagDetails>> = Object
   ai_job_summary: {
     owner: AI_FLAG_OWNER,
     purpose: 'The AI job summary for the office (S7-10).',
+    removeBy: AI_FLAG_REMOVE_BY,
+  },
+});
+
+// Every deterministic feature switch's owner, purpose and removal review date, as for the AI switches.
+export const FEATURE_FLAG_DETAILS: Readonly<Record<FeatureFlagName, FlagDetails>> = Object.freeze({
+  readiness: {
+    owner: AI_FLAG_OWNER,
+    purpose: 'Ready to review? (S5b-11): the advisory list of what a job still lacks before Finish; it never blocks Finish or Submit.',
     removeBy: AI_FLAG_REMOVE_BY,
   },
 });

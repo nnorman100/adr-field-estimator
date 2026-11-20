@@ -9,15 +9,19 @@ Read in this order: `CLAUDE.md` and `AGENTS.md` (rules), `VISION.md` (what the p
 this file, `docs/STATUS.md` (each feature: built, on, checked on a phone), `docs/spec.md`,
 `docs/phone-acceptance.md`.
 
-## What is live
+## Where to check the rebuilt app
 
-| Item | Where to read it |
+See [Where things run and what is serving](docs/runbook/where-things-run.md) for the rebuilt app.
+
+## Historical operations of the retired app
+
+| Item | Historical record |
 |---|---|
-| Old app (retired, historical): serving backend revision, version (`YYYY.MM.DD-N`) and source commit | `GET /api/health`, the app footer or Account menu, `node scripts/verify_hosting.js` |
-| Release history | Rebuilt app: `docs/runbook/where-things-run.md`. Historical, retired old app only: `RELEASES.md` (manual releases) and the archived **Deploy** run summaries in GitHub Actions (automated releases) |
-| Cloud Run service | `alert-disaster-field-estimator`, `us-west2`, project `alert-disaster-field-2026` |
-| Hosting | target `alert-disaster`, site `alert-disaster-field-2026`; app at `https://alert-disaster-field-2026.web.app/app` |
-| Latest release row in `RELEASES.md` when this file was written (2026-11-06) | 2026-11-04, version `2026.11.04-5`, commit `22b3a509`, promoted to 100% with Hosting released. Automatic deploys after that date appear only in the Actions history, so recheck before relying on this row |
+| Backend revision, version (`YYYY.MM.DD-N`) and source commit | Operators used `GET /api/health`, the app footer or Account menu, and `node scripts/verify_hosting.js` |
+| Release history | `RELEASES.md` (manual releases) and the archived **Deploy** run summaries in GitHub Actions (automated releases) |
+| Former Cloud Run service | `alert-disaster-field-estimator`, `us-west2`, project `alert-disaster-field-2026` |
+| Former Hosting site | Target `alert-disaster`, site `alert-disaster-field-2026`, former app URL `https://alert-disaster-field-2026.web.app/app` |
+| Latest release row in `RELEASES.md` when this file was written (2026-11-06) | 2026-11-04, version `2026.11.04-5`, commit `22b3a509`, promoted to 100% with Hosting released. Later automatic deploys were recorded in the Actions history |
 
 ## Feature switches
 

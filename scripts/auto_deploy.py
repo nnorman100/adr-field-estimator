@@ -1,4 +1,4 @@
-"""Release a CI-tested master commit to production with the manual release flow's safety.
+"""Historical release CLI for the retired app. Its project is never deployed to or changed.
 
 Historical: this CLI released the retired old app. That project is switched off and is never deployed
 to or changed (docs/architecture/product-rules.md); the CLI is kept only as a record. It used the manual
@@ -323,8 +323,8 @@ def baseline_refusal(reductions, confirm_how):
             f'Refusing a baseline less permissive than the serving revision: {settings}. '
             'Nothing was staged.',
             *(line for _, _, line in reductions),
-            f'To keep it on, change {constants} in scripts/deploy_backend.py in a reviewed pull '
-            f'request. To turn it off on purpose, {confirm_how}',
+            f'Historically, keeping it on required changing {constants} in scripts/deploy_backend.py '
+            f'in a reviewed pull request. Turning it off required {confirm_how}',
         ]
     )
 
@@ -385,6 +385,7 @@ def check_ttls(runner):
     if result.returncode:
         raise Refused(
             'The read-only Firestore TTL check failed:\n'
+            'Historical diagnostic output for the retired project, which is never deployed to or changed:\n'
             + (result.stdout or '')
             + (result.stderr or '')
             + '\nHistorically a missing policy was enabled by hand with scripts/ensure_firestore_ttls.py --apply.'
@@ -472,18 +473,18 @@ def publish_live_version(runner, record, commit):
     url = service_state(runner).get('status', {}).get('url', '').rstrip('/')
     status, body = runner.fetch(url + '/api/health')
     if status != 200:
-        raise Refused(f'Live /api/health answered {status}; nothing was published. Rerun.')
+        raise Refused(f'Live /api/health answered {status}; nothing was published.')
     try:
         health = json.loads(body)
     except ValueError:
-        raise Refused('Live /api/health was not JSON; nothing was published. Rerun.') from None
+        raise Refused('Live /api/health was not JSON; nothing was published.') from None
     if health.get('source_commit') != commit:
         raise Skipped(f'{commit[:12]} is not what is serving; nothing to publish.')
     version = health.get('version')
     if not valid_version(version):
         warning = (
             f'{commit[:12]} is serving but reports version {version!r}, so no tag or GitHub Release '
-            'was created. Redeploy it with --version to give it a number.'
+            'was created. Historically, redeploying with --version assigned a version number.'
         )
         print(f'::warning::{warning}', file=sys.stderr)
         raise Skipped(warning)
@@ -588,9 +589,7 @@ def resolve_rollback_version(runner, version):
     )
     commit = (resolved.stdout or '').strip() if resolved.returncode == 0 else ''
     if not COMMIT.fullmatch(commit):
-        raise Refused(
-            f'Release version tag {version!r} is not in this checkout. Run git fetch --tags if it is new.'
-        )
+        raise Refused(f'Release version tag {version!r} is not in this checkout.')
     if git(runner, 'merge-base', '--is-ancestor', commit, 'origin/master', check=False).returncode:
         raise Refused(f'Release version {version} ({commit[:12]}) is not on master.')
     return commit
@@ -680,7 +679,10 @@ def roll_back(runner, record, previous, hosting_before, hosting_deployed):
         except Refused as error:
             problems.append(f'Rollback of {what} failed: {error}')
             record.note(problems[-1])
-    record.set('Rollback', 'completed' if not problems else 'FAILED, restore by hand')
+    record.set(
+        'Rollback (historical procedure)',
+        'completed' if not problems else 'FAILED, the old app was not restored',
+    )
     return problems
 
 
@@ -791,7 +793,7 @@ def release(runner, record, commit, tag, check_only=False, confirm_baseline=Fals
         raise Refused(
             baseline_refusal(
                 reductions,
-                f'historically the owner confirmed it with --confirm-baseline on '
+                f'owner confirmation with --confirm-baseline on '
                 f'scripts/auto_deploy.py --commit {commit}.',
             )
         )
@@ -844,7 +846,7 @@ def rollback_to_version(
     reductions = baseline_reductions(serving_summary)
     refusals = []
     if reductions and not confirm_baseline:
-        refusals.append(baseline_refusal(reductions, 'it was historically confirmed with --confirm-baseline.'))
+        refusals.append(baseline_refusal(reductions, 'confirmation with --confirm-baseline.'))
     if (rules_warning or migration_warning) and not confirm_past_migration:
         refusals.append(
             f'Rollback to {version} stopped; nothing was staged. Historically it was confirmed with '
@@ -878,40 +880,40 @@ def rollback_to_version(
 def main(argv=None, runner=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     target = parser.add_mutually_exclusive_group(required=True)
-    target.add_argument('--commit', help='the CI-tested commit; must be checked out')
+    target.add_argument('--commit', help='CI-tested checkout used for a legacy release')
     target.add_argument(
         '--publish',
         metavar='COMMIT',
-        help='create the tag and GitHub Release for the version the live backend reports for COMMIT',
+        help='published the tag and GitHub Release for the version the old backend reported for COMMIT',
     )
     target.add_argument(
         '--next-version',
         action='store_true',
-        help='fetch tags and print the version number a hand release of HEAD should use',
+        help='printed the version number for a legacy hand release of HEAD after fetching tags',
     )
     target.add_argument(
         '--rollback',
         metavar='VERSION',
-        help='roll production back to an existing YYYY.MM.DD-N release tag',
+        help='rolled the old app back to an existing YYYY.MM.DD-N release tag',
     )
     parser.add_argument('--tag', help='revision URL tag (default: a<commit prefix>-<run id>)')
     parser.add_argument('--run-id', default='', help='CI run id, folded into the default tag')
     parser.add_argument(
         '--check-only',
         action='store_true',
-        help='with --commit: run every refusal check; stage and deploy nothing',
+        help='with --commit: ran every refusal check without staging or deploying',
     )
     parser.add_argument(
         '--confirm-past-migration',
         action='store_true',
-        help='let --rollback continue past a data migration or a rules or index change',
+        help='let --rollback continue past a data migration or a rules or index change in the old app',
     )
     parser.add_argument(
         '--confirm-baseline',
         action='store_true',
         help=(
-            'with --commit or --rollback: stage the repository baseline even though it turns off '
-            'a feature the serving revision has on'
+            'with --commit or --rollback: allowed staging a baseline that turned off '
+            'a feature enabled on the serving revision'
         ),
     )
     args = parser.parse_args(argv)

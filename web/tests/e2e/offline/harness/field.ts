@@ -101,6 +101,7 @@ const f = {
   async signOutKeep(person: Person, refusal?: LockReason): Promise<void> {
     running.delete(key(person));
     const auth = companyAuth(person);
+    await auth.authStateReady();
     await (refusal ? signOutOnRefusal(auth, person.tenantId, person.config, refusal, true) : signOutKeeping(auth, person.tenantId));
   },
   // What the field shell and the sign-in page do as they open (S6-3b): the phone's one retention

@@ -1,6 +1,6 @@
 'use client';
 
-import { onAuthStateChanged } from 'firebase/auth';
+import { onIdTokenChanged } from 'firebase/auth';
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { companyAuth } from '@/lib/firebase-client';
@@ -207,7 +207,7 @@ export function FieldStore({
     })();
     // A sign-out or a new sign-in in this company's Auth while the shell is open: the person app
     // follows it, and the gate asks again.
-    const stopAuth = onAuthStateChanged(companyAuth({ config: me.config, tenantId: me.tenantId }), () => {
+    const stopAuth = onIdTokenChanged(companyAuth({ config: me.config, tenantId: me.tenantId }), () => {
       void mirrorSignIn(person).then(() => gateRef.current?.poke(), () => undefined);
     });
     // Hidden, the network goes off; shown again, the session's age is judged and the gate asks

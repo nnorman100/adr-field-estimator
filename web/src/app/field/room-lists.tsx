@@ -24,6 +24,8 @@ const UNITS: Record<string, string> = {
   room: 'rooms',
 };
 
+export const itemUnitLabel = (unit: string): string => UNITS[unit] ?? unit;
+
 export function RoomItems({
   id,
   stored,
@@ -76,7 +78,7 @@ export function RoomItems({
               <div className="min-w-0 flex-1">
                 <Box
                   id={`${id}-${itemId}`}
-                  label={`${nameOf(itemId)}${unit ? ` (${UNITS[unit] ?? unit})` : ''}`}
+                  label={`${nameOf(itemId)}${unit ? ` (${itemUnitLabel(unit)})` : ''}`}
                   value={current[itemId] ?? ''}
                   onChange={(value) => onChange({ ...current, [itemId]: value })}
                   readOnly={readOnly}

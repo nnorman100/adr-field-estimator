@@ -224,7 +224,7 @@ export async function checkSignIn(
 // status and fixed error code only, as in checkSignIn.
 export type ApiAnswer = { status: number; body: unknown };
 
-export async function callApi(user: User, path: string, init: { method?: string; json?: unknown } = {}): Promise<ApiAnswer> {
+export async function callApi(user: User, path: string, init: { method?: string; json?: unknown; signal?: AbortSignal } = {}): Promise<ApiAnswer> {
   let response: Response;
   try {
     const token = await user.getIdToken();
@@ -237,6 +237,7 @@ export async function callApi(user: User, path: string, init: { method?: string;
       },
       body: init.json !== undefined ? JSON.stringify(init.json) : undefined,
       cache: 'no-store',
+      signal: init.signal,
     });
   } catch {
     return { status: 0, body: null };

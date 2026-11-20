@@ -3,6 +3,7 @@ import type { BrowserSignInConfig } from '@/lib/config';
 import { signOutCompany } from '@/lib/firebase-client';
 import { discardFieldWork, stopFieldClient } from '@/lib/field-db';
 import { forgetMe, readMe, restoreMe } from './ds-me';
+import { forgetItemLists } from './ds-prices';
 import { evaluate, pendingReason } from './retention';
 import { unsentWork, type LockReason } from './unsent';
 
@@ -40,7 +41,11 @@ async function leave(auth: Auth, tenantId: string, from: Session): Promise<void>
   if (!stillSignedIn(auth, from)) return;
   if (removed === false) throw new Error('the saved sign-in may still be on this phone');
   try {
-    if (user) await stopFieldClient({ tenantId, uid: user.uid });
+    if (user) {
+      const person = { tenantId, uid: user.uid };
+      await stopFieldClient(person);
+      await forgetItemLists(person, () => stillSignedIn(auth, from));
+    }
     if (stillSignedIn(auth, from)) await signOutCompany(auth);
   } catch (error) {
     if (removed) await restoreMe(removed);

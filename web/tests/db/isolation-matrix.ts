@@ -162,6 +162,8 @@ export const MATRIX: readonly MatrixRow[] = [
   row('api/jobs/[jobId]/agreements', 'GET', 'company', { own: 'cross' }),
   // S5a-10: what Check Scope picks from; another company's job is 404 to every role.
   row('api/jobs/[jobId]/scope-lists', 'GET', 'company', { own: 'cross' }),
+  // S5b-11 Ready to review?: read-only, behind the `readiness` switch; scope work on the job.
+  row('api/jobs/[jobId]/readiness', 'GET', 'company', { own: 'cross' }),
   // S5a-11b: a signing link or document link of another company's job is 404 to every role, and
   // nothing is made; the bodies carry the suite's own ids.
   row('api/jobs/[jobId]/signing-link', 'POST', 'company', { body: JOB_LINK, own: 'cross' }),
