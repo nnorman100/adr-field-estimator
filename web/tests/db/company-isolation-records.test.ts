@@ -316,6 +316,8 @@ const idsOf = (victim: Side, job: 'signed' | 'pending', company: Side = victim):
   linkId: victim.signed.homeowner.id,
   signatureId: victim.signed.signatureId,
   assignmentId: victim[job].assignmentId,
+  // No proposal is seeded here; the job's photo id stands in (approvals-api.test.ts uses real ones).
+  approvalId: victim[job].photoId,
 });
 
 const directions = (): [Side, Side][] => [

@@ -32,10 +32,18 @@ async function respond(run: () => Promise<Response>): Promise<Response> {
   }
 }
 
-async function pathId(context: RouteContext, name: 'jobId' | 'approvalId'): Promise<string> {
-  const value = (await context.params)[name];
-  if (typeof value !== 'string' || !UUID.test(value)) throw name === 'jobId' ? new JobError('not_found') : new ApprovalError('approval_not_found');
+// The job id: a uuid, or the job does not exist (as in src/lib/jobs/http.ts).
+async function jobPath(context: RouteContext): Promise<string> {
+  const value = (await context.params).jobId;
+  if (typeof value !== 'string' || !UUID.test(value)) throw new JobError('not_found');
   return value.toLowerCase();
+}
+
+// The proposal id as given: the service checks it only after job access, so an archived job still
+// answers 410 and another company's job 404 whatever proposal id the path names.
+async function approvalPath(context: RouteContext): Promise<string> {
+  const value = (await context.params).approvalId;
+  return typeof value === 'string' && UUID.test(value) ? value.toLowerCase() : '';
 }
 
 async function bodyOf(request: Request): Promise<unknown> {
@@ -58,14 +66,14 @@ function proposal(raw: unknown): ProposalInput {
 // GET /api/jobs/{jobId}/approvals
 // The submitted record's open proposals and approvals at the job's revision.
 export async function listApprovals(_request: Request, identity: Identity, context: RouteContext): Promise<Response> {
-  return respond(async () => json(await approvalsServices().list(identity, await pathId(context, 'jobId'))));
+  return respond(async () => json(await approvalsServices().list(identity, await jobPath(context))));
 }
 
 // POST /api/jobs/{jobId}/approvals  { id, revision, kind, ... }
 // Proposes a named adjustment or an hourly addition: 201 when made, 200 when this id was already.
 export async function proposeApproval(request: Request, identity: Identity, context: RouteContext): Promise<Response> {
   return respond(async () => {
-    const id = await pathId(context, 'jobId');
+    const id = await jobPath(context);
     const input = proposal(await bodyOf(request));
     const { created, approval } = await approvalsServices().propose(identity, id, input);
     return json({ approval }, created ? 201 : 200);
@@ -76,8 +84,8 @@ export async function proposeApproval(request: Request, identity: Identity, cont
 // Edits a proposal: ends it, approval and all, and proposes the new one (a new id).
 export async function editApproval(request: Request, identity: Identity, context: RouteContext): Promise<Response> {
   return respond(async () => {
-    const id = await pathId(context, 'jobId');
-    const approvalId = await pathId(context, 'approvalId');
+    const id = await jobPath(context);
+    const approvalId = await approvalPath(context);
     const input = proposal(await bodyOf(request));
     const { created, approval } = await approvalsServices().edit(identity, id, approvalId, input);
     return json({ approval }, created ? 201 : 200);
@@ -88,8 +96,8 @@ export async function editApproval(request: Request, identity: Identity, context
 // The owner approves a proposal exactly as proposed.
 export async function approveApproval(request: Request, identity: Identity, context: RouteContext): Promise<Response> {
   return respond(async () => {
-    const id = await pathId(context, 'jobId');
-    const approvalId = await pathId(context, 'approvalId');
+    const id = await jobPath(context);
+    const approvalId = await approvalPath(context);
     const parsed = approveBody.safeParse(await bodyOf(request));
     if (!parsed.success) throw new ApprovalError('invalid_request');
     return json(await approvalsServices().approve(identity, id, approvalId, parsed.data));

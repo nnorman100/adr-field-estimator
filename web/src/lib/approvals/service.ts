@@ -84,7 +84,9 @@ async function audit(tx: CompanyTransaction, caller: JobCaller, action: string, 
   await tx.insert(auditEvents).values({ companyId: caller.companyId, actorId: caller.actorId, action, target: jobId, details });
 }
 
+// A proposal of this job by id; an empty id (one the path did not give as a uuid) is no proposal.
 async function rowById(tx: CompanyTransaction, companyId: string, jobId: string, id: string): Promise<Row | null> {
+  if (id === '') return null;
   const [row] = await tx
     .select()
     .from(jobPriceApprovals)
