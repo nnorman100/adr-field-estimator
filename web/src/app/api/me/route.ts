@@ -11,6 +11,8 @@ export const dynamic = 'force-dynamic';
 // there is none or it cannot be read): the phone sends its queued field edits only while it is in
 // the future (S6-3's sync gate), since a skipped renewal still answers 200. A renewal skipped
 // because the actor was busy leaves its outbox row due, so the next call tries it again.
+// `features` are the company switches the screens read (an allowlist, never the whole flag list):
+// `readiness` turns on "Ready to review?" (S5b-11). The server checks each again on its own routes.
 export const GET = memberRoute(async (_request, identity) => {
   await renewSignedInAccess(identity);
   const expiresAt = await fieldAccessExpiry(identity);
@@ -20,6 +22,7 @@ export const GET = memberRoute(async (_request, identity) => {
       actor: { id: identity.actorId, displayName: identity.displayName },
       role: identity.role,
       capabilities: identity.capabilities,
+      features: { readiness: identity.flags?.readiness === true },
       fieldAccessExpiresAt: expiresAt ? expiresAt.toISOString() : null,
     },
     { headers: { 'Cache-Control': 'no-store' } },
