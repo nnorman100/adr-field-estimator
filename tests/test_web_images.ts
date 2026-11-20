@@ -598,4 +598,21 @@ done`,
     }
     expect(docker.has('/web')).toBe(true);
   });
+
+  it('has Dependabot watch the npm packages at the root, web/ and web/synthetic', () => {
+    const npm = new Map<string, Data>();
+    for (const update of load(path.join(ROOT, '.github', 'dependabot.yml')).updates) {
+      if (update['package-ecosystem'] === 'npm') {
+        const dirs = update.directories?.length ? update.directories : [update.directory];
+        for (const dir of dirs) npm.set(dir, update);
+      }
+    }
+    expect([...npm.keys()].sort()).toEqual(['/', '/web', '/web/synthetic']);
+    for (const dir of ['/web', '/web/synthetic']) {
+      expect(npm.get(dir)?.ignore).toContainEqual({
+        'dependency-name': 'typescript',
+        'update-types': ['version-update:semver-major'],
+      });
+    }
+  });
 });
