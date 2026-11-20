@@ -38,6 +38,10 @@ vi.mock('@/lib/estimates/services', async () => {
   const { estimatesService } = await import('@/lib/estimates/service');
   return { estimatesServices: () => estimatesService(live.harness!.handle.db) };
 });
+vi.mock('@/lib/approvals/services', async () => {
+  const { approvalsService } = await import('@/lib/approvals/service');
+  return { approvalsServices: () => approvalsService(live.harness!.handle.db) };
+});
 vi.mock('@/lib/agreements/services', async () => {
   const { agreementsService } = await import('@/lib/agreements/service');
   return { agreementsServices: () => agreementsService(live.harness!.handle.db) };
@@ -122,7 +126,8 @@ async function seedSides(): Promise<void> {
     [h.seed.b, h.seed.ownerB.actor],
   ] as const) {
     await h.admin`INSERT INTO audit_events (company_id, actor_id, action, target) VALUES (${company}, ${by}, 'seeded_event', ${company})`;
-    await h.admin`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${company}, 'price_books', true)`;
+    // Priced extras too (S5b-8), so the proposal and approval routes are reached and refused by their access rule, not the switch.
+    await h.admin`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${company}, 'price_books', true), (${company}, 'priced_extras', true)`;
     await h.admin`INSERT INTO access_projection_outbox (company_id, actor_id) VALUES (${company}, ${by})`;
   }
   // Each company has a working copy and a published version, named so a leak of either shows.
@@ -279,6 +284,9 @@ const idsOf = (victim: Side, company: Side = victim): Record<string, string> => 
   linkId: victim.ids.photoId,
   signatureId: victim.ids.photoId,
   assignmentId: victim.ids.assignmentId,
+  // No proposal is seeded (one needs a submitted, priced record); the other company's photo id stands
+  // in, and approvals-api.test.ts sends a real proposal id across companies.
+  approvalId: victim.ids.photoId,
 });
 
 const rowsOfKind = (...kinds: MatrixRow['kind'][]) => MATRIX.filter((row) => kinds.includes(row.kind));

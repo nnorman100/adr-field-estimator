@@ -47,6 +47,10 @@ export const memberApiPaths: readonly string[] = [
   '/api/jobs/:id/drafts',
   '/api/jobs/:id/estimate',
   '/api/jobs/:id/reprice',
+  // Proposals and approvals on a job (S5b-8, priced_extras).
+  '/api/jobs/:id/approvals',
+  '/api/jobs/:id/approvals/:id',
+  '/api/jobs/:id/approvals/:id/approve',
   '/api/jobs/:id/agreements',
   '/api/jobs/:id/scope-lists',
   '/api/jobs/:id/signing-link',

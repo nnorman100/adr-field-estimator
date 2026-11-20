@@ -8,6 +8,8 @@ import type { Capability } from '@/lib/access';
 import { canonicalJson } from '@/lib/field/canonical';
 import { FieldMapError } from '@/lib/field/inspection';
 import { hasAny, jobAccess, JobError, type JobCaller, type JobRow } from '@/lib/jobs/access';
+import { approvedFor, withApprovals } from '@/lib/approvals/priced';
+import type { CompanyFlags } from '@/lib/flags';
 import { advance } from '@/lib/jobs/service';
 import { readCompanyDocuments, type CompanyDocuments } from '@/lib/profile/documents';
 import { readJobDetails, type JobDetails } from '@/lib/submissions/details';
@@ -74,7 +76,8 @@ type RepriceAnswer = { sequence: number; version: number; job_status: JobRow['st
 export type EstimateJobState = { id: string; status: JobRow['status']; currentDraftId: string; revision: number };
 
 export type EstimatesService = {
-  make(caller: JobCaller, jobId: string): Promise<{ created: boolean; job: EstimateJobState; estimate: EstimateView }>;
+  // `flags`: the company's switches from the sign-in; with `priced_extras` on, the record's approvals are priced (S5b-8, D5).
+  make(caller: JobCaller & { flags?: Partial<CompanyFlags> }, jobId: string): Promise<{ created: boolean; job: EstimateJobState; estimate: EstimateView }>;
   read(caller: JobCaller, jobId: string): Promise<{ job: EstimateJobState; estimate: EstimateView | null }>;
   reprice(caller: JobCaller, jobId: string, input: RepriceInput): Promise<RepriceResult>;
   repricePreview(caller: JobCaller, jobId: string): Promise<RepricePreview>;
@@ -83,11 +86,11 @@ export type EstimatesService = {
 const jobState = (row: JobRow): EstimateJobState => ({ id: row.id, status: row.status, currentDraftId: row.currentDraftId, revision: row.revision });
 
 export type SubmissionRow = { id: string; snapshotBytes: Buffer; snapshotSha256: string };
-type PinRow = { id: string; sequence: number; versionId: string; reason: 'first_price' | 'owner_reprice' };
-type VersionRow = { id: string; sequence: number; content: unknown; contentHash: string; engineVersion: string };
+export type PinRow = { id: string; sequence: number; versionId: string; reason: 'first_price' | 'owner_reprice' };
+export type VersionRow = { id: string; sequence: number; content: unknown; contentHash: string; engineVersion: string };
 
 // The committed record of the job's current draft (one per draft, migration 0011), or none.
-async function currentSubmission(tx: CompanyTransaction, companyId: string, job: JobRow): Promise<SubmissionRow | null> {
+export async function currentSubmission(tx: CompanyTransaction, companyId: string, job: JobRow): Promise<SubmissionRow | null> {
   const [row] = await tx
     .select({ id: jobSubmissions.id, snapshotBytes: jobSubmissions.snapshotBytes, snapshotSha256: jobSubmissions.snapshotSha256 })
     .from(jobSubmissions)
@@ -122,7 +125,7 @@ async function detailsCurrent(tx: CompanyTransaction, companyId: string, job: Jo
 }
 
 // The job's current pin: the highest sequence.
-async function currentPin(tx: CompanyTransaction, companyId: string, jobId: string): Promise<PinRow | null> {
+export async function currentPin(tx: CompanyTransaction, companyId: string, jobId: string): Promise<PinRow | null> {
   const [row] = await tx
     .select({ id: jobPricePins.id, sequence: jobPricePins.sequence, versionId: jobPricePins.versionId, reason: jobPricePins.reason })
     .from(jobPricePins)
@@ -140,7 +143,7 @@ const versionColumns = {
   engineVersion: priceTableVersions.engineVersion,
 };
 
-async function versionById(tx: CompanyTransaction, companyId: string, id: string): Promise<VersionRow | null> {
+export async function versionById(tx: CompanyTransaction, companyId: string, id: string): Promise<VersionRow | null> {
   const [row] = await tx
     .select(versionColumns)
     .from(priceTableVersions)
@@ -149,7 +152,7 @@ async function versionById(tx: CompanyTransaction, companyId: string, id: string
 }
 
 // "Current prices" is the highest version number (pricing plan 3.1).
-async function latestVersion(tx: CompanyTransaction, companyId: string): Promise<VersionRow | null> {
+export async function latestVersion(tx: CompanyTransaction, companyId: string): Promise<VersionRow | null> {
   const [row] = await tx
     .select(versionColumns)
     .from(priceTableVersions)
@@ -187,7 +190,7 @@ async function storedEstimate(tx: CompanyTransaction, companyId: string, submiss
 
 // The pinned version's table, read through the one schema with its hash checked, as the Prices API
 // reads a version. A table that does not parse or match its hash is never priced from.
-function versionTable(version: VersionRow): Table {
+export function versionTable(version: VersionRow): Table {
   let table: Table;
   try {
     table = parseTable(version.content);
@@ -198,6 +201,18 @@ function versionTable(version: VersionRow): Table {
   return table;
 }
 
+// The job's first pin, to the version given (the company's newest published one): made by the first
+// estimate, or by the first proposal on the job (S5b-8), under the job's row lock either way, with
+// its audit row. Pin rules: sequence 1, reason first_price (migration 0011's trigger checks both).
+export async function pinFirstPrice(tx: CompanyTransaction, caller: JobCaller, jobId: string, version: Pick<VersionRow, 'id' | 'sequence'>): Promise<PinRow> {
+  const [made] = await tx
+    .insert(jobPricePins)
+    .values({ companyId: caller.companyId, jobId, sequence: 1, versionId: version.id, reason: 'first_price', pinnedByActorId: caller.actorId })
+    .returning({ id: jobPricePins.id, sequence: jobPricePins.sequence, versionId: jobPricePins.versionId, reason: jobPricePins.reason });
+  await audit(tx, caller, 'job_price_pinned', jobId, { sequence: made!.sequence, version: version.sequence });
+  return made!;
+}
+
 async function audit(tx: CompanyTransaction, caller: JobCaller, action: string, jobId: string, details: Record<string, number | string>): Promise<void> {
   await tx.insert(auditEvents).values({ companyId: caller.companyId, actorId: caller.actorId, action, target: jobId, details });
 }
@@ -206,7 +221,7 @@ async function audit(tx: CompanyTransaction, caller: JobCaller, action: string, 
 // replacement locks the company row and then the same membership row, so the company row is locked
 // first here too (the pin and audit rows need it anyway), and a replacement cannot slip between the
 // check and the write.
-async function lockActiveOwner(tx: CompanyTransaction, caller: JobCaller): Promise<void> {
+export async function lockActiveOwner(tx: CompanyTransaction, caller: JobCaller): Promise<void> {
   await tx.select({ id: companies.id }).from(companies).where(eq(companies.id, caller.companyId)).for('no key update');
   const [owner] = await tx
     .select({ id: memberships.id })
@@ -378,17 +393,11 @@ export function estimatesService(db: Database): EstimatesService {
         if (!input.scopeConfirmed) throw new EstimateError('scope_not_confirmed');
         if (await confirmationPredatesReprice(tx, caller.companyId, jobId, job.currentDraftId)) throw new EstimateError('scope_not_confirmed');
         if (!input.summary.trim()) throw new EstimateError('summary_missing');
-        const { estimate, table } = priceInput(input.job, version);
+        // The owner's approvals on this record, at the job's revision and pin (S5b-8); none without a pin yet.
+        const approved = pin && caller.flags?.priced_extras === true ? await approvedFor(tx, caller.companyId, { submissionId: submission.id, jobRevision: job.revision, pinId: pin.id }) : null;
+        const { estimate, table } = priceInput(approved ? withApprovals(input.job, approved) : input.job, version);
 
-        let pinned = pin;
-        if (!pinned) {
-          const [made] = await tx
-            .insert(jobPricePins)
-            .values({ companyId: caller.companyId, jobId, sequence: 1, versionId: version.id, reason: 'first_price', pinnedByActorId: caller.actorId })
-            .returning({ id: jobPricePins.id, sequence: jobPricePins.sequence, versionId: jobPricePins.versionId, reason: jobPricePins.reason });
-          pinned = made!;
-          await audit(tx, caller, 'job_price_pinned', jobId, { sequence: pinned.sequence, version: version.sequence });
-        }
+        const pinned = pin ?? (await pinFirstPrice(tx, caller, jobId, version));
 
         const revised = await revisedFor(tx, caller.companyId, jobId, company);
         const pricedResult = { ...estimate, job_revision: (await detailsCurrent(tx, caller.companyId, job, snapshot)) ? job.revision : null };
