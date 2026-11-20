@@ -1,4 +1,4 @@
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { companyFeatureFlags, jobPriceApprovals } from '@/db/schema';
 import type { CompanyTransaction } from '@/db/tenant';
 import { Dec, money } from '@/engine/decimal';
@@ -7,6 +7,17 @@ import type { EstimateJob, Json } from '@/engine/estimate';
 // Whether the company's `priced_extras` switch is on, read inside the caller's transaction after its
 // job lock, so the switch the work is done under is the one stored at that moment, never the sign-in's
 // copy (owner decision D5). A missing row is off.
+// Whether both switches the approval routes need are on now, read in the request's own transaction (under
+// the company lock the routes take): priced extras, and price books, which every price route needs.
+export async function approvalSwitchesOn(tx: CompanyTransaction, companyId: string): Promise<boolean> {
+  const rows = await tx
+    .select({ flag: companyFeatureFlags.flag, enabled: companyFeatureFlags.enabled })
+    .from(companyFeatureFlags)
+    .where(and(eq(companyFeatureFlags.companyId, companyId), inArray(companyFeatureFlags.flag, ['priced_extras', 'price_books'])));
+  const on = new Set(rows.filter((row) => row.enabled === true).map((row) => row.flag));
+  return on.has('priced_extras') && on.has('price_books');
+}
+
 export async function pricedExtrasOn(tx: CompanyTransaction, companyId: string): Promise<boolean> {
   const [flag] = await tx
     .select({ enabled: companyFeatureFlags.enabled })

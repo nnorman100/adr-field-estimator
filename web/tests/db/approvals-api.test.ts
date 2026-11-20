@@ -345,6 +345,31 @@ describe('proposals and approvals (S5b-8)', () => {
     expect(await h.admin`SELECT count(*)::int AS n FROM job_price_approvals WHERE job_id = ${second}`).toEqual([{ n: 0 }]);
   });
 
+  it('takes the price books switch from the database too: switched off after the sign-in, a proposal answers 404 and writes nothing', async () => {
+    await publish();
+    const { jobId } = await submittedJob();
+    const revision = await revisionOf(jobId);
+    // The request signed in with price books on; it is turned off while the request waits for the company lock.
+    const answered = await interleaved(
+      async (tx) => {
+        await tx`SELECT id FROM companies WHERE id = ${h.seed.a} FOR UPDATE`;
+      },
+      () =>
+        approvalsService(h.handle.db)
+          .propose(ESTIMATOR_CALLER(), jobId, { id: randomUUID(), revision, kind: 'hourly', description: 'Move contents', hours: '1' })
+          .then(
+            () => 'made',
+            (error: { code?: string }) => error.code,
+          ),
+      async (tx) => {
+        await tx`UPDATE company_feature_flags SET enabled = false WHERE company_id = ${h.seed.a} AND flag = 'price_books'`;
+      },
+    );
+    expect(answered).toMatchObject({ blocked: true, result: 'not_found' });
+    expect(await h.admin`SELECT count(*)::int AS n FROM job_price_approvals WHERE job_id = ${jobId}`).toEqual([{ n: 0 }]);
+    expect(await h.admin`SELECT count(*)::int AS n FROM job_price_pins WHERE job_id = ${jobId}`).toEqual([{ n: 0 }]);
+  });
+
   it('shows an hourly line’s total with every view of it, and none for a named adjustment', async () => {
     await publish();
     const { jobId } = await submittedJob();

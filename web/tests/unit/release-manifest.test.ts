@@ -87,6 +87,24 @@ describe('release manifest', () => {
     );
   });
 
+  it('reads a previous release manifest made before a switch existed, and still refuses an unknown or switched-on one', () => {
+    const earlier = buildManifest(
+      input({ version: '2026.11.12-4', revision: 'dryscope-api-test-00010-pqr', replaced: 'dryscope-api-test-00009-def=100' }),
+    );
+    const at = { version: '2026.11.13-2', revision: 'dryscope-api-test-00013-new' };
+    // An earlier release knew fewer switches: each known switch may be missing from its manifest.
+    for (const missing of FLAG_NAMES) {
+      const older = { ...earlier, switchDefaults: Object.fromEntries(Object.entries(earlier.switchDefaults).filter(([name]) => name !== missing)) };
+      expect({ missing, replaced: releasedBefore(older, at) }).toEqual({ missing, replaced: [{ revision: 'dryscope-api-test-00010-pqr', percent: 100 }] });
+    }
+    expect(releasedBefore({ ...earlier, switchDefaults: {} }, at)).toEqual([{ revision: 'dryscope-api-test-00010-pqr', percent: 100 }]);
+    // A name no release knows, or a switch recorded on, is still not a valid manifest.
+    expect(() => releasedBefore({ ...earlier, switchDefaults: { ...earlier.switchDefaults, not_a_switch: false } }, at)).toThrow(/not valid/);
+    expect(() => releasedBefore({ ...earlier, switchDefaults: { ...earlier.switchDefaults, price_books: true } }, at)).toThrow(/not valid/);
+    // This release's own manifest still lists every switch it knows.
+    expect(ReleaseManifest.safeParse({ ...earlier, switchDefaults: {} }).success).toBe(false);
+  });
+
   it.each<[string, unknown]>([
     ['this release itself', { version: '2026.11.13-2' }],
     ['the same revision', { revision: 'dryscope-api-test-00012-abc' }],

@@ -19,7 +19,7 @@ import {
 } from '@/lib/estimates/service';
 import { ENGINE_VERSION } from '@/engine/table';
 import { ApprovalError } from './errors';
-import { hourlyTotal, pricedExtrasOn } from './priced';
+import { approvalSwitchesOn, hourlyTotal } from './priced';
 import type { ApproveInput, ProposalInput } from './schema';
 
 // Proposals and approvals on a job (S5b-8; spec 6.1; owner decisions D1 to D5, 2026-11-20). The
@@ -161,7 +161,7 @@ async function lockCompany(tx: CompanyTransaction, caller: JobCaller, mode: 'sha
 
 // The company's `priced_extras` switch is on under the job's lock; off, every route answers 404 (D5).
 async function lockedFlagOn(tx: CompanyTransaction, caller: JobCaller): Promise<void> {
-  if (!(await pricedExtrasOn(tx, caller.companyId))) throw new JobError('not_found');
+  if (!(await approvalSwitchesOn(tx, caller.companyId))) throw new JobError('not_found');
 }
 
 export function approvalsService(db: Database): ApprovalsService {
