@@ -9,7 +9,8 @@ import { SecondStepSection } from './second-step-section';
 import { StatusSection } from './status-section';
 
 // Company administration (S3-15): one company's status, owner and second steps. It holds no
-// customer data and no control for any: jobs, estimates and prices are not shown or changed here.
+// customer data and no control for any: jobs, estimates and prices are not shown or changed here;
+// the read-only support view of the jobs (S5b-5) is its own page, linked below.
 // The company is found in the list the session already read, so opening this page writes no audit
 // row; each change below writes exactly one on the server.
 export function CompanyAdminScreen({ companyId }: { companyId: string }) {
@@ -45,6 +46,15 @@ export function CompanyAdminScreen({ companyId }: { companyId: string }) {
         <p>See who is on this company’s team. It is a read-only view, and each view is recorded.</p>
         <Link href={`/operator/${tenantId}/companies/${company.id}/team`} className="w-fit font-medium underline underline-offset-4">
           Open the team view
+        </Link>
+      </Section>
+      <Section title="Jobs">
+        <p>
+          See this company’s jobs, signed agreements, photos and evidence. It is a read-only view: nothing can be
+          changed from it, and each job and image you open is recorded.
+        </p>
+        <Link href={`/operator/${tenantId}/companies/${company.id}/jobs`} className="w-fit font-medium underline underline-offset-4">
+          Open the jobs view
         </Link>
       </Section>
     </>

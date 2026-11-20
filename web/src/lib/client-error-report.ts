@@ -45,6 +45,8 @@ export const CLIENT_ROUTES: readonly string[] = [
   '/operator/[tenantId]',
   '/operator/[tenantId]/companies/[companyId]',
   '/operator/[tenantId]/companies/[companyId]/team',
+  '/operator/[tenantId]/companies/[companyId]/jobs',
+  '/operator/[tenantId]/companies/[companyId]/jobs/[jobId]',
 ];
 
 // The pattern a path matches, or 'unknown'. A `[name]` segment stands for any one non-empty segment.

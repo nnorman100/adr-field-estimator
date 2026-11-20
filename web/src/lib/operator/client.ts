@@ -1,6 +1,7 @@
 import type { User } from 'firebase/auth';
 import { appCheckHeaders } from '@/lib/app-check-client';
 import type { CompanyView } from '@/lib/platform/service';
+import type { SupportJobListItem, SupportJobView } from '@/lib/platform/support-jobs';
 import type { MemberView, TeamView } from '@/lib/team/service';
 
 // The operator screens' calls to the platform operator routes (src/app/api/platform). The ID token
@@ -35,8 +36,12 @@ export async function operatorCall<T>(user: Pick<User, 'getIdToken'>, path: stri
     // An answer with no JSON is judged on its status alone.
   }
   if (response.ok) return body === null ? { ok: false, status: response.status, code: 'unavailable' } : { ok: true, status: response.status, body: body as T };
+  return { ok: false, status: response.status, code: refusalCode(body) };
+}
+
+function refusalCode(body: unknown): string {
   const code = body !== null && typeof body === 'object' ? (body as Record<string, unknown>).error : undefined;
-  return { ok: false, status: response.status, code: typeof code === 'string' ? code : 'unavailable' };
+  return typeof code === 'string' ? code : 'unavailable';
 }
 
 // A path segment is one uuid; anything else never reaches the address.
@@ -54,6 +59,12 @@ export const platformPaths = {
   team: (companyId: string) => `/api/platform/companies/${id(companyId)}/team`,
   resetSecondStep: (companyId: string, membershipId: string) =>
     `/api/platform/companies/${id(companyId)}/members/${id(membershipId)}/reset-second-step`,
+  // The read-only support view of a company's jobs (S5b-5); the cursor is the one the list gave.
+  supportJobs: (companyId: string, cursor: string | null = null) =>
+    `/api/platform/companies/${id(companyId)}/jobs${cursor === null ? '' : `?cursor=${encodeURIComponent(cursor)}`}`,
+  supportJob: (companyId: string, jobId: string) => `/api/platform/companies/${id(companyId)}/jobs/${id(jobId)}`,
+  supportPhoto: (companyId: string, jobId: string, photoId: string, kind: 'photo' | 'original' | 'signature') =>
+    `/api/platform/companies/${id(companyId)}/jobs/${id(jobId)}/photos/${id(photoId)}?kind=${kind}`,
 } as const;
 
 export type CompaniesAnswer = { companies: CompanyView[] };
@@ -67,6 +78,30 @@ export type OwnerAnswer = {
 };
 export type ResetAnswer = { reset: true; email: 'sent' | 'not_sent'; tellByPhone: boolean };
 export type SupportTeamAnswer = { company: CompanyView; team: TeamView };
+export type SupportJobsAnswer = { company: CompanyView; jobs: SupportJobListItem[]; nextCursor: string | null };
+export type SupportJobAnswer = SupportJobView;
+
+// One image of a job through the operator's photo route: a local blob address for an <img>, or the
+// route's refusal, so the session can act on it as on any other operator answer. Each read is audited
+// on the server, so it is made only when asked.
+export async function operatorImage(user: Pick<User, 'getIdToken'>, path: string): Promise<ApiResult<string>> {
+  try {
+    const token = await user.getIdToken();
+    const response = await fetch(path, { headers: { Authorization: `Bearer ${token}`, ...(await appCheckHeaders()) }, cache: 'no-store' });
+    if (!response.ok) {
+      let body: unknown = null;
+      try {
+        body = await response.json();
+      } catch {
+        // A refusal with no JSON is judged on its status alone.
+      }
+      return { ok: false, status: response.status, code: refusalCode(body) };
+    }
+    return { ok: true, status: response.status, body: URL.createObjectURL(await response.blob()) };
+  } catch {
+    return { ok: false, status: 0, code: 'unavailable' };
+  }
+}
 
 // The operator's team view is always the full one; anything else is treated as unavailable.
 export function fullTeam(team: TeamView): Extract<TeamView, { view: 'full' }> | null {
