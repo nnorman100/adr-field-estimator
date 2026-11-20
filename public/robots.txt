@@ -1,5 +1,3 @@
 User-agent: *
 Disallow: /api/
 Disallow: /__/
-
-Sitemap: https://alert-disaster-field-2026.web.app/sitemap.xml

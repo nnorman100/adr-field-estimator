@@ -32,16 +32,13 @@ const lintScript = (): string =>
 
 describe('every workflow', () => {
   it('includes the expected workflows', () => {
-    for (const name of [
-      'ai-evals.yml',
-      'ci.yml',
-      'deploy.yml',
-      'test-guard.yml',
-      'web.yml',
-      'web-release.yml',
-    ]) {
+    for (const name of ['ai-evals.yml', 'ci.yml', 'test-guard.yml', 'web.yml', 'web-release.yml']) {
       expect(WORKFLOW_FILES).toContain(name);
     }
+  });
+
+  it('excludes the retired deploy workflow', () => {
+    expect(WORKFLOW_FILES).not.toContain('deploy.yml');
   });
 
   it('has no CodeQL workflow, because code scanning default setup replaces it', () => {
@@ -201,9 +198,3 @@ function scopeGatedParts(config: Data): string[] {
   }
   return gated;
 }
-
-describe('deploy.yml', () => {
-  it('can only be triggered manually', () => {
-    expect(Object.keys(workflow('deploy.yml').on)).toEqual(['workflow_dispatch']);
-  });
-});

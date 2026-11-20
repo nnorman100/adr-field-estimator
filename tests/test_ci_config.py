@@ -225,12 +225,13 @@ def workflow_jobs(path):
 
 
 def test_workflows_exist():
-    assert {path.name for path in WORKFLOWS} >= {
+    names = {path.name for path in WORKFLOWS}
+    assert names >= {
         'ci.yml',
-        'deploy.yml',
         'test-guard.yml',
         'web.yml',
     }
+    assert 'deploy.yml' not in names
 
 
 @pytest.mark.parametrize('path', WORKFLOWS, ids=lambda path: path.name)

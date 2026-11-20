@@ -4,14 +4,10 @@ This is the single record of what is deployed in `alert-disaster-field-2026`. Ot
 instead of repeating production state. Append one row per deploy or traffic change, oldest first, and
 never rewrite earlier rows; add a correcting row instead.
 
-Releases made by the automatic deploy workflow (`.github/workflows/deploy.yml`) are not appended here:
-an automated run cannot commit to protected `master`. Each one is recorded in the job summary of its
-run in the Actions history (source commit, backend revision and tag, Hosting version and release,
-rollback pair, check results), and the serving backend and frontend are still read from `/api/health`
-and `node scripts/verify_hosting.js`. Manual releases keep appending rows as described below. Read
-the newest Deploy run as well as the newest row when you need to know what is serving; a manual
-release made while automation is enabled should say so in its row. See
-[Automatic deploys](docs/firebase-isolation.md#automatic-deploys).
+Historical automated releases made by the retired `deploy.yml` workflow are recorded in their
+GitHub Actions job summaries. Each summary records the source commit, backend revision and tag,
+Hosting version and release, rollback pair and check results. Record any owner-run legacy release
+in this log. The [release runbook](docs/runbook/releases.md) describes the retained manual commands.
 
 - **Date (UTC)**: day of the deploy or traffic change.
 - **Backend revision (tag)**: Cloud Run revision suffix of `alert-disaster-field-estimator` and its URL tag;

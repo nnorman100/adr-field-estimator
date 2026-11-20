@@ -2,13 +2,18 @@
 
 ## Release
 
-Follow the recipe at the top of `RELEASES.md` and `docs/SHIP-CHECKLIST.md`. A hand release is a production step the owner runs (`HANDOFF.md`, "Rules that decide what you may do"). Full commands: `docs/firebase-isolation.md`. The legacy `.github/workflows/deploy.yml` is manual-only; it no longer releases master commits automatically.
+The old app is retired. Any manual legacy release is an owner-only operation. The retained
+procedure is in [RELEASES.md](../../RELEASES.md), [the checklist](../SHIP-CHECKLIST.md) and
+[the deployment guide](../firebase-isolation.md#deployment). For the rebuilt app, see
+[the release workflow](test-release.md).
 
 ## Roll back
 
-For a one-step rollback to an earlier `YYYY.MM.DD-N` version, run `python3 scripts/auto_deploy.py --rollback <YYYY.MM.DD-N>` or trigger **Deploy** in GitHub Actions with the `version` input (it needs `AUTO_DEPLOY_ENABLED` set to `true`; while paused, use the command). It redeploys that version's backend and Hosting and verifies health, but stops first when the target is older than a data migration, rules or indexes changed since it, or the repository baseline would turn off a feature now serving; `docs/firebase-isolation.md#rollback` has the confirmations and what stays unchanged.
-
-**After a rollback, pause automatic deploys (`AUTO_DEPLOY_ENABLED`) or revert the bad change before the next merge. Otherwise the next release brings it back.**
+The owner can run `python3 scripts/auto_deploy.py --rollback <YYYY.MM.DD-N>`. It redeploys that
+version's backend and Hosting and checks health. It stops before staging if the target predates a
+data migration or rules or index change, or if the baseline would turn off a serving feature. The
+[rollback guide](../firebase-isolation.md#rollback) lists the explicit confirmations. Fix or revert
+the bad change before the next manual release.
 
 For an immediate traffic-only restore, point Cloud Run traffic to the recorded rollback revision (explicit project and region), clone the recorded rollback Hosting version to the live channel, read back both, and append rows to `RELEASES.md`. Do not retry a failed deploy immediately.
 

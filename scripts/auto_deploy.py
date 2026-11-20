@@ -1,7 +1,7 @@
 """Release a CI-tested master commit to production with the manual release flow's safety.
 
-Run by .github/workflows/deploy.yml after the CI workflow succeeds on a push to master. It reuses the
-manual path instead of replacing it: scripts/deploy_backend.py stages a tagged 0% revision with the
+This is the retained CLI for owner-run legacy releases. It uses the manual release path:
+scripts/deploy_backend.py stages a tagged 0% revision with the
 production baseline, the staged health and signed-out refusal checks run against the tagged URL,
 traffic is promoted only if they pass, then the Hosting shell is stamped, only hosting:alert-disaster
 is deployed and scripts/verify_hosting.js verifies it. A failure before promotion promotes nothing. A
@@ -14,18 +14,15 @@ unknown or not an ancestor of the candidate, a staged revision whose environment
 differ from the serving one beyond the three baseline flags, a service without the one-instance minimum,
 a serving revision with no STAFF_EMAILS,
 a Firestore TTL policy that is missing, or a repository baseline less permissive than the serving
-revision. That last one stops before staging unless --confirm-baseline is given on a hand run or a
-rollback dispatch; the automatic run never gives it, so no merge can turn a serving feature off.
+revision. That last one stops before staging unless the owner passes --confirm-baseline.
 A candidate that is already serving, or older than what is serving, is skipped without error so
 overlapping runs and manual releases never move production backwards. So is a candidate whose changes
 since the serving commit touch no file the legacy app is built from (LEGACY_PREFIXES and LEGACY_FILES
 in auto_deploy_helpers.py): DryScope rebuild merges (web/, infra/, docs) never release it.
 
-The release record goes to the Actions job summary (GITHUB_STEP_SUMMARY), because automation cannot
-commit to protected master; manual releases still append RELEASES.md rows.
+The CLI writes to GITHUB_STEP_SUMMARY when present. The owner records manual releases in RELEASES.md.
 
---publish creates the git tag and GitHub Release for the version the live backend reports. It runs as its
-own step, because only it holds a GitHub write token, and a hand release runs it too. --rollback
+--publish creates the git tag and GitHub Release for the version the live backend reports. --rollback
 redeploys an earlier version and stops before staging when a data migration is newer than that version,
 or Firestore rules or indexes changed since it, unless --confirm-past-migration is given. It stages the
 target's code with the baseline of the checkout running it.
@@ -84,7 +81,7 @@ PRICE_BOOKS = DEFAULT_PRICE_BOOKS
 RETENTION = DEFAULT_RETENTION
 # The firebase-tools version CI already uses.
 FIREBASE_TOOLS = 'firebase-tools@15.31.0'
-# A merge touching these is released by hand: the workflow never deploys rules or indexes.
+# Handle changed rules or indexes separately before releasing with the CLI.
 HAND_RELEASED = ('firestore.rules', 'firestore.indexes.json')
 # deploy_backend.py sets these on every revision; any other difference from the serving revision is a bug.
 BASELINE_KEYS = tuple(env_assignments(WORKSPACES, AI_FEATURES, PRICE_BOOKS, RETENTION))
@@ -375,10 +372,10 @@ def check_hand_released(names):
     changed = [name for name in HAND_RELEASED if name in names]
     if changed:
         raise Refused(
-            f'{", ".join(changed)} changed since the serving commit. Automatic deploys never '
-            'release Firestore rules or indexes: deploy them by hand '
-            '(docs/firebase-isolation.md, Deployment), confirm the indexes are READY, then release '
-            'this commit by hand; later merges deploy automatically again.'
+            f'{", ".join(changed)} changed since the serving commit. '
+            'The release CLI leaves Firestore rules and indexes to the owner. '
+            'Deploy the changes by hand (docs/firebase-isolation.md, Deployment), '
+            'confirm the indexes are READY, then release this commit by hand.'
         )
 
 
@@ -846,15 +843,11 @@ def rollback_to_version(
     reductions = baseline_reductions(serving_summary)
     refusals = []
     if reductions and not confirm_baseline:
-        refusals.append(
-            baseline_refusal(
-                reductions, 'rerun with --confirm-baseline (workflow input confirm_baseline=yes).'
-            )
-        )
+        refusals.append(baseline_refusal(reductions, 'rerun with --confirm-baseline.'))
     if (rules_warning or migration_warning) and not confirm_past_migration:
         refusals.append(
             f'Rollback to {version} stopped; nothing was staged. To roll back anyway, rerun with '
-            '--confirm-past-migration (workflow input confirm_past_migration=yes).'
+            '--confirm-past-migration.'
         )
     if refusals:
         raise Refused('\n'.join(refusals))
@@ -878,10 +871,7 @@ def rollback_to_version(
         if moved and git(runner, 'checkout', original or head, check=False).returncode:
             record.note(f'Could not return this checkout to {original or head}; do that by hand.')
     record.note(f'Rolled production back to version {version} ({target_commit[:12]}).')
-    record.note(
-        'The next release brings the bad change back: pause automatic deploys '
-        '(set AUTO_DEPLOY_ENABLED to anything but true) or revert the bad change before the next merge.'
-    )
+    record.note('Fix or revert the bad change before the next manual release.')
 
 
 def main(argv=None, runner=None):
