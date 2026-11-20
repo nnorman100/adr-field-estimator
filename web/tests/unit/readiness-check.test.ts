@@ -10,6 +10,12 @@ import { PORTED, ready } from './readiness-fixtures';
 
 const codes = (facts: ReadinessFacts) => checkReadiness(facts).gaps.map((gap) => gap.code);
 
+// Rooms given in any order, put in the draft's room order the way the route does: through parseDraft.
+const inOrder = (facts: ReadinessFacts): ReadinessFacts => ({
+  ...facts,
+  rooms: parseDraft({ draft: facts.draft, rooms: facts.rooms.map((room) => ({ id: room.id, field: room.field })), photos: [] })!.rooms,
+});
+
 describe('the old app’s readiness cases, ported', () => {
   it.each(PORTED.map((c) => [c.name, c] as const))('%s', (_name, c) => {
     const result = checkReadiness(c.facts);
@@ -34,7 +40,7 @@ describe('room gaps', () => {
       ],
       photos: [],
     };
-    const { gaps } = checkReadiness(facts);
+    const { gaps } = checkReadiness(inOrder(facts));
     expect(gaps).toEqual([
       { code: 'demolitionArea', roomId: 'cat-3' },
       { code: 'floorSf', roomId: 'cat-3' },
@@ -104,7 +110,7 @@ describe('photos', () => {
 describe('job gaps', () => {
   it('raises the no-prices gap only when no price version is published', () => {
     expect(codes({ ...ready(), prices: { state: 'none' } })).toEqual(['prices']);
-    expect(checkReadiness({ ...ready(), prices: { state: 'none' } }).unavailable).toEqual(['ocr']);
+    expect(checkReadiness({ ...ready(), prices: { state: 'none' } }).unavailable).toEqual(['roomArea', 'ocr']);
   });
 
   it('flags a part-filled claim by key only, and counts an entered deductible of 0', () => {
@@ -138,7 +144,7 @@ describe('job gaps', () => {
       photos: [],
       setupReadings: 'absent',
     };
-    const first = checkReadiness(facts);
+    const first = checkReadiness(inOrder(facts));
     expect(first.gaps.map((gap) => [gap.code, gap.roomId ?? ''])).toEqual([
       ['propertyAddress', ''],
       ['yearBuilt', ''],
@@ -163,7 +169,7 @@ describe('job gaps', () => {
       ['summary', ''],
       ['scopeConfirmed', ''],
     ]);
-    expect(checkReadiness(structuredClone(facts))).toEqual(first);
+    expect(checkReadiness(inOrder(structuredClone(facts)))).toEqual(first);
   });
 
   it('changes nothing it is given', () => {

@@ -39,6 +39,8 @@ export type ReadinessAnswer =
   | { status: 'unavailable'; jobId: string; reason: UnavailableReason };
 
 const id = z.string().min(1).max(64);
+// A job or draft id as the jobs API takes one (src/lib/jobs/http.ts): any uuid-shaped id, lowercased.
+const jobUuid = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
 const gap = z.strictObject({
   code: z.string().max(64).refine(isReadinessCode),
   roomId: id.optional(),
@@ -48,13 +50,13 @@ const gap = z.strictObject({
 export const readinessAnswerSchema = z.discriminatedUnion('status', [
   z.strictObject({
     status: z.literal('checked'),
-    jobId: z.uuid(),
-    draftId: z.uuid(),
+    jobId: jobUuid,
+    draftId: jobUuid,
     jobRevision: z.int().min(1),
     fieldSha256: z.string().regex(/^[0-9a-f]{64}$/),
     ready: z.boolean(),
     gaps: z.array(gap).max(2000),
     unavailable: z.array(z.enum(['roomArea', 'setupReadings', 'ocr', 'prices'])).max(4),
   }),
-  z.strictObject({ status: z.literal('unavailable'), jobId: z.uuid(), reason: z.enum(UNAVAILABLE_REASONS) }),
+  z.strictObject({ status: z.literal('unavailable'), jobId: jobUuid, reason: z.enum(UNAVAILABLE_REASONS) }),
 ]);

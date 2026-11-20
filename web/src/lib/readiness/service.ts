@@ -1,13 +1,15 @@
 import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm';
-import { companyFeatureFlags, evidenceObjects, jobClaims, jobDrafts, jobSubmissions, memberships } from '@/db/schema';
+import { companies, companyFeatureFlags, evidenceObjects, jobDrafts, jobSubmissions, memberships } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import { capabilitiesFor, type Capability } from '@/lib/access';
 import { accessFlags, flagsFromRows } from '@/lib/flags';
 import { confirmationPredatesReprice } from '@/lib/estimates/service';
 import { CanonicalFormError, manifestDigest } from '@/lib/field/canonical';
+import { IdentityRefusal } from '@/lib/auth';
 import { jobAccess, JobError, type JobCaller, type JobRow } from '@/lib/jobs/access';
+import { readClaim } from '@/lib/jobs/service';
 import { jobPriceTable, PricesUnreadable } from '@/lib/scope-lists/version';
-import { checkReadiness, countsEquipment, parseDraft, type ParsedDraft, type PriceState, type ReadinessFacts, type SetupReadings } from './check';
+import { checkReadiness, countsEquipment, parseDraft, type ParsedDraft, type PriceState, type SetupReadings } from './check';
 import type { ReadinessReader } from './reader';
 import { noDryingLog, type SetupReadingSource } from './readings';
 import type { ReadinessAnswer, UnavailableReason } from './schema';
@@ -61,6 +63,9 @@ const sameJobPrices = (a: JobPrices, b: JobPrices) => JSON.stringify(a) === JSON
 // The caller as they are now: the company's `readiness` switch (off: 404 as the route's switch), their
 // membership active (else 403) and the keys of the role they hold now.
 async function currentCaller(tx: CompanyTransaction, caller: JobCaller): Promise<JobCaller> {
+  // A company the operator suspended since the sign-in is refused as the sign-in would refuse it.
+  const [company] = await tx.select({ status: companies.status }).from(companies).where(eq(companies.id, caller.companyId));
+  if (company?.status !== 'active') throw new IdentityRefusal('company_inactive');
   const flags = flagsFromRows(
     await tx.select({ flag: companyFeatureFlags.flag, enabled: companyFeatureFlags.enabled }).from(companyFeatureFlags).where(eq(companyFeatureFlags.companyId, caller.companyId)),
   );
@@ -73,24 +78,6 @@ async function currentCaller(tx: CompanyTransaction, caller: JobCaller): Promise
     .limit(1);
   if (membership?.status !== 'active') throw new JobError('not_allowed');
   return { ...caller, role: membership.role, capabilities: capabilitiesFor(membership.role, accessFlags(flags)) };
-}
-
-async function jobClaim(tx: CompanyTransaction, companyId: string, jobId: string): Promise<ReadinessFacts['claim']> {
-  const [claim] = await tx
-    .select({
-      carrier: jobClaims.carrier,
-      claimNumber: jobClaims.claimNumber,
-      policyNumber: jobClaims.policyNumber,
-      dateOfLoss: jobClaims.dateOfLoss,
-      lossCause: jobClaims.lossCause,
-      adjusterName: jobClaims.adjusterName,
-      adjusterEmail: jobClaims.adjusterEmail,
-      adjusterPhone: jobClaims.adjusterPhone,
-      deductible: jobClaims.deductible,
-    })
-    .from(jobClaims)
-    .where(and(eq(jobClaims.companyId, companyId), eq(jobClaims.jobId, jobId)));
-  return claim ?? {};
 }
 
 // The drying log's setup reading, only when equipment is counted. A read that fails is not known.
@@ -129,7 +116,9 @@ async function storedPhotoIds(tx: CompanyTransaction, companyId: string, jobId: 
   return new Set(rows.map((row) => row.objectId));
 }
 
-type FieldOutcome = { answer: ReadinessAnswer } | { parsed: ParsedDraft; fieldSha256: string; stamped: boolean };
+// What the field read gave: the draft, an answer without gaps, or a failure the route answers 503 for.
+// Each is held until the second Postgres snapshot has checked the caller and the job again.
+type FieldOutcome = { answer: ReadinessAnswer } | { failed: unknown } | { parsed: ParsedDraft; fieldSha256: string; stamped: boolean };
 
 export function readinessService(db: Database, reader: () => ReadinessReader, readings: SetupReadingSource = noDryingLog): ReadinessService {
   return {
@@ -141,11 +130,11 @@ export function readinessService(db: Database, reader: () => ReadinessReader, re
         db,
         companyId,
         async (tx) => {
-          const job = await jobAccess(tx, caller, jobId, READINESS_NEEDS);
+          const job = await jobAccess(tx, await currentCaller(tx, caller), jobId, READINESS_NEEDS);
           if (job.status !== 'draft') return { job, facts: null };
           return {
             job,
-            facts: { propertyAddress: job.propertyAddress, claim: await jobClaim(tx, companyId, jobId), price: await jobPrices(tx, companyId, jobId) },
+            facts: { propertyAddress: job.propertyAddress, claim: await readClaim(tx, companyId, jobId), price: await jobPrices(tx, companyId, jobId) },
           };
         },
         { snapshot: true },
@@ -171,7 +160,7 @@ export function readinessService(db: Database, reader: () => ReadinessReader, re
           return { parsed, fieldSha256: await manifestDigest(read.manifest), stamped: read.stamped };
         } catch (error) {
           if (error instanceof CanonicalFormError) return { answer: unavailable('draft_unreadable') };
-          throw error;
+          return { failed: error };
         }
       })();
 
@@ -181,8 +170,8 @@ export function readinessService(db: Database, reader: () => ReadinessReader, re
         async (tx) => {
           const now = await jobAccess(tx, await currentCaller(tx, caller), jobId, READINESS_NEEDS);
           if (!sameBasis(job, now)) return 'changed' as const;
-          if ('answer' in field) return field.answer;
           if (!sameJobPrices(facts.price, await jobPrices(tx, companyId, jobId))) return 'changed' as const;
+          if (!('parsed' in field)) return 'field' as const;
           const { parsed, stamped } = field;
           if (!stamped && !(await draftIsJobs(tx, companyId, jobId, draftId))) return 'unreadable' as const;
           const photoIds = parsed.photos.map((photo) => photo.id).filter((id) => UUID.test(id));
@@ -196,8 +185,12 @@ export function readinessService(db: Database, reader: () => ReadinessReader, re
       );
       if (after === 'changed') return unavailable('draft_changed');
       if (after === 'unreadable') return unavailable('draft_unreadable');
-      if ('status' in after) return after;
-      if ('answer' in field) return field.answer;
+      if (after === 'field') {
+        if ('failed' in field) throw field.failed;
+        if ('answer' in field) return field.answer;
+        throw new Error('the field read gave no outcome');
+      }
+      if (!('parsed' in field)) throw new Error('the field read gave no draft');
 
       const { parsed, fieldSha256 } = field;
       const result = checkReadiness({

@@ -122,7 +122,8 @@ async function readCustomer(tx: CompanyTransaction, companyId: string, jobId: st
   return row ?? EMPTY_CUSTOMER;
 }
 
-async function readClaim(tx: CompanyTransaction, companyId: string, jobId: string): Promise<ClaimView> {
+// The job's claim, the fields the documents print (also the readiness check's, src/lib/readiness/service.ts).
+export async function readClaim(tx: CompanyTransaction, companyId: string, jobId: string): Promise<ClaimView> {
   const [row] = await tx
     .select({
       carrier: jobClaims.carrier,

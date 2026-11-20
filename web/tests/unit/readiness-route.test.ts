@@ -156,4 +156,15 @@ describe('the jobs list marker', () => {
     expect(readinessMarker(row, checked({ extra: 1 }), scope)).toBeNull();
     expect(readinessMarker(row, { status: 'unavailable', jobId: JOB, reason: 'field_unavailable' }, scope)).toBeNull();
   });
+
+  it('shows no marker for an answer with no gap that is not ready, a check it could not run being no pass', () => {
+    expect(readinessMarker(row, checked({ gaps: [], ready: false, unavailable: ['setupReadings', 'ocr'] }), scope)).toBeNull();
+  });
+
+  it('takes any uuid-shaped job id the jobs API takes, not only an RFC 4122 one', () => {
+    const id = '00000000-0000-0000-0000-000000000001';
+    expect(readinessMarker({ ...row, id }, checked({ jobId: id, draftId: id }), scope)).toEqual({ kind: 'gaps', count: 2 });
+    // The route answers with the lowercased id, so an uppercase one is not its answer.
+    expect(readinessAnswerSchema.safeParse(checked({ jobId: JOB.toUpperCase() })).success).toBe(false);
+  });
 });

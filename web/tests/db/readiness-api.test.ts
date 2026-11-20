@@ -1,9 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { manifestDigest, type FieldManifest } from '@/lib/field/canonical';
-import type { ReadinessRead, ReadinessReader } from '@/lib/readiness/reader';
 import type { SetupReadingSource } from '@/lib/readiness/readings';
-import type { FakeField } from '../submissions/field-fake';
+import { standIn } from './readiness-fake';
 import { flow, image, json, type Answer } from './submission-flow';
 import type { FakeClaims, Harness } from './team-harness';
 
@@ -28,9 +27,15 @@ vi.mock('@/lib/readiness/services', async () => {
   const { noDryingLog } = await import('@/lib/readiness/readings');
   return {
     readinessServices: () => {
-      // As a server whose field database setting is missing: the service cannot be built at all.
-      if (live.down) throw new Error('readiness services unavailable');
-      return readinessService(live.harness!.handle.db, live.reader!, live.readings ?? noDryingLog);
+      return readinessService(
+        live.harness!.handle.db,
+        () => {
+          // As a server whose field database setting is missing: the field reader cannot be built.
+          if (live.down) throw new Error('readiness field reader unavailable');
+          return live.reader!;
+        },
+        live.readings ?? noDryingLog,
+      );
     },
   };
 });
@@ -47,36 +52,6 @@ const archiveRoute = await import('@/app/api/jobs/[jobId]/archive/route');
 const readinessRoute = await import('@/app/api/jobs/[jobId]/readiness/route');
 const { contentHash, ENGINE_VERSION, parseTable } = await import('@/engine/table');
 const { everything, params, request, resetTeamDatabase, startTeamServer } = await import('./team-harness');
-
-// The field database's read for the check, over the stand-in's drafts, with the outcomes of the real
-// reader (src/lib/readiness/reader.ts). `fail` makes the next read throw as an unreachable Firestore;
-// `during` runs while a read is under way, so a test can change the job between the two Postgres reads.
-function standIn(field: FakeField) {
-  const reader = {
-    reads: 0,
-    fail: false,
-    during: null as null | (() => Promise<void>),
-    async readEditing(companyId: string, jobId: string, draftId: string): Promise<ReadinessRead> {
-      reader.reads += 1;
-      if (reader.fail) {
-        reader.fail = false;
-        throw new Error('field database unreachable');
-      }
-      const draft = field.draft(companyId, draftId);
-      if (reader.during) {
-        const run = reader.during;
-        reader.during = null;
-        await run();
-      }
-      if (!draft || draft.placeholder) return { outcome: 'missing' };
-      if (draft.jobId !== undefined && draft.jobId !== jobId) return { outcome: 'other_job' };
-      if (draft.state !== 'editing') return { outcome: 'not_editing' };
-      const docs = (from: Record<string, unknown>) => Object.entries(from).map(([id, value]) => ({ id, field: value ?? {} }));
-      return { outcome: 'read', stamped: draft.jobId === jobId, manifest: { draft: draft.field ?? {}, rooms: docs(draft.rooms), photos: docs(draft.photos) } };
-    },
-  } satisfies ReadinessReader & Record<string, unknown>;
-  return reader;
-}
 
 let base: Awaited<ReturnType<typeof startTeamServer>>;
 let h: Harness;
@@ -180,11 +155,11 @@ const codes = (body: Body) => (body.gaps as { code: string; roomId?: string }[])
 
 // What the stand-in job lacks: no address, the kitchen's surface and meter photos, the hall's sizing
 // and photos (both rooms are named Kitchen: each is its own room), no prices, scope not confirmed.
+// With no published prices the room area check is unavailable, not a demolition gap.
 const JOB_GAPS = [
   'propertyAddress',
   'kitchen:shot:surface',
   'kitchen:shot:meter',
-  'hall:demolitionArea',
   'hall:ceilingHeightFt',
   'hall:waterClass',
   'hall:shot:overview',
@@ -206,7 +181,7 @@ describe('GET /api/jobs/{jobId}/readiness: who may read it', () => {
     const { jobId, draftId, manifest } = await job();
     const owner = await readiness(OWNER_A, jobId);
     expect(owner.status).toBe(200);
-    expect(owner.body).toMatchObject({ status: 'checked', jobId, draftId, jobRevision: 1, ready: false, fieldSha256: await manifestDigest(manifest), unavailable: ['setupReadings', 'ocr'] });
+    expect(owner.body).toMatchObject({ status: 'checked', jobId, draftId, jobRevision: 1, ready: false, fieldSha256: await manifestDigest(manifest), unavailable: ['roomArea', 'setupReadings', 'ocr'] });
     expect(codes(owner.body)).toEqual(JOB_GAPS);
     expect(await readiness(ESTIMATOR_A, jobId)).toEqual(owner);
     // Another estimator of the company does not see the job until they are assigned it.
@@ -311,7 +286,26 @@ describe('GET /api/jobs/{jobId}/readiness: the gaps', () => {
     live.readings = { setupReading: async () => 'present' };
     const present = (await readiness(OWNER_A, jobId)).body;
     expect(codes(present)).not.toContain('setupReadings');
-    expect(present.unavailable).toEqual(['ocr']);
+    expect(present.unavailable).toEqual(['roomArea', 'ocr']);
+  });
+
+  it('counts a scope confirmation made before an owner reprice as not confirmed, as the estimate does', async () => {
+    const { jobId, draftId, manifest } = await job();
+    h.field.put(h.seed.a, draftId, { ...manifest, draft: { ...(manifest.draft as object), scopeConfirmed: true } });
+    await publish();
+    await publish();
+    const versions = await h.admin<{ id: string; sequence: number }[]>`SELECT id::text, sequence FROM price_table_versions WHERE company_id = ${h.seed.a} ORDER BY sequence`;
+    const pin = (sequence: number, reason: string) =>
+      h.admin`INSERT INTO job_price_pins (company_id, job_id, sequence, version_id, reason, pinned_by_actor_id) VALUES (${h.seed.a}, ${jobId}, ${sequence}, ${versions[sequence - 1]!.id}, ${reason}, ${h.seed.ownerA.actor})`;
+    await pin(1, 'first_price');
+    expect(codes((await readiness(OWNER_A, jobId)).body)).not.toContain('scopeConfirmed');
+    // The owner's reprice of this very draft (as POST /api/jobs/{id}/reprice records it).
+    await pin(2, 'owner_reprice');
+    await h.admin`
+      INSERT INTO audit_events (company_id, actor_id, action, target, details)
+      VALUES (${h.seed.a}, ${h.seed.ownerA.actor}, 'job_repriced', ${jobId}, ${JSON.stringify({ sequence: '2', job_draft: draftId })}::text::jsonb)
+    `;
+    expect(codes((await readiness(OWNER_A, jobId)).body)).toContain('scopeConfirmed');
   });
 
   it('reads a draft made before drafts carried their job id once Postgres holds it for the job', async () => {
@@ -384,11 +378,48 @@ describe('Submit never depends on readiness', () => {
     live.reader!.fail = true;
     expect((await readiness(OWNER_A, jobId)).body.reason).toBe('field_unavailable');
     live.down = true;
-    expect((await readiness(OWNER_A, jobId)).status).toBe(503);
+    expect((await readiness(OWNER_A, jobId)).body.reason).toBe('field_unavailable');
     // Submit's digest and field-owner rules are unchanged by any of it.
     expect((await f.submitShown(ESTIMATOR_A, jobId, draftId, { ...manifest, draft: { ...(manifest.draft as object), yearBuilt: 1999 } })).answer).toMatchObject({ status: 409 });
     expect((await f.submitShown(OWNER_A, jobId, draftId, manifest)).answer.status).toBe(403);
     expect((await f.submitShown(ESTIMATOR_A, jobId, draftId, manifest)).answer.status).toBe(201);
     errors.mockRestore();
+  });
+});
+
+describe('GET /api/jobs/{jobId}/readiness: the second Postgres read decides', () => {
+  it('refuses a company suspended while the draft was read, and a switch turned off meanwhile', async () => {
+    const { jobId } = await job();
+    live.reader!.during = async () => {
+      await h.admin`UPDATE companies SET status = 'suspended' WHERE id = ${h.seed.a}`;
+    };
+    expect(await readiness(OWNER_A, jobId)).toEqual({ status: 403, body: { error: 'company_inactive' } });
+    await h.admin`UPDATE companies SET status = 'active' WHERE id = ${h.seed.a}`;
+    live.reader!.during = async () => {
+      await h.admin`UPDATE company_feature_flags SET enabled = false WHERE company_id = ${h.seed.a} AND flag = 'readiness'`;
+    };
+    expect(await readiness(OWNER_A, jobId)).toEqual({ status: 404, body: { error: 'not_found' } });
+  });
+
+  // A draft the check cannot read as the field map gives no gaps, but only once Postgres agrees.
+  const unreadable = async () => {
+    const made = await job();
+    h.field.put(h.seed.a, made.draftId, { ...made.manifest, draft: { ...(made.manifest.draft as object), roomOrder: ['kitchen'] } });
+    return made;
+  };
+
+  it('answers 410 for a job archived while its draft was read, whatever the read gave', async () => {
+    const { jobId } = await unreadable();
+    live.reader!.during = async () => {
+      const archived = await archiveRoute.POST(request(OWNER_A, `/api/jobs/${jobId}/archive`, { method: 'POST', body: { revision: await revision(jobId), changeId: randomUUID() } }), params({ jobId }));
+      expect(archived.status).toBe(200);
+    };
+    expect(await readiness(OWNER_A, jobId)).toEqual({ status: 410, body: { error: 'archived' } });
+  });
+
+  it('says changed when the first price version is published while the draft is read, whatever the read gave', async () => {
+    const { jobId } = await unreadable();
+    live.reader!.during = () => publish();
+    expect(await readiness(OWNER_A, jobId)).toEqual({ status: 200, body: { status: 'unavailable', jobId, reason: 'draft_changed' } });
   });
 });

@@ -28,6 +28,12 @@ vi.mock('@/lib/auth/services', () => ({
   serverDatabase: () => live.harness!.handle.db,
 }));
 vi.mock('@/lib/team/services', () => ({ teamServices: () => live.harness!.team }));
+// The readiness check (S5b-11) reads the field drafts through the shared field stand-in.
+vi.mock('@/lib/readiness/services', async () => {
+  const { readinessService } = await import('@/lib/readiness/service');
+  const { standIn } = await import('./readiness-fake');
+  return { readinessServices: () => readinessService(live.harness!.handle.db, () => standIn(live.harness!.field)) };
+});
 vi.mock('@/lib/prices/services', () => ({ pricesServices: () => live.harness!.prices }));
 vi.mock('@/lib/jobs/services', () => ({ jobsServices: () => live.harness!.jobs }));
 vi.mock('@/lib/photos/services', () => ({ photosServices: () => live.harness!.photos }));
@@ -276,6 +282,8 @@ beforeEach(async () => {
   live.harness = h;
   made = new Set();
   await seedSides();
+  // Readiness on in both companies, so its route answers by job access, not only by its switch.
+  await h.admin`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${h.seed.a}, 'readiness', true), (${h.seed.b}, 'readiness', true)`;
 });
 
 afterAll(async () => {
@@ -398,6 +406,18 @@ describe('the S5a routes', () => {
       for (const route of ['api/jobs', 'api/jobs/[jobId]/estimate', 'api/jobs/[jobId]/agreements', 'api/jobs/[jobId]/document-links', 'api/jobs/[jobId]/coordination']) {
         const answer = await call({ route, method: 'GET' }, 'owner', self.people.owner, idsOf(self, 'signed'));
         expect({ route, as: self.name, status: answer.status, own: leaks(answer.text, self).length > 0 }).toEqual({ route, as: self.name, status: 200, own: true });
+      }
+      // Readiness answers the company's own owner about both of its jobs (neither is editing now), so its
+      // refusals above are job access, not the switch.
+      for (const job of ['signed', 'pending'] as const) {
+        const ids = idsOf(self, job);
+        const answer = await call({ route: 'api/jobs/[jobId]/readiness', method: 'GET' }, 'owner', self.people.owner, ids);
+        expect({ as: self.name, job, status: answer.status, body: JSON.parse(answer.text) as unknown }).toEqual({
+          as: self.name,
+          job,
+          status: 200,
+          body: { status: 'unavailable', jobId: ids.jobId, reason: 'not_editing' },
+        });
       }
       const link = await call({ route: 'api/jobs/[jobId]/signing-link', method: 'GET' }, 'owner', self.people.owner, idsOf(self, 'pending'));
       expect({ as: self.name, status: link.status, own: leaks(link.text, self).length > 0 }).toEqual({ as: self.name, status: 200, own: true });
