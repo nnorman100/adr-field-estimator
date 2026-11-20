@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import type { Table } from '@/engine/table';
-import { addAdjustment, removeAdjustment, setAdjustment } from '@/lib/prices/edit';
+import { addAdjustment, adjustmentNameInput, removeAdjustment, setAdjustment } from '@/lib/prices/edit';
 import { DecimalField, Hint, RadioGroup, Section, TextField } from './ui';
 
 // The company's own named adjustments (S5b-7): a discount or a charge, a percent of the price or a
@@ -29,8 +29,7 @@ export function AdjustmentsSection({ table, onChange }: Edit) {
           <TextField
             label="Adjustment name"
             value={adjustment.name}
-            maxLength={60}
-            onChange={(value) => onChange(setAdjustment(table, adjustment.adjustment_id, { name: value }))}
+            onChange={(value) => onChange(setAdjustment(table, adjustment.adjustment_id, { name: adjustmentNameInput(value) }))}
           />
           <RadioGroup
             legend="This adjustment is a"
@@ -59,19 +58,24 @@ export function AdjustmentsSection({ table, onChange }: Edit) {
             hint={adjustment.kind === 'percent' && adjustment.direction === 'discount' ? 'A discount is at most 100%.' : undefined}
             onChange={(value) => onChange(setAdjustment(table, adjustment.adjustment_id, { value }))}
           />
-          <Button type="button" variant="outline" onClick={() => onChange(removeAdjustment(table, adjustment.adjustment_id))}>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-auto min-h-10 whitespace-normal break-all py-2"
+            onClick={() => onChange(removeAdjustment(table, adjustment.adjustment_id))}
+          >
             Remove the {adjustment.name} adjustment
           </Button>
         </fieldset>
       ))}
       <div className="flex flex-col gap-2">
-        <TextField label="New adjustment" value={name} maxLength={60} onChange={setName} />
+        <TextField label="New adjustment" value={name} onChange={(value) => setName(adjustmentNameInput(value))} />
         <Button
           type="button"
           variant="outline"
           disabled={name.trim() === ''}
           onClick={() => {
-            onChange(addAdjustment(table, name.trim()));
+            onChange(addAdjustment(table, name));
             setName('');
           }}
         >

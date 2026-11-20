@@ -8,6 +8,7 @@ import {
   addRoomType,
   addRoomTypeRow,
   addAdjustment,
+  adjustmentNameInput,
   addTrade,
   categoryPricingOn,
   changed,
@@ -234,6 +235,30 @@ describe('the editor changes', () => {
     expect(parseTable(edited).adjustments).toEqual([{ adjustment_id: 'returning_customer', name: 'Returning customer', kind: 'amount', direction: 'charge', value: '50' }]);
     expect(addAdjustment(edited, 'Returning customer').adjustments!.map((row) => row.adjustment_id)).toEqual(['returning_customer', 'returning_customer_2']);
     expect(removeAdjustment(edited, 'returning_customer')).not.toHaveProperty('adjustments');
+  });
+
+  it('keeps an adjustment name exactly as entered, padding and all', () => {
+    const added = addAdjustment(priced(), ' Weekend start ');
+    expect(added.adjustments![0]).toMatchObject({ adjustment_id: 'weekend_start', name: ' Weekend start ' });
+  });
+
+  it('holds an adjustment name to 60 characters counted the way the schema counts them', () => {
+    const house = '\u{1F3E0}';
+    const full = `${'a'.repeat(59)}${house}`;
+    expect(adjustmentNameInput(full)).toBe(full);
+    expect(adjustmentNameInput(`${full}b`)).toBe(full);
+    const added = addAdjustment(priced(), full);
+    expect(setAdjustment(added, added.adjustments![0]!.adjustment_id, { value: '5' }).adjustments![0]!.name).toBe(full);
+    expect(parseTable(setAdjustment(added, added.adjustments![0]!.adjustment_id, { value: '5' })).adjustments).toHaveLength(1);
+  });
+
+  it('makes an id that fits the schema even when a numbered suffix is needed', () => {
+    const name = 'Service area zone '.repeat(3);
+    let table = priced();
+    for (let n = 0; n < 100; n += 1) table = addAdjustment(table, name);
+    const ids = table.adjustments!.map((row) => row.adjustment_id);
+    expect(new Set(ids).size).toBe(100);
+    for (const id of ids) expect(id).toMatch(/^[a-z][a-z0-9_]{1,39}$/);
   });
 
   it('counts two tables that differ only in key order as unchanged', () => {

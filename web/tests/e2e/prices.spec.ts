@@ -502,7 +502,7 @@ test('the owner adds, edits and removes a named adjustment, and none is seeded',
   await expectNoAxeViolations(page);
   await expectNoSideways(page);
   await page.getByRole('button', { name: 'Save changes' }).click();
-  await expect(page.getByText('Saved.', { exact: false })).toBeVisible();
+  await expect(page.getByText('Saved. The prices are not published until you publish them.')).toBeVisible();
 
   // What the server holds is what a reload shows.
   const saved = await call(request, company.owner, 'GET', '/api/prices');
@@ -514,7 +514,7 @@ test('the owner adds, edits and removes a named adjustment, and none is seeded',
 
   await section.getByRole('button', { name: 'Remove the Weekend start adjustment' }).click();
   await page.getByRole('button', { name: 'Save changes' }).click();
-  await expect(page.getByText('Saved.', { exact: false })).toBeVisible();
+  await expect(page.getByText('Saved. The prices are not published until you publish them.')).toBeVisible();
   const removed = await call(request, company.owner, 'GET', '/api/prices');
   expect((removed.body.workingCopy as { table: Json }).table).not.toHaveProperty('adjustments');
 });
