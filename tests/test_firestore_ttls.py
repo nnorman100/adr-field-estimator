@@ -145,7 +145,7 @@ def test_main_exit_codes_and_default_mode(monkeypatch, capsys):
     monkeypatch.setattr(ttls, 'states', lambda run=None: {g: s for g, s in states.items() if s})
     monkeypatch.setattr(ttls, 'enable', enabled.append)
     assert ttls.main([]) == 1 and enabled == []
-    assert 'Run again with --apply' in capsys.readouterr().out
+    assert capsys.readouterr().out.rstrip().endswith('1 policy(ies) not in place.')
 
     def enable(group):
         enabled.append(group)
