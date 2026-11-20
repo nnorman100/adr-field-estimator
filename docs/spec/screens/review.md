@@ -115,7 +115,7 @@ and it needs a new signature. Estimator and office never see the banner.
 
 ## Not built yet
 
-- Named adjustments (S5b-7).
+- Approving a named adjustment on a job (S5b-8).
 - Corrections and change orders after signing (S5b-4, S5b-9).
 - "Email me a copy" and emailing documents: hidden until email arrives (J7, S9).
 
