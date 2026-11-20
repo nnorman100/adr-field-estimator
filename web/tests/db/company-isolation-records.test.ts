@@ -486,6 +486,7 @@ const NOT_FILLED: Record<string, string> = {
   member_voice_settings: 'S7 Live: live-tables.test.ts',
   voice_notes: 'S7 Live: live-tables.test.ts',
   price_table_working_copies: 'S4 Prices: company-isolation.test.ts seeds and attacks it',
+  job_price_approvals: 'S5b-8 table: price-approvals-table.test.ts checks it; the S5b-8 server slice adds its routes',
 };
 
 // What a copied row needs to look new, so a table's own insert guard (which runs before the row

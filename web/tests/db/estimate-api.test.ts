@@ -247,6 +247,21 @@ describe('making the estimate', () => {
     expect(await estimates(jobId)).toHaveLength(2);
   });
 
+  it('a job whose first pin exists with no estimate is priced from that pin, and the estimate makes no second pin', async () => {
+    const one = await publish(h.seed.a, '2.00');
+    const { jobId } = await submittedJob();
+    await h.admin`
+      INSERT INTO job_price_pins (company_id, job_id, sequence, version_id, reason, pinned_by_actor_id)
+      VALUES (${h.seed.a}, ${jobId}, 1, ${one.id}, 'first_price', ${h.seed.ownerA.actor})
+    `;
+    await publish(h.seed.a, '5.00');
+    const answer = await make(ESTIMATOR_A, jobId);
+    expect(answer.status).toBe(201);
+    expect(answer.body.estimate).toMatchObject({ price: { pinSequence: 1, versionSequence: 1, tableHash: one.hash }, totals: { low: { total: '240.00' } } });
+    expect(await pins(jobId)).toEqual([{ sequence: 1, version_id: one.id, reason: 'first_price' }]);
+    expect(await estimates(jobId)).toHaveLength(1);
+  });
+
   it('a job first priced after version 2 is published is pinned to version 2', async () => {
     await publish(h.seed.a, '2.00');
     const two = await publish(h.seed.a, '5.00');

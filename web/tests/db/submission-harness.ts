@@ -32,7 +32,7 @@ export type SubmissionInput = {
   draft: string;
   epoch: string;
   actor: string;
-  kind?: 'original' | 'change_order';
+  kind?: 'original' | 'change_order' | 'revision';
   parent?: string | null;
   digest?: string;
   // Seconds from now the row expires; the default is a fence's 15 minutes.
@@ -192,7 +192,7 @@ export type AgreementInput = {
   version: string;
   hash: string;
   proposalSha: string;
-  kind?: 'original' | 'change_order';
+  kind?: 'original' | 'change_order' | 'revision';
   parent?: string | null;
   signerKind?: string;
   signerName?: string;

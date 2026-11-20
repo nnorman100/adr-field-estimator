@@ -7,12 +7,12 @@ lookup across companies (S5a-7, `docs/plans/S5.md`); the submission routes (S5a-
 hold a company's rows only inside `withCompany`, with forced row-level security, and every key between rows
 carries `company_id`.
 
-| Table | What it holds | Runtime rights |
-| --- | --- | --- |
-| `job_submissions` | Submit's row, keyed `(company_id, id)` with `id` made on the phone: `job_id`, `draft_id` (the Firestore field draft), `epoch` (server-made), `kind` (`original`, `change_order`), `parent_agreement_id` (set exactly for a change order), `status` (`pending`, `committed`, `aborted`), `request_digest`, `expires_at`, `snapshot_bytes` and `snapshot_sha256` (set exactly when committed; the hash is checked against the bytes), `marker_state` (`pending`, `done`), `created_by_actor_id`, `decided_at` | `SELECT`, `INSERT`, and `UPDATE` of `status`, `snapshot_bytes`, `snapshot_sha256` and `marker_state` only |
-| `job_price_pins` | Which published version a job is priced from: `job_id`, `sequence` (1, 2, 3 per job), `version_id` (a version of the same company), `reason` (`first_price` for sequence 1, `owner_reprice` after), `pinned_by_actor_id`; the current pin is the highest sequence | `SELECT`, `INSERT`; never changed or removed |
-| `job_estimates` | One priced estimate per committed submission and pin: `table_hash` and `engine_version` (those of the pinned version), `priced_result`, `proposal_bytes` and `proposal_sha256` (checked against the bytes), `created_by_actor_id` | `SELECT`, `INSERT`; never changed or removed |
-| `agreements` | The signed record, keyed `(company_id, id)` with `id` made on the phone: `job_id`, `submission_id`, `estimate_id`, `kind`, `parent_agreement_id`, `signer_kind` (`device`, `link`), `signer_name`, `signature_evidence_id` (a `signature` object of the job in `evidence_objects`), `proposal_sha256`, `priced_result`, `version_id`, `content_hash`, `engine_version`, `documents_bytes` (the documents as signed), `request_digest`, `created_by_actor_id`, `signed_at` | `SELECT`, `INSERT`; never changed or removed |
+| Table             | What it holds                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Runtime rights                                                                                            |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `job_submissions` | Submit's row, keyed `(company_id, id)` with `id` made on the phone: `job_id`, `draft_id` (the Firestore field draft), `epoch` (server-made), `kind` (`original`, `change_order`, and since `0019_price_approvals` `revision`), `parent_agreement_id` (set exactly for a change order or a revision), `status` (`pending`, `committed`, `aborted`), `request_digest`, `expires_at`, `snapshot_bytes` and `snapshot_sha256` (set exactly when committed; the hash is checked against the bytes), `marker_state` (`pending`, `done`), `created_by_actor_id`, `decided_at` | `SELECT`, `INSERT`, and `UPDATE` of `status`, `snapshot_bytes`, `snapshot_sha256` and `marker_state` only |
+| `job_price_pins`  | Which published version a job is priced from: `job_id`, `sequence` (1, 2, 3 per job), `version_id` (a version of the same company), `reason` (`first_price` for sequence 1, `owner_reprice` after), `pinned_by_actor_id`; the current pin is the highest sequence                                                                                                                                                                                                                                                                                                      | `SELECT`, `INSERT`; never changed or removed                                                              |
+| `job_estimates`   | One priced estimate per committed submission and pin: `table_hash` and `engine_version` (those of the pinned version), `priced_result`, `proposal_bytes` and `proposal_sha256` (checked against the bytes), `created_by_actor_id`                                                                                                                                                                                                                                                                                                                                      | `SELECT`, `INSERT`; never changed or removed                                                              |
+| `agreements`      | The signed record, keyed `(company_id, id)` with `id` made on the phone: `job_id`, `submission_id`, `estimate_id`, `kind`, `parent_agreement_id`, `signer_kind` (`device`, `link`), `signer_name`, `signature_evidence_id` (a `signature` object of the job in `evidence_objects`), `proposal_sha256`, `priced_result`, `version_id`, `content_hash`, `engine_version`, `documents_bytes` (the documents as signed), `request_digest`, `created_by_actor_id`, `signed_at`                                                                                              | `SELECT`, `INSERT`; never changed or removed                                                              |
 
 - A submission is made `pending` (a trigger refuses any other start) and moves once to `committed`, with its
   snapshot bytes and their SHA-256, or to `aborted`. The decision time is the database clock's, set by the
@@ -33,8 +33,9 @@ carries `company_id`.
   `committed` and has the same kind and parent; the proposal hash, priced result, content hash and engine
   version are the estimate's, the version is the estimate's pin's, and that pin is still the job's current one;
   the signature is a `signature` object of this job. A submission, an estimate and a signature object are
-  signed once each, and a job has at most one `original` agreement; a change order is not counted and names
-  its parent (an agreement of the same job).
+  signed once each, and a job has at most one `original` agreement; a change order or a revision (S5b-9: a
+  revised estimate after signing that supersedes the agreement it names) is not counted and names its parent
+  (an agreement of the same job).
 - `job_price_pins` names a version of its own company (composite key), and a pin takes the job's next number.
 - Sizes: a snapshot or proposal is 2 bytes to 8 MiB, the signed documents 2 bytes to 16 MiB.
 - Personal data: `snapshot_bytes` (the job's field work, customer and claim as submitted), `proposal_bytes`
@@ -43,3 +44,51 @@ carries `company_id`.
   details hold ids and counts only.
 - A platform operator reads a company's rows through `withOperator` with that company set, and every write
   policy refuses an active operator.
+
+## Proposals and approvals (`0019_price_approvals`)
+
+`0019_price_approvals` adds `job_price_approvals` (S5b-8, pricing plan S5b-3, spec.md 6.1) and the kind
+`revision` above (the kind and parent checks of `job_submissions` and `agreements` are replaced by wider ones
+under the same names; no stored row changes). No route uses the table yet.
+
+| Table                 | What it holds                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Runtime rights                                                                                                              |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `job_price_approvals` | What the estimator proposes on a submitted job and the owner approves, keyed `(company_id, id)` with `id` made on the phone: `job_id`, `submission_id`, `pin_id`, `table_hash`, `job_revision` (what it is bound to), `kind` (`named_adjustment`, `line_multiplier`, `hourly`, `unit`, `flat`), `adjustment_id` (a named adjustment of the pinned table), `item_id` and `room_id` (a custom multiplier's line; no room for a job-wide item), `multiplier` (above 1, at most 3, two decimal places), `description`, `quantity` (hours for `hourly`, required, 0.25 to 200), `unit`, `price` (the hourly rate, at most 10,000 as the engine's approved-rate cap, the unit price or the flat amount, above 0 to 100,000, two decimal places at most), `taxable` (unit and flat only), `request_digest`, `proposed_by_actor_id`, `proposed_at`, `approved_by_actor_id`, `approved_at`, `approved_by_name` (hourly only: the approver's name as entered at approval, 1 to 150 characters, kept exactly as entered), `ended_by_actor_id`, `ended_at`, `ended_reason` (`edited`, `replaced`, `repriced`) | `SELECT`, `INSERT`, and `UPDATE` of `approved_by_actor_id`, `approved_by_name`, `ended_by_actor_id` and `ended_reason` only |
+
+- Each kind holds exactly its own fields (a check). Decimals (multiplier, quantity, price) are refused, not rounded, past two places (`1.250` is refused). An hourly row
+  states the approver's name exactly when it is approved, and no other row does. `description`, `unit` and
+  `approved_by_name` are kept exactly as entered (padding included) and must hold a character that is not
+  whitespace, Unicode spaces such as U+00A0, U+2003 and U+3000 included (an explicit character class, not the
+  database locale's idea of whitespace, and not `btrim`).
+- A row is bound to the job's committed submission of its current draft, the job revision, the job's current
+  pin and that pin's version's content hash. A trigger refuses a proposal, an approval or an end unless the job
+  is `submitted` at that revision and pin and no estimate has been made from that submission on any pin: after
+  the estimate (a reprice onto a newer pin included), a change goes through Back to editing and Finish (owner
+  decision D1, 2026-11-20). A finished job has no pin until its first estimate, so the first proposal on a job
+  with no pin will establish the first price pin (sequence 1, reason `first_price`, the company's newest
+  published version, the estimate service's pin rules) under the job lock; that route is the server slice of
+  S5b-8. A job that already has its first pin and no estimate is priced from that pin, with no second pin.
+- A reprice (a pin added with reason `owner_reprice`) ends every open row of the job as `repriced`, by the owner
+  who repriced, in the same transaction: an `AFTER INSERT` trigger on `job_price_pins`, run as the caller under
+  row-level security. After it, no proposal, approval or end is accepted on a submission of the draft that was
+  current at the move: the job's current pin has reason `owner_reprice` and a `job_repriced` audit row for this
+  company and job names that pin's `sequence` and that submission's `draft_id` (the rule of
+  `confirmationPredatesReprice` in `web/src/lib/estimates/service.ts`; refusal: "the job was repriced: go back
+  to editing and Finish to price it again"). The job goes through Back to editing and Finish, which makes a new
+  draft and submission. Only the end as `repriced` skips the binding checks, and it is refused unless the
+  row's pin is no longer the job's newest and the newest was added by a reprice.
+- What a row says never changes. It is approved once and ended once, in separate changes, and the database
+  sets all three times (`proposed_at`, `approved_at`, `ended_at`) from `clock_timestamp()` after the job row
+  lock is held, so a change that waited for a reprice or another change is stamped after it (a reprice's end
+  of a row proposed while it was under way is never dated before the proposal), and a caller's `proposed_at`
+  is never kept. An edit ends the row (`edited`) and proposes a new one with no approval, so an approved
+  hourly rate stays as saved. Approving a named adjustment while another is approved first ends that one
+  (`replaced`); only an approved named adjustment is replaced.
+- A partial index on `(company_id, job_id)` for open rows serves the reprice's end of a job's rows, which
+  reads only that job's rows while it holds the job lock.
+- One open custom multiplier per line (item and room, or job-wide item) per submission and job revision; at
+  most one approved named adjustment in force per submission and job revision.
+- Personal data: `description` (as typed, printed on the proposal) and `approved_by_name` (the approver's name). The other columns are ids, kinds,
+  amounts, hashes and times.
+- A platform operator reads a company's rows through `withOperator` with that company set, and every write
+  policy refuses an active operator. No `DELETE`, no `TRUNCATE`.
