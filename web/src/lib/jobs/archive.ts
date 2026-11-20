@@ -237,6 +237,7 @@ export function archiveService(db: Database, store: ArchiveStore): ArchiveServic
             currentDraftId: input.draftId,
             propertyAddress: address,
             requestDigest: digest,
+            copiedFromJobId: source.id,
           })
           // The same id, or a draft id another job holds, makes no second row.
           .onConflictDoNothing()
@@ -255,6 +256,13 @@ export function archiveService(db: Database, store: ArchiveStore): ArchiveServic
           // commits before the field database is touched: a draft the previous version made is stamped only
           // once the claim is committed, so a lost answer from that stamp never leaves it unclaimed.
           if (!(await holdDraft(tx, caller.companyId, existing.id, input.draftId))) throw new JobError('conflict');
+          // The same digest is the same source: a copy without it (made before 0018) gets it now.
+          if (existing.copiedFromJobId === null) {
+            await tx
+              .update(jobs)
+              .set({ copiedFromJobId: source.id })
+              .where(and(eq(jobs.companyId, caller.companyId), eq(jobs.id, existing.id)));
+          }
           row = existing;
         } else {
           if (!(await claimDraft(tx, caller.companyId, row.id, input.draftId))) throw new JobError('conflict');

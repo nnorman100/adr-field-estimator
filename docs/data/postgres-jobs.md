@@ -98,3 +98,43 @@ the record in Postgres rather than Firestore). A draft submitted in Firestore al
 checked by the owner before 0016 runs, read only, with `npm run platform:check-draft-states`
 ([migrations runbook](../runbook/migrations.md#before-0016_job_drafts-security-audit-f1)). Which job keeps a draft, and how a stuck job moves on, are the
 owner's decisions, made before the file runs again. The table holds ids only.
+
+## The field revision (`0018_field_revision`, draft life-cycle redesign slice 1)
+
+`0018_field_revision` adds four columns to `jobs` and one lookup; no table, row or policy is removed. They
+are the database part of the draft life-cycle redesign (Design 2): one sync step will write every Firestore
+draft of a job from Postgres, guarded by one version number. Copy already records `copied_from_job_id`; the
+sync that reads these columns comes in a later slice.
+
+- `field_revision` (starts at 0) rises by exactly one, inside the database, every time an input of the
+  drafts' life cycle changes: the job's `status`, `current_draft_id`, `field_owner_actor_id` or `copied_from_job_id`; its
+  `job_coordination` row being made or its `revision` moving; a `job_submissions` row being made or its
+  `status` moving; a draft id claimed in `job_drafts`; and the sign-in `uid` of the person who owns the
+  field work (`actors`). Nothing else moves it: not the address, the job `revision` alone, office notes saved
+  without a coordination revision, a submission's marker, an email, or the watermark below. The runtime may
+  ask for a bump (`field_revision + 1`) and nothing else; a bump from another table runs as the caller and
+  is refused when the caller cannot change the job (an active platform operator), so no input is committed
+  without its bump. Like the field owner, a bump keeps the job `revision` (the 0015 trigger is widened for
+  the field columns).
+- `field_synced_revision` (starts at 0): the highest field revision the sync has written to Firestore. The
+  runtime may set it.
+- `field_changed_at`: when the field revision last rose (the clock at the bump), set by the trigger only.
+- `copied_from_job_id`: the job a copy was made from, in the same company (a foreign key), set once and
+  never changed or cleared. Copy sets it when it inserts the copy, or on a retry while it is empty. A
+  trigger on the `job_copied` audit row (`details.copiedFrom`, written in the copy's transaction) sets it
+  too while it is empty, so copies the previous version makes during a rollout or after an allowed
+  rollback get it. 0018 fills it for existing copies from those audit rows.
+- `job_field_sync_due_companies(max, grace)` returns, on the 0005 pattern, the ids of companies with a job
+  whose `field_synced_revision` is behind its `field_revision` and whose last change is more than `grace`
+  seconds old, the one waiting longest first. The repair worker will use it.
+
+A bump from another table locks the job row after that table's row, so every writer locks the job row
+first. The submission worker does so before it aborts an expired attempt since #482
+(`web/src/lib/submissions/repair.ts`, test release 2026.11.19-7). That release must be serving before
+0018 is applied, and no rollback goes behind it afterwards: an older worker deadlocks against Submit once
+the triggers exist; the [test release runbook](../runbook/test-release.md) states that rollback floor and how to tell
+whether 0018 is applied (the migration job's executions, and `migration_ledger` whenever they cannot confirm it). 0018
+waits at most 5 seconds for each lock (`SET LOCAL lock_timeout`), so a blocked run fails with nothing applied. The job
+revision guard lets an update that changes only these field columns keep the job `revision`; an update
+that changes nothing is still refused, so the sync writes the watermark only when it is newer
+(`WHERE field_synced_revision < v`).

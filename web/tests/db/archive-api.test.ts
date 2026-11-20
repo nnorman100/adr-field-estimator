@@ -254,6 +254,8 @@ describe('copy', () => {
     const again = await copy(ESTIMATOR_A, source, ids);
     expect(again).toEqual({ ...first, status: 200 });
     expect(await h.admin`SELECT 1 FROM jobs WHERE id = ${ids.id}`).toHaveLength(1);
+    // The copy names its source in Postgres (0018), so its first draft can be rebuilt from the signed record.
+    expect(await h.admin`SELECT copied_from_job_id::text AS source FROM jobs WHERE id = ${ids.id}`).toEqual([{ source }]);
     expect(h.field.calls.filter((call) => call === 'createCopy')).toHaveLength(2);
     // The rooms and the scope, less the approval; no photo (it stays the signed job's evidence).
     const { scopeConfirmed, ...kept } = manifest.draft as Record<string, unknown>;
@@ -275,6 +277,23 @@ describe('copy', () => {
     expect((await f.job(source)).status).toBe('signed');
     const copied: FieldManifest = { draft: kept, rooms: manifest.rooms, photos: [] };
     expect((await f.submitShown(ESTIMATOR_A, ids.id, ids.draftId, copied)).answer.status).toBe(201);
+  });
+
+  it('gives a copy made before 0018 its source when the same copy is sent again', async () => {
+    const { jobId: source } = await signedJob();
+    const ids = { id: randomUUID(), draftId: randomUUID() };
+    expect((await copy(ESTIMATOR_A, source, ids)).status).toBe(201);
+    // As the previous version left it: no source on the row (set aside without the triggers).
+    await h.admin.begin(async (sql) => {
+      await sql`SET LOCAL session_replication_role = replica`;
+      await sql`UPDATE jobs SET copied_from_job_id = NULL WHERE id = ${ids.id}`;
+    });
+    const [before] = await h.admin<{ field: number }[]>`SELECT field_revision::int AS field FROM jobs WHERE id = ${ids.id}`;
+    expect((await copy(ESTIMATOR_A, source, ids)).status).toBe(200);
+    // Setting the source is a life-cycle input: the field revision rises, the job revision stays.
+    expect(await h.admin`SELECT copied_from_job_id::text AS source, revision, field_revision::int AS field FROM jobs WHERE id = ${ids.id}`).toEqual([
+      { source, revision: 1, field: before!.field + 1 },
+    ]);
   });
 
   it('refuses another body under the same id, and copies only a signed job', async () => {
