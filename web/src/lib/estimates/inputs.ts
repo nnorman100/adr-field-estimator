@@ -135,11 +135,17 @@ export type EstimateInput = {
   scopeConfirmed: boolean;
 };
 
+/** What prices a record and nothing else: the inspection, with no documents and so no company inputs. */
+export function pricingJob(snapshot: Snapshot): EstimateJob {
+  const inspection = toInspection(snapshot.field.draft, snapshot.field.rooms);
+  inspection.address = snapshot.job.propertyAddress;
+  return { inspection };
+}
+
 /** The engine's input for one submitted record and the company's document inputs. */
 export function estimateInput(snapshot: Snapshot, company: CompanyDocuments): EstimateInput {
   const draft = draftFieldSchema.parse(snapshot.field.draft ?? {});
-  const inspection = toInspection(snapshot.field.draft, snapshot.field.rooms);
-  inspection.address = snapshot.job.propertyAddress;
+  const inspection = pricingJob(snapshot).inspection;
   const summary = draft.summary ?? '';
   const identity = company.identity;
   return {

@@ -78,3 +78,13 @@ export async function repriceJob(request: Request, identity: Identity, context: 
     return json(await estimatesServices().reprice(identity, id, parsed.data));
   });
 }
+
+// GET /api/jobs/{jobId}/reprice
+// The owner's before/after preview of Reprice this draft (S5b-6): `reprice` null when there is
+// nothing to reprice. Writes nothing.
+export async function previewReprice(_request: Request, identity: Identity, context: RouteContext): Promise<Response> {
+  return respond(async () => {
+    const id = await jobId(context);
+    return json(await estimatesServices().repricePreview(identity, id));
+  });
+}

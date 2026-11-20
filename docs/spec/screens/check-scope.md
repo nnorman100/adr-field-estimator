@@ -84,7 +84,7 @@ submitting: `docs/access/submit.md`.
 
 - Drying readings and the drying log, job close (S5b-10).
 - Voice notes, scope suggestions from AI and meter-photo reading (S7).
-- Named adjustments and Reprice (S5b-7, S5b-6).
+- Named adjustments (S5b-7). Reprice (S5b-6) is on Review before signing.
 - A normal Check Scope action that opens [Finish and review](finish.md): see "Mismatches to check".
 - A field for the summary of findings that [Finish](finish.md) checks: see "Mismatches to check".
 

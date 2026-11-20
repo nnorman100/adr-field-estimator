@@ -3,8 +3,9 @@
 Part of [Screen specs](README.md). Address: `/sign-in/{address}/jobs/{id}/review`. Built in:
 `web/src/app/(auth)/sign-in/[address]/jobs/[jobId]/review/` (`review-screen.tsx`,
 `review-documents.tsx`, `signing.tsx`, `signature-pad.tsx`, `send-link.tsx`,
-`document-links.tsx`), `web/src/lib/estimates/screen.ts`, `web/src/lib/links/screen.ts`. Stages
-S5a-9, S5a-11, S5a-11b.
+`document-links.tsx`, `reprice-banner.tsx`), `web/src/lib/estimates/screen.ts`,
+`web/src/lib/estimates/reprice-screen.ts`, `web/src/lib/links/screen.ts`. Stages S5a-9, S5a-11,
+S5a-11b, S5b-6.
 
 ## Purpose
 
@@ -90,9 +91,31 @@ The screen decides by keys from `GET /api/me`: pricing by `audit`, signing and s
 
 Rules: `docs/access/estimate.md`, `docs/access/signing.md`, `docs/access/signing-links.md`.
 
+## Reprice this draft (owner, S5b-6)
+
+With the owner's `job_reprice` key, on a job that is not signed, the screen reads
+`GET /api/jobs/{id}/reprice`. When newer prices are published than the ones the job is pinned to, a
+"Newer prices are published" banner says which prices version the job is priced from and offers
+"Review and reprice". That opens a dialog, "Reprice this draft?", with the job's last submitted
+scope priced at the pinned prices and at the newest, either of which may instead say why the record
+cannot be priced from it (the action stays and the server decides), and what a reprice does.
+Nothing is sent until "Reprice this draft" in the dialog; Cancel and Esc send nothing. The dialog
+shows one preview, taken when it was opened, and its confirmation sends exactly that preview's
+version and job revision, with its own change id; the action is unavailable until a
+refusal for a changed basis has shown its message and read the preview again. Review reads the job
+and its estimate again, rather than keep what it shows, when the preview's job revision is not the
+one Review loaded, when a reprice or the preview answers that the job moved (`stale_revision`),
+was signed (`job_signed`) or is no longer reachable (401, 403, 404, 410), and after a reprice, including one whose answer
+was lost (a connection failure or a 5xx, which may have been committed): the old
+estimate, its proposal and its signing actions are gone, and the scope must be confirmed again
+through Back to editing and Finish. When pricing the job makes an estimate, the preview is read again at the job revision that answer states. When the preview cannot be read, the screen says so (a status
+note). The revised estimate's proposal shows its "Revised {date}" line under the heading (with the previous
+price when the company's "Show the previous price on a revised estimate" was on when it was made),
+and it needs a new signature. Estimator and office never see the banner.
+
 ## Not built yet
 
-- Reprice (owner) and named adjustments (S5b-6, S5b-7).
+- Named adjustments (S5b-7).
 - Corrections and change orders after signing (S5b-4, S5b-9).
 - "Email me a copy" and emailing documents: hidden until email arrives (J7, S9).
 

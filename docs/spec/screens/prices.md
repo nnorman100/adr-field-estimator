@@ -64,7 +64,7 @@ Rules: `docs/access/prices.md`; pricing source `docs/pricing-source.md`.
 
 ## Not built yet
 
-- Reprice and its preview (S5b-6), named adjustments (S5b-7).
+- Named adjustments (S5b-7). Reprice and its preview are on Review before signing (S5b-6).
 - The operator's read-only prices view (`GET /api/platform/companies/{id}/prices` exists; no
   operator screen calls it).
 

@@ -8,8 +8,9 @@ import { Button } from '@/components/ui/button';
 import { signatureAddress } from '@/lib/agreements/client';
 import { agreementAnswerOf, type SignedAgreement } from '@/lib/agreements/screen';
 import type { BrowserSignInConfig } from '@/lib/config';
+import { canRepriceOf } from '@/lib/estimates/reprice-screen';
 import type { EstimateView } from '@/lib/estimates/result';
-import { notReadyReasons, outcomeOf, reviewAnswerOf, reviewerOf, type Next, type ReviewJob, type Reviewer } from '@/lib/estimates/screen';
+import { notReadyReasons, outcomeOf, reviewAnswerOf, reviewerOf, revisionOf, type Next, type ReviewJob, type Reviewer } from '@/lib/estimates/screen';
 import { signInOf, signOutOnRefusal, signOutOrShow, type FailedSignOut } from '@/lib/field/sign-out';
 import { belongsTo, callApi, companyAuth } from '@/lib/firebase-client';
 import { linkRightsOf, type DocumentLinkView } from '@/lib/links/screen';
@@ -19,6 +20,7 @@ import { Panel } from '../../../../../panel';
 import { WorkNotSecured } from '../../../work-not-secured';
 import { EstimateDocuments, EstimatePrice, StaffNotes } from './review-documents';
 import { DocumentLinks } from './document-links';
+import { RepriceBanner } from './reprice-banner';
 import { SendLink } from './send-link';
 import { SignedAgreementView, SigningForm, type IssuedLink } from './signing';
 
@@ -36,7 +38,11 @@ type Ready = {
   reviewer: Reviewer;
   // Who may send links (S5a-11b): `sign` makes them, `delivery_resend` revokes document links.
   links: { canSend: boolean; canRevoke: boolean };
+  // The owner's Reprice this draft (S5b-6, `job_reprice`).
+  canReprice: boolean;
   job: ReviewJob;
+  // The job's revision as this screen read it; the Reprice banner checks its preview against it.
+  revision: number;
   estimate: EstimateView | null;
   agreement: SignedAgreement | null;
 };
@@ -69,6 +75,7 @@ function Review({ address, companyName, tenantId, jobId, config }: ReviewScreenP
   const load = useCallback(
     async (user: User) => {
       const stale = () => authRef.current?.currentUser !== user;
+      if (stale()) return;
       setPhase({ name: 'checking' });
       // The sign-in this check is for, kept as the request goes.
       const auth = authRef.current!;
@@ -94,7 +101,8 @@ function Review({ address, companyName, tenantId, jobId, config }: ReviewScreenP
       // The job is there, so a 404 here is the company's prices being switched off.
       if (answer.status === 404) return setPhase({ name: 'prices-off' });
       const read = answer.status === 200 ? reviewAnswerOf(answer.body) : null;
-      if (!read) return setPhase({ name: 'unavailable' });
+      const revision = answer.status === 200 ? revisionOf(answer.body) : null;
+      if (!read || revision === null) return setPhase({ name: 'unavailable' });
       // A signed job opens read-only, from the agreement's stored bytes (S5a-11).
       let agreement: SignedAgreement | null = null;
       if (read.job.status === 'signed') {
@@ -104,7 +112,7 @@ function Review({ address, companyName, tenantId, jobId, config }: ReviewScreenP
         if (!parsed?.agreement) return setPhase({ name: 'unavailable' });
         agreement = parsed.agreement;
       }
-      setPhase({ name: 'ready', user, reviewer, links: linkRightsOf(me.body), ...read, agreement });
+      setPhase({ name: 'ready', user, reviewer, links: linkRightsOf(me.body), canReprice: canRepriceOf(me.body), revision, ...read, agreement });
     },
     [config, jobId, tenantId],
   );
@@ -175,8 +183,11 @@ function Review({ address, companyName, tenantId, jobId, config }: ReviewScreenP
   }
 }
 
-function ReviewBody({ user, reviewer, links, job, estimate: first, agreement: signedFirst, finishHref, reload }: Ready & { finishHref: string; reload: () => void }) {
-  const [estimate, setEstimate] = useState<EstimateView | null>(first);
+function ReviewBody({ user, reviewer, links, canReprice, revision: firstRevision, job, estimate: first, agreement: signedFirst, finishHref, reload }: Ready & { finishHref: string; reload: () => void }) {
+  // The estimate and the job revision it was read at, changed together: the Reprice banner's preview
+  // is only good for the revision it was taken at.
+  const [read, setRead] = useState<{ estimate: EstimateView | null; revision: number }>({ estimate: first, revision: firstRevision });
+  const { estimate, revision } = read;
   const [agreement, setAgreement] = useState<SignedAgreement | null>(signedFirst);
   const [issued, setIssued] = useState<{ tokens: IssuedLink[]; listed: DocumentLinkView[] }>({ tokens: [], listed: [] });
   const signatureId = agreement?.record.signature.id ?? null;
@@ -192,7 +203,10 @@ function ReviewBody({ user, reviewer, links, job, estimate: first, agreement: si
     const answer = await callApi(user, `/api/jobs/${encodeURIComponent(job.id)}/estimate`, { method: 'POST' });
     setBusy(false);
     const made = answer.status === 200 || answer.status === 201 ? reviewAnswerOf(answer.body) : null;
-    if (made?.estimate) return setEstimate(made.estimate);
+    if (made?.estimate) {
+      const now = revisionOf(answer.body);
+      return now === null ? reload() : setRead({ estimate: made.estimate, revision: now });
+    }
     setProblem(outcomeOf(answer.status, answer.body));
   }
 
@@ -211,9 +225,12 @@ function ReviewBody({ user, reviewer, links, job, estimate: first, agreement: si
     );
   }
 
+  const repriceBanner = canReprice ? <RepriceBanner key={`${revision}/${estimate?.id ?? ''}`} user={user} jobId={job.id} revision={revision} onChanged={reload} /> : null;
+
   if (!estimate) {
     return (
       <FocusedPanel title={job.status === 'draft' ? 'Not finished yet' : 'Price this job'}>
+        {repriceBanner}
         {problem ? (
           <div role="alert" className="flex flex-col gap-3 rounded-md border border-red-700 p-3">
             <p>{problem.message}</p>
@@ -251,6 +268,7 @@ function ReviewBody({ user, reviewer, links, job, estimate: first, agreement: si
   const reasons = notReadyReasons(estimate);
   return (
     <FocusedPanel title="Review before signing">
+      {repriceBanner}
       <EstimatePrice estimate={estimate} />
       <EstimateDocuments estimate={estimate} />
       <StaffNotes estimate={estimate} />

@@ -21,8 +21,8 @@ name (`web/src/engine/documents.ts`). The settings do different things too. The 
 texts are the list the field picker offers on Check Scope (`web/src/lib/scope-lists/service.ts`);
 the proposal letter prints the prep tasks recorded in each room, as submitted, not the company's list
 (`web/src/lib/estimates/inputs.ts`, `web/src/engine/proposal-letter.ts`). "Show the previous price
-on a revised estimate" is saved but changes nothing yet: the document reader does not pass it to the
-engine, and Reprice, the revised estimate, is not built (see "Not built yet"). The company name is set by DryScope when the company is created and is shown, not
+on a revised estimate" adds the previous estimate's price to a revised estimate's "Revised {date}"
+line (S5b-6). The company name is set by DryScope when the company is created and is shown, not
 edited. A box at the top says whether documents can be issued and signed, or lists what is still
 needed (the engine's setup check). Each company's identity is meant to print exactly as entered here (AGENTS.md
 rule 7); as built, the save trims the ends of each text and the scope defense letter's header collapses spaces inside a line (see "Mismatches to check").
@@ -67,8 +67,6 @@ Rules: `docs/access/company-profile.md`, `docs/access/ai-usage.md`.
 
 ## Not built yet
 
-- Reprice and the revised estimate that "Show the previous price on a revised estimate" is for
-  (S5b-6): the setting is stored and not used.
 - Record retention days (`retention_manage`) and delivery settings (`delivery_manage`): keys exist
   in `web/src/lib/access/roles.ts`, no screen in `web/`.
 

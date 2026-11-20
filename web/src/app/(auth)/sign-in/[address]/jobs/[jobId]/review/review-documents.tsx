@@ -2,7 +2,7 @@ import { LinkPhoto } from '@/components/links/link-photo';
 import type { ProposalEnd, LetterLine, ProposalLetter } from '@/engine/estimate';
 import { adjustmentLines } from '@/engine/values';
 import type { EstimateView } from '@/lib/estimates/result';
-import { chargeRows, dollars, photoAlbums, priceLines, pricePointLine, quantityNoteLine, warningText } from '@/lib/estimates/screen';
+import { chargeRows, customerPriceLine, dollars, photoAlbums, priceLines, pricePointLine, quantityNoteLine, warningText } from '@/lib/estimates/screen';
 
 // The parts of Review before signing that show the stored estimate: the price, the four documents
 // and the staff-only notes. Every amount and sentence is the server's, shown as stored; the
@@ -152,7 +152,7 @@ export function Proposal({ proposal }: { proposal: NonNullable<EstimateView['pro
   const priceLine = (
     <>
       <p className="font-semibold">
-        {price.mode === 'range' && price.high ? `Customer estimate range: ${dollars(price.low.total)} to ${dollars(price.high.total)}` : `Price: ${dollars(price.low.total)}`}
+        {customerPriceLine(price)}
       </p>
       {adjustment ? <p>{adjustment}</p> : null}
       {named.map((line, index) => (
@@ -167,6 +167,7 @@ export function Proposal({ proposal }: { proposal: NonNullable<EstimateView['pro
   return (
     <div className="flex flex-col gap-2" data-layout={proposal.letter ? 'letter' : 'itemized'}>
       <p className="font-semibold">{proposal.heading}</p>
+      {proposal.revised ? <p className="font-semibold">{proposal.revised}</p> : null}
       <p className="text-sm break-words">{proposal.letterhead.join(' · ')}</p>
       {proposal.customer_name ? <p>Customer: {proposal.customer_name}</p> : null}
       <p className="break-words">Property: {proposal.property_address}</p>

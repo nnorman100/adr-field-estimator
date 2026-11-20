@@ -33,6 +33,10 @@ const estimateRoute = await import('@/app/api/jobs/[jobId]/estimate/route');
 const agreementsRoute = await import('@/app/api/jobs/[jobId]/agreements/route');
 const repriceRoute = await import('@/app/api/jobs/[jobId]/reprice/route');
 const { contentHash, ENGINE_VERSION, parseTable } = await import('@/engine/table');
+const { revisedLine } = await import('@/lib/estimates/proposal');
+const { estimatesService } = await import('@/lib/estimates/service');
+const { readStoredEstimate } = await import('@/lib/estimates/result');
+const { priceText } = await import('@/lib/estimates/screen');
 const { everything, params, request, resetTeamDatabase, startTeamServer } = await import('./team-harness');
 
 let base: Awaited<ReturnType<typeof startTeamServer>>;
@@ -420,5 +424,132 @@ describe('what is refused, and writes nothing', () => {
     await h.admin`UPDATE company_feature_flags SET enabled = false WHERE company_id = ${h.seed.a} AND flag = 'price_books'`;
     expect((await reprice(OWNER_A, jobId)).status).toBe(404);
     expect(await pins(jobId)).toHaveLength(1);
+  });
+});
+
+const preview = (claims: FakeClaims | null, jobId: string): Promise<Reply> =>
+  json(repriceRoute.GET(request(claims, `/api/jobs/${jobId}/reprice`), params({ jobId })));
+const agreementsOf = (claims: FakeClaims | null, jobId: string): Promise<Reply> =>
+  json(agreementsRoute.GET(request(claims, `/api/jobs/${jobId}/agreements`), params({ jobId })));
+// The day a revised estimate made now is headed with (UTC, written out).
+const today = () => new Intl.DateTimeFormat('en-US', { dateStyle: 'long', timeZone: 'UTC' }).format(new Date());
+const showPreviousPrice = () =>
+  h.admin`UPDATE companies SET profile_documents = profile_documents || '{"show_previous_price": true}'::jsonb WHERE id = ${h.seed.a}`;
+
+// Reprices the ready job to $3.00 and prices it again on a new record with the scope confirmed.
+async function repricedEstimate() {
+  const job = await readyToSign();
+  await publish(h.seed.a, '3.00');
+  expect((await reprice(OWNER_A, job.jobId)).status).toBe(200);
+  await finishAgain(ESTIMATOR_A, job.jobId, job.draftId, job.manifest);
+  const revised = await make(ESTIMATOR_A, job.jobId);
+  expect(revised.status).toBe(201);
+  return { ...job, revised: revised.body.estimate as Body };
+}
+
+describe('the revised estimate heading (D6)', () => {
+  it('a first estimate has no revised line; the estimate after a reprice is headed "Revised {date}" without the previous price', async () => {
+    const { estimate: first, revised } = await repricedEstimate();
+    expect(first.proposal).not.toHaveProperty('revised');
+    expect(revised.proposal.revised).toBe(`Revised ${today()}`);
+    expect(revised.proposal.heading).toBe(first.proposal.heading);
+    // The line is in the stored bytes the signature binds, and reads back the same.
+    const [row] = await h.admin<{ proposal_bytes: Buffer }[]>`SELECT proposal_bytes FROM job_estimates WHERE id = ${revised.id}`;
+    expect(JSON.parse(row!.proposal_bytes.toString('utf8')).revised).toBe(`Revised ${today()}`);
+    expect((await read(OWNER_A, revised.jobId)).body.estimate.proposal.revised).toBe(`Revised ${today()}`);
+  });
+
+  it('with the company’s show_previous_price on, before signing it reads "Revised {date}: was {previous price}"', async () => {
+    await showPreviousPrice();
+    const { revised } = await repricedEstimate();
+    expect(revised.proposal.revised).toBe(`Revised ${today()}: was $240.00`);
+  });
+
+  it('Back to editing without a reprice is a revised estimate too, with the previous price only when the setting is on', async () => {
+    await showPreviousPrice();
+    const { jobId, draftId, manifest } = await readyToSign();
+    await finishAgain(ESTIMATOR_A, jobId, draftId, manifest);
+    expect((await make(ESTIMATOR_A, jobId)).body.estimate.proposal.revised).toBe(`Revised ${today()}: was $240.00`);
+  });
+
+  it('a job with a signed agreement is headed with the agreement’s stored price, whatever the setting', async () => {
+    const { jobId, estimate, signatureId } = await readyToSign();
+    expect((await sign(ESTIMATOR_A, jobId, bodyFor(estimate, signatureId))).status).toBe(201);
+    const [agreement] = await h.admin<{ priced_result: unknown }[]>`SELECT priced_result FROM agreements WHERE job_id = ${jobId}`;
+    const signed = priceText(readStoredEstimate(agreement!.priced_result).totals);
+    const made = new Date('2026-11-19T12:00:00Z');
+    const lineWith = (showPrevious: boolean) => revisedLine(made, { previous: '$999.00', signed, showPrevious });
+    expect(lineWith(false)).toBe('Revised November 19, 2026: was $240.00');
+    expect(lineWith(true)).toBe('Revised November 19, 2026: was $240.00');
+  });
+
+  it('a signed proposal is unchanged: the agreement keeps the bytes it was signed with, with no revised line', async () => {
+    const { jobId, estimate, signatureId } = await readyToSign();
+    expect((await sign(ESTIMATOR_A, jobId, bodyFor(estimate, signatureId))).status).toBe(201);
+    await showPreviousPrice();
+    await publish(h.seed.a, '3.00');
+    const signed = await agreementsOf(OWNER_A, jobId);
+    expect(signed.status).toBe(200);
+    expect(JSON.stringify(signed.body)).not.toContain('Revised');
+    const [row] = await h.admin<{ proposal_sha256: string }[]>`SELECT proposal_sha256 FROM agreements WHERE job_id = ${jobId}`;
+    expect(row!.proposal_sha256).toBe(estimate.proposalSha256);
+  });
+});
+
+describe('the before/after preview', () => {
+  it('shows the owner the job’s record priced from its pinned prices and from the newest, and writes nothing', async () => {
+    const { jobId } = await readyToSign();
+    const two = await publish(h.seed.a, '3.00');
+    const before = await everything(h.admin);
+    const answer = await preview(OWNER_A, jobId);
+    expect(answer.status).toBe(200);
+    expect(answer.body).toEqual({
+      job: { revision: (await f.job(jobId)).revision },
+      reprice: { pinned: { version: 1, price: '$240.00', refused: null }, newest: { versionId: two.id, version: 2, price: '$360.00', refused: null } },
+    });
+    expect(await everything(h.admin)).toBe(before);
+  });
+
+  it('prices only the two totals: company settings the documents cannot be built from do not stop it', async () => {
+    const { jobId } = await readyToSign();
+    const two = await publish(h.seed.a, '3.00');
+    await h.admin`UPDATE companies SET profile_documents = profile_documents || '{"photo_log_grouping": "by_colour"}'::jsonb WHERE id = ${h.seed.a}`;
+    const answer = await preview(OWNER_A, jobId);
+    expect(answer.status).toBe(200);
+    expect(answer.body.reprice).toMatchObject({ pinned: { price: '$240.00' }, newest: { versionId: two.id, price: '$360.00' } });
+  });
+
+  it('while the job is back in editing, previews its last record', async () => {
+    const { jobId, draftId } = await readyToSign();
+    await publish(h.seed.a, '3.00');
+    expect((await f.nextDraft(ESTIMATOR_A, jobId, { draftId: randomUUID(), fromDraftId: draftId })).status).toBe(201);
+    expect((await preview(OWNER_A, jobId)).body.reprice).toMatchObject({ pinned: { price: '$240.00' }, newest: { price: '$360.00' } });
+  });
+
+  it('has nothing to show on the newest prices, a never-priced job or a signed job', async () => {
+    const { jobId, estimate, signatureId } = await readyToSign();
+    expect((await preview(OWNER_A, jobId)).body.reprice).toBeNull();
+    const unpriced = await submittedJob();
+    await publish(h.seed.a, '3.00');
+    expect((await preview(OWNER_A, unpriced.jobId)).body.reprice).toBeNull();
+    expect((await sign(ESTIMATOR_A, jobId, bodyFor(estimate, signatureId))).status).toBe(201);
+    expect((await preview(OWNER_A, jobId)).body.reprice).toBeNull();
+  });
+
+  it('is refused to an owner who was disabled after the sign-in was verified, and reads nothing', async () => {
+    const { jobId } = await readyToSign();
+    await publish(h.seed.a, '3.00');
+    await h.admin`UPDATE memberships SET status = 'disabled' WHERE id = ${h.seed.ownerA.membership}`;
+    const caller = { companyId: h.seed.a, actorId: h.seed.ownerA.actor, uid: 'owner-a', role: 'owner' as const, capabilities: ['job_reprice' as const] };
+    await expect(estimatesService(h.handle.db).repricePreview(caller, jobId)).rejects.toMatchObject({ code: 'not_allowed' });
+  });
+
+  it('is the owner’s only: estimator and office are 403, another company’s owner 404, signed out 401', async () => {
+    const { jobId } = await readyToSign();
+    await publish(h.seed.a, '3.00');
+    expect((await preview(ESTIMATOR_A, jobId)).status).toBe(403);
+    expect((await preview(OFFICE_A, jobId)).status).toBe(403);
+    expect((await preview(OWNER_B, jobId)).status).toBe(404);
+    expect((await preview(null, jobId)).status).toBe(401);
   });
 });
