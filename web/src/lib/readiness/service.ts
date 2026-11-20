@@ -1,12 +1,13 @@
 import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 import { companies, companyFeatureFlags, evidenceObjects, jobDrafts, jobSubmissions, memberships } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
+import { ENGINE_VERSION } from '@/engine/table';
 import { capabilitiesFor, type Capability } from '@/lib/access';
 import { accessFlags, flagsFromRows } from '@/lib/flags';
 import { confirmationPredatesReprice } from '@/lib/estimates/service';
 import { CanonicalFormError, manifestDigest } from '@/lib/field/canonical';
 import { IdentityRefusal } from '@/lib/auth';
-import { jobAccess, JobError, type JobCaller, type JobRow } from '@/lib/jobs/access';
+import { jobAccess, JobError, hasAny, type JobCaller, type JobRow } from '@/lib/jobs/access';
 import { readClaim } from '@/lib/jobs/service';
 import { jobPriceTable, PricesUnreadable } from '@/lib/scope-lists/version';
 import { checkReadiness, countsEquipment, parseDraft, type ParsedDraft, type PriceState, type SetupReadings } from './check';
@@ -20,12 +21,13 @@ import type { ReadinessAnswer, UnavailableReason } from './schema';
 // never call this, and a failure here answers "unavailable", so it can never hold any of them up.
 //
 // 1. Postgres, one read-only snapshot: the caller's access to the job (scope work, as Submit), its
-//    state and current draft, its property address and claim, and its price version's area basis.
+//    state and current draft (a draft with a Submit in progress is not open for editing), its property address and claim, and its price version's area basis.
 // 2. The field database: the current draft, its rooms and photo references in one read-only read
 //    (reader.ts), only while the draft is this job's and open for editing. The reader is built only
 //    now, so a missing field database setting cannot change what step 1 decided.
 // 3. Postgres again, one read-only snapshot, after every outcome of step 2: the caller's membership,
-//    role and the company's `readiness` switch read again, the access check again and the job
+//    role and the company's `readiness` switch read again, the access check and the draft's state again
+//    (the same function as step 1) and the job
 //    unchanged (state, current draft, revision, life-cycle version), the price version unchanged, so
 //    the gaps are never those of another draft, other prices or for a caller who lost the job or the
 //    switch meanwhile; the draft id this job's when the draft names no job; which photo references name
@@ -51,7 +53,10 @@ type JobPrices = { prices: PriceState; sequence: number | null };
 async function jobPrices(tx: CompanyTransaction, companyId: string, jobId: string): Promise<JobPrices> {
   try {
     const found = await jobPriceTable(tx, companyId, jobId);
-    return found ? { prices: { state: 'published', areaBasis: found.table.policy.area_basis }, sequence: found.sequence } : { prices: { state: 'none' }, sequence: null };
+    if (!found) return { prices: { state: 'none' }, sequence: null };
+    // A version this server cannot price is as unusable as one that does not parse (the estimate refuses it).
+    if (found.engineVersion !== ENGINE_VERSION) return { prices: { state: 'unavailable' }, sequence: null };
+    return { prices: { state: 'published', areaBasis: found.table.policy.area_basis }, sequence: found.sequence };
   } catch (error) {
     if (error instanceof PricesUnreadable) return { prices: { state: 'unavailable' }, sequence: null };
     throw error;
@@ -60,10 +65,12 @@ async function jobPrices(tx: CompanyTransaction, companyId: string, jobId: strin
 
 const sameJobPrices = (a: JobPrices, b: JobPrices) => JSON.stringify(a) === JSON.stringify(b);
 
-// The caller as they are now: the company's `readiness` switch (off: 404 as the route's switch), their
-// membership active (else 403) and the keys of the role they hold now.
-async function currentCaller(tx: CompanyTransaction, caller: JobCaller): Promise<JobCaller> {
-  // A company the operator suspended since the sign-in is refused as the sign-in would refuse it.
+// Both Postgres snapshots start here: the caller as they are now, then the job. In this order: the
+// company still active, the company's `readiness` switch (off: 404 as the route's switch), the
+// membership active (else 403), the role they hold now holding `scope` (else 403, before the job is
+// looked at, so office gets 403 even for an archived or missing job), the job's access, then whether
+// the job's current draft is open for editing: the job is a draft and no Submit of that draft is pending.
+async function recheck(tx: CompanyTransaction, caller: JobCaller, jobId: string): Promise<{ job: JobRow; editing: boolean }> {
   const [company] = await tx.select({ status: companies.status }).from(companies).where(eq(companies.id, caller.companyId));
   if (company?.status !== 'active') throw new IdentityRefusal('company_inactive');
   const flags = flagsFromRows(
@@ -77,7 +84,16 @@ async function currentCaller(tx: CompanyTransaction, caller: JobCaller): Promise
     .orderBy(sql`${memberships.status} = 'active' DESC`, desc(memberships.updatedAt))
     .limit(1);
   if (membership?.status !== 'active') throw new JobError('not_allowed');
-  return { ...caller, role: membership.role, capabilities: capabilitiesFor(membership.role, accessFlags(flags)) };
+  const current: JobCaller = { ...caller, role: membership.role, capabilities: capabilitiesFor(membership.role, accessFlags(flags)) };
+  if (!hasAny(current, READINESS_NEEDS)) throw new JobError('not_allowed');
+  const job = await jobAccess(tx, current, jobId, READINESS_NEEDS);
+  if (job.status !== 'draft') return { job, editing: false };
+  const [pending] = await tx
+    .select({ id: jobSubmissions.id })
+    .from(jobSubmissions)
+    .where(and(eq(jobSubmissions.companyId, caller.companyId), eq(jobSubmissions.jobId, jobId), eq(jobSubmissions.draftId, job.currentDraftId), eq(jobSubmissions.status, 'pending')))
+    .limit(1);
+  return { job, editing: pending === undefined };
 }
 
 // The drying log's setup reading, only when equipment is counted. A read that fails is not known.
@@ -130,8 +146,8 @@ export function readinessService(db: Database, reader: () => ReadinessReader, re
         db,
         companyId,
         async (tx) => {
-          const job = await jobAccess(tx, await currentCaller(tx, caller), jobId, READINESS_NEEDS);
-          if (job.status !== 'draft') return { job, facts: null };
+          const { job, editing } = await recheck(tx, caller, jobId);
+          if (!editing) return { job, facts: null };
           return {
             job,
             facts: { propertyAddress: job.propertyAddress, claim: await readClaim(tx, companyId, jobId), price: await jobPrices(tx, companyId, jobId) },
@@ -168,14 +184,17 @@ export function readinessService(db: Database, reader: () => ReadinessReader, re
         db,
         companyId,
         async (tx) => {
-          const now = await jobAccess(tx, await currentCaller(tx, caller), jobId, READINESS_NEEDS);
-          if (!sameBasis(job, now)) return 'changed' as const;
-          if (!sameJobPrices(facts.price, await jobPrices(tx, companyId, jobId))) return 'changed' as const;
-          if (!('parsed' in field)) return 'field' as const;
-          const { parsed, stamped } = field;
-          if (!stamped && !(await draftIsJobs(tx, companyId, jobId, draftId))) return 'unreadable' as const;
+          const { job: now, editing } = await recheck(tx, caller, jobId);
+          if (!editing) return unavailable('not_editing');
+          if (!sameBasis(job, now) || !sameJobPrices(facts.price, await jobPrices(tx, companyId, jobId))) return unavailable('draft_changed');
+          if ('failed' in field) throw field.failed;
+          if ('answer' in field) return field.answer;
+          const { parsed, fieldSha256, stamped } = field;
+          if (!stamped && !(await draftIsJobs(tx, companyId, jobId, draftId))) return unavailable('draft_unreadable');
           const photoIds = parsed.photos.map((photo) => photo.id).filter((id) => UUID.test(id));
           return {
+            parsed,
+            fieldSha256,
             stored: await storedPhotoIds(tx, companyId, jobId, photoIds),
             scopeStale: await confirmationPredatesReprice(tx, companyId, jobId, draftId),
             setup: await setupReading(tx, readings, parsed.draft, companyId, jobId),
@@ -183,16 +202,9 @@ export function readinessService(db: Database, reader: () => ReadinessReader, re
         },
         { snapshot: true },
       );
-      if (after === 'changed') return unavailable('draft_changed');
-      if (after === 'unreadable') return unavailable('draft_unreadable');
-      if (after === 'field') {
-        if ('failed' in field) throw field.failed;
-        if ('answer' in field) return field.answer;
-        throw new Error('the field read gave no outcome');
-      }
-      if (!('parsed' in field)) throw new Error('the field read gave no draft');
+      if ('status' in after) return after;
 
-      const { parsed, fieldSha256 } = field;
+      const { parsed, fieldSha256 } = after;
       const result = checkReadiness({
         propertyAddress: facts.propertyAddress,
         claim: facts.claim,
