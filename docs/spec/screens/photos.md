@@ -2,7 +2,7 @@
 
 Part of [Screen specs](README.md). Address: `/field?job={id}&view=photos`. Built in:
 `web/src/app/field/photos-view.tsx`, `web/src/lib/field/api.ts` (`sendPhoto`, `photoAddress`).
-Stages S5a-5, S5a-6, S6-5.
+Stages S5a-5, S5a-6, S6-5, S5b-11.
 
 ## Purpose
 
@@ -36,6 +36,10 @@ cap (`docs/access/photos.md`).
   sent: this job is archived."; "Not sent: another person now owns this job's field work."; "This
   picture could not be read. Take the photo with the camera."
 - Photo cap reached: no more photos (the draft holds at most `MAX_PHOTO_REFS`, 300).
+- Readiness on ([Check Scope](check-scope.md), "Ready to review?"): with a room chosen, "Photos still
+  needed in {room}" lists the baseline shots (overview, affected surface, moisture meter) the
+  readiness check lacks for it; each button selects that shot tag and moves focus to the camera. A
+  Fix link from [Finish](finish.md) opens this tab with the room and shot already chosen.
 
 ## Key actions and server routes
 
