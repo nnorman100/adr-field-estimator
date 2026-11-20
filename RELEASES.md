@@ -83,6 +83,8 @@ Before promoting a backend, complete the
 
 ### ADR price book
 
+Historical: these steps no longer run. `scripts/migrate_price_books.py` imports `backend/adr_price_book.py`, which was removed from the repository (see [pricing source](docs/pricing-source.md)).
+
 ADR's rates are ADR's own price-book data, and no other company falls back to them. ADR already holds its book from the 2026-10-26 setup row below, so this check should find nothing to write. Run it after the release that removes the default, with the owner's go for any `--apply`. It prints only counts and content hashes, and writes only ADR's records.
 
 1. Dry run, which writes nothing:

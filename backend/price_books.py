@@ -2,7 +2,7 @@
 
 Formulas, factors, default quantities and mandatory wording stay in code. A company
 may replace only the unit prices listed here, and the catalog itself holds no prices:
-each company publishes its own (ADR's starting rates live in adr_price_book.py).
+each company publishes its own (the file that held ADR's starting rates was removed from the repository).
 """
 
 import hashlib

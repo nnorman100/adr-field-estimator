@@ -114,10 +114,10 @@ agreements, evidence, photos, coordination, delivery, prices, drying-watch, outc
 records: every request answers 403 or 404, no lists contain A's records, and a superadmin's view
 of A is audited.
 
-Existing proof: `tests/test_workspaces_part1.py::test_roles_and_cross_company_scoped_jobs`,
-`tests/test_workspaces_part2.py::test_signed_job_records_evidence_and_coordination_stay_scoped`,
+Existing proof: `tests/test_workspaces_part2.py::test_signed_job_records_evidence_and_coordination_stay_scoped`,
 `tests/test_job_archive_and_customer.py::test_other_company_owner_cannot_reach_this_company`,
 `tests/test_outcomes.py` (isolation and 404 cases), `tests/test_drying_watch.py::test_lists_are_company_scoped_and_support_is_read_only`,
+Historical, removed with the first company's price book files: `tests/test_workspaces_part1.py` and
 `tests/browser/workspaces.spec.js` (branding and account-switch isolation).
 **[open]** These run against the in-memory fake store, not the Firestore emulator. No test was
 found that fetches company A's photo bytes or full-size original as company B, and no rules test
@@ -160,10 +160,9 @@ second signature is rejected and the stored records are unchanged.
 Existing proof: `tests/test_firestore_emulator.py::test_concurrent_signing_retries_return_one_receipt`,
 `::test_signed_records_cannot_be_altered`, `::test_link_and_device_signatures_race_to_one_agreement`,
 `::test_link_signature_and_edit_race_never_both_land`,
-`tests/test_backend.py::test_authenticated_durable_flow_and_immutable_retry`,
 `tests/test_signing_links.py::test_link_reads_the_bound_documents_and_signs_once_as_the_technician`,
-`tests/browser/workflows.spec.js` (failed save keeps the retry reference),
-`tests/browser/signing-link.spec.js` (homeowner retry).
+`tests/browser/signing-link.spec.js` (homeowner retry). Historical, removed with the first company's price book
+files: `tests/test_backend.py` and `tests/browser/workflows.spec.js` (failed save keeps the retry reference).
 **[open]** No browser test double-clicks the sign buttons (the buttons disable during the call);
 the old app has no HTTP-level race of two simultaneous homeowner signing requests (it is tested at
 store level in the emulator). The rebuilt app closes this at its route handlers: `web/tests/db/signing-links.test.ts`
@@ -190,8 +189,8 @@ and no false conflict.
 Existing proof: `tests/browser/photo-originals.spec.js` (a failed photo upload resends only that
 photo; an original whose copy reached the server unseen), `tests/browser/offline-notes.spec.js`
 (a note saved with its response lost appears once), `tests/browser/scope-items-office.spec.js` (a lost
-create response), `tests/browser/workflows.spec.js` and `local-drafts.spec.js` (offline draft,
-reconnection), `tests/test_inspection_store.py::test_photo_retry_same_id_cannot_substitute_room_or_evidence`,
+create response), `tests/browser/local-drafts.spec.js` (offline draft, reconnection; the earlier
+`tests/browser/workflows.spec.js` coverage is historical, removed), `tests/test_inspection_store.py::test_photo_retry_same_id_cannot_substitute_room_or_evidence`,
 `tests/test_photo_originals.py::test_a_retried_original_that_is_already_stored_succeeds`,
 `tests/test_voice_notes.py::test_retried_voice_note_is_not_transcribed_or_appended_twice`.
 **[open]** Not covered by any test: a lost response to the autosave `PUT` after the server saved
