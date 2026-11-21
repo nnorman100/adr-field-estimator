@@ -2,6 +2,7 @@ import type { User } from 'firebase/auth';
 import { afterEach, expect, it, vi } from 'vitest';
 import { sendPhoto, sendQueuedPhoto } from '@/lib/field/api';
 import { appCheckHeaders } from '@/lib/app-check-client';
+import { CLIENT_EPOCH, CLIENT_EPOCH_HEADER } from '@/lib/app-version';
 
 vi.mock('@/lib/app-check-client', () => ({ appCheckHeaders: vi.fn() }));
 vi.mock('@/lib/firebase-client', () => ({ callApi: vi.fn() }));
@@ -36,14 +37,15 @@ it('uses the signed-in photo route, refreshes a refused App Check credential, an
   expect(await sendQueuedPhoto(user, entry, photo, signal)).toEqual({ ok: true, value: { photoId: entry.photoId, sha256: entry.sha256 } });
   expect(fetch).toHaveBeenCalledTimes(2);
   for (const [index, token] of ['old-test-token', 'new-test-token'].entries()) {
-    expect(fetch).toHaveBeenNthCalledWith(index + 1, '/api/jobs/job/photos/photo?kind=original', {
-      method: 'PUT', cache: 'no-store', signal, body: new Uint8Array([7, 8, 9]),
-      headers: {
-        Authorization: 'Bearer test-id',
-        'Content-Type': 'image/jpeg',
-        'X-Photo-Sha256': entry.photoSha256,
-        'X-Firebase-AppCheck': token,
-      },
+    const [path, init] = fetch.mock.calls[index] as [string, RequestInit];
+    expect(path).toBe('/api/jobs/job/photos/photo?kind=original');
+    expect(init).toMatchObject({ method: 'PUT', cache: 'no-store', signal, body: new Uint8Array([7, 8, 9]) });
+    expect(Object.fromEntries(new Headers(init.headers))).toEqual({
+      authorization: 'Bearer test-id',
+      'content-type': 'image/jpeg',
+      'x-photo-sha256': entry.photoSha256,
+      'x-firebase-appcheck': token,
+      [CLIENT_EPOCH_HEADER.toLowerCase()]: String(CLIENT_EPOCH),
     });
   }
 });
