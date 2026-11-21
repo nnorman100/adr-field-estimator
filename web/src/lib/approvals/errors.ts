@@ -27,7 +27,8 @@ export const APPROVAL_ERRORS = {
   // A custom multiplier is already proposed for that line (one per line, owner decision D2).
   line_already_proposed: 409,
   no_hourly_rate: 409,
-  // The record already has the most rows of that kind the estimate takes (30 hourly; 30 unit and flat).
+  // The record already has the most rows of that kind the estimate takes (30 hourly; 30 unit and flat; 3,000 custom
+  // multipliers). An edit that replaces one is not a new row, so it is allowed at the limit.
   too_many_additions: 409,
   // The proposal named was already ended or approved, so it cannot change that way.
   approval_closed: 409,

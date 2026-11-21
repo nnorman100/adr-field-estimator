@@ -24,7 +24,7 @@ import { draftFieldSchema, fieldId, photoFieldSchema, roomFieldSchema, type Draf
 // - A part-filled claim asks for its other fields by key. No published price version asks the owner
 //   to set prices.
 // - A check the server cannot run is listed as unavailable, never as a gap: the setup reading while
-//   the drying log is not there (S5b-10) or could not be read, the meter-photo reading status (the S7
+//   the service has no drying log source or the read failed (src/lib/drying/setup.ts, S5b-10), the meter-photo reading status (the S7
 //   meter workflow stores none yet), and the price basis while there is no readable price version.
 
 /** The area a company's price version prices a water room's per-room items by (src/engine/table.ts). */

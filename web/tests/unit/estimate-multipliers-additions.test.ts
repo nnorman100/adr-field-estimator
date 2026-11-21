@@ -1,7 +1,9 @@
 // Custom multipliers and unit and flat additions (S5 plan step S5b-8, Engine B; owner decisions B1 to B3,
 // 2026-11-20). Every expected number is worked by hand in the comment beside it.
-// B1: an approved custom multiplier applies like the category multiplier, to the line total after waste and
-// bracket pricing, at both range ends, before overhead and profit, tax, minimums and after-hours.
+// B1: an approved custom multiplier applies like the category multiplier, to the line total after waste, at
+// both range ends, before overhead and profit, tax, minimums and after-hours. Owner answer 2026-11-21, option
+// (a): on a bracket-priced line it multiplies the unit price before the bands are allocated, as the category
+// multiplier does. One that matches no line is refused.
 // B2: unit and flat additions are taxed by their own flag, carry overhead and profit, count toward the job and
 // trade minimums, take no after-hours and do not grow at the range's high end.
 // B3: printed as "{description}: {quantity} {unit} at ${price}/{unit}, approved on {date}." and
@@ -94,13 +96,12 @@ describe('custom multipliers (B1)', () => {
     expect(result.totals.low).toMatchObject({ minimum_charge: '0.00', total: '400.00' });
   });
 
-  it('changes nothing when it matches no line, and says so to the staff', () => {
-    const result = priced(
+  it('refuses an approved multiplier that matches no line', () => {
+    const result = priceEstimate(
       table([item('demo')]),
       withApprovals([room('Kitchen', { unfinished_sf: 100 })], { line_multipliers: [{ item_id: 'demo', room: 'Hall', multiplier: '2' }] }),
     );
-    expect(result.totals.low.total).toBe('200.00');
-    expect(JSON.stringify(result)).toContain('unmatched_line_multiplier');
+    expect(result).toMatchObject({ ok: false, stage: 'pricing' });
   });
 
   it('refuses a multiplier at or below 1, above 3, or with more than two decimal places', () => {
@@ -112,35 +113,49 @@ describe('custom multipliers (B1)', () => {
 });
 
 describe('custom multipliers with brackets, duplicates and the letter (Engine B review)', () => {
-  const bands = [
-    { up_to_sf: 100, unit_price: '10.00' },
-    { up_to_sf: null, unit_price: '1.00' },
-  ];
   const uncertainty = (hidden: Obj) => ({
     estimate_mode: 'range',
     assist: { drying_days: 3, range_method: 'uncertainty', extra_drying_days: 0, hidden_damage_percent: hidden },
   });
 
-  it('ranks bracket bands by the billed rate after the factor, so the high end is not below the low end', () => {
-    // Two 100 sq ft rooms, a $10.00 first band and $1.00 beyond. The Kitchen is x3, so it bills the most per
-    // square foot and takes the $10.00 band: 100 x $10.00 x 3 = $3,000.00; the Hall's 100 sq ft at $1.00 = $100.00.
-    // Low $3,100.00. Hidden damage 10% in the Hall only: the Hall grows to $110.00; the Kitchen does not grow.
-    // High $3,000.00 + $110.00 = $3,110.00 (ranked without the factor the Hall would take the dear band: $1,400.00).
+  it('takes the factor in the unit price before a bracket line is allocated, so the high end is not below the low end', () => {
+    // Two 1 sq ft rooms in one $1.04 band, 10% waste, Kitchen x2. Kitchen's unit price is 2: 1 x $2.08 x 1.1 = $2.288,
+    // billed $2.29. The Hall: $2.288 + $1.144 = $3.432, billed $3.43 cumulatively, so $1.14. Low $3.43.
+    // No hidden damage: the high end is the same $3.432 billed, $3.43.
+    const result = priced(
+      table([item('demo', { unit_price: '', waste_percent: '10', price_brackets: [{ up_to_sf: null, unit_price: '1.04' }] })], uncertainty({ '1': '0', '2': '0', '3': '0' })),
+      withApprovals([room('Kitchen', { unfinished_sf: 1 }), room('Hall', { unfinished_sf: 1 })], { line_multipliers: [{ item_id: 'demo', room: 'Kitchen', multiplier: '2' }] }),
+    );
+    expect(lineTotals(result)).toEqual([
+      'Kitchen: demo (tiered bracket: over 0 sq ft) x2 = 2.29',
+      'Hall: demo (tiered bracket: over 0 sq ft) = 1.14',
+    ]);
+    expect(result.totals.low.total).toBe('3.43');
+    expect(result.totals.high?.total).toBe('3.43');
+  });
+
+  it('ranks the factored line first and gives it the first band; the high end follows', () => {
+    // $1.00 for the first 100 sq ft and $10.00 beyond; two 100 sq ft rooms, the Kitchen x3 (unit price 3), the Hall 1.
+    // The Kitchen ranks first and takes the first band: 100 x $1.00 x 3 = $300.00. The Hall takes the next 100 sq ft
+    // at $10.00 = $1,000.00. Low $1,300.00. Hidden damage 10% in the Hall only: $1,100.00. High $300.00 + $1,100.00 = $1,400.00.
+    const bands = [
+      { up_to_sf: 100, unit_price: '1.00' },
+      { up_to_sf: null, unit_price: '10.00' },
+    ];
     const result = priced(
       table([item('demo', { unit_price: '', price_brackets: bands })], uncertainty({ '1': '0', '2': '10', '3': '0' })),
       withApprovals([room('Kitchen', { unfinished_sf: 100 }), room('Hall', { category: 2, unfinished_sf: 100 })], {
         line_multipliers: [{ item_id: 'demo', room: 'Kitchen', multiplier: '3' }],
       }),
     );
-    expect(result.totals.low.total).toBe('3100.00');
-    expect(result.totals.high?.total).toBe('3110.00');
+    expect(result.totals.low.total).toBe('1300.00');
+    expect(result.totals.high?.total).toBe('1400.00');
   });
 
-  it('keeps the high end at the billed amount of a multiplied bracket line, rounded as the low end is', () => {
-    // One square foot at $1.05 with 10% waste is $1.155, billed $1.16 after bracket pricing; x2 = $2.32 low.
-    // The high end grows nothing (0% hidden damage) and works from the billed $2.32, not from $1.155 x 2 = $2.31.
+  it('keeps a non-bracketed line as B1 says: its total after waste, rounded to the cent, times the factor', () => {
+    // One square foot at $1.05 with 10% waste is $1.155, rounded $1.16; x2 = $2.32. The high end grows nothing: $2.32.
     const result = priced(
-      table([item('demo', { unit_price: '', waste_percent: '10', price_brackets: [{ up_to_sf: null, unit_price: '1.05' }] })], uncertainty({ '1': '0', '2': '0', '3': '0' })),
+      table([item('demo', { unit_price: '1.05', waste_percent: '10' })], uncertainty({ '1': '0', '2': '0', '3': '0' })),
       withApprovals([room('Kitchen', { unfinished_sf: 1 })], { line_multipliers: [{ item_id: 'demo', room: 'Kitchen', multiplier: '2' }] }),
     );
     expect(result.totals.low.total).toBe('2.32');
@@ -148,17 +163,20 @@ describe('custom multipliers with brackets, duplicates and the letter (Engine B 
   });
 
   it('refuses a second multiplier for the same line, a job-wide one included, and reads rooms as the lines do', () => {
-    const rooms = [room('Kitchen', { unfinished_sf: 100 })];
-    const twice = (first: Obj, second: Obj) => priceEstimate(table([item('demo')]), withApprovals(rooms, { line_multipliers: [first, second] }));
+    const rooms = [room('Kitchen', { unfinished_sf: 100 }), room('Hall', { unfinished_sf: 100 })];
+    const twice = (first: Obj, second: Obj) => priceEstimate(table([item('demo'), item('other')]), withApprovals(rooms, { line_multipliers: [first, second] }));
     expect(twice({ item_id: 'demo', room: 'Kitchen', multiplier: '2' }, { item_id: 'demo', room: ' kitchen ', multiplier: '2' }).ok).toBe(false);
     expect(twice({ item_id: 'demo', room: null, multiplier: '2' }, { item_id: 'demo', room: null, multiplier: '1.5' }).ok).toBe(false);
-    expect(twice({ item_id: 'demo', room: 'Kitchen', multiplier: '2' }, { item_id: 'demo', room: null, multiplier: '2' }).ok).toBe(true);
+    expect(twice({ item_id: 'demo', room: 'Kitchen', multiplier: '2' }, { item_id: 'demo', room: 'Hall', multiplier: '2' }).ok).toBe(true);
     expect(twice({ item_id: 'demo', room: 'Kitchen', multiplier: '2' }, { item_id: 'other', room: 'Kitchen', multiplier: '2' }).ok).toBe(true);
   });
 
   it('takes a multiplier on every line of a large job', () => {
-    const many = Array.from({ length: 300 }, (_, index) => ({ item_id: `item_${index}`, room: 'Kitchen', multiplier: '2' }));
-    expect(priceEstimate(table([item('demo')]), withApprovals([room('Kitchen', { unfinished_sf: 100 })], { line_multipliers: many })).ok).toBe(true);
+    const ids = Array.from({ length: 150 }, (_, index) => `item_${index}`);
+    const items = ids.map((id) => item(id));
+    const many = ids.map((id) => ({ item_id: id, room: 'Kitchen', multiplier: '2' }));
+    const result = priced(table(items), withApprovals([room('Kitchen', { unfinished_sf: 100 })], { line_multipliers: many }));
+    expect(result.totals.low.total).toBe('60000.00');
   });
 
   it('prints the factor in the proposal letter beside the line', () => {
@@ -238,5 +256,44 @@ describe('unit and flat additions (B2, B3)', () => {
       const result = priceEstimate(table([item('demo')]), withApprovals([room('Kitchen')], { additions: [bad] }));
       expect(result.ok).toBe(false);
     }
+  });
+
+  it('refuses a unit or description that is blank, or holds a control or line-separator character', () => {
+    for (const bad of [unit({ unit: ' ' }), unit({ unit: '\u00a0' }), unit({ unit: 'ba\ng' }), flat({ description: 'Permit\nfiling' }), flat({ description: '\u3000' })]) {
+      expect(priceEstimate(table([item('demo')]), withApprovals([room('Kitchen')], { additions: [bad] })).ok).toBe(false);
+    }
+  });
+
+  describe('when the proposal hides line prices', () => {
+    const letter = (showLines: boolean, additions: Obj[]) =>
+      priced(
+        table([item('demo')], { show_line_breakdown: showLines }),
+        documentJob([room('Kitchen', { unfinished_sf: 50 })], { additions }, { settings: { proposal_layout: 'letter', company_clauses: [] }, rooms: [{ name: 'Kitchen', findings: '', prep_tasks: [] }] }),
+      );
+
+    it('prints a unit and a flat addition without their price', () => {
+      const hidden = letter(false, [unit(), flat()]).documents!;
+      expect(hidden.proposal.letter?.job_work.map((line) => line.text)).toEqual([
+        'Haul-away bags: 12 bag, approved on 2026-11-20.',
+        'Permit filing, approved on 2026-11-20.',
+      ]);
+      expect(JSON.stringify(hidden.proposal)).not.toContain('$4.50');
+      expect(JSON.stringify(hidden.proposal)).not.toContain('$150.00');
+    });
+
+    it('keeps the priced wording when line prices are shown', () => {
+      const shown = letter(true, [unit(), flat()]).documents!;
+      expect(shown.proposal.letter?.job_work.map((line) => line.text)).toEqual([
+        'Haul-away bags: 12 bag at $4.50/bag, approved on 2026-11-20.',
+        'Permit filing: $150.00, approved on 2026-11-20.',
+      ]);
+    });
+  });
+
+  it('counts an approved addition as covering an unpriced-work note of its description, and a pending one not', () => {
+    const note = (additions: Obj[]) =>
+      priced(table([item('demo')]), documentJob([room('Kitchen', { unfinished_sf: 50 })], { additions }, { ai: { summary: 'Reviewed.', suggestions: [], unpriced_work: ['Permit filing'] } })).documents!;
+    expect(note([flat()])).toMatchObject({ unpriced_work: [], signable: true });
+    expect(note([flat({ approved_at: null })])).toMatchObject({ pending_extras: 1, signable: false });
   });
 });

@@ -54,6 +54,7 @@ export function useFieldEdit(job: JobContext) {
       void acknowledged.then(
         () => {
           acknowledgedBy();
+          job.readiness.recheck();
           if (current()) setNotice(saved);
         },
         refused,

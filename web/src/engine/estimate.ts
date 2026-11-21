@@ -5,6 +5,7 @@ import { Dec, money } from './decimal';
 import { isObj, type JObj, type Json } from './json';
 import { checkOverrides, checkRoomItems, distinctRooms, validateInspection, type Inspection } from './inspection';
 import { checkPublishable, contentHash, effectiveTable, parseTable, type Table } from './table';
+import { priceScopeV2 } from './price-v2';
 import { priceAndRange, type End, type Priced } from './totals';
 import { advisoryWarnings } from './warnings';
 import { makeDocuments } from './documents';
@@ -267,6 +268,31 @@ function savedInspection(raw: Json, table: Table): Inspection {
   checkOverrides(data);
   checkRoomItems(data, new Set(table.items.filter((item) => item.quantity_source === 'room:typed').map((item) => item.item_id)));
   return data;
+}
+
+/**
+ * The lines a saved draft's scope builds from a published table, each as its item and room: no totals and no
+ * documents, so a draft whose work prices to nothing has none and is not refused. A proposal on a line is
+ * checked against these (S5b-8).
+ */
+export function scopeLines(table: Json, job: EstimateJob): { ok: true; lines: Array<{ item_id: string | null; room: string | null }> } | Refusal {
+  let used: Table;
+  try {
+    used = effectiveTable(parseTable(table));
+  } catch (error) {
+    return { ok: false, stage: 'table', error: message(error) };
+  }
+  let data: Inspection;
+  try {
+    data = savedInspection(job.inspection, used);
+  } catch (error) {
+    return { ok: false, stage: 'inspection', error: message(error) };
+  }
+  try {
+    return { ok: true, lines: priceScopeV2(data, used.items, used.policy).lines.map((line) => ({ item_id: line.itemId, room: line.room })) };
+  } catch (error) {
+    return { ok: false, stage: 'pricing', error: message(error) };
+  }
 }
 
 /** Price a saved draft from a published table. The table's zero prices were confirmed when it was published. */

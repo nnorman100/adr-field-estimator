@@ -3,6 +3,7 @@ import { companyFeatureFlags, jobPriceApprovals } from '@/db/schema';
 import type { CompanyTransaction } from '@/db/tenant';
 import { Dec, money } from '@/engine/decimal';
 import type { EstimateJob, Json } from '@/engine/estimate';
+import { EstimateError } from '@/lib/estimates/errors';
 import type { Snapshot } from '@/lib/submissions/snapshot';
 
 // Whether the company's `priced_extras` switch is on, read inside the caller's transaction after its
@@ -124,13 +125,14 @@ export function roomNamesOf(snapshot: Pick<Snapshot, 'field'>): ReadonlyMap<stri
 /**
  * The job to price with its approvals: the approved named adjustment, and the hourly, unit and flat additions and
  * the approved custom multipliers in place of any in the record. A multiplier names its room by the record's room
- * name; one whose room the record does not have is left out (the proposal checked it, so this cannot happen).
+ * name; one whose room the record does not have is refused, as an estimate that cannot be priced (the proposal checked
+ * it, so this cannot happen).
  */
 export function withApprovals(job: EstimateJob, approved: Approved, rooms: ReadonlyMap<string, string>): EstimateJob {
   const lineMultipliers: Json[] = [];
   for (const entry of approved.multipliers) {
-    const room = entry.roomId === null ? null : (rooms.get(entry.roomId) ?? undefined);
-    if (room === undefined) continue;
+    const room = entry.roomId === null ? null : rooms.get(entry.roomId);
+    if (room === undefined) throw new EstimateError('estimate_refused', { stage: 'pricing', message: 'An approved custom multiplier names a room the record does not have.' });
     lineMultipliers.push({ item_id: entry.itemId, room, multiplier: entry.multiplier });
   }
   const inspection = {

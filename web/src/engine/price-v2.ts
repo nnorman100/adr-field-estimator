@@ -12,7 +12,7 @@ import {
   type PriceLine,
 } from './values';
 import type { Inspection, LineMultiplier, Room } from './inspection';
-import { fieldDec, roomNumber } from './inspection';
+import { fieldDec, multiplierKey, roomNumber } from './inspection';
 import { affectedBandOf, roomTypeOf, sizeTierOf } from './rooms';
 import { pickPriceRow } from './row-pick';
 import {
@@ -311,10 +311,10 @@ export function jobSf(data: Inspection, items: Item[], policy: Policy): Dec {
   return sumDec([...areas.values()], typed);
 }
 
-function score(line: PriceLine, growth?: (line: PriceLine) => Dec, factor?: (line: PriceLine) => Dec): Dec {
+function score(line: PriceLine, growth?: (line: PriceLine) => Dec): Dec {
   const waste = ONE.add(line.waste.div(HUNDRED));
   const grown = ONE.add(growth ? growth(line) : ZERO);
-  return line.unitPrice.mul(waste).mul(grown).mul(factor ? factor(line) : ONE);
+  return line.unitPrice.mul(waste).mul(grown);
 }
 
 /**
@@ -327,7 +327,6 @@ function bracketLines(
   policy: Policy,
   jobArea: Dec | null,
   growth?: (line: PriceLine) => Dec,
-  factor?: (line: PriceLine) => Dec,
 ): PriceLine[] {
   const mode = policy.bracket_mode;
   const whole = mode === 'whole-job';
@@ -335,7 +334,7 @@ function bracketLines(
   let used = ZERO;
   let exact = ZERO;
   let rounded = ZERO;
-  const ordered = [...lines].sort((left, right) => score(right, growth, factor).cmp(score(left, growth, factor)));
+  const ordered = [...lines].sort((left, right) => score(right, growth).cmp(score(left, growth)));
   const result: PriceLine[] = [];
   for (const line of ordered) {
     let remaining = line.quantity;
@@ -425,16 +424,26 @@ export function priceScopeV2(
     }
   }
   const area = policy.bracket_mode === 'whole-job' ? jobSf(data, items, policy) : null;
-  const factor = (line: PriceLine): Dec => multiplierOf(data, line)?.multiplier ?? ONE;
+  const multipliers = new Map((data.lineMultipliers ?? []).map((entry) => [multiplierKey(entry.itemId, entry.room), entry]));
+  const matched = new Set<string>();
   const lines: PriceLine[] = [];
+  const place = (brackets: PriceBand[] | null | undefined, group: PriceLine[]): void => {
+    if (!brackets) {
+      lines.push(...group.map((line) => multiplied(line, multipliers, matched)));
+      return;
+    }
+    for (const line of group) surcharge(line, multipliers, matched);
+    lines.push(...bracketLines(brackets, group, policy, area, growth).map(labelled));
+  };
   for (const [item, itemLines] of priced) {
     if (!item.rows) {
-      lines.push(...(item.price_brackets ? bracketLines(item.price_brackets, itemLines, policy, area, growth, factor) : itemLines));
+      place(item.price_brackets, itemLines);
       continue;
     }
-    for (const [brackets, group] of byRow(item, itemLines)) {
-      lines.push(...(brackets ? bracketLines(brackets, group, policy, area, growth, factor) : group));
-    }
+    for (const [brackets, group] of byRow(item, itemLines)) place(brackets, group);
+  }
+  for (const key of multipliers.keys()) {
+    if (!matched.has(key)) throw new Error('An approved custom multiplier matches no priced line.');
   }
   for (const extra of data.extras) {
     if (!extra.approval) continue;
@@ -459,7 +468,6 @@ export function priceScopeV2(
       area: null,
     });
   }
-  applyLineMultipliers(lines, data, warnings);
   for (const addition of data.additions ?? []) if (addition.approvedAt !== null) lines.push(additionLine(addition, extrasItem));
   return { lines, warnings };
 }
@@ -468,36 +476,33 @@ export function priceScopeV2(
 export const ADDITION = 'ADDITION';
 
 /**
- * Each approved custom multiplier (S5b-8, owner decision B1) on the lines it names: the item's lines in
- * that room, or its job-wide lines. Like the category multiplier it applies at both ends of the range and
- * before overhead and profit, tax, minimums and after-hours, but to the line as priced: its unit price is
- * multiplied and its total, after waste and bracket pricing, is multiplied and rounded to the cent. The line
- * keeps its own description, with "x{multiplier}" beside it. One that matches no line changes nothing and
- * says so.
+ * An approved custom multiplier (S5b-8) on the one line it names: an item's line in one room, or its
+ * job-wide line. Like the category multiplier it applies at both ends of the range and before overhead and
+ * profit, tax, minimums and after-hours. A bracket-priced line takes it in its unit price, before its bands
+ * are allocated, as the category multiplier is; any other line takes it on its total, after waste, rounded
+ * to the cent. The line keeps its own description, with "x{multiplier}" beside it.
  */
-function applyLineMultipliers(lines: PriceLine[], data: Inspection, warnings: EngineWarning[]): void {
-  for (const entry of data.lineMultipliers ?? []) {
-    let matched = false;
-    for (const line of lines) {
-      if (!targets(entry, line)) continue;
-      matched = true;
-      line.unitPrice = line.unitPrice.mul(entry.multiplier);
-      line.total = money(line.total.mul(entry.multiplier));
-      line.multiplier = entry.multiplier;
-      line.description = `${line.description} x${entry.multiplier.normalize().format('f')}`;
-    }
-    if (!matched) warnings.push({ code: 'unmatched_line_multiplier', item_id: entry.itemId, room: entry.room });
-  }
+function surcharge(line: PriceLine, multipliers: Map<string, LineMultiplier>, matched: Set<string>): LineMultiplier | undefined {
+  if (line.itemId === null) return undefined;
+  const key = multiplierKey(line.itemId, line.room);
+  const entry = multipliers.get(key);
+  if (!entry) return undefined;
+  matched.add(key);
+  line.unitPrice = line.unitPrice.mul(entry.multiplier);
+  line.multiplier = entry.multiplier;
+  return entry;
 }
 
-function targets(entry: LineMultiplier, line: PriceLine): boolean {
-  if (line.itemId !== entry.itemId) return false;
-  return (line.room === null ? null : roomKey(line.room)) === (entry.room === null ? null : roomKey(entry.room));
+function multiplied(line: PriceLine, multipliers: Map<string, LineMultiplier>, matched: Set<string>): PriceLine {
+  const entry = surcharge(line, multipliers, matched);
+  if (!entry) return line;
+  line.total = money(line.total.mul(entry.multiplier));
+  return labelled(line);
 }
 
-/** The approved multiplier on a line, if any; the inspection holds at most one per line. */
-function multiplierOf(data: Inspection, line: PriceLine): LineMultiplier | undefined {
-  return (data.lineMultipliers ?? []).find((entry) => targets(entry, line));
+function labelled(line: PriceLine): PriceLine {
+  if (line.multiplier) line.description = `${line.description} x${line.multiplier.normalize().format('f')}`;
+  return line;
 }
 
 /**
@@ -511,15 +516,18 @@ function additionLine(addition: NonNullable<Inspection['additions']>[number], ex
   const price = '$' + addition.price.format('.2f');
   const unit = addition.kind === 'unit';
   const quantity = unit ? addition.quantity! : ONE;
+  const quantityText = unit ? `${addition.quantity!.normalize().format('f')} ${addition.unit!}` : '';
   const description = unit
-    ? `${addition.description}: ${addition.quantity!.normalize().format('f')} ${addition.unit!} at ${price}/${addition.unit!}, approved on ${date}.`
+    ? `${addition.description}: ${quantityText} at ${price}/${addition.unit!}, approved on ${date}.`
     : `${addition.description}: ${price}, approved on ${date}.`;
+  const withoutPrice = unit ? `${addition.description}: ${quantityText}, approved on ${date}.` : `${addition.description}, approved on ${date}.`;
   return {
     code: ADDITION,
     itemId: null,
     group: EXTRAS,
     bucket: bucketOf(EXTRAS, ADDITION),
     description,
+    withoutPrice,
     quantity,
     unit: unit ? addition.unit! : 'each',
     unitPrice: addition.price,
@@ -537,7 +545,6 @@ function additionLine(addition: NonNullable<Inspection['additions']>[number], ex
 }
 
 export function exactAmount(line: PriceLine): Dec {
-  if (line.multiplier) return line.total;
   return line.quantity.mul(line.unitPrice).mul(ONE.add(line.waste.div(HUNDRED)));
 }
 

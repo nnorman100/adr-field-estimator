@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto';
 import { and, asc, count, eq, inArray, isNotNull, isNull } from 'drizzle-orm';
 import { auditEvents, companies, jobEstimates, jobPriceApprovals, jobSubmissions, memberships } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
-import { priceEstimate, type EstimateJob, type Json } from '@/engine/estimate';
+import { scopeLines, type EstimateJob, type Json } from '@/engine/estimate';
+import { MAX_LINE_MULTIPLIERS } from '@/engine/inspection';
 import type { Table } from '@/engine/table';
 import { collapse } from '@/engine/values';
 import type { Capability } from '@/lib/access';
@@ -184,12 +185,12 @@ async function recordPricing(
     if (error instanceof SnapshotError || error instanceof FieldMapError || error instanceof ZodError) throw new EstimateError('record_unreadable');
     throw error;
   }
-  const estimate = priceEstimate(content, job);
-  if (!estimate.ok) {
-    if (estimate.stage === 'table') throw new EstimateError('prices_unreadable');
-    throw new EstimateError('estimate_refused', { stage: estimate.stage, message: estimate.error });
+  const scoped = scopeLines(content, job);
+  if (!scoped.ok) {
+    if (scoped.stage === 'table') throw new EstimateError('prices_unreadable');
+    throw new EstimateError('estimate_refused', { stage: scoped.stage, message: scoped.error });
   }
-  return { rooms: roomNamesOf(snapshot), lines: estimate.lines };
+  return { rooms: roomNamesOf(snapshot), lines: scoped.lines };
 }
 
 // The table's additional work rate: its one enabled `extras` item's price, which is per hour.
@@ -281,6 +282,7 @@ export function approvalsService(db: Database): ApprovalsService {
         (line) => line.item_id === input.itemId && (roomName === null ? line.room === null : line.room !== null && collapse(line.room) === collapse(roomName)),
       );
       if (!priced) throw new ApprovalError('no_such_line');
+      if ((await openCount(['line_multiplier'])) >= MAX_LINE_MULTIPLIERS) throw new ApprovalError('too_many_additions');
       // One open multiplier per line (D2): a second proposal for the same line is refused.
       const [same] = await tx
         .select({ id: jobPriceApprovals.id })

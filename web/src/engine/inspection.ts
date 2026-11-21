@@ -4,7 +4,7 @@
 import { z } from 'zod';
 
 import { Dec, ZERO } from './decimal';
-import { chars, collapse, oneLine, printable, type Category, type MoldCondition, type SizeTier } from './values';
+import { chars, collapse, enteredText, oneLine, printable, type Category, type MoldCondition, type SizeTier } from './values';
 
 export class Reject extends Error {
   constructor(message: string) {
@@ -282,6 +282,14 @@ const EXTRA = z
     }),
   );
 
+/** The key one multiplier holds: an item in one room (by the room's name as the matcher reads it), or the item job-wide. */
+export function multiplierKey(itemId: string, room: string | null): string {
+  return `${itemId}\u0000${room === null ? '' : `r${collapse(room)}`}`;
+}
+
+/** The most approved custom multipliers one inspection takes. */
+export const MAX_LINE_MULTIPLIERS = 3000;
+
 const LINE_MULTIPLIER = z
   .strictObject({
     item_id: z.string().regex(ITEM_ID),
@@ -294,9 +302,9 @@ const ADDITION = z
   .strictObject({
     id: z.string().regex(HEX_ID),
     kind: z.enum(['unit', 'flat']),
-    description: text(1, 300).refine((value) => oneLine(value) !== '' && printable(oneLine(value)), { message: 'description' }),
+    description: text(1, 300).refine((value) => enteredText(value) && printable(oneLine(value)), { message: 'description' }),
     quantity: amount('0', '100000', { above: true, places: 2 }).nullish(),
-    unit: text(1, 20).nullish(),
+    unit: text(1, 20).refine(enteredText, { message: 'unit' }).nullish(),
     price: amount('0', '100000', { above: true, places: 2 }),
     taxable: z.boolean(),
     approved_at: ISO_TIME.nullable(),
@@ -403,9 +411,9 @@ const INSPECTION = z.strictObject({
   extras: z.array(EXTRA).max(30).default([]),
   line_multipliers: z
     .array(LINE_MULTIPLIER)
-    .max(3000)
+    .max(MAX_LINE_MULTIPLIERS)
     .refine(
-      (entries) => new Set(entries.map((entry) => `${entry.itemId}\u0000${entry.room === null ? '' : `r${collapse(entry.room)}`}`)).size === entries.length,
+      (entries) => new Set(entries.map((entry) => multiplierKey(entry.itemId, entry.room))).size === entries.length,
       { message: 'one multiplier per line' },
     )
     .optional(),

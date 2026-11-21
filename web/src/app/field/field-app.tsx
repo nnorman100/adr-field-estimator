@@ -27,6 +27,7 @@ export function FieldApp({ me }: { me: DsMe }) {
     return {
       user, db: field.client.db, client: field.client,
       companyId: identity.companyId, actorId: identity.actorId, role: identity.role, capabilities: field.me.capabilities,
+      readiness: field.gate.kind === 'open' && field.gate.facts.readiness === true,
       online: field.online, offlineCapture: field.offlineCapture,
     };
   }, [field, user]);
@@ -65,7 +66,7 @@ export function FieldApp({ me }: { me: DsMe }) {
       ) : place.view === 'new-job' ? (
         <NewJobView session={session} />
       ) : (
-        <JobScreens key={place.jobId} session={session} jobId={place.jobId} view={place.view} />
+        <JobScreens key={place.jobId} session={session} jobId={place.jobId} view={place.view} readinessFix={params.get('fix')} address={me.address} />
       )}
     </>
   );

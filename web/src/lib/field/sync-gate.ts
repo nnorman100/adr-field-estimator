@@ -1,4 +1,5 @@
 import { SESSION_RULES } from '@/lib/auth/policy';
+import { readinessEnabled } from '@/lib/readiness/feature';
 import { meOutcome, type MeOutcome } from '@/lib/sign-in/outcome';
 
 // The sync gate (S6-3; docs/plans/S6.md section 3). The field client starts with its network off,
@@ -31,9 +32,16 @@ export type MeAnswer = { status: number; body: unknown };
 
 export type AppCheckSeam = { mode: 'monitor' | 'enforce'; token(): Promise<unknown> };
 
-// What the server said about the person, kept in ds-me for the offline start.
-// `actorId`: the person's id in the company, from the same answer (field-sync.ts adds it).
-export type MeFacts = { companyId: string; companyName: string; role: string; capabilities: string[]; actorId?: string; expiresAt: number };
+// What /api/me said about the person. The live readiness flag is used only by screens.
+export type MeFacts = {
+  companyId: string;
+  companyName: string;
+  role: string;
+  capabilities: string[];
+  actorId?: string;
+  expiresAt: number;
+  readiness?: true;
+};
 
 export type GateState =
   | { kind: 'starting' }
@@ -87,7 +95,10 @@ export function judgeMe(answer: MeAnswer, now: number): Verdict {
   const expiresAt = typeof expires === 'string' ? Date.parse(expires) : NaN;
   if (!facts) return { kind: 'offline' };
   if (!Number.isFinite(expiresAt) || !accessCurrent(expiresAt, now)) return { kind: 'renewing' };
-  return { kind: 'open', facts: { ...facts, companyName: outcome.companyName, role: outcome.role, expiresAt } };
+  return {
+    kind: 'open',
+    facts: { ...facts, companyName: outcome.companyName, role: outcome.role, expiresAt, ...(readinessEnabled(answer.body) ? { readiness: true } : {}) },
+  };
 }
 
 // The offline `me` read (D7): a sign-in the phone saved stands in for the server while there is no

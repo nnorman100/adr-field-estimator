@@ -73,6 +73,9 @@ const JOB_REPRICE = { revision: 1, changeId: '4d8b2f60-9c1e-4a73-8b05-2e7a6c1d9f
 // S5b-8: a valid hourly proposal and an approval, so a refusal is the access rule's.
 const JOB_PROPOSAL = { id: '7a3c9e15-2b84-4d60-9f17-3e6a8c2d5b41', revision: 1, kind: 'hourly', description: 'Move contents', hours: '2' };
 const JOB_APPROVE = { revision: 1, approverName: 'Pat' };
+// A drying-log reading and a void (S5b-10): the suite's own ids, an air reading with no room.
+const JOB_READING = { id: '7e3c9a51-4b28-4d6f-8a10-2c5e7b9d3f46', kind: 'air', takenAt: '2026-11-20T09:30:00Z', temperatureF: 70, relativeHumidity: 50 };
+const JOB_READING_VOID = { changeId: '0f6b2d84-9a3c-4e71-b5d2-8c1e4a7f9b30', expectedState: 'active' };
 const JOB_SIGN = {
   id: '2d7f4a91-6c3b-4e85-9a12-7b5c8e0f3d64',
   estimateId: '5b8e1c47-3f2a-4d96-8e01-4c7a9b2d6f15',
@@ -172,6 +175,11 @@ export const MATRIX: readonly MatrixRow[] = [
   row('api/jobs/[jobId]/scope-lists', 'GET', 'company', { own: 'cross' }),
   // S5b-11 Ready to review?: read-only, behind the `readiness` switch; scope work on the job.
   row('api/jobs/[jobId]/readiness', 'GET', 'company', { own: 'cross' }),
+  // S5b-10: the drying log of another company's job is 404 to every role, and no reading is stored or
+  // voided; the bodies carry the suite's own ids.
+  row('api/jobs/[jobId]/drying-readings', 'GET', 'company', { own: 'cross' }),
+  row('api/jobs/[jobId]/drying-readings', 'POST', 'company', { body: JOB_READING, own: 'cross' }),
+  row('api/jobs/[jobId]/drying-readings/[readingId]/void', 'POST', 'company', { body: JOB_READING_VOID, own: 'cross' }),
   // S5a-11b: a signing link or document link of another company's job is 404 to every role, and
   // nothing is made; the bodies carry the suite's own ids.
   row('api/jobs/[jobId]/signing-link', 'POST', 'company', { body: JOB_LINK, own: 'cross' }),

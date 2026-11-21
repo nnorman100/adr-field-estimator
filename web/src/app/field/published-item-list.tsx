@@ -4,7 +4,17 @@ import { useEffect, useRef, useState } from 'react';
 import { companyAuth } from '@/lib/firebase-client';
 import { readPublishedItemList } from '@/lib/field/api';
 import type { User } from 'firebase/auth';
-import { eraseItemList, governing, readItemList, replaceItemList, type ItemList, type SavedList } from '@/lib/field/ds-prices';
+import {
+  eraseItemList,
+  governing,
+  readItemList,
+  refusalStamp,
+  replaceItemList,
+  unchanged,
+  type ItemList,
+  type SavedList,
+  type Stamp,
+} from '@/lib/field/ds-prices';
 import { ReopenTheApp } from '@/lib/field/idb';
 import type { FieldSession } from '@/lib/field/session';
 import { signInOf, stillSameSignIn, type SignIn } from '@/lib/field/sign-out';
@@ -50,8 +60,22 @@ function display(view: View): Display {
   return { list: current.list, notes: note ? [note] : [] };
 }
 
-function definitiveRefusal(answer: { status: number; code?: string }): boolean {
-  return answer.status === 403 || answer.status === 404 || (answer.status === 401 && answer.code === 'sign_in_revoked');
+// The 403 codes the server gives when the person, their account, the role or the company no longer
+// allows the list: the route's capability check (`not_allowed`) and the member route's identity
+// check (src/lib/auth/identity.ts, REFUSALS). A 403 or 404 from a captive portal or a proxy carries
+// none of them and is no answer.
+const ACCESS_REFUSALS = new Set([
+  'not_allowed', 'not_a_member', 'member_disabled', 'company_inactive', 'account_disabled', 'email_unverified', 'no_tenant', 'unknown_tenant',
+]);
+
+// What a refusal from the item-list route means for the copy on this phone. 'erase': the person may
+// no longer see this company's list. 'hide': the sign-in must be renewed, or completed with the
+// role's second step; the list is hidden now and the copy kept for after it.
+function refusalOf({ status, code }: { status: number; code?: string }): 'erase' | 'hide' | null {
+  if (code === undefined) return null;
+  if ((status === 403 && ACCESS_REFUSALS.has(code)) || (status === 404 && code === 'not_found') || (status === 401 && code === 'sign_in_revoked')) return 'erase';
+  if ((status === 401 && code === 'sign_in_again') || (status === 403 && code === 'second_step_required')) return 'hide';
+  return null;
 }
 
 export function PublishedItemList({ session }: { session: FieldSession }) {
@@ -105,17 +129,13 @@ function PublishedList({ session }: { session: FieldSession }) {
       setShown((before) => before.list?.versionId === next.list?.versionId && before.notes.join('\n') === next.notes.join('\n') ? before : next);
     }
 
-    function save(mine: { list: ItemList | null }, governs: () => boolean, from: SignIn, signedInUser: User) {
+    function save(mine: { list: ItemList | null }, stamp: Stamp, governs: () => boolean, from: SignIn, signedInUser: User) {
       const active = () => governs() && stillSameSignIn(auth, from);
       view.saving = view.saving.then(async () => {
         if (!active()) return;
-        if (view.saved !== null && view.saved !== 'withheld' && view.saved.list?.versionId === mine.list?.versionId) {
-          view.warning = null;
-          return render();
-        }
         const authTime = await authTimeOf(signedInUser);
         let problem: string | null = null;
-        const committed = await replaceItemList(owner, mine.list, authTime, active).catch((error: unknown) => {
+        const committed = await replaceItemList(owner, mine.list, authTime, stamp, active).catch((error: unknown) => {
           problem = error instanceof ReopenTheApp ? error.message : null;
           return false;
         });
@@ -134,6 +154,9 @@ function PublishedList({ session }: { session: FieldSession }) {
       const sameSignIn = () => stillSameSignIn(auth, from);
       const pending = new AbortController();
       request = pending;
+      // The refusals recorded when this answer was asked for: it is saved only while none came since
+      // (ds-prices.ts).
+      const stamp = refusalStamp(owner);
       const timeout = window.setTimeout(() => pending.abort(), REQUEST_TIMEOUT_MS);
       const stopped = new Promise<null>((resolve) => pending.signal.addEventListener('abort', () => resolve(null), { once: true }));
       let result: Awaited<ReturnType<typeof readPublishedItemList>> | null;
@@ -145,13 +168,19 @@ function PublishedList({ session }: { session: FieldSession }) {
       }
       if (!sameSignIn()) return;
       if (!result?.ok) {
-        if (result && definitiveRefusal(result)) {
-          const governs = governing(owner);
+        const refusal = result ? refusalOf(result) : null;
+        if (refusal) {
+          // A save still queued for an earlier answer of this view is dropped.
+          governing(owner);
           view.answer = 'refused';
           view.shownList = null;
           view.warning = null;
           render();
-          if (offlineCapture) void eraseItemList(owner, () => governs() && sameSignIn());
+          if (refusal === 'erase') {
+            view.saved = null;
+            // Also on a phone that now keeps nothing: one that kept a copy earlier still holds it.
+            void eraseItemList(owner);
+          }
         } else {
           view.fetchProblem = UNAVAILABLE;
           render();
@@ -159,8 +188,10 @@ function PublishedList({ session }: { session: FieldSession }) {
         return;
       }
 
-      const list = result.value.current;
       const governs = governing(owner);
+      // An answer is dropped when a refusal was recorded after its request started.
+      if (!(await unchanged(owner, stamp).catch(() => false)) || !governs() || !sameSignIn()) return;
+      const list = result.value.current;
       const before = view.answer;
       if (!before || before === 'refused' || before.list?.versionId !== list?.versionId) view.warning = null;
       view.updated = view.shownList !== null && list !== null && view.shownList.versionId !== list.versionId;
@@ -170,7 +201,7 @@ function PublishedList({ session }: { session: FieldSession }) {
       const mine = { list };
       view.answer = mine;
       render();
-      if (keep) save(mine, governs, from, current);
+      if (keep) save(mine, stamp, governs, from, current);
     }
 
     async function load(): Promise<void> {

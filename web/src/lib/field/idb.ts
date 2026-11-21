@@ -15,8 +15,9 @@
 export type DbSpec = {
   name: string;
   version: number;
-  // Creates the stores; called only when the database is new or older than `version`.
-  upgrade: (db: IDBDatabase, oldVersion: number) => void;
+  // Creates the stores; called only when the database is new or older than `version`. Aborting
+  // `transaction` leaves a new database uncreated.
+  upgrade: (db: IDBDatabase, oldVersion: number, transaction: IDBTransaction) => void;
 };
 
 export const REOPEN_TEXT = 'Reopen the app.';
@@ -39,7 +40,7 @@ function openOnce(spec: DbSpec): Promise<IDBDatabase> {
     let blocked = false;
     try {
       const request = indexedDB.open(spec.name, spec.version);
-      request.onupgradeneeded = (event) => spec.upgrade(request.result, event.oldVersion);
+      request.onupgradeneeded = (event) => spec.upgrade(request.result, event.oldVersion, request.transaction as IDBTransaction);
       request.onsuccess = () => {
         const db = request.result;
         // An open that was blocked already answered; the connection it gets later is not kept.

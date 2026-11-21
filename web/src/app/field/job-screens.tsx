@@ -1,13 +1,18 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { readJob, type JobDetail, type Refusal } from '@/lib/field/api';
 import { loadJobProjection, type JobProjection } from '@/lib/field/job-projection';
+import { watchJournal } from '@/lib/field/journal';
+import { journalFailed, readEntries } from '@/lib/field/journal-sync';
 import { newerDetail, pending, usePending } from '@/lib/field/pending';
 import type { FieldSession } from '@/lib/field/session';
 import { canEditDraft, draftReads, fieldRefusal, IncompleteFieldData, InvalidFieldData, SUPERSEDED, type DraftRef, type FieldDraft } from '@/lib/field/store';
 import type { JobView } from '@/lib/field/views';
+import { useDraftReadiness } from '@/lib/readiness/client';
+import { fixTarget } from '@/lib/readiness/fix';
+import type { ReadinessAnswer } from '@/lib/readiness/schema';
 import { CustomerView } from './customer-view';
 import { PhotosView } from './photos-view';
 import { ScopeView } from './scope-view';
@@ -34,6 +39,9 @@ function fieldWorkOf(session: FieldSession, detail: JobDetail): FieldWork {
   if (owner === null) return 'nobody';
   return owner === session.actorId ? 'mine' : 'other';
 }
+
+// Where a Fix lands when its own control is not there or not usable, as for a read-only draft.
+const FIX_FALLBACKS: Record<string, string> = { 'new-room-name': 'readiness-rooms', 'photo-room': 'readiness-photos' };
 
 const readsEveryDraft = (session: FieldSession) => session.role === 'owner' || session.role === 'office';
 const draftReadable = (session: FieldSession, detail: JobDetail) => readsEveryDraft(session) || fieldWorkOf(session, detail) === 'mine';
@@ -79,6 +87,9 @@ export type JobContext = {
   // The last read of the draft did not get through, so the draft on screen may be older than what is
   // stored: boxes stay open, but nothing is saved over it until it is read again.
   stale: boolean;
+  // The advisory readiness answer for this draft: `checking` while this screen asks for it, `answer`
+  // undefined until it is back and null when it is unusable; `recheck` asks again after an accepted save.
+  readiness: { checking: boolean; answer: Extract<ReadinessAnswer, { status: 'checked' }> | null | undefined; recheck: () => void };
 };
 
 
@@ -86,7 +97,10 @@ export type JobContext = {
 // draft from the field database, read once and again after each save, so what is on screen is what
 // is stored. Office, the owner who is not the field owner, and anyone once the draft is no longer
 // being edited see the field work read-only, as the rules hold it.
-export function JobScreens({ session, jobId, view }: { session: FieldSession; jobId: string; view: JobView }) {
+export function JobScreens({
+  session, jobId, view, readinessFix, address,
+}: { session: FieldSession; jobId: string; view: JobView; readinessFix: string | null; address: string }) {
+  const focusedFix = useRef<string | null>(null);
   const [read, setRead] = useState<{ detail: JobDetail; mark: number } | null>(null);
   // A save that settled after an earlier screen of this job closed posts the job it got back
   // (src/lib/field/pending.ts); the newer of that and this screen's own read is the job shown. Once
@@ -354,11 +368,85 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   useEffect(() => pending.hold(jobId, held), [jobId, held]);
   // Archived as the newest answer about the job said, or as its field draft on screen says.
   const archived = archivedSaid || draft?.state === 'archived';
+  const [rechecks, setRechecks] = useState(0);
+  const recheck = useCallback(() => setRechecks((count) => count + 1), []);
+  const currentRefId = draftAt ?? locator?.currentDraftId ?? detail?.job.currentDraftId;
+  const row = detail?.job;
+  const checking =
+    (view === 'scope' || view === 'photos') && session.online && session.readiness && session.capabilities.includes('scope') &&
+    !archived && !archiveChecking && movedState === null && draft !== null && draftError === null && draft.state === 'editing' &&
+    row?.status === 'draft' && row.currentDraftId === currentRefId;
+  const manifest = useMemo(() => (draft ? { draft: draft.field, rooms: draft.rooms, photos: draft.photos } : null), [draft]);
+  const archiveSeen = useCallback(() => checkAccess({ status: 410, message: 'This job is archived.' }), [checkAccess]);
+  const advisory = useDraftReadiness(session.user, checking ? row! : null, manifest, rechecks, archiveSeen);
   // The draft as last read goes with a moved job, for a screen of it opened again on this page.
   const draftId = locator?.currentDraftId ?? detail?.job.currentDraftId ?? null;
   useEffect(() => {
     if (movedState && draft && (draftAt ?? draftId)) pending.keepDraft(jobId, draft, (draftAt ?? draftId)!);
   }, [movedState, draft, draftAt, draftId, jobId]);
+
+  const readinessOn = session.readiness && session.capabilities.includes('scope') && detail?.job.status === 'draft' && !archived && !movedState && !archiveChecking;
+  const fix = readinessOn ? fixTarget(readinessFix, view) : null;
+  // Once a Fix brought the person here, the way back to Finish stays for this job's other tabs too.
+  const [fromFinish, setFromFinish] = useState(false);
+  if (fix && !fromFinish) setFromFinish(true);
+  const finishHref = `/sign-in/${address}/jobs/${jobId}/finish`;
+  const returnGuarded = fromFinish && readinessOn;
+  // Back to Finish asks to save or discard while any form holds unsaved input, then waits until this
+  // job's field writes and photo sends have the server's acknowledgement: Finish reads the manifest
+  // from the field database, not from this phone.
+  const [leaving, setLeaving] = useState<'no' | 'choosing' | 'going'>('no');
+  if (leaving === 'choosing' && !unsaved) setLeaving('no');
+  const recordInFlight = usePending(() => pending.record(jobId)?.sending === true || pending.coordWrite(jobId)?.sending === true);
+  const photosInFlight = usePending(() => pending.photos(jobId)).some((photo) => photo.step === 'sending' || photo.step === 'saving');
+  const [journalBusy, setJournalBusy] = useState<boolean | null>(null);
+  const fieldClient = session.client;
+  useEffect(() => {
+    if (!returnGuarded || leaving !== 'going') return;
+    let live = true;
+    let reads = 0;
+    const load = async () => {
+      const mine = ++reads;
+      try {
+        const entries = await readEntries(fieldClient);
+        if (live && mine === reads) setJournalBusy(entries.some((entry) => entry.state === 'pending' && entry.jobId === jobId));
+      } catch (error) {
+        journalFailed(fieldClient, error);
+      }
+    };
+    void Promise.resolve().then(load);
+    const stop = watchJournal({ tenantId: fieldClient.person.tenantId, uid: fieldClient.person.uid }, () => void load());
+    return () => {
+      live = false;
+      stop();
+    };
+  }, [returnGuarded, leaving, fieldClient, jobId]);
+  const writing = journalBusy !== false || recordInFlight || photosInFlight;
+  const returnToFinish = () => {
+    setJournalBusy(null);
+    setLeaving('going');
+  };
+  useEffect(() => {
+    // Finish uses a separate Firestore client. End the field document after its writes settle.
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- The browser must load a separate document to release the field client's connections.
+    if (returnGuarded && leaving === 'going' && !writing) window.location.assign(finishHref);
+  }, [returnGuarded, leaving, writing, finishHref]);
+  useEffect(() => {
+    if (!fix) {
+      focusedFix.current = null;
+      return;
+    }
+    if (focusedFix.current === readinessFix) return;
+    const usable = (found: HTMLElement) =>
+      !found.closest('[hidden]') && !found.matches(':disabled') && !((found instanceof HTMLInputElement || found instanceof HTMLTextAreaElement) && found.readOnly);
+    const fallbackId = FIX_FALLBACKS[fix] ?? (view === 'scope' ? 'readiness-scope' : null);
+    const element = [fix, fallbackId].map((id) => (id ? document.getElementById(id) : null)).find(
+      (found): found is HTMLElement => found instanceof HTMLElement && usable(found),
+    );
+    if (!element) return;
+    element.focus();
+    if (document.activeElement === element) focusedFix.current = readinessFix;
+  }, [readinessFix, fix, draft, view]);
 
   // An archived job (an old link, or archived here) shows that it is archived: every job route answers
   // it 410, and the field rules refuse every write to its draft. Screens of the job as read here stay,
@@ -421,6 +509,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     held: archived || archiveChecking,
     markUnsaved,
     stale: draft !== null && draftError !== null,
+    readiness: { checking, answer: checking ? advisory : undefined, recheck },
   };
   const onDraftViews = view === 'scope' || view === 'photos';
 
@@ -435,6 +524,49 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
           </FieldLink>
         ))}
       </nav>
+      {returnGuarded ? (
+        <div className="flex flex-col gap-2">
+          <a
+            className="inline-flex min-h-11 items-center self-start underline"
+            href={finishHref}
+            onClick={(event) => {
+              event.preventDefault();
+              if (leaving === 'going') return;
+              if (unsaved) setLeaving('choosing');
+              else returnToFinish();
+            }}
+          >
+            Back to Finish and review
+          </a>
+          {leaving === 'choosing' ? (
+            <div role="alert" className="flex flex-col gap-2 rounded-md border border-foreground/40 p-3 text-sm">
+              <p>Some changes are not saved. Save them first, or discard them and go back to Finish and review.</p>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" onClick={() => setLeaving('no')}>
+                  Keep editing
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    if (currentRefId) pending.discardUnsent(jobId, currentRefId);
+                    returnToFinish();
+                  }}
+                >
+                  Discard changes and go back
+                </Button>
+              </div>
+            </div>
+          ) : null}
+          {leaving === 'going' && writing ? (
+            <div className="flex flex-col gap-2 text-sm">
+              <p role="status">Saving…</p>
+              <Button variant="outline" className="self-start" onClick={() => setLeaving('no')}>
+                Keep editing
+              </Button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       {archived ? <ArchivedNotice session={session} jobId={jobId} /> : null}
       {moved ? (
         <p role="alert" className="rounded-md bg-foreground/5 p-3 text-sm">
@@ -460,8 +592,8 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       {onDraftViews && !draft && !draftError && cachedError ? <p role="status">{cachedError}</p> : null}
       {/* The views of one job stay mounted and only the open one shows, so moving between them
           keeps what the person has typed and not saved. */}
-      <div hidden={view !== 'scope'}>{draft ? <ScopeView key={draftAt} job={context} draft={draft} open={view === 'scope'} /> : null}</div>
-      <div hidden={view !== 'photos'}>{draft ? <PhotosView key={draftAt} job={context} draft={draft} open={view === 'photos'} /> : null}</div>
+      <div hidden={view !== 'scope'}>{draft ? <ScopeView key={draftAt} job={context} draft={draft} open={view === 'scope'} readinessFix={fix ? readinessFix : null} /> : null}</div>
+      <div hidden={view !== 'photos'}>{draft ? <PhotosView key={draftAt} job={context} draft={draft} open={view === 'photos'} readinessFix={fix ? readinessFix : null} /> : null}</div>
       <div hidden={view !== 'customer'}>
         {detail ? (
           <CustomerView job={{ ...context, detail }} />

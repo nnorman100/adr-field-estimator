@@ -85,10 +85,10 @@ afterAll(async () => {
 
 // Publishes company A's next price version: $2.00 per square foot of wet floor, an additional work
 // rate of $50.00 an hour (none when `rate` is null) and two named adjustments.
-async function publish(rate: string | null = '50.00'): Promise<{ id: string; hash: string }> {
+async function publish(rate: string | null = '50.00', extractionSource = 'room:wet_floor'): Promise<{ id: string; hash: string }> {
   const table = parseTable({
     items: [
-      { item_id: 'extraction', group: 'treatment', name: 'Extraction', unit: 'sf', quantity_source: 'room:wet_floor', unit_price: '2.00' },
+      { item_id: 'extraction', group: 'treatment', name: 'Extraction', unit: 'sf', quantity_source: extractionSource, unit_price: '2.00' },
       ...(rate === null ? [] : [{ item_id: 'additional_work', group: 'extras', name: 'Additional work', unit: 'hour', quantity_source: 'field:labor_hours', unit_price: rate }]),
     ],
     policy: {
@@ -262,6 +262,29 @@ describe('proposals and approvals (S5b-8)', () => {
     const estimate = (await make(ESTIMATOR_A, jobId)).body.estimate;
     expect(estimate.totals.low.total).toBe('280.00');
     expect(JSON.stringify(estimate)).toContain('x1.25');
+  });
+
+  it('answers a record that prices no line 409 no_such_line, not that the estimate is refused', async () => {
+    await publish('50.00', 'room:demolition:unfinished');
+    const { jobId } = await submittedJob();
+    const line = { kind: 'line_multiplier', itemId: 'extraction', roomId: 'kitchen', multiplier: '1.25' };
+    expect(await propose(ESTIMATOR_A, jobId, line)).toMatchObject({ status: 409, body: { error: 'no_such_line' } });
+    expect(await h.admin`SELECT count(*)::int AS n FROM job_price_approvals`).toEqual([{ n: 0 }]);
+  });
+
+  it('refuses a custom multiplier beyond the 3,000 the estimate takes, and lets an edit replace one at the limit', async () => {
+    await publish();
+    const { jobId } = await submittedJob();
+    const line = { kind: 'line_multiplier', itemId: 'extraction', roomId: 'kitchen', multiplier: '1.25' };
+    const first = (await propose(ESTIMATOR_A, jobId, line)).body.approval.id as string;
+    await h.admin`
+      INSERT INTO job_price_approvals (id, company_id, job_id, submission_id, pin_id, table_hash, job_revision, kind, item_id, room_id, multiplier, request_digest, proposed_by_actor_id)
+      SELECT gen_random_uuid(), company_id, job_id, submission_id, pin_id, table_hash, job_revision, kind, 'seed_' || n, room_id, multiplier, request_digest, proposed_by_actor_id
+      FROM job_price_approvals, generate_series(1, 2999) AS n WHERE id = ${first}
+    `;
+    expect(await propose(ESTIMATOR_A, jobId, { ...line, roomId: 'hall' })).toMatchObject({ status: 409, body: { error: 'too_many_additions' } });
+    expect((await edit(ESTIMATOR_A, jobId, first, { ...line, multiplier: '1.5' })).status).toBe(201);
+    expect(await h.admin`SELECT count(*)::int AS n FROM job_price_approvals WHERE ended_at IS NULL`).toEqual([{ n: 3000 }]);
   });
 
   it('prices approved unit and flat additions with their approved wording, never in the price table, and waits on unapproved ones', async () => {

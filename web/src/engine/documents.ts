@@ -409,7 +409,10 @@ export function makeDocuments(input: {
     const line = extraLines[index];
     if (line) line.description = wording(extra, clauseCompany);
   });
-  const covered = new Set(approved.map((extra) => extra.description));
+  const covered = new Set([
+    ...approved.map((extra) => extra.description),
+    ...(data.additions ?? []).filter((addition) => addition.approvedAt !== null).map((addition) => plain(addition.description)),
+  ]);
   const unpriced = ai.unpriced_work.filter((note) => !covered.has(plain(note)));
   const pending =
     data.extras.filter((extra) => extra.approval === null).length + (data.additions ?? []).filter((addition) => addition.approvedAt === null).length;
@@ -437,7 +440,8 @@ export function makeDocuments(input: {
     ...(before ? [TESTING] : []),
     PROTECTION.replaceAll('{company}', () => clauseCompany),
   ];
-  const recommendations = [...mandated, ...items.filter((item) => item.group !== 'job_charges').map((item) => item.description), ADDITIONAL];
+  const shown = input.table.policy.show_line_breakdown;
+  const recommendations = [...mandated, ...items.filter((item) => item.group !== 'job_charges').map((item) => (shown ? item.description : (item.withoutPrice ?? item.description))), ADDITIONAL];
   const words = roomWordsFor(data.rooms, roomWords);
   const customer = input.customerName.trim();
   const license = identity?.license ?? '';

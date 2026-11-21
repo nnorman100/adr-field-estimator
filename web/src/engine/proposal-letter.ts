@@ -66,7 +66,7 @@ function letterLine(line: PriceLine, labels: Map<string, string>, showPrices: bo
   const label = line.itemId === null ? undefined : labels.get(line.itemId);
   // Approved additional work (no price-list item) keeps the engine's own sentence for it.
   const factor = line.multiplier ? ` x${line.multiplier.normalize().format('f')}` : '';
-  const text = label === undefined ? line.description : `${label}: up to ${line.quantity.normalize().format('f')} ${line.unit}${factor}`;
+  const text = label === undefined ? ((showPrices ? undefined : line.withoutPrice) ?? line.description) : `${label}: up to ${line.quantity.normalize().format('f')} ${line.unit}${factor}`;
   return showPrices ? { text, total: money(line.total).toString() } : { text };
 }
 

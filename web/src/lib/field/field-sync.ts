@@ -3,6 +3,7 @@ import { getIdTokenResult } from 'firebase/auth';
 import { callApi } from '@/lib/firebase-client';
 import { appCheckSeam, fieldUser, settle, type FieldClient } from '@/lib/field-db';
 import { meKey, readMe, updateMe, type DsMe } from './ds-me';
+import { eraseItemList } from './ds-prices';
 import { meActor, sessionValid, SyncGate, type GateState, type MeAnswer, type MeFacts } from './sync-gate';
 import { evaluate, onWorkRemoved, pendingReason, type RetentionEvent } from './retention';
 import { onJournalLost, reconcileJournal } from './journal-sync';
@@ -115,6 +116,12 @@ export function runFieldSync(
     const shown: GateState = state.kind === 'open' && actorId ? { ...state, facts: { ...state.facts, actorId } } : state;
     onEvent({ state: shown });
     if (shown.kind === 'open') {
+      // The gate let the person in without prices_read: the company's item list is no longer theirs
+      // to see, so the copy Check Scope saved is erased (ds-prices.ts), whether or not Check Scope is
+      // open and whether or not the ds-me write below, which hides its list offline, works.
+      if (!shown.facts.capabilities.includes('prices_read')) {
+        void eraseItemList({ tenantId: person.tenantId, uid: person.uid, companyId: shown.facts.companyId });
+      }
       void settle(client).catch(() => undefined);
       // What became of the edits an earlier page left in the recovery journal (S6-4).
       void reconcileJournal(client);

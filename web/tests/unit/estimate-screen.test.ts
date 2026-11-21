@@ -134,7 +134,7 @@ describe('the review screen', () => {
   it('says additions wait for the owner, not that the scope has no work', () => {
     const waiting = { documents: { signable: false, unpricedWork: [], pendingExtras: 2 }, staffNotes: { companySetupMissing: [] }, needsReview: false, missingDetails: [] } as unknown as EstimateView;
     expect(notReadyReasons(waiting)).toEqual([
-      'Additions or additional work are waiting for the owner to approve them. Once they are settled, go back to editing, then finish and review.',
+      'Additions or additional work are waiting for the owner to approve them. Go back to editing, finish, propose them again and have the owner approve before making the estimate.',
     ]);
   });
 });
