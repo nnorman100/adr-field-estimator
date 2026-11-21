@@ -184,6 +184,8 @@ export const MATRIX: readonly MatrixRow[] = [
   row('api/jobs/[jobId]/drying-readings', 'GET', 'company', { own: 'cross' }),
   row('api/jobs/[jobId]/drying-readings', 'POST', 'company', { body: JOB_READING, own: 'cross' }),
   row('api/jobs/[jobId]/drying-readings/[readingId]/void', 'POST', 'company', { body: JOB_READING_VOID, own: 'cross' }),
+  // S5b-10: the rooms a reading may name; another company's job is 404 to every role.
+  row('api/jobs/[jobId]/drying-rooms', 'GET', 'company', { own: 'cross' }),
   // S5b-10: the drying watch, behind the `drying_watch` switch; another company's job is 404 to every role.
   row('api/jobs/[jobId]/drying-watch', 'GET', 'company', { own: 'cross' }),
   row('api/jobs/[jobId]/drying-watch/actions', 'POST', 'company', { body: JOB_WATCH_ACTION, own: 'cross' }),

@@ -38,6 +38,7 @@ const assignmentsRoute = await import('@/app/api/jobs/[jobId]/assignments/route'
 const archiveRoute = await import('@/app/api/jobs/[jobId]/archive/route');
 const readingsRoute = await import('@/app/api/jobs/[jobId]/drying-readings/route');
 const voidRoute = await import('@/app/api/jobs/[jobId]/drying-readings/[readingId]/void/route');
+const roomsRoute = await import('@/app/api/jobs/[jobId]/drying-rooms/route');
 const { readinessService } = await import('@/lib/readiness/service');
 const { dryingSetupReadings } = await import('@/lib/drying/setup');
 const { readingsService } = await import('@/lib/drying/readings');
@@ -587,5 +588,69 @@ describe('a room reading while a Submit of the draft is deciding', () => {
     expect(await during!.release()).toBe(201);
     expect(await rows(other.jobId)).toEqual([]);
     expect([...(await readingAudits(one.jobId)), ...(await readingAudits(other.jobId))]).toEqual([]);
+  });
+});
+
+describe('the rooms a reading may name', () => {
+  const rooms = (claims: FakeClaims | null, jobId: string, query = ''): Promise<Reply> => json(roomsRoute.GET(request(claims, `/api/jobs/${jobId}/drying-rooms${query}`), params({ jobId })));
+  const KITCHEN_HALL = [
+    { id: 'kitchen', label: 'Kitchen' },
+    { id: 'hall', label: 'Hall' },
+  ];
+
+  it('lists a draft’s rooms in their order, by the write’s own rule, for every job reader on an empty log', async () => {
+    const { jobId, draftId } = await draftJob();
+    for (const claims of [OWNER_A, ESTIMATOR_A, OFFICE_A]) expect(await rooms(claims, jobId)).toEqual({ status: 200, body: { jobId, rooms: KITCHEN_HALL } });
+    // An assigned estimator who does not own the field work reads the list too.
+    const assigned = await assignmentsRoute.POST(request(OWNER_A, `/api/jobs/${jobId}/assignments`, { method: 'POST', body: { id: randomUUID(), estimatorActorId: estimatorA2 } }), params({ jobId }));
+    expect(assigned.status).toBe(201);
+    expect(await rooms(ESTIMATOR_A2, jobId)).toEqual({ status: 200, body: { jobId, rooms: KITCHEN_HALL } });
+    // Renamed, reordered, a room the order no longer lists and a room with no name: as the write sees them.
+    h.field.put(h.seed.a, draftId, {
+      draft: { roomOrder: ['hall', 'kitchen', 'den'] },
+      rooms: [
+        { id: 'kitchen', field: { name: 'Kitchen (north)', category: 2 } },
+        { id: 'den', field: { category: 2 } },
+      ],
+    });
+    const now = await rooms(ESTIMATOR_A2, jobId);
+    expect(now.body.rooms).toEqual([
+      { id: 'hall', label: 'Hall' },
+      { id: 'kitchen', label: 'Kitchen (north)' },
+    ]);
+    // Every listed room is one the reading write takes, and the unlisted one it refuses.
+    for (const room of now.body.rooms as { id: string }[]) expect((await add(ESTIMATOR_A2, jobId, material({ roomId: room.id }))).status).toBe(201);
+    expect(await add(ESTIMATOR_A2, jobId, material({ roomId: 'den' }))).toEqual({ status: 409, body: { error: 'unknown_room' } });
+  });
+
+  it('lists a signed job’s rooms from its signed snapshot, whatever the field draft says', async () => {
+    const { jobId, draftId } = await signedJob();
+    h.field.put(h.seed.a, draftId, { draft: { roomOrder: ['attic'] }, rooms: [{ id: 'attic', field: { name: 'Attic' } }] });
+    expect(await rooms(OFFICE_A, jobId)).toEqual({ status: 200, body: { jobId, rooms: KITCHEN_HALL } });
+    expect(live.reader!.reads).toBe(0);
+  });
+
+  it('refuses everyone else, an archived job, a query, a Submit deciding the draft and a field outage', async () => {
+    const { jobId } = await draftJob();
+    for (const other of [ESTIMATOR_A2, OWNER_B, ESTIMATOR_B]) expect(await rooms(other, jobId)).toEqual({ status: 404, body: { error: 'not_found' } });
+    expect((await rooms(null, jobId)).status).toBe(401);
+    expect(await rooms(OWNER_A, jobId, '?all=1')).toEqual({ status: 400, body: { error: 'invalid_request' } });
+    live.reader!.fail = true;
+    expect(await rooms(OWNER_A, jobId)).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
+    // A Submit held at its draft sync: a pending submission while the field draft still says editing.
+    const { jobId: submitting, draftId, manifest: ready } = await f.readyJob(ESTIMATOR_A, h.seed.a);
+    const manifest: FieldManifest = { ...ready, draft: { ...(ready.draft as object), scopeConfirmed: true } };
+    h.field.put(h.seed.a, draftId, manifest);
+    const hold = latch();
+    const reached = latch();
+    h.field.gate.sync = () => (reached.open(), hold.wait);
+    const submit = f.submitShown(ESTIMATOR_A, submitting, draftId, manifest);
+    await reached.wait;
+    expect(await rooms(OWNER_A, submitting)).toEqual({ status: 409, body: { error: 'submission_in_progress' } });
+    hold.open();
+    expect((await submit).answer.status).toBe(201);
+    const archived = await archiveRoute.POST(request(OWNER_A, `/api/jobs/${jobId}/archive`, { method: 'POST', body: { revision: 1, changeId: randomUUID() } }), params({ jobId }));
+    expect(archived.status).toBe(200);
+    expect(await rooms(OWNER_A, jobId)).toEqual({ status: 410, body: { error: 'archived' } });
   });
 });

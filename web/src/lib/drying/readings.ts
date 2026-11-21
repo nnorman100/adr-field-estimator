@@ -10,7 +10,7 @@ import type { ReadinessReader } from '@/lib/readiness/reader';
 import { draftIsJobs, hasPendingSubmission } from '@/lib/readiness/service';
 import { DryingError } from './errors';
 import { psychrometrics } from './psychrometrics';
-import { draftRoom, submittedRoom, type ReadingRoom } from './rooms';
+import { roomsIn, submittedRooms, type ReadingRoom } from './rooms';
 import {
   DEFAULT_PAGE,
   listQuery,
@@ -171,25 +171,44 @@ type DraftRead = { draftId: string; read: Awaited<ReturnType<ReadinessReader['re
 // read is made, and the write runs again with it.
 type NeedsDraft = { needsDraft: string };
 
-async function roomOf(tx: CompanyTransaction, job: JobRow, roomId: string, draft: DraftRead | null): Promise<{ room: ReadingRoom } | NeedsDraft> {
-  if (job.status !== 'draft') {
-    const room = await submittedRoom(tx, job, roomId);
-    if (!room) throw new DryingError('unknown_room');
-    return { room };
-  }
-  // A Submit of the current draft already committed its pending row: checked under the job lock, whatever the field draft says.
+// The rooms a reading of the job may name, the one rule for the reading write and the room list
+// (rooms.ts): a submitted or signed job's from the snapshot its current draft was committed with; a job
+// being edited, its current field draft's, read before (none when the draft is missing, another job's or
+// over its caps).
+async function jobRooms(tx: CompanyTransaction, job: JobRow, draft: DraftRead | null): Promise<{ rooms: ReadingRoom[] } | NeedsDraft> {
+  if (job.status !== 'draft') return { rooms: await submittedRooms(tx, job) };
+  // A Submit of the current draft already committed its pending row: checked under the job lock (or in
+  // the read's snapshot), whatever the field draft says.
   if (await hasPendingSubmission(tx, job)) throw new DryingError('submission_in_progress');
   if (draft?.draftId !== job.currentDraftId) return { needsDraft: job.currentDraftId };
   const { read } = draft;
   if (read === null) throw new DryingError('draft_unavailable');
   // A Submit is deciding the draft: its rooms are about to be the submitted record's.
   if (read.outcome === 'not_editing') throw new DryingError('submission_in_progress');
-  if (read.outcome !== 'read') throw new DryingError('unknown_room');
+  if (read.outcome !== 'read') return { rooms: [] };
   // A draft made before drafts carried their job id: it is this job's only if Postgres says so.
-  if (!read.stamped && !(await draftIsJobs(tx, job.companyId, job.id, draft.draftId))) throw new DryingError('unknown_room');
-  const room = draftRoom(read.manifest, roomId);
+  if (!read.stamped && !(await draftIsJobs(tx, job.companyId, job.id, draft.draftId))) return { rooms: [] };
+  return { rooms: roomsIn(read.manifest) };
+}
+
+async function roomOf(tx: CompanyTransaction, job: JobRow, roomId: string, draft: DraftRead | null): Promise<{ room: ReadingRoom } | NeedsDraft> {
+  const found = await jobRooms(tx, job, draft);
+  if ('needsDraft' in found) return found;
+  const room = found.rooms.find((one) => one.id === roomId);
   if (!room) throw new DryingError('unknown_room');
   return { room };
+}
+
+// The field database's read of the job's current draft, made with no Postgres transaction open; null
+// when it fails (the write and the room list answer 503 then).
+async function readDraft(reader: () => ReadinessReader, companyId: string, jobId: string, draftId: string): Promise<DraftRead> {
+  try {
+    return { draftId, read: await reader().readEditing(companyId, jobId, draftId) };
+  } catch (failure) {
+    // Fixed text only: the SDK's message may quote a path.
+    console.error('drying reading draft unavailable', failure instanceof Error ? failure.name : 'unknown');
+    return { draftId, read: null };
+  }
 }
 
 // The caller as Postgres holds them now, read first in every transaction of this log: the company
@@ -240,6 +259,7 @@ export function refusedByDatabase(error: unknown): never {
 
 export type ReadingsService = {
   list(caller: JobCaller, jobId: string, query: Record<string, string>): Promise<ReadingsPage>;
+  rooms(caller: JobCaller, jobId: string): Promise<{ jobId: string; rooms: ReadingRoom[] }>;
   add(caller: JobCaller, jobId: string, body: string | null): Promise<{ created: boolean; reading: ReadingView }>;
   void(caller: JobCaller, jobId: string, readingId: string, body: string | null): Promise<VoidReceipt>;
 };
@@ -324,17 +344,33 @@ export function readingsService(db: Database, reader: () => ReadinessReader): Re
       );
     },
 
+    // GET .../drying-rooms: the rooms a reading of the job may name, by the write's own rule (jobRooms),
+    // for every job reader (an assigned estimator who does not own the field work included). Each pass is
+    // a read-only snapshot; the field database is read between two, as the write reads it.
+    async rooms(caller, jobId) {
+      const pass = (draft: DraftRead | null) =>
+        withCompany(
+          db,
+          caller.companyId,
+          async (tx) => {
+            await currentCaller(tx, caller, false);
+            const job = await jobAccess(tx, caller, jobId, READ);
+            return jobRooms(tx, job, draft);
+          },
+          { snapshot: true },
+        );
+      const first = await pass(null);
+      if (!('needsDraft' in first)) return { jobId, rooms: first.rooms };
+      const second = await pass(await readDraft(reader, caller.companyId, jobId, first.needsDraft));
+      // The job moved to another draft while its rooms were read: the screen reads the list again.
+      if ('needsDraft' in second) throw new DryingError('conflict');
+      return { jobId, rooms: second.rooms };
+    },
+
     async add(caller, jobId, body) {
       const first = await attempt(caller, jobId, body, null);
       if (!('needsDraft' in first)) return first;
-      let read: DraftRead['read'] = null;
-      try {
-        read = await reader().readEditing(caller.companyId, jobId, first.needsDraft);
-      } catch (failure) {
-        // Fixed text only: the SDK's message may quote a path.
-        console.error('drying reading draft unavailable', failure instanceof Error ? failure.name : 'unknown');
-      }
-      const second = await attempt(caller, jobId, body, { draftId: first.needsDraft, read });
+      const second = await attempt(caller, jobId, body, await readDraft(reader, caller.companyId, jobId, first.needsDraft));
       // The job moved to another draft while its rooms were read: the phone reads the job again.
       if ('needsDraft' in second) throw new DryingError('conflict');
       return second;

@@ -72,6 +72,16 @@ export async function listReadings(request: Request, identity: Identity, context
   });
 }
 
+// GET /api/jobs/{jobId}/drying-rooms: the rooms a reading of the job may name, stable id and label, in
+// the room order. No query is accepted.
+export async function listRooms(request: Request, identity: Identity, context: RouteContext): Promise<Response> {
+  return respond(async () => {
+    const id = await jobPathId(context);
+    if ([...new URL(request.url).searchParams.keys()].length > 0) throw new DryingError('invalid_request');
+    return json(await dryingServices().readings.rooms(identity, id));
+  });
+}
+
 // POST /api/jobs/{jobId}/drying-readings  { id, kind, roomId?, takenAt, ... }: 201 for a new reading,
 // 200 with the stored reading for the same request again.
 export async function addReading(request: Request, identity: Identity, context: RouteContext): Promise<Response> {
