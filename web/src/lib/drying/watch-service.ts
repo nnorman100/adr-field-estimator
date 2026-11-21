@@ -13,7 +13,7 @@ import { snapshotManifest } from '@/lib/submissions/snapshot';
 import { DryingError } from './errors';
 import { currentCaller, micros, parseBody, refusedByDatabase } from './readings';
 import { nonblank, noteText } from './schema';
-import { factsHash, finished, watchState, watchSummary, type SignedRoom, type WatchReading, type WatchState } from './watch';
+import { factsHash, finishedDayNumber, watchState, watchSummary, type SignedRoom, type WatchReading, type WatchState } from './watch';
 
 // The drying watch's routes (S5b-10 slice 10B; docs/drying-watch.md), behind the company's
 // `drying_watch` switch (the route files' requireFlag). A signed job only. Every function runs inside
@@ -206,7 +206,7 @@ async function viewOf(tx: CompanyTransaction, caller: JobCaller, job: JobRow, no
     ...state,
     summary: watchSummary(state),
     decisions: await decisionViews(tx, job.companyId, watch.receipts),
-    suggestedDays: finished(state.status) ? state.dayNumber : null,
+    suggestedDays: finishedDayNumber(state, watch.receipts),
     can: {
       markDry: open && hasAny(caller, NEEDS.mark_dry),
       extend: open && hasAny(caller, NEEDS.extend) && watch.receipts.length < MAX_EXTENSIONS,
@@ -225,7 +225,7 @@ export async function finishedDayCount(tx: CompanyTransaction, job: JobRow, fact
   const log = await logFacts(tx, job);
   const watch = await watchOf(tx, job);
   const state = watchState({ plannedDays: facts.plan.plannedDays, rooms: facts.plan.rooms, setupAt: facts.setupAt, readings: log.readings, decisions: watch.receipts, at: now });
-  return finished(state.status) ? state.dayNumber : null;
+  return finishedDayNumber(state, watch.receipts);
 }
 
 /** The watch as its own card shows it (the jobs list's projection reads it). */
