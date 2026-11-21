@@ -121,4 +121,24 @@ describe('the field owner’s job read', () => {
     expect(answer.status).toBe(200);
     expect(answer.body.job.id).toBe(id);
   });
+
+  // R4 (slice 6 review round 2): a member disabled while the read got the draft ready learns nothing of the
+  // job, not even that it was archived meanwhile: the final snapshot checks the caller first.
+  it('answers a member disabled while the job was archived during the read 403, never 410', async () => {
+    // The company owner owns the field work of a job they made; while the read looks for its draft, the
+    // owner is disabled and the job archived. The locator's read then finds the job archived, but the
+    // answer is the final snapshot's, which checks the caller first.
+    const ids = { id: randomUUID(), draftId: randomUUID() };
+    expect((await create(OWNER_A, { ...ids, propertyAddress: '2 Archived Meanwhile Road' })).status).toBe(201);
+    const find = h.drafts.findDraft;
+    h.drafts.findDraft = async (...args) => {
+      h.drafts.findDraft = find;
+      await h.admin`UPDATE memberships SET status = 'disabled' WHERE id = ${h.seed.ownerA.membership}`;
+      await h.admin`UPDATE jobs SET status = 'archived', archived_at = now(), archived_by_actor_id = ${h.seed.ownerA.actor}, revision = revision + 1 WHERE id = ${ids.id}`;
+      return find(...args);
+    };
+    const answer = await read(OWNER_A, ids.id);
+    await h.admin`UPDATE memberships SET status = 'active' WHERE id = ${h.seed.ownerA.membership}`;
+    expect(answer).toEqual({ status: 403, body: { error: 'not_allowed' } });
+  });
 });

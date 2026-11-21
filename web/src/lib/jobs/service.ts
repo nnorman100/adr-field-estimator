@@ -273,7 +273,7 @@ export function jobsService(db: Database, drafts: DraftStore, sync: DraftSync): 
   // again. Best effort: the read never fails for it (the field screens read the draft and, while it is not
   // there yet, read the job again).
   async function prepare(caller: JobCaller, row: JobRow): Promise<void> {
-    if (row.status === 'archived' || !ownsFieldWork(caller, row)) return;
+    if (!ownsFieldWork(caller, row)) return;
     try {
       const behind = row.fieldSyncedRevision < row.fieldRevision;
       if (!behind && !noDraft(await drafts.findDraft(caller.companyId, row.currentDraftId))) return;
@@ -413,8 +413,10 @@ export function jobsService(db: Database, drafts: DraftStore, sync: DraftSync): 
         // Lazy population repairs existing jobs on an authorized online open; no bulk backfill.
         await drafts.projectJob(caller.companyId, jobId, { currentDraftId: now.currentDraftId, revision: now.revision });
       } catch (error) {
-        if (error instanceof JobError || isQueueTimeout(error)) throw error;
-        console.error('job projection unavailable', error instanceof Error ? error.name : 'unknown');
+        if (isQueueTimeout(error)) throw error;
+        // A refusal here (the job archived, or the caller's access gone, meanwhile) is the final
+        // snapshot's to answer, the caller checked first; anything else only leaves the locator as it was.
+        if (!(error instanceof JobError)) console.error('job projection unavailable', error instanceof Error ? error.name : 'unknown');
       }
       // The answer, after the last field operation: the job as Postgres holds it then, in one read-only
       // snapshot, only to a caller still an active member of an active company with their role.

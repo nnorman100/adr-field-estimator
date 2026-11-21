@@ -419,7 +419,12 @@ export const pending = {
     }
     if (archivedAnswer) change({ archived: flagged(state.archived, jobId, true), marks: { ...state.marks, [jobId]: mark + 0.5 } });
     else if (answer.ok) change({ readAt: { ...state.readAt, [jobId]: mark }, archived: flagged(state.archived, jobId, false) });
-    if (!answer.ok && answer.denied) pending.refused(jobId, answer.message, answer.status);
+    // A refusal is the newest word on the job too: an older read answered after it counts for nothing (it
+    // cannot clear a revocation, nor restart getting the field work ready).
+    if (!answer.ok && answer.denied) {
+      change({ readAt: { ...state.readAt, [jobId]: mark } });
+      pending.refused(jobId, answer.message, answer.status);
+    }
     return true;
   },
   coordSettled: (jobId: string): number => state.coordSettled[jobId] ?? 0,

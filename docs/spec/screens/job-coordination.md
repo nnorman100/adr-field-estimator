@@ -40,8 +40,8 @@ from here (no Unassign button for them).
   but the draft does not name the new owner yet. The owner can send the same move again; otherwise
   the person moved to (an estimator, or the owner moving it to themself) gets it ready by opening the
   job, whose read syncs the job's drafts ("Getting this job's field work ready…" meanwhile, see
-  [Check Scope](check-scope.md)), and the draft sync's repair pass finishes it within a few minutes
-  with no request.
+  [Check Scope](check-scope.md)). Where a scheduled worker runs the draft sync's repair pass (the test
+  copy only for now), that pass can finish it too.
 - Done: "The field work was moved.", "The estimator was assigned.", "Notes saved.".
 
 ## Key actions and server routes
@@ -52,7 +52,7 @@ from here (no Unassign button for them).
 | Save the office notes | `PUT /api/jobs/{id}/coordination` | `coordination` |
 | Assign an estimator | `POST /api/jobs/{id}/assignments` | `assignment` |
 | Unassign an estimator | `DELETE /api/jobs/{id}/assignments/{assignmentId}` | `assignment` |
-| Move field work (a 503 after the move is saved is finished by sending it again, by the draft sync's repair pass, or when the new owner opens the job, whose read gets the field work ready) | `POST /api/jobs/{id}/field-owner/transfer` | `field_owner_transfer` |
+| Move field work (a 503 after the move is saved is finished by sending it again, or when the new owner opens the job, whose read gets the field work ready; also by the draft sync's repair pass where a scheduled worker runs it, the test copy only for now) | `POST /api/jobs/{id}/field-owner/transfer` | `field_owner_transfer` |
 
 Rules: `docs/access/jobs.md` ("Office jobs routes"), owner decision J5 (`docs/plans/S5.md`).
 

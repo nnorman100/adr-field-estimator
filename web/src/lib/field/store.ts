@@ -35,6 +35,8 @@ export type FieldDraft = {
   // In the draft's room order; a room document the order does not list is not shown.
   rooms: { id: string; field: RoomField }[];
   photos: { id: string; field: PhotoField }[];
+  // A placeholder a previous version's archive or restore left where the draft was missing: no draft yet.
+  placeholder?: true;
 };
 
 export const draftPath = ({ companyId, draftId }: DraftRef) => `companies/${companyId}/drafts/${draftId}`;
@@ -110,6 +112,7 @@ export async function loadDraft(db: Firestore, ref: DraftRef, source?: 'cache' |
     field,
     rooms: order.map((id) => ({ id, field: byId.get(id)! })),
     photos: (photos?.docs ?? []).map((photo) => ({ id: photo.id, field: mapOf<PhotoField>(photoFieldSchema, photo.data().field) })),
+    ...(data.placeholder === true ? { placeholder: true as const } : {}),
   };
 }
 
