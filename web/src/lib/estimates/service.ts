@@ -124,15 +124,24 @@ export async function currentSubmissionId(tx: CompanyTransaction, companyId: str
   return row?.id ?? null;
 }
 
-// The job's most recently committed record, of any of its drafts, or none.
-async function lastSubmission(tx: CompanyTransaction, companyId: string, jobId: string): Promise<{ id: string; snapshotBytes: Buffer } | null> {
+// The id of the job's most recently committed record, of any of its drafts, or none; its snapshot,
+// which can be megabytes, is read apart by recordOf, only where it is priced.
+async function lastSubmissionId(tx: CompanyTransaction, companyId: string, jobId: string): Promise<string | null> {
   const [row] = await tx
-    .select({ id: jobSubmissions.id, snapshotBytes: jobSubmissions.snapshotBytes })
+    .select({ id: jobSubmissions.id })
     .from(jobSubmissions)
     .where(and(eq(jobSubmissions.companyId, companyId), eq(jobSubmissions.jobId, jobId), eq(jobSubmissions.status, 'committed')))
     .orderBy(desc(jobSubmissions.decidedAt))
     .limit(1);
-  return row?.snapshotBytes ? { id: row.id, snapshotBytes: Buffer.from(row.snapshotBytes) } : null;
+  return row?.id ?? null;
+}
+
+async function recordOf(tx: CompanyTransaction, companyId: string, id: string): Promise<RecordRow> {
+  const [row] = await tx
+    .select({ snapshotBytes: jobSubmissions.snapshotBytes })
+    .from(jobSubmissions)
+    .where(and(eq(jobSubmissions.companyId, companyId), eq(jobSubmissions.id, id)));
+  return { id, snapshotBytes: Buffer.from(row!.snapshotBytes!) };
 }
 
 // Whether the record states the job's property address, customer and claim as they are now: asked
@@ -470,7 +479,7 @@ async function pinnedSideOf(
   caller: JobCaller,
   job: JobRow,
   pin: PinRow,
-  prepare: () => RecordPricing,
+  prepare: () => Promise<RecordPricing>,
   recordId: string,
   pinned: VersionRow,
 ): Promise<PricedSide> {
@@ -479,7 +488,7 @@ async function pinnedSideOf(
     .from(jobEstimates)
     .where(and(eq(jobEstimates.companyId, caller.companyId), eq(jobEstimates.submissionId, recordId), eq(jobEstimates.pinId, pin.id)));
   if (stored) return { price: priceText(readStoredEstimate(stored.pricedResult).totals), refused: null };
-  const { pricing, rooms } = prepare();
+  const { pricing, rooms } = await prepare();
   const approved =
     job.status === 'submitted' && (await pricedExtrasOn(tx, caller.companyId))
       ? await approvedFor(tx, caller.companyId, { submissionId: recordId, jobRevision: job.revision, pinId: pin.id })
@@ -500,15 +509,15 @@ async function previewOf(tx: CompanyTransaction, caller: JobCaller, job: JobRow)
   const pinned = (await versionById(tx, caller.companyId, pin.versionId))!;
   // A pinned job always has a committed record: its first price is made with one. It is the
   // current draft's while submitted, the one before Back to editing while a new draft is open.
-  const record = (await lastSubmission(tx, caller.companyId, job.id))!;
+  const recordId = (await lastSubmissionId(tx, caller.companyId, job.id))!;
   let prepared: RecordPricing | undefined;
-  const prepare = (): RecordPricing => (prepared ??= recordPricing(record));
-  const pinnedSide = await pinnedSideOf(tx, caller, job, pin, prepare, record.id, pinned);
+  const prepare = async (): Promise<RecordPricing> => (prepared ??= recordPricing(await recordOf(tx, caller.companyId, recordId)));
+  const pinnedSide = await pinnedSideOf(tx, caller, job, pin, prepare, recordId, pinned);
   return {
     job: { revision: job.revision },
     reprice: {
       pinned: { version: pinned.sequence, ...pinnedSide },
-      newest: { versionId: newest.id, version: newest.sequence, ...pricedSide(prepare().pricing, newest) },
+      newest: { versionId: newest.id, version: newest.sequence, ...pricedSide((await prepare()).pricing, newest) },
     },
   };
 }
@@ -657,8 +666,9 @@ export function estimatesService(db: Database): EstimatesService {
         // The owner confirms the before-price they saw: an approval edited, approved or ended since the
         // preview changes the pinned price without moving the job revision, and is refused (S5b-8).
         const previous = (await versionById(tx, caller.companyId, pin.versionId))!;
-        const record = (await lastSubmission(tx, caller.companyId, jobId))!;
-        if ((await pinnedSideOf(tx, caller, job, pin, () => recordPricing(record), record.id, previous)).price !== pinnedPrice) throw new EstimateError('preview_stale');
+        const recordId = (await lastSubmissionId(tx, caller.companyId, jobId))!;
+        const prepare = async (): Promise<RecordPricing> => recordPricing(await recordOf(tx, caller.companyId, recordId));
+        if ((await pinnedSideOf(tx, caller, job, pin, prepare, recordId, previous)).price !== pinnedPrice) throw new EstimateError('preview_stale');
         // A version this server cannot price is never pinned.
         versionTable(version);
         if (version.engineVersion !== ENGINE_VERSION) throw new EstimateError('prices_unreadable');
