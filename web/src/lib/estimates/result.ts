@@ -86,7 +86,6 @@ const documentsSchema = z.strictObject({
   claim: json,
   itemized_claim: z.array(json),
   unpriced_work: strings,
-  pending_extras: z.number().int().min(0).optional(),
   signable: z.boolean(),
   staff_notes: z.strictObject({
     summary: z.string(),
@@ -219,7 +218,7 @@ export type EstimateView = {
 export type RebuiltDocuments = { documents: EstimateDocuments; proposal: Proposal; proposalSha256: string } | { missing: string[] };
 
 /** What a caller is shown of a stored estimate. The quantity-override note goes only to `quantity_notes_read`. */
-export function estimateView(record: EstimateRecord, capabilities: readonly Capability[], rebuilt?: RebuiltDocuments): EstimateView {
+export function estimateView(record: EstimateRecord, capabilities: readonly Capability[], rebuilt?: RebuiltDocuments, pendingExtras = 0): EstimateView {
   const stored = readStoredEstimate(record.pricedResult);
   const shown =
     rebuilt === undefined
@@ -253,7 +252,7 @@ export function estimateView(record: EstimateRecord, capabilities: readonly Capa
       claim: documents.claim,
       complianceNotes: documents.compliance_notes,
       unpricedWork: documents.unpriced_work,
-      pendingExtras: documents.pending_extras ?? 0,
+      pendingExtras,
       signable: documents.signable && rebuilt === undefined,
     },
     staffNotes,

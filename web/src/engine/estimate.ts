@@ -99,8 +99,6 @@ export type EstimateDocuments = {
   /** The itemized claim's lines: description, price and the owner's optional "matches Xactimate line" note. */
   itemized_claim: Json[];
   unpriced_work: string[];
-  /** Hourly, unit and flat additions still waiting for the owner's approval; absent on an estimate stored before. */
-  pending_extras?: number;
   signable: boolean;
   /** Notes for the company's staff, never part of a document a customer or adjuster receives. */
   staff_notes: StaffNotes;
@@ -227,7 +225,6 @@ function documentsOf(documents: JObj): EstimateDocuments {
     claim: documents.claim ?? null,
     itemized_claim: Array.isArray(documents.xactimate_scope) ? documents.xactimate_scope : [],
     unpriced_work: strings(documents.unpriced_work),
-    pending_extras: typeof documents.pending_extras === 'number' ? documents.pending_extras : 0,
     signable: documents.signable === true,
     staff_notes: {
       summary: typeof documents.ai_summary === 'string' ? documents.ai_summary : '',
@@ -275,10 +272,10 @@ function savedInspection(raw: Json, table: Table): Inspection {
  * documents, so a draft whose work prices to nothing has none and is not refused. A proposal on a line is
  * checked against these (S5b-8).
  */
-export function scopeLines(table: Json, job: EstimateJob): { ok: true; lines: Array<{ item_id: string | null; room: string | null }> } | Refusal {
+export function scopeLines(table: Table, job: EstimateJob): { ok: true; lines: Array<{ item_id: string | null; room: string | null }> } | Refusal {
   let used: Table;
   try {
-    used = effectiveTable(parseTable(table));
+    used = effectiveTable(table);
   } catch (error) {
     return { ok: false, stage: 'table', error: message(error) };
   }

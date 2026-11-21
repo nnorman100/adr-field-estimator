@@ -8,7 +8,7 @@ import type { Capability } from '@/lib/access';
 import { canonicalJson } from '@/lib/field/canonical';
 import { FieldMapError } from '@/lib/field/inspection';
 import { hasAny, jobAccess, JobError, type JobCaller, type JobRow } from '@/lib/jobs/access';
-import { approvedFor, pricedExtrasOn, roomNamesOf, withApprovals } from '@/lib/approvals/priced';
+import { approvedFor, pendingCount, pricedExtrasOn, roomNamesOf, withApprovals } from '@/lib/approvals/priced';
 import { advance } from '@/lib/jobs/service';
 import { readCompanyDocuments, type CompanyDocuments } from '@/lib/profile/documents';
 import { readJobDetails, type JobDetails } from '@/lib/submissions/details';
@@ -389,19 +389,20 @@ function missingDetails(details: JobDetails): string[] {
 // answer is the stored prices and what is missing, with no documents.
 async function present(tx: CompanyTransaction, caller: JobCaller, job: JobRow, row: StoredRow, submission: SubmissionRow): Promise<EstimateView> {
   const revision = readStoredEstimate(row.pricedResult).job_revision;
-  if (job.status !== 'submitted' || (revision !== null && revision >= job.revision)) return estimateView(row, caller.capabilities);
+  const approved = await pricedWith(tx, caller.companyId, row);
+  const waiting = (await pricedExtrasOn(tx, caller.companyId)) ? pendingCount(approved) : 0;
+  if (job.status !== 'submitted' || (revision !== null && revision >= job.revision)) return estimateView(row, caller.capabilities, undefined, waiting);
   const details = await readJobDetails(tx, caller.companyId, job);
   const missing = missingDetails(details);
-  if (missing.length) return estimateView(row, caller.capabilities, { missing });
+  if (missing.length) return estimateView(row, caller.capabilities, { missing }, waiting);
   const version = await versionById(tx, caller.companyId, row.versionId);
   if (!version) throw new EstimateError('prices_unreadable');
   const company = await companyDocuments(tx, caller.companyId);
-  const approved = await pricedWith(tx, caller.companyId, row);
   const record = readSnapshot(submission.snapshotBytes);
   const rebuilt = inputOf({ ...record, ...details }, company).job;
   const { estimate, table } = priceInput(approved ? withApprovals(rebuilt, approved, roomNamesOf(record)) : rebuilt, version);
   const proposal = proposalFor(estimate, company, table, submission, version, readStoredProposal(row.proposalBytes).revised ?? null);
-  return estimateView(row, caller.capabilities, { documents: estimate.documents!, proposal, proposalSha256: proposalBytes(proposal).sha256 });
+  return estimateView(row, caller.capabilities, { documents: estimate.documents!, proposal, proposalSha256: proposalBytes(proposal).sha256 }, waiting);
 }
 
 export function estimatesService(db: Database): EstimatesService {

@@ -281,6 +281,18 @@ describe('unit and flat additions (B2, B3)', () => {
       expect(JSON.stringify(hidden.proposal)).not.toContain('$150.00');
     });
 
+    it('prints the itemized proposal without the price, and keeps it in the adjuster letter and the itemized claim', () => {
+      const itemized = (showLines: boolean) =>
+        priced(table([item('demo')], { show_line_breakdown: showLines }), documentJob([room('Kitchen', { unfinished_sf: 50 })], { additions: [unit(), flat()] })).documents!;
+      const hidden = itemized(false);
+      expect(hidden.proposal.recommendations).toEqual(expect.arrayContaining(['Haul-away bags: 12 bag, approved on 2026-11-20.', 'Permit filing, approved on 2026-11-20.']));
+      expect(JSON.stringify(hidden.proposal.recommendations)).not.toContain('$150.00');
+      expect(hidden.letter).toContain('Permit filing: $150.00, approved on 2026-11-20.');
+      expect(hidden.letter).toContain('Haul-away bags: 12 bag at $4.50/bag, approved on 2026-11-20.');
+      expect(JSON.stringify(hidden.itemized_claim)).toContain('Permit filing: $150.00, approved on 2026-11-20.');
+      expect(itemized(true).proposal.recommendations).toContain('Permit filing: $150.00, approved on 2026-11-20.');
+    });
+
     it('keeps the priced wording when line prices are shown', () => {
       const shown = letter(true, [unit(), flat()]).documents!;
       expect(shown.proposal.letter?.job_work.map((line) => line.text)).toEqual([
@@ -294,6 +306,6 @@ describe('unit and flat additions (B2, B3)', () => {
     const note = (additions: Obj[]) =>
       priced(table([item('demo')]), documentJob([room('Kitchen', { unfinished_sf: 50 })], { additions }, { ai: { summary: 'Reviewed.', suggestions: [], unpriced_work: ['Permit filing'] } })).documents!;
     expect(note([flat()])).toMatchObject({ unpriced_work: [], signable: true });
-    expect(note([flat({ approved_at: null })])).toMatchObject({ pending_extras: 1, signable: false });
+    expect(note([flat({ approved_at: null })])).toMatchObject({ signable: false });
   });
 });

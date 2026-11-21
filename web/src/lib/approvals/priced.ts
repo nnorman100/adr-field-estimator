@@ -82,7 +82,6 @@ export async function approvedFor(
   const waiting: Json[] = pending.map((row) => ({ id: row.id.replace(/-/g, ''), description: row.description!, hours: row.quantity! }));
   const multipliers = rows
     .filter((row) => row.kind === 'line_multiplier' && row.approvedAt !== null)
-    .sort((left, right) => left.approvedAt!.getTime() - right.approvedAt!.getTime() || left.id.localeCompare(right.id))
     .map((row) => ({ itemId: row.itemId!, roomId: row.roomId, multiplier: row.multiplier! }));
   // Unit and flat additions (B2), approved ones first in approval order, then those waiting for the owner.
   const additions: Json[] = rows
@@ -103,6 +102,15 @@ export async function approvedFor(
 // Approved rows by approval time, then rows not yet approved by proposal time.
 function order(row: { approvedAt: Date | null; proposedAt: Date }): number {
   return row.approvedAt ? row.approvedAt.getTime() : Number.MAX_SAFE_INTEGER / 2 + row.proposedAt.getTime();
+}
+
+/** How many hourly, unit and flat rows still wait for the owner's approval in what the estimate takes. */
+export function pendingCount(approved: Approved | null): number {
+  if (!approved) return 0;
+  return (
+    approved.extras.filter((extra) => !(extra as { approval?: unknown }).approval).length +
+    approved.additions.filter((addition) => (addition as { approved_at?: unknown }).approved_at === null).length
+  );
 }
 
 export type Approved = {
