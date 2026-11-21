@@ -318,3 +318,28 @@ describe('the drying days a job close is preset with', () => {
 function request_(claims: FakeClaims, jobId: string, body: unknown): Request {
   return request(claims, `/api/jobs/${jobId}/coordination`, { method: 'PUT', body });
 }
+
+describe('the jobs list projection', () => {
+  const due = (card: Body) => (card.flags.includes('overdue') ? 'overdue' : card.flags.includes('due_today') ? 'due_today' : null);
+
+  it('gives each signed job on one page the status and due its own card works out, with drying_watch alone', async () => {
+    const active = (await signedJob()).jobId;
+    const dry = (await signedJob()).jobId;
+    for (const room of ['kitchen', 'hall']) expect((await addReading(ESTIMATOR_A, dry, dryMaterial(room))).status).toBe(201);
+    const noPlan = (await signedJob({ plan: false })).jobId;
+    const rows = (await json(jobsRoute.GET(request(OWNER_A, '/api/jobs'), params({})))).body.jobs as Body[];
+    const row = (jobId: string) => rows.find((one) => one.id === jobId)!;
+    const cards = { active: (await watch(OWNER_A, active)).body, dry: (await watch(OWNER_A, dry)).body };
+    expect([cards.active.status, cards.dry.status]).toEqual(['active', 'dry_standard_met']);
+    for (const [jobId, card] of [
+      [active, cards.active],
+      [dry, cards.dry],
+    ] as const) {
+      expect(row(jobId).dryingWatch).toEqual({ status: card.status, due: due(card), nextDueAt: card.nextDueAt });
+      // estimate_assist is off: no close status.
+      expect(row(jobId).closed).toBeUndefined();
+    }
+    expect(row(active).dryingWatch.nextDueAt).not.toBeNull();
+    expect(row(noPlan).dryingWatch).toEqual({ status: 'unavailable', due: null, nextDueAt: null });
+  });
+});

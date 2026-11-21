@@ -92,8 +92,9 @@ async function publish(policy: Record<string, unknown> = {}) {
 }
 
 // A signed job of `company` with its original agreement, its history sample (a range of 1,000.00 to
-// 1,400.00, with 1,000.00 of labor and materials) and, when `final` is given, closes at those amounts.
-async function closedJob(company: string, closes: number[] = []): Promise<string> {
+// 1,400.00, with 1,000.00 of labor and materials; none with `history` false, as a signing whose sample
+// write failed) and, when `final` is given, closes at those amounts.
+async function closedJob(company: string, closes: number[] = [], history = true): Promise<string> {
   const actor = company === h.seed.a ? h.seed.ownerA.actor : h.seed.ownerB.actor;
   const proposal = { format: PROPOSAL_FORMAT, heading: 'Synthetic proposal' } as unknown as Proposal;
   const proposalBytes = bytesOf(canonicalJson(proposal));
@@ -124,10 +125,12 @@ async function closedJob(company: string, closes: number[] = []): Promise<string
   const agreement = agreementOf(chain, { id, documents: signedRecordBytes(record) });
   await withCompany(h.handle.db, company, (tx) => insertAgreement(tx, agreement));
   await h.admin`UPDATE jobs SET status = 'signed', revision = revision + 1 WHERE id = ${chain.job.id}`;
-  await h.admin`
-    INSERT INTO estimate_history (company_id, job_id, agreement_id, signed_at, price_mode, low_cents, high_cents, labor_material_low_cents, room_categories, planned_days)
-    VALUES (${company}, ${chain.job.id}, ${agreement.id}, now(), 'range', 100000, 140000, 100000, '{2}', 3)
-  `;
+  if (history) {
+    await h.admin`
+      INSERT INTO estimate_history (company_id, job_id, agreement_id, signed_at, price_mode, low_cents, high_cents, labor_material_low_cents, room_categories, planned_days)
+      VALUES (${company}, ${chain.job.id}, ${agreement.id}, now(), 'range', 100000, 140000, 100000, '{2}', 3)
+    `;
+  }
   for (const [n, final] of closes.entries()) {
     const closeId = randomUUID();
     const landed = final < 100_000 ? 'below' : final > 140_000 ? 'above' : 'inside';
@@ -186,6 +189,35 @@ describe('GET /api/estimate-accuracy', () => {
     expect(await accuracy(OWNER_A)).toEqual({ status: 404, body: { error: 'not_found' } });
     expect((await accuracy(null)).status).toBe(401);
   });
+
+  it('counts every signed job, one whose signing kept no history sample included', async () => {
+    await switchOn(h.seed.a, 'price_books', 'estimate_assist');
+    await closedJob(h.seed.a, [], false);
+    await closedJob(h.seed.a, [120_000]);
+    expect((await accuracy(OWNER_A)).body).toMatchObject({ signed: 2, closed: 1 });
+  });
+
+  it('refuses any query, one with no parameter names included', async () => {
+    await switchOn(h.seed.a, 'price_books', 'estimate_assist');
+    for (const query of ['?&&', '?&', '?=']) expect(await accuracy(OWNER_A, query)).toEqual({ status: 400, body: { error: 'invalid_request' } });
+    expect((await accuracy(OWNER_A)).status).toBe(200);
+  });
+
+  it('refuses once either switch is off, even for a request that passed the route’s checks, before reading history', async () => {
+    await switchOn(h.seed.a, 'price_books', 'estimate_assist');
+    await closedJob(h.seed.a, [120_000]);
+    const { accuracyService } = await import('@/lib/drying/accuracy-service');
+    const service = accuracyService(h.handle.db);
+    const owner = { companyId: h.seed.a, actorId: h.seed.ownerA.actor, uid: 'owner-a', role: 'owner' as const, capabilities: ['jobs_read' as const, 'prices_read' as const, 'prices_manage' as const] };
+    expect(await service.read(owner)).toMatchObject({ signed: 1, closed: 1 });
+    const refusal = async (run: Promise<unknown>) => run.then(() => 'answered', (error: { code?: string }) => error.code);
+    for (const flag of ['estimate_assist', 'price_books']) {
+      await h.admin`UPDATE company_feature_flags SET enabled = false WHERE company_id = ${h.seed.a} AND flag = ${flag}`;
+      expect(await refusal(service.read(owner))).toBe('not_found');
+      await h.admin`UPDATE company_feature_flags SET enabled = true WHERE company_id = ${h.seed.a} AND flag = ${flag}`;
+    }
+    expect(await service.read(owner)).toMatchObject({ signed: 1, closed: 1 });
+  });
 });
 
 describe('the signed-row projection', () => {
@@ -217,5 +249,25 @@ describe('the signed-row projection', () => {
     expect(view.status).toBe(200);
     expect(view.body).toMatchObject({ closed: { closedAt: closedRow.closed.closedAt }, dryingWatch: { status: 'unavailable' } });
     expect(JSON.stringify(view.body)).not.toContain('Paid in full');
+  });
+
+  it('adds exactly the close status with estimate_assist alone, to the member list and both support views', async () => {
+    const closed = await closedJob(h.seed.a, [120_000]);
+    const memberRow = async () => ((await jobsList(OFFICE_A)).body.jobs as Body[]).find((one) => one.id === closed)!;
+    const supportRow = async () =>
+      ((await json(supportListRoute.GET(request(OPERATOR, `/api/platform/companies/${h.seed.a}/jobs`), params({ companyId: h.seed.a })))).body.jobs as Body[]).find((one) => one.id === closed)!;
+    const supportView = async () => (await json(supportJobRoute.GET(request(OPERATOR, `/api/platform/companies/${h.seed.a}/jobs/${closed}`), params({ companyId: h.seed.a, jobId: closed })))).body;
+    const before = { member: await memberRow(), list: await supportRow(), view: await supportView() };
+    await switchOn(h.seed.a, 'estimate_assist');
+    const after = { member: await memberRow(), list: await supportRow(), view: await supportView() };
+    const closedAt = after.member.closed?.closedAt;
+    expect(closedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/);
+    // The member row is the same row with one field more: the close date, nothing of the close itself.
+    expect(after.member).toEqual({ ...before.member, closed: { closedAt } });
+    for (const where of ['list', 'view'] as const) {
+      expect(Object.keys(after[where]).sort()).toEqual([...Object.keys(before[where]), 'closed'].sort());
+      expect(after[where].closed).toEqual({ closedAt });
+      expect(after[where].dryingWatch).toBeUndefined();
+    }
   });
 });
