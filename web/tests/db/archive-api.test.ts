@@ -249,6 +249,7 @@ describe('copy', () => {
   it('copied twice with the same ids makes one draft, from the signed record, with its approval cleared', async () => {
     const { jobId: source, manifest, address } = await signedJob();
     const ids = { id: randomUUID(), draftId: randomUUID() };
+    const calls = h.field.calls.length;
     const first = await copy(ESTIMATOR_A, source, ids);
     expect(first).toMatchObject({
       status: 201,
@@ -259,7 +260,8 @@ describe('copy', () => {
     expect(await h.admin`SELECT 1 FROM jobs WHERE id = ${ids.id}`).toHaveLength(1);
     // The copy names its source in Postgres (0018), so its first draft can be rebuilt from the signed record.
     expect(await h.admin`SELECT copied_from_job_id::text AS source FROM jobs WHERE id = ${ids.id}`).toEqual([{ source }]);
-    expect(h.field.calls.filter((call) => call === 'createCopy')).toHaveLength(2);
+    // One draft sync each; the second finds the draft as Postgres says.
+    expect(h.field.calls.slice(calls).filter((call) => call === 'sync')).toHaveLength(2);
     // The rooms and the scope, less the approval; no photo (it stays the signed job's evidence).
     const { scopeConfirmed, ...kept } = manifest.draft as Record<string, unknown>;
     expect(scopeConfirmed).toBe(true);
@@ -272,6 +274,9 @@ describe('copy', () => {
       photos: {},
       previous: null,
       jobId: ids.id,
+      // The legacy keys the draft sync writes while older versions may serve: the job and coordination revisions.
+      archiveRevision: 1,
+      fieldOwnerRevision: 0,
     });
     expect(await auditOf(ids.id)).toEqual(['job_copied']);
     const [audit] = await h.admin<{ details: Record<string, unknown> }[]>`SELECT details FROM audit_events WHERE target = ${ids.id}`;
@@ -360,7 +365,8 @@ describe('copy', () => {
     expect((await copy(OWNER_A, source, ids)).status).toBe(201);
     await h.admin`DELETE FROM job_drafts WHERE draft_id = ${ids.draftId}`;
     h.field.unstamp(h.seed.a, ids.draftId);
-    h.field.loseNext.createCopy = true;
+    // The draft sync stamps it and loses its answer, on its try and its one more try.
+    h.field.loseNext.sync = 2;
     expect((await copy(OWNER_A, source, ids)).status).toBe(503);
     expect(h.field.draft(h.seed.a, ids.draftId)?.jobId).toBe(ids.id);
     expect(await h.admin`SELECT job_id::text AS job FROM job_drafts WHERE draft_id = ${ids.draftId}`).toEqual([{ job: ids.id }]);
@@ -383,18 +389,6 @@ describe('copy', () => {
 });
 
 // Holds the next call of a field method at its start until `open`, which may come before the call.
-function hold(method: keyof FakeField['gate']): { arrived: Promise<void>; open: () => void } {
-  let open!: () => void;
-  const opened = new Promise<void>((resolve) => (open = resolve));
-  let arrive!: () => void;
-  const arrived = new Promise<void>((resolve) => (arrive = resolve));
-  h.field.gate[method] = async () => {
-    arrive();
-    await opened;
-  };
-  return { arrived, open };
-}
-
 // Holds the next call of whichever of these methods comes first (the draft sync, or the previous writer
 // it replaces), so a sequence is held at the same step on either; the other gates go.
 function holdEither(methods: (keyof FakeField['gate'])[]): { arrived: Promise<void>; open: () => void } {
@@ -418,7 +412,8 @@ describe('overlapping requests', () => {
   it('leaves a copy archived when the owner archives it before its field draft is made', async () => {
     const { jobId: source } = await signedJob();
     const ids = { id: randomUUID(), draftId: randomUUID() };
-    const made = hold('createCopy');
+    // Held at its field step: the draft sync, or the previous writer it replaces.
+    const made = holdEither(['sync', 'createCopy']);
     const copying = copy(ESTIMATOR_A, source, ids);
     await made.arrived;
     const archiving = archive(OWNER_A, ids.id, change(1));
@@ -433,7 +428,8 @@ describe('overlapping requests', () => {
     const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
     expect((await f.submitShown(ESTIMATOR_A, jobId, draftId, manifest)).answer.status).toBe(201);
     const next = randomUUID();
-    const made = hold('createFrom');
+    // Held at its field step: the draft sync, or the previous writer it replaces.
+    const made = holdEither(['sync', 'createFrom']);
     const editing = f.nextDraft(ESTIMATOR_A, jobId, { draftId: next, fromDraftId: draftId });
     await made.arrived;
     const archiving = archive(OWNER_A, jobId, change((await f.job(jobId)).revision));

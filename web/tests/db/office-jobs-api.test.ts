@@ -33,8 +33,9 @@ describe('an office user starts a job', () => {
     expect(await count('jobs')).toBe(1);
     expect(await audits('job_created')).toBe(1);
     // The draft is made empty, with no field owner: an office user never captures field work.
-    expect(h.drafts.owner(`${h.seed.a}/${ids.draftId}`)).toEqual({ fieldOwnerUid: null });
-    expect(h.drafts.calls.every((call) => call.fieldOwnerUid === null)).toBe(true);
+    expect(h.drafts.owner(`${h.seed.a}/${ids.draftId}`)).toEqual({ fieldOwnerUid: null, fieldOwnerRevision: 0 });
+    // The draft sync wrote the draft once, naming nobody.
+    expect(h.field.ownerWrites.filter((write) => write.at === `${h.seed.a}/${ids.draftId}`)).toEqual([{ at: `${h.seed.a}/${ids.draftId}`, fieldOwnerUid: null }]);
   });
 });
 

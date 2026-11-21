@@ -1,9 +1,11 @@
 import { and, asc, desc, eq, ne, or, sql, type SQL } from 'drizzle-orm';
-import { actors, auditEvents, jobAssignments, jobClaims, jobCustomers, jobs, jobSubmissions } from '@/db/schema';
+import { auditEvents, jobAssignments, jobClaims, jobCustomers, jobs, jobSubmissions } from '@/db/schema';
 import { holdAcrossOutsideCall, withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
-import { canSeeJob, claimDraft, hasAny, holdDraft, isOwnJob, jobAccess, JobError, lockedJob, ownsFieldWork, seesEveryJob, type JobCaller, type JobRow } from './access';
+import { canSeeJob, claimDraft, hasAny, holdDraft, isOwnJob, jobAccess, JobError, ownsFieldWork, seesEveryJob, type JobCaller, type JobRow } from './access';
+import type { DraftSync } from './draft-sync';
 import type { DraftFound, DraftLookup, DraftStore } from './drafts';
+import { syncJobDrafts } from './sync-job';
 import { createDigest, type ClaimInput, type CreateJobInput, type CustomerInput, type ListQuery } from './schema';
 
 // The jobs of a company (S5a-3). Every function runs inside withCompany for the company of the
@@ -275,7 +277,7 @@ export async function rebuildableRecord(tx: CompanyTransaction, companyId: strin
   return { snapshotBytes: latest.snapshotBytes, previous: { draftId: latest.draftId, submissionId: latest.id } };
 }
 
-export function jobsService(db: Database, drafts: DraftStore): JobsService {
+export function jobsService(db: Database, drafts: DraftStore, sync: DraftSync): JobsService {
   async function inCompany<T>(companyId: string, run: (tx: CompanyTransaction) => Promise<T>): Promise<T> {
     try {
       return await withCompany(db, companyId, run);
@@ -345,26 +347,14 @@ export function jobsService(db: Database, drafts: DraftStore): JobsService {
           if (await findDraft(drafts, caller.companyId, input.draftId)) throw new JobError('conflict');
           await audit(tx, caller, 'job_created', row.id, { revision: row.revision });
         }
-        let ownerUid: string | null = null;
-        if (row.fieldOwnerActorId) {
-          const [actor] = await tx
-            .select({ uid: actors.uid })
-            .from(actors)
-            .where(and(eq(actors.companyId, caller.companyId), eq(actors.id, row.fieldOwnerActorId)));
-          ownerUid = actor?.uid ?? null;
-        }
-        return { created: inserted !== undefined, ownerUid, detail: await detailOf(tx, row) };
+        return { created: inserted !== undefined, detail: await detailOf(tx, row) };
       });
       try {
-        await inCompany(caller.companyId, async (tx) => {
-          await lockedJob(tx, caller.companyId, made.detail.job.id, { live: true });
-          await holdAcrossOutsideCall(tx);
-          const result = await drafts.ensure(caller.companyId, made.detail.job.id, input.draftId, made.ownerUid);
-          // A draft made for another job is never this job's.
-          if (result === 'taken') throw new JobError('conflict');
-          // Only an archived job's placeholder is there: no draft yet, so the same request again.
-          if (result === 'archived') throw new JobError('draft_unavailable');
-        });
+        // The job's first draft, as the draft sync makes every draft (the draft life-cycle redesign, slice 5):
+        // empty, in the job's state, naming the field owner Postgres holds when the sync reads it, so a
+        // creation can never name an owner a later move replaced; a placeholder an older version left
+        // under the id is replaced, and nothing is written for one (sync-job.ts).
+        await syncJobDrafts(db, sync, drafts, caller.companyId, made.detail.job.id);
         await drafts.projectJob(caller.companyId, made.detail.job.id, {
           currentDraftId: made.detail.job.currentDraftId, revision: made.detail.job.revision,
         });

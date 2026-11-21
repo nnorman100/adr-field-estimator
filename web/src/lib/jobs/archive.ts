@@ -1,14 +1,11 @@
 import { and, desc, eq, sql } from 'drizzle-orm';
-import { actors, agreements, jobs, jobSubmissions } from '@/db/schema';
+import { agreements, jobs, jobSubmissions } from '@/db/schema';
 import { holdAcrossOutsideCall, withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
-import type { FieldDoc } from '@/lib/field/canonical';
-import { snapshotManifest } from '@/lib/submissions/snapshot';
-import { canSeeJob, claimDraft, hasAny, holdDraft, jobAccess, JobError, lockedJob, type JobCaller, type JobRow } from './access';
+import { canSeeJob, claimDraft, hasAny, holdDraft, jobAccess, JobError, type JobCaller, type JobRow } from './access';
 import type { ArchiveStore } from './archive-store';
 import type { DraftSync } from './draft-sync';
 import { afterFieldStep, syncJobDrafts } from './sync-job';
-import { copiedManifest } from './copy-rule';
 import { copyDigest, type ArchiveInput, type CopyInput } from './schema';
 import { audit, CHECK_VIOLATION, detailOf, errorCode, type JobDetail, type JobView } from './service';
 
@@ -77,11 +74,6 @@ function jobView(detail: JobDetail): { job: JobView } {
   return { job: detail.job };
 }
 
-// The same, from the signed record's snapshot bytes.
-function copiedField(bytes: Buffer | Uint8Array): { draft: Record<string, unknown>; rooms: FieldDoc[] } {
-  return copiedManifest(snapshotManifest(bytes));
-}
-
 export function archiveService(db: Database, store: ArchiveStore, sync: DraftSync): ArchiveService {
   async function inCompany<T>(companyId: string, run: (tx: CompanyTransaction) => Promise<T>): Promise<T> {
     try {
@@ -101,15 +93,6 @@ export function archiveService(db: Database, store: ArchiveStore, sync: DraftSyn
       console.error('job draft unavailable', error instanceof Error ? error.name : 'unknown');
       throw new JobError('draft_unavailable');
     }
-  }
-
-  async function ownerUid(tx: CompanyTransaction, row: JobRow): Promise<string | null> {
-    if (!row.fieldOwnerActorId) return null;
-    const [actor] = await tx
-      .select({ uid: actors.uid })
-      .from(actors)
-      .where(and(eq(actors.companyId, row.companyId), eq(actors.id, row.fieldOwnerActorId)));
-    return actor?.uid ?? null;
   }
 
   // Every draft of the job brought to the job's state as Postgres holds it now, at its field revision, in
@@ -261,17 +244,13 @@ export function archiveService(db: Database, store: ArchiveStore, sync: DraftSyn
           if (await field(() => store.findDraft(caller.companyId, input.draftId))) throw new JobError('conflict');
           await audit(tx, caller, 'job_copied', row.id, { revision: row.revision, copiedFrom: source.id });
         }
-        return { created: inserted !== undefined, ownerUid: await ownerUid(tx, row), field: copiedField(signed.bytes), detail: await detailOf(tx, row) };
+        return { created: inserted !== undefined, detail: await detailOf(tx, row) };
       });
-      await inCompany(caller.companyId, async (tx) => {
-        await lockedJob(tx, caller.companyId, input.id, { live: true });
-        await holdAcrossOutsideCall(tx);
-        const result = await field(() => store.createCopy(caller.companyId, input.id, input.draftId, made.ownerUid, made.field));
-        // A draft made for another job is never the copy's (security audit F1).
-        if (result === 'taken') throw new JobError('conflict');
-        // Only an archived job's placeholder is there: no draft yet, so the same request again.
-        if (result === 'archived') throw new JobError('draft_unavailable');
-      });
+      // The copy's first draft, as the draft sync makes every draft (the draft life-cycle redesign, slice 5):
+      // from its source's signed record less COPY_CLEARED_KEYS (copied_from_job_id), naming the field owner
+      // Postgres holds when the sync reads it. A draft another job holds under the id is 409; a placeholder
+      // an older version left is replaced; nothing is written for one.
+      await syncJobDrafts(db, sync, store, caller.companyId, input.id);
       await field(() =>
         store.projectJob(caller.companyId, made.detail.job.id, { currentDraftId: made.detail.job.currentDraftId, revision: made.detail.job.revision }),
       );

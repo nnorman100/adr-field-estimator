@@ -273,7 +273,7 @@ export async function resetTeamDatabase(
   harness.photos = photosService(handle.db, harness.evidence, harness.draftStates);
   harness.field = fakeField(record);
   harness.jobs = {
-    ...jobsService(handle.db, harness.drafts),
+    ...jobsService(handle.db, harness.drafts, harness.field),
     ...officeService(handle.db, harness.drafts, harness.field),
     ...archiveService(handle.db, harness.field, harness.field),
   };

@@ -140,7 +140,7 @@ describe('creating a job', () => {
     expect(first.body.claim.dateOfLoss).toBeNull();
     expect(await jobCount()).toBe(1);
     expect(await auditCount('job_created')).toBe(1);
-    expect(h.drafts.owners()).toEqual([[`${h.seed.a}/${ids.draftId}`, { fieldOwnerUid: 'estimator-a' }]]);
+    expect(h.drafts.owners()).toEqual([[`${h.seed.a}/${ids.draftId}`, { fieldOwnerUid: 'estimator-a', fieldOwnerRevision: 0 }]]);
     expect(h.drafts.projected.get(`${h.seed.a}/${ids.id}`)).toEqual({ currentDraftId: ids.draftId, revision: 1 });
   });
 
@@ -226,8 +226,8 @@ describe('creating a job', () => {
     const key = `${h.seed.a}/${ids.draftId}`;
     await h.admin`DELETE FROM job_drafts WHERE draft_id = ${ids.draftId}`;
     h.drafts.unstamp(key);
-    h.drafts.failNext.on = true;
-    h.drafts.failNext.afterWrite = true;
+    // The draft sync stamps it and loses its answer, on its try and its one more try.
+    h.field.loseNext.sync = 2;
     expect(await create(ESTIMATOR_A, ids)).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
     expect(h.drafts.jobOf(key)).toBe(ids.id);
     expect(await h.admin`SELECT job_id::text AS job FROM job_drafts WHERE draft_id = ${ids.draftId}`).toEqual([{ job: ids.id }]);
@@ -236,7 +236,8 @@ describe('creating a job', () => {
 
   it('makes the draft on a retry when the first attempt saved the job and lost the draft', async () => {
     const ids = newIds();
-    h.drafts.failNext.on = true;
+    // The draft sync fails on its try and its one more try.
+    h.field.failNext.sync = 2;
     expect(await create(ESTIMATOR_A, ids)).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
     expect(await jobCount()).toBe(1);
     expect(h.drafts.owners().length).toBe(0);
@@ -250,8 +251,8 @@ describe('creating a job', () => {
 
   it('makes no second draft when the draft was written but its answer was lost', async () => {
     const ids = newIds();
-    h.drafts.failNext.on = true;
-    h.drafts.failNext.afterWrite = true;
+    // The draft sync writes the draft and loses its answer, on its try and its one more try.
+    h.field.loseNext.sync = 2;
     expect((await create(ESTIMATOR_A, ids)).status).toBe(503);
     expect(h.drafts.owners().length).toBe(1);
     expect((await create(ESTIMATOR_A, ids)).status).toBe(200);
@@ -275,8 +276,8 @@ describe('creating a job', () => {
     const office = await create(OFFICE_A, byOffice);
     expect(office.status).toBe(201);
     expect(office.body.job.fieldOwnerActorId).toBeNull();
-    expect(h.drafts.owner(`${h.seed.a}/${byOffice.draftId}`)).toEqual({ fieldOwnerUid: null });
-    expect(h.drafts.owner(`${h.seed.a}/${byOwner.draftId}`)).toEqual({ fieldOwnerUid: 'owner-a' });
+    expect(h.drafts.owner(`${h.seed.a}/${byOffice.draftId}`)).toEqual({ fieldOwnerUid: null, fieldOwnerRevision: 0 });
+    expect(h.drafts.owner(`${h.seed.a}/${byOwner.draftId}`)).toEqual({ fieldOwnerUid: 'owner-a', fieldOwnerRevision: 0 });
   });
 
   it('makes the other company’s own job from the other company’s ids, and touches nothing of the first', async () => {

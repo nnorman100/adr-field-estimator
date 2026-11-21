@@ -408,7 +408,8 @@ describe('what is refused, and writes nothing', () => {
     const { jobId, draftId } = await readyToSign();
     await publish(h.seed.a, '3.00');
     const open = randomUUID();
-    h.field.failNext.createFrom = true;
+    // Back to editing's field step (the draft sync) fails on its try and its one more try.
+    h.field.failNext.sync = 2;
     expect((await f.nextDraft(ESTIMATOR_A, jobId, { draftId: open, fromDraftId: draftId })).status).toBe(503);
     expect(await reprice(OWNER_A, jobId)).toMatchObject({ status: 200, body: { job: { status: 'draft', currentDraftId: open } } });
     // Start field work syncs the job: the missing current draft is made from the latest record.
@@ -424,7 +425,8 @@ describe('what is refused, and writes nothing', () => {
     const { jobId, draftId } = await readyToSign();
     await publish(h.seed.a, '3.00');
     const open = randomUUID();
-    h.field.failNext.createFrom = true;
+    // Back to editing's field step (the draft sync) fails on its try and its one more try.
+    h.field.failNext.sync = 2;
     expect((await f.nextDraft(ESTIMATOR_A, jobId, { draftId: open, fromDraftId: draftId })).status).toBe(503);
     let arrived = false;
     let release = () => {};
@@ -455,7 +457,8 @@ describe('what is refused, and writes nothing', () => {
     const { jobId, draftId } = await readyToSign();
     await publish(h.seed.a, '3.00');
     const open = randomUUID();
-    h.field.failNext.createFrom = true;
+    // Back to editing's field step (the draft sync) fails on its try and its one more try.
+    h.field.failNext.sync = 2;
     expect((await f.nextDraft(ESTIMATOR_A, jobId, { draftId: open, fromDraftId: draftId })).status).toBe(503);
     const sync = h.field.sync;
     let repriced = false;
@@ -500,7 +503,8 @@ describe('what is refused, and writes nothing', () => {
     const { jobId, draftId } = await readyToSign();
     await publish(h.seed.a, '3.00');
     const open = randomUUID();
-    h.field.failNext.createFrom = true;
+    // Back to editing's field step (the draft sync) fails on its try and its one more try.
+    h.field.failNext.sync = 2;
     expect((await f.nextDraft(ESTIMATOR_A, jobId, { draftId: open, fromDraftId: draftId })).status).toBe(503);
     const sync = h.field.sync;
     let repriced = false;
@@ -534,7 +538,8 @@ describe('what is refused, and writes nothing', () => {
     const { jobId, draftId } = await readyToSign();
     await publish(h.seed.a, '3.00');
     const open = randomUUID();
-    h.field.failNext.createFrom = true;
+    // Back to editing's field step (the draft sync) fails on its try and its one more try.
+    h.field.failNext.sync = 2;
     expect((await f.nextDraft(ESTIMATOR_A, jobId, { draftId: open, fromDraftId: draftId })).status).toBe(503);
     h.field.failNext.sync = 1;
     const sync = h.field.sync;

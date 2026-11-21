@@ -109,11 +109,13 @@ describe('Back to editing', () => {
   it('two calls with the same new id make one draft', async () => {
     const { jobId, draftId } = await submittedJob();
     const body = { draftId: randomUUID(), fromDraftId: draftId };
+    const calls = h.field.calls.length;
     expect((await f.nextDraft(ESTIMATOR_A, jobId, body)).status).toBe(201);
     const after = await f.job(jobId);
     expect(await f.nextDraft(ESTIMATOR_A, jobId, body)).toEqual({ status: 200, body: { job: { id: jobId, status: 'draft', currentDraftId: body.draftId, revision: after.revision } } });
     expect(await f.job(jobId)).toEqual(after);
-    expect(h.field.calls.filter((call) => call === 'createFrom')).toHaveLength(2);
+    // One draft sync each; the second finds the draft as Postgres says.
+    expect(h.field.calls.slice(calls).filter((call) => call === 'sync')).toHaveLength(2);
     expect(Object.keys(h.field.data()).filter((key) => key.endsWith(body.draftId))).toHaveLength(1);
     expect((await f.auditActions(jobId)).filter((action) => action === 'job_back_to_editing')).toHaveLength(1);
   });
@@ -266,7 +268,8 @@ describe('Back to editing', () => {
     expect((await f.nextDraft(ESTIMATOR_A, jobId, body)).status).toBe(201);
     await h.admin`DELETE FROM job_drafts WHERE draft_id = ${body.draftId}`;
     h.field.unstamp(h.seed.a, body.draftId);
-    h.field.loseNext.createFrom = true;
+    // The draft sync stamps it and loses its answer, on its try and its one more try.
+    h.field.loseNext.sync = 2;
     expect((await f.nextDraft(ESTIMATOR_A, jobId, body)).status).toBe(503);
     expect(h.field.draft(h.seed.a, body.draftId)?.jobId).toBe(jobId);
     expect(await h.admin`SELECT job_id::text AS job FROM job_drafts WHERE draft_id = ${body.draftId}`).toEqual([{ job: jobId }]);
@@ -305,7 +308,8 @@ describe('Back to editing', () => {
   it('makes the missing draft when the same request is sent again after the field database failed', async () => {
     const { jobId, draftId } = await submittedJob();
     const body = { draftId: randomUUID(), fromDraftId: draftId };
-    h.field.failNext.createFrom = true;
+    // The draft sync fails on its try and its one more try.
+    h.field.failNext.sync = 2;
     expect(await f.nextDraft(ESTIMATOR_A, jobId, body)).toMatchObject({ status: 503, body: { error: 'submissions_unavailable' } });
     expect((await f.job(jobId)).current_draft_id).toBe(body.draftId);
     expect(h.field.draft(h.seed.a, body.draftId)).toBeNull();
@@ -316,7 +320,8 @@ describe('Back to editing', () => {
   it('makes the missing draft on a retry even after the office saved the claim in between', async () => {
     const { jobId, draftId, submissionId } = await submittedJob();
     const body = { draftId: randomUUID(), fromDraftId: draftId };
-    h.field.failNext.createFrom = true;
+    // The draft sync fails on its try and its one more try.
+    h.field.failNext.sync = 2;
     expect((await f.nextDraft(ESTIMATOR_A, jobId, body)).status).toBe(503);
     const claim = {
       revision: (await f.job(jobId)).revision,
@@ -345,7 +350,8 @@ describe('Back to editing', () => {
     h.field.put(h.seed.a, second, manifest);
     expect((await f.submitShown(ESTIMATOR_A, jobId, second, manifest)).answer.status).toBe(201);
     const third = randomUUID();
-    h.field.failNext.createFrom = true;
+    // The draft sync fails on its try and its one more try.
+    h.field.failNext.sync = 2;
     expect((await f.nextDraft(ESTIMATOR_A, jobId, { draftId: third, fromDraftId: second })).status).toBe(503);
     expect(await f.nextDraft(ESTIMATOR_A, jobId, { draftId: third, fromDraftId: draftId })).toMatchObject({ status: 409, body: { error: 'conflict' } });
     expect(h.field.draft(h.seed.a, third)).toBeNull();
