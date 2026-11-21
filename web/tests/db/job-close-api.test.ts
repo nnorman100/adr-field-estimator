@@ -190,7 +190,7 @@ describe('closing a job', () => {
     await switchOn(h.seed.a);
     const before = await signedRecord(jobId);
     const read = await outcome(OFFICE_A, jobId);
-    expect(read.body).toMatchObject({ jobId, access: 'full', closed: false, closedAt: null, agreementId, revision: 0, close: null, earlier: [], suggestedDays: null });
+    expect(read.body).toMatchObject({ jobId, access: 'full', closed: false, closedAt: null, agreementId, revision: 0, close: null, suggestedDays: null });
     const totals = await signedTotals(agreementId);
     const first = closeBody(agreementId, { finalAmount: totals.low });
     const made = await close(OFFICE_A, jobId, first);
@@ -204,7 +204,9 @@ describe('closing a job', () => {
     expect(await close(OFFICE_A, jobId, first)).toEqual({ status: 200, body: made.body });
     expect(await close(OFFICE_A, jobId, { ...first, note: 'Changed.' })).toEqual({ status: 409, body: { error: 'conflict' } });
     const now = await outcome(OWNER_A, jobId);
-    expect(now.body).toMatchObject({ closed: true, revision: 2, close: { id: correction.id }, earlier: [{ id: first.id, revision: 1 }] });
+    expect(now.body).toMatchObject({ closed: true, revision: 2, close: { id: correction.id, revision: 2 } });
+    // The latest close only; the first stays stored and answers its own request (above).
+    expect(now.body.earlier).toBeUndefined();
     expect(await closeAudits(jobId)).toEqual(['job_closed', 'job_closed']);
     expect(await signedRecord(jobId)).toEqual(before);
   });
@@ -276,6 +278,59 @@ describe('who reads and closes', () => {
     expect(await close(OWNER_A, unsigned, closeBody(agreementId))).toEqual({ status: 409, body: { error: 'not_signed' } });
     expect(await outcome(OWNER_B, jobId)).toEqual({ status: 404, body: { error: 'not_found' } });
     expect(await close(OWNER_B, jobId, closeBody(agreementId))).toEqual({ status: 404, body: { error: 'not_found' } });
+    expect(await closeAudits(jobId)).toEqual([]);
+  });
+});
+
+describe('review round fixes', () => {
+  it('signs all the same when the history write is cancelled, a statement timeout included', async () => {
+    await h.admin.unsafe(`
+      CREATE FUNCTION test_cancel_history() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'cancelled for a test' USING ERRCODE = '57014'; END $$;
+      CREATE TRIGGER test_cancel_history BEFORE INSERT ON estimate_history FOR EACH ROW EXECUTE FUNCTION test_cancel_history();
+    `);
+    let signed: { jobId: string; agreementId: string };
+    try {
+      signed = await signedOnPhone();
+    } finally {
+      await h.admin.unsafe('DROP TRIGGER test_cancel_history ON estimate_history; DROP FUNCTION test_cancel_history();');
+    }
+    expect((await l.f.job(signed.jobId)).status).toBe('signed');
+    expect(await samples(signed.jobId)).toEqual([]);
+  });
+
+  it('records a signed room with no category as the engine priced it, category 1', async () => {
+    await publish(h.seed.a, '2.00');
+    const ready = await l.f.readyJob(ESTIMATOR_A, h.seed.a);
+    expect((await l.saveCustomer(ESTIMATOR_A, ready.jobId, '12 Synthetic Lane, Testville')).status).toBe(200);
+    const manifest = l.manifestOf(ready.photoId);
+    // The hall has no category; the kitchen is category 2.
+    const hall = manifest.rooms.find((room) => room.id === 'hall')!;
+    const { category: _dropped, ...rest } = hall.field as Record<string, unknown>;
+    void _dropped;
+    hall.field = rest;
+    h.field.put(h.seed.a, ready.draftId, manifest);
+    expect((await l.f.submitShown(ESTIMATOR_A, ready.jobId, ready.draftId, manifest)).answer.status).toBe(201);
+    const estimate = (await l.price(ESTIMATOR_A, ready.jobId)).body.estimate as Body;
+    const signatureId = randomUUID();
+    const built = request(ESTIMATOR_A, `/api/jobs/${ready.jobId}/photos/${signatureId}?kind=signature`, { method: 'PUT', body: image(`signature ${signatureId}`) });
+    built.headers.set('X-Proposal-Sha256', estimate.proposalSha256);
+    expect((await photoRoute.PUT(built, params({ jobId: ready.jobId, photoId: signatureId }))).status).toBe(201);
+    const body = { id: randomUUID(), estimateId: estimate.id, proposalSha256: estimate.proposalSha256, signatureId, signerName: 'Casey Customer', documentsConfirmed: true };
+    expect((await json(agreementsRoute.POST(request(ESTIMATOR_A, `/api/jobs/${ready.jobId}/agreements`, { method: 'POST', body }), params({ jobId: ready.jobId })))).status).toBe(201);
+    expect((await samples(ready.jobId)).map((row) => row.room_categories)).toEqual([['1', '2']]);
+  });
+
+  it('refuses a read or a close once the switch is off, even for a request that passed the route’s check', async () => {
+    const { jobId, agreementId } = await signedOnPhone();
+    await switchOn(h.seed.a);
+    const { outcomeService } = await import('@/lib/drying/outcome');
+    const service = outcomeService(h.handle.db);
+    const office = { companyId: h.seed.a, actorId: h.seed.officeA.actor, uid: 'office-a', role: 'office' as const, capabilities: ['jobs_read' as const, 'coordination' as const] };
+    expect((await service.read(office, jobId)).access).toBe('full');
+    await h.admin`UPDATE company_feature_flags SET enabled = false WHERE company_id = ${h.seed.a} AND flag = 'estimate_assist'`;
+    const refusal = async (run: Promise<unknown>) => run.then(() => 'answered', (error: { code?: string }) => error.code);
+    expect(await refusal(service.read(office, jobId))).toBe('not_found');
+    expect(await refusal(service.close(office, jobId, JSON.stringify(closeBody(agreementId))))).toBe('not_found');
     expect(await closeAudits(jobId)).toEqual([]);
   });
 });

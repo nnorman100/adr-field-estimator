@@ -83,7 +83,7 @@ export type WatchService = {
   act(caller: JobCaller, jobId: string, body: string | null): Promise<WatchActionResult>;
 };
 
-type SignedFacts = { agreementId: string; setupAt: Date; plan: { plannedDays: number; rooms: SignedRoom[] } | null };
+export type SignedFacts = { agreementId: string; setupAt: Date; plan: { plannedDays: number; rooms: SignedRoom[] } | null };
 
 // The agreement in force (the latest signed; S5b-9's resolver replaces this when revisions land), the
 // original signing's time, and the plan of the snapshot the agreement in force was signed from.
@@ -215,7 +215,20 @@ async function viewOf(tx: CompanyTransaction, caller: JobCaller, job: JobRow, no
   };
 }
 
-/** The watch as its own card shows it, for the job close's suggested days (S5b-10 part 3). */
+/**
+ * The watch's day count once monitoring has finished (marked dry, closed, or at its dry standard), for the
+ * job close's suggested days: null while monitoring is active or when the signed record keeps no plan.
+ * Works out only the watch's state, from the signed facts the caller has already read.
+ */
+export async function finishedDayCount(tx: CompanyTransaction, job: JobRow, facts: SignedFacts, now: string): Promise<number | null> {
+  if (!facts.plan) return null;
+  const log = await logFacts(tx, job);
+  const watch = await watchOf(tx, job);
+  const state = watchState({ plannedDays: facts.plan.plannedDays, rooms: facts.plan.rooms, setupAt: facts.setupAt, readings: log.readings, decisions: watch.receipts, at: now });
+  return finished(state.status) ? state.dayNumber : null;
+}
+
+/** The watch as its own card shows it (the jobs list's projection reads it). */
 export async function compute(tx: CompanyTransaction, caller: JobCaller, job: JobRow, now: string): Promise<{ view: WatchView }> {
   return { view: await viewOf(tx, caller, job, now, await load(tx, job), await watchOf(tx, job)) };
 }

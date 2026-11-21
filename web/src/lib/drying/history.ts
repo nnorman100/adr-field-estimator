@@ -41,11 +41,15 @@ export function centsOf(value: unknown): number | null {
 
 const CATEGORY_ORDER = ['1', '2', '3', 'mold'] as const;
 
-// The signed rooms' categories, each once, in the database's order; null when no room states one.
-function categoriesOf(rooms: { field: unknown }[]): HistorySample['roomCategories'] {
+// The signed rooms' categories as the engine priced them, each once, in the database's order: the
+// rooms the draft's room order lists, a room with no category priced as category 1 (the engine's
+// default, src/engine/inspection.ts). Null for a record with no listed room.
+function categoriesOf(manifest: { draft: unknown; rooms: { id: string; field: unknown }[] }): HistorySample['roomCategories'] {
+  const order = (manifest.draft as { roomOrder?: unknown } | null)?.roomOrder;
+  const listed = Array.isArray(order) ? manifest.rooms.filter((room) => order.includes(room.id)) : [];
   const found = new Set<string>();
-  for (const room of rooms) {
-    const category = (room.field as { category?: unknown } | null)?.category;
+  for (const room of listed) {
+    const category = (room.field as { category?: unknown } | null)?.category ?? 1;
     if (category === 1 || category === 2 || category === 3) found.add(String(category));
     else if (category === 'mold') found.add('mold');
   }
@@ -74,7 +78,7 @@ export function sampleOf(agreement: { id: string; signedAt: Date; pricedResult: 
   if (snapshot) {
     try {
       const manifest = snapshotManifest(snapshot);
-      roomCategories = categoriesOf(manifest.rooms);
+      roomCategories = categoriesOf(manifest);
       const days = (manifest.draft as { dryingDays?: unknown } | null)?.dryingDays;
       plannedDays = typeof days === 'number' && Number.isInteger(days) && days >= 1 && days <= 365 ? days : null;
     } catch {
@@ -136,10 +140,11 @@ export async function writeSample(tx: CompanyTransaction, companyId: string, job
   return (await storedSample(tx, companyId, jobId, agreementId)) ?? sample;
 }
 
-// What a failed statement leaves for the transaction around it: these end or poison the whole
-// transaction (serialization, deadlock, a lost connection, a cancelled query, the server going away),
-// so signing fails and retries as for any other error; anything else stays inside the savepoint.
-const WHOLE_TRANSACTION = /^(40001|40P01|08|57|53|58|25P02)/;
+// What a failed statement leaves for the transaction around it: these end the whole transaction
+// (serialization failure, deadlock, a lost connection, the server shutting down), so signing fails and
+// retries as for any other error. Anything else, a statement timeout or a refused row included, rolls
+// back to the savepoint and the signature goes on.
+const WHOLE_TRANSACTION = /^(40001|40P01|08|57P0[1-3])/;
 
 /**
  * The signing transaction's history capture: best effort, in a savepoint. A sample that cannot be built

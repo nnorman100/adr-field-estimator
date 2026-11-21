@@ -6,14 +6,14 @@ import { companyFeatureFlags } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
 import { canonicalJson } from '@/lib/field/canonical';
-import { flagsFromRows } from '@/lib/flags';
+import { flagsFromRows, type CompanyFlags } from '@/lib/flags';
 import { hasAny, jobAccess, JobError, type JobCaller, type JobRow } from '@/lib/jobs/access';
 import { audit } from '@/lib/jobs/service';
 import { DryingError } from './errors';
 import { storedSample, writeSample, type HistorySample } from './history';
 import { currentCaller, parseBody, refusedByDatabase } from './readings';
 import { noteText } from './schema';
-import { compute, databaseNow, signedFacts } from './watch-service';
+import { databaseNow, finishedDayCount, signedFacts, type SignedFacts } from './watch-service';
 
 // The job close (S5b-10 slice 10B; docs/estimate-assist.md "Job close and estimate accuracy"), behind
 // the company's `estimate_assist` switch (the route files' requireFlag). A signed job only. Every
@@ -21,8 +21,8 @@ import { compute, databaseNow, signedFacts } from './watch-service';
 // (readings.ts, currentCaller) and goes through the one job-access function.
 //
 // - GET outcome: `jobs_read`. `coordination` (the owner and office) gets the close with its amounts and
-//   note, every earlier version, the agreement in force, the close revision a new close must name, the
-//   baseline and the suggested drying days. Anyone else with the job (the estimator) gets only whether
+//   note (the latest close; an earlier version answers its own request again), the agreement in force,
+//   the close revision a new close must name, the baseline and the suggested drying days. Anyone else with the job (the estimator) gets only whether
 //   it closed and when, from a query that reads nothing more.
 // - POST close: `coordination`. Each close or correction is a new row with the next close revision. The
 //   job is locked; a request sent again gets its original receipt first, even after a correction; then
@@ -107,8 +107,6 @@ export type OutcomeView =
       // The close revision a new close or correction names: 0 before the first.
       revision: number;
       close: CloseView | null;
-      // Every earlier version, newest first.
-      earlier: CloseView[];
       // The drying days to preset: the watch's day count once monitoring has finished (with the
       // drying_watch switch on), otherwise the signed plan's days; null when neither is known.
       suggestedDays: { days: number; source: 'watch' | 'plan' } | null;
@@ -174,12 +172,14 @@ function closeView(row: CloseRow): CloseView {
   };
 }
 
+// The job's latest close (each earlier version stays stored and answers its own request again).
 async function closesOf(tx: CompanyTransaction, job: JobRow): Promise<CloseRow[]> {
   return (await tx
     .select(closeColumns)
     .from(jobCloses)
     .where(and(eq(jobCloses.companyId, job.companyId), eq(jobCloses.jobId, job.id)))
-    .orderBy(desc(jobCloses.revision))) as CloseRow[];
+    .orderBy(desc(jobCloses.revision))
+    .limit(1)) as CloseRow[];
 }
 
 async function closeRevision(tx: CompanyTransaction, job: JobRow): Promise<number> {
@@ -192,16 +192,20 @@ async function closeRevision(tx: CompanyTransaction, job: JobRow): Promise<numbe
 
 // The days to preset (docs/estimate-assist.md): a finished watch's day count when drying_watch is on,
 // otherwise the signed plan's drying days.
-async function suggestedDays(tx: CompanyTransaction, caller: JobCaller, job: JobRow): Promise<{ days: number; source: 'watch' | 'plan' } | null> {
-  const flags = flagsFromRows(
-    await tx.select({ flag: companyFeatureFlags.flag, enabled: companyFeatureFlags.enabled }).from(companyFeatureFlags).where(eq(companyFeatureFlags.companyId, job.companyId)),
-  );
+async function suggestedDays(tx: CompanyTransaction, job: JobRow, facts: SignedFacts, flags: CompanyFlags): Promise<{ days: number; source: 'watch' | 'plan' } | null> {
   if (flags.drying_watch) {
-    const { view } = await compute(tx, caller, job, await databaseNow(tx));
-    if (view.status !== 'unavailable' && view.suggestedDays !== null) return { days: view.suggestedDays, source: 'watch' };
+    const days = await finishedDayCount(tx, job, facts, await databaseNow(tx));
+    if (days !== null) return { days, source: 'watch' };
   }
-  const { plan } = await signedFacts(tx, job);
-  return plan ? { days: plan.plannedDays, source: 'plan' } : null;
+  return facts.plan ? { days: facts.plan.plannedDays, source: 'plan' } : null;
+}
+
+// The company's switches as they are now, in the request's own transaction; `estimate_assist` off is 404,
+// as the route's switch (a switch turned off while the request waited).
+async function switchesOn(tx: CompanyTransaction, companyId: string): Promise<CompanyFlags> {
+  const flags = flagsFromRows(await tx.select({ flag: companyFeatureFlags.flag, enabled: companyFeatureFlags.enabled }).from(companyFeatureFlags).where(eq(companyFeatureFlags.companyId, companyId)));
+  if (!flags.estimate_assist) throw new JobError('not_found');
+  return flags;
 }
 
 // The original agreement's sample: stored, or written now from its signed record. Null when its signed
@@ -222,6 +226,7 @@ export function outcomeService(db: Database): OutcomeService {
         caller.companyId,
         async (tx) => {
           await currentCaller(tx, caller, false);
+          const flags = await switchesOn(tx, caller.companyId);
           const job = await jobAccess(tx, caller, jobId, READ);
           if (job.status !== 'signed') throw new JobError('not_signed');
           if (!hasAny(caller, CLOSE)) {
@@ -234,18 +239,17 @@ export function outcomeService(db: Database): OutcomeService {
               .limit(1);
             return { jobId, access: 'status' as const, closed: latest !== undefined, closedAt: latest?.closedAt ?? null };
           }
-          const closes = (await closesOf(tx, job)).map(closeView);
-          const { agreementId } = await signedFacts(tx, job);
+          const [latest] = (await closesOf(tx, job)).map(closeView);
+          const facts = await signedFacts(tx, job);
           return {
             jobId,
             access: 'full' as const,
-            closed: closes.length > 0,
-            closedAt: closes[0]?.closedAt ?? null,
-            agreementId,
-            revision: closes[0]?.revision ?? 0,
-            close: closes[0] ?? null,
-            earlier: closes.slice(1),
-            suggestedDays: await suggestedDays(tx, caller, job),
+            closed: latest !== undefined,
+            closedAt: latest?.closedAt ?? null,
+            agreementId: facts.agreementId,
+            revision: latest?.revision ?? 0,
+            close: latest ?? null,
+            suggestedDays: await suggestedDays(tx, job, facts, flags),
           };
         },
         { snapshot: true },
@@ -255,6 +259,8 @@ export function outcomeService(db: Database): OutcomeService {
     async close(caller, jobId, body) {
       return withCompany(db, caller.companyId, async (tx) => {
         await currentCaller(tx, caller, true);
+        // After the company lock the operator's switch writer also takes.
+        await switchesOn(tx, caller.companyId);
         const job = await jobAccess(tx, caller, jobId, CLOSE, { lock: true });
         const input = parseBody(closeBody, body);
         const digest = closeDigest(input);
