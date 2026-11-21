@@ -365,6 +365,34 @@ describe('the owner reprices a draft', () => {
     expect(await send(OWNER_A, jobId, { ...change, revision: change.revision + 1 })).toMatchObject({ status: 409, body: { error: 'conflict' } });
   });
 
+  it('a retry of a reprice the previous release made, sent without the price, is answered with the original answer', async () => {
+    const { jobId } = await readyToSign();
+    const two = await publish(h.seed.a, '3.00');
+    const change = { revision: (await f.job(jobId)).revision, changeId: randomUUID(), versionId: two.id, pinnedPrice: await shownPinnedPrice(jobId) };
+    const first = await send(OWNER_A, jobId, change);
+    expect(first.status).toBe(200);
+    const raw = { revision: change.revision, changeId: change.changeId, versionId: change.versionId };
+    const post = (body: unknown) => json(repriceRoute.POST(request(OWNER_A, `/api/jobs/${jobId}/reprice`, { method: 'POST', body }), params({ jobId })));
+    const before = await everything(h.admin);
+    expect(await post(raw)).toMatchObject({ status: 409, body: { error: 'conflict' } });
+    await h.admin`UPDATE audit_events SET details = details - 'request_digest' WHERE target = ${jobId} AND action = 'job_repriced'`;
+    const legacy = await everything(h.admin);
+    expect(await post(raw)).toEqual(first);
+    expect(await post({ ...raw, revision: raw.revision + 1 })).toMatchObject({ status: 409, body: { error: 'conflict' } });
+    expect(await everything(h.admin)).toBe(legacy);
+    expect(before).not.toBe(legacy);
+  });
+
+  it('a new confirmation without the price is 400 and writes nothing', async () => {
+    const { jobId } = await readyToSign();
+    const two = await publish(h.seed.a, '3.00');
+    const before = await everything(h.admin);
+    const raw = { revision: (await f.job(jobId)).revision, changeId: randomUUID(), versionId: two.id };
+    expect(await json(repriceRoute.POST(request(OWNER_A, `/api/jobs/${jobId}/reprice`, { method: 'POST', body: raw }), params({ jobId })))).toMatchObject({ status: 400, body: { error: 'invalid_request' } });
+    expect(await everything(h.admin)).toBe(before);
+    expect(await pins(jobId)).toHaveLength(1);
+  });
+
   it('a suspended company, or price books switched off, is refused for the preview and the confirmation before the job is read', async () => {
     const { jobId } = await readyToSign();
     await publish(h.seed.a, '3.00');

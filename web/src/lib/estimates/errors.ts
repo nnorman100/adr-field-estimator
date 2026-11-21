@@ -13,8 +13,7 @@ export const ESTIMATE_ERRORS = {
   prices_superseded: 409,
   // Reprice (S5b-6): the job is already priced from the company's newest version.
   prices_unchanged: 409,
-  // Reprice: the pinned price the owner saw has changed since the preview (an approval was proposed,
-  // edited or approved meanwhile): review the preview again.
+  // Reprice: the pinned price the owner saw has changed since the preview: review the preview again.
   preview_stale: 409,
   // The company has no published price version, so nothing can be priced (pricing plan 3.2).
   prices_not_set: 409,

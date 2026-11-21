@@ -440,7 +440,9 @@ async function present(tx: CompanyTransaction, caller: JobCaller, job: JobRow, r
 
 type RecordRow = { id: string; snapshotBytes: Buffer };
 
-function recordPricing(record: RecordRow): { pricing: EstimateJob; rooms: ReadonlyMap<string, string> } {
+type RecordPricing = { pricing: EstimateJob; rooms: ReadonlyMap<string, string> };
+
+function recordPricing(record: RecordRow): RecordPricing {
   try {
     const snapshot = readSnapshot(record.snapshotBytes);
     return { pricing: pricingJob(snapshot), rooms: roomNamesOf(snapshot) };
@@ -463,16 +465,24 @@ function pricedSide(job: EstimateJob, version: VersionRow): PricedSide {
 // never priced again; with no estimate yet, the submitted record's current approvals, as the estimate
 // would take them. The preview shows it and the confirmation checks it; only this is computed for the
 // confirmation, never the newest side.
-async function pinnedSideOf(tx: CompanyTransaction, caller: JobCaller, job: JobRow, pin: PinRow, record: RecordRow, pinned: VersionRow): Promise<PricedSide> {
+async function pinnedSideOf(
+  tx: CompanyTransaction,
+  caller: JobCaller,
+  job: JobRow,
+  pin: PinRow,
+  prepare: () => RecordPricing,
+  recordId: string,
+  pinned: VersionRow,
+): Promise<PricedSide> {
   const [stored] = await tx
     .select({ pricedResult: jobEstimates.pricedResult })
     .from(jobEstimates)
-    .where(and(eq(jobEstimates.companyId, caller.companyId), eq(jobEstimates.submissionId, record.id), eq(jobEstimates.pinId, pin.id)));
+    .where(and(eq(jobEstimates.companyId, caller.companyId), eq(jobEstimates.submissionId, recordId), eq(jobEstimates.pinId, pin.id)));
   if (stored) return { price: priceText(readStoredEstimate(stored.pricedResult).totals), refused: null };
-  const { pricing, rooms } = recordPricing(record);
+  const { pricing, rooms } = prepare();
   const approved =
     job.status === 'submitted' && (await pricedExtrasOn(tx, caller.companyId))
-      ? await approvedFor(tx, caller.companyId, { submissionId: record.id, jobRevision: job.revision, pinId: pin.id })
+      ? await approvedFor(tx, caller.companyId, { submissionId: recordId, jobRevision: job.revision, pinId: pin.id })
       : null;
   return pricedSide(approved ? withApprovals(pricing, approved, rooms) : pricing, pinned);
 }
@@ -491,19 +501,21 @@ async function previewOf(tx: CompanyTransaction, caller: JobCaller, job: JobRow)
   // A pinned job always has a committed record: its first price is made with one. It is the
   // current draft's while submitted, the one before Back to editing while a new draft is open.
   const record = (await lastSubmission(tx, caller.companyId, job.id))!;
-  const pinnedSide = await pinnedSideOf(tx, caller, job, pin, record, pinned);
+  let prepared: RecordPricing | undefined;
+  const prepare = (): RecordPricing => (prepared ??= recordPricing(record));
+  const pinnedSide = await pinnedSideOf(tx, caller, job, pin, prepare, record.id, pinned);
   return {
     job: { revision: job.revision },
     reprice: {
       pinned: { version: pinned.sequence, ...pinnedSide },
-      newest: { versionId: newest.id, version: newest.sequence, ...pricedSide(recordPricing(record).pricing, newest) },
+      newest: { versionId: newest.id, version: newest.sequence, ...pricedSide(prepare().pricing, newest) },
     },
   };
 }
 
 // SHA-256 of the confirmation in a fixed key order: the same change id and body is the same request,
 // the same id with another body is refused (docs/plans/S5.md, section 1). The price is hashed, never kept.
-const repriceDigest = (input: RepriceInput): string =>
+const repriceDigest = (input: RepriceInput & { pinnedPrice: string | null }): string =>
   createHash('sha256')
     .update(canonicalJson({ revision: input.revision, changeId: input.changeId, versionId: input.versionId, pinnedPrice: input.pinnedPrice }), 'utf8')
     .digest('hex');
@@ -610,7 +622,6 @@ export function estimatesService(db: Database): EstimatesService {
         await lockActiveOwner(tx, caller);
         if (!(await priceBooksOn(tx, caller.companyId))) throw new JobError('not_found');
         const job = await jobAccess(tx, caller, jobId, REPRICE, { lock: true });
-        const digest = repriceDigest(input);
         const [done] = await tx
           .select({ details: auditEvents.details })
           .from(auditEvents)
@@ -624,11 +635,17 @@ export function estimatesService(db: Database): EstimatesService {
           );
         if (done) {
           const first = done.details as RepriceAnswer & { request_revision: number; request_version_id: string; request_digest?: string };
-          // An older row without the digest is compared on its revision and version.
-          const same = first.request_digest === undefined ? first.request_revision === input.revision && first.request_version_id === input.versionId : first.request_digest === digest;
+          // An older row without the digest is compared on its revision and version; a body without
+          // the price differs from every row that has one.
+          const same =
+            first.request_digest === undefined
+              ? first.request_revision === input.revision && first.request_version_id === input.versionId
+              : input.pinnedPrice !== undefined && first.request_digest === repriceDigest({ ...input, pinnedPrice: input.pinnedPrice });
           if (!same) throw new JobError('conflict');
           return { job: { id: jobId, status: first.job_status, currentDraftId: first.job_draft, revision: first.job_revision }, pin: { sequence: first.sequence, version: first.version } };
         }
+        const { pinnedPrice } = input;
+        if (pinnedPrice === undefined) throw new EstimateError('invalid_request');
         if (job.status === 'signed') throw new EstimateError('job_signed');
         if (job.revision !== input.revision) throw new JobError('stale_revision');
         const pin = await currentPin(tx, caller.companyId, jobId);
@@ -641,7 +658,7 @@ export function estimatesService(db: Database): EstimatesService {
         // preview changes the pinned price without moving the job revision, and is refused (S5b-8).
         const previous = (await versionById(tx, caller.companyId, pin.versionId))!;
         const record = (await lastSubmission(tx, caller.companyId, jobId))!;
-        if ((await pinnedSideOf(tx, caller, job, pin, record, previous)).price !== input.pinnedPrice) throw new EstimateError('preview_stale');
+        if ((await pinnedSideOf(tx, caller, job, pin, () => recordPricing(record), record.id, previous)).price !== pinnedPrice) throw new EstimateError('preview_stale');
         // A version this server cannot price is never pinned.
         versionTable(version);
         if (version.engineVersion !== ENGINE_VERSION) throw new EstimateError('prices_unreadable');
@@ -657,7 +674,7 @@ export function estimatesService(db: Database): EstimatesService {
           change_id: input.changeId,
           request_revision: input.revision,
           request_version_id: input.versionId,
-          request_digest: digest,
+          request_digest: repriceDigest({ ...input, pinnedPrice }),
           job_status: next.status,
           job_draft: next.currentDraftId,
           job_revision: next.revision,
