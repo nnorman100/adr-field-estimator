@@ -294,9 +294,7 @@ const ADDITION = z
   .strictObject({
     id: z.string().regex(HEX_ID),
     kind: z.enum(['unit', 'flat']),
-    description: text(1, 300)
-      .transform((value) => oneLine(value))
-      .refine((value) => value !== '' && printable(value), { message: 'description' }),
+    description: text(1, 300).refine((value) => oneLine(value) !== '' && printable(oneLine(value)), { message: 'description' }),
     quantity: amount('0', '100000', { above: true, places: 2 }).nullish(),
     unit: text(1, 20).nullish(),
     price: amount('0', '100000', { above: true, places: 2 }),
@@ -403,7 +401,14 @@ const INSPECTION = z.strictObject({
   scope_confirmed: z.boolean().default(false),
   capture_metadata: CAPTURE.nullish(),
   extras: z.array(EXTRA).max(30).default([]),
-  line_multipliers: z.array(LINE_MULTIPLIER).max(200).optional(),
+  line_multipliers: z
+    .array(LINE_MULTIPLIER)
+    .max(3000)
+    .refine(
+      (entries) => new Set(entries.map((entry) => `${entry.itemId}\u0000${entry.room === null ? '' : `r${collapse(entry.room)}`}`)).size === entries.length,
+      { message: 'one multiplier per line' },
+    )
+    .optional(),
   additions: z.array(ADDITION).max(30).optional(),
   equipment_scans: z.array(SCAN).max(200).optional(),
   scope_items: capped(SCOPE, 150)

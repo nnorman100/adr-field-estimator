@@ -65,7 +65,8 @@ export function roomWordsFor(rooms: Room[], words: RoomWords[] | null): RoomWord
 function letterLine(line: PriceLine, labels: Map<string, string>, showPrices: boolean): LetterLine {
   const label = line.itemId === null ? undefined : labels.get(line.itemId);
   // Approved additional work (no price-list item) keeps the engine's own sentence for it.
-  const text = label === undefined ? line.description : `${label}: up to ${line.quantity.normalize().format('f')} ${line.unit}`;
+  const factor = line.multiplier ? ` x${line.multiplier.normalize().format('f')}` : '';
+  const text = label === undefined ? line.description : `${label}: up to ${line.quantity.normalize().format('f')} ${line.unit}${factor}`;
   return showPrices ? { text, total: money(line.total).toString() } : { text };
 }
 

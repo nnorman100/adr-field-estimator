@@ -21,6 +21,9 @@ export const APPROVAL_ERRORS = {
   // submitted record does not have.
   unknown_item: 409,
   unknown_room: 409,
+  // The submitted record, priced at the job's pinned prices, has no line of that item in that room (or no
+  // job-wide line of it when no room is named), so a multiplier on it would change nothing.
+  no_such_line: 409,
   // A custom multiplier is already proposed for that line (one per line, owner decision D2).
   line_already_proposed: 409,
   no_hourly_rate: 409,

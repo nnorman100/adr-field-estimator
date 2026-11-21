@@ -130,6 +130,13 @@ describe('the review screen', () => {
     const missing = { documents: null, staffNotes: { companySetupMissing: [] }, needsReview: true, missingDetails: ['Property address is missing'] } as unknown as EstimateView;
     expect(notReadyReasons(missing)).toEqual([changed, 'Property address is missing. The documents are shown again once it is added on the job.']);
   });
+
+  it('says additions wait for the owner, not that the scope has no work', () => {
+    const waiting = { documents: { signable: false, unpricedWork: [], pendingExtras: 2 }, staffNotes: { companySetupMissing: [] }, needsReview: false, missingDetails: [] } as unknown as EstimateView;
+    expect(notReadyReasons(waiting)).toEqual([
+      'Additions or additional work are waiting for the owner to approve them. Once they are settled, go back to editing, then finish and review.',
+    ]);
+  });
 });
 
 describe('the photo log of a submitted record', () => {

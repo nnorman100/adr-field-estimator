@@ -253,6 +253,10 @@ describe('proposals and approvals (S5b-8)', () => {
     expect(await propose(ESTIMATOR_A, jobId, { ...line, multiplier: '1.5' })).toMatchObject({ status: 409, body: { error: 'line_already_proposed' } });
     expect(await propose(ESTIMATOR_A, jobId, { ...line, itemId: 'no_such_item' })).toMatchObject({ status: 409, body: { error: 'unknown_item' } });
     expect(await propose(ESTIMATOR_A, jobId, { ...line, roomId: 'attic' })).toMatchObject({ status: 409, body: { error: 'unknown_room' } });
+    // The record prices extraction in the rooms, not job-wide, and the hourly rate item prices no line of its own.
+    expect(await propose(ESTIMATOR_A, jobId, { ...line, roomId: null })).toMatchObject({ status: 409, body: { error: 'no_such_line' } });
+    expect(await propose(ESTIMATOR_A, jobId, { ...line, itemId: 'additional_work' })).toMatchObject({ status: 409, body: { error: 'no_such_line' } });
+    expect(await h.admin`SELECT count(*)::int AS n FROM job_price_approvals`).toEqual([{ n: 1 }]);
     expect((await approve(OWNER_A, jobId, id)).body.approval).toMatchObject({ id, itemId: 'extraction', roomId: 'kitchen', multiplier: '1.25', approved: true });
     // Kitchen 80 sq ft x $2.00 = $160.00, x1.25 = $200.00; Hall 40 sq ft x $2.00 = $80.00. Total $280.00.
     const estimate = (await make(ESTIMATOR_A, jobId)).body.estimate;
@@ -262,6 +266,11 @@ describe('proposals and approvals (S5b-8)', () => {
 
   it('prices approved unit and flat additions with their approved wording, never in the price table, and waits on unapproved ones', async () => {
     await publish();
+    const catalog = async () => ({
+      versions: await h.admin`SELECT * FROM price_table_versions WHERE company_id = ${h.seed.a} ORDER BY sequence`,
+      workingCopies: await h.admin`SELECT * FROM price_table_working_copies WHERE company_id = ${h.seed.a}`,
+    });
+    const before = await catalog();
     const { jobId } = await submittedJob();
     const bags = (await propose(ESTIMATOR_A, jobId, { kind: 'unit', description: 'Haul-away bags', quantity: '12', unit: 'bag', price: '4.50', taxable: true })).body.approval;
     expect(bags).toMatchObject({ quantity: '12', unit: 'bag', price: '4.50', taxable: true, total: '54.00' });
@@ -269,13 +278,13 @@ describe('proposals and approvals (S5b-8)', () => {
     expect(permit).toMatchObject({ quantity: null, price: '150.00', taxable: false, total: '150.00' });
     await approve(OWNER_A, jobId, bags.id as string);
     // The flat addition is still waiting for the owner: it prices nothing and the estimate cannot be signed.
-    const waiting = await h.admin`SELECT content FROM price_table_versions WHERE company_id = ${h.seed.a}`;
     const other = await submittedJob();
     const pending = (await propose(ESTIMATOR_A, other.jobId, { kind: 'flat', description: 'Permit filing', price: '150.00', taxable: false })).body.approval;
     expect(pending.approved).toBe(false);
     const unsettled = (await make(ESTIMATOR_A, other.jobId)).body.estimate;
     expect(unsettled.totals.low.total).toBe('240.00');
     expect(unsettled.documents.signable).toBe(false);
+    expect(unsettled.documents.pendingExtras).toBe(1);
     await approve(OWNER_A, jobId, permit.id as string);
     // $240.00 + 12 bags x $4.50 = $54.00 + $150.00 = $444.00 (no sales tax in this table).
     const estimate = (await make(ESTIMATOR_A, jobId)).body.estimate;
@@ -284,7 +293,7 @@ describe('proposals and approvals (S5b-8)', () => {
     expect(text).toContain('Haul-away bags: 12 bag at $4.50/bag, approved on ');
     expect(text).toContain('Permit filing: $150.00, approved on ');
     // The company's published prices are as they were.
-    expect(await h.admin`SELECT content FROM price_table_versions WHERE company_id = ${h.seed.a}`).toEqual(waiting);
+    expect(await catalog()).toEqual(before);
   });
 
   it('lets only the owner approve; an hourly approval keeps the name as entered and reaches the estimate', async () => {

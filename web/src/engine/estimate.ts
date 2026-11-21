@@ -98,6 +98,8 @@ export type EstimateDocuments = {
   /** The itemized claim's lines: description, price and the owner's optional "matches Xactimate line" note. */
   itemized_claim: Json[];
   unpriced_work: string[];
+  /** Hourly, unit and flat additions still waiting for the owner's approval; absent on an estimate stored before. */
+  pending_extras?: number;
   signable: boolean;
   /** Notes for the company's staff, never part of a document a customer or adjuster receives. */
   staff_notes: StaffNotes;
@@ -224,6 +226,7 @@ function documentsOf(documents: JObj): EstimateDocuments {
     claim: documents.claim ?? null,
     itemized_claim: Array.isArray(documents.xactimate_scope) ? documents.xactimate_scope : [],
     unpriced_work: strings(documents.unpriced_work),
+    pending_extras: typeof documents.pending_extras === 'number' ? documents.pending_extras : 0,
     signable: documents.signable === true,
     staff_notes: {
       summary: typeof documents.ai_summary === 'string' ? documents.ai_summary : '',

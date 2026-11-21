@@ -129,6 +129,8 @@ export type PriceLine = {
   priceRow?: string | null;
   priceBracket?: { upToSf: number | null; unitPrice: string } | null;
   bracketMode?: string | null;
+  /** The owner-approved custom multiplier already in this line's unit price and total (S5b-8). */
+  multiplier?: Dec;
 };
 
 /** A line on the itemized claim, money as Decimal strings. */

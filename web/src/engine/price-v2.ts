@@ -11,7 +11,7 @@ import {
   type SizeTier,
   type PriceLine,
 } from './values';
-import type { Inspection, Room } from './inspection';
+import type { Inspection, LineMultiplier, Room } from './inspection';
 import { fieldDec, roomNumber } from './inspection';
 import { affectedBandOf, roomTypeOf, sizeTierOf } from './rooms';
 import { pickPriceRow } from './row-pick';
@@ -311,10 +311,10 @@ export function jobSf(data: Inspection, items: Item[], policy: Policy): Dec {
   return sumDec([...areas.values()], typed);
 }
 
-function score(line: PriceLine, growth?: (line: PriceLine) => Dec): Dec {
+function score(line: PriceLine, growth?: (line: PriceLine) => Dec, factor?: (line: PriceLine) => Dec): Dec {
   const waste = ONE.add(line.waste.div(HUNDRED));
   const grown = ONE.add(growth ? growth(line) : ZERO);
-  return line.unitPrice.mul(waste).mul(grown);
+  return line.unitPrice.mul(waste).mul(grown).mul(factor ? factor(line) : ONE);
 }
 
 /**
@@ -327,6 +327,7 @@ function bracketLines(
   policy: Policy,
   jobArea: Dec | null,
   growth?: (line: PriceLine) => Dec,
+  factor?: (line: PriceLine) => Dec,
 ): PriceLine[] {
   const mode = policy.bracket_mode;
   const whole = mode === 'whole-job';
@@ -334,7 +335,7 @@ function bracketLines(
   let used = ZERO;
   let exact = ZERO;
   let rounded = ZERO;
-  const ordered = [...lines].sort((left, right) => score(right, growth).cmp(score(left, growth)));
+  const ordered = [...lines].sort((left, right) => score(right, growth, factor).cmp(score(left, growth, factor)));
   const result: PriceLine[] = [];
   for (const line of ordered) {
     let remaining = line.quantity;
@@ -424,14 +425,15 @@ export function priceScopeV2(
     }
   }
   const area = policy.bracket_mode === 'whole-job' ? jobSf(data, items, policy) : null;
+  const factor = (line: PriceLine): Dec => multiplierOf(data, line)?.multiplier ?? ONE;
   const lines: PriceLine[] = [];
   for (const [item, itemLines] of priced) {
     if (!item.rows) {
-      lines.push(...(item.price_brackets ? bracketLines(item.price_brackets, itemLines, policy, area, growth) : itemLines));
+      lines.push(...(item.price_brackets ? bracketLines(item.price_brackets, itemLines, policy, area, growth, factor) : itemLines));
       continue;
     }
     for (const [brackets, group] of byRow(item, itemLines)) {
-      lines.push(...(brackets ? bracketLines(brackets, group, policy, area, growth) : group));
+      lines.push(...(brackets ? bracketLines(brackets, group, policy, area, growth, factor) : group));
     }
   }
   for (const extra of data.extras) {
@@ -475,18 +477,27 @@ export const ADDITION = 'ADDITION';
  */
 function applyLineMultipliers(lines: PriceLine[], data: Inspection, warnings: EngineWarning[]): void {
   for (const entry of data.lineMultipliers ?? []) {
-    const room = entry.room === null ? null : roomKey(entry.room);
     let matched = false;
     for (const line of lines) {
-      if (line.itemId !== entry.itemId) continue;
-      if ((line.room === null ? null : roomKey(line.room)) !== room) continue;
+      if (!targets(entry, line)) continue;
       matched = true;
       line.unitPrice = line.unitPrice.mul(entry.multiplier);
       line.total = money(line.total.mul(entry.multiplier));
+      line.multiplier = entry.multiplier;
       line.description = `${line.description} x${entry.multiplier.normalize().format('f')}`;
     }
     if (!matched) warnings.push({ code: 'unmatched_line_multiplier', item_id: entry.itemId, room: entry.room });
   }
+}
+
+function targets(entry: LineMultiplier, line: PriceLine): boolean {
+  if (line.itemId !== entry.itemId) return false;
+  return (line.room === null ? null : roomKey(line.room)) === (entry.room === null ? null : roomKey(entry.room));
+}
+
+/** The approved multiplier on a line, if any; the inspection holds at most one per line. */
+function multiplierOf(data: Inspection, line: PriceLine): LineMultiplier | undefined {
+  return (data.lineMultipliers ?? []).find((entry) => targets(entry, line));
 }
 
 /**
@@ -526,6 +537,7 @@ function additionLine(addition: NonNullable<Inspection['additions']>[number], ex
 }
 
 export function exactAmount(line: PriceLine): Dec {
+  if (line.multiplier) return line.total;
   return line.quantity.mul(line.unitPrice).mul(ONE.add(line.waste.div(HUNDRED)));
 }
 

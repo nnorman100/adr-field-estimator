@@ -2,12 +2,17 @@ import { createHash } from 'node:crypto';
 import { and, asc, count, eq, inArray, isNotNull, isNull } from 'drizzle-orm';
 import { auditEvents, companies, jobEstimates, jobPriceApprovals, jobSubmissions, memberships } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
+import { priceEstimate, type EstimateJob, type Json } from '@/engine/estimate';
 import type { Table } from '@/engine/table';
+import { collapse } from '@/engine/values';
 import type { Capability } from '@/lib/access';
 import { canonicalJson } from '@/lib/field/canonical';
 import { jobAccess, JobError, type JobCaller, type JobRow } from '@/lib/jobs/access';
 import { EstimateError } from '@/lib/estimates/errors';
-import { readSnapshot } from '@/lib/estimates/inputs';
+import { pricingJob, readSnapshot, SnapshotError } from '@/lib/estimates/inputs';
+import { FieldMapError } from '@/lib/field/inspection';
+import type { Snapshot } from '@/lib/submissions/snapshot';
+import { ZodError } from 'zod';
 import {
   confirmationPredatesReprice,
   currentPin,
@@ -131,7 +136,7 @@ async function rowById(tx: CompanyTransaction, companyId: string, jobId: string,
 
 // What a write is bound to: the committed record of the job's current draft, its pin and the pin's
 // table. Refused when the job is not submitted, the record was repriced, or its estimate is made.
-type Binding = { submissionId: string; pin: PinRow; table: Table; tableHash: string };
+type Binding = { submissionId: string; pin: PinRow; table: Table; tableHash: string; content: Json };
 
 async function binding(tx: CompanyTransaction, caller: JobCaller, job: JobRow, pinIfMissing: boolean): Promise<Binding> {
   if (job.status === 'signed') throw new EstimateError('job_signed');
@@ -154,17 +159,37 @@ async function binding(tx: CompanyTransaction, caller: JobCaller, job: JobRow, p
     if (!pinIfMissing) throw new EstimateError('not_priced');
     pin = await pinFirstPrice(tx, caller, job.id, version);
   }
-  return { submissionId, pin, table, tableHash: version.contentHash };
+  return { submissionId, pin, table, tableHash: version.contentHash, content: version.content as Json };
 }
 
-// The record's rooms by field id: a custom multiplier names one of them (or none, for a job-wide item).
-async function recordRoomIds(tx: CompanyTransaction, companyId: string, submissionId: string): Promise<ReadonlySet<string>> {
+// What a custom multiplier can name, read from the committed record priced at the pinned prices: the record's
+// rooms by field id with their names, and the priced lines (item and room name; a job-wide line has no room).
+async function recordPricing(
+  tx: CompanyTransaction,
+  companyId: string,
+  submissionId: string,
+  content: Json,
+): Promise<{ rooms: ReadonlyMap<string, string>; lines: Array<{ item_id: string | null; room: string | null }> }> {
   const [row] = await tx
     .select({ bytes: jobSubmissions.snapshotBytes })
     .from(jobSubmissions)
     .where(and(eq(jobSubmissions.companyId, companyId), eq(jobSubmissions.id, submissionId)));
-  if (!row?.bytes) return new Set();
-  return new Set(roomNamesOf(readSnapshot(Buffer.from(row.bytes))).keys());
+  if (!row?.bytes) throw new EstimateError('record_unreadable');
+  let snapshot: Snapshot;
+  let job: EstimateJob;
+  try {
+    snapshot = readSnapshot(Buffer.from(row.bytes));
+    job = pricingJob(snapshot);
+  } catch (error) {
+    if (error instanceof SnapshotError || error instanceof FieldMapError || error instanceof ZodError) throw new EstimateError('record_unreadable');
+    throw error;
+  }
+  const estimate = priceEstimate(content, job);
+  if (!estimate.ok) {
+    if (estimate.stage === 'table') throw new EstimateError('prices_unreadable');
+    throw new EstimateError('estimate_refused', { stage: estimate.stage, message: estimate.error });
+  }
+  return { rooms: roomNamesOf(snapshot), lines: estimate.lines };
 }
 
 // The table's additional work rate: its one enabled `extras` item's price, which is per hour.
@@ -248,9 +273,14 @@ export function approvalsService(db: Database): ApprovalsService {
     if (input.kind === 'line_multiplier') {
       // The item is one of the pinned prices' items that is on; the room is one of the record's rooms.
       if (!bound.table.items.some((entry) => entry.item_id === input.itemId && entry.enabled)) throw new ApprovalError('unknown_item');
-      if (input.roomId !== null && !(await recordRoomIds(tx, caller.companyId, bound.submissionId)).has(input.roomId)) {
-        throw new ApprovalError('unknown_room');
-      }
+      const record = await recordPricing(tx, caller.companyId, bound.submissionId, bound.content);
+      const roomName = input.roomId === null ? null : record.rooms.get(input.roomId);
+      if (roomName === undefined) throw new ApprovalError('unknown_room');
+      // The record must price a line of that item in that room, or a job-wide line of it (D2).
+      const priced = record.lines.some(
+        (line) => line.item_id === input.itemId && (roomName === null ? line.room === null : line.room !== null && collapse(line.room) === collapse(roomName)),
+      );
+      if (!priced) throw new ApprovalError('no_such_line');
       // One open multiplier per line (D2): a second proposal for the same line is refused.
       const [same] = await tx
         .select({ id: jobPriceApprovals.id })

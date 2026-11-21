@@ -86,6 +86,7 @@ const documentsSchema = z.strictObject({
   claim: json,
   itemized_claim: z.array(json),
   unpriced_work: strings,
+  pending_extras: z.number().int().min(0).optional(),
   signable: z.boolean(),
   staff_notes: z.strictObject({
     summary: z.string(),
@@ -200,6 +201,7 @@ export type EstimateView = {
     claim: Json;
     complianceNotes: string[];
     unpricedWork: string[];
+    pendingExtras: number;
     signable: boolean;
   } | null;
   staffNotes: StaffNotesView;
@@ -251,6 +253,7 @@ export function estimateView(record: EstimateRecord, capabilities: readonly Capa
       claim: documents.claim,
       complianceNotes: documents.compliance_notes,
       unpricedWork: documents.unpriced_work,
+      pendingExtras: documents.pending_extras ?? 0,
       signable: documents.signable && rebuilt === undefined,
     },
     staffNotes,
