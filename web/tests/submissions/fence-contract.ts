@@ -8,20 +8,10 @@ import type { FenceStore } from '@/lib/submissions/fence';
 // database tests' stand-in cannot drift from Firestore. The fence, its marker and its release are the
 // draft sync's (tests/submissions/sync-contract.ts); `place` leaves a draft as the sync would.
 
-export type DraftPeek = {
-  state: string;
-  fence: { submissionId: string; epoch: string } | null;
-  previous: { draftId: string; submissionId: string } | null;
-  fieldOwnerUid: string | null;
-  manifest: FieldManifest;
-};
-
 export type FenceProbe = {
   store: FenceStore;
   // Makes an editing draft holding this field data, as the jobs route and the phone would.
   seed(companyId: string, draftId: string, manifest: FieldManifest, fieldOwnerUid?: string | null): Promise<void>;
-  // What the draft holds now, or null when there is none.
-  peek(companyId: string, draftId: string): Promise<DraftPeek | null>;
   // Puts a seeded draft in this state with this fence, as the draft sync writes a Submit's fence and marker.
   place(companyId: string, draftId: string, state: 'submitting' | 'submitted', fence: { submissionId: string; epoch: string; expiresAt: Date }): Promise<void>;
 };

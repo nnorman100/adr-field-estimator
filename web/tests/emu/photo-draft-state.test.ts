@@ -28,7 +28,7 @@ beforeAll(() => {
 const path = (company: string, draft: string) => `companies/${company}/drafts/${draft}`;
 
 // A job's first draft as the draft sync makes it.
-const firstDraft = (company: string, draft: string) => db.doc(path(company, draft)).create({ jobId: randomUUID(), fieldOwnerUid: 'uid-1', state: 'editing', field: {} });
+const firstDraft = (company: string, draft: string) => db.doc(path(company, draft)).create({ jobId: randomUUID(), fieldOwnerUid: 'uid-1', state: 'editing', field: {}, archiveRevision: 1, fieldOwnerRevision: 0 });
 
 describe('the state of a draft', () => {
   it('is editing for the draft a job starts with, and whatever the server sets after', async () => {

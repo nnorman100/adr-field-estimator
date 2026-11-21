@@ -58,21 +58,6 @@ fenceStoreContract('Firestore', () => ({
   store,
   seed,
   place,
-  async peek(company, draft) {
-    const ref = db.doc(draftPath(company, draft));
-    const doc = await ref.get();
-    if (!doc.exists) return null;
-    const data = doc.data()!;
-    const fence = data.fence as { submissionId: string; epoch: string } | undefined;
-    const nested = async (name: string) => (await ref.collection(name).get()).docs.map((d) => ({ id: d.id, field: d.get('field') }));
-    return {
-      state: data.state as string,
-      fence: fence ? { submissionId: fence.submissionId, epoch: fence.epoch } : null,
-      previous: (data.previous as { draftId: string; submissionId: string } | undefined) ?? null,
-      fieldOwnerUid: (data.fieldOwnerUid as string | undefined) ?? null,
-      manifest: { draft: data.field, rooms: await nested('rooms'), photos: await nested('photos') },
-    };
-  },
 }));
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -145,7 +130,7 @@ describe('the field rules on a draft Submit has fenced', () => {
     const next = randomUUID();
     // As the draft sync makes it: the job id, the field owner, `editing`, the field data and its provenance.
     await seed(company, next, MANIFEST, owner.uid);
-    await db.doc(draftPath(company, next)).update({ jobId: randomUUID(), previous: { draftId: randomUUID(), submissionId: randomUUID() } });
+    await db.doc(draftPath(company, next)).update({ jobId: randomUUID(), previous: { draftId: randomUUID(), submissionId: randomUUID() }, archiveRevision: 3, fieldOwnerRevision: 0 });
     await phoneWrites(owner.caller, company, next, 200);
     await phoneWrites(other.caller, company, next, 403);
     await phoneWrites(office.caller, company, next, 403);

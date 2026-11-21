@@ -33,7 +33,7 @@ describe('Firestore spans', () => {
       }),
     );
     const [company, draft, uid] = [randomUUID(), randomUUID(), `uid-${randomUUID()}`];
-    await db.doc(`companies/${company}/drafts/${draft}`).create({ jobId: randomUUID(), fieldOwnerUid: uid, state: 'editing', field: {} });
+    await db.doc(`companies/${company}/drafts/${draft}`).create({ jobId: randomUUID(), fieldOwnerUid: uid, state: 'editing', field: {}, archiveRevision: 1, fieldOwnerRevision: 0 });
     // A Submit's read of the fenced draft: one transaction on the drafts (none is fenced here, so it reads nothing).
     await firestoreFenceStore(db).read(company, draft, randomUUID());
     await firestoreDraftStates(db).state(company, draft);

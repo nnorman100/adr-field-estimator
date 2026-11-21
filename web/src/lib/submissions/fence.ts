@@ -12,7 +12,8 @@ import { firestoreSpan } from '@/lib/telemetry/spans';
 // every client write unless `state` is `editing` (web/firestore.rules).
 //
 // The draft document's server keys (beside `fieldOwnerUid` and the client's `field`):
-//   state     `editing`, `submitting` (fenced) or `submitted`; `archived` while the job is archived
+//   state     `editing`, `submitting` (fenced) or `submitted`; the job's current draft is `archived`
+//             while the job is (an earlier submitted draft stays `submitted`)
 //   fence     { submissionId, epoch, expiresAt } while submitting and after; removed on release
 //   previous  { draftId, submissionId } on a draft Back to editing made: where it came from
 //   jobId     the job the draft was made for (src/lib/jobs/drafts.ts, security audit F1)

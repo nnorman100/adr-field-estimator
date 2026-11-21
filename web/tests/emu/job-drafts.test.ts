@@ -43,9 +43,9 @@ async function member(tenantId: string, company: string, role: 'owner' | 'estima
 const path = (company: string, draft: string) => `companies/${company}/drafts/${draft}`;
 
 // A job's first draft as the draft sync makes it: the job id, the field owner (none while nobody owns
-// the field work), `editing` and an empty field map.
+// the field work), `editing`, an empty field map and the revisions it was written at.
 async function firstDraft(company: string, job: string, draft: string, fieldOwnerUid: string | null): Promise<void> {
-  await db.doc(path(company, draft)).create({ jobId: job, ...(fieldOwnerUid === null ? {} : { fieldOwnerUid }), state: 'editing', field: {} });
+  await db.doc(path(company, draft)).create({ jobId: job, ...(fieldOwnerUid === null ? {} : { fieldOwnerUid }), state: 'editing', field: {}, archiveRevision: 1, fieldOwnerRevision: 0 });
 }
 
 describe('the first draft of a job', () => {
@@ -147,7 +147,7 @@ describe('the draft lookup', () => {
     const draft = randomUUID();
     await db.doc(path(company, draft)).create({ jobId: job, state: 'absent', placeholder: true, archiveRevision: 6 });
     expect(await drafts.findDraft(company, draft)).toEqual({ jobId: job, placeholder: true });
-    await db.doc(path(company, draft)).set({ jobId: job, fieldOwnerUid: 'uid-1', state: 'editing', field: {}, archiveRevision: 6 });
+    await db.doc(path(company, draft)).set({ jobId: job, fieldOwnerUid: 'uid-1', state: 'editing', field: {}, archiveRevision: 6, fieldOwnerRevision: 0 });
     expect(await drafts.findDraft(company, draft)).toEqual({ jobId: job });
     expect(await drafts.findDraft(company, randomUUID())).toBeNull();
   });

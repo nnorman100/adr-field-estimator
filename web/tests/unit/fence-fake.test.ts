@@ -16,20 +16,5 @@ fenceStoreContract('in-memory', () => {
       if (store.draft(company, draft)?.state !== 'submitting') await store.fence(company, draft, fence);
       if (state === 'submitted') await store.markSubmitted(company, draft, fence.epoch, fence.submissionId);
     },
-    async peek(company, draft) {
-      const found = store.draft(company, draft);
-      if (!found) return null;
-      return {
-        state: found.state,
-        fence: found.fence ? { submissionId: found.fence.submissionId, epoch: found.fence.epoch } : null,
-        previous: found.previous,
-        fieldOwnerUid: found.fieldOwnerUid,
-        manifest: {
-          draft: found.field,
-          rooms: Object.entries(found.rooms).map(([id, field]) => ({ id, field })),
-          photos: Object.entries(found.photos).map(([id, field]) => ({ id, field })),
-        },
-      };
-    },
   };
 });

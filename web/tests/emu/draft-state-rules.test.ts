@@ -8,8 +8,8 @@ import { commit, createDoc, deleteDoc, getDoc, updateDoc, type Caller } from './
 
 // The field rules (web/firestore.rules) on the draft states and field owners the draft sync writes
 // (src/lib/jobs/draft-sync.ts; the sync itself is checked against the emulator in draft-sync.test.ts),
-// with real Auth emulator tokens. An archived draft refuses every client write and is open again once it
-// is back to `editing`; nobody reaches another company's archived draft; the field owner the sync names
+// with real Auth emulator tokens. An archived draft (the job's current one while the job is archived)
+// refuses every client write and is open again once it is back to `editing`; nobody reaches another company's archived draft; the field owner the sync names
 // is the only person who writes the draft, and a move refuses the phone that held it. Moved here from
 // archive.test.ts and field-owner.test.ts, which tested the previous-version writers (draft life-cycle
 // redesign, slice 7). The routes and the job rows are in tests/db/archive-api.test.ts and
@@ -44,6 +44,17 @@ async function member(tenantId: string, company: string, role: 'owner' | 'estima
 
 const path = (company: string, draft: string) => `companies/${company}/drafts/${draft}`;
 
+// A draft as the draft sync makes it (draft-lifecycle.ts, planSync): the job id, the field owner (none
+// while nobody owns the field work), the state, the field map and the revisions it was written at.
+type SyncedDraft = { jobId: string; fieldOwnerUid?: string; state: string; field: Record<string, unknown>; archiveRevision: number; fieldOwnerRevision: number; previous?: { draftId: string; submissionId: string } };
+const synced = (job: string, fieldOwnerUid: string | null, revisions = { archiveRevision: 1, fieldOwnerRevision: 0 }): SyncedDraft => ({
+  jobId: job,
+  ...(fieldOwnerUid === null ? {} : { fieldOwnerUid }),
+  state: 'editing',
+  field: {},
+  ...revisions,
+});
+
 // A company whose estimator owns a draft with a room and a photo reference: the draft as the sync makes
 // it, then the phone's own writes under the rules.
 async function company(name: string) {
@@ -55,7 +66,7 @@ async function company(name: string) {
   const owner = await member(tenant, id, 'owner');
   const office = await member(tenant, id, 'office');
   const at = path(id, draft);
-  await db.doc(at).create({ jobId: job, fieldOwnerUid: estimator.uid, state: 'editing', field: {} });
+  await db.doc(at).create(synced(job, estimator.uid));
   expect(await updateDoc(estimator.caller, at, { field: { notes: 'wet carpet', roomOrder: ['kitchen'] } })).toBe(200);
   expect(await createDoc(estimator.caller, `${at}/rooms/kitchen`, { field: { name: 'Kitchen' } })).toBe(200);
   expect(await createDoc(estimator.caller, `${at}/photos/p1`, { field: { roomId: 'kitchen' } })).toBe(200);
@@ -79,8 +90,9 @@ async function writes(caller: Caller, at: string): Promise<number[]> {
 describe('an archived draft', () => {
   it('refuses every client write, and is open again once it is back to editing', async () => {
     const a = await company('archive-a');
-    // The sync archives the job's drafts: `archived`, with the field work left as it was.
-    await db.doc(a.at).update({ state: 'archived' });
+    // The archive's sync puts the job's current draft `archived` at the job's new revision, with the field
+    // work left as it was (an earlier submitted draft would stay `submitted`).
+    await db.doc(a.at).update({ state: 'archived', archiveRevision: 2 });
     for (const who of [a.estimator, a.owner, a.office]) expect(await writes(who.caller, a.at)).toEqual([403, 403, 403, 403, 403, 403, 403]);
     // Nor may a client put the state or the revision back.
     expect(await updateDoc(a.estimator.caller, a.at, { state: 'editing' })).toBe(403);
@@ -90,15 +102,15 @@ describe('an archived draft', () => {
     expect(await getDoc(a.estimator.caller, a.at)).toBe(200);
     expect(await getDoc(a.owner.caller, a.at)).toBe(200);
 
-    // The restore's sync puts it back to `editing`.
-    await db.doc(a.at).update({ state: 'editing' });
+    // The restore's sync puts it back to `editing` at the next revision.
+    await db.doc(a.at).update({ state: 'editing', archiveRevision: 3 });
     expect(await updateDoc(a.estimator.caller, a.at, { field: { notes: 'back at work', roomOrder: ['kitchen'] } })).toBe(200);
   });
 
   it('is never reached by the other company, archived or not', async () => {
     const a = await company('archive-iso-a');
     const b = await company('archive-iso-b');
-    await db.doc(a.at).update({ state: 'archived' });
+    await db.doc(a.at).update({ state: 'archived', archiveRevision: 2 });
     for (const [attacker, victim] of [
       [b, a],
       [a, b],
@@ -124,7 +136,7 @@ describe('the field owner of a draft', () => {
     const first = await member(tenant, company, 'estimator');
     const second = await member(tenant, company, 'estimator');
     const office = await member(tenant, company, 'office');
-    await db.doc(path(company, draft)).create({ jobId: randomUUID(), state: 'editing', field: {} });
+    await db.doc(path(company, draft)).create(synced(randomUUID(), null));
     return { company, draft, first, second, office };
   }
 
@@ -136,8 +148,8 @@ describe('the field owner of a draft', () => {
       expect(await updateDoc(who.caller, path(company, draft), { field: { notes: 'x' } })).toBe(403);
       expect(await updateDoc(who.caller, path(company, draft), { fieldOwnerUid: who.uid })).toBe(403);
     }
-    // The first capture: the sync names the first estimator.
-    await db.doc(path(company, draft)).update({ fieldOwnerUid: first.uid });
+    // The first capture: the sync names the first estimator at the job's new coordination revision.
+    await db.doc(path(company, draft)).update({ fieldOwnerUid: first.uid, fieldOwnerRevision: 1 });
     expect(await updateDoc(first.caller, path(company, draft), { field: { notes: 'wet carpet' } })).toBe(200);
     // The second estimator's later write is refused; office reads and never writes.
     expect(await getDoc(second.caller, path(company, draft))).toBe(403);
@@ -151,12 +163,60 @@ describe('the field owner of a draft', () => {
 
   it('moves with the field work and refuses the phone that held it', async () => {
     const { company, draft, first, second } = await officeDraft('field-owner-b');
-    await db.doc(path(company, draft)).update({ fieldOwnerUid: first.uid });
+    await db.doc(path(company, draft)).update({ fieldOwnerUid: first.uid, fieldOwnerRevision: 1 });
     expect(await updateDoc(first.caller, path(company, draft), { field: { notes: 'before the move' } })).toBe(200);
     // The move's sync names the second estimator.
-    await db.doc(path(company, draft)).update({ fieldOwnerUid: second.uid });
+    await db.doc(path(company, draft)).update({ fieldOwnerUid: second.uid, fieldOwnerRevision: 2 });
     expect(await updateDoc(first.caller, path(company, draft), { field: { notes: 'unsent on the old phone' } })).toBe(403);
     expect(await getDoc(first.caller, path(company, draft))).toBe(403);
     expect(await updateDoc(second.caller, path(company, draft), { field: { notes: 'after the move' } })).toBe(200);
+  });
+
+  // Moved from field-owner.test.ts: the job id is the server's, and a submitted draft stays its field
+  // owner's to read and nobody's to write.
+  it('keeps the job id the server’s, and shows a submitted draft and its rooms only to its field owner', async () => {
+    const { company, draft, first, second } = await officeDraft('field-owner-d');
+    await db.doc(path(company, draft)).update({ fieldOwnerUid: first.uid, fieldOwnerRevision: 1 });
+    expect(await updateDoc(first.caller, path(company, draft), { field: { notes: 'submitted notes' } })).toBe(200);
+    expect(await createDoc(first.caller, `${path(company, draft)}/rooms/kitchen`, { field: { name: 'Kitchen' } })).toBe(200);
+    expect(await updateDoc(first.caller, path(company, draft), { jobId: randomUUID() })).toBe(403);
+    // Submit's marker, as the sync writes it.
+    await db.doc(path(company, draft)).update({ state: 'submitted', fence: { submissionId: randomUUID(), epoch: randomUUID() } });
+    expect(await getDoc(second.caller, path(company, draft))).toBe(403);
+    expect(await getDoc(second.caller, `${path(company, draft)}/rooms/kitchen`)).toBe(403);
+    expect(await getDoc(first.caller, path(company, draft))).toBe(200);
+    expect(await getDoc(first.caller, `${path(company, draft)}/rooms/kitchen`)).toBe(200);
+    expect(await updateDoc(first.caller, path(company, draft), { field: { notes: 'after Finish' } })).toBe(403);
+  });
+});
+
+// Placeholders an earlier version's archive or restore left are still read (the app writes none), and a
+// copy's first draft is the sync's too: the rules on both, moved from archive.test.ts.
+describe('a placeholder an earlier version left, and the draft the sync makes over it', () => {
+  it('reaches nobody while it is a placeholder, and the field owner once the sync replaces it with the draft', async () => {
+    const a = await company('placeholder-rules');
+    const draft = randomUUID();
+    const at = path(a.id, draft);
+    await db.doc(at).create({ jobId: a.job, state: 'archived', placeholder: true, archiveRevision: 3 });
+    expect(await getDoc(a.estimator.caller, at)).toBe(403);
+    for (const who of [a.estimator, a.owner, a.office]) expect(await writes(who.caller, at)).toEqual([403, 403, 403, 403, 403, 403, 403]);
+    // The sync makes the job's draft over it (it replaces the whole document), taking the revisions.
+    await db.doc(at).set(synced(a.job, a.estimator.uid, { archiveRevision: 4, fieldOwnerRevision: 0 }));
+    expect(await updateDoc(a.estimator.caller, at, { field: { notes: 'mine' } })).toBe(200);
+  });
+
+  it('opens a copy’s first draft, with its rooms, to the copier only', async () => {
+    const tenant = await createTenant(`copy-${randomUUID().slice(0, 6)}`);
+    const companyId = randomUUID();
+    const estimator = await member(tenant, companyId, 'estimator');
+    const other = await member(tenant, companyId, 'estimator');
+    const at = path(companyId, randomUUID());
+    const field = { roomOrder: ['kitchen'], notes: 'from the signed job' };
+    await db.doc(at).create({ ...synced(randomUUID(), estimator.uid), field });
+    await db.doc(`${at}/rooms/kitchen`).create({ field: { name: 'Kitchen', category: 2 } });
+    expect(await updateDoc(estimator.caller, at, { field: { ...field, scopeConfirmed: true } })).toBe(200);
+    expect(await updateDoc(estimator.caller, `${at}/rooms/kitchen`, { field: { name: 'Galley', category: 2 } })).toBe(200);
+    expect(await getDoc(other.caller, at)).toBe(403);
+    expect(await updateDoc(other.caller, at, { field: { notes: 'taken' } })).toBe(403);
   });
 });

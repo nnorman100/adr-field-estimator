@@ -53,14 +53,15 @@ import { manifestProblem, SNAPSHOT_FORMAT, snapshotBytes, storedManifest, type S
 const SUBMIT: readonly Capability[] = ['scope'];
 
 // How long a pending row may wait before the worker aborts it, and how close to that a request no
-// longer closes a fence it has not closed yet, so an attempt does not start a fence its row is about
-// to lose (the worker runs every five minutes, docs/plans/S5.md section 4 step 6). While closeFence's
-// transaction is open, its row lock, not this margin, keeps a fence from landing after its row is
-// decided. A fence call still retrying after that transaction ended (cut off by the server's idle
-// limit, db/tenant.ts holdAcrossOutsideCall, or by the request's end) is the draft sync's, which writes
-// only at the job's newest version: once the worker aborted the row, the late fence is refused at the
-// job's marker (src/lib/jobs/draft-sync.ts). The margin is no rollout measure: it keeps today's Submit
-// from closing a fence its own row is about to lose.
+// longer starts closing a fence (the preflight expiry check in submit, before closeFence), so an attempt
+// does not start a fence its row is about to lose (the worker runs every five minutes, docs/plans/S5.md
+// section 4 step 6). The margin is no rollout measure: today's Submit uses it. closeFence checks the row
+// is still pending in a short transaction of its own and holds no lock across the field step, so the
+// worker can abort the row after that check. The draft sync then decides: a sync that reads Postgres
+// after the abort plans no fence; one at an older version is refused at the job's marker once a newer
+// sync advanced it; and one that read Postgres before the abort but commits first is caught by its own
+// version recheck before its writes and the catch-up after its commit, which syncs the job again
+// (src/lib/jobs/sync-job.ts).
 export const SUBMIT_WINDOW_MS = 2 * 60 * 1000;
 export const FENCE_MARGIN_MS = 30 * 1000;
 
