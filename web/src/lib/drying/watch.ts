@@ -22,14 +22,18 @@ import { canonicalJson } from '@/lib/field/canonical';
 export const ZONE = 'America/Los_Angeles';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+// An instant: a Date (whole milliseconds) or the database's text of one, YYYY-MM-DDTHH:MM:SS[.ffffff]Z,
+// which keeps its microseconds. Order, eligibility and due times compare microseconds.
+export type Stamp = Date | string;
+
 export type WatchReading = {
   id: string;
   kind: 'air' | 'material' | 'thermal';
   roomId: string | null;
-  takenAt: Date;
+  takenAt: Stamp;
   // When the server received it: the order of two readings taken at the same instant (the old app's
   // recorded_at), then the id.
-  receivedAt?: Date;
+  receivedAt?: Stamp;
   // Air: the zone and the server's GPP. Material: the label, unit, reading, standard and affected flag.
   zone?: string;
   gpp?: number;
@@ -80,15 +84,34 @@ function daysBetween(from: string, to: string): number {
 // JavaScript's Math.round, as the old app's browser code rounded (half up, negative halves too).
 const rounded = (value: number) => Math.floor(value + 0.5);
 
-const iso = (at: Date) => at.toISOString();
-const fold = (text: string) => text.toLocaleLowerCase('en-US');
+// Case folding close to Python's str.casefold for material labels and meter units: lower, upper, lower,
+// so ß, SS and the capital ẞ all match. (Python keeps the dotless ı apart from i; this folds them
+// together, an edge no material label in practice depends on.)
+const fold = (text: string) => text.toLowerCase().toUpperCase().toLowerCase();
+const DAY_US = DAY_MS * 1000;
+
+// Microseconds since the epoch (exact in a double until the year 2255).
+function micros(at: Stamp): number {
+  if (typeof at !== 'string') return at.getTime() * 1000;
+  const fraction = /\.(\d{1,6})Z$/.exec(at)?.[1] ?? '';
+  return Date.parse(at.replace(/\.\d+Z$/, 'Z')) * 1000 + Number(fraction.padEnd(6, '0'));
+}
+const dateOf = (at: Stamp) => (typeof at === 'string' ? new Date(at) : at);
+const dateOfMicros = (us: number) => new Date(Math.floor(us / 1000));
+// An instant in microseconds as the database writes one: YYYY-MM-DDTHH:MM:SS.ffffffZ, so an answer keeps
+// the microseconds every comparison here uses.
+const isoMicros = (us: number) => `${new Date(Math.floor(us / 1_000_000) * 1000).toISOString().slice(0, 19)}.${String(us % 1_000_000).padStart(6, '0')}Z`;
+
+// A reading with its instants worked out once: whole-millisecond dates for calendar days and output,
+// microseconds for every comparison.
+type Timed = Omit<WatchReading, 'takenAt' | 'receivedAt'> & { takenAt: Date; takenUs: number; receivedUs: number };
 
 type RoomDay = { key: string; number: number; affected: WatchReading | null; reference: WatchReading | null };
 
 // For each room, in order (the signed rooms, then rooms only readings name, then the whole job), its
 // readings' calendar days and on each the latest affected air reading and the latest reference
 // (unaffected air, any room) of that day or before: the part of the old day_groups the status reads.
-function dayGroups(readings: WatchReading[], rooms: SignedRoom[]) {
+function dayGroups(readings: Timed[], rooms: SignedRoom[]) {
   const days = [...new Set(readings.map((reading) => calendarDay(reading.takenAt)))].sort();
   const signed = rooms.map((room) => room.id);
   const order: (string | null)[] = [...new Set<string | null>([...signed, ...readings.map((r) => r.roomId).filter((id): id is string => id !== null), null])];
@@ -124,12 +147,15 @@ function dayGroups(readings: WatchReading[], rooms: SignedRoom[]) {
  * The watch's state at `at`: the signed rooms and drying days, the setup time (the original signing),
  * the log's active readings and the staff's decisions.
  */
-export function watchState(input: { plannedDays: number; rooms: SignedRoom[]; setupAt: Date; readings: WatchReading[]; decisions: WatchDecision[]; at: Date }): WatchState {
-  const { plannedDays, rooms, setupAt, at } = input;
+export function watchState(input: { plannedDays: number; rooms: SignedRoom[]; setupAt: Date; readings: WatchReading[]; decisions: WatchDecision[]; at: Stamp }): WatchState {
+  const { plannedDays, rooms, setupAt } = input;
+  const atUs = micros(input.at);
+  const at = dateOf(input.at);
   // Future entries cannot postpone a visit or attest that a material is dry today.
-  const readings = input.readings
-    .filter((r) => r.takenAt.getTime() <= at.getTime())
-    .sort((a, b) => a.takenAt.getTime() - b.takenAt.getTime() || (a.receivedAt?.getTime() ?? 0) - (b.receivedAt?.getTime() ?? 0) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const readings: Timed[] = input.readings
+    .map((r) => ({ ...r, takenAt: dateOf(r.takenAt), takenUs: micros(r.takenAt), receivedUs: r.receivedAt === undefined ? 0 : micros(r.receivedAt) }))
+    .filter((r) => r.takenUs <= atUs)
+    .sort((a, b) => a.takenUs - b.takenUs || a.receivedUs - b.receivedUs || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const groups = dayGroups(readings, rooms);
   const latestMaterials = new Map<string, WatchReading>();
   for (const r of readings) {
@@ -139,16 +165,17 @@ export function watchState(input: { plannedDays: number; rooms: SignedRoom[]; se
   // No air-only or partial-room log can attest that all affected materials are dry.
   const missingRooms = rooms.filter((room) => latest.filter((m) => m.roomId === room.id).length < 1).map((room) => room.id);
   const dry = rooms.length > 0 && missingRooms.length === 0 && latest.every((m) => m.dryStandard !== null && m.dryStandard !== undefined && m.moisture! <= m.dryStandard);
-  const last = readings.at(-1)?.takenAt ?? null;
-  const due = new Date((last ?? setupAt).getTime() + DAY_MS);
+  const lastReading = readings.at(-1);
+  const dueUs = (lastReading?.takenUs ?? micros(setupAt)) + DAY_US;
+  const due = dateOfMicros(dueUs);
   const dayNumber = Math.max(1, daysBetween(calendarDay(setupAt), calendarDay(at)) + 1);
   let flags: WatchFlag[] = [];
   if (rooms.length === 0 || missingRooms.length > 0 || latest.some((m) => m.dryStandard === null || m.dryStandard === undefined)) flags.push('missing_dry_standard');
   const airTrends: WatchState['airTrends'] = [];
   const roomReadings: WatchState['roomReadings'] = [];
   for (const group of groups) {
-    const roomLast = readings.filter((r) => r.roomId === group.roomId).at(-1)?.takenAt ?? null;
-    roomReadings.push({ roomId: group.roomId, lastReadingAt: roomLast ? iso(roomLast) : null, overdue: roomLast !== null && roomLast.getTime() + DAY_MS < at.getTime() });
+    const roomLast = readings.filter((r) => r.roomId === group.roomId).at(-1) ?? null;
+    roomReadings.push({ roomId: group.roomId, lastReadingAt: roomLast ? isoMicros(roomLast.takenUs) : null, overdue: roomLast !== null && roomLast.takenUs + DAY_US < atUs });
     const airDays = group.days.filter((day) => day.affected);
     if (airDays.length === 0) continue;
     const gpp = (offset: number) => airDays.at(offset)!.affected!.gpp!;
@@ -161,7 +188,7 @@ export function watchState(input: { plannedDays: number; rooms: SignedRoom[]; se
   let status: WatchStatus = dry ? 'dry_standard_met' : 'active';
   if (closing) status = closing.action === 'mark_dry' ? 'marked_dry' : 'closed';
   if (status === 'active') {
-    if (due.getTime() < at.getTime()) flags.push('overdue');
+    if (dueUs < atUs) flags.push('overdue');
     else if (calendarDay(due) === calendarDay(at)) flags.push('due_today');
     if (dayNumber > plannedDays) flags.push('past_signed_plan');
   } else {
@@ -172,9 +199,9 @@ export function watchState(input: { plannedDays: number; rooms: SignedRoom[]; se
     plannedDays,
     signedRooms: rooms,
     dayNumber,
-    setupAt: iso(setupAt),
-    lastReadingAt: last ? iso(last) : null,
-    nextDueAt: status === 'active' ? iso(due) : null,
+    setupAt: isoMicros(micros(setupAt)),
+    lastReadingAt: lastReading ? isoMicros(lastReading.takenUs) : null,
+    nextDueAt: status === 'active' ? isoMicros(dueUs) : null,
     flags,
     materials: latest.map((m) => ({ roomId: m.roomId, material: m.material!, unit: m.unit!, moisture: m.moisture!, dryStandard: m.dryStandard ?? null })),
     air: groups.flatMap((group) => (group.progress ? [group.progress] : [])),

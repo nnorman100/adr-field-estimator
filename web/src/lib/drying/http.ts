@@ -98,11 +98,11 @@ export async function readWatch(_request: Request, identity: Identity, context: 
 }
 
 // POST /api/jobs/{jobId}/drying-watch/actions  { id, action, factsHash, confirmed: true, reason }: 201
-// with the new receipt and the watch, 200 with the accepted receipt for the same request again.
+// with the new receipt and the watch now, 200 with the accepted receipt alone for the same request again.
 export async function actOnWatch(request: Request, identity: Identity, context: RouteContext): Promise<Response> {
   return respond(async () => {
     const id = await jobPathId(context);
     const { created, receipt, watch } = await dryingServices().watch.act(identity, id, await bodyText(request));
-    return json({ receipt, watch }, created ? 201 : 200);
+    return json(created ? { receipt, watch } : { receipt }, created ? 201 : 200);
   });
 }

@@ -1,16 +1,17 @@
 import { createHash } from 'node:crypto';
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { dryingReadings } from '@/db/drying-schema';
-import { actors, agreements, jobCoordination, jobSubmissions, type DryingWatch, type DryingWatchReceipt } from '@/db/schema';
+import { actors, agreements, companyFeatureFlags, jobCoordination, jobSubmissions, type DryingWatch, type DryingWatchReceipt } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
 import { canonicalJson } from '@/lib/field/canonical';
 import { hasAny, jobAccess, JobError, type JobCaller, type JobRow } from '@/lib/jobs/access';
+import { flagsFromRows } from '@/lib/flags';
 import { audit } from '@/lib/jobs/service';
 import { snapshotManifest } from '@/lib/submissions/snapshot';
 import { DryingError } from './errors';
-import { currentCaller, parseBody, refusedByDatabase } from './readings';
+import { currentCaller, micros, parseBody, refusedByDatabase } from './readings';
 import { nonblank, noteText } from './schema';
 import { factsHash, finished, watchState, watchSummary, type SignedRoom, type WatchReading, type WatchState } from './watch';
 
@@ -25,8 +26,12 @@ import { factsHash, finished, watchState, watchSummary, type SignedRoom, type Wa
 // - Act: Mark dry with `scope` or `coordination` (the estimator with the job, the owner, office);
 //   Extend plan and Close monitoring with `coordination` (the owner and office). Each carries the phone's
 //   own id, the facts hash the person reviewed, an explicit confirmation and a reason. The job is locked;
-//   a request sent again gets its accepted receipt first; then the facts are worked out again and
-//   compared; then one change of the watch and one audit row are saved.
+//   a request sent again gets its accepted receipt first, without the facts being worked out; a new
+//   request then has the facts worked out and compared, and one change of the watch and one audit row
+//   are saved. A new action answers its receipt and the watch now; a request sent again, its receipt only.
+// - Both re-read the company's `drying_watch` switch in their own transaction (404 when off): the action
+//   after the company lock the operator's switch writer also takes (a switch turned off before it is 404,
+//   one turned off after it waits for the action); the read in its snapshot, as the switch stood then.
 //
 // The signed facts: the drying days and the rooms (by stable id, in their signed order, with their
 // signed names) of the snapshot the agreement in force was signed from; the original signing starts
@@ -70,7 +75,8 @@ export type WatchView =
       can: { markDry: boolean; extend: boolean; close: boolean };
     } & WatchState);
 
-export type WatchActionResult = { created: boolean; receipt: WatchDecisionView & { id: string }; watch: WatchView };
+// A new action answers its receipt and the watch now; a request sent again answers its receipt only.
+export type WatchActionResult = { created: boolean; receipt: WatchDecisionView & { id: string }; watch?: WatchView };
 
 export type WatchService = {
   read(caller: JobCaller, jobId: string): Promise<WatchView>;
@@ -87,7 +93,8 @@ async function signedFacts(tx: CompanyTransaction, job: JobRow): Promise<SignedF
     .from(agreements)
     .where(and(eq(agreements.companyId, job.companyId), eq(agreements.jobId, job.id)))
     .orderBy(asc(agreements.signedAt), asc(agreements.id));
-  const original = signed.find((row) => row.kind === 'original') ?? signed[0];
+  // Day one is the original signing's; a job signs its original first, so one without it has no watch.
+  const original = signed.find((row) => row.kind === 'original');
   const inForce = signed.at(-1);
   if (!original || !inForce) throw new JobError('not_signed');
   const [submission] = await tx
@@ -117,41 +124,49 @@ function planOf(bytes: Buffer): SignedFacts['plan'] {
 
 type LogFacts = { readings: WatchReading[]; version: { readings: number; voids: number; changedAt: string | null } };
 
-// Every reading of the job: the active ones for the status, and the log's version (every reading and
-// void counted, with the latest receive or void time), so any change to the log changes the facts hash.
+// The active readings of the job for the status (times as text, to keep their microseconds), and the
+// log's version (every reading and void counted, with the latest receive or void time), so any change to
+// the log changes the facts hash. The version is counted in the database; a voided reading's fields are
+// never loaded.
 async function logFacts(tx: CompanyTransaction, job: JobRow): Promise<LogFacts> {
+  const mine = and(eq(dryingReadings.companyId, job.companyId), eq(dryingReadings.jobId, job.id));
   const rows = await tx
     .select({
       id: dryingReadings.id,
       kind: dryingReadings.kind,
       roomId: dryingReadings.roomId,
-      takenAt: dryingReadings.takenAt,
-      receivedAt: dryingReadings.receivedAt,
+      takenAt: micros(dryingReadings.takenAt),
+      receivedAt: micros(dryingReadings.receivedAt),
       payload: dryingReadings.payload,
       gpp: dryingReadings.gpp,
-      voided: sql<boolean>`${dryingReadings.voidedAt} IS NOT NULL`,
-      changedAt: sql<string>`to_char(greatest(${dryingReadings.receivedAt}, ${dryingReadings.voidedAt}) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
     })
     .from(dryingReadings)
-    .where(and(eq(dryingReadings.companyId, job.companyId), eq(dryingReadings.jobId, job.id)));
-  const readings: WatchReading[] = rows
-    .filter((row) => !row.voided)
-    .map((row) => {
-      const p = row.payload as Record<string, unknown>;
-      return {
-        id: row.id,
-        kind: row.kind,
-        roomId: row.roomId,
-        takenAt: row.takenAt,
-        receivedAt: row.receivedAt,
-        ...(row.kind === 'air' ? { zone: p.zone as string, gpp: row.gpp! } : {}),
-        ...(row.kind === 'material'
-          ? { material: p.material as string, unit: p.unit as string, moisture: p.moisture as number, dryStandard: (p.dry_standard as number | null) ?? null, affected: p.affected !== false }
-          : {}),
-      };
-    });
-  const changedAt = rows.map((row) => row.changedAt).sort().at(-1) ?? null;
-  return { readings, version: { readings: rows.length, voids: rows.filter((row) => row.voided).length, changedAt } };
+    .where(and(mine, isNull(dryingReadings.voidedAt)));
+  const [counted] = await tx
+    .select({
+      readings: sql<number>`count(*)::int`,
+      voids: sql<number>`count(${dryingReadings.voidedAt})::int`,
+      // Null for an empty log.
+      changedAt: micros(sql`max(greatest(${dryingReadings.receivedAt}, ${dryingReadings.voidedAt}))`),
+    })
+    .from(dryingReadings)
+    .where(mine);
+  const readings: WatchReading[] = rows.map((row) => {
+    const p = row.payload as Record<string, unknown>;
+    return {
+      id: row.id,
+      kind: row.kind,
+      roomId: row.roomId,
+      takenAt: row.takenAt,
+      receivedAt: row.receivedAt,
+      ...(row.kind === 'air' ? { zone: p.zone as string, gpp: row.gpp! } : {}),
+      ...(row.kind === 'material'
+        ? { material: p.material as string, unit: p.unit as string, moisture: p.moisture as number, dryStandard: (p.dry_standard as number | null) ?? null, affected: p.affected !== false }
+        : {}),
+    };
+  });
+  // An aggregate with no GROUP BY always answers one row: zero counts and no time for an empty log.
+  return { readings, version: { readings: counted!.readings, voids: counted!.voids, changedAt: counted!.changedAt } };
 }
 
 async function watchOf(tx: CompanyTransaction, job: JobRow): Promise<DryingWatch> {
@@ -171,10 +186,10 @@ async function decisionViews(tx: CompanyTransaction, companyId: string, receipts
 
 type Computed = { view: WatchView; facts: SignedFacts; watch: DryingWatch };
 
-async function compute(tx: CompanyTransaction, caller: JobCaller, job: JobRow, now: Date): Promise<Computed> {
+async function compute(tx: CompanyTransaction, caller: JobCaller, job: JobRow, now: string, known?: DryingWatch): Promise<Computed> {
   if (job.status !== 'signed') throw new JobError('not_signed');
   const facts = await signedFacts(tx, job);
-  const watch = await watchOf(tx, job);
+  const watch = known ?? (await watchOf(tx, job));
   if (!facts.plan) return { view: { jobId: job.id, status: 'unavailable', reason: 'no_plan' }, facts, watch };
   const log = await logFacts(tx, job);
   const state = watchState({ plannedDays: facts.plan.plannedDays, rooms: facts.plan.rooms, setupAt: facts.setupAt, readings: log.readings, decisions: watch.receipts, at: now });
@@ -200,10 +215,17 @@ async function compute(tx: CompanyTransaction, caller: JobCaller, job: JobRow, n
   };
 }
 
-// The database's clock, so the status of a write is worked out at the time its receipt is stamped.
-async function databaseNow(tx: CompanyTransaction): Promise<Date> {
-  const [row] = (await tx.execute(sql`SELECT clock_timestamp() AS now`)) as unknown as { now: Date | string }[];
-  return new Date(row!.now);
+// The database's clock (with its microseconds), so the status of a write is worked out at the time its
+// receipt is stamped.
+async function databaseNow(tx: CompanyTransaction): Promise<string> {
+  const [row] = (await tx.execute(sql`SELECT ${micros(sql`clock_timestamp()`)} AS now`)) as unknown as { now: string }[];
+  return row!.now;
+}
+
+// The company's `drying_watch` switch as it is now, in the request's own transaction: off is 404, as the route's switch.
+async function requireWatchOn(tx: CompanyTransaction, companyId: string): Promise<void> {
+  const flags = flagsFromRows(await tx.select({ flag: companyFeatureFlags.flag, enabled: companyFeatureFlags.enabled }).from(companyFeatureFlags).where(eq(companyFeatureFlags.companyId, companyId)));
+  if (!flags.drying_watch) throw new JobError('not_found');
 }
 
 export function watchService(db: Database): WatchService {
@@ -214,6 +236,7 @@ export function watchService(db: Database): WatchService {
         caller.companyId,
         async (tx) => {
           await currentCaller(tx, caller, false);
+          await requireWatchOn(tx, caller.companyId);
           const job = await jobAccess(tx, caller, jobId, READ);
           return (await compute(tx, caller, job, await databaseNow(tx))).view;
         },
@@ -224,21 +247,23 @@ export function watchService(db: Database): WatchService {
     async act(caller, jobId, body) {
       return withCompany(db, caller.companyId, async (tx) => {
         await currentCaller(tx, caller, true);
+        await requireWatchOn(tx, caller.companyId);
         const job = await jobAccess(tx, caller, jobId, ACT, { lock: true });
         const input = parseBody(watchActionBody, body);
         if (!hasAny(caller, NEEDS[input.action])) throw new JobError('not_allowed');
         const digest = actionDigest(input);
-        const before = await compute(tx, caller, job, await databaseNow(tx));
-        const accepted = before.watch.receipts.find((receipt) => receipt.request_id === input.id);
+        const watch = await watchOf(tx, job);
+        const accepted = watch.receipts.find((receipt) => receipt.request_id === input.id);
         if (accepted) {
           if (accepted.request_digest !== digest) throw new DryingError('conflict');
           const [view] = await decisionViews(tx, job.companyId, [accepted]);
-          return { created: false, receipt: { id: input.id, ...view! }, watch: before.view };
+          return { created: false, receipt: { id: input.id, ...view! } };
         }
+        const before = await compute(tx, caller, job, await databaseNow(tx), watch);
         if (before.view.status === 'unavailable') throw new DryingError('no_plan');
         if (before.view.factsHash !== input.factsHash) throw new DryingError('stale_facts');
-        if (before.watch.receipts.some((receipt) => receipt.action !== 'extend')) throw new DryingError('watch_closed');
-        if (input.action === 'extend' && before.watch.receipts.filter((receipt) => receipt.action === 'extend').length >= MAX_EXTENSIONS) throw new DryingError('extension_limit');
+        if (watch.receipts.some((receipt) => receipt.action !== 'extend')) throw new DryingError('watch_closed');
+        if (input.action === 'extend' && watch.receipts.filter((receipt) => receipt.action === 'extend').length >= MAX_EXTENSIONS) throw new DryingError('extension_limit');
         const receipt: DryingWatchReceipt = {
           action: input.action,
           agreement_id: before.facts.agreementId,
@@ -249,7 +274,7 @@ export function watchService(db: Database): WatchService {
           request_id: input.id,
           request_digest: digest,
         };
-        const next: DryingWatch = { revision: before.watch.revision + 1, receipts: [...before.watch.receipts, receipt] };
+        const next: DryingWatch = { revision: watch.revision + 1, receipts: [...watch.receipts, receipt] };
         try {
           // The first action makes the coordination row at revision 0 ("no office change yet", 0020);
           // otherwise only the watch column changes, never the office notes or their revision.
@@ -263,7 +288,7 @@ export function watchService(db: Database): WatchService {
         }
         await audit(tx, caller, 'drying_watch_action', job.id, { action: input.action, request: input.id, revision: next.revision });
         const after = await compute(tx, caller, job, await databaseNow(tx));
-        const stored = (await watchOf(tx, job)).receipts.at(-1)!;
+        const stored = after.watch.receipts.at(-1)!;
         const [view] = await decisionViews(tx, job.companyId, [stored]);
         return { created: true, receipt: { id: input.id, ...view! }, watch: after.view };
       });

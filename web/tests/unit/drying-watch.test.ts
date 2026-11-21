@@ -58,8 +58,8 @@ describe('California days', () => {
 
 describe('due and overdue', () => {
   it('is due 24 hours from the signing with no reading, then from the latest reading', () => {
-    expect(state([], '2026-10-21T20:00:00Z').nextDueAt).toBe('2026-10-22T16:00:00.000Z');
-    expect(state([material('a', '2026-10-22T10:00:00Z', 20)], '2026-10-22T12:00:00Z').nextDueAt).toBe('2026-10-23T10:00:00.000Z');
+    expect(state([], '2026-10-21T20:00:00Z').nextDueAt).toBe('2026-10-22T16:00:00.000000Z');
+    expect(state([material('a', '2026-10-22T10:00:00Z', 20)], '2026-10-22T12:00:00Z').nextDueAt).toBe('2026-10-23T10:00:00.000000Z');
     expect(state([material('a', '2026-10-22T10:00:00Z', 20)], '2026-10-23T10:00:01Z').flags).toContain('overdue');
   });
 
@@ -67,8 +67,32 @@ describe('due and overdue', () => {
     const future = [material('a', '2026-10-21T17:00:00Z', 30), material('b', '2026-10-30T17:00:00Z', 5)];
     const s = state(future, '2026-10-23T17:00:00Z');
     expect(s.status).toBe('active');
-    expect(s.lastReadingAt).toBe('2026-10-21T17:00:00.000Z');
+    expect(s.lastReadingAt).toBe('2026-10-21T17:00:00.000000Z');
     expect(s.flags).toContain('overdue');
+  });
+});
+
+describe('microseconds and case', () => {
+  it('orders readings and answers times to the microsecond', () => {
+    // The wet reading is a few hundred microseconds later than the dry one, within one millisecond.
+    // As the service passes them: the database's text of each time, microseconds kept.
+    const readings = [
+      material('wet', '2026-10-22T16:00:00Z', 30, { takenAt: '2026-10-22T16:00:00.123900Z' }),
+      material('dry', '2026-10-22T16:00:00Z', 10, { takenAt: '2026-10-22T16:00:00.123100Z' }),
+    ];
+    const s = state(readings, '2026-10-22T17:00:00Z', { at: '2026-10-22T17:00:00.000000Z' });
+    expect(s.status).toBe('active');
+    expect(s.lastReadingAt).toBe('2026-10-22T16:00:00.123900Z');
+    expect(s.nextDueAt).toBe('2026-10-23T16:00:00.123900Z');
+    expect(s.roomReadings).toEqual([{ roomId: 'kitchen', lastReadingAt: '2026-10-22T16:00:00.123900Z', overdue: false }]);
+    // Due means that very instant has passed.
+    expect(state(readings, '2026-10-23T16:00:00Z', { at: '2026-10-23T16:00:00.123900Z' }).flags).not.toContain('overdue');
+    expect(state(readings, '2026-10-23T16:00:00Z', { at: '2026-10-23T16:00:00.123901Z' }).flags).toContain('overdue');
+  });
+
+  it('matches a material whatever its case, ß, SS and capital ẞ alike', () => {
+    const readings = [material('a', '2026-10-22T16:00:00Z', 30, { material: 'Außenwand' }), material('b', '2026-10-23T16:00:00Z', 10, { material: 'AUẞENWAND' }), material('c', '2026-10-23T16:05:00Z', 10, { material: 'AUSSENWAND' })];
+    expect(state(readings, '2026-10-23T17:00:00Z')).toMatchObject({ status: 'dry_standard_met', materials: [{ moisture: 10 }] });
   });
 });
 

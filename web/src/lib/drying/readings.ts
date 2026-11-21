@@ -47,8 +47,9 @@ const WRITE: readonly Capability[] = ['scope'];
 const UNIQUE_VIOLATION = '23505';
 const INVALID_DATETIME = new Set(['22007', '22008', '22009']);
 
-// Times as the database holds them (microseconds, UTC), so a cursor names a reading exactly.
-const micros = (column: unknown) => sql<string>`to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
+// Times as the database holds them (microseconds, UTC), so a cursor names a reading exactly. The drying
+// watch reads every time through this one formatter too.
+export const micros = (column: unknown) => sql<string>`to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
 
 const readingColumns = {
   id: dryingReadings.id,
