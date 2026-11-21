@@ -5,9 +5,6 @@
 export const APPROVAL_ERRORS = {
   // The body did not read through its schema.
   invalid_request: 400,
-  // A custom multiplier, unit or flat addition: the estimate cannot price it yet, so it is not taken
-  // (firstmate ruling A1, 2026-11-20: every control an owner can set must change a price).
-  not_yet_supported: 400,
   // An hourly approval needs the approver's name as they enter it (it prints on the proposal).
   approver_name_required: 400,
   // No proposal of this job has that id.
@@ -20,8 +17,18 @@ export const APPROVAL_ERRORS = {
   // The named adjustment is not in the job's pinned prices.
   unknown_adjustment: 409,
   // The job's pinned prices have no rate on their additional work item.
+  // A custom multiplier names an item the job's pinned prices do not have (or have off), or a room the
+  // submitted record does not have.
+  unknown_item: 409,
+  unknown_room: 409,
+  // The submitted record, priced at the job's pinned prices, has no line of that item in that room (or no
+  // job-wide line of it when no room is named), so a multiplier on it would change nothing.
+  no_such_line: 409,
+  // A custom multiplier is already proposed for that line (one per line, owner decision D2).
+  line_already_proposed: 409,
   no_hourly_rate: 409,
-  // The record already has the most additional work rows the estimate takes (30).
+  // The record already has the most rows of that kind the estimate takes (30 hourly; 30 unit and flat; 3,000 custom
+  // multipliers). An edit that replaces one is not a new row, so it is allowed at the limit.
   too_many_additions: 409,
   // The proposal named was already ended or approved, so it cannot change that way.
   approval_closed: 409,

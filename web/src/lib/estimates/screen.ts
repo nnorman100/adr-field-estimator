@@ -176,6 +176,9 @@ export function notReadyReasons(estimate: EstimateView): string[] {
   for (const missing of estimate.missingDetails) reasons.push(`${missing}. The documents are shown again once it is added on the job.`);
   for (const missing of estimate.staffNotes.companySetupMissing) reasons.push(`Company settings: ${missing} is not filled in. The owner adds it on Company settings.`);
   if (estimate.documents?.unpricedWork.length) reasons.push('Some work has no price. Go back to editing and change the scope.');
+  if (estimate.documents?.pendingExtras) {
+    reasons.push('Additions or additional work are waiting for the owner to approve them. Go back to editing, finish, propose them again and have the owner approve before making the estimate.');
+  }
   if (reasons.length === 0) reasons.push('The scope has no priced work yet. Go back to editing and add the work.');
   return reasons;
 }
