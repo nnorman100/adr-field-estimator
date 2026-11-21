@@ -5,16 +5,76 @@
 // shell then needs a connection to open, and nothing else breaks.
 //
 // `updateViaCache: 'none'` makes the browser fetch the worker script itself past its HTTP cache,
-// so a new build is noticed on the next open. A new worker waits; it is applied only by the
-// "Update ready" step (S6-6), never by this file.
+// so a new build is noticed on the next open.
 const register = () => navigator.serviceWorker.register('/sw.js', { scope: '/', updateViaCache: 'none' });
 
-export function registerFieldWorker(): void {
-  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
-  const start = () => void register().catch(() => undefined);
+export function watchFieldWorker(waiting: (worker: ServiceWorker | null) => void): () => void {
+  if (!('serviceWorker' in navigator)) return () => undefined;
+  const hour = 60 * 60 * 1000;
+  let stop = () => { window.removeEventListener('load', start); };
+  let live = true;
+  const start = () => void register().then((registration) => {
+    if (!live) return;
+    let installer: ServiceWorker | null = null;
+    const show = () => waiting(registration.waiting);
+    const installing = () => {
+      installer?.removeEventListener('statechange', show);
+      installer = registration.installing;
+      installer?.addEventListener('statechange', show);
+      show();
+    };
+    const check = () => {
+      show();
+      if (document.visibilityState === 'visible') void registration.update().then(show).catch(() => undefined);
+    };
+    registration.addEventListener('updatefound', installing);
+    navigator.serviceWorker.addEventListener('controllerchange', show);
+    document.addEventListener('visibilitychange', check);
+    window.addEventListener('pageshow', check);
+    window.addEventListener('online', check);
+    const timer = window.setInterval(check, hour);
+    stop = () => {
+      installer?.removeEventListener('statechange', show);
+      registration.removeEventListener('updatefound', installing);
+      navigator.serviceWorker.removeEventListener('controllerchange', show);
+      document.removeEventListener('visibilitychange', check);
+      window.removeEventListener('pageshow', check);
+      window.removeEventListener('online', check);
+      window.clearInterval(timer);
+    };
+    installing();
+    check();
+  }).catch(() => undefined);
   // After the page has loaded, so registering never competes with the shell's own files.
   if (document.readyState === 'complete') start();
   else window.addEventListener('load', start, { once: true });
+  return () => {
+    live = false;
+    stop();
+  };
+}
+
+// A waiting worker changes the controller of an already controlled page. A first visit can
+// still be uncontrolled, in which case wait for activation before navigating into that build.
+export function applyWaitingWorker(worker: ServiceWorker): Promise<boolean> {
+  return new Promise((done) => {
+    const workers = navigator.serviceWorker;
+    const previous = workers.controller;
+    const finish = (applied: boolean) => {
+      clearTimeout(timer);
+      workers.removeEventListener('controllerchange', changed);
+      worker.removeEventListener('statechange', changed);
+      done(applied);
+    };
+    const changed = () => {
+      if (workers.controller === worker || (!previous && worker.state === 'activated')) finish(true);
+      else if (worker.state === 'redundant') finish(false);
+    };
+    const timer = setTimeout(() => finish(false), PREPARE_WITHIN_MS);
+    workers.addEventListener('controllerchange', changed);
+    worker.addEventListener('statechange', changed);
+    worker.postMessage('SKIP_WAITING');
+  });
 }
 
 export const PREPARE_WITHIN_MS = 20_000;

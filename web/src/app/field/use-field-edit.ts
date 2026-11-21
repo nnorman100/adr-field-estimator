@@ -6,6 +6,7 @@ import { ReopenTheApp } from '@/lib/field/idb';
 import { JournalNotSaved, type DocWrite } from '@/lib/field/journal';
 import { journaledEdit } from '@/lib/field/journal-sync';
 import { draftDocs, fieldRefusal, type FieldDraft } from '@/lib/field/store';
+import { beginUpdateActivity } from '@/lib/update-activity';
 import type { JobContext } from './job-screens';
 
 // A form waits for local persistence, so the technician can keep working with no signal.
@@ -26,6 +27,7 @@ export function useFieldEdit(job: JobContext) {
   async function save(writes: DocWrite[], saved: string, locallySaved: () => void = () => undefined, acknowledgedBy: () => void = () => undefined, base: FieldDraft | null = job.draft): Promise<boolean> {
     if (!job.editable || job.stale) return false;
     const prepared = job.startSave();
+    const savedOnPhone = beginUpdateActivity('save');
     let onPhone = false;
     const mine = ++latest.current;
     const current = () => live.current && mine === latest.current;
@@ -65,6 +67,7 @@ export function useFieldEdit(job: JobContext) {
     } finally {
       if (current()) setBusy(false);
       prepared(!onPhone);
+      savedOnPhone();
     }
     return onPhone;
   }

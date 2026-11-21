@@ -272,6 +272,7 @@ export const pending = {
     pending.dropRefusal(jobId, 'claim');
   },
   photos: (jobId: string): PendingPhoto[] => state.photos[jobId] ?? NO_PHOTOS,
+  hasPhotos: (): boolean => Object.values(state.photos).some((photos) => photos.length > 0),
   addPhoto(jobId: string, photo: PendingPhoto) {
     change({ photos: { ...state.photos, [jobId]: [...pending.photos(jobId), photo] } });
   },

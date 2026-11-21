@@ -2,7 +2,6 @@
 
 import { Suspense, useEffect, useState, type ReactNode } from 'react';
 import { meKey, readLatestMe, type DsMe } from '@/lib/field/ds-me';
-import { registerFieldWorker } from '@/lib/field/register-worker';
 import { watchRetention } from '@/lib/field/retention';
 import { offlineCaptureAllowed } from '@/lib/field/platform';
 import { rememberedSignInAddress } from '@/lib/sign-in/remember';
@@ -55,7 +54,6 @@ export function FieldShell() {
   const surface = useFieldSurface();
 
   useEffect(() => {
-    registerFieldWorker();
     let live = true;
     const load = () =>
       void readLatestMe().then((me) => {

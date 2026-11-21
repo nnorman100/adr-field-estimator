@@ -18,6 +18,7 @@
 // that report's story: nothing is retried into a refusal.
 
 import { buildReport, type ClientErrorReport } from './client-error-report';
+import { CLIENT_EPOCH, CLIENT_EPOCH_HEADER } from './app-version';
 
 export const CLIENT_ERRORS_PATH = '/api/client-errors';
 export const MAX_REPORTS_PER_LOAD = 10;
@@ -151,7 +152,7 @@ async function post(env: ClientEnv, body: string): Promise<boolean> {
   try {
     await env.fetch(CLIENT_ERRORS_PATH, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', [CLIENT_EPOCH_HEADER]: String(CLIENT_EPOCH) },
       body,
       keepalive: true,
       credentials: 'omit',

@@ -1,4 +1,4 @@
-import { memberRoute } from '@/lib/auth';
+import { memberRoute, requireCurrentClient } from '@/lib/auth';
 import { readCoordination, saveCoordination } from '@/lib/jobs';
 
 export const dynamic = 'force-dynamic';
@@ -7,4 +7,4 @@ export const dynamic = 'force-dynamic';
 // office read it (`coordination` or `assignment`); only `coordination` saves the notes. An estimator
 // is refused: they see the customer view only.
 export const GET = memberRoute(readCoordination);
-export const PUT = memberRoute(saveCoordination);
+export const PUT = requireCurrentClient(memberRoute(saveCoordination));

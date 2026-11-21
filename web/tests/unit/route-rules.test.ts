@@ -2,6 +2,7 @@ import { readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
+import { CLIENT_EPOCH, CLIENT_EPOCH_HEADER } from '@/lib/app-version';
 import { accessRuleOf, accountRoute, linkRoute, memberRoute, operatorRoute, publicRoute, requireFlag, serviceRoute, type AccessRule } from '@/lib/auth/route';
 
 // Every route handler must be made by an access rule from src/lib/auth/route.ts. This finds every
@@ -77,7 +78,8 @@ async function routeProblems(module: Record<string, unknown>): Promise<string[]>
       continue;
     }
     if (rule === 'public') continue;
-    const answer = await (handler as Handler)(new Request(`http://localhost/api/${ID}`, { method }), params());
+    const headers = { [CLIENT_EPOCH_HEADER]: String(CLIENT_EPOCH) };
+    const answer = await (handler as Handler)(new Request(`http://localhost/api/${ID}`, { method, headers }), params());
     const body = await answer.json().catch(() => null);
     if (answer.status !== REFUSED[rule].status || body?.error !== REFUSED[rule].error || answer.headers.get('cache-control') !== 'no-store') {
       problems.push(`${method} (${rule}) answered ${answer.status} ${JSON.stringify(body)} to a request with no sign-in`);

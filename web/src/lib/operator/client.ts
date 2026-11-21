@@ -1,3 +1,4 @@
+import { apiFetch } from '@/lib/api-fetch';
 import type { User } from 'firebase/auth';
 import { appCheckHeaders } from '@/lib/app-check-client';
 import type { CompanyView } from '@/lib/platform/service';
@@ -16,7 +17,7 @@ export async function operatorCall<T>(user: Pick<User, 'getIdToken'>, path: stri
   let response: Response;
   try {
     const token = await user.getIdToken();
-    response = await fetch(path, {
+    response = await apiFetch(path, {
       method: call.method ?? 'GET',
       headers: {
         Authorization: `Bearer ${token}`,

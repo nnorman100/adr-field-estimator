@@ -1,4 +1,4 @@
-import { memberRoute } from '@/lib/auth';
+import { memberRoute, requireCurrentClient } from '@/lib/auth';
 import { getPhoto, putPhoto } from '@/lib/photos';
 
 export const dynamic = 'force-dynamic';
@@ -9,4 +9,4 @@ export const GET = memberRoute(getPhoto);
 
 // Stores one photo (?kind=photo), its full-size original (?kind=original) or the customer's
 // signature (?kind=signature, before signing) from a raw image body and answers the receipt. Sent again with the same bytes it answers the same receipt.
-export const PUT = memberRoute(putPhoto);
+export const PUT = requireCurrentClient(memberRoute(putPhoto));

@@ -1,3 +1,4 @@
+import { apiFetch } from '@/lib/api-fetch';
 import type { User } from 'firebase/auth';
 import type { ApiAnswer } from '@/lib/firebase-client';
 
@@ -8,7 +9,7 @@ import type { ApiAnswer } from '@/lib/firebase-client';
 async function authorized(user: User, path: string, init: RequestInit = {}): Promise<Response | null> {
   try {
     const token = await user.getIdToken();
-    return await fetch(path, { ...init, headers: { ...init.headers, Authorization: `Bearer ${token}` }, cache: 'no-store' });
+    return await apiFetch(path, { ...init, headers: { ...init.headers, Authorization: `Bearer ${token}` }, cache: 'no-store' }, 'upload');
   } catch {
     return null;
   }
