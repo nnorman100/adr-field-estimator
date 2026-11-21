@@ -301,18 +301,25 @@ describe('moving the field work (owner decision J5)', () => {
     const hold = latch();
     let arrived = false;
     const named = h.drafts.setFieldOwner;
+    const ensure = h.drafts.ensure;
     const all = ['sync', ...methods] as (keyof Harness['field']['gate'])[];
     const gate = async () => {
       if (arrived) return;
       arrived = true;
       for (const method of all) delete h.field.gate[method];
       h.drafts.setFieldOwner = named;
+      h.drafts.ensure = ensure;
       await hold.wait;
     };
     for (const method of all) h.field.gate[method] = gate;
     h.drafts.setFieldOwner = async (...args) => {
       await gate();
       return named(...args);
+    };
+    // New job's previous writer, which named the owner its request read.
+    h.drafts.ensure = async (...args) => {
+      await gate();
+      return ensure(...args);
     };
     return { reached: () => arrived, open: hold.open };
   }
@@ -847,6 +854,32 @@ describe('moving the field work (owner decision J5)', () => {
     // Nothing writes a placeholder now: every draft a sync makes is a real draft.
     expect(Object.values(h.field.data()).filter((draft) => draft.placeholder)).toEqual([]);
     expect(h.field.stateWrites.slice(writes)).toEqual([{ at: `${h.seed.a}/${ids.draftId}`, state: 'editing' }]);
+  });
+
+  // Slice 5 review R1/R2: New job and Back to editing answer only a caller still a member after their field
+  // step, and with the job as Postgres holds it then: an archive committed while the sync waited is 410.
+  it('answers New job and Back to editing after their field step as Postgres holds the job then, and only to a member', async () => {
+    const ids = { id: randomUUID(), draftId: randomUUID() };
+    const making = await heldSync(() => create(ESTIMATOR_A, { ...ids, propertyAddress: '9 Waiting Way' }));
+    await h.admin`UPDATE memberships SET status = 'disabled' WHERE id = ${h.seed.estimatorA.membership}`;
+    making.open();
+    expect(await making.running).toEqual({ status: 403, body: { error: 'not_allowed' } });
+    await h.admin`UPDATE memberships SET status = 'active' WHERE id = ${h.seed.estimatorA.membership}`;
+
+    const again = { id: randomUUID(), draftId: randomUUID() };
+    const archivedMeanwhile = await heldSync(() => create(ESTIMATOR_A, { ...again, propertyAddress: '10 Waiting Way' }));
+    expect((await archive(OWNER_A, again.id, { revision: 1, changeId: randomUUID() })).status).toBe(200);
+    archivedMeanwhile.open();
+    expect(await archivedMeanwhile.running).toEqual({ status: 410, body: { error: 'archived' } });
+
+    const { id, draftId } = await claimedJob();
+    h.field.put(h.seed.a, draftId, MANIFEST);
+    expect((await submitDraft(ESTIMATOR_A, id, { id: randomUUID(), draftId, digest: await manifestDigest(MANIFEST) })).status).toBe(201);
+    const editing = await heldSync(() => nextDraft(ESTIMATOR_A, id, { draftId: randomUUID(), fromDraftId: draftId }));
+    const { revision } = (await read(OWNER_A, id)).body.job as { revision: number };
+    expect((await archive(OWNER_A, id, { revision, changeId: randomUUID() })).status).toBe(200);
+    editing.open();
+    expect(await editing.running).toEqual({ status: 410, body: { error: 'archived' } });
   });
 
   it('refuses the company owner field work they do not own, until they move it to themself', async () => {

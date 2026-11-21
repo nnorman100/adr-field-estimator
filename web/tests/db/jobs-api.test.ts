@@ -155,7 +155,9 @@ describe('creating a job', () => {
     const ids = newIds();
     await create(ESTIMATOR_A, { ...ids, propertyAddress: '12 Sample Way' });
     const before = await everything(h.admin);
+    // No refused request reaches the field database: no draft writer (the sync, or the previous one).
     const drafts = h.drafts.calls.length;
+    const field = h.field.calls.length;
     for (const body of [
       { ...ids, propertyAddress: '99 Other Road' },
       { ...ids, draftId: randomUUID(), propertyAddress: '12 Sample Way' },
@@ -165,6 +167,7 @@ describe('creating a job', () => {
     }
     expect(await everything(h.admin)).toBe(before);
     expect(h.drafts.calls).toHaveLength(drafts);
+    expect(h.field.calls.slice(field)).toEqual([]);
   });
 
   it('answers 409 when the draft id is another job’s', async () => {
@@ -302,6 +305,7 @@ describe('creating a job', () => {
     expect(await create(ESTIMATOR_A, body)).toEqual({ status: 400, body: { error: 'invalid_request' } });
     expect(await jobCount()).toBe(0);
     expect(h.drafts.calls).toEqual([]);
+    expect(h.field.calls).toEqual([]);
   });
 
   it('refuses a call with no sign-in', async () => {

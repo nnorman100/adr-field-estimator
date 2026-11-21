@@ -359,6 +359,27 @@ describe('copy', () => {
 
   // Security audit F1: the claim commits before the stamp, so a lost answer from the stamp never leaves
   // a copy draft the previous version made stamped without its claim.
+  // Slice 5 review R1/R2: a copy answers only a caller still a member after its field step, and with the
+  // copy as Postgres holds it then: an archive committed while the sync waited is 410.
+  it('answers a copy after its field step as Postgres holds the copy then, and only to a member', async () => {
+    const { jobId: source } = await signedJob();
+    const ids = { id: randomUUID(), draftId: randomUUID() };
+    const held = holdEither(['sync']);
+    const copying = copy(ESTIMATOR_A, source, ids);
+    await held.arrived;
+    expect((await archive(OWNER_A, ids.id, change(1))).status).toBe(200);
+    held.open();
+    expect(await copying).toEqual({ status: 410, body: { error: 'archived' } });
+
+    const other = { id: randomUUID(), draftId: randomUUID() };
+    const waiting = holdEither(['sync']);
+    const copyingAgain = copy(ESTIMATOR_A, source, other);
+    await waiting.arrived;
+    await h.admin`UPDATE memberships SET status = 'disabled' WHERE id = ${h.seed.estimatorA.membership}`;
+    waiting.open();
+    expect(await copyingAgain).toEqual({ status: 403, body: { error: 'not_allowed' } });
+  });
+
   it('commits the claim before stamping a copy draft the previous version made, so a lost answer leaves it claimed', async () => {
     const { jobId: source } = await signedJob();
     const ids = { id: randomUUID(), draftId: randomUUID() };
@@ -419,7 +440,8 @@ describe('overlapping requests', () => {
     const archiving = archive(OWNER_A, ids.id, change(1));
     await briefly(archiving);
     made.open();
-    expect((await copying).status).toBe(201);
+    // The copy's answer is the copy as Postgres holds it after its field step: archived (slice 5).
+    expect(await copying).toEqual({ status: 410, body: { error: 'archived' } });
     expect((await archiving).status).toBe(200);
     expect(h.field.draft(h.seed.a, ids.draftId)?.state).toBe('archived');
   });
@@ -435,7 +457,8 @@ describe('overlapping requests', () => {
     const archiving = archive(OWNER_A, jobId, change((await f.job(jobId)).revision));
     await briefly(archiving);
     made.open();
-    expect((await editing).status).toBe(201);
+    // Back to editing's answer is the job as Postgres holds it after its field step: archived (slice 5).
+    expect(await editing).toMatchObject({ status: 410, body: { error: 'archived' } });
     expect((await archiving).status).toBe(200);
     expect(h.field.draft(h.seed.a, next)?.state).toBe('archived');
   });

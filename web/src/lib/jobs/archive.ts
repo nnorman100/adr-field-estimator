@@ -22,6 +22,8 @@ import { audit, CHECK_VIOLATION, detailOf, errorCode, type JobDetail, type JobVi
 // The owner archives and restores (docs/access/roles.md); every role copies a signed job.
 const ARCHIVE: readonly Capability[] = ['jobs_archive'];
 const COPY: readonly Capability[] = ['jobs_copy'];
+// The copy's answer is the job as the caller may read it.
+const READ: readonly Capability[] = ['jobs_read'];
 
 // The copy rule (copy-rule.ts), shared with the draft sync.
 export { COPY_CLEARED_KEYS, copiedManifest } from './copy-rule';
@@ -249,12 +251,16 @@ export function archiveService(db: Database, store: ArchiveStore, sync: DraftSyn
       // The copy's first draft, as the draft sync makes every draft (the draft life-cycle redesign, slice 5):
       // from its source's signed record less COPY_CLEARED_KEYS (copied_from_job_id), naming the field owner
       // Postgres holds when the sync reads it. A draft another job holds under the id is 409; a placeholder
-      // an older version left is replaced; nothing is written for one.
-      await syncJobDrafts(db, sync, store, caller.companyId, input.id);
+      // an older version left is replaced; nothing is written for one. Its answer only to a caller still an
+      // active member of an active company (afterFieldStep).
+      await afterFieldStep(db, caller, () => syncJobDrafts(db, sync, store, caller.companyId, input.id));
       await field(() =>
         store.projectJob(caller.companyId, made.detail.job.id, { currentDraftId: made.detail.job.currentDraftId, revision: made.detail.job.revision }),
       );
-      return { created: made.created, detail: made.detail };
+      // The copy as Postgres holds it after the field step, read with the caller's access again: a change
+      // committed meanwhile (an archive, a move) is the answer, not the row this request wrote.
+      const detail = await withCompany(db, caller.companyId, async (tx) => detailOf(tx, await jobAccess(tx, caller, input.id, READ)), { snapshot: true });
+      return { created: made.created, detail };
     },
   };
 }

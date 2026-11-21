@@ -468,8 +468,9 @@ export function submissionsService(db: Database, store: SubmitStore, options: Su
         // claim, so the refused id commits nothing.
         if (input.draftId === input.fromDraftId) throw new SubmissionError('conflict');
         // The job's latest record: a new draft is made only from it.
+        // Its id and draft only: the draft sync reads the record's bytes itself, after the commit.
         const [latest] = await tx
-          .select()
+          .select({ id: jobSubmissions.id, draftId: jobSubmissions.draftId })
           .from(jobSubmissions)
           .where(
             and(
@@ -521,15 +522,21 @@ export function submissionsService(db: Database, store: SubmitStore, options: Su
       // where it came from, less the scope confirmation when an owner reprice postdates it (pricing plan 3),
       // naming the field owner Postgres holds when the sync reads it. A retry makes it if it is missing; a
       // draft another job holds under the id is 409; a placeholder an older version left is replaced. Its
-      // 503 stays Submit's own (submissions_unavailable), as the phone reads it.
-      await syncJobDrafts(db, store, store, caller.companyId, jobId).catch((error: unknown) => {
-        if (error instanceof JobError && error.code === 'draft_unavailable') throw new SubmissionError('submissions_unavailable');
-        throw error;
-      });
+      // 503 stays Submit's own (submissions_unavailable), as the phone reads it; its answer goes only to a
+      // caller still an active member of an active company (afterFieldStep).
+      await afterFieldStep(db, caller, () =>
+        syncJobDrafts(db, store, store, caller.companyId, jobId).catch((error: unknown) => {
+          if (error instanceof JobError && error.code === 'draft_unavailable') throw new SubmissionError('submissions_unavailable');
+          throw error;
+        }),
+      );
       await field(() => store.projectJob(caller.companyId, jobId, {
         currentDraftId: made.job.currentDraftId, revision: made.job.revision,
       }));
-      return { created: made.changed, job: jobState(made.job) };
+      // The job as Postgres holds it after the field step, read with the caller's access again: a change
+      // committed meanwhile (an archive) is the answer, not the row this request wrote.
+      const job = await withCompany(db, caller.companyId, (tx) => jobAccess(tx, caller, jobId, SUBMIT), { snapshot: true });
+      return { created: made.changed, job: jobState(job) };
     },
   };
 }

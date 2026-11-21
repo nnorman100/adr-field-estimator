@@ -5,7 +5,9 @@ import type { Capability } from '@/lib/access';
 import { canSeeJob, claimDraft, hasAny, holdDraft, isOwnJob, jobAccess, JobError, ownsFieldWork, seesEveryJob, type JobCaller, type JobRow } from './access';
 import type { DraftSync } from './draft-sync';
 import type { DraftFound, DraftLookup, DraftStore } from './drafts';
-import { syncJobDrafts } from './sync-job';
+import { afterFieldStep, syncJobDrafts } from './sync-job';
+import { IdentityRefusal } from '@/lib/auth';
+import { isQueueTimeout } from '@/db/client';
 import { createDigest, type ClaimInput, type CreateJobInput, type CustomerInput, type ListQuery } from './schema';
 
 // The jobs of a company (S5a-3). Every function runs inside withCompany for the company of the
@@ -354,17 +356,21 @@ export function jobsService(db: Database, drafts: DraftStore, sync: DraftSync): 
         // empty, in the job's state, naming the field owner Postgres holds when the sync reads it, so a
         // creation can never name an owner a later move replaced; a placeholder an older version left
         // under the id is replaced, and nothing is written for one (sync-job.ts).
-        await syncJobDrafts(db, sync, drafts, caller.companyId, made.detail.job.id);
+        // Its answer only to a caller still an active member of an active company (afterFieldStep).
+        await afterFieldStep(db, caller, () => syncJobDrafts(db, sync, drafts, caller.companyId, made.detail.job.id));
         await drafts.projectJob(caller.companyId, made.detail.job.id, {
           currentDraftId: made.detail.job.currentDraftId, revision: made.detail.job.revision,
         });
       } catch (error) {
-        if (error instanceof JobError) throw error;
+        if (error instanceof JobError || error instanceof IdentityRefusal || isQueueTimeout(error)) throw error;
         // Fixed text only: the SDK's message may quote a path.
         console.error('job draft unavailable', error instanceof Error ? error.name : 'unknown');
         throw new JobError('draft_unavailable');
       }
-      return { created: made.created, detail: made.detail };
+      // The job as Postgres holds it after the field step, read with the caller's access again: a change
+      // committed meanwhile (an archive, a move) is the answer, not the row this request wrote.
+      const detail = await withCompany(db, caller.companyId, async (tx) => detailOf(tx, await jobAccess(tx, caller, made.detail.job.id, READ)), { snapshot: true });
+      return { created: made.created, detail };
     },
 
     async list(caller, query) {
