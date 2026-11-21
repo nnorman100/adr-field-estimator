@@ -4,7 +4,20 @@ import { useEffect, useRef, useState } from 'react';
 import { companyAuth } from '@/lib/firebase-client';
 import { readPublishedItemList } from '@/lib/field/api';
 import type { User } from 'firebase/auth';
-import { eraseItemList, governing, readItemList, replaceItemList, type ItemList, type SavedList } from '@/lib/field/ds-prices';
+import {
+  eraseItemList,
+  governing,
+  hideItemList,
+  itemListHidden,
+  readItemList,
+  refusalStamp,
+  replaceItemList,
+  showItemList,
+  watchItemListHidden,
+  type ItemList,
+  type SavedList,
+  type Stamp,
+} from '@/lib/field/ds-prices';
 import { ReopenTheApp } from '@/lib/field/idb';
 import type { FieldSession } from '@/lib/field/session';
 import { signInOf, stillSameSignIn, type SignIn } from '@/lib/field/sign-out';
@@ -50,14 +63,17 @@ function display(view: View): Display {
   return { list: current.list, notes: note ? [note] : [] };
 }
 
-// What a refusal from the item-list route means for the copy on this phone. Only the server's own
-// refusals count, and every one of them carries a JSON error code: a 403 or 404 page from a captive
-// portal or a proxy has none and is no answer. 'erase': the person may no longer see this company's
-// list. 'hide': the sign-in must be renewed; the list is hidden now and the copy kept for after it.
-function refusalOf(answer: { status: number; code?: string }): 'erase' | 'hide' | null {
-  if (answer.code === undefined) return null;
-  if (answer.status === 403 || answer.status === 404 || (answer.status === 401 && answer.code === 'sign_in_revoked')) return 'erase';
-  if (answer.status === 401 && answer.code === 'sign_in_again') return 'hide';
+// The codes the server gives when the person, the role or the company's switch no longer allows the
+// list. A 403 or 404 from a captive portal or a proxy carries none of them and is no answer.
+const MEMBER_REFUSALS = new Set(['not_allowed', 'not_a_member', 'member_disabled', 'company_inactive', 'account_disabled']);
+
+// What a refusal from the item-list route means for the copy on this phone. 'erase': the person may
+// no longer see this company's list. 'hide': the sign-in must be renewed; the list is hidden until
+// access is confirmed again and the copy kept for after it.
+function refusalOf({ status, code }: { status: number; code?: string }): 'erase' | 'hide' | null {
+  if (code === undefined) return null;
+  if ((status === 403 && MEMBER_REFUSALS.has(code)) || (status === 404 && code === 'not_found') || (status === 401 && code === 'sign_in_revoked')) return 'erase';
+  if (status === 401 && code === 'sign_in_again') return 'hide';
   return null;
 }
 
@@ -108,19 +124,17 @@ function PublishedList({ session }: { session: FieldSession }) {
 
     function render() {
       if (!mounted.current) return;
-      const next = display(view);
+      const next = itemListHidden(owner) ? { list: null, notes: [UNAVAILABLE] } : display(view);
       setShown((before) => before.list?.versionId === next.list?.versionId && before.notes.join('\n') === next.notes.join('\n') ? before : next);
     }
 
-    function save(mine: { list: ItemList | null }, asOf: number, governs: () => boolean, from: SignIn, signedInUser: User) {
+    function save(mine: { list: ItemList | null }, stamp: Stamp, governs: () => boolean, from: SignIn, signedInUser: User) {
       const active = () => governs() && stillSameSignIn(auth, from);
       view.saving = view.saving.then(async () => {
         if (!active()) return;
-        // Saved every time, the same version too: the copy may have been erased since (here, in
-        // another tab or by the field gate), and a save renews the time an erase owed is judged by.
         const authTime = await authTimeOf(signedInUser);
         let problem: string | null = null;
-        const committed = await replaceItemList(owner, mine.list, authTime, asOf, active).catch((error: unknown) => {
+        const committed = await replaceItemList(owner, mine.list, authTime, stamp, active).catch((error: unknown) => {
           problem = error instanceof ReopenTheApp ? error.message : null;
           return false;
         });
@@ -139,9 +153,9 @@ function PublishedList({ session }: { session: FieldSession }) {
       const sameSignIn = () => stillSameSignIn(auth, from);
       const pending = new AbortController();
       request = pending;
-      // When this answer was asked for: a list is saved only when no refusal that arrived since is
-      // owed (ds-prices.ts).
-      const asOf = Date.now();
+      // The refusals recorded when this answer was asked for: it is saved only while none came since
+      // (ds-prices.ts).
+      const stamp = refusalStamp(owner);
       const timeout = window.setTimeout(() => pending.abort(), REQUEST_TIMEOUT_MS);
       const stopped = new Promise<null>((resolve) => pending.signal.addEventListener('abort', () => resolve(null), { once: true }));
       let result: Awaited<ReturnType<typeof readPublishedItemList>> | null;
@@ -160,11 +174,12 @@ function PublishedList({ session }: { session: FieldSession }) {
           view.answer = 'refused';
           view.shownList = null;
           view.warning = null;
+          if (refusal === 'hide') hideItemList(owner);
           render();
           if (refusal === 'erase') {
             view.saved = null;
             // Also on a phone that now keeps nothing: one that kept a copy earlier still holds it.
-            void eraseItemList(owner, Date.now());
+            void eraseItemList(owner);
           }
         } else {
           view.fetchProblem = UNAVAILABLE;
@@ -174,6 +189,7 @@ function PublishedList({ session }: { session: FieldSession }) {
       }
 
       const list = result.value.current;
+      showItemList(owner);
       const governs = governing(owner);
       const before = view.answer;
       if (!before || before === 'refused' || before.list?.versionId !== list?.versionId) view.warning = null;
@@ -184,7 +200,7 @@ function PublishedList({ session }: { session: FieldSession }) {
       const mine = { list };
       view.answer = mine;
       render();
-      if (keep) save(mine, asOf, governs, from, current);
+      if (keep) save(mine, stamp, governs, from, current);
     }
 
     async function load(): Promise<void> {
@@ -214,12 +230,14 @@ function PublishedList({ session }: { session: FieldSession }) {
     }
 
     void load();
+    const unwatch = watchItemListHidden(render);
     const check = () => void refresh();
     window.addEventListener('pageshow', check);
     document.addEventListener('visibilitychange', check);
     const timer = online ? window.setInterval(check, CHECK_INTERVAL_MS) : undefined;
     return () => {
       disposed = true;
+      unwatch();
       request?.abort();
       window.clearInterval(timer);
       window.removeEventListener('pageshow', check);

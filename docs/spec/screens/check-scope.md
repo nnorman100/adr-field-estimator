@@ -90,12 +90,19 @@ job's field work is no longer yours…" (unsent changes stay on the phone, read 
   phone has seen that answer. When the server refuses the list (403, price books off, or a revoked sign-in), the list is
   hidden at once and the saved copy for that person and company is erased. The same erase runs when
   the field gate's `GET /api/me` lets the person in without `prices_read`, whether or not Check
-  Scope is open. The erase is recorded in localStorage before it is tried and stays until it has
-  committed, so every read of the copy, in any tab and after a reload, makes it first and shows
-  nothing until it has. A copy saved from an answer asked for after the refusal arrived is kept.
-  A refusal that only asks the person to sign in again hides the list and keeps the copy. A lost
-  connection, or a 403 or 404 page without the server's error code (a captive portal), is not a
-  refusal: the last readable list stays.
+  Scope is open, and wherever the Prices screen, the sign-in page or field recovery accepts a
+  `GET /api/me` answer without `prices_read`. The list is then hidden in every Check Scope view
+  until access is confirmed again. The erase is recorded in localStorage before it is tried and
+  stays until it has committed, so every read of the copy, in any tab and after a reload, makes it
+  first and shows nothing until it has. An answer is saved only if no refusal was recorded after
+  its request started, and a copy fetched before a refusal is erased. The same version already
+  saved is not written again. A refusal that only asks the person to sign in again (401
+  `sign_in_again`) hides the list in every view and keeps the copy. A lost connection, or a 403
+  or 404 without one of the server's own member, capability or feature-flag codes (a captive
+  portal or proxy), is not a refusal: the last readable list stays. Erasing, sign-out and
+  Discard never create the item-list database, and sign-out and Discard fail while an erase
+  cannot finish. Limit: when the phone cannot write localStorage, a refusal is held in the page
+  only, so after a reload the list may stay viewable offline until the next online check.
 - Offline with jobs kept: edits save on the phone (the shell's "No signal: your work is saved on
   this phone"); offline with Online only, nothing opens without a signal.
 - Draft unreadable: the error with "Try again".

@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import type { BrowserSignInConfig } from '@/lib/config';
 import { belongsTo, callApi, companyAuth } from '@/lib/firebase-client';
+import { noteItemListAccess } from '@/lib/field/ds-prices';
 import { signInOf, signOutOnRefusal, signOutOrShow, type FailedSignOut, type SignIn } from '@/lib/field/sign-out';
 import type { LockReason } from '@/lib/field/unsent';
 import { pricesAccess, pricesView, type OwnerPrices, type ReaderPrices } from '@/lib/prices/screen';
@@ -75,6 +76,7 @@ function CompanyPrices({ address, companyName, tenantId, config }: PricesScreenP
       }
       if (outcome.kind === 'unavailable') return setPhase({ name: 'unavailable' });
       if (outcome.kind !== 'signed-in') return setPhase({ name: 'finish-sign-in' });
+      noteItemListAccess({ tenantId, uid: user.uid }, me);
       const access = pricesAccess(me.body);
       if (!access) return setPhase({ name: 'unavailable' });
       if (!access.canRead) return setPhase({ name: 'hidden' });

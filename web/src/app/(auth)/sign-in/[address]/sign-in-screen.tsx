@@ -20,6 +20,7 @@ import {
   type SecondStepChallenge,
 } from '@/lib/firebase-client';
 import { saveMe } from '@/lib/field/ds-me';
+import { noteItemListAccess } from '@/lib/field/ds-prices';
 import { prepareFieldShell } from '@/lib/field/register-worker';
 import { meActor, meFacts } from '@/lib/field/sync-gate';
 import { evaluate, watchRetention } from '@/lib/field/retention';
@@ -213,6 +214,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
           () => NaN,
         );
         if (!stillCurrent()) return;
+        noteItemListAccess({ tenantId, uid: user.uid }, { status: 200, body });
         await saveMe({
           tenantId,
           uid: user.uid,

@@ -158,6 +158,9 @@ export type GateDeps = {
   // Either answers false when the phone could not save it: the gate then asks again after
   // LOCKED_RETRY_MS, whatever the refusal, until it can. `answer`: what ask() answered.
   onRefused?: (reason: Extract<GateState, { kind: 'locked' }>['reason'], answer: MeAnswer) => boolean | void;
+  // Told of every answer of the server the gate accepts for its current request and sign-in, before
+  // anything else is judged: an answer dropped as late, cancelled or superseded is never told.
+  onAnswer?: (answer: MeAnswer) => void;
   onExpired?: () => boolean | void;
   // - False when the work on the phone may no longer be sent. Asked
   //   after every answer, by checkSession() (the page shown again, every minute) and, with
@@ -378,6 +381,7 @@ export class SyncGate {
       const answer = await this.wait(this.deps.ask(), ASK_WITHIN_MS, NO_ANSWER);
       if (answer === CALLED_OFF) return calledOff();
       if (stale() || this.retired()) return;
+      this.deps.onAnswer?.(answer);
       let verdict = judgeMe(answer, this.now());
       let refusalSaved = true;
       if (verdict.kind === 'locked') {

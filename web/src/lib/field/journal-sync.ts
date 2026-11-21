@@ -51,6 +51,7 @@ import {
   type ServerDoc,
 } from './journal';
 import { readJob } from './api';
+import { noteItemListAccess } from './ds-prices';
 import { ReopenTheApp } from './idb';
 import { queueFieldEdit } from './local-edit';
 import { applyWrites, draftPath, stageWrites, type DraftRef } from './store';
@@ -107,17 +108,21 @@ function roleNow(client: FieldClient): Promise<RoleNow> {
   const found = asking.get(key);
   if (found) return found;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let answered = false;
   const ask = Promise.race([
     (async () => {
       const user = fieldUser(client.person);
       if (!user) return NO_ANSWER;
-      const verdict = judgeMe(await callApi(user, '/api/me'), Date.now());
+      const answer = await callApi(user, '/api/me');
+      if (!answered && fieldUser(client.person) === user) noteItemListAccess(client.person, answer);
+      const verdict = judgeMe(answer, Date.now());
       return verdict.kind === 'open' ? verdict.facts.role : verdict.kind === 'locked' ? null : NO_ANSWER;
     })(),
     new Promise<typeof NO_ANSWER>((done) => (timer = setTimeout(() => done(NO_ANSWER), ASK_WITHIN_MS))),
   ])
     .catch((): RoleNow => NO_ANSWER)
     .finally(() => {
+      answered = true;
       clearTimeout(timer);
       asking.delete(key);
     });

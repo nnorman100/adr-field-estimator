@@ -3,8 +3,8 @@ import { getIdTokenResult } from 'firebase/auth';
 import { callApi } from '@/lib/firebase-client';
 import { appCheckSeam, fieldUser, settle, type FieldClient } from '@/lib/field-db';
 import { meKey, readMe, updateMe, type DsMe } from './ds-me';
-import { eraseItemList } from './ds-prices';
-import { meActor, meFacts, sessionValid, SyncGate, type GateState, type MeAnswer, type MeFacts } from './sync-gate';
+import { noteItemListAccess } from './ds-prices';
+import { meActor, sessionValid, SyncGate, type GateState, type MeAnswer, type MeFacts } from './sync-gate';
 import { evaluate, onWorkRemoved, pendingReason, type RetentionEvent } from './retention';
 import { onJournalLost, reconcileJournal } from './journal-sync';
 import { savedLock, savedReason } from './unsent';
@@ -82,23 +82,16 @@ export function runFieldSync(
       if (!user) return { status: 401, body: { error: 'missing_token' } };
       const answer = await callApi(user, '/api/me');
       fromServer.add(answer);
-      if (answer.status === 200) {
-        actorId = meActor(answer.body).actorId ?? actorId;
-        // The server no longer lets this person see the company's item list: the copy Check Scope
-        // saved is erased (ds-prices.ts), whatever the gate makes of this answer, whether or not
-        // Check Scope is open, and whether or not the ds-me write that hides its list offline works.
-        // Stamped when the answer arrived: a list asked for before then is no newer than it.
-        const facts = meFacts(answer.body);
-        if (facts && !facts.capabilities.includes('prices_read')) {
-          void eraseItemList({ tenantId: person.tenantId, uid: person.uid, companyId: facts.companyId }, Date.now());
-        }
-      }
+      if (answer.status === 200) actorId = meActor(answer.body).actorId ?? actorId;
       return answer;
     },
     enableNetwork: () => enableNetwork(client.db),
     disableNetwork: () => disableNetwork(client.db),
     appCheck: appCheckSeam(),
     now,
+    onAnswer: (answer) => {
+      if (fromServer.has(answer)) noteItemListAccess(person, answer);
+    },
     initial,
     session: () => fieldUser(person),
     sessionValid: (at) => sessionValid(row, at),
