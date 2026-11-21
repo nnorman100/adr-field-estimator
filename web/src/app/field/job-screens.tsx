@@ -20,6 +20,7 @@ import { CoordinationView } from './coordination-view';
 import { ArchivedNotice, JobActions } from './job-actions';
 import { StartFieldWork } from './start-field-work';
 import { FieldLink } from './ui';
+import { beginUpdateActivity } from '@/lib/update-activity';
 
 const TABS: { view: JobView; label: string }[] = [
   { view: 'scope', label: 'Check Scope' },
@@ -455,7 +456,9 @@ export function JobScreens({
   const [preparing, setPreparing] = useState(0);
   const startSave = useCallback(() => {
     setPreparing((count) => count + 1);
+    const endActivity = beginUpdateActivity('save');
     return (failed = false) => {
+      endActivity();
       setPreparing((count) => count - 1);
       if (failed) setLeaving((current) => current === 'going' ? 'blocked' : current);
     };

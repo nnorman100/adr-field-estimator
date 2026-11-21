@@ -1,6 +1,6 @@
 // The actual job screens behind the network lane, including WebKit's worker-controlled page.
 // Only the SQL reads are stand-ins; field writes and their receipts use the real emulator/rules.
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { HIDDEN_TEXT } from '../../../src/app/field/field-store-text';
 import { firestoreJobProjectionStore } from '../../../src/lib/jobs/projection';
 import { keepKey } from '../../../src/lib/field/keep-consent';
@@ -255,7 +255,7 @@ test('a photo taken while the camera hid the page is kept to send again', async 
   await expectNothingSent(lane);
 });
 
-test('an update waits for the camera and upload and keeps a photo refused with 426', async ({ context, lane }) => {
+test('an update waits for the camera and upload, and carries a photo refused with 426 to be sent after it', async ({ context, lane }) => {
   const world = await seedCompany();
   const { page } = await signedIn(context, lane, world);
   const jobId = randomUUID();
@@ -279,8 +279,10 @@ test('an update waits for the camera and upload and keeps a photo refused with 4
 
   const release = Promise.withResolvers<void>();
   let epoch: string | string[] | undefined;
-  lane.serve(`/api/jobs/${jobId}/photos/${photoId}`, async (headers) => {
+  let heldBytes: Buffer | undefined;
+  lane.serve(`/api/jobs/${jobId}/photos/${photoId}`, async (headers, _url, request) => {
     epoch = headers['x-dryscope-client-epoch'];
+    heldBytes = request.body;
     await release.promise;
     return { type: 'application/json', status: 426, body: '{"error":"update_required"}' };
   });
@@ -303,10 +305,24 @@ test('an update waits for the camera and upload and keeps a photo refused with 4
 
   const needed = page.getByRole('dialog', { name: 'Update needed' });
   await expect(needed).toBeVisible();
-  await expect(needed.getByRole('button', { name: 'Update now' })).toBeDisabled();
-  await expect(needed.getByText('A photo is still held in this window. Keep it open to avoid losing the photo.')).toBeVisible();
+  const updateNow = needed.getByRole('button', { name: 'Update now' });
+  await expect(updateNow).toBeEnabled();
   expect(await mark(page, world)).toMatchObject({ photosInMemory: [photoId] });
   expect(await page.evaluate(async () => (await navigator.serviceWorker.getRegistration())?.waiting?.state)).toBe('installed');
+
+  // The same photo, with the same bytes, goes with the update and is sent once the new build is open.
+  const sent: { epoch: string | string[] | undefined; bytes: Buffer }[] = [];
+  lane.serve(`/api/jobs/${jobId}/photos/${photoId}`, async (headers, _url, request) => {
+    sent.push({ epoch: headers['x-dryscope-client-epoch'], bytes: request.body });
+    const sha256 = createHash('sha256').update(request.body).digest('hex');
+    return { type: 'application/json', status: 201, body: JSON.stringify({ photoId, sha256 }) };
+  });
+  const reloaded = page.waitForEvent('framenavigated', (frame) => frame === page.mainFrame());
+  await updateNow.click();
+  await reloaded;
+  await expect.poll(() => sent.length).toBe(1);
+  expect(sent[0]).toEqual({ epoch: String(CLIENT_EPOCH), bytes: heldBytes });
+  expect(heldBytes?.length).toBeGreaterThan(0);
 });
 
 test('a write sends the client epoch, defers the update while saving, and presents a 426', async ({ context, lane }) => {
@@ -342,6 +358,13 @@ test('a write sends the client epoch, defers the update while saving, and presen
   const needed = page.getByRole('dialog', { name: 'Update needed' });
   await expect(needed).toBeVisible();
   await expect(needed.getByRole('button', { name: 'Update now' })).toBeEnabled();
+  await expect(page.getByLabel('Customer name')).toHaveValue('Update Test');
+
+  // What the refused save left on the form goes with the update.
+  const reloaded = page.waitForEvent('framenavigated', (frame) => frame === page.mainFrame());
+  await needed.getByRole('button', { name: 'Update now' }).click();
+  await reloaded;
+  await page.getByRole('link', { name: 'Customer and claim', exact: true }).click();
   await expect(page.getByLabel('Customer name')).toHaveValue('Update Test');
 });
 

@@ -39,6 +39,11 @@ import { Writable } from 'node:stream';
 import { pathToFileURL } from 'node:url';
 import type { FieldManifest } from '../src/lib/field/canonical';
 
+// What a current phone sends with every write (src/lib/app-version.ts). Plain Node cannot import that
+// file here; tests/unit/load-test.test.ts fails when these drift from it.
+export const CLIENT_EPOCH_HEADER = 'x-dryscope-client-epoch';
+export const CLIENT_EPOCH = 1;
+
 export type PassMarks = {
   readsP95Ms: number;
   photoP95Ms: number;
@@ -453,7 +458,7 @@ export async function runLoadTest(options: LoadOptions, marks: PassMarks, deps: 
         ...init,
         redirect: 'manual',
         signal: AbortSignal.timeout(TIMEOUT_MS),
-        headers: { authorization: `Bearer ${session.token}`, ...(init.headers as Record<string, string> | undefined) },
+        headers: { authorization: `Bearer ${session.token}`, [CLIENT_EPOCH_HEADER]: String(CLIENT_EPOCH), ...(init.headers as Record<string, string> | undefined) },
       });
       status = res.status;
       const raw = Buffer.from(await res.arrayBuffer());

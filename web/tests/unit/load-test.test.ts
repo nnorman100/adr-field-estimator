@@ -1,7 +1,10 @@
 import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
+import { CLIENT_EPOCH as APP_EPOCH, CLIENT_EPOCH_HEADER as APP_EPOCH_HEADER } from '@/lib/app-version';
 import {
   ask,
+  CLIENT_EPOCH,
+  CLIENT_EPOCH_HEADER,
   checkTarget,
   connectionLogFilter,
   freshPhoto,
@@ -209,6 +212,12 @@ describe('signing in', () => {
       { path: '/v1/accounts:signInWithPassword', origin: TEST_ORIGIN, referer: `${TEST_ORIGIN}/` },
       { path: '/v2/accounts/mfaSignIn:finalize', origin: TEST_ORIGIN, referer: `${TEST_ORIGIN}/` },
     ]);
+  });
+});
+
+describe('the client epoch', () => {
+  it('is the one the app code was built with, so the run exercises the same handlers as a current phone', () => {
+    expect({ header: CLIENT_EPOCH_HEADER, epoch: CLIENT_EPOCH }).toEqual({ header: APP_EPOCH_HEADER, epoch: APP_EPOCH });
   });
 });
 

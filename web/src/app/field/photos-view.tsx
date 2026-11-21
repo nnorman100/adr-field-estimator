@@ -113,6 +113,19 @@ export function PhotosView({ job, draft, open, readinessFix }: { job: JobContext
         ? 'Not sent: this job is being checked. Send it again in a moment.'
         : 'Not sent: this job’s field work is being got ready. Send it again in a moment.';
 
+  // A photo kept through an app update is sent once, as soon as this job's photos are on screen
+  // and can send: its id and bytes are the ones the old build held.
+  const canSend = job.editable && !job.moved && job.session.online;
+  useEffect(() => {
+    if (!canSend) return;
+    for (const item of pending) {
+      if (!item.resumed || item.step !== 'send-failed') continue;
+      update(item.id, { resumed: undefined });
+      void finish(item);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- finish and update read the screen as it is now
+  }, [pending, canSend]);
+
   async function finish(item: PendingPhoto) {
     const done = beginUpdateActivity('upload');
     try {
@@ -164,7 +177,6 @@ export function PhotosView({ job, draft, open, readinessFix }: { job: JobContext
     if (!file || job.moved || heldNow()) return;
     const capturedAt = new Date().toISOString();
     const prepared = job.startSave();
-    const saved = beginUpdateActivity('save');
     let item: PendingPhoto | undefined;
     try {
       const bytes = await preparePhoto(file).catch(() => null);
@@ -177,7 +189,6 @@ export function PhotosView({ job, draft, open, readinessFix }: { job: JobContext
       unsent.addPhoto(jobId, item);
     } finally {
       prepared(!item);
-      saved();
     }
     await finish(item);
   }

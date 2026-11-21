@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { CLIENT_EPOCH, CLIENT_EPOCH_HEADER } from '@/lib/app-version';
 import { linkRoute } from '@/lib/auth/route';
 import { LINK_REQUESTS_PER_ADDRESS_PER_MINUTE, linkAddressTableSize, resetLinkRequestLimits, takeLinkRequest } from '@/lib/links/address-limit';
 import { isLinkToken, LINK_TOKEN_HEADER, linkTokenHashOf, newLinkToken } from '@/lib/links/token';
@@ -153,7 +154,7 @@ describe('the link route files', () => {
     for (const [path, load, methods] of TECHNICIAN_ROUTES) {
       const route = await load();
       for (const method of methods) {
-        const answer = await route[method as keyof RouteModule]!(new Request(`http://localhost${path}`, { method, headers: { [LINK_TOKEN_HEADER]: newLinkToken() } }), params);
+        const answer = await route[method as keyof RouteModule]!(new Request(`http://localhost${path}`, { method, headers: { [LINK_TOKEN_HEADER]: newLinkToken(), [CLIENT_EPOCH_HEADER]: String(CLIENT_EPOCH) } }), params);
         expect({ path, method, status: answer.status }).toEqual({ path, method, status: 401 });
       }
     }

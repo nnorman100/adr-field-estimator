@@ -3,7 +3,7 @@
 import { useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import { fieldUser } from '@/lib/field-db';
-import type { DsMe } from '@/lib/field/ds-me';
+import { meKey, type DsMe } from '@/lib/field/ds-me';
 import { pending } from '@/lib/field/pending';
 import { sessionIdentity, watchSignIn, type FieldSession } from '@/lib/field/session';
 import { placeOf } from '@/lib/field/views';
@@ -12,6 +12,7 @@ import { JobsView } from './jobs-view';
 import { NewJobView } from './new-job-view';
 import { SyncChip } from './sync-chip';
 import { useFieldClient } from './field-store';
+import { restoreKept } from '@/lib/field/update-keep';
 
 // Identity and cache come from FieldStore's gate, including its saved offline facts.
 export function FieldApp({ me }: { me: DsMe }) {
@@ -37,7 +38,9 @@ export function FieldApp({ me }: { me: DsMe }) {
   useEffect(() => {
     if (!companyId || !uid) return;
     return watchSignIn(me, uid, () => setLost(true), () => {
-      pending.openFor(`${companyId}/${uid}`);
+      const owner = meKey(me.tenantId, uid);
+      pending.openFor(owner);
+      void restoreKept(owner);
       setOpened(`${companyId}/${uid}`);
     });
   }, [me, companyId, uid]);
