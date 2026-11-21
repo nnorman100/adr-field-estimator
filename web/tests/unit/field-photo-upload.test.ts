@@ -1,6 +1,6 @@
 import type { User } from 'firebase/auth';
 import { afterEach, expect, it, vi } from 'vitest';
-import { sendQueuedPhoto } from '@/lib/field/api';
+import { sendPhoto, sendQueuedPhoto } from '@/lib/field/api';
 import { appCheckHeaders } from '@/lib/app-check-client';
 
 vi.mock('@/lib/app-check-client', () => ({ appCheckHeaders: vi.fn() }));
@@ -55,4 +55,12 @@ it('passes Retry-After and the server code to the queue', async () => {
   expect(await sendQueuedPhoto(user, { ...entry, kind: 'photo' }, photo, new AbortController().signal)).toMatchObject({
     ok: false, status: 429, code: 'rate_limit', retryAfter: '45',
   });
+});
+
+it('does not repeat the online-only photo request after an App Check refusal', async () => {
+  vi.mocked(appCheckHeaders).mockResolvedValue({});
+  const fetch = vi.fn().mockResolvedValue(Response.json({ error: 'app_check_required' }, { status: 401 }));
+  vi.stubGlobal('fetch', fetch);
+  expect(await sendPhoto(user, 'job', 'photo', new Blob([new Uint8Array([1])], { type: 'image/jpeg' }))).toMatchObject({ ok: false, status: 401 });
+  expect(fetch).toHaveBeenCalledTimes(1);
 });

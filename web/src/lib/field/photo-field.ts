@@ -2,8 +2,9 @@ import { doc, getDocFromServer } from 'firebase/firestore';
 import { fieldUser, settle, type FieldClient } from '@/lib/field-db';
 import { sendQueuedPhoto } from './api';
 import { canonicalJson } from './canonical';
+import { ReopenTheApp } from './idb';
 import type { RejectReason } from './journal';
-import { journaledEdit, readEntries, refusalNow } from './journal-sync';
+import { journaledEdit, journalFailed, readEntries, refusalNow } from './journal-sync';
 import {
   acknowledgeQueuedPhoto,
   readPhotoQueue,
@@ -59,6 +60,13 @@ export async function readRefusedPhotos(owner: PhotoOwner): Promise<PhotoQueueEn
 
 type Result = { kind: 'acknowledged' } | { kind: 'retry' } | { kind: 'sign-in' } | { kind: 'blocked'; reason: string; refusal?: NonNullable<PhotoQueueEntry['refusal']> };
 
+async function serverReference(client: FieldClient, path: string, entry: PhotoQueueEntry, signal: AbortSignal) {
+  const current = await whileAvailable(getDocFromServer(doc(client.db, path)), signal);
+  if (current.metadata.hasPendingWrites) return 'pending';
+  if (!current.exists()) return 'missing';
+  return canonicalJson(current.data().field) === canonicalJson(entry.field) ? 'matches' : 'different';
+}
+
 async function saveReference(
   client: FieldClient,
   companyId: string,
@@ -75,12 +83,10 @@ async function saveReference(
   try {
     // The response may have been lost after the SDK committed the reference or after the journal
     // pruned its entry. Only a server read can settle that case.
-    const current = await whileAvailable(getDocFromServer(doc(client.db, path)), signal);
-    if (current.metadata.hasPendingWrites) return { kind: 'retry' };
-    if (current.exists()) {
-      if (canonicalJson(current.data().field) !== canonicalJson(entry.field)) {
-        return { kind: 'blocked', reason: 'This photo has different details on the server.' };
-      }
+    const current = await serverReference(client, path, entry, signal);
+    if (current === 'pending') return { kind: 'retry' };
+    if (current === 'different') return { kind: 'blocked', reason: 'This photo has different details on the server.' };
+    if (current === 'matches') {
       await written();
       return { kind: 'acknowledged' };
     }
@@ -102,6 +108,7 @@ async function saveReference(
     await whileAvailable(edit.acknowledged, signal);
     return { kind: 'acknowledged' };
   } catch (error) {
+    if (error instanceof ReopenTheApp) throw error;
     if (signal.aborted) return { kind: 'retry' };
     const refusal = fieldRefusal(error);
     if (refusal?.status === 401) return { kind: 'sign-in' };
@@ -130,6 +137,19 @@ export function mountFieldPhotos(client: FieldClient, company: () => string | nu
       const reason = found === null || found === 'no-answer' ? 'archived' : found;
       return { ...failure, reason: REFUSAL_TEXT[reason], refusal: { reason, draftPath: path } };
     },
+    async recover(entry, signal) {
+      const companyId = company();
+      if (!companyId) return null;
+      const path = photoRefWrites({ companyId, draftId: entry.draftId }, entry.photoId, entry.field)[0]!.path;
+      const found = await serverReference(client, path, entry, signal).catch((error: unknown) => {
+        const refusal = fieldRefusal(error);
+        if (refusal) return refusal.status === 401 ? 'pending' : 'missing';
+        throw error;
+      });
+      if (found === 'pending') return null;
+      if (found === 'matches') pending.draftChanged(entry.jobId);
+      return found === 'matches';
+    },
     async reference(entry, written, signal) {
       const companyId = company();
       if (!companyId) return { kind: 'retry' };
@@ -141,6 +161,7 @@ export function mountFieldPhotos(client: FieldClient, company: () => string | nu
       if (!sending) void settle(client).catch(() => undefined);
     },
     signInRequired,
+    storageError: (error) => journalFailed(client, error),
   });
 }
 

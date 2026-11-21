@@ -17,6 +17,7 @@ import { appendEntry, forgetJournal, readJournal } from '../../../../src/lib/fie
 import { basesOf, journaledEdit, readEntries } from '../../../../src/lib/field/journal-sync';
 import { mountFieldPhotos, photoCompanyOf, readRefusedPhotos } from '../../../../src/lib/field/photo-field';
 import { capturePhoto, readPhotoQueue } from '../../../../src/lib/field/photo-queue';
+import { changePhoto, readPayload } from '../../../../src/lib/field/photo-queue-storage';
 import { evaluate } from '../../../../src/lib/field/retention';
 import { signOutDiscarding, signOutKeeping, signOutOnRefusal } from '../../../../src/lib/field/sign-out';
 import { syncStatus } from '../../../../src/lib/field/sync-status';
@@ -103,6 +104,16 @@ const f = {
     return capturePhoto(person, { jobId, draftId, field: { shotTag: 'overview' } }, image);
   },
   queuedPhotos: readPhotoQueue,
+  async queuePayloads(person: Person) {
+    const rows = await readPhotoQueue(person);
+    const payloads = await Promise.all(rows.map((row) => readPayload(row)));
+    return rows.filter((_, index) => payloads[index]).map((row) => row.kind).sort();
+  },
+  // A photo whose receipt is held and whose reference stopped with no refusal of its own, as a closed page leaves it.
+  async blockPhoto(person: Person, photoId: string) {
+    const row = (await readPhotoQueue(person)).find((entry) => entry.photoId === photoId && entry.kind === 'photo')!;
+    await changePhoto(row, { stage: 'blocked', receipt: true, reason: 'The photo is stored. Its room and tag could not be saved.' });
+  },
   async photoRecovery(person: Person) {
     return syncStatus(await readEntries(get(person).client), true, await readRefusedPhotos(person));
   },

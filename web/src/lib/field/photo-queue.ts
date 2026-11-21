@@ -1,4 +1,5 @@
 import { meOutcome } from '@/lib/sign-in/outcome';
+import { ReopenTheApp } from './idb';
 import { preparePhoto } from './photo';
 import { noteQueuedPhoto, queuedPhotoDone } from './unsent';
 import {
@@ -137,6 +138,9 @@ type PhotoTransport = {
   // Call written once the reference is saved locally. After a reopen the reference has the
   // same id, and the acknowledgement must come from the server.
   reference(entry: PhotoQueueEntry, written: () => Promise<void>, signal: AbortSignal): Promise<ReferenceResult>;
+  // A blocked copy may have a matching server reference after an interrupted recovery. Null
+  // means the answer is still pending.
+  recover?(entry: PhotoQueueEntry, signal: AbortSignal): Promise<boolean | null>;
   changed?(photoId: string, sending: boolean): void;
   // The server refused the sign-in. The queue stops sending and keeps every entry for the next sign-in.
   signInRequired?(): void;
@@ -220,6 +224,7 @@ export function startPhotoQueue(owner: PhotoOwner, transport: PhotoTransport) {
   stopPhotoQueue(owner);
   let draining = false;
   let signedOut = false;
+  let checkedBlocked = false;
   const canRun = () => !signal.aborted && !signedOut && document.visibilityState === 'visible' && transport.canSend();
   const lock = () => {
     if (signedOut) return;
@@ -291,7 +296,8 @@ export function startPhotoQueue(owner: PhotoOwner, transport: PhotoTransport) {
       let result: ReferenceResult;
       try {
         result = await transport.reference(current, written, limit.signal);
-      } catch {
+      } catch (error) {
+        if (error instanceof ReopenTheApp) throw error;
         if (!signal.aborted) await retry();
         return;
       } finally {
@@ -307,12 +313,38 @@ export function startPhotoQueue(owner: PhotoOwner, transport: PhotoTransport) {
     }
   }
 
+  // Check blocked copies on startup under the drain lock, even if their journal entries are gone.
+  async function recoverBlocked(): Promise<boolean> {
+    if (!transport.recover) return true;
+    const blocked = (await readPhotoQueue(person)).filter((entry) => entry.kind === 'photo' && entry.stage === 'blocked' && entry.receipt);
+    let complete = true;
+    for (const entry of blocked) {
+      if (!canRun()) return false;
+      const limit = attemptSignal(signal, REFERENCE_DEADLINE_MS);
+      try {
+        const matched = await transport.recover(entry, limit.signal);
+        if (matched === null) complete = false;
+        if (matched && !signal.aborted) {
+          await acknowledgeQueuedPhoto(entry);
+          transport.changed?.(entry.photoId, false);
+        }
+      } catch (error) {
+        if (error instanceof ReopenTheApp) throw error;
+        complete = false;
+      } finally {
+        limit.release();
+      }
+    }
+    return complete;
+  }
+
   async function drain(): Promise<void> {
     if (draining || !canRun()) return;
     draining = true;
     try {
       await navigator.locks.request(DRAIN_LOCK, { ifAvailable: true }, async (lock) => {
         if (!lock) return;
+        if (!checkedBlocked) checkedBlocked = await recoverBlocked();
         while (canRun()) {
           const entries = readyEntries(await readPendingWork(person), Date.now());
           if (!entries.length) return;

@@ -241,11 +241,14 @@ export function sendPhoto(user: User, jobId: string, photoId: string, bytes: Blo
   return photoReceipt(user, jobId, photoId, bytes);
 }
 
+// Only queued photos renew a refused App Check credential and replay the upload.
 export function sendQueuedPhoto(user: User, photo: PhotoUpload, bytes: Blob, signal: AbortSignal) {
-  return photoReceipt(user, photo.jobId, photo.photoId, bytes, photo.kind === 'original' ? photo.photoSha256 : undefined, signal);
+  return photoReceipt(user, photo.jobId, photo.photoId, bytes, { originalOf: photo.kind === 'original' ? photo.photoSha256 : undefined, signal, renewAppCheck: true });
 }
 
-async function photoReceipt(user: User, jobId: string, photoId: string, bytes: Blob, originalOf?: string, signal?: AbortSignal) {
+type ReceiptOptions = { originalOf?: string; signal?: AbortSignal; renewAppCheck?: boolean };
+
+async function photoReceipt(user: User, jobId: string, photoId: string, bytes: Blob, { originalOf, signal, renewAppCheck }: ReceiptOptions = {}) {
   // The bytes themselves rather than the Blob: the same body on every send, whatever the browser
   // does with a Blob it streams.
   const path = `/api/jobs/${encodeURIComponent(jobId)}/photos/${encodeURIComponent(photoId)}?kind=${originalOf ? 'original' : 'photo'}`;
@@ -266,7 +269,7 @@ async function photoReceipt(user: User, jobId: string, photoId: string, bytes: B
     return answer.ok ? answer : { ...answer, retryAfter: response.headers.get('Retry-After') };
   };
   const answer = await attempt(false);
-  return !answer.ok && answer.status === 401 && answer.code === 'app_check_required' ? attempt(true) : answer;
+  return renewAppCheck && !answer.ok && answer.status === 401 && answer.code === 'app_check_required' ? attempt(true) : answer;
 }
 
 // A photo's bytes as a local address for an <img>; the server's refusal (401, 403, 404, or 410 for

@@ -18,6 +18,7 @@
 import { collection, doc, getDocFromCache, getDocFromServer, getDocsFromCache, runTransaction } from 'firebase/firestore';
 import { fieldUser, type FieldClient } from '@/lib/field-db';
 import { createJob } from './api';
+import { ReopenTheApp } from './idb';
 import { discardEntries, refusalNow } from './journal-sync';
 import { copyVerdict, jobOf, rejectEntry, type DocWrite, type JournalEntry, type Owner } from './journal';
 import { draftPath, stageWrites, type DraftRef } from './store';
@@ -162,7 +163,8 @@ export async function saveAsNewDraft(
   if (fromJob && fromDraft && (photos.length || mark === 'unreadable' || mark.queuedPhotos?.length)) {
     try {
       await whilePhotoQueueIdle(() => moveQueuedPhotos(owner, { jobId: fromJob, draftId: fromDraft }, { jobId, draftId }));
-    } catch {
+    } catch (error) {
+      if (error instanceof ReopenTheApp) throw error;
       return { kind: 'no-answer' };
     }
   }

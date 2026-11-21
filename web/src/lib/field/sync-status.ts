@@ -91,14 +91,6 @@ export function syncStatus(entries: readonly JournalEntry[], canSaveAsNew: boole
   return { kind, waiting, problems: [...byJob.values()] };
 }
 
-// A problem's edits, one draft's at a time, in the order they were made: Try again and Save as new
-// draft work on one draft.
-export function byDraft(entries: readonly JournalEntry[]): JournalEntry[][] {
-  const drafts = new Map<string, JournalEntry[]>();
-  for (const entry of entries) drafts.set(entry.draftPath, [...(drafts.get(entry.draftPath) ?? []), entry]);
-  return [...drafts.values()];
-}
-
 // A problem's edits and refused photos together, one draft at a time.
 export function draftGroups(problem: { entries: readonly JournalEntry[]; photos: readonly PhotoQueueEntry[] }): { entries: JournalEntry[]; photos: PhotoQueueEntry[] }[] {
   const groups = new Map<string, { entries: JournalEntry[]; photos: PhotoQueueEntry[] }>();

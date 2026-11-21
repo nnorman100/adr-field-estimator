@@ -105,6 +105,26 @@ const yearOf = async (path: string): Promise<unknown> =>
 
 const chip = (page: Page): Locator => page.getByRole('status', { name: 'Sync' });
 
+test('the sync chip reports an unreadable photo queue and recovers when it answers', async ({ context, lane }) => {
+  const { page } = await openJob(context, lane, await seedCompany());
+  await expect(chip(page)).toHaveText('Saved');
+  await page.evaluate(() => {
+    const open = IDBFactory.prototype.open;
+    IDBFactory.prototype.open = function (name, version) {
+      if (name === 'ds-queue') throw new DOMException('Photo storage is unavailable.', 'InvalidStateError');
+      return open.call(this, name, version);
+    };
+    window.addEventListener('test-restore-photo-db', () => { IDBFactory.prototype.open = open; }, { once: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await expect(chip(page)).toHaveText('Couldn’t read photos on this phone');
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event('test-restore-photo-db'));
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await expect(chip(page)).toHaveText('Saved');
+});
+
 async function offline(page: Page, lane: NetworkLane) {
   lane.cut();
   await page.evaluate(() => window.dispatchEvent(new Event('offline')));

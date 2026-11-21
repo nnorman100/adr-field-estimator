@@ -121,3 +121,29 @@ for (const [reason, message, jobStatus] of [
     expect(await readDoc(`${world.draftPath}/photos/${capture.photoId}`)).toBeNull();
   });
 }
+
+for (const matching of [true, false]) {
+  test(`a reopened queue ${matching ? 'settles' : 'keeps'} a blocked photo whose reference the server holds ${matching ? 'as saved' : 'with other details'}`, async ({ context, lane }) => {
+    const world = await seedCompany();
+    const jobId = randomUUID();
+    let phone = await FieldPhone.open(context, lane);
+    const person = await phone.signIn(world, world.owner);
+    serveMe(lane, { expiresAt: inDays(7) }, { companyId: world.companyId, capabilities: ['scope', 'photos'] });
+    expect(await phone.call('start', person, 'persistent')).toBe('persistent');
+    await phone.call('sync', person);
+    await expect.poll(() => phone.call('gate', person)).toBe('open');
+    const capture = await phone.call('captureQueuedPhoto', person, jobId, world.draftId);
+    await phone.call('blockPhoto', person, capture.photoId);
+    expect(await phone.call('journal', person)).toEqual([]);
+    phone = await phone.restart(context);
+    await adminDb().doc(`${world.draftPath}/photos/${capture.photoId}`).set({ field: matching ? capture.field : { ...capture.field, shotTag: 'source' } });
+    expect(await phone.call('start', person, 'persistent')).toBe('persistent');
+    await phone.call('sync', person);
+    await expect.poll(() => phone.call('gate', person)).toBe('open');
+    await phone.call('photoDrain', person);
+    const row = () => phone.call('queuedPhotos', person).then((rows) => rows.find((entry) => entry.kind === 'photo'));
+    if (matching) await expect.poll(async () => (await row())?.stage, { timeout: SEND_MS }).toBe('done');
+    else await expectWithheld(async () => (await row())?.stage === 'blocked');
+    expect(await phone.call('queuePayloads', person)).toEqual(matching ? ['original'] : ['original', 'photo']);
+  });
+}

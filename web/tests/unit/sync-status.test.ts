@@ -89,6 +89,17 @@ describe('the sync chip', () => {
       ],
     });
   });
+
+  it('keeps the same job’s refused edits in draft order for recovery', () => {
+    const first = entry('rejected', 'archived');
+    const second = { ...entry('rejected', 'archived', undefined, OTHER), jobId: first.jobId };
+    const third = entry('rejected', 'archived');
+    const [problem] = syncStatus([first, second, third], true).problems;
+    expect(draftGroups(problem!)).toEqual([
+      { entries: [first, third], photos: [] },
+      { entries: [second], photos: [] },
+    ]);
+  });
 });
 
 describe('why the server refuses, from its copy of the draft and the job', () => {

@@ -31,6 +31,8 @@ export const DISCARD_KEEP = 'Keep them';
 export const SAVE_AS_NEW = 'Save as new draft';
 export const SAVE_AS_ANOTHER = 'Save as another new draft';
 
+type ChipRead = { kind: 'read'; status: SyncStatus } | { kind: 'unreadable'; status: SyncStatus | null };
+
 // How a panel names its job: the address this page last read for it, else the start of its id; none
 // once the server refused this person the job (no access), so nothing of it is shown.
 function jobLabel(problem: Problem, listDenied: boolean): string | null {
@@ -43,7 +45,7 @@ function jobLabel(problem: Problem, listDenied: boolean): string | null {
 export function SyncChip({ me }: { me: DsMe }) {
   const field = useFieldClient();
   const client = field?.client ?? null;
-  const [status, setStatus] = useState<SyncStatus | null>(null);
+  const [read, setRead] = useState<ChipRead | null>(null);
   // How many times the sheet was opened: each opening asks the server again what it offers.
   const [opened, setOpened] = useState(0);
   const sheet = useRef<HTMLDialogElement>(null);
@@ -59,9 +61,14 @@ export function SyncChip({ me }: { me: DsMe }) {
     const mine = ++reads.current;
     try {
       const entries = await readEntries(client);
-      // A queue that cannot be read leaves the photos out; the journal's refusals still show.
-      const photos = await readRefusedPhotos(client.person).catch(() => []);
-      if (mine === reads.current) setStatus(syncStatus(entries, canSaveAsNew, photos));
+      try {
+        const photos = await readRefusedPhotos(client.person);
+        if (mine === reads.current) setRead({ kind: 'read', status: syncStatus(entries, canSaveAsNew, photos) });
+      } catch (error) {
+        if (mine !== reads.current) return;
+        setRead((last) => ({ kind: 'unreadable', status: last?.status ?? null }));
+        journalFailed(client, error);
+      }
     } catch (error) {
       // The journal did not answer: the chip keeps what it last said, and a storage connection lost
       // twice goes to the shell, which says "Reopen the app".
@@ -92,14 +99,14 @@ export function SyncChip({ me }: { me: DsMe }) {
     };
   }, [client, load, online]);
 
-  const problems = status?.problems ?? [];
+  const problems = read?.status?.problems ?? [];
   // The sheet closes once its last problem has cleared.
   useEffect(() => {
     if (problems.length === 0 && sheet.current?.open) sheet.current.close();
   }, [problems.length]);
 
-  if (!client || !status) return null;
-  const text = chipText(status);
+  if (!client || !read) return null;
+  const text = read.kind === 'unreadable' ? 'Couldn’t read photos on this phone' : chipText(read.status);
 
   return (
     <div>
