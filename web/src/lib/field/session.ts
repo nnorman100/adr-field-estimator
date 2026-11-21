@@ -17,6 +17,8 @@ export type FieldSession = {
   role: string;
   capabilities: string[];
   readiness: boolean;
+  // The company's AI summary draft switch (S7-6), from the live /api/me answer only.
+  aiSummary: boolean;
   online: boolean;
   offlineCapture: boolean;
 };

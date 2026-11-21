@@ -9,8 +9,8 @@ Part of [Screen specs](README.md). Address: `/sign-in/{address}/jobs/{id}/finish
 Turn the job's draft into its record and lock it on every phone ("Finish and review"), or, for a
 finished job, make a new draft version from the record ("Back to editing"). Before Finish it lists
 "What will be recorded": the rooms (and how many have no name), the photo count, and whether the
-summary of findings is written (the draft's `summary` key, not the Notes box on Check Scope: no field
-screen edits it, see [Check Scope](check-scope.md)). Finish needs a connection.
+summary of findings is written (the draft's `summary` key, the summary box on [Check Scope](check-scope.md),
+not its Notes box). Finish needs a connection.
 
 With the company's `readiness` flag on, the page checks the saved draft in the background. It
 compares the answer's job, revision, draft ID and field digest with what the page shows. If the
@@ -96,7 +96,3 @@ views have no readiness controls.
   offers "Back to Finish and review" on a job not yet finished ("Not finished yet"), on a finished,
   unpriced job ("Price this job") and on a priced unsigned job, not once signed. Otherwise the address
   must be typed. A technician walking a loss has no button from Check Scope to Finish.
-- The summary check reads `draft.summary`, which no field screen can write (see
-  [Check Scope](check-scope.md)), so "No summary of findings yet" stays until another source sets it. The check does not stop Finish,
-  but pricing does: "Price this job" is refused with `summary_missing` ("Go back to editing, write it,
-  then finish again") when the summary is empty, and Check Scope has no editor for it.

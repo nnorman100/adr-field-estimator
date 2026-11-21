@@ -39,20 +39,20 @@ writes `fieldOwnerRevision`, the job's coordination revision (`job_coordination.
 nothing, so a slow request never puts back an earlier owner. A client can change neither key: the rules
 let it change only `field`.
 
-Each `field` map follows field map v2 (S5a-1, room inputs S5a-10, `web/src/lib/field/schema.ts`), and the rules refuse
+Each `field` map follows field map v3 (S5a-1, room inputs S5a-10, AI summary keys S7-6, `web/src/lib/field/schema.ts`), and the rules refuse
 a key it does not name, a value of the wrong type, and a text, number or list outside its size. Every
 key is optional; clearing a value deletes its key.
 
 | Document | `field` keys |
 | --- | --- |
-| Draft | `yearBuilt`; `roomOrder` (room ids, at most 30, no repeats); `notes` (up to 40,000 characters) and `summary` (the written summary of findings, up to 6,000); `scopeConfirmed`; equipment counts `airMovers`, `dehumidifiers`, `airScrubbers`, `woodFloorSystems` with `dryingDays` and `woodFloorDays`; job charges `emergencyCalls`, `monitoringHours`, `haulLoads`, `hepaFilters`, `matterportScans`, `dumpTruckLoads`, `equipmentDecon`, `powerDistribution`, `laborHours`, `isAfterHours` |
+| Draft | `yearBuilt`; `roomOrder` (room ids, at most 30, no repeats); `notes` (up to 40,000 characters) and `summary` (the written summary of findings, up to 6,000); `summarySource` (`manual`, or `ai` once the technician accepted an AI draft of the summary); `aiNotes` (the AI notes the technician ticked when accepting: `suggestions` and `unpricedWork`, at most 30 each, and `testingAdvice`, at most 10, each note 1 to 1,000 characters on one line); `scopeConfirmed`; equipment counts `airMovers`, `dehumidifiers`, `airScrubbers`, `woodFloorSystems` with `dryingDays` and `woodFloorDays`; job charges `emergencyCalls`, `monitoringHours`, `haulLoads`, `hepaFilters`, `matterportScans`, `dumpTruckLoads`, `equipmentDecon`, `powerDistribution`, `laborHours`, `isAfterHours` |
 | Room | `name`; `roomTypeId` (a room type of the job's price version; absent is Other); `category` (1 to 3, or `mold`); `waterClass` (1 to 4) and `ceilingHeightFt` for a water room, `moldCondition` (1 to 3) and `affectedSf` for a mold room; `unfinishedSf`, `finishedSf`, `floorSf`, `wetFloorSf`, `wastePercent`; `items` (a map of price-list item id to typed quantity, at most 50); `prepTasks` (at most 10 texts of up to 300 characters: a company template's words, copied when picked, or the estimator's own); `findings` (the room's findings note, up to 2,000 characters) |
 | Photo reference | `roomId`, `shotTag` (overview, source, surface, meter, contents or equipment), `capturedAt` (client-clock ISO 8601 datetime when taken, up to 40 characters) |
 
-`notes`, `summary`, a room's `prepTasks` and `findings` are free text and may hold personal details,
+`notes`, `summary`, `aiNotes`, a room's `prepTasks` and `findings` are free text and may hold personal details,
 so they are personal data. The rules cannot loop over a list, so they check each `roomOrder` entry
 by joining and splitting it (a string id of `[A-Za-z0-9_-]{1,64}`, at most 30, no repeats), and a
-room's `items` and `prepTasks`, which have a fixed largest size, entry by entry. Room and photo
+room's `items` and `prepTasks`, which have a fixed largest size, entry by entry. The three `aiNotes` lists are joined into one text by line breaks, checked with one pattern and split again (checking 70 notes one by one would pass the rules' per-request expression limit), which is why a note is one line. Room and photo
 document ids must match the same shape. Collection counts cannot be capped in rules; Submit reads
 a bounded number of rooms and photo references (`docs/ACCESS.md`, "F5 draft safety bounds").
 Whether a room type or item is in the job's price version is the server's check at Submit

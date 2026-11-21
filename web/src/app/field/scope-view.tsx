@@ -24,16 +24,17 @@ import { EquipmentSuggestion } from './equipment-suggestion';
 import type { JobContext } from './job-screens';
 import { PublishedItemList } from './published-item-list';
 import { RoomsSection } from './rooms-section';
+import { SummarySection } from './summary-section';
 import { useFieldEdit } from './use-field-edit';
 import { Box, Outcome, READ_AGAIN, Section, Tick } from './ui';
 
-// Check Scope (S5a-6, room inputs S5a-10): year built, the rooms, equipment counts (with the counts
-// the rooms suggest), job charges, notes and the
-// scope-confirmed box, written straight to the job's field draft. The boxes hold only what the
+// Check Scope (S5a-6, room inputs S5a-10, summary S7-6): year built, the rooms, equipment counts (with
+// the counts the rooms suggest), job charges, notes and the scope-confirmed box, then the summary of
+// findings with "Draft with AI" (./summary-section.tsx), written straight to the job's field draft. The boxes hold only what the
 // person changed over the draft as last read; Save writes only those, and the screen then reads the
 // draft back, so a save never writes back a value someone else has since changed. The
 // pre-1978 wording itself comes from the server with the estimate (S5a-9), never from here.
-export function ScopeView({ job, draft, open, readinessFix }: { job: JobContext; draft: FieldDraft; open: boolean; readinessFix: string | null }) {
+export function ScopeView({ job, draft, open }: { job: JobContext; draft: FieldDraft; open: boolean }) {
   // Only the boxes the person changed; the rest always show the draft as last read.
   const [edits, setEdits] = useState<FormValues>({});
   const values = withEdits(FACT_FIELDS, draft.field, edits);
@@ -97,9 +98,6 @@ export function ScopeView({ job, draft, open, readinessFix }: { job: JobContext;
           {marker ? markerText(marker) : answer !== undefined ? 'Readiness check unavailable.' : ''}
         </p>
       ) : null}
-      {readinessFix === 'readiness-findings' ? (
-        <p id="readiness-findings" tabIndex={-1} className="text-sm">The summary of findings is separate from job notes. Ask your company for help adding it.</p>
-      ) : null}
       {open ? <PublishedItemList session={job.session} /> : null}
       {box(YEAR_FIELD)}
       <RoomsSection job={job} draft={draft} />
@@ -142,6 +140,7 @@ export function ScopeView({ job, draft, open, readinessFix }: { job: JobContext;
         {!readOnly && job.stale ? <p className="text-sm">{READ_AGAIN}</p> : null}
         <Outcome error={error} notice={notice} />
       </form>
+      <SummarySection job={job} draft={draft} />
     </div>
   );
 }

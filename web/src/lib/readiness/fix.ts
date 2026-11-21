@@ -8,7 +8,7 @@ const general = {
   yearBuilt: ['Add the year built', 'scope', 'fact-yearBuilt'],
   rooms: ['Add an affected room', 'scope', 'new-room-name'],
   equipment: ['Enter the drying equipment counts', 'scope', 'fact-airMovers'],
-  summary: ['No summary of findings yet', 'scope', 'readiness-findings'],
+  summary: ['No summary of findings yet', 'scope', 'fact-summary'],
   scopeConfirmed: ['Confirm the scope', 'scope', 'fact-scopeConfirmed'],
 } as const;
 
