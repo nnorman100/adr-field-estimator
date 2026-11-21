@@ -2,14 +2,11 @@
 
 import type { User } from 'firebase/auth';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { ReadingInput } from '@/lib/drying/schema';
 import { callApi, type ApiAnswer } from '@/lib/firebase-client';
 
 export type DryingContext = {
   user: User;
   jobId: string;
-  // The sign-in, company, actor and job this card belongs to; unsent input is kept only under it.
-  scope: string;
   isCurrent: () => boolean;
   visible: boolean;
   online: boolean;
@@ -17,8 +14,9 @@ export type DryingContext = {
   office: boolean;
   // The job is archived, refused or being verified: fetched data is hidden, unsent input stays.
   blocked?: boolean;
-  // Changes when the job's status or draft changes, so the watch is read again.
+  // Change when the job's status or draft, or its rooms, change, so the watch or room list is read again.
   refreshOn?: string;
+  roomsOn?: string;
   // The field screen's Back to Finish guard and readiness recheck, when it has them.
   markUnsaved?: (form: string, discard: (() => void) | null, unsaved?: boolean) => void;
   startSave?: () => (failed?: boolean) => void;
@@ -29,14 +27,6 @@ export type DryingSession = DryingContext & {
   refused: boolean;
   // `ambiguous` marks a 404 that may only mean the feature is off: the screen rechecks job access.
   onRefused: (status: number, ambiguous?: boolean) => void;
-};
-
-const unsentReadings = new Map<string, ReadingInput>();
-// The exact reading request (and its id) of a save with no answer yet, until it is resolved.
-export const unsent = {
-  get: (scope: string) => unsentReadings.get(scope) ?? null,
-  set: (scope: string, reading: ReadingInput) => void unsentReadings.set(scope, reading),
-  clear: (scope: string) => void unsentReadings.delete(scope),
 };
 
 export const dryingPath = (jobId: string) => `/api/jobs/${encodeURIComponent(jobId)}`;

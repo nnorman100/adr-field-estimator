@@ -3,7 +3,7 @@
 import type { Auth, User } from 'firebase/auth';
 import { onAuthStateChanged } from 'firebase/auth';
 import Link from 'next/link';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ReviewDrying, dryingAccess, type DryingAccess } from '@/app/field/drying/review-drying';
 import { Button } from '@/components/ui/button';
 import { signatureAddress } from '@/lib/agreements/client';
@@ -207,6 +207,39 @@ function ReviewBody({ user, reviewer, links, canReprice, revision: firstRevision
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<{ message: string; next: Next } | null>(null);
   const [confirmed, setConfirmed] = useState(false);
+  const [lost, setLost] = useState(false);
+  const checks = useRef(0);
+  const reloading = useRef(reload);
+  useLayoutEffect(() => {
+    reloading.current = reload;
+  });
+
+  // The job is read again to confirm its access: on a card's refusal and on every foreground resume,
+  // including a page restored from the back-forward cache. Only the newest answer counts, and a
+  // refusal stays until the review is read again.
+  const checkJob = useCallback(async () => {
+    if (document.visibilityState !== 'visible' || !navigator.onLine) return;
+    const mine = ++checks.current;
+    const answer = await callApi(user, `/api/jobs/${encodeURIComponent(job.id)}`);
+    if (mine !== checks.current) return;
+    if (answer.status === 401) reloading.current();
+    else if (answer.status === 403 || answer.status === 404 || answer.status === 410) setLost(true);
+  }, [user, job.id]);
+  useEffect(() => {
+    const shown = () => void checkJob();
+    const restored = (event: PageTransitionEvent) => {
+      if (event.persisted) void checkJob();
+    };
+    document.addEventListener('visibilitychange', shown);
+    window.addEventListener('pageshow', restored);
+    window.addEventListener('online', shown);
+    return () => {
+      checks.current += 1;
+      document.removeEventListener('visibilitychange', shown);
+      window.removeEventListener('pageshow', restored);
+      window.removeEventListener('online', shown);
+    };
+  }, [checkJob]);
 
   // Pricing is safe to send again: the same record and pin always answer the same estimate.
   async function price() {
@@ -228,18 +261,26 @@ function ReviewBody({ user, reviewer, links, canReprice, revision: firstRevision
     </Button>
   );
 
+  if (lost && !agreement) {
+    return (
+      <FocusedPanel title="This job could not be found">
+        <p>It may belong to someone else, or it was archived.</p>
+      </FocusedPanel>
+    );
+  }
+
   if (agreement) {
     return (
-      <FocusedPanel title="Signed">
-        <SignedAgreementView agreement={agreement} loadSignature={loadSignature} />
+      <FocusedPanel title={lost ? 'This job could not be found' : 'Signed'}>
+        {lost ? <p>It may belong to someone else, or it was archived.</p> : <SignedAgreementView agreement={agreement} loadSignature={loadSignature} />}
         {drying && agreement.record.job_id === job.id ? (
           <ReviewDrying
             key={JSON.stringify([drying.access.companyId, drying.access.actorId, drying.signIn.key, job.id])}
             auth={drying.auth} signIn={drying.signIn} initial={drying.access} user={user} jobId={job.id} agreementId={agreement.id}
-            onRefused={reload}
+            blocked={lost} onRefused={() => void checkJob()} onIdentity={reload}
           />
         ) : null}
-        <DocumentLinks user={user} jobId={job.id} canSend={links.canSend} canRevoke={links.canRevoke} issued={issued.tokens} listed={issued.listed} />
+        {lost ? null : <DocumentLinks user={user} jobId={job.id} canSend={links.canSend} canRevoke={links.canRevoke} issued={issued.tokens} listed={issued.listed} />}
       </FocusedPanel>
     );
   }

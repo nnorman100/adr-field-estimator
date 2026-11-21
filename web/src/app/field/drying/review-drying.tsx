@@ -39,7 +39,9 @@ export function ReviewDrying({
   jobId,
   agreementId,
   initial,
+  blocked,
   onRefused,
+  onIdentity,
 }: {
   auth: Auth;
   signIn: SignIn;
@@ -47,19 +49,23 @@ export function ReviewDrying({
   jobId: string;
   agreementId: string;
   initial: DryingAccess;
-  // Rereads the whole review, which drops what it shows until the server answers again.
-  onRefused: () => void;
+  // The signed job is refused or its access was lost: fetched data is hidden, the unsent form stays.
+  blocked: boolean;
+  // A card was refused: the review reads the job again to confirm.
+  onRefused: (status: number) => void;
+  // The signed-in person changed or was refused: the review starts over.
+  onIdentity: () => void;
 }) {
   const isCurrent = useCallback(() => stillSameSignIn(auth, signIn), [auth, signIn]);
   const [access, setAccess] = useState<DryingAccess | null>(initial);
   const [checking, setChecking] = useState(false);
   const online = useBrowserOnline();
-  const scope = JSON.stringify([initial.companyId, initial.actorId, signIn.key, jobId]);
-  const latest = useRef(onRefused);
+  const latest = useRef({ onRefused, onIdentity });
   useLayoutEffect(() => {
-    latest.current = onRefused;
+    latest.current = { onRefused, onIdentity };
   });
-  const refused = useCallback(() => latest.current(), []);
+  const refused = useCallback((status: number) => latest.current.onRefused(status), []);
+  const identity = useCallback(() => latest.current.onIdentity(), []);
 
   // Review has no field sync gate. Recheck its live feature flag and identity on foreground resume.
   useEffect(() => {
@@ -79,9 +85,9 @@ export function ReviewDrying({
         const latest = dryingAccess(answer.body);
         if (latest?.actorId === initial.actorId && latest.companyId === initial.companyId)
           setAccess(latest);
-        else refused();
+        else identity();
       } else if (accessRefused(answer.status)) {
-        refused();
+        identity();
       }
       setChecking(false);
     }
@@ -103,7 +109,7 @@ export function ReviewDrying({
       window.removeEventListener('pagehide', suspend);
       window.removeEventListener('online', recheck);
     };
-  }, [initial.actorId, initial.companyId, isCurrent, user, refused]);
+  }, [initial.actorId, initial.companyId, isCurrent, user, identity]);
 
   if (!access || !isCurrent()) return null;
   return (
@@ -111,13 +117,13 @@ export function ReviewDrying({
       session={{
         user,
         jobId,
-        scope,
         refreshOn: agreementId,
         isCurrent,
         online: online && !checking,
         visible: true,
         canAdd: access.canAdd,
         office: access.office,
+        blocked,
       }}
       watchEnabled={access.watchEnabled}
       agreementId={agreementId}

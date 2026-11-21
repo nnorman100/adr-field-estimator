@@ -104,23 +104,15 @@ function Rooms({ watch }: { watch: AvailableWatch }) {
     roomId === null
       ? 'Whole job'
       : (watch.signedRooms.find((room) => room.id === roomId)?.name ?? 'Other room');
-  const listed = new Set(watch.roomReadings.map(({ roomId }) => roomId));
-  const rows = [
-    ...watch.roomReadings,
-    ...watch.signedRooms
-      .filter((room) => !listed.has(room.id))
-      .map((room) => ({ roomId: room.id as string | null, lastReadingAt: null, overdue: false })),
-  ];
   return (
     <>
       {watch.flags.includes('missing_dry_standard') ? (
         <p>Some affected materials still need a reading or a dry standard.</p>
       ) : null}
-      {rows.length ? (
+      {watch.roomReadings.length ? (
         <ul className="space-y-2" aria-label="Room reading status">
-          {rows.map(({ roomId, lastReadingAt, overdue }) => {
+          {watch.roomReadings.map(({ roomId, lastReadingAt, overdue }) => {
             const materials = roomMaterials(watch, roomId);
-            const signed = roomId !== null && watch.signedRooms.some((room) => room.id === roomId);
             return (
               <li key={roomId ?? ''}>
                 <strong>{name(roomId)}</strong>
@@ -128,7 +120,7 @@ function Rooms({ watch }: { watch: AvailableWatch }) {
                   {when(lastReadingAt, 'No reading yet')}
                   {overdue ? ' · Overdue' : ''}
                 </div>
-                {signed && materials.length === 0 ? (
+                {roomId !== null && watch.missingRooms.includes(roomId) ? (
                   <div>Missing affected material reading</div>
                 ) : null}
                 {materials.map((material, i) => (
@@ -172,13 +164,16 @@ type ActionRequest = {
   confirmed: true;
   reason: string;
 };
+type Retry = { request: ActionRequest; prompt: Prompt };
 
 export function DryingWatch({
   session,
+  enabled,
   agreementId,
   changes,
 }: {
   session: DryingSession;
+  enabled: boolean;
   agreementId?: string;
   changes: number | string;
 }) {
@@ -186,7 +181,7 @@ export function DryingWatch({
   const title = useId();
   const dialog = useRef<HTMLDialogElement>(null);
   const inFlight = useRef<AbortController | null>(null);
-  const { result, refresh, setResult } = useDryingRead(session, true, readWatch, changes, true);
+  const { result, refresh, setResult } = useDryingRead(session, enabled, readWatch, changes, true);
   const watch =
     !session.refused &&
     result.kind === 'ready' &&
@@ -198,13 +193,17 @@ export function DryingWatch({
   const [draftReason, setDraftReason] = useState<{ action: WatchAction; reason: string } | null>(
     null,
   );
-  const reason = draftReason?.action === prompt?.action.action ? (draftReason?.reason ?? '') : '';
-  const [retries, setRetries] = useState<Partial<Record<WatchAction, ActionRequest>>>({});
-  const retry = prompt ? (retries[prompt.action.action] ?? null) : null;
+  const [retries, setRetries] = useState<Partial<Record<WatchAction, Retry>>>({});
+  const retry = prompt ? (retries[prompt.action.action]?.request ?? null) : null;
   const settle = (action: WatchAction) =>
     setRetries((current) =>
       Object.fromEntries(Object.entries(current).filter(([key]) => key !== action)),
     );
+  const reason = retry
+    ? retry.reason
+    : draftReason?.action === prompt?.action.action
+      ? (draftReason?.reason ?? '')
+      : '';
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -222,21 +221,19 @@ export function DryingWatch({
       prompt &&
       (session.refused ||
         result.kind === 'refused' ||
-        (watch && watch.agreementId !== prompt.watch.agreementId))
+        (!retry && watch && watch.agreementId !== prompt.watch.agreementId))
     )
       dialog.current?.close();
-  }, [prompt, result.kind, session.refused, watch]);
+  }, [prompt, retry, result.kind, session.refused, watch]);
 
   async function confirm(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!prompt || !session.online || !session.isCurrent() || inFlight.current) return;
     if (
-      !prompt ||
-      !session.online ||
-      !watch ||
-      !watch.can[prompt.action.permission] ||
-      watch.agreementId !== prompt.watch.agreementId ||
-      !session.isCurrent() ||
-      inFlight.current
+      !retry &&
+      (!watch ||
+        !watch.can[prompt.action.permission] ||
+        watch.agreementId !== prompt.watch.agreementId)
     )
       return;
     if (!reason.trim()) return setError('Enter a reason.');
@@ -252,7 +249,7 @@ export function DryingWatch({
     setBusy(true);
     setError(null);
     setNotice(null);
-    setRetries((current) => ({ ...current, [payload.action]: payload }));
+    setRetries((current) => ({ ...current, [payload.action]: { request: payload, prompt } }));
     const answer = await dryingRequest(
       session.user,
       `${dryingPath(session.jobId)}/drying-watch/actions`,
@@ -312,7 +309,7 @@ export function DryingWatch({
   return (
     <section
       aria-labelledby={heading}
-      hidden={session.blocked === true}
+      hidden={session.blocked === true || !enabled}
       className="min-w-0 flex-col gap-3 break-words rounded-md border border-input p-4 text-sm [&:not([hidden])]:flex"
     >
       <h3 id={heading} className="text-lg font-semibold">
@@ -361,7 +358,7 @@ export function DryingWatch({
                   onClick={() => {
                     setError(null);
                     setNotice(null);
-                    setPrompt({ action, watch });
+                    setPrompt(retries[action.action]?.prompt ?? { action, watch });
                   }}
                 >
                   {action.label}
@@ -370,6 +367,28 @@ export function DryingWatch({
           </div>
         </>
       ) : null}
+      {Object.values(retries)
+        .filter((entry) => !watch?.can[entry.prompt.action.permission])
+        .map(({ prompt: unsent }) => (
+          <div key={unsent.action.action}>
+            <p>
+              {unsent.action.label} was not confirmed. Try again to send the same decision and
+              reason.
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={!session.online || busy}
+              onClick={() => {
+                setError(null);
+                setNotice(null);
+                setPrompt(unsent);
+              }}
+            >
+              Try again: {unsent.action.label}
+            </Button>
+          </div>
+        ))}
       <Outcome error={prompt ? null : error} notice={notice} />
       {prompt ? (
         <DryingConfirmation
@@ -408,7 +427,7 @@ export function DryingWatch({
               >
                 Cancel
               </Button>
-              <Button type="submit" disabled={busy || !session.online || !watch}>
+              <Button type="submit" disabled={busy || !session.online || (!retry && !watch)}>
                 {retry ? 'Try again' : prompt.action.confirm}
               </Button>
             </div>
