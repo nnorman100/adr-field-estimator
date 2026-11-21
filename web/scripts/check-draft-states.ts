@@ -14,32 +14,14 @@
 // reads only, and prints company and job ids and counts, never field data. It exits 1 when any job
 // is stuck, so 0016 waits.
 import { pathToFileURL } from 'node:url';
-import { PROJECT_ID } from './create-tenant';
+import { parseTargetArgs, ScriptError, stopMessage } from './target-args';
 
 export type CheckOptions = { project: string; database: string };
 
-// A Firestore database id: lowercase letters, digits and hyphens, or "(default)".
-const DATABASE_ID = /^(?:\(default\)|[a-z][a-z0-9-]{2,62})$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export function parseCheckArgs(argv: string[]): CheckOptions {
-  const values: Record<string, string> = {};
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i]!;
-    if (arg === '--project' || arg === '--database') {
-      const value = argv[i + 1];
-      if (!value || value.startsWith('--')) throw new Error(`${arg} needs a value`);
-      i++;
-      values[arg.slice(2)] = value;
-    } else if (arg.startsWith('--')) throw new Error(`unknown option ${arg}`);
-    else throw new Error(`unexpected argument ${arg}`);
-  }
-  const { project, database } = values;
-  if (!project) throw new Error('--project is required');
-  if (!PROJECT_ID.test(project)) throw new Error('--project must be a Google Cloud project id');
-  if (!database) throw new Error('--database is required');
-  if (!DATABASE_ID.test(database)) throw new Error('--database must be a Firestore database id');
-  return { project, database };
+  return parseTargetArgs(argv);
 }
 
 export type DraftJob = { companyId: string; jobId: string; draftId: string };
@@ -53,7 +35,7 @@ export function parseDraftJobs(text: string): DraftJob[] {
     if (line === '') continue;
     const fields = line.split(',');
     if (fields.length !== 3 || !fields.every((field) => UUID.test(field))) {
-      throw new Error(`line ${index + 1} is not "company id,job id,current draft id"`);
+      throw new ScriptError(`line ${index + 1} is not "company id,job id,current draft id"`);
     }
     const [companyId, jobId, draftId] = fields as [string, string, string];
     jobs.push({ companyId, jobId, draftId });
@@ -112,8 +94,8 @@ async function main() {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((error: unknown) => {
-    // Fixed text and our own messages only: the SDK's message may quote a path.
-    console.error(error instanceof Error && !/firestore|grpc/i.test(error.message) ? error.message : 'checking the drafts failed');
+    // Its own messages and fixed categories only: an SDK's or the file system's message may quote a path.
+    console.error(stopMessage(error, 'checking the drafts failed'));
     process.exit(1);
   });
 }

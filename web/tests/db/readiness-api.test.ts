@@ -426,11 +426,12 @@ describe('GET /api/jobs/{jobId}/readiness: the second Postgres read decides', ()
 });
 
 describe('GET /api/jobs/{jobId}/readiness: round 2 rules', () => {
-  // Submit's intent row is committed before its fence closes (src/lib/submissions/service.ts): hold it at
-  // the fence, so Postgres has a pending submission while the field draft still says editing.
+  // Submit's intent row is committed before its fence closes (src/lib/submissions/service.ts), and the job's
+  // draft sync closes it (since the draft life-cycle redesign's slice 4a): hold that sync, so Postgres has a
+  // pending submission while the field draft still says editing.
   async function heldSubmit(jobId: string, draftId: string, manifest: FieldManifest) {
     const hold = latch();
-    h.field.gate.fence = () => hold.wait;
+    h.field.gate.sync = () => hold.wait;
     const submit = f.submitShown(ESTIMATOR_A, jobId, draftId, manifest);
     await until(async () => (await f.submissions(jobId)).some((row) => row.status === 'pending'), 'the pending submission');
     expect(h.field.draft(h.seed.a, draftId)?.state).toBe('editing');

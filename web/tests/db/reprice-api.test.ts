@@ -448,6 +448,121 @@ describe('what is refused, and writes nothing', () => {
     expect(h.field.draft(h.seed.a, open)?.field).not.toHaveProperty('scopeConfirmed');
   });
 
+  // reprice-after-version-check: the reprice commits after the sync's version check passed and before its
+  // Firestore commit, so the draft is written at the older job revision. The catch-up is then a new field
+  // revision, not a retry at the same one, and writes the draft's legacy archive revision to the job's.
+  it('a reprice between the sync’s version check and its commit is caught up at a new version', async () => {
+    const { jobId, draftId } = await readyToSign();
+    await publish(h.seed.a, '3.00');
+    const open = randomUUID();
+    h.field.failNext.createFrom = true;
+    expect((await f.nextDraft(ESTIMATOR_A, jobId, { draftId: open, fromDraftId: draftId })).status).toBe(503);
+    const sync = h.field.sync;
+    let repriced = false;
+    // The field revision the check passed at, before the reprice landed.
+    let checkedAt = -1;
+    h.field.sync = (company, job, gen, options = {}) =>
+      sync(company, job, gen, {
+        ...options,
+        stillCurrent: async () => {
+          const current = await options.stillCurrent!();
+          if (current && !repriced) {
+            repriced = true;
+            checkedAt = job.v;
+            expect((await reprice(OWNER_A, jobId)).status).toBe(200);
+          }
+          return current;
+        },
+      });
+    try {
+      const started = await json(fieldOwnerRoute.POST(request(ESTIMATOR_A, `/api/jobs/${jobId}/field-owner`, { method: 'POST' }), params({ jobId })));
+      expect(started.status).toBe(200);
+    } finally {
+      h.field.sync = sync;
+    }
+    expect(repriced).toBe(true);
+    expect(h.field.draft(h.seed.a, open)).toMatchObject({ jobId, state: 'editing', archiveRevision: (await f.job(jobId)).revision });
+    // The catch-up was exactly one field revision higher, not a replan at the same one.
+    const [fieldRevision] = await h.admin<{ v: number }[]>`SELECT field_revision::int AS v FROM jobs WHERE id = ${jobId}`;
+    expect(fieldRevision!.v).toBe(checkedAt + 1);
+    expect(h.field.marker(h.seed.a, jobId)).toMatchObject({ v: checkedAt + 1 });
+    // The first commit made the draft with the confirmation it read; a sync never rewrites field work, so
+    // the catch-up keeps it (the estimate refuses a confirmation older than the reprice).
+    expect(h.field.draft(h.seed.a, open)?.field).toHaveProperty('scopeConfirmed', true);
+    const [row] = await h.admin<{ behind: boolean }[]>`SELECT field_synced_revision < field_revision AS behind FROM jobs WHERE id = ${jobId}`;
+    expect(row!.behind).toBe(false);
+  });
+
+  // R3 (slice 4b review): the sync commits the older job revision's keys and its answer is lost; the one
+  // more try meets a marker written at the older job revision, so it is planned again and writes the job's
+  // revision rather than answering `same`.
+  it('a sync whose answer was lost while a reprice landed is tried again at a new version', async () => {
+    const { jobId, draftId } = await readyToSign();
+    await publish(h.seed.a, '3.00');
+    const open = randomUUID();
+    h.field.failNext.createFrom = true;
+    expect((await f.nextDraft(ESTIMATOR_A, jobId, { draftId: open, fromDraftId: draftId })).status).toBe(503);
+    const sync = h.field.sync;
+    let repriced = false;
+    h.field.sync = (company, job, gen, options = {}) =>
+      sync(company, job, gen, {
+        ...options,
+        stillCurrent: async () => {
+          const current = await options.stillCurrent!();
+          if (current && !repriced) {
+            repriced = true;
+            expect((await reprice(OWNER_A, jobId)).status).toBe(200);
+            // This try commits, and its answer is lost.
+            h.field.loseNext.sync = true;
+          }
+          return current;
+        },
+      });
+    try {
+      const started = await json(fieldOwnerRoute.POST(request(ESTIMATOR_A, `/api/jobs/${jobId}/field-owner`, { method: 'POST' }), params({ jobId })));
+      expect(started.status).toBe(200);
+    } finally {
+      h.field.sync = sync;
+    }
+    expect(h.field.draft(h.seed.a, open)).toMatchObject({ jobId, state: 'editing', archiveRevision: (await f.job(jobId)).revision });
+  });
+
+  // R2 (slice 4b review round 2): the first try fails, and the last one commits while a reprice lands after
+  // its version check, then loses its answer. The next request starts again at the same field revision: its
+  // marker was written at the older job revision, so it is planned again and writes the job's revision.
+  it('a last try whose answer was lost while a reprice landed is caught up by the next request', async () => {
+    const { jobId, draftId } = await readyToSign();
+    await publish(h.seed.a, '3.00');
+    const open = randomUUID();
+    h.field.failNext.createFrom = true;
+    expect((await f.nextDraft(ESTIMATOR_A, jobId, { draftId: open, fromDraftId: draftId })).status).toBe(503);
+    h.field.failNext.sync = 1;
+    const sync = h.field.sync;
+    let repriced = false;
+    h.field.sync = (company, job, gen, options = {}) =>
+      sync(company, job, gen, {
+        ...options,
+        stillCurrent: async () => {
+          const current = await options.stillCurrent!();
+          if (current && !repriced) {
+            repriced = true;
+            expect((await reprice(OWNER_A, jobId)).status).toBe(200);
+            h.field.loseNext.sync = true;
+          }
+          return current;
+        },
+      });
+    const start = () => json(fieldOwnerRoute.POST(request(ESTIMATOR_A, `/api/jobs/${jobId}/field-owner`, { method: 'POST' }), params({ jobId })));
+    try {
+      expect(await start()).toMatchObject({ status: 503, body: { error: 'draft_unavailable' } });
+    } finally {
+      h.field.sync = sync;
+    }
+    expect(repriced).toBe(true);
+    expect((await start()).status).toBe(200);
+    expect(h.field.draft(h.seed.a, open)).toMatchObject({ jobId, state: 'editing', archiveRevision: (await f.job(jobId)).revision });
+  });
+
   it('a job never priced has no pin to move', async () => {
     await publish(h.seed.a, '2.00');
     const { jobId } = await submittedJob();

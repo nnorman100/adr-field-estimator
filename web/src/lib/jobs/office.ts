@@ -7,7 +7,7 @@ import type { DraftSync } from './draft-sync';
 import { draftOfOtherJob, type DraftStore } from './drafts';
 import { assignDigest, type AssignInput, type CoordinationInput, type TransferInput } from './schema';
 import { audit, CHECK_VIOLATION, detailOf, errorCode, findDraft, type JobDetail } from './service';
-import { claimJobDrafts, syncJobDrafts } from './sync-job';
+import { afterFieldStep, claimJobDrafts, stillMember, syncJobDrafts } from './sync-job';
 
 // Office jobs, assignment and the field owner (S5b-1, docs/plans/S5.md; docs/spec.md 6.2). Every
 // function runs inside withCompany for the company of the verified sign-in and goes through the one
@@ -157,17 +157,6 @@ async function viewOf(tx: CompanyTransaction, row: JobRow): Promise<Coordination
 }
 
 
-// The caller is still an active member of the company with the role it signed in with, read again in
-// the snapshot an answer after a field step is built from: a member disabled, or whose role changed,
-// while the request waited on the field database gets no job, customer, claim or staff details.
-async function stillMember(tx: CompanyTransaction, caller: JobCaller): Promise<void> {
-  const [found] = await tx
-    .select({ role: memberships.role })
-    .from(memberships)
-    .where(and(eq(memberships.companyId, caller.companyId), eq(memberships.actorId, caller.actorId), eq(memberships.status, 'active')));
-  if (!found || found.role !== caller.role) throw new JobError('not_allowed');
-}
-
 export function officeService(db: Database, drafts: DraftStore, sync: DraftSync): OfficeService {
   async function inCompany<T>(companyId: string, run: (tx: CompanyTransaction) => Promise<T>): Promise<T> {
     try {
@@ -293,7 +282,7 @@ export function officeService(db: Database, drafts: DraftStore, sync: DraftSync)
         await draftsToName(tx, next);
         return { claimed: next !== row };
       });
-      await fieldStep(caller.companyId, jobId);
+      await afterFieldStep(db, caller, () => fieldStep(caller.companyId, jobId));
       // The job as Postgres holds it after the field step, read with the caller's access again: a change
       // committed meanwhile (an archive, a move, an unassignment) is the answer, not what this request saw.
       const detail = await withCompany(
@@ -343,7 +332,7 @@ export function officeService(db: Database, drafts: DraftStore, sync: DraftSync)
         }
         await draftsToName(tx, next);
       });
-      await fieldStep(caller.companyId, jobId);
+      await afterFieldStep(db, caller, () => fieldStep(caller.companyId, jobId));
       // The coordination as Postgres holds it after the field step: a later move's owner and revision,
       // when one committed meanwhile, never this request's superseded ones.
       return withCompany(

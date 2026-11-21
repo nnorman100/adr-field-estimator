@@ -4,7 +4,8 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { parseProjectionConfig } from '@/lib/config';
 import { MAX_PHOTO_REFS, MAX_ROOMS } from '@/lib/field/schema';
 import { desired, MalformedMarkerError, type JobDraftSnapshot, type SyncMarker } from '@/lib/jobs/draft-lifecycle';
-import { firestoreDraftSync, type DraftSync } from '@/lib/jobs/draft-sync';
+import { raiseGeneration } from '../../scripts/raise-draft-sync-generation';
+import { firestoreDraftSync, GENERATION_PATH, type DraftSync } from '@/lib/jobs/draft-sync';
 import { firestoreAccessStore, firestoreFor } from '@/lib/projection/firestore';
 import { draftSyncContract } from '../submissions/sync-contract';
 import { createTenant, projectId, signIn, signUp, withSecondFactor } from './auth-emulator';
@@ -41,12 +42,13 @@ draftSyncContract('Firestore', () => ({
   store,
   async seed(company, draft, seed) {
     const ref = db.doc(draftPath(company, draft));
-    const { rooms, fence, ...data } = seed;
+    const { rooms, photos, fence, ...data } = seed;
     await ref.set({
       ...data,
       ...(fence ? { fence: { submissionId: fence.submissionId, epoch: fence.epoch, expiresAt: Timestamp.fromDate(fence.expiresAt) } } : {}),
     });
     for (const room of rooms ?? []) await ref.collection('rooms').doc(room.id).set({ field: room.field });
+    for (const photo of photos ?? []) await ref.collection('photos').doc(photo.id).set({ field: photo.field });
   },
   async peek(company, draft) {
     const path = draftPath(company, draft);
@@ -77,6 +79,10 @@ draftSyncContract('Firestore', () => ({
   },
   async seedMarker(company, job, data) {
     await db.doc(markerPath(company, job)).set(data);
+  },
+  async seedGeneration(data) {
+    if (data === null) await db.doc(GENERATION_PATH).delete();
+    else await db.doc(GENERATION_PATH).set(data);
   },
 }));
 
@@ -122,6 +128,49 @@ describe('the draft sync under the field rules', () => {
     }
     // The estimator works on the draft the sync made, as the phone does.
     expect(await updateDoc(estimator.caller, draftPath(company, draft), { field: { notes: 'wet carpet' } })).toBe(200);
+  });
+
+  it('the operator script raises the generation by one in a transaction, and stops on a document not in its shape', async () => {
+    try {
+      await db.doc(GENERATION_PATH).delete();
+      expect(await raiseGeneration(db)).toEqual({ from: 0, to: 1 });
+      expect(await raiseGeneration(db)).toEqual({ from: 1, to: 2 });
+      expect((await db.doc(GENERATION_PATH).get()).data()).toEqual({ gen: 2 });
+      // The next sync of a job writes at that generation.
+      const company = randomUUID();
+      const draft = randomUUID();
+      const job = snapshotOf({ currentDraftId: draft, draftIds: [draft] });
+      expect(await store.sync(company, desired(job), 0)).toMatchObject({ outcome: 'synced' });
+      expect((await db.doc(markerPath(company, job.jobId)).get()).get('gen')).toBe(2);
+      await db.doc(GENERATION_PATH).set({ gen: 'two' });
+      await expect(raiseGeneration(db)).rejects.toThrow('the draft sync generation document is not { gen } with a non-negative integer: nothing changed');
+      expect((await db.doc(GENERATION_PATH).get()).data()).toEqual({ gen: 'two' });
+      // Never past a generation the sync can read back.
+      await db.doc(GENERATION_PATH).set({ gen: Number.MAX_SAFE_INTEGER });
+      await expect(raiseGeneration(db)).rejects.toThrow('cannot be raised further');
+      expect((await db.doc(GENERATION_PATH).get()).data()).toEqual({ gen: Number.MAX_SAFE_INTEGER });
+    } finally {
+      await db.doc(GENERATION_PATH).delete();
+    }
+  });
+
+  it('keeps the operator’s generation document closed to every client, owner included', async () => {
+    const tenant = await createTenant(`sync-g-${randomUUID().slice(0, 6)}`);
+    const company = randomUUID();
+    const [owner, estimator] = [await member(tenant, company, 'owner'), await member(tenant, company, 'estimator')];
+    try {
+      await db.doc(GENERATION_PATH).set({ gen: 1 });
+      for (const who of [owner, estimator]) {
+        expect(await getDoc(who.caller, GENERATION_PATH)).toBe(403);
+        expect(await updateDoc(who.caller, GENERATION_PATH, { gen: 0 })).toBe(403);
+        expect(await createDoc(who.caller, `draftSyncGeneration/${randomUUID()}`, { gen: 0 })).toBe(403);
+      }
+      await db.doc(GENERATION_PATH).delete();
+      for (const who of [owner, estimator]) expect(await createDoc(who.caller, GENERATION_PATH, { gen: 9 })).toBe(403);
+      expect((await db.doc(GENERATION_PATH).get()).exists).toBe(false);
+    } finally {
+      await db.doc(GENERATION_PATH).delete();
+    }
   });
 
   it('after a sync moves the field work, the old owner reads none of the job’s drafts and the new owner reads all', async () => {

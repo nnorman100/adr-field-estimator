@@ -11,7 +11,7 @@ import { claimDraft, hasAny, holdDraft, jobAccess, JobError, lockedJob, type Job
 import { jobPriceTable, namesPriceIds, priceIdsKnown, PricesUnreadable } from '@/lib/scope-lists/version';
 import { readJobDetails } from './details';
 import { SubmissionError, type SubmissionErrorCode } from './errors';
-import { syncJobDrafts } from '@/lib/jobs/sync-job';
+import { afterFieldStep, syncJobDrafts } from '@/lib/jobs/sync-job';
 import type { DraftSync } from '@/lib/jobs/draft-sync';
 import type { FenceStore } from './fence';
 import { submitDigest, type NextDraftInput, type SubmitInput } from './schema';
@@ -419,8 +419,11 @@ export function submissionsService(db: Database, store: SubmitStore, options: Su
       const row = await intent(caller, jobId, input, digest);
 
       if (row.status !== 'pending') {
-        // A retry of a decided submission: its answer again, and its marker if still unwritten.
-        if (row.markerState === 'pending') await writeMarker(db, store, caller.companyId, row);
+        // A retry of a decided submission: its answer again, and its marker if still unwritten; the answer
+        // only to a caller still an active member of an active company (afterFieldStep).
+        await afterFieldStep(db, caller, async () => {
+          if (row.markerState === 'pending') await writeMarker(db, store, caller.companyId, row);
+        });
         if (row.status === 'aborted') throw new SubmissionError('submission_aborted');
         const job = await inCompany(caller.companyId, (tx) => jobAccess(tx, caller, jobId, SUBMIT));
         return { created: false, submission: submissionView(row), job: jobState(job) };
@@ -449,7 +452,9 @@ export function submissionsService(db: Database, store: SubmitStore, options: Su
 
       // Steps 4 and 5.
       const decided = await decide(caller, jobId, row.id, manifest, problem);
-      await writeMarker(db, store, caller.companyId, decided.row);
+      // The record stands whatever comes next; its answer only to a caller still an active member of an
+      // active company with its role, read again after the marker's field step (afterFieldStep).
+      await afterFieldStep(db, caller, () => writeMarker(db, store, caller.companyId, decided.row));
       if (decided.refused) throw decided.refused;
       if (decided.row.status === 'aborted') throw new SubmissionError(decided.decidedHere ? decided.problem! : 'submission_aborted');
       return { created: decided.decidedHere, submission: submissionView(decided.row), job: jobState(decided.job) };

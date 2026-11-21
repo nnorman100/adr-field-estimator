@@ -3,7 +3,7 @@ import type { JobProjection } from '@/lib/field/job-projection';
 import type { FieldManifest } from '@/lib/field/canonical';
 import { MAX_PHOTO_REFS, MAX_ROOMS } from '@/lib/field/schema';
 import type { ArchiveResult, ArchiveStore } from '@/lib/jobs/archive-store';
-import { assertVersion, parseMarker, planSync, versionRefusal, type StoredDraft, type SyncMarker } from '@/lib/jobs/draft-lifecycle';
+import { assertVersion, parseGeneration, parseMarker, planSync, versionRefusal, type StoredDraft, type SyncMarker } from '@/lib/jobs/draft-lifecycle';
 import { draftIdsToRead, draftsToMake, resultOf, type DraftSync, type SyncResult } from '@/lib/jobs/draft-sync';
 import { placeholderRefusal as refusalOf, draftOfOtherJob, type DraftMade } from '@/lib/jobs/drafts';
 import type { FenceResult, FenceStore, Provenance } from '@/lib/submissions/fence';
@@ -43,7 +43,8 @@ export type FieldData = Record<string, FakeDraft>;
 export type Markers = Record<string, SyncMarker>;
 
 /** The one record: every draft, by "company/draft", and every marker, by "company/job". */
-export type FieldRecord = { drafts: FieldData; markers: Markers };
+// The operator's draft sync generation document (src/lib/jobs/draft-sync.ts GENERATION_PATH), when there is one.
+export type FieldRecord = { drafts: FieldData; markers: Markers; generation?: Record<string, unknown> };
 
 export type Backing = { load(): FieldRecord; save(record: FieldRecord): void };
 
@@ -97,6 +98,8 @@ export type FakeField = FenceStore & ArchiveStore & DraftSync & {
   unstamp(companyId: string, draftId: string): void;
   // Removes a draft from the record, as one that is not there.
   remove(companyId: string, draftId: string): void;
+  // Leaves the operator's draft sync generation document as given, as scripts/raise-draft-sync-generation.ts would.
+  setGeneration(data: Record<string, unknown> | null): void;
   // Makes the next call of a method fail as if Firestore were unreachable, before it changes anything;
   // a number makes that many calls in a row fail (a request that tries again meets it again).
   failNext: Partial<Record<Method, boolean | number>>;
@@ -167,23 +170,32 @@ export function fakeField(backing: Backing = memoryBacking()): FakeField {
     marker: (companyId, jobId) => backing.load().markers[key(companyId, jobId)] ?? null,
     ownerWrites: [],
     stateWrites: [],
+    checkControls: (companyId, jobId) =>
+      call('checkControls', ({ markers, generation }) => {
+        parseGeneration(generation);
+        const left = markers[key(companyId, jobId)];
+        if (left !== undefined) parseMarker(left as unknown as Record<string, unknown>);
+      }),
     sync: async (companyId, job, gen, options = {}) => {
       // As the real writer: refused before any read or write, as a rejected promise.
       assertVersion(gen, job.v);
       // As the real writer: once the marker lets the version through, Postgres's version is checked
       // before anything is written, and a snapshot Postgres moved on from writes nothing.
       const ready = async (): Promise<SyncResult | undefined> => {
-        const left = backing.load().markers[key(companyId, job.jobId)];
+        const record = backing.load();
+        const left = record.markers[key(companyId, job.jobId)];
         const marker = left === undefined ? null : parseMarker(left as unknown as Record<string, unknown>);
-        if (versionRefusal(marker, gen, job.v)) return undefined;
+        if (versionRefusal(marker, Math.max(gen, parseGeneration(record.generation)), job.v, job.revision)) return undefined;
         return options.stillCurrent && !(await options.stillCurrent()) ? { outcome: 'moved' } : undefined;
       };
-      return call('sync', ({ drafts: data, markers }) => {
-        // As the real writer: a marker there is read in its shape or the sync stops (MalformedMarkerError),
-        // and it decides first, before any draft is read.
+      return call('sync', ({ drafts: data, markers, generation: raised }) => {
+        // As the real writer: the operator's generation and a marker there are read in their shape or
+        // the sync stops (MalformedGenerationError, MalformedMarkerError), and they decide first, before
+        // any draft is read; the higher of the caller's generation and the stored one is written.
+        const generation = Math.max(gen, parseGeneration(raised));
         const left = markers[key(companyId, job.jobId)];
         const marker = left === undefined ? null : parseMarker(left as unknown as Record<string, unknown>);
-        const refused = versionRefusal(marker, gen, job.v);
+        const refused = versionRefusal(marker, generation, job.v, job.revision);
         if (refused) return refused;
         const stored = Object.fromEntries(draftIdsToRead(marker, job).map((draftId) => [draftId, storedOf(data[key(companyId, draftId)])]));
         // Rooms or photos left under a draft to make (only a placeholder can hold them here).
@@ -193,7 +205,7 @@ export function fakeField(backing: Backing = memoryBacking()): FakeField {
             return left !== undefined && (Object.keys(left.rooms).length > 0 || Object.keys(left.photos).length > 0);
           }),
         );
-        const plan = planSync(marker, stored, orphans, job, gen);
+        const plan = planSync(marker, stored, orphans, job, generation);
         // As Firestore's commit: a create of a room or photo the same write already creates fails the
         // whole write, and nothing (no draft, no marker) is saved.
         // And Firestore stores no list directly inside a list: a value holding one fails the write.
@@ -278,6 +290,12 @@ export function fakeField(backing: Backing = memoryBacking()): FakeField {
     remove(companyId, draftId) {
       edit(({ drafts: data }) => {
         delete data[key(companyId, draftId)];
+      });
+    },
+    setGeneration(data) {
+      edit((record) => {
+        if (data === null) delete record.generation;
+        else record.generation = { ...data };
       });
     },
     unstamp(companyId, draftId) {

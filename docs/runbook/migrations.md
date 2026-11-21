@@ -23,6 +23,6 @@ The migrator does not parse SQL for removals: a migration that removes a table, 
    ROLLBACK;
    ```
 
-2. From `web/`, with your own `gcloud auth application-default login`: `npm run platform:check-draft-states -- --project dryscope --database dryscope-field-test < draft-jobs.csv` (`dryscope-field-live` in project `dryscope-live` for live). It reads each job's current draft and prints `company/job` for every job whose draft is `submitted`, then the counts. It exits 1 when any job is listed.
+2. From `web/`, with your own `gcloud auth application-default login`: `npm run platform:check-draft-states -- --project dryscope --database dryscope-field-test < draft-jobs.csv` (`--database dryscope-field-live` for live, in project `dryscope` while live shares it with test). It reads each job's current draft and prints `company/job` for every job whose draft is `submitted`, then the counts. It exits 1 when any job is listed.
 
 A listed job, like one 0016 names itself, is the owner's to settle before 0016 runs; nothing moves it automatically. An environment with no jobs yet exports an empty file, and the check prints `checked 0 jobs`. Delete `draft-jobs.csv` afterwards: it holds ids only, but it is not kept.

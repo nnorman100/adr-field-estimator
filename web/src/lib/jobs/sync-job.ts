@@ -1,14 +1,15 @@
 import { and, desc, eq, lt, sql } from 'drizzle-orm';
 import { isQueueTimeout } from '@/db/client';
-import { actors, agreements, jobCoordination, jobDrafts, jobs, jobSubmissions } from '@/db/schema';
+import { actors, agreements, companies, jobCoordination, jobDrafts, jobs, jobSubmissions, memberships } from '@/db/schema';
+import { IdentityRefusal } from '@/lib/auth';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
-import { holdDraft, JobError, lockedJob, type JobRow } from './access';
+import { holdDraft, JobError, lockedJob, type JobCaller, type JobRow } from './access';
 import { confirmationPredatesReprice } from '@/lib/estimates/service';
 import type { Fence } from '@/lib/submissions/fence';
 import { SNAPSHOT_FORMAT } from '@/lib/submissions/snapshot';
 import type { FieldManifest } from '@/lib/field/canonical';
 import { fieldId } from '@/lib/field/schema';
-import { desired, UnclaimedDraftError, type DraftContent, type JobDraftSnapshot } from './draft-lifecycle';
+import { desired, MalformedGenerationError, MalformedMarkerError, UnclaimedDraftError, type DraftContent, type JobDraftSnapshot } from './draft-lifecycle';
 import type { DraftSync, SyncResult } from './draft-sync';
 import { draftOfOtherJob, type DraftLookup } from './drafts';
 
@@ -139,6 +140,40 @@ async function contentOf(tx: CompanyTransaction, companyId: string, job: { id: s
   return { kind: 'empty' };
 }
 
+// The caller is still an active member of an active company with the role it signed in with, read again in
+// the snapshot an answer after a field step is built from: a member disabled, or whose role changed,
+// while the request waited on the field database gets no job, customer, claim or staff details.
+export async function stillMember(tx: CompanyTransaction, caller: JobCaller): Promise<void> {
+  // A company suspended meanwhile is refused as a fresh request would be (auth/identity.ts).
+  const [company] = await tx.select({ status: companies.status }).from(companies).where(eq(companies.id, caller.companyId));
+  if (company?.status !== 'active') throw new IdentityRefusal('company_inactive');
+  const [found] = await tx
+    .select({ role: memberships.role })
+    .from(memberships)
+    .where(and(eq(memberships.companyId, caller.companyId), eq(memberships.actorId, caller.actorId), eq(memberships.status, 'active')));
+  if (!found || found.role !== caller.role) throw new JobError('not_allowed');
+}
+
+/**
+ * A field step at a route's answer boundary: whatever the step answers, its result or its refusal, reaches
+ * only a caller still an active member of an active company with the same role, read again after it (a
+ * company suspended or a member disabled while it waited is refused as a fresh request would be, 403). What
+ * the request committed before the step stays committed. A database connection that did not come free in
+ * time is passed on as it is.
+ */
+export async function afterFieldStep<T>(db: Database, caller: JobCaller, step: () => Promise<T>): Promise<T> {
+  let outcome: { ok: true; value: T } | { ok: false; error: unknown };
+  try {
+    outcome = { ok: true, value: await step() };
+  } catch (error) {
+    if (isQueueTimeout(error)) throw error;
+    outcome = { ok: false, error };
+  }
+  await withCompany(db, caller.companyId, (tx) => stillMember(tx, caller), { snapshot: true });
+  if (!outcome.ok) throw outcome.error;
+  return outcome.value;
+}
+
 /** What Postgres holds for the job's drafts, in one read-only snapshot. Null when there is no such job. */
 export async function readJobDraftSnapshot(db: Database, companyId: string, jobId: string): Promise<JobDraftSnapshot | null> {
   return withCompany(
@@ -206,6 +241,13 @@ async function versionOf(db: Database, companyId: string, jobId: string): Promis
 // How many times one call syncs again when Postgres moved on while it was syncing.
 const CATCH_UP = 3;
 
+// How long the version check inside the Firestore transaction waits for its Postgres read. It runs while
+// Firestore holds the job's drafts, so it never waits out the pool's queue (QUEUE_TIMEOUT_SECONDS,
+// db/client.ts) behind a request that holds a connection and waits on those same drafts (a Submit):
+// past this, the snapshot counts as moved, the transaction writes nothing and ends, and the sync tries
+// again.
+export const STILL_CURRENT_WAIT_MS = 2_000;
+
 /**
  * Syncs every draft of the job to what Postgres holds now, then records the version as synced, unless a
  * draft is to be written again (one held back by a newer legacy write, or a current draft it could not
@@ -220,11 +262,37 @@ export async function syncJob(db: Database, store: DraftSync, companyId: string,
   if (!snapshot) return null;
   const current = (now: { fieldRevision: number; revision: number } | null) =>
     now !== null && now.fieldRevision === snapshot.fieldRevision && now.revision === snapshot.revision;
-  const stillCurrent = async () => current(await versionOf(db, companyId, jobId));
+  const stillCurrent = async () => {
+    let timer: NodeJS.Timeout | undefined;
+    const waited = new Promise<'waited'>((resolve) => {
+      timer = setTimeout(() => resolve('waited'), STILL_CURRENT_WAIT_MS);
+    });
+    // A read that answers late is dropped (it only reads).
+    const read = versionOf(db, companyId, jobId);
+    read.catch(() => {});
+    try {
+      const now = await Promise.race([read, waited]);
+      return now !== 'waited' && current(now);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
   const result = await store.sync(companyId, desired(snapshot), 0, { stillCurrent });
   // Read again after the commit, the last try included: a snapshot Postgres moved on from is synced again,
   // and once the tries are used up it is answered as not written (the same request again), never synced.
-  if (result.outcome === 'moved' || !current(await versionOf(db, companyId, jobId))) {
+  const after = result.outcome === 'moved' ? null : await versionOf(db, companyId, jobId);
+  if (result.outcome === 'moved' || !current(after)) {
+    // Written at this field revision while only the job revision moved (an owner reprice): the field
+    // revision is raised, so the catch-up is a new version and writes the keys that follow the job
+    // revision (the legacy archiveRevision), rather than meeting its own marker as a retry.
+    if (after !== null && after.fieldRevision === snapshot.fieldRevision) {
+      await withCompany(db, companyId, (tx) =>
+        tx
+          .update(jobs)
+          .set({ fieldRevision: sql`${jobs.fieldRevision} + 1` })
+          .where(and(eq(jobs.companyId, companyId), eq(jobs.id, jobId), eq(jobs.fieldRevision, snapshot.fieldRevision))),
+      );
+    }
     if (round < CATCH_UP) return syncJob(db, store, companyId, jobId, round + 1);
     return { result: { outcome: 'moved' }, currentDraftId: snapshot.currentDraftId };
   }
@@ -261,6 +329,15 @@ export async function syncJobDrafts(
   companyId: string,
   jobId: string,
 ): Promise<{ result: SyncResult; currentDraftId: string }> {
+  // The operator's generation and the job's marker in their shape first, before this step's own Postgres
+  // writes (the claim below, a raised field revision): one that is not stops it with nothing changed.
+  try {
+    await store.checkControls(companyId, jobId);
+  } catch (error) {
+    if (isQueueTimeout(error)) throw error;
+    console.error('job draft sync refused', error instanceof Error ? error.name : 'unknown');
+    throw new JobError('draft_unavailable');
+  }
   const claimed = await withCompany(db, companyId, async (tx) => {
     const row = await lockedJob(tx, companyId, jobId);
     try {
@@ -280,7 +357,9 @@ export async function syncJobDrafts(
       // A current draft that names another job is never this job's, whatever an earlier sync recorded.
       if (found && draftOfOtherJob(found.jobId, jobId)) throw new JobError('conflict');
       // A missing current draft, or a placeholder a previous-version archive or restore left in its
-      // place, is made at a new version: at the version already synced the sync would write nothing.
+      // place, is made at a new version: at the version already synced the sync would write nothing. (A try
+      // whose commit lost its answer needs no new version: the marker records the job revision it wrote at,
+      // so the same field revision at a moved job revision is planned again, draft-lifecycle.ts.)
       if (!found || found.placeholder) {
         await withCompany(db, companyId, (tx) =>
           tx
@@ -294,6 +373,12 @@ export async function syncJobDrafts(
     } catch (error) {
       if (error instanceof UnclaimedDraftError) throw new JobError('conflict');
       if (error instanceof JobError || isQueueTimeout(error)) throw error;
+      // A marker or generation document not in its shape stops the sync the same way every time: no more
+      // tries and no new version, the same request again (the repair pass reports it each period).
+      if (error instanceof MalformedMarkerError || error instanceof MalformedGenerationError) {
+        console.error('job draft sync refused', error.name);
+        throw new JobError('draft_unavailable');
+      }
       // Fixed text only: the SDK's message may quote a path.
       console.error('job draft sync unavailable', error instanceof Error ? error.name : 'unknown');
       // The answer may have been lost after the write: once more, from a fresh read of Postgres.

@@ -7,7 +7,7 @@ import { snapshotManifest } from '@/lib/submissions/snapshot';
 import { canSeeJob, claimDraft, hasAny, holdDraft, jobAccess, JobError, lockedJob, type JobCaller, type JobRow } from './access';
 import type { ArchiveStore } from './archive-store';
 import type { DraftSync } from './draft-sync';
-import { syncJobDrafts } from './sync-job';
+import { afterFieldStep, syncJobDrafts } from './sync-job';
 import { copiedManifest } from './copy-rule';
 import { copyDigest, type ArchiveInput, type CopyInput } from './schema';
 import { audit, CHECK_VIOLATION, detailOf, errorCode, type JobDetail, type JobView } from './service';
@@ -121,12 +121,14 @@ export function archiveService(db: Database, store: ArchiveStore, sync: DraftSyn
   }
 
   // The answer of an archive or restore, once the field draft is settled after it.
-  async function settled(companyId: string, jobId: string, decided: Promise<JobDetail>): Promise<{ job: JobView }> {
+  async function settled(caller: JobCaller, jobId: string, decided: Promise<JobDetail>): Promise<{ job: JobView }> {
     const outcome = await decided.catch((error: unknown) => {
       if (error instanceof JobError && SETTLED.has(error.code)) return error;
       throw error;
     });
-    await settle(companyId, jobId);
+    // Any answer after the field step, the job's details, a settled refusal or the field step's own
+    // failure, only to a caller still an active member of an active company with its role (afterFieldStep).
+    await afterFieldStep(db, caller, () => settle(caller.companyId, jobId));
     if (outcome instanceof JobError) throw outcome;
     return jobView(outcome);
   }
@@ -160,7 +162,7 @@ export function archiveService(db: Database, store: ArchiveStore, sync: DraftSyn
         await audit(tx, caller, 'job_archived', row.id, { revision: next!.revision });
         return detailOf(tx, next!);
       });
-      return settled(caller.companyId, jobId, decided);
+      return settled(caller, jobId, decided);
     },
 
     async restore(caller, jobId, input) {
@@ -190,7 +192,7 @@ export function archiveService(db: Database, store: ArchiveStore, sync: DraftSyn
         await audit(tx, caller, 'job_restored', row.id, { revision: next!.revision });
         return detailOf(tx, next!);
       });
-      return settled(caller.companyId, jobId, decided);
+      return settled(caller, jobId, decided);
     },
 
     async copy(caller, sourceJobId, input) {
