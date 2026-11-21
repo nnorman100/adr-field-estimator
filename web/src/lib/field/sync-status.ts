@@ -171,4 +171,4 @@ export function changedFields(entries: readonly JournalEntry[]): string[] {
   return [...names];
 }
 
-export const PHOTOS_STAY = 'Photos stay with the old job: they are not copied to the new draft.';
+export const PHOTOS_STAY = 'Photos stay with the old job once they are sent. Photos waiting on this phone move to the new draft.';

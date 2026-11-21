@@ -1,5 +1,6 @@
 import { transact, withDatabase, type DbSpec } from './idb';
 import type { PhotoField } from './schema';
+import { noteQueuedPhoto, queuedPhotoDone } from './unsent';
 
 export type PhotoOwner = Readonly<{ tenantId: string; uid: string }>;
 export type PhotoTarget = Readonly<{ jobId: string; draftId: string; field: PhotoField }>;
@@ -135,6 +136,93 @@ export function readPayload(entry: PhotoUpload): Promise<ArrayBuffer | undefined
     const request = transaction.objectStore(BYTES).get(keyOf(entry));
     return () => (request.result as { data: ArrayBuffer } | undefined)?.data;
   });
+}
+
+export function hasPhotoBytes(entry: PhotoUpload): Promise<boolean> {
+  return run(BYTES, 'readonly', (transaction) => {
+    const bytes = transaction.objectStore(BYTES);
+    const photo = bytes.getKey(keyOf({ ...entry, kind: 'photo' }));
+    const original = bytes.getKey(keyOf({ ...entry, kind: 'original' }));
+    return () => photo.result !== undefined || original.result !== undefined;
+  });
+}
+
+export function discardQueuedPhotos(
+  owner: PhotoOwner,
+  matches: (entry: PhotoQueueEntry) => boolean = () => true,
+  stillWanted?: () => boolean,
+): Promise<boolean> {
+  return run([ENTRIES, BYTES], 'readwrite', (transaction) => {
+    const entries = transaction.objectStore(ENTRIES).index(OWNER);
+    const bytes = transaction.objectStore(BYTES);
+    const wanted = stillWanted?.() ?? true;
+    if (wanted) {
+      const request = entries.openCursor(ownerRange(owner));
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) return;
+        if (matches(cursor.value as PhotoQueueEntry)) {
+          bytes.delete(cursor.primaryKey);
+          cursor.delete();
+        }
+        cursor.continue();
+      };
+    }
+    return () => wanted;
+  });
+}
+
+// Move unpublished photos with their originals in one commit. A retry after that commit finds
+// no source rows to move. The new job must get its own receipt and its own original-upload tap.
+export async function moveQueuedPhotos(
+  owner: PhotoOwner,
+  source: Pick<PhotoTarget, 'jobId' | 'draftId'>,
+  destination: Pick<PhotoTarget, 'jobId' | 'draftId'>,
+): Promise<void> {
+  const moved = await run([ENTRIES, BYTES], 'readwrite', (transaction) => {
+    const entries = transaction.objectStore(ENTRIES);
+    const bytes = transaction.objectStore(BYTES);
+    const request = entries.index(OWNER).getAll(ownerRange(owner));
+    const ids = new Map<string, string>();
+    request.onsuccess = () => {
+      const local = (request.result as PhotoQueueEntry[]).filter(
+        (entry) => entry.jobId === source.jobId && entry.draftId === source.draftId && entry.stage !== 'done',
+      );
+      for (const entry of local) {
+        if (entry.kind !== 'photo') continue;
+        const id = crypto.randomUUID();
+        if (!noteQueuedPhoto(owner.tenantId, owner.uid, id)) return transaction.abort();
+        ids.set(entry.photoId, id);
+      }
+      for (const entry of local) {
+        const photoId = ids.get(entry.photoId);
+        if (!photoId) continue;
+        const key = keyOf(entry);
+        const payload = bytes.get(key);
+        payload.onsuccess = () => {
+          const saved = payload.result as { data: ArrayBuffer } | undefined;
+          if (!saved) return transaction.abort();
+          const next: PhotoQueueEntry = {
+            ...entry, ...destination, photoId, stage: 'queued', attempts: 0, retryAt: 0,
+            requested: entry.kind === 'photo',
+          };
+          delete next.reason;
+          delete next.receipt;
+          if (entry.kind === 'photo') next.open = 1;
+          else delete next.open;
+          entries.add(next);
+          bytes.add({
+            tenantId: owner.tenantId, uid: owner.uid, jobId: next.jobId,
+            photoId, kind: next.kind, data: saved.data,
+          });
+          entries.delete(key);
+          bytes.delete(key);
+        };
+      }
+    };
+    return () => [...ids.keys()];
+  });
+  for (const id of moved) queuedPhotoDone(owner.tenantId, owner.uid, id);
 }
 
 // Use the current row so a tap on Send originals is not overwritten by an in-flight upload.

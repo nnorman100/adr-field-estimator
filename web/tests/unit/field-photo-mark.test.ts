@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { keepPhotosHere, notePhoto, noteWrite, photoSent, readUnsent, settled, unsentWork } from '@/lib/field/unsent';
+import { keepPhotosHere, notePhoto, noteQueuedPhoto, noteWrite, photoSent, queuedPhotoDone, readUnsent, settled, unsentWork } from '@/lib/field/unsent';
 
 beforeEach(() => {
   const items = new Map<string, string>();
@@ -57,4 +57,28 @@ it('leaves a mark it cannot read as it is', () => {
   window.localStorage.setItem('ds-sync/tenant-a/ana', 'not json');
   keepPhotosHere('tenant-a', 'ana');
   expect(readUnsent('tenant-a', 'ana')).toBe('unreadable');
+});
+
+it('keeps a durable photo through reload and field acknowledgement without changing another person’s mark', async () => {
+  const write = noteWrite('tenant-a', 'ana', Date.now(), true)!;
+  expect(noteQueuedPhoto('tenant-a', 'ana', 'queue-a')).toBe(true);
+  expect(noteQueuedPhoto('tenant-a', 'ana', 'queue-a')).toBe(true);
+  expect(noteQueuedPhoto('tenant-b', 'ana', 'queue-b')).toBe(true);
+  expect(unsentWork('tenant-a', 'ana')).toBe('kept');
+  vi.resetModules();
+  const page = await import('@/lib/field/unsent');
+  page.keepPhotosHere('tenant-a', 'ana');
+  page.settled('tenant-a', 'ana', write);
+  expect(page.readUnsent('tenant-a', 'ana')).toMatchObject({ queuedPhotos: ['queue-a'] });
+  expect(page.unsentWork('tenant-a', 'ana')).toBe('kept');
+  page.queuedPhotoDone('tenant-a', 'ana', 'queue-a');
+  page.settled('tenant-a', 'ana', write);
+  expect(page.unsentWork('tenant-a', 'ana')).toBe('none');
+  expect(page.unsentWork('tenant-b', 'ana')).toBe('kept');
+});
+
+it('clears the last durable photo when there have been no field writes', () => {
+  noteQueuedPhoto('tenant-a', 'ana', 'queue-a');
+  queuedPhotoDone('tenant-a', 'ana', 'queue-a');
+  expect(unsentWork('tenant-a', 'ana')).toBe('none');
 });

@@ -13,14 +13,17 @@
 // merged into: once that new draft holds anything else (an earlier copy, work made on it since), the
 // edits can go into another new draft of their own ('another'), whose ids also come from the edits
 // themselves, so each try of those edits makes one job too.
-// Photo references are not copied: a photo id is registered to its job and cannot be used under
-// another one, and photo bytes are not kept on the phone until the photo queue (S6-5).
+// Existing server photo references are not copied. Unsent photo bytes get new IDs in the
+// new draft through the queue, before the old journal entries are discarded.
 import { collection, doc, getDocFromCache, getDocFromServer, getDocsFromCache, runTransaction } from 'firebase/firestore';
 import { fieldUser, type FieldClient } from '@/lib/field-db';
 import { createJob } from './api';
 import { discardEntries, refusalNow } from './journal-sync';
 import { copyVerdict, jobOf, rejectEntry, type DocWrite, type JournalEntry, type Owner } from './journal';
 import { draftPath, stageWrites, type DraftRef } from './store';
+import { whilePhotoQueueIdle } from './photo-queue';
+import { moveQueuedPhotos } from './photo-queue-storage';
+import { readUnsent } from './unsent';
 
 function uuidOf(bytes: Uint8Array): string {
   const b = Uint8Array.from(bytes.subarray(0, 16));
@@ -148,6 +151,16 @@ export async function saveAsNewDraft(client: FieldClient, entries: readonly Jour
   }
   // Another new draft is these edits' own: anything in it is their copy, made on an earlier try.
   if (verdict === 'exists' && !another) return { kind: 'exists' };
+  const fromJob = jobOf(entries);
+  const fromDraft = first.draftPath.split('/').at(-1);
+  const mark = readUnsent(owner.tenantId, owner.uid);
+  if (fromJob && fromDraft && (mark === 'unreadable' || mark.queuedPhotos?.length)) {
+    try {
+      await whilePhotoQueueIdle(() => moveQueuedPhotos(owner, { jobId: fromJob, draftId: fromDraft }, { jobId, draftId }));
+    } catch {
+      return { kind: 'no-answer' };
+    }
+  }
   // The new draft into this phone's cache, so its screen opens on it.
   await getDocFromServer(doc(client.db, newPath)).catch(() => undefined);
   await discardEntries(client, entries);

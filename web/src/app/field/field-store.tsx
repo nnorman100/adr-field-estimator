@@ -10,6 +10,7 @@ import { runFieldSync } from '@/lib/field/field-sync';
 import { contentHidden, evaluate, onWorkRemoved, takeRemoved } from '@/lib/field/retention';
 import { askToPersist, keepAnswer, saveKeepAnswer, type KeepAnswer } from '@/lib/field/keep-consent';
 import { offlineCaptureAllowed, type FieldSurface } from '@/lib/field/platform';
+import { mountFieldPhotos } from '@/lib/field/photo-field';
 import { sessionValid, type GateState, type SyncGate } from '@/lib/field/sync-gate';
 import { readUnsent, unsentWork } from '@/lib/field/unsent';
 import { holdWindow } from '@/lib/field/window-lock';
@@ -163,6 +164,9 @@ export function FieldStore({
     let live = true;
     let release = () => undefined as void;
     const person = { tenantId: me.tenantId, uid: me.uid, config: me.config };
+    const auth = companyAuth({ config: me.config, tenantId: me.tenantId });
+    let photos: ReturnType<typeof mountFieldPhotos> | undefined;
+    let photoCompany: string | null = null;
     const own = meKey(me.tenantId, me.uid);
     // The retention routine removed this person's work (hidden past the 30-day limit, then refused by
     // the server, decision 010), before this started or while it runs: the shell says so, nothing of
@@ -198,18 +202,35 @@ export function FieldStore({
       onStorage(started.client.cache === 'persistent' ? 'kept' : started.fellBack ? 'not-saved' : 'online-only');
       if (cache === 'persistent') void askToPersist();
       setPhase({ kind: 'ready', client: started.client });
+      if (cache === 'persistent') {
+        photos = mountFieldPhotos(
+          started.client,
+          () => live && !gone && auth.currentUser?.uid === person.uid ? photoCompany : null,
+          () => {
+            photoCompany = null;
+            gateRef.current?.poke();
+          },
+        );
+      }
       gateRef.current = runFieldSync(started.client, me, (event) => {
         if (!live) return;
-        if ('removed' in event) return setPhase({ kind: 'removed' });
-        if ('reopen' in event) return setPhase({ kind: 'reopen' });
+        if ('removed' in event || 'reopen' in event) {
+          photos?.stop();
+          return setPhase({ kind: 'removed' in event ? 'removed' : 'reopen' });
+        }
         if ('me' in event) return setKnown(event.me);
+        photoCompany = event.state.kind === 'open' && event.state.facts.capabilities.includes('photos')
+          ? event.state.facts.companyId
+          : null;
+        if (photoCompany) photos?.resume();
         setGate(event.state);
         setNow(Date.now());
       });
     })();
     // A sign-out or a new sign-in in this company's Auth while the shell is open: the person app
     // follows it, and the gate asks again.
-    const stopAuth = onIdTokenChanged(companyAuth({ config: me.config, tenantId: me.tenantId }), () => {
+    const stopAuth = onIdTokenChanged(auth, () => {
+      photoCompany = null;
       void mirrorSignIn(person).then(() => gateRef.current?.poke(), () => undefined);
     });
     // Hidden, the network goes off; shown again, the session's age is judged and the gate asks
@@ -217,13 +238,20 @@ export function FieldStore({
     const shown = () => {
       setNow(Date.now());
       if (document.visibilityState === 'visible') gateRef.current?.resume();
-      else void gateRef.current?.suspend();
+      else {
+        photoCompany = null;
+        void gateRef.current?.suspend();
+      }
     };
-    const offline = () => void gateRef.current?.networkLost();
+    const offline = () => {
+      photoCompany = null;
+      void gateRef.current?.networkLost();
+    };
     document.addEventListener('visibilitychange', shown);
     window.addEventListener('offline', offline);
     return () => {
       live = false;
+      photos?.stop();
       stopWatching();
       stopAuth();
       document.removeEventListener('visibilitychange', shown);

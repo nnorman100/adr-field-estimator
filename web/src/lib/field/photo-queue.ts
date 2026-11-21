@@ -1,8 +1,10 @@
 import { meOutcome } from '@/lib/sign-in/outcome';
 import { preparePhoto } from './photo';
+import { noteQueuedPhoto, queuedPhotoDone } from './unsent';
 import {
   addCapture,
   changePhoto,
+  hasPhotoBytes,
   readPayload,
   readPendingWork,
   readPhotoQueue,
@@ -18,6 +20,8 @@ export { readPendingWork, readPhotoQueue, type PhotoOwner, type PhotoQueueEntry,
 const CAPTURE_LOCK = 'ds-photo-capture';
 const DRAIN_LOCK = 'ds-photo-drain';
 const CAPTURED = 'ds-photo-captured';
+const activeQueues = new Map<string, () => void>();
+const ownerKey = ({ tenantId, uid }: PhotoOwner) => JSON.stringify([tenantId, uid]);
 const FOREGROUND_INTERVAL_MS = 2_000;
 const UPLOAD_BASE_DEADLINE_MS = 30_000;
 // The photo route allows a request 300 seconds, so no upload is cut off before that.
@@ -45,7 +49,8 @@ export async function capturePhoto(owner: PhotoOwner, target: PhotoTarget, file:
     const original = await file.arrayBuffer();
     const originalSha256 = await sha256Of(original);
     const common = {
-      ...owner,
+      tenantId: owner.tenantId,
+      uid: owner.uid,
       ...target,
       field: { ...target.field, capturedAt: target.field.capturedAt ?? new Date(capturedAt).toISOString() },
       photoId,
@@ -66,7 +71,7 @@ export async function capturePhoto(owner: PhotoOwner, target: PhotoTarget, file:
         reason: UNPREPARED_REASON,
         requested: false,
       };
-      await addCapture([{ entry, data: original }]);
+      await keepCapture([{ entry, data: original }]);
       return entry;
     }
     const data = await resized.arrayBuffer();
@@ -90,7 +95,7 @@ export async function capturePhoto(owner: PhotoOwner, target: PhotoTarget, file:
       stage: 'queued',
       requested: false,
     };
-    await addCapture([
+    await keepCapture([
       { entry, data },
       { entry: waiting, data: original },
     ]);
@@ -98,6 +103,16 @@ export async function capturePhoto(owner: PhotoOwner, target: PhotoTarget, file:
   });
   window.dispatchEvent(new Event(CAPTURED));
   return photo;
+
+  async function keepCapture(payloads: Parameters<typeof addCapture>[0]): Promise<void> {
+    if (!noteQueuedPhoto(owner.tenantId, owner.uid, photoId)) throw new Error('This phone could not record the photo as unsent.');
+    try {
+      await addCapture(payloads);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'QuotaExceededError') queuedPhotoDone(owner.tenantId, owner.uid, photoId);
+      throw error;
+    }
+  }
 }
 
 export async function photoStorageNearlyFull(): Promise<boolean> {
@@ -177,10 +192,26 @@ function readyEntries(entries: PhotoQueueEntry[], now: number): PhotoQueueEntry[
   });
 }
 
+export function stopPhotoQueue(owner: PhotoOwner): void {
+  activeQueues.get(ownerKey(owner))?.();
+}
+
+export async function whilePhotoQueueIdle<T>(work: () => Promise<T>): Promise<T> {
+  const options = { signal: AbortSignal.timeout(5_000) };
+  return await navigator.locks.request(DRAIN_LOCK, options, () => navigator.locks.request(CAPTURE_LOCK, options, work));
+}
+
+export async function acknowledgeQueuedPhoto(entry: PhotoQueueEntry): Promise<void> {
+  const saved = await changePhoto(entry, { stage: 'done' });
+  if (saved && !(await hasPhotoBytes(entry))) queuedPhotoDone(entry.tenantId, entry.uid, entry.photoId);
+}
+
 export function startPhotoQueue(owner: PhotoOwner, transport: PhotoTransport) {
   const person = { ...owner };
   const lifetime = new AbortController();
   const { signal } = lifetime;
+  const key = ownerKey(owner);
+  stopPhotoQueue(owner);
   let draining = false;
   let signedOut = false;
   const canRun = () => !signal.aborted && !signedOut && document.visibilityState === 'visible' && transport.canSend();
@@ -227,13 +258,17 @@ export function startPhotoQueue(owner: PhotoOwner, transport: PhotoTransport) {
           await block('The upload receipt did not match this photo.');
           return;
         }
+        if (current.kind === 'original') {
+          await acknowledgeQueuedPhoto(current);
+          return;
+        }
         const saved = await changePhoto(current, {
-          stage: current.kind === 'original' ? 'done' : 'sent',
+          stage: 'sent',
           receipt: true,
           attempts: 0,
           retryAt: 0,
         });
-        if (!saved || saved.kind === 'original') return;
+        if (!saved) return;
         current = saved;
       }
 
@@ -256,7 +291,7 @@ export function startPhotoQueue(owner: PhotoOwner, transport: PhotoTransport) {
         limit.release();
       }
       if (signal.aborted) return;
-      if (result.kind === 'acknowledged' && current.stage === 'referenced') await changePhoto(current, { stage: 'done' });
+      if (result.kind === 'acknowledged' && current.stage === 'referenced') await acknowledgeQueuedPhoto(current);
       else if (result.kind === 'blocked') await block(result.reason);
       else if (result.kind === 'sign-in') lock();
       else await retry();
@@ -301,16 +336,24 @@ export function startPhotoQueue(owner: PhotoOwner, transport: PhotoTransport) {
   const timer = window.setInterval(drain, FOREGROUND_INTERVAL_MS);
   void drain();
 
+  const stop = () => {
+    lifetime.abort();
+    window.clearInterval(timer);
+    if (activeQueues.get(key) === stop) activeQueues.delete(key);
+  };
+  activeQueues.set(key, stop);
+
   return {
     drain,
+    resume() {
+      signedOut = false;
+      void drain();
+    },
     async sendOriginals(jobId: string) {
       if (signal.aborted) return;
       await requestOriginals(person, jobId);
       await drain();
     },
-    stop() {
-      lifetime.abort();
-      window.clearInterval(timer);
-    },
+    stop,
   };
 }

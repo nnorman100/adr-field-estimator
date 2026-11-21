@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import type { BrowserSignInConfig } from '@/lib/config';
 import { manifestDigest, type FieldManifest } from '@/lib/field/canonical';
+import { hasWaitingPhotos } from '@/lib/field/photo-field';
 import { noteItemListAccess } from '@/lib/field/ds-prices';
 import { signInOf, signOutOnRefusal, signOutOrShow, stillSameSignIn, type FailedSignOut } from '@/lib/field/sign-out';
 import { belongsTo, callApi, companyAuth } from '@/lib/firebase-client';
@@ -45,6 +46,7 @@ type Phase =
   | { name: 'finish-sign-in' }
   | FailedSignOut
   | { name: 'not-found' }
+  | { name: 'photos-waiting'; user: User }
   | ({ name: 'ready' } & Ready);
 
 // How long the job is read again after an ownership refusal, including the wait for a sign-in token.
@@ -67,6 +69,14 @@ export function FinishScreen(props: FinishScreenProps) {
 function Finish({ address, companyName, tenantId, jobId, config }: FinishScreenProps & { config: BrowserSignInConfig }) {
   const [phase, setPhase] = useState<Phase>({ name: 'checking' });
   const authRef = useRef<Auth | null>(null);
+  const photosReady = useCallback(async (user: User, draftId: string): Promise<boolean> => {
+    const from = signInOf(user);
+    const waiting = await hasWaitingPhotos({ tenantId, uid: user.uid }, jobId, draftId).catch(() => null);
+    if (!stillSameSignIn(authRef.current, from)) return false;
+    if (waiting === null) setPhase({ name: 'unavailable' });
+    else if (waiting) setPhase({ name: 'photos-waiting', user });
+    return waiting === false;
+  }, [jobId, tenantId]);
 
   // Reads who is signed in, the job and (while it is being edited) its draft, from the server.
   const load = useCallback(
@@ -96,6 +106,7 @@ function Finish({ address, companyName, tenantId, jobId, config }: FinishScreenP
       if (!job) return setPhase({ name: 'unavailable' });
       let manifest: FieldManifest | null = null;
       if (job.status === 'draft') {
+        if (!(await photosReady(user, job.currentDraftId)) || stale()) return;
         const db = fieldDatabase(authRef.current!.app, config);
         const shown = db ? await readShownDraft(db, who.companyId, job.currentDraftId).catch(() => null) : null;
         if (stale()) return;
@@ -106,7 +117,7 @@ function Finish({ address, companyName, tenantId, jobId, config }: FinishScreenP
       const readinessRevision = who.canFinish && readinessEnabled(me.body) && typeof revision === 'number' ? revision : null;
       setPhase({ name: 'ready', user, canFinish: who.canFinish, job, manifest, readinessRevision, pricesManage: (me.body as { capabilities: unknown[] }).capabilities.includes('prices_manage'), owner: outcome.role === 'owner' });
     },
-    [config, jobId, tenantId],
+    [config, jobId, photosReady, tenantId],
   );
 
   useEffect(() => {
@@ -163,6 +174,14 @@ function Finish({ address, companyName, tenantId, jobId, config }: FinishScreenP
       );
     case 'not-secured':
       return <WorkNotSecured retry={phase.retry} />;
+    case 'photos-waiting':
+      return (
+        <FocusedPanel title="Send this job’s photos first">
+          <p>Keep Photos open with a connection until this job’s photos are sent.</p>
+          <Button asChild><Link href={`/field?job=${encodeURIComponent(jobId)}&view=photos`}>Open Photos</Link></Button>
+          <Button variant="outline" onClick={() => void load(phase.user)}>Check again</Button>
+        </FocusedPanel>
+      );
     case 'unavailable':
       return (
         <FocusedPanel title="We could not open this job">
@@ -172,13 +191,13 @@ function Finish({ address, companyName, tenantId, jobId, config }: FinishScreenP
         </FocusedPanel>
       );
     case 'ready':
-      return <FinishActions {...phase} address={address} reviewHref={`/sign-in/${address}/jobs/${encodeURIComponent(jobId)}/review`} reload={() => void load(phase.user)} />;
+      return <FinishActions {...phase} address={address} reviewHref={`/sign-in/${address}/jobs/${encodeURIComponent(jobId)}/review`} reload={() => void load(phase.user)} photosReady={photosReady} />;
   }
 }
 
 function FinishActions({
-  user, canFinish, job, manifest, readinessRevision, pricesManage, owner, address, reviewHref, reload,
-}: Ready & { address: string; reviewHref: string; reload: () => void }) {
+  user, canFinish, job, manifest, readinessRevision, pricesManage, owner, address, reviewHref, reload, photosReady,
+}: Ready & { address: string; reviewHref: string; reload: () => void; photosReady: (user: User, draftId: string) => Promise<boolean> }) {
   const [current, setCurrent] = useState<JobOnScreen>(job);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<Problem | null>(null);
@@ -189,6 +208,7 @@ function FinishActions({
   const pendingDraft = useRef<{ draftId: string; fromDraftId: string } | null>(null);
   const dialog = useRef<HTMLDialogElement>(null);
   const back = useRef<HTMLButtonElement>(null);
+  const checkingPhotos = useRef(false);
   // The revision the checklist is read for, and a count that asks for it to be read again.
   const [checked, setChecked] = useState({ revision: readinessRevision, recheck: 0 });
   const readinessJob = useMemo(
@@ -212,6 +232,16 @@ function FinishActions({
   const prompted = problem && problem.next !== 'retry' && problem.checklist !== 'current' ? [] : items;
   // The refusal is visible during the refresh. Finish waits for the job and the readiness answer.
   const rechecking = problem?.checklist === 'checking' || (checked.recheck > 0 && readinessJob !== null && advisory === undefined);
+
+  async function finishWhenPhotosReady() {
+    if (checkingPhotos.current) return;
+    checkingPhotos.current = true;
+    try {
+      if (await photosReady(user, current.currentDraftId)) await finish();
+    } finally {
+      checkingPhotos.current = false;
+    }
+  }
 
   async function finish() {
     if (!manifest) return;
@@ -299,7 +329,7 @@ function FinishActions({
         <div role="alert" className="flex flex-col gap-3 rounded-md border border-red-700 p-3">
           <p>{problem.message}</p>
           {problem.next === 'retry' ? (
-            <Button disabled={busy} onClick={() => void (editing ? finish() : backToEditing())}>
+            <Button disabled={busy} onClick={() => void (editing ? finishWhenPhotosReady() : backToEditing())}>
               Try again
             </Button>
           ) : null}
@@ -339,7 +369,7 @@ function FinishActions({
             disabled={busy || rechecking}
             onClick={(event) => {
               const prompt = dialog.current;
-              if (!prompt || prompted.length === 0) return void finish();
+              if (!prompt || prompted.length === 0) return void finishWhenPhotosReady();
               // Some touch browsers do not focus a tapped button. Make it the focus return target.
               event.currentTarget.focus();
               prompt.showModal();
@@ -377,7 +407,7 @@ function FinishActions({
                     onClick={() => {
                       if (!dialog.current?.open) return;
                       dialog.current.close();
-                      void finish();
+                      void finishWhenPhotosReady();
                     }}
                   >
                     Continue anyway

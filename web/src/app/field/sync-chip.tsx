@@ -12,6 +12,7 @@ import { pending, usePending } from '@/lib/field/pending';
 import { byDraft, changedFields, chipText, keptText, PHOTOS_STAY, REASONS, RESTORE_FIRST, syncStatus, type Problem, type SyncStatus } from '@/lib/field/sync-status';
 import { useFieldClient } from './field-store';
 import { photoReferenceDone } from './photos-view';
+import { finishRecoveredPhotos } from '@/lib/field/photo-field';
 import { go, Outcome } from './ui';
 import { beginUpdateActivity } from '@/lib/update-activity';
 
@@ -207,23 +208,30 @@ function ProblemPanel({
   }
 
   // A photo reference these edits set leaves the photos being sent: it was sent, or discarded.
-  const photosDone = (edits: readonly JournalEntry[]) => {
-    const jobId = edits.find((entry) => entry.jobId)?.jobId;
-    if (!client || !jobId) return;
-    for (const write of edits.flatMap((entry) => entry.writes)) {
-      const photo = /\/photos\/([^/]+)$/.exec(write.path)?.[1];
-      if (photo && write.op === 'set') photoReferenceDone(client, jobId, photo);
+  const photosDone = async (edits: readonly JournalEntry[], action: 'acknowledge' | 'discard') => {
+    if (!client) return;
+    for (const group of byDraft(edits)) {
+      const jobId = group.find((entry) => entry.jobId)?.jobId;
+      const draftId = group[0]?.draftPath.split('/').at(-1);
+      if (!jobId || !draftId) continue;
+      const ids = new Set<string>();
+      for (const write of group.flatMap((entry) => entry.writes)) {
+        const photo = /\/photos\/([^/]+)$/.exec(write.path)?.[1];
+        if (photo && write.op === 'set') ids.add(photo);
+      }
+      await finishRecoveredPhotos(client, jobId, draftId, ids, action);
+      for (const photo of ids) photoReferenceDone(client, jobId, photo);
     }
   };
 
   // The edits are saved: the job's open screen reads the job and its draft again (the job was
   // restored, or its field work came back).
-  const sent = (edits: readonly JournalEntry[]) => {
+  const sent = async (edits: readonly JournalEntry[]) => {
     const jobId = edits.find((entry) => entry.jobId)?.jobId;
     if (!client || !jobId) return;
     pending.returned(jobId);
     pending.verify(jobId);
-    photosDone(edits);
+    await photosDone(edits, 'acknowledge');
   };
 
   const again = () =>
@@ -233,7 +241,7 @@ function ProblemPanel({
       for (const edits of byDraft(problem.entries)) {
         const answer = await tryAgain(client!, edits);
         answers.push(answer);
-        if (answer === 'sent') sent(edits);
+        if (answer === 'sent') await sent(edits);
       }
       if (answers.includes('no-answer')) return 'No answer from DryScope. Check the signal and try again.';
       if (answers.includes('refused')) return 'Still can’t save: the reason above still holds.';
@@ -264,8 +272,8 @@ function ProblemPanel({
 
   const discard = () =>
     run('Discarding…', async () => {
+      await photosDone(problem.entries, 'discard');
       await discardEntries(client!, problem.entries);
-      photosDone(problem.entries);
       return null;
     });
 
