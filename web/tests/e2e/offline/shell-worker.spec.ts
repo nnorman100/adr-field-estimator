@@ -2,6 +2,7 @@
 // only `setOffline`, which WebKit does not apply to a worker): the shell opens and reloads with no
 // signal; the worker keeps the listed files and nothing else; and a deployment never changes a
 // window that is running.
+import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from './fixture';
@@ -9,6 +10,8 @@ import { makeWorker, missingFromPrecache } from '../../../scripts/build-sw';
 import { PROBE_PATH } from '../../../src/app/field/connection';
 import { buildIdOf, cacheNames, cachedPaths, COMPANY, keptAsFiles, keptEntries, nudge, openControlled, precacheOf, workerText } from './shell';
 import { expectWorkerRuns } from '../service-workers';
+import { estimateFor } from '../review-fixtures';
+import { PASSWORD, readSeed } from '../sign-in/seed';
 
 // Offline and worker tests need the service worker, which the suite blocks by default.
 test.use({ serviceWorkers: 'allow' });
@@ -125,6 +128,44 @@ test.describe('a deployment', () => {
     expect(await page.content()).toContain('updated-shell');
     await expect(update).toBeHidden();
     await expect(page.getByRole('heading', { name: COMPANY })).toBeVisible();
+  });
+
+  test('a waiting update preserves unsaved work in an office window', async ({ context, page, lane }, testInfo) => {
+    const team = readSeed().teams[testInfo.project.name]!;
+    const job = { id: randomUUID(), status: 'submitted', currentDraftId: randomUUID(), revision: 3 };
+    const estimate = estimateFor(team, job.id, job.currentDraftId, 'estimator');
+    const jobApi = `/api/jobs/${job.id}`;
+    lane.serve(jobApi, { type: 'application/json', body: JSON.stringify({ job, customer: {}, claim: {} }) });
+    lane.serve(`${jobApi}/estimate`, { type: 'application/json', body: JSON.stringify({ job, estimate }) });
+
+    const worker = await workerText(lane);
+    await openControlled(page, lane);
+    const office = await context.newPage();
+    await office.goto(`${lane.appUrl}/sign-in/${team.address}`);
+    await office.getByLabel('Email').fill(team.estimator.email);
+    await office.getByLabel('Password').fill(PASSWORD);
+    await office.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await expect(office.getByRole('heading', { name: `Signed in to ${team.companyName}` })).toBeVisible();
+    await office.goto(`${lane.appUrl}/sign-in/${team.address}/jobs/${job.id}/review`);
+    await office.getByRole('checkbox', { name: /I reviewed the proposal/ }).check();
+    const signer = office.getByLabel("Customer's full name");
+    await signer.fill('Casey');
+
+    lane.serve('/sw.js', { type: 'text/javascript', body: worker.replace(buildIdOf(worker), 'office-busy') });
+    await nudge(page);
+    const update = page.getByRole('button', { name: 'Update now' });
+    await expect(update).toBeDisabled();
+    await expect(page.getByRole('status').filter({ hasText: 'Another window has unsaved work.' })).toBeVisible();
+    expect(await cacheNames(page)).toContain(`ds-field-${buildIdOf(worker)}`);
+    await expect(signer).toHaveValue('Casey');
+
+    await signer.clear();
+    await expect(update).toBeEnabled();
+    const reloaded = page.waitForEvent('framenavigated', (frame) => frame === page.mainFrame());
+    await update.click();
+    await reloaded;
+    await page.waitForLoadState('domcontentloaded');
+    await expect.poll(() => cacheNames(page)).toEqual(['ds-field-office-busy']);
   });
 
   test('a controller change reloads a second window, and a canceled reload can be tried again', async ({ context, page, lane }) => {

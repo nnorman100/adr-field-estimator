@@ -7,7 +7,7 @@ import { applyWaitingWorker, NO_WORKER, watchFieldWorker, type WorkerState } fro
 import { forgetKept, keepBlock, keepForUpdate } from '@/lib/field/update-keep';
 import { pending, usePending } from '@/lib/field/pending';
 import { holdsWindow, whileNoFieldWindow } from '@/lib/field/window-lock';
-import { subscribeToUpdate, updateBusy, updateRequired } from '@/lib/update-activity';
+import { hasHeldUpdatePeer, holdUpdateWindow, subscribeToUpdate, updateBusy, updateRequired } from '@/lib/update-activity';
 
 const BUSY_TEXT = {
   camera: 'Close the camera before updating.',
@@ -24,6 +24,8 @@ export const publicPage = (pathname: string | null): boolean => PUBLIC_PAGES.som
 // How long a reload that did not leave the page is waited for: the person stayed on the browser's
 // leave-this-page prompt.
 const RELOAD_WAIT_MS = 2000;
+const PEER_CHECK_MS = 500;
+const PEER_TEXT = 'Another window has unsaved work.';
 
 export function AppUpdate({ children }: { children: ReactNode }) {
   return publicPage(usePathname()) ? <>{children}</> : <UpdateWatch>{children}</UpdateWatch>;
@@ -35,14 +37,33 @@ function UpdateWatch({ children }: { children: ReactNode }) {
   const kept = usePending(keepBlock);
   const hasPendingWork = usePending(() => pending.kept() !== null);
   const [worker, setWorker] = useState<WorkerState>(NO_WORKER);
+  const [peerHeld, setPeerHeld] = useState<boolean | null>(null);
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState('');
   const starting = useRef(false);
   const heading = useRef<HTMLHeadingElement>(null);
   const { waiting, replaced, active, unsupported } = worker;
   const ready = waiting !== null || replaced;
+  const waitingUpdate = replaced ? null : waiting;
 
   useEffect(() => watchFieldWorker(setWorker), []);
+  useEffect(() => (hasPendingWork ? holdUpdateWindow() : undefined), [hasPendingWork]);
+  useEffect(() => {
+    if (!waitingUpdate) return;
+    let live = true;
+    let timer: number | undefined;
+    const check = async () => {
+      const held = await hasHeldUpdatePeer();
+      if (!live) return;
+      setPeerHeld(held);
+      timer = window.setTimeout(() => void check(), PEER_CHECK_MS);
+    };
+    void check();
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+    };
+  }, [waitingUpdate]);
   useEffect(() => {
     if (!needed) return;
     if ('serviceWorker' in navigator) {
@@ -50,10 +71,10 @@ function UpdateWatch({ children }: { children: ReactNode }) {
     }
   }, [needed]);
 
-  const reason = busy ? BUSY_TEXT[busy] : (kept ?? '');
+  const reason = busy ? BUSY_TEXT[busy] : (kept ?? (waitingUpdate && peerHeld ? PEER_TEXT : ''));
   // Work only this window holds stays reachable while the update waits for it: nothing covers it.
   const covering = needed && busy !== 'unsent' && kept === null;
-  const canUpdate = ready || (needed && (unsupported || active));
+  const canUpdate = (ready || (needed && (unsupported || active))) && (!waitingUpdate || peerHeld !== null);
   useEffect(() => {
     if (covering) heading.current?.focus();
   }, [covering]);
@@ -65,13 +86,18 @@ function UpdateWatch({ children }: { children: ReactNode }) {
     // The row this tap wrote, if any: an earlier one that was not put back yet is never removed here.
     let owner: string | null = null;
     try {
-      const activate = async (): Promise<boolean | 'elsewhere' | 'not-kept'> => {
+      const activate = async (): Promise<boolean | 'peer-held' | 'not-kept'> => {
         if (updateBusy()) return false;
         const carrying = pending.kept()?.owner ?? null;
         if (!(await keepForUpdate())) return 'not-kept';
         owner = carrying;
+        // The peer may have started work since the banner last checked.
+        if (waitingUpdate && (await hasHeldUpdatePeer())) {
+          setPeerHeld(true);
+          return 'peer-held';
+        }
         if (updateBusy()) return false;
-        return waiting && !replaced ? applyWaitingWorker(waiting) : true;
+        return waitingUpdate ? applyWaitingWorker(waitingUpdate) : true;
       };
       const updated = replaced || unsupported || holdsWindow() ? await activate() : await whileNoFieldWindow(activate);
       if (updated === true) {
@@ -82,7 +108,7 @@ function UpdateWatch({ children }: { children: ReactNode }) {
         window.location.reload();
         return;
       }
-      setError(
+      if (updated !== 'peer-held') setError(
         updated === 'elsewhere'
           ? 'Close the other DryScope window and try again.'
           : updated === 'not-kept'
@@ -106,7 +132,7 @@ function UpdateWatch({ children }: { children: ReactNode }) {
       if (owner) await forgetKept(owner).catch(() => undefined);
       settle();
     }
-  }, [canUpdate, replaced, unsupported, waiting]);
+  }, [canUpdate, replaced, unsupported, waitingUpdate]);
 
   useEffect(() => {
     // Another window accepted the update. Once this window is safe, reload it into the same build.

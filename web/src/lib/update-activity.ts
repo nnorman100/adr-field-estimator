@@ -6,6 +6,26 @@ let required = false;
 const listeners = new Set<() => void>();
 const changed = () => listeners.forEach((listener) => listener());
 
+const UPDATE_WORK = 'ds-update-work:';
+let windowLock: string | undefined;
+
+// All activity in this window shares its name. Closing the window releases its locks.
+export function holdUpdateWindow(): () => void {
+  if (typeof window === 'undefined' || !navigator.locks) return () => undefined;
+  windowLock ??= UPDATE_WORK + crypto.randomUUID();
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((done) => { release = done; });
+  void navigator.locks.request(windowLock, { mode: 'shared' }, () => held).catch(() => undefined);
+  return release;
+}
+
+export async function hasHeldUpdatePeer(): Promise<boolean> {
+  const snapshot = await navigator.locks?.query().catch(() => undefined);
+  return [...(snapshot?.held ?? []), ...(snapshot?.pending ?? [])].some(
+    ({ name }) => name?.startsWith(UPDATE_WORK) && name !== windowLock,
+  );
+}
+
 export function subscribeToUpdate(listener: () => void): () => void {
   listeners.add(listener);
   return () => { listeners.delete(listener); };
@@ -27,12 +47,14 @@ export function updateBusy(): Kind | null {
 }
 
 export function beginUpdateActivity(kind: Kind): () => void {
+  const releaseWindow = holdUpdateWindow();
   counts[kind]++;
   changed();
   let ended = false;
   return () => {
     if (ended) return;
     ended = true;
+    releaseWindow();
     counts[kind]--;
     changed();
   };
