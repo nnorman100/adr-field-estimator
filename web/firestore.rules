@@ -20,7 +20,7 @@ rules_version = '2';
 //   the `field` map, and only while `state` is editing, so every other state refuses every client
 //   write.
 //
-// The `field` maps follow field map v2 (`web/src/lib/field/schema.ts`): the rules check each
+// The `field` maps follow field map v3 (`web/src/lib/field/schema.ts`): the rules check each
 // key's type and size and refuse a key the map does not name. Every key is optional; clearing a
 // value deletes its key. `roomOrder` is checked for string ids, size and repeats; a room's items and
 // prep tasks, which have a fixed largest size, are checked entry by entry, one line per place.

@@ -11,7 +11,7 @@ import type { FieldManifest } from '@/lib/field/canonical';
 // evaluation (web/tests/ai-evals/runner.ts) both build their request here, so the eval measures the
 // request the route sends.
 //
-// Facts: the draft's field map and rooms (field map v2), the number of photos, the walkthrough turns
+// Facts: the draft's field map and rooms (field map v3), the number of photos, the walkthrough turns
 // that passed screening, the voice-note transcripts the technician reviewed, and the meter readings
 // the technician accepted. The job's saved customer name and address are never read into them, and
 // every string goes through the shared prompt builder (web/src/lib/ai/prompt-facts.ts), which removes
