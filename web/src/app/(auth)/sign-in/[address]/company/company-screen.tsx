@@ -100,12 +100,17 @@ function CompanySettings({
       });
     }
 
-    return onAuthStateChanged(auth, (user) => {
+    const stop = onAuthStateChanged(auth, (user) => {
       if (!user) return setPhase({ name: 'signed-out' });
       // This company's Auth instance only ever holds this tenant's sign-in.
       if (!belongsTo(user, tenantId)) return void signOutOrUnavailable('not-this-company');
       void open(user);
     });
+    return () => {
+      stop();
+      // A closed screen drops its late answers (stale), so an old /api/me never erases a list given back since.
+      authRef.current = null;
+    };
   }, [config, tenantId]);
 
   const signInLink = (

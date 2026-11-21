@@ -9,9 +9,9 @@ import {
   governing,
   onRefusalElsewhere,
   readItemList,
-  refusalStamp,
   refusedSince,
   replaceItemList,
+  requestStamp,
   unchanged,
   type ItemList,
   type SavedList,
@@ -39,8 +39,8 @@ type Answer = { list: ItemList | null } | 'refused';
 // What one open view knows. It outlives the effect below, which restarts when the connection
 // changes. `answer` is the newest the server gave this view (a list, no list, or a refusal) and
 // `saved` what the phone holds; the screen shows the answer when there is one and the saved copy
-// otherwise. A save changes only `saved` and `warning`. `stamp` is the refusal stamp noted when what
-// is shown was asked for: a refusal recorded since, in any tab, hides it.
+// otherwise. A save changes only `saved` and `warning`. `stamp` is the time what is shown was asked
+// for: a refusal recorded since, in any tab, hides it.
 type View = {
   loaded: boolean;
   online: boolean;
@@ -134,10 +134,10 @@ function PublishedList({ session }: { session: FieldSession }) {
     }
 
     // Hides what this view shows when a refusal has been recorded since it was asked for, in this
-    // tab or another. The tab that received the refusal erases the copy; a reload reads the counters
+    // tab or another. The tab that received the refusal erases the copy; a reload reads the refusal times
     // and shows nothing the refusal covers (ds-prices.ts).
     function hideIfRefused() {
-      if (!view.stamp || !refusedSince(owner, view.stamp)) return;
+      if (view.stamp === null || !refusedSince(owner, view.stamp)) return;
       view.stamp = null;
       // Only what is shown is hidden: an answer asked for since the refusal still comes in, and a
       // save of an older one is refused by its own stamp check (ds-prices.ts).
@@ -172,9 +172,9 @@ function PublishedList({ session }: { session: FieldSession }) {
       const sameSignIn = () => stillSameSignIn(auth, from);
       const pending = new AbortController();
       request = pending;
-      // The refusals recorded when this answer was asked for: it is saved only while none came since
+      // When this answer was asked for: it is shown and saved only while no refusal came since
       // (ds-prices.ts).
-      const stamp = refusalStamp(owner);
+      const stamp = requestStamp();
       const timeout = window.setTimeout(() => pending.abort(), REQUEST_TIMEOUT_MS);
       const stopped = new Promise<null>((resolve) => pending.signal.addEventListener('abort', () => resolve(null), { once: true }));
       let result: Awaited<ReturnType<typeof readPublishedItemList>> | null;
@@ -229,7 +229,7 @@ function PublishedList({ session }: { session: FieldSession }) {
         if (!from) return;
         let read: SavedList = null;
         let problem: string | null = null;
-        const stamp = refusalStamp(owner);
+        const stamp = requestStamp();
         if (keep) {
           try {
             read = await readItemList(owner);

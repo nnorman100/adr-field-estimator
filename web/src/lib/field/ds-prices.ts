@@ -33,59 +33,58 @@ export function governing(owner: ListOwner): () => boolean {
   return () => newest.get(key) === mine;
 }
 
-// What the phone records of the server's refusals: one counter per scope, the company's list
-// ([tenant, person, company]) or every list this person holds in this company tenant ([tenant,
-// person]), in localStorage so every tab and a reload see it. A raise only adds one, so it never
-// goes down; it needs no lock, because two tabs raising at once still leave it higher than before. A request for the list notes
-// the counters when it starts (its stamp) and its answer is shown and saved only while they are
-// unchanged; a saved row keeps the stamp of the request that fetched it, and a row stamped below
-// the current counters is owed an erase: it is never shown, and every read erases it first. No
-// clock decides any of it. When the phone's localStorage refuses the raise, the copy is erased all
-// the same, but one that cannot be erased may stay viewable offline until the next online check.
+// What the phone records of the server's refusals: per scope, the company's list ([tenant, person,
+// company]) or every list this person holds in this company tenant ([tenant, person]), the time
+// (Date.now()) of the latest refusal, in localStorage so every tab and a reload see it. A refusal
+// writes the later of the stored time and its own, once at once (a best-effort signal to other
+// tabs, which two tabs writing together can undo) and again under the cross-tab lock below, so the
+// value left never goes below any refusal's time. A request for the list notes the time it starts
+// (its stamp); its answer is shown and saved only while no refusal is recorded at or after that
+// time, and a saved row keeps that stamp: a row stamped at or before the latest refusal is owed an
+// erase, never shown, and every read erases it first. Clearing localStorage removes the times, but
+// any later refusal writes a newer one. When the phone's localStorage refuses the write, the copy
+// is erased all the same, but one that cannot be erased may stay viewable offline until the next
+// online check.
 type Scope = { tenantId: string; uid: string; companyId?: string };
-export type Stamp = readonly [number, number];
-const COUNTER_PREFIX = 'ds-prices-erase/';
+export type Stamp = number;
+const REFUSAL_PREFIX = 'ds-prices-erase/';
 
 const scopeKey = ({ tenantId, uid, companyId }: Scope) =>
   JSON.stringify(companyId === undefined ? [tenantId, uid] : [tenantId, uid, companyId]);
 
-function counter(scope: Scope): number {
+function refusedAt(scope: Scope): number {
   try {
-    const value = Number(window.localStorage.getItem(COUNTER_PREFIX + scopeKey(scope)));
+    const value = Number(window.localStorage.getItem(REFUSAL_PREFIX + scopeKey(scope)));
     return Number.isSafeInteger(value) && value > 0 ? value : 0;
   } catch {
     return 0;
   }
 }
 
-function raise(scope: Scope): void {
+function record(scope: Scope, at: number): void {
   try {
-    window.localStorage.setItem(COUNTER_PREFIX + scopeKey(scope), String(counter(scope) + 1));
+    if (refusedAt(scope) < at) window.localStorage.setItem(REFUSAL_PREFIX + scopeKey(scope), String(at));
   } catch {
     // Nothing more can be recorded.
   }
 }
 
-function stampOf({ tenantId, uid }: Person, companyId?: string): Stamp {
-  return [counter({ tenantId, uid }), companyId === undefined ? 0 : counter({ tenantId, uid, companyId })];
+// The latest refusal covering `companyId`'s list for this person (0: none recorded).
+function latestRefusal({ tenantId, uid }: Person, companyId?: string): number {
+  return Math.max(refusedAt({ tenantId, uid }), companyId === undefined ? 0 : refusedAt({ tenantId, uid, companyId }));
 }
 
 // Noted when a request for this owner's list starts.
-export const refusalStamp = (owner: ListOwner): Stamp => stampOf(owner, owner.companyId);
+export const requestStamp = (): Stamp => Date.now();
 
-const sameStamp = (left: Stamp, right: Stamp) => left[0] === right[0] && left[1] === right[1];
+// Whether a refusal has been recorded, in this tab or another, at or after `stamp`. Read without the
+// lock, it decides whether to hide what this page shows; under the lock, whether an answer counts.
+export const refusedSince = (owner: ListOwner, stamp: Stamp): boolean => latestRefusal(owner, owner.companyId) >= stamp;
 
-// Whether a refusal has been recorded, in this tab or another, since `stamp` was noted: a counter
-// went up. Read without the lock: it only decides whether to hide what this page shows.
-export function refusedSince(owner: ListOwner, stamp: Stamp): boolean {
-  const now = refusalStamp(owner);
-  return now[0] > stamp[0] || now[1] > stamp[1];
-}
-
-// Calls `check` whenever another tab changes a refusal counter that covers this owner's list (the
+// Calls `check` whenever another tab changes a refusal time that covers this owner's list (the
 // browser's storage event, which never fires in the tab that made the change). Returns the unsubscribe.
 export function onRefusalElsewhere(owner: ListOwner, check: () => void): () => void {
-  const keys = new Set([COUNTER_PREFIX + scopeKey(owner), COUNTER_PREFIX + scopeKey({ tenantId: owner.tenantId, uid: owner.uid })]);
+  const keys = new Set([REFUSAL_PREFIX + scopeKey(owner), REFUSAL_PREFIX + scopeKey({ tenantId: owner.tenantId, uid: owner.uid })]);
   const listener = (event: StorageEvent) => {
     if (event.storageArea === window.localStorage && event.key !== null && keys.has(event.key)) check();
   };
@@ -93,19 +92,18 @@ export function onRefusalElsewhere(owner: ListOwner, check: () => void): () => v
   return () => window.removeEventListener('storage', listener);
 }
 
-// Whether a refusal came after the request that fetched a row of `companyId` started. A row that
-// kept no stamp (saved before rows did) was fetched before any refusal.
+// Whether a refusal was recorded at or after the request that fetched a row of `companyId` started.
+// A row with no time as its stamp (saved before rows had one) counts as fetched before any refusal.
 function covered(person: Person, companyId: unknown, seen: unknown): boolean {
-  const [people, companies] =
-    Array.isArray(seen) && seen.length === 2 && seen.every((count) => Number.isSafeInteger(count) && count >= 0) ? (seen as unknown as Stamp) : [0, 0];
-  const now = stampOf(person, typeof companyId === 'string' ? companyId : undefined);
-  return people < now[0] || companies < now[1];
+  const latest = latestRefusal(person, typeof companyId === 'string' ? companyId : undefined);
+  const fetched = typeof seen === 'number' && Number.isSafeInteger(seen) && seen > 0 ? seen : 0;
+  return latest > 0 && fetched <= latest;
 }
 
 // Whether no refusal has been recorded since a request with `stamp` started; asked under the lock,
 // so a refusal already waiting for it has been recorded.
 export function unchanged(owner: ListOwner, stamp: Stamp): Promise<boolean> {
-  return changing(owner, async () => sameStamp(stamp, refusalStamp(owner)));
+  return changing(owner, async () => !refusedSince(owner, stamp));
 }
 
 // What an authenticated GET /api/me answer that the caller accepts means for the item list: without
@@ -274,13 +272,13 @@ export function replaceItemList(owner: ListOwner, list: ItemList | null, authTim
     // cannot put it back. authTime also guards a new sign-in by the same person.
     const me = await readMe(owner.tenantId, owner.uid);
     if (!me || me.companyId !== owner.companyId || me.authTime !== authTime || !active()) return false;
-    if (!sameStamp(stamp, refusalStamp(owner))) return false;
+    if (refusedSince(owner, stamp)) return false;
     const versionId = list?.versionId ?? NONE;
     const row = await stored(owner, signal);
     if (row?.versionId === versionId && !covered(owner, owner.companyId, row.seen)) return true;
     return onLists('readwrite', signal, true, (store) => {
       // Asked again now the write has started: a refusal or a newer answer may have come meanwhile.
-      if (!active() || !sameStamp(stamp, refusalStamp(owner))) return () => false;
+      if (!active() || refusedSince(owner, stamp)) return () => false;
       store.delete(range(owner, owner.companyId));
       store.put({ ...owner, versionId, list, seen: stamp });
       return () => true;
@@ -289,29 +287,31 @@ export function replaceItemList(owner: ListOwner, list: ItemList | null, authTim
 }
 
 // The server refused this company's list for this person (an item-list refusal, or GET /api/me
-// without prices_read): the refusal is recorded at once, before this returns, so a screen that goes
-// on to show its answer never leaves it unrecorded behind another tab's held lock. The copy is then
-// erased under the lock. True when the copy is gone; when it is not, it is owed (a row stamped below
-// the counter) and every read erases it first.
+// without prices_read): the refusal's time is written at once, before this returns, so a screen
+// that goes on to show its answer never leaves it unrecorded behind another tab's held lock, and
+// written again under the lock, which a write from another tab at the same moment cannot undo. The
+// copy is then erased. It is recorded on a phone with no IndexedDB too. True when the copy is gone;
+// when it is not, it is owed (a row stamped at or before the refusal) and every read erases it first.
 export function eraseItemList(owner: ListOwner): Promise<boolean> {
-  if (typeof indexedDB === 'undefined') return Promise.resolve(true);
-  // Recorded once: a retry of the erase must not count as a new refusal, which would drop an answer
-  // asked for after access came back.
-  raise(owner);
-  return twice(() => changing(owner, (signal) => erase(owner, signal))).then(() => true, () => false);
+  const at = Date.now();
+  record(owner, at);
+  return twice(() => changing(owner, async (signal) => {
+    record(owner, at);
+    if (typeof indexedDB !== 'undefined') await erase(owner, signal);
+  })).then(() => true, () => false);
 }
 
 // Sign-out: every list this person holds in this company tenant goes. Throws, with the erase owed,
 // when the phone could not finish it. `active` says the sign-in this is for has not been replaced,
-// asked under the lock: a newer one's lists stay and nothing is recorded.
+// asked under the lock: a newer one's lists stay and nothing is recorded. It is recorded on a phone
+// with no IndexedDB too.
 export async function forgetItemLists(person: Person, active: () => boolean = () => true): Promise<void> {
-  if (typeof indexedDB === 'undefined' || !active()) return;
+  if (!active()) return;
   const whole = { tenantId: person.tenantId, uid: person.uid };
-  let recorded = false;
+  const at = Date.now();
   await twice(() => changing(person, async (signal) => {
     if (!active()) return;
-    if (!recorded) raise(whole);
-    recorded = true;
-    await erase(person, signal);
+    record(whole, at);
+    if (typeof indexedDB !== 'undefined') await erase(person, signal);
   }));
 }

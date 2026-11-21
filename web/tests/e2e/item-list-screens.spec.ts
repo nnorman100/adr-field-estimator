@@ -17,21 +17,21 @@ test.beforeEach(({}, testInfo) => {
   team = readSeed().teams[testInfo.project.name]!;
 });
 
-async function signIn(page: Page) {
+async function signIn(page: Page, who: { email: string } = team.estimator) {
   await page.goto(`/sign-in/${team.address}`);
-  await page.getByLabel('Email').fill(team.estimator.email);
+  await page.getByLabel('Email').fill(who.email);
   await page.getByLabel('Password').fill(PASSWORD);
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await expect(page.getByRole('heading', { name: `Signed in to ${team.companyName}` })).toBeVisible();
 }
 
-// Saves an item list for the estimator as Check Scope would, stamped with the refusals recorded so
-// far, so no refusal before this covers it. Waits first for the item-list work sign-in queued.
+// Saves an item list for the estimator as Check Scope would, stamped with a time after every refusal
+// recorded so far, so none covers it. Waits first for the item-list work sign-in queued.
 const saveCopy = (page: Page, owner: { tenantId: string; uid: string; companyId: string }) =>
   page.evaluate(async ({ tenantId, uid, companyId }) => {
     await navigator.locks.request(JSON.stringify(['ds-prices', tenantId, uid]), () => undefined);
-    const counter = (scope: string[]) => Number(localStorage.getItem(`ds-prices-erase/${JSON.stringify(scope)}`)) || 0;
-    const seen = [counter([tenantId, uid]), counter([tenantId, uid, companyId])];
+    const refusedAt = (scope: string[]) => Number(localStorage.getItem(`ds-prices-erase/${JSON.stringify(scope)}`)) || 0;
+    const seen = Math.max(Date.now(), refusedAt([tenantId, uid]) + 1, refusedAt([tenantId, uid, companyId]) + 1);
     const list = {
       versionId: crypto.randomUUID(), publishedAt: '2026-11-10T12:00:00Z',
       items: [{ itemId: 'extraction', name: 'Water extraction', unit: 'sf' }], roomTypes: [],
@@ -85,7 +85,7 @@ test('a screen records the refusal before it shows its answer, even while anothe
   const owner = { tenantId: team.tenantId, uid: team.estimator.uid, companyId: team.companyId };
   await signIn(page);
   await saveCopy(page, owner);
-  const counter = () => page.evaluate((scope) => Number(localStorage.getItem(`ds-prices-erase/${JSON.stringify(scope)}`)) || 0, [owner.tenantId, owner.uid, owner.companyId]);
+  const refusedAt = () => page.evaluate((scope) => Number(localStorage.getItem(`ds-prices-erase/${JSON.stringify(scope)}`)) || 0, [owner.tenantId, owner.uid, owner.companyId]);
 
   // Another tab (Check Scope in the middle of a slow save) holds the person's item-list lock. Its page
   // is one that runs none of the app's item-list code.
@@ -98,13 +98,46 @@ test('a screen records the refusal before it shows its answer, even while anothe
     }));
   }), JSON.stringify(['ds-prices', owner.tenantId, owner.uid]));
 
-  const before = await counter();
+  const before = await refusedAt();
   await page.goto(`/sign-in/${team.address}/company`);
   await expect(page.getByRole('heading', { name: 'This screen is for the company owner' })).toBeVisible();
   // Recorded already: a reload in any tab, even offline, now shows nothing of the saved copy.
-  expect(await counter()).toBe(before + 1);
+  expect(await refusedAt()).toBeGreaterThan(before);
   expect(await savedCount(page)).toBe(1);
 
   await other.evaluate(() => (window as unknown as { releaseItemListLock: () => void }).releaseItemListLock());
   await expect.poll(() => savedCount(page)).toBe(0);
+});
+
+test('a screen the person has left drops its late /api/me answer and records no refusal', async ({ page }) => {
+  // The owner: the signed-in screen links to Company settings only for them.
+  const owner = { tenantId: team.tenantId, uid: team.owner.uid, companyId: team.companyId };
+  await signIn(page, team.owner);
+  await saveCopy(page, owner);
+  const refusedAt = () => page.evaluate((scope) => Number(localStorage.getItem(`ds-prices-erase/${JSON.stringify(scope)}`)) || 0, [owner.tenantId, owner.uid, owner.companyId]);
+
+  // Company settings' GET /api/me is held until the person has gone back (an in-app navigation).
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  let first = true;
+  await page.route('**/api/me', async (route) => {
+    if (!first) return route.continue();
+    first = false;
+    await held;
+    await route.continue();
+  });
+  await page.getByRole('link', { name: 'Company settings' }).click();
+  await expect(page).toHaveURL(new RegExp(`/sign-in/${team.address}/company$`));
+  await page.goBack();
+  await expect(page.getByRole('heading', { name: `Signed in to ${team.companyName}` })).toBeVisible();
+  // What the sign-in screen recorded, once its own item-list work is done.
+  await page.evaluate((lock) => navigator.locks.request(lock, () => undefined), JSON.stringify(['ds-prices', owner.tenantId, owner.uid]));
+  const before = await refusedAt();
+
+  const late = page.waitForResponse((response) => response.url().endsWith('/api/me'));
+  release();
+  await late;
+  await page.waitForTimeout(500);
+  await page.evaluate((lock) => navigator.locks.request(lock, () => undefined), JSON.stringify(['ds-prices', owner.tenantId, owner.uid]));
+  expect(await refusedAt()).toBe(before);
 });
