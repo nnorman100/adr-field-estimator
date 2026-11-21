@@ -114,7 +114,12 @@ export function RoomCard({
   const ownTask = (drafts[draftId] ?? NO_TYPED).rooms[roomId]?.task ?? '';
   const earlierTasks = typedBefore(drafts, draftId).rooms[roomId]?.tasks ?? [];
   const setOwnTask = (text: string) => pending.typeTask(jobId, draftId, roomId, text, { field: stored, number });
-  const values = withEdits(ROOM_FIELDS, stored, edits);
+  const visibleField = job.lost ? {} : stored;
+  const values = withEdits(ROOM_FIELDS, visibleField, edits);
+  const visibleItems = job.lost && listEdits.items
+    ? Object.fromEntries(Object.entries(listEdits.items).filter(([id, quantity]) => stored.items?.[id] !== quantity))
+    : listEdits.items;
+  const visibleTasks = job.lost ? listEdits.prepTasks?.filter((task) => !stored.prepTasks?.includes(task)) : listEdits.prepTasks;
   const [ownTyped, setOwnTyped] = useState(false);
   const result = roomChanges(values, stored, listEdits);
   const unsaved = editedResult(result, edits);
@@ -145,8 +150,8 @@ export function RoomCard({
     setListEdits((current) => ({ ...current, ...next }));
     setNotice(null);
   };
-  const title = stored.name ?? `Room ${number}`;
-  const mold = values.category === 'mold';
+  const title = visibleField.name ?? `Room ${number}`;
+  const mold = values.category === 'mold' || (job.lost && (edits.affectedSf !== undefined || edits.moldCondition !== undefined));
 
   async function save() {
     if (job.stale || readOnly) return;
@@ -220,8 +225,8 @@ export function RoomCard({
       <div className="grid grid-cols-2 gap-3">{['floorSf', 'wetFloorSf', 'finishedSf', 'unfinishedSf', 'wastePercent'].map(area)}</div>
       <RoomItems
         id={id('items')}
-        stored={stored.items ?? {}}
-        edited={listEdits.items}
+        stored={visibleField.items ?? {}}
+        edited={visibleItems}
         onChange={(items) => setList({ items })}
         lists={lists}
         suggested={roomType.suggested}
@@ -231,8 +236,8 @@ export function RoomCard({
       <RoomPrepTasks
         onTyped={setOwnTyped}
         id={id('prep')}
-        stored={stored.prepTasks ?? []}
-        edited={listEdits.prepTasks}
+        stored={visibleField.prepTasks ?? []}
+        edited={visibleTasks}
         onChange={(prepTasks) => setList({ prepTasks })}
         templates={lists?.prepTasks ?? []}
         error={errors.prepTasks}

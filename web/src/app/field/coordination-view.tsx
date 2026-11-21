@@ -10,7 +10,6 @@ import {
   unassignEstimator,
   type Answer,
   type CoordinationView as View,
-  type JobDetail,
   type Person,
 } from '@/lib/field/api';
 import { pending, usePending, type CoordRequest } from '@/lib/field/pending';
@@ -38,7 +37,7 @@ function send(user: JobContext['session']['user'], jobId: string, request: Coord
 // jobs API. Office notes (`coordination`), the estimators assigned (`assignment`), and who owns the
 // field work, which the owner alone moves (owner decision J5, `field_owner_transfer`). An estimator
 // never sees any of it (docs/spec.md 2.3); the server refuses them too.
-export function CoordinationView({ job, open }: { job: JobContext & { detail: JobDetail }; open: boolean }) {
+export function CoordinationView({ job, open }: { job: JobContext; open: boolean }) {
   const caps = job.session.capabilities;
   const mayView = caps.includes('coordination') || caps.includes('assignment');
   const { user } = job.session;
@@ -56,7 +55,7 @@ export function CoordinationView({ job, open }: { job: JobContext & { detail: Jo
     setSeen(settled);
     setAsked((count) => count + 1);
   }
-  const wanted = open && mayView && job.session.online && asked >= answered;
+  const wanted = open && !job.lost && mayView && job.session.online && asked >= answered;
 
   useEffect(() => {
     if (!wanted) return;
@@ -77,7 +76,7 @@ export function CoordinationView({ job, open }: { job: JobContext & { detail: Jo
     };
   }, [wanted, asked, user, job.jobId, checkAccess]);
 
-  if (!mayView) {
+  if (!mayView && !job.lost) {
     return (
       <div className="flex flex-col gap-2">
         <h3 className="text-lg font-semibold">Job coordination</h3>
@@ -107,7 +106,7 @@ export function CoordinationView({ job, open }: { job: JobContext & { detail: Jo
   return <Coordination job={job} view={view} setView={setView} reread={() => setAsked((count) => count + 1)} />;
 }
 
-function Coordination({ job, view, setView, reread }: { job: JobContext & { detail: JobDetail }; view: View; setView: (view: View) => void; reread: () => void }) {
+function Coordination({ job, view, setView, reread }: { job: JobContext; view: View; setView: (view: View) => void; reread: () => void }) {
   const caps = job.session.capabilities;
   const { jobId, session } = job;
   const { user } = session;
@@ -191,6 +190,16 @@ function Coordination({ job, view, setView, reread }: { job: JobContext & { deta
     markUnsaved('notes', notesUnsaved ? () => setNotes(null) : null);
     return () => markUnsaved('notes', null);
   }, [markUnsaved, notesUnsaved]);
+
+  if (job.lost) {
+    const ownNotes = notes ?? (held?.request.kind === 'notes' ? held.request.notes : '');
+    return ownNotes ? (
+      <Section title="Office notes">
+        <label htmlFor="office-notes">Office notes</label>
+        <textarea id="office-notes" rows={5} className="w-full rounded-md border border-input p-3" readOnly value={ownNotes} />
+      </Section>
+    ) : null;
+  }
 
   return (
     <div className="flex flex-col gap-4">

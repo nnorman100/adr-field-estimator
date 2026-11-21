@@ -888,3 +888,49 @@ test('an assigned estimator can use the drying log without owning the draft and 
   await log.getByRole('button', { name: 'Save reading' }).click();
   await expect(log.getByText('Cold anomaly')).toBeVisible();
 });
+
+test('a confirmed drying log denial hides fetched field data but keeps the former technician’s own edits', async ({ page, request }) => {
+  const company = await seedCompany('drying-denial', { owner: 'owner', office: 'office', first: 'estimator', second: 'estimator' });
+  const address = '85 Drying Denial Lane';
+  const { jobId, assignments, actorOf, headers } = await seedJob(request, company, company.people.office!, address, [company.people.first!, company.people.second!]);
+  await claim(request, company, company.people.first!, jobId);
+  await signIn(page, company, company.people.first!);
+  await openJob(page, address);
+  await page.getByLabel('New room name').fill('Fetched Room');
+  await page.getByRole('button', { name: 'Add room' }).click();
+  await roomOnServer(company, jobId, 'Fetched Room');
+  await page.getByLabel('Year built').fill('1962');
+
+  await main(page).getByRole('link', { name: 'Photos' }).click();
+  await page.getByLabel('Room', { exact: true }).selectOption({ label: 'Fetched Room' });
+  await page.getByLabel('Shot').selectOption({ label: 'Overview' });
+  await page.getByLabel('Take photo').setInputFiles({
+    name: 'photo.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAZ0lEQVR4nBWMQQ0AQAyDqmRKqgQlU1IlU1JFl+NJCBIaZARaFHSoSGKGMQOzTJhjykh4sDF4cfDhYokfm89C4KAgscP6y1027LFlJTLEP82SkCMlEjec/+CWC3dcOYkO9d92aejR0gf/sEsBLaIzfQAAAABJRU5ErkJggg==', 'base64'),
+  });
+  const photo = page.getByRole('img', { name: 'Photo 1, Fetched Room, Overview' });
+  await expect(photo).toBeVisible();
+  await main(page).getByRole('link', { name: 'Customer and claim' }).click();
+  await page.getByLabel('Insurance carrier').fill('Typed Mutual');
+  await main(page).getByRole('link', { name: 'Check Scope' }).click();
+
+  await transfer(request, company, jobId, actorOf(company.people.second!));
+  expect((await request.delete(`${JOBS_BASE_URL}/api/jobs/${jobId}/assignments/${assignments[0]}`, { headers })).status()).toBe(200);
+  const denial = page.waitForResponse((response) => response.url().includes(`/api/jobs/${jobId}/drying-readings`) && response.status() === 404);
+  await page.getByRole('button', { name: 'Drying log', exact: true }).click();
+  await denial;
+  await expect(page.getByText(MOVED)).toBeVisible();
+  await expect(main(page).getByText(address, { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('form', { name: 'Fetched Room', exact: true })).toHaveCount(0);
+  await expect(page.getByLabel('Year built')).toHaveValue('1962');
+  await expect(page.getByLabel('Year built')).not.toBeEditable();
+
+  await main(page).getByRole('link', { name: 'Photos' }).click();
+  await expect(photo).toHaveCount(0);
+  await expect(main(page).getByText('Fetched Room')).toHaveCount(0);
+  await main(page).getByRole('link', { name: 'Customer and claim' }).click();
+  await expect(page.getByLabel('Insurance carrier')).toHaveValue('Typed Mutual');
+  await expect(page.getByLabel('Insurance carrier')).not.toBeEditable();
+  await expect(page.getByLabel('Property address')).toHaveValue('');
+});

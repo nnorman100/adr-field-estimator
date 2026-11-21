@@ -100,7 +100,7 @@ export function ScopeView({ job, draft, open, readinessFix }: { job: JobContext;
       {readinessFix === 'readiness-findings' ? (
         <p id="readiness-findings" tabIndex={-1} className="text-sm">The summary of findings is separate from job notes. Ask your company for help adding it.</p>
       ) : null}
-      {open ? <PublishedItemList session={job.session} /> : null}
+      {open && !job.lost ? <PublishedItemList session={job.session} /> : null}
       {box(YEAR_FIELD)}
       <RoomsSection job={job} draft={draft} />
       <form
@@ -112,7 +112,7 @@ export function ScopeView({ job, draft, open, readinessFix }: { job: JobContext;
         }}
       >
         <Section title="Equipment">
-          <EquipmentSuggestion draft={draft} />
+          {job.lost ? null : <EquipmentSuggestion draft={draft} />}
           <div className="grid grid-cols-2 gap-3">{EQUIPMENT_FIELDS.map(box)}</div>
         </Section>
         <Section title="Job charges">

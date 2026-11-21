@@ -726,3 +726,97 @@ test('an older signed job without a saved plan shows that the drying watch is un
   await expect(watch.getByRole('button', { name: 'Mark dry' })).toHaveCount(0);
   await expectNoSideways(page);
 });
+
+test('a definitive drying denial clears signed Review while an earlier watch access check is held', async ({ page }) => {
+  const job = { id: randomUUID(), status: 'signed', currentDraftId: randomUUID(), revision: 4 };
+  const made = estimateFor(team, job.id, job.currentDraftId, 'estimator');
+  await playApi(page, job, { estimate: made, agreement: signedFor(made, randomUUID()) });
+  await signInTo(page, team.estimator);
+  await page.route('**/api/me', async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    await route.fulfill({ response, json: { ...body, features: { ...body.features, drying_watch: true } } });
+  });
+  await page.route(`**/api/jobs/${job.id}/drying-watch`, (route) =>
+    route.fulfill({ status: 404, json: { error: 'not_found' } }),
+  );
+  await page.route(new RegExp(`/api/jobs/${job.id}/drying-readings(?:[?]|$)`), (route) =>
+    route.fulfill({ status: 404, json: { error: 'not_found' } }),
+  );
+  let jobReads = 0;
+  let checked!: () => void;
+  const checkStarted = new Promise<void>((resolve) => { checked = resolve; });
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  await page.route(`**/api/jobs/${job.id}`, async (route) => {
+    jobReads += 1;
+    if (jobReads === 2) {
+      checked();
+      await held;
+    }
+    await route.fallback();
+  });
+
+  await page.goto(`/sign-in/${team.address}/jobs/${job.id}/review`);
+  const main = page.getByRole('main');
+  await expect(main.getByRole('region', { name: 'Signed proposal' })).toBeVisible();
+  await checkStarted;
+  const lateJob = page.waitForResponse((response) => new URL(response.url()).pathname === `/api/jobs/${job.id}`);
+  try {
+    await main.getByRole('button', { name: 'Drying log', exact: true }).click();
+    await expect(main.getByRole('heading', { name: 'This job could not be found' })).toBeVisible();
+    await expect(main.getByRole('region', { name: 'Signed proposal' })).toHaveCount(0);
+  } finally {
+    release();
+  }
+  const response = await lateJob;
+  expect(response.status()).toBe(200);
+  await response.finished();
+  await expect(main.getByRole('heading', { name: 'This job could not be found' })).toBeVisible();
+  await expect(main.getByRole('region', { name: 'Signed proposal' })).toHaveCount(0);
+});
+
+test('an unreadable foreground identity reply keeps a drying entry and the document link issued at signing', async ({ page }) => {
+  const job = { id: randomUUID(), status: 'submitted', currentDraftId: randomUUID(), revision: 3 };
+  const made = estimateFor(team, job.id, job.currentDraftId, 'estimator');
+  const signing: Signing = { signatures: [], agreements: [] };
+  const token = 'H0meownerTokenMadeAtSigningOnThePhone_abcde'.slice(0, 43);
+  await playApi(page, job, {
+    estimate: made,
+    signature: () => [201, { photoId: 'x', kind: 'signature', sha256: 'f'.repeat(64) }],
+    sign: () => {
+      const id = (signing.agreements[0] as { signatureId: string }).signatureId;
+      const link = { id: randomUUID(), set: 'homeowner', status: 'active', createdAt: '2026-11-15T18:00:00.000Z', expiresAt: '2026-12-15T18:00:00.000Z', endedAt: null };
+      job.status = 'signed';
+      return [201, { job, agreement: signedFor(made, id), documentLinks: [{ link, token }], links: [link] }];
+    },
+  }, signing);
+  await page.route(`**/api/jobs/${job.id}/document-links**`, (route) => route.fulfill({ status: 503, json: { error: 'links_unavailable' } }));
+  await page.route(new RegExp(`/api/jobs/${job.id}/drying-readings(?:[?]|$)`), (route) =>
+    route.fulfill({ json: { jobId: job.id, readings: [], next: null, canChange: true } }),
+  );
+  await page.route(`**/api/jobs/${job.id}/drying-rooms`, (route) =>
+    route.fulfill({ json: { jobId: job.id, rooms: [] } }),
+  );
+  await signInTo(page, team.estimator);
+  await page.goto(`/sign-in/${team.address}/jobs/${job.id}/review`);
+  const main = page.getByRole('main');
+  await main.getByRole('checkbox', { name: /I reviewed the proposal/ }).check();
+  await main.getByLabel("Customer's full name").fill('Casey Customer');
+  await drawSignature(page);
+  await main.getByRole('button', { name: 'Sign', exact: true }).click();
+
+  const issued = main.getByRole('textbox', { name: "Homeowner's documents link" });
+  await expect(issued).toHaveValue(new RegExp(`/documents#${token}$`));
+  await main.getByRole('button', { name: 'Drying log', exact: true }).click();
+  const log = main.getByRole('region', { name: 'Drying log' });
+  await log.getByLabel('Temperature (°F)').fill('70');
+  await page.route('**/api/me', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '{"company":' }));
+  const unreadable = page.waitForResponse((response) => response.url().endsWith('/api/me'));
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
+  expect((await unreadable).status()).toBe(200);
+  await expect(log.getByRole('button', { name: 'Save reading' })).toBeEnabled();
+  await expect(log.getByLabel('Temperature (°F)')).toHaveValue('70');
+  await expect(issued).toHaveValue(new RegExp(`/documents#${token}$`));
+  await expect(main.getByRole('region', { name: 'Signed proposal' })).toBeVisible();
+});

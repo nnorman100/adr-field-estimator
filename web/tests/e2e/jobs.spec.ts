@@ -622,7 +622,7 @@ async function openSignedDryingJob(page: Page, request: APIRequestContext) {
   await signIn(page, company, owner);
   await main(page).getByRole('link', { name: address }).click();
   await main(page).getByRole('link', { name: 'Check Scope' }).click();
-  return { id, headers };
+  return { id, headers, companyId: company.id };
 }
 
 test('signed drying watch rejects a stale confirmation and saves the reason after fresh confirmation', async ({ page, request }) => {
@@ -677,4 +677,39 @@ test('signed drying watch refreshes after a material reading is added and voided
   await expect(watch.getByText('Marked dry by staff.')).toBeVisible();
   await expect(watch.getByText('Confirmed by meter.')).toBeVisible();
   await expectNoSideways(page);
+});
+
+test('a refused replay of a committed drying watch action keeps the exact request', async ({ page, request }) => {
+  const { id, headers, companyId } = await openSignedDryingJob(page, request);
+  const watch = page.getByRole('region', { name: 'Drying watch' });
+  const posts: Array<{ status: number; body: string | null }> = [];
+  await page.route(`**/api/jobs/${id}/drying-watch/actions`, async (route) => {
+    const response = await route.fetch();
+    posts.push({ status: response.status(), body: route.request().postData() });
+    if (posts.length === 1) return route.abort();
+    await route.fulfill({ response });
+  });
+
+  await watch.getByRole('button', { name: 'Extend plan', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Extend plan', exact: true });
+  const reason = 'Recheck the room tomorrow.';
+  await dialog.getByLabel('Reason').fill(reason);
+  await dialog.getByRole('button', { name: 'Confirm extension' }).click();
+  await expect(dialog.getByRole('alert')).toContainText('Could not confirm that the monitoring decision was saved');
+
+  const db = adminSql();
+  await db`UPDATE company_feature_flags SET enabled = false WHERE company_id = ${companyId} AND flag = 'drying_watch'`;
+  await dialog.getByRole('button', { name: 'Try again', exact: true }).click();
+  await expect(watch.getByRole('alert')).toContainText('Monitoring access changed.');
+  await db`UPDATE company_feature_flags SET enabled = true WHERE company_id = ${companyId} AND flag = 'drying_watch'`;
+  await watch.getByRole('button', { name: 'Try again: Extend plan', exact: true }).click();
+  await expect(dialog.getByLabel('Reason')).toHaveValue(reason);
+  await dialog.getByRole('button', { name: 'Try again', exact: true }).click();
+  await expect(watch.getByRole('status')).toHaveText('Monitoring decision saved.');
+  await expect(watch.getByText(reason, { exact: true })).toBeVisible();
+  expect(posts.map(({ status }) => status)).toEqual([201, 404, 200]);
+  expect(posts.map(({ body }) => body)).toEqual([posts[0]!.body, posts[0]!.body, posts[0]!.body]);
+  const response = await request.get(`${JOBS_BASE_URL}/api/jobs/${id}/drying-watch`, { headers });
+  expect(response.status()).toBe(200);
+  expect((await response.json()).decisions).toEqual([expect.objectContaining({ action: 'extend', reason })]);
 });

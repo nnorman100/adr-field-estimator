@@ -31,7 +31,7 @@ export const SAVE_AS_ANOTHER = 'Save as another new draft';
 // once the server refused this person the job (no access), so nothing of it is shown.
 function jobLabel(problem: Problem, listDenied: boolean): string | null {
   if (problem.reason === 'no-access') return null;
-  const address = problem.jobId && !listDenied ? pending.detail(problem.jobId)?.job.propertyAddress : '';
+  const address = problem.jobId && !listDenied && !pending.moved(problem.jobId)?.revoked ? pending.detail(problem.jobId)?.job.propertyAddress : '';
   if (address) return address;
   return problem.jobId ? `Job ${problem.jobId.slice(0, 8)}` : `Draft ${problem.draftPath.split('/').at(-1)?.slice(0, 8) ?? ''}`;
 }

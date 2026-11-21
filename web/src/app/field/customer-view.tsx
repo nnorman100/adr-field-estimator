@@ -7,8 +7,6 @@ import { pending, usePending, type RecordKind } from '@/lib/field/pending';
 import type { JobContext } from './job-screens';
 import { Box, Outcome, Section } from './ui';
 
-type CustomerJob = JobContext & { detail: JobDetail };
-
 type Values = Record<string, string>;
 type BoxSpec = { key: string; label: string; type?: 'email' | 'tel' | 'date'; autoComplete?: string; inputMode?: 'decimal' };
 
@@ -37,10 +35,10 @@ const claimOf = (detail: JobDetail): Values => ({ ...detail.claim, dateOfLoss: d
 // Customer and claim (S5a-6), saved to the jobs API (S5a-3), which keeps them in the database. Who
 // may save follows owner decision J3: the estimator who owns the field work, the owner and office,
 // while the job is unsigned; the server decides, and its refusal is shown.
-export function CustomerView({ job }: { job: CustomerJob }) {
+export function CustomerView({ job }: { job: JobContext }) {
   // Read only once the field work moved away from this person (J5), or the job is archived (S5b-2):
   // what they typed stays, unsaved.
-  const canSave = job.session.capabilities.some((key) => key === 'scope' || key === 'coordination') && !job.moved && !job.held;
+  const canSave = job.session.capabilities.some((key) => key === 'scope' || key === 'coordination') && job.detail !== null && !job.moved && !job.held;
   return (
     <div className="flex flex-col gap-4">
       <h3 className="sr-only">Customer and claim</h3>
@@ -51,7 +49,7 @@ export function CustomerView({ job }: { job: CustomerJob }) {
         boxes={CUSTOMER}
         readOnly={!canSave}
         send={(values, revision, changeId) =>
-          saveCustomer(job.session.user, job.detail.job.id, {
+          saveCustomer(job.session.user, job.jobId, {
             name: values.name!,
             phone: values.phone!,
             email: values.email!,
@@ -69,7 +67,7 @@ export function CustomerView({ job }: { job: CustomerJob }) {
         boxes={CLAIM}
         readOnly={!canSave}
         send={(values, revision, changeId) =>
-          saveClaim(job.session.user, job.detail.job.id, {
+          saveClaim(job.session.user, job.jobId, {
             carrier: values.carrier!,
             claimNumber: values.claimNumber!,
             policyNumber: values.policyNumber!,
@@ -104,7 +102,7 @@ function RecordForm({
   send,
   reread,
 }: {
-  job: CustomerJob;
+  job: JobContext;
   title: string;
   kind: RecordKind;
   boxes: BoxSpec[];
@@ -112,7 +110,7 @@ function RecordForm({
   send: (values: Values, revision: number, changeId: string) => Promise<Answer<JobDetail>>;
   reread: (detail: JobDetail) => Values;
 }) {
-  const jobId = job.detail.job.id;
+  const jobId = job.jobId;
   const [edits, setEdits] = useState<Values>({});
   const unsettled = usePending(() => pending.record(jobId));
   const mine = unsettled?.kind === kind ? unsettled : null;
@@ -125,8 +123,8 @@ function RecordForm({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const changed = { ...refusal?.edits, ...edits };
-  const baseline = mine?.values ?? reread(job.detail);
-  const shown = mine?.values ?? { ...baseline, ...changed };
+  const baseline = job.detail ? mine?.values ?? reread(job.detail) : {};
+  const shown = job.lost ? { ...mine?.edits, ...changed } : mine?.values ?? { ...baseline, ...changed };
   const { markUnsaved } = job;
   const dirty = Object.entries(changed).some(([key, value]) => baseline[key] !== value);
   useLayoutEffect(() => {
@@ -143,6 +141,7 @@ function RecordForm({
   }
 
   async function save() {
+    if (readOnly || !job.detail) return;
     if (!job.session.online) return setError('Needs a connection');
     const held = pending.record(jobId);
     if (held && (held.kind !== kind || held.sending)) return;
