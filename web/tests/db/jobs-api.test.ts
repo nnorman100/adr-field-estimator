@@ -58,7 +58,6 @@ type Body = {
   job: { id: string; status: string; currentDraftId: string; fieldOwnerActorId: string | null; propertyAddress: string; revision: number };
   customer: { name: string; phone: string; email: string };
   claim: { dateOfLoss: string | null };
-  draftMissing?: true;
   jobs: { id: string; mine: boolean; customerName: string; propertyAddress: string; revision: number }[];
   nextCursor: string | null;
   error: string;
@@ -510,15 +509,6 @@ describe('listing and reading', () => {
     expect((await read(OFFICE_A, mine.id)).status).toBe(200);
   });
 
-  it('does not say draftMissing for a new job’s first draft, which Start field work has no record to make', async () => {
-    const started = await seedJob(OWNER_A);
-    expect((await read(OWNER_A, started.id)).body.draftMissing).toBeUndefined();
-    h.drafts.remove(`${h.seed.a}/${started.draftId}`);
-    const lost = await read(OWNER_A, started.id);
-    expect(lost.status).toBe(200);
-    expect(lost.body.draftMissing).toBeUndefined();
-    expect(lost.body.job.currentDraftId).toBe(started.draftId);
-  });
 
   it('shows an estimator a job they own in the field even when someone else started it', async () => {
     const started = await seedJob(OWNER_A);

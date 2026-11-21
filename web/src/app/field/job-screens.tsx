@@ -46,6 +46,12 @@ const JOURNAL_READ_MS = 8_000;
 
 const readsEveryDraft = (session: FieldSession) => session.role === 'owner' || session.role === 'office';
 const draftReadable = (session: FieldSession, detail: JobDetail) => readsEveryDraft(session) || fieldWorkOf(session, detail) === 'mine';
+// The one draft the screen reads and edits: the one the job read names, else (no job read yet, offline) the
+// locator's. A locator is projected with the job revision it came from, so one that is newer than the job
+// read wins (the read was slower), and one that is not (a locator that could not be written after a field
+// step still names an older draft) never does.
+const jobDraftId = (detail: JobDetail | null | undefined, locator: { currentDraftId: string; revision: number } | null | undefined): string | undefined =>
+  locator && (!detail || locator.revision > detail.job.revision) ? locator.currentDraftId : detail?.job.currentDraftId;
 
 // Owner decision J5: the field work moved to another person (or this person was unassigned with it).
 // What they typed and did not send stays on this phone, read only; Save as new draft is S6.
@@ -53,6 +59,9 @@ const MOVED_TEXT =
   'This job’s field work is no longer yours: another person owns it now. What you changed and did not save stays on this phone, read only, and is not saved to this job.';
 const OTHER_OWNS_TEXT = 'Another person owns this job’s field work, so it is not shown here. The company owner can move it to you.';
 
+
+// How many times a job whose field work is being got ready is read again before the screen says so.
+const PREPARE_TRIES = 5;
 export type JobContext = {
   session: FieldSession;
   detail: JobDetail | null;
@@ -82,6 +91,10 @@ export type JobContext = {
   // Nothing of the job is sent: it is archived, or a read of it must say first whether an archive or
   // another refusal changed it. What was typed stays, read only.
   held: boolean;
+  // Whether the draft's own work (a photo taken or sent) is held now, read when it is about to be sent, not
+  // as it was when it began: `held`, or the job's field work being got ready (only the draft waits for
+  // that; the customer, the claim and the coordination do not).
+  draftHeld: () => boolean;
   // Each mounted form registers how to clear its unsent values on discard, and whether it holds any now.
   markUnsaved: (form: string, discard: (() => void) | null, unsaved?: boolean) => void;
   // Keeps the return guard active during local preparation, before a write can be tracked elsewhere.
@@ -132,9 +145,17 @@ export function JobScreens({
   const movedState = usePending(() => pending.moved(jobId));
   const [draft, setDraft] = useState<FieldDraft | null>(() => pending.moved(jobId)?.draft ?? null);
   const [draftAt, setDraftAt] = useState<string | null>(() => pending.moved(jobId)?.draftId ?? null);
-  // The job names this person as its field owner but the draft does not yet (the server's draft step
-  // did not get through): Start field work, sent again, sets it.
-  const [ownerUnset, setOwnerUnset] = useState(false);
+  // The job names this person as its field owner but the draft is not there or does not name them yet (a
+  // field step that did not get through): the job read prepares it (the draft life-cycle redesign, slice 6),
+  // so the screen reads the job again, a few times, each answer still checked against the newest read.
+  const [gettingReady, setGettingReadyState] = useState(false);
+  // Read by the try that settles (it may settle before this render's state is committed).
+  const stillGettingReady = useRef(false);
+  const setGettingReady = useCallback((ready: boolean) => {
+    stillGettingReady.current = ready;
+    setGettingReadyState(ready);
+  }, []);
+  const [prepareTries, setPrepareTries] = useState(0);
   const [error, setError] = useState<string | null>(null);
   // The job is archived (S5b-2), as the newest answer about it said: a read of it (410, or the job),
   // or an archive or restore done on this page (src/lib/field/pending.ts).
@@ -171,17 +192,18 @@ export function JobScreens({
     },
     [jobId],
   );
-  // The field database refused the draft. An estimator whose job names them but whose draft does not
-  // yet is sent to start the field work again; anything else is a refusal of the job.
+  // The field database refused the draft. A field owner whose job names them (an estimator or the company
+  // owner, with a draft already on screen or not) gets it got ready by the job read; anything else is a
+  // refusal of the job.
   const refuseDraft = useCallback(
     (refusal: Refusal, job: JobDetail | null) => {
-      if (refusal.status === 403 && draft === null && job && !readsEveryDraft(session) && fieldWorkOf(session, job) === 'mine' && !pending.moved(jobId)) {
+      if (refusal.status === 403 && job && fieldWorkOf(session, job) === 'mine' && !pending.moved(jobId)) {
         setDraftError(null);
-        return setOwnerUnset(true);
+        return setGettingReady(true);
       }
       refuse(refusal);
     },
-    [draft, session, jobId, refuse],
+    [session, jobId, refuse, setGettingReady],
   );
   // Whether the screens may read this job's draft: not the rules' refusal for an estimator whose job
   // is someone else's, and nothing more once the field work moved away.
@@ -190,22 +212,34 @@ export function JobScreens({
     [jobId, session],
   );
 
+  // `mark`: the job read that started this draft read, whose answers count only while it is the newest. A
+  // read no job read started (a photo sent, the journal) counts only for the draft the job names now.
   const reloadDraft = useCallback(
-    async (currentDraftId?: string, source?: 'cache', job?: JobDetail) => {
-      const draftId = currentDraftId ?? locator?.currentDraftId ?? detail?.job.currentDraftId;
-      if (!draftId || !session.db || !mayReadDraft(job ?? detail) || pending.missingDraft(jobId)) return;
+    async (currentDraftId?: string, source?: 'cache', job?: JobDetail, mark?: number) => {
+      const draftId = currentDraftId ?? jobDraftId(detail, locator);
+      if (!draftId || !session.db || !mayReadDraft(job ?? detail)) return;
+      const current = () => pending.draftReadCounts(jobId, draftId, mark, jobDraftId(detail, locator));
       try {
         const found = await readDraft(session.db, { companyId: session.companyId, draftId }, source);
-        if (found === SUPERSEDED || pending.missingDraft(jobId)) return;
-        setDraftAt(draftId);
-        setDraft(found);
-        // The job names this person but the draft read (an owner reads every draft) names someone else:
-        // the server's draft step did not get through, and Start field work finishes it.
+        if (found === SUPERSEDED || !current()) return;
+        // The job names this person but the draft is not there, or the draft read (an owner reads every
+        // draft) names someone else or is a placeholder: a field step did not get through, and the job read
+        // prepares it.
         const named = job ?? detail;
-        setOwnerUnset(found !== null && named !== null && fieldWorkOf(session, named) === 'mine' && found.fieldOwnerUid !== session.user.uid);
-        setDraftError(found ? null : 'The field work of this job is not there yet. Try again in a moment.');
+        const mine = named !== null && fieldWorkOf(session, named) === 'mine';
+        const absent = found === null || found.placeholder === true;
+        const unready = mine && (absent || found.fieldOwnerUid !== session.user.uid);
+        // A draft not there yet (nothing, or a placeholder) never takes the one on screen away, with what
+        // the person typed in it.
+        if (!(unready && absent)) {
+          setDraftAt(draftId);
+          setDraft(found);
+        }
+        setGettingReady(unready);
+        if (!unready) setPrepareTries(0);
+        setDraftError(found || unready ? null : 'The field work of this job is not there yet. Try again in a moment.');
       } catch (error) {
-        if (pending.missingDraft(jobId)) return;
+        if (!current()) return;
         const refusal = fieldRefusal(error);
         if (refusal) return refuseDraft(refusal, job ?? detail);
         // A read that did not get through keeps the draft as last read on screen, and with it any
@@ -220,41 +254,32 @@ export function JobScreens({
         );
       }
     },
-    [detail, locator, session, refuseDraft, readDraft, mayReadDraft, jobId],
+    [detail, locator, session, refuseDraft, readDraft, mayReadDraft, jobId, setGettingReady],
   );
 
   // The locator first, then the draft it names; trying again repeats both. `job` is the job just read,
   // which the state of this render does not hold yet.
   const openDraft = useCallback(
-    async (job?: JobDetail) => {
-      // A job read that says nothing of a missing draft (the lookup may not have got through) keeps what
-      // an earlier read said of this same draft; Start field work, or another draft, clears it.
-      if (job) {
-        const mine = fieldWorkOf(session, job) === 'mine' && !pending.moved(jobId);
-        const kept = pending.missingDraft(jobId) === job.job.currentDraftId;
-        pending.setMissingDraft(jobId, mine && (job.draftMissing || kept) ? job.job.currentDraftId : null);
-      }
+    async (job?: JobDetail, mark?: number) => {
       if (!mayReadDraft(job ?? detail)) {
         setDraftError(null);
         return;
       }
-      // The job read says the current draft is not in the field database: no locator or draft read can
-      // get through (the rules dereference the draft), and Start field work makes it again.
-      if (pending.missingDraft(jobId)) {
-        setDraftError(null);
-        return setOwnerUnset(true);
-      }
+      // What a read started counts only while it is the newest read of the job (src/lib/field/pending.ts).
+      const current = () => mark === undefined || pending.newestRead(jobId, mark);
       try {
         // The API populated this server-owned locator, including for jobs made before S6. Read
         // the document itself to warm the person cache; never cache the API response.
         const head = await loadJobProjection(session.db, session.companyId, jobId);
-        if (pending.missingDraft(jobId)) return;
+        if (!current()) return;
         if (!head) throw new Error('Job locator unavailable');
         setLocator(head);
         setCachedError(null);
-        await reloadDraft(head.currentDraftId, undefined, job ?? detail ?? undefined);
+        // The draft the job read names, never an older one a locator that could not be written still names
+        // (a field step that did not get through): that one is got ready (reloadDraft).
+        await reloadDraft(jobDraftId(job ?? detail, head), undefined, job ?? detail ?? undefined, mark);
       } catch (error) {
-        if (pending.missingDraft(jobId)) return;
+        if (!current()) return;
         const refusal = fieldRefusal(error);
         if (refusal) refuseDraft(refusal, job ?? detail);
         else setDraftError('The field work could not be opened. Try again when connected.');
@@ -269,17 +294,19 @@ export function JobScreens({
       setError(answer.ok ? null : answer.message);
       if (!answer.ok) {
         // A refusal to show the job drops every copy of it (unless the field work is this person's on
-        // this phone, J5); no answer keeps the one on screen.
+        // this phone, J5); no answer keeps the one on screen. A refusal or an archive ends getting the
+        // field work ready: there is nothing more to read.
+        if (answer.denied || answer.status === 410) setGettingReady(false);
         if (answer.denied && pending.denial(jobId)) setDraft(null);
         return null;
       }
       // The job is this person's field work again: it opens as usual.
       if (answer.value.job.fieldOwnerActorId === session.actorId) pending.returned(jobId);
       setDetail(answer.value, sentAt);
-      await openDraft(answer.value);
+      await openDraft(answer.value, sentAt);
       return answer.value;
     },
-    [openDraft, setDetail, jobId, session.actorId],
+    [openDraft, setDetail, jobId, session.actorId, setGettingReady],
   );
 
   const reloadJob = useCallback(async () => {
@@ -288,6 +315,27 @@ export function JobScreens({
     const sentAt = pending.markRead();
     return apply(await readJob(session.user, jobId), sentAt);
   }, [apply, session, jobId]);
+
+  // While the field work is being got ready, the job is read again (the read prepares it), sooner then
+  // later: 1, 2, 4, 8 and 8 seconds after the previous try settled (its job read and the draft read it
+  // started), one at a time. Each answer is applied only if it is the newest read's (apply).
+  // Only while a draft view (Check Scope or Photos) is open and the job names this person as field owner.
+  const tryInFlight = useRef(false);
+  // A draft view (Check Scope or Photos) is open: the one test of it, for the tries and what they show.
+  const draftView = view === 'scope' || view === 'photos';
+  const ownsIt = detail !== null && fieldWorkOf(session, detail) === 'mine';
+  useEffect(() => {
+    if (!gettingReady || !draftView || !ownsIt || !session.online || prepareTries >= PREPARE_TRIES || tryInFlight.current) return;
+    const timer = setTimeout(() => {
+      tryInFlight.current = true;
+      void reloadJob().finally(() => {
+        tryInFlight.current = false;
+        // A try that found the field work ready ends the tries uncounted, so a later spell gets all five.
+        if (stillGettingReady.current) setPrepareTries((tries) => tries + 1);
+      });
+    }, Math.min(1000 * 2 ** prepareTries, 8000));
+    return () => clearTimeout(timer);
+  }, [gettingReady, draftView, ownsIt, prepareTries, session.online, reloadJob]);
 
   const checkAccess = useCallback(
     (refusal: Refusal | null) => {
@@ -371,10 +419,12 @@ export function JobScreens({
   const held = (detail !== null && detail.job.fieldOwnerActorId === session.actorId) || draft?.fieldOwnerUid === session.user.uid;
   useEffect(() => pending.hold(jobId, held), [jobId, held]);
   // Archived as the newest answer about the job said, or as its field draft on screen says.
-  const archived = archivedSaid || draft?.state === 'archived';
+  // A draft read as archived says the job is archived, except while the field work is being got ready (an
+  // archived placeholder a previous version left over a restored job's missing draft says nothing).
+  const archived = archivedSaid || (draft?.state === 'archived' && !gettingReady);
   const [rechecks, setRechecks] = useState(0);
   const recheck = useCallback(() => setRechecks((count) => count + 1), []);
-  const currentRefId = draftAt ?? locator?.currentDraftId ?? detail?.job.currentDraftId;
+  const currentRefId = draftAt ?? jobDraftId(detail, locator);
   const row = detail?.job;
   const checking =
     (view === 'scope' || view === 'photos') && session.online && session.readiness && session.capabilities.includes('scope') &&
@@ -384,7 +434,7 @@ export function JobScreens({
   const archiveSeen = useCallback(() => checkAccess({ status: 410, message: 'This job is archived.' }), [checkAccess]);
   const advisory = useDraftReadiness(session.user, checking ? row! : null, manifest, rechecks, archiveSeen);
   // The draft as last read goes with a moved job, for a screen of it opened again on this page.
-  const draftId = locator?.currentDraftId ?? detail?.job.currentDraftId ?? null;
+  const draftId = jobDraftId(detail, locator) ?? null;
   useEffect(() => {
     if (movedState && draft && (draftAt ?? draftId)) pending.keepDraft(jobId, draft, (draftAt ?? draftId)!);
   }, [movedState, draft, draftAt, draftId, jobId]);
@@ -535,7 +585,7 @@ export function JobScreens({
   if (!detail && (!locator || !draft)) {
     return <p role="status">{session.online ? 'Opening the job…' : cachedError ?? 'Opening saved field work…'}</p>;
   }
-  const currentDraftId = locator?.currentDraftId ?? detail!.job.currentDraftId;
+  const currentDraftId = jobDraftId(detail, locator)!;
   const fieldWork = detail ? fieldWorkOf(session, detail) : null;
   const reader = readsEveryDraft(session);
   // The field work moved away from this person (J5): the server refused them, or the job named someone
@@ -547,7 +597,8 @@ export function JobScreens({
     !archived &&
     !archiveChecking &&
     detail !== null &&
-    ((fieldWork === 'nobody' && detail.job.status === 'draft') || (ownerUnset && fieldWork === 'mine'));
+    fieldWork === 'nobody' &&
+    detail.job.status === 'draft';
 
   const context: JobContext = {
     session,
@@ -564,15 +615,15 @@ export function JobScreens({
     refuse,
     moved,
     editable:
-      !moved && !archived && verifying === null && !ownerUnset && draftAt === currentDraftId && draft !== null && canEditDraft(draft, session.user.uid, session.capabilities) && (session.online || session.offlineCapture),
+      !moved && !archived && verifying === null && !gettingReady && draftAt === currentDraftId && draft !== null && canEditDraft(draft, session.user.uid, session.capabilities) && (session.online || session.offlineCapture),
     archived,
     held: archived || archiveChecking,
+    draftHeld: () => archived || archiveChecking || stillGettingReady.current,
     markUnsaved,
     startSave,
     stale: draft !== null && draftError !== null,
     readiness: { checking, answer: checking ? advisory : undefined, recheck },
   };
-  const onDraftViews = view === 'scope' || view === 'photos';
 
   return (
     <div className="flex flex-col gap-4">
@@ -638,15 +689,29 @@ export function JobScreens({
           {MOVED_TEXT}
         </p>
       ) : null}
-      {onDraftViews && startable && detail ? <StartFieldWork context={{ ...context, detail }} resume={ownerUnset && fieldWork === 'mine'} /> : null}
-      {onDraftViews && !moved && !reader && fieldWork === 'other' ? <p className="rounded-md bg-foreground/5 p-3 text-sm">{OTHER_OWNS_TEXT}</p> : null}
-      {onDraftViews && draft !== null && !moved && !archived && !context.editable && !(fieldWork === 'other' && !reader) ? (
+      {draftView && startable && detail ? <StartFieldWork context={{ ...context, detail }} /> : null}
+      {draftView && gettingReady && !moved && !archived ? (
+        prepareTries < PREPARE_TRIES ? (
+          <p role="status" className="rounded-md bg-foreground/5 p-3 text-sm">
+            Getting this job&rsquo;s field work ready&hellip;
+          </p>
+        ) : (
+          <div className="flex flex-col gap-2">
+            <p role="alert">This job&rsquo;s field work is not ready on this phone yet. Try again in a moment.</p>
+            <Button variant="outline" onClick={() => setPrepareTries(0)}>
+              Try again
+            </Button>
+          </div>
+        )
+      ) : null}
+      {draftView && !moved && !reader && fieldWork === 'other' ? <p className="rounded-md bg-foreground/5 p-3 text-sm">{OTHER_OWNS_TEXT}</p> : null}
+      {draftView && draft !== null && !moved && !archived && !context.editable && !(fieldWork === 'other' && !reader) ? (
         <p className="rounded-md bg-foreground/5 p-3 text-sm">
           Read only. Only the estimator who owns this job&rsquo;s field work changes it, while the job is being edited.
         </p>
       ) : null}
-      {onDraftViews && !session.db ? <p role="alert">The field database is not set up for this company yet.</p> : null}
-      {onDraftViews && draftError ? (
+      {draftView && !session.db ? <p role="alert">The field database is not set up for this company yet.</p> : null}
+      {draftView && draftError ? (
         <div className="flex flex-col gap-2">
           <p role="alert">{draftError}</p>
           <Button variant="outline" onClick={() => void openDraft()}>
@@ -654,7 +719,7 @@ export function JobScreens({
           </Button>
         </div>
       ) : null}
-      {onDraftViews && !draft && !draftError && cachedError ? <p role="status">{cachedError}</p> : null}
+      {draftView && !draft && !draftError && cachedError ? <p role="status">{cachedError}</p> : null}
       {/* The views of one job stay mounted and only the open one shows, so moving between them
           keeps what the person has typed and not saved. */}
       <div hidden={view !== 'scope'}>{draft ? <ScopeView key={draftAt} job={context} draft={draft} open={view === 'scope'} readinessFix={fix ? readinessFix : null} /> : null}</div>

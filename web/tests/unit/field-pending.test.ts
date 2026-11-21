@@ -121,6 +121,42 @@ describe('what a late send posts for the open screen of its job', () => {
     expect(pending.denial('job-late')).toBeNull();
   });
 
+  // Slice 6 review R1: a refusal of a job whose field work is held on this phone (kept as moved, revoked)
+  // is the newest word on it: an older read's 200 answered after it cannot clear the revocation.
+  it('keeps a held job revoked when an older read answers after the refusal', () => {
+    pending.openFor('company-a/user-held-refusal');
+    pending.hold('job-held', true);
+    const older = pending.markRead();
+    const newer = pending.markRead();
+    const refused = { ok: false as const, status: 404, message: 'This job is not in your list.', denied: true as const };
+    expect(pending.readAnswered('job-held', refused, newer)).toBe(true);
+    expect(pending.moved('job-held')?.revoked).toBe(true);
+    expect(pending.readAnswered('job-held', { ok: true, value: at(6, 'older') }, older)).toBe(false);
+    expect(pending.newestRead('job-held', older)).toBe(false);
+    expect(pending.moved('job-held')?.revoked).toBe(true);
+  });
+
+  // Slice 6 review round 3, R2: an archive answered after a read started ends what that read started.
+  it('counts no locator or draft answer of a read sent before the job was seen archived', () => {
+    pending.openFor('company-a/user-archived-since');
+    const sent = pending.markRead();
+    expect(pending.readAnswered('job-arch', { ok: true, value: at(3, 'open') }, sent)).toBe(true);
+    expect(pending.newestRead('job-arch', sent)).toBe(true);
+    pending.archivedSeen('job-arch');
+    expect(pending.newestRead('job-arch', sent)).toBe(false);
+  });
+
+  // Slice 6 review round 3, R3: a draft read no job read started counts only for the draft the job names.
+  it('counts a draft read no job read started only for the draft the job names now', () => {
+    pending.openFor('company-a/user-draft-reads');
+    const named = at(2, 'named');
+    pending.publishDetail('job-draft', { ...named, job: { ...named.job, currentDraftId: 'draft-b' } }, pending.mark('job-draft'));
+    expect(pending.draftReadCounts('job-draft', 'draft-a', undefined, 'draft-a')).toBe(false);
+    expect(pending.draftReadCounts('job-draft', 'draft-b', undefined, 'draft-a')).toBe(true);
+    // With no job read yet (offline), the locator's draft is the one.
+    expect(pending.draftReadCounts('job-unread', 'draft-a', undefined, 'draft-a')).toBe(true);
+  });
+
   it('drops the job for a refused read that comes back after its screen closed, by job id', () => {
     pending.openFor('company-a/user-late-refusal');
     pending.publishDetail('job-late', at(4, 'cached'), pending.mark('job-late'));

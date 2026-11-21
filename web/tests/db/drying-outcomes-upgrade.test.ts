@@ -48,6 +48,8 @@ describe('migration 0020: applied to an existing database', () => {
       const [actor] = await admin<{ id: string }[]>`
         INSERT INTO actors (company_id, auth_tenant_id, uid, email) VALUES (${company!.id}, 'tenant-existing', 'u1', 'u1@example.test') RETURNING id
       `;
+      // The owner's membership, as a signed-in owner has (the job read checks it again after its field step).
+      await admin`INSERT INTO memberships (company_id, actor_id, role) VALUES (${company!.id}, ${actor!.id}, 'owner')`;
       // A signed job (its whole chain and its original agreement, its documents bytes a signed record the app
       // reads), with office notes, and a draft job.
       const proposal = { format: PROPOSAL_FORMAT, heading: 'Existing proposal' } as unknown as Proposal;

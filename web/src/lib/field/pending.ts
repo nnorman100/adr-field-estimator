@@ -108,10 +108,6 @@ type State = {
   denials: Record<string, string>;
   // By job: the field work is on this phone as this person's (or its job says it is theirs).
   held: Record<string, true>;
-  // By job: the current draft id the newest accepted job read says is not in the field database (Back to
-  // editing committed it but its field step failed). While it is set no draft read says anything about
-  // the job, an older one still in flight included, and Start field work makes the draft.
-  missingDraft: Record<string, string>;
   // By job: the field work moved away from this person; the draft as last read stays on screen.
   // `revoked`: the server refused the job to this person (nothing more is asked of it); otherwise the
   // job is still readable (the owner, office) but the field work is another person's.
@@ -155,7 +151,6 @@ const EMPTY = {
   readAt: {},
   denials: {},
   held: {},
-  missingDraft: {},
   moved: {},
   coord: {},
   typed: {},
@@ -324,14 +319,6 @@ export const pending = {
     else delete held[jobId];
     change({ held });
   },
-  missingDraft: (jobId: string): string | null => state.missingDraft[jobId] ?? null,
-  setMissingDraft(jobId: string, draftId: string | null) {
-    if ((state.missingDraft[jobId] ?? null) === draftId) return;
-    const missingDraft = { ...state.missingDraft };
-    if (draftId === null) delete missingDraft[jobId];
-    else missingDraft[jobId] = draftId;
-    change({ missingDraft });
-  },
   // A refusal of the job to this person. While their field work is on the phone, the job and the
   // field work stay (kept as moved; answers true), otherwise it is a refusal to show the job and
   // every copy goes (answers false). A 401 is a sign-in refused, never a move.
@@ -415,6 +402,17 @@ export const pending = {
   // job (archived or not, S5b-2) says whether it is archived, and an archived answer is newer than
   // any request made before it. Answers false when the job was refused or archived since, so the
   // answer no longer counts.
+  // Whether the read sent under `mark` is still the newest that showed the job (no later read was
+  // answered): what it started (its locator and draft reads) is applied only while it is.
+  // An archive or a refusal since (410, archivedSeen, archivalDone, a denial: each moves the job's mark on)
+  // ends it too.
+  newestRead: (jobId: string, mark: number): boolean => mark >= (state.readAt[jobId] ?? 0) && mark >= pending.mark(jobId),
+  // Whether a draft read's answer counts: one a job read (sent under `mark`) started counts while that read
+  // is the newest; one no job read started (a photo sent, the journal) counts only for the draft the job
+  // names now (the newest job read's, else `fallback`, the locator's), so a read of an older draft never
+  // decides whether the field work is ready.
+  draftReadCounts: (jobId: string, draftId: string, mark: number | undefined, fallback?: string): boolean =>
+    mark === undefined ? draftId === (state.details[jobId]?.job.currentDraftId ?? fallback) : pending.newestRead(jobId, mark),
   // A read sent before the newest read that showed the job no longer counts either.
   readAnswered(jobId: string, answer: Answer<unknown>, mark: number): boolean {
     if (mark < pending.mark(jobId) || mark < (state.readAt[jobId] ?? 0)) return false;
@@ -429,7 +427,12 @@ export const pending = {
     }
     if (archivedAnswer) change({ archived: flagged(state.archived, jobId, true), marks: { ...state.marks, [jobId]: mark + 0.5 } });
     else if (answer.ok) change({ readAt: { ...state.readAt, [jobId]: mark }, archived: flagged(state.archived, jobId, false) });
-    if (!answer.ok && answer.denied) pending.refused(jobId, answer.message, answer.status);
+    // A refusal is the newest word on the job too: an older read answered after it counts for nothing (it
+    // cannot clear a revocation, nor restart getting the field work ready).
+    if (!answer.ok && answer.denied) {
+      change({ readAt: { ...state.readAt, [jobId]: mark } });
+      pending.refused(jobId, answer.message, answer.status);
+    }
     return true;
   },
   coordSettled: (jobId: string): number => state.coordSettled[jobId] ?? 0,
