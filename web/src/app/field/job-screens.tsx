@@ -46,10 +46,12 @@ const JOURNAL_READ_MS = 8_000;
 
 const readsEveryDraft = (session: FieldSession) => session.role === 'owner' || session.role === 'office';
 const draftReadable = (session: FieldSession, detail: JobDetail) => readsEveryDraft(session) || fieldWorkOf(session, detail) === 'mine';
-// The draft the job read names, else (no job read yet, offline) the locator's: the one draft the screen
-// reads and edits. A locator that could not be written after a field step may name an older one.
-const jobDraftId = (detail: JobDetail | null | undefined, locator: { currentDraftId: string } | null | undefined): string | undefined =>
-  detail?.job.currentDraftId ?? locator?.currentDraftId;
+// The one draft the screen reads and edits: the one the job read names, else (no job read yet, offline) the
+// locator's. A locator is projected with the job revision it came from, so one that is newer than the job
+// read wins (the read was slower), and one that is not (a locator that could not be written after a field
+// step still names an older draft) never does.
+const jobDraftId = (detail: JobDetail | null | undefined, locator: { currentDraftId: string; revision: number } | null | undefined): string | undefined =>
+  locator && (!detail || locator.revision > detail.job.revision) ? locator.currentDraftId : detail?.job.currentDraftId;
 
 // Owner decision J5: the field work moved to another person (or this person was unassigned with it).
 // What they typed and did not send stays on this phone, read only; Save as new draft is S6.
@@ -422,7 +424,7 @@ export function JobScreens({
   const archived = archivedSaid || (draft?.state === 'archived' && !gettingReady);
   const [rechecks, setRechecks] = useState(0);
   const recheck = useCallback(() => setRechecks((count) => count + 1), []);
-  const currentRefId = draftAt ?? locator?.currentDraftId ?? detail?.job.currentDraftId;
+  const currentRefId = draftAt ?? jobDraftId(detail, locator);
   const row = detail?.job;
   const checking =
     (view === 'scope' || view === 'photos') && session.online && session.readiness && session.capabilities.includes('scope') &&
@@ -432,7 +434,7 @@ export function JobScreens({
   const archiveSeen = useCallback(() => checkAccess({ status: 410, message: 'This job is archived.' }), [checkAccess]);
   const advisory = useDraftReadiness(session.user, checking ? row! : null, manifest, rechecks, archiveSeen);
   // The draft as last read goes with a moved job, for a screen of it opened again on this page.
-  const draftId = locator?.currentDraftId ?? detail?.job.currentDraftId ?? null;
+  const draftId = jobDraftId(detail, locator) ?? null;
   useEffect(() => {
     if (movedState && draft && (draftAt ?? draftId)) pending.keepDraft(jobId, draft, (draftAt ?? draftId)!);
   }, [movedState, draft, draftAt, draftId, jobId]);
