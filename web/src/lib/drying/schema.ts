@@ -30,6 +30,9 @@ const NOTE_CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
 // Half of a UTF-16 surrogate pair on its own, which jsonb cannot store.
 const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
 
+/** Whether a text has a character that is not whitespace, by the database's class. */
+export const nonblank = (value: string) => NONBLANK.test(value);
+
 /** Characters as the database counts them (code points, not UTF-16 units). */
 const characters = (value: string) => [...value].length;
 

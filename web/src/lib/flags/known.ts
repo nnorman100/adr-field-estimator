@@ -23,8 +23,10 @@ export type AiFlagName = (typeof AI_FLAG_NAMES)[number];
 // is checked with that company. `readiness` is "Ready to review?" (S5b-11): the advisory gaps before
 // Finish, which never block Finish or Submit. `priced_extras` (S5b-8) is an estimator's proposals and the
 // owner's approvals on a job (today named adjustments and hourly additions; see docs/access/approvals.md):
-// off, every propose and approve route answers 404 and the estimate ignores approvals.
-export const FEATURE_FLAG_NAMES = Object.freeze(['readiness', 'priced_extras'] as const);
+// off, every propose and approve route answers 404 and the estimate ignores approvals. `drying_watch` is the
+// drying watch on a signed job (S5b-10): its status from the signed plan and the drying log, and the staff's
+// confirmed decisions.
+export const FEATURE_FLAG_NAMES = Object.freeze(['readiness', 'priced_extras', 'drying_watch'] as const);
 export type FeatureFlagName = (typeof FEATURE_FLAG_NAMES)[number];
 
 export const FLAG_NAMES = Object.freeze([
@@ -85,6 +87,11 @@ export const FEATURE_FLAG_DETAILS: Readonly<Record<FeatureFlagName, FlagDetails>
   priced_extras: {
     owner: AI_FLAG_OWNER,
     purpose: 'owner approvals for extras and named adjustments priced on a job',
+    removeBy: AI_FLAG_REMOVE_BY,
+  },
+  drying_watch: {
+    owner: AI_FLAG_OWNER,
+    purpose: 'Drying watch (S5b-10): the monitoring status of a signed job from its signed plan and drying log, with Mark dry, Extend plan and Close monitoring after a confirmation.',
     removeBy: AI_FLAG_REMOVE_BY,
   },
 });

@@ -47,8 +47,9 @@ const WRITE: readonly Capability[] = ['scope'];
 const UNIQUE_VIOLATION = '23505';
 const INVALID_DATETIME = new Set(['22007', '22008', '22009']);
 
-// Times as the database holds them (microseconds, UTC), so a cursor names a reading exactly.
-const micros = (column: unknown) => sql<string>`to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
+// Times as the database holds them (microseconds, UTC), so a cursor names a reading exactly. The drying
+// watch reads every time through this one formatter too.
+export const micros = (column: unknown) => sql<string>`to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
 
 const readingColumns = {
   id: dryingReadings.id,
@@ -196,7 +197,7 @@ async function roomOf(tx: CompanyTransaction, job: JobRow, roomId: string, draft
 // sign-in passed that role's session rules, so a changed role is refused, never taken on). In a write
 // both rows are locked FOR SHARE, before the job, so a suspension, a disable or a role change waits for
 // the write's commit, and a write that waited for one of them sees it.
-async function currentCaller(tx: CompanyTransaction, caller: JobCaller, lock: boolean): Promise<void> {
+export async function currentCaller(tx: CompanyTransaction, caller: JobCaller, lock: boolean): Promise<void> {
   const company = tx.select({ status: companies.status }).from(companies).where(eq(companies.id, caller.companyId));
   const [found] = await (lock ? company.for('share') : company);
   if (found?.status !== 'active') throw new IdentityRefusal('company_inactive');
@@ -217,7 +218,7 @@ function parse<T>(schema: { safeParse(value: unknown): { success: true; data: T 
 
 // The request body's text (null: over the size limit or not UTF-8) as JSON, checked against the schema: only after
 // the job's access is decided.
-function parseBody<T>(schema: { safeParse(value: unknown): { success: true; data: T } | { success: false } }, text: string | null): T {
+export function parseBody<T>(schema: { safeParse(value: unknown): { success: true; data: T } | { success: false } }, text: string | null): T {
   if (text === null) throw new DryingError('invalid_request');
   let raw: unknown;
   try {
@@ -230,7 +231,7 @@ function parseBody<T>(schema: { safeParse(value: unknown): { success: true; data
 
 // A refusal the database makes of a value the schema let through is a bad request; the same id taken
 // by a request racing this one, on another job, is a conflict.
-function refusedByDatabase(error: unknown): never {
+export function refusedByDatabase(error: unknown): never {
   const code = errorCode(error);
   if (code === CHECK_VIOLATION || (typeof code === 'string' && INVALID_DATETIME.has(code))) throw new DryingError('invalid_request');
   if (code === UNIQUE_VIOLATION) throw new DryingError('conflict');

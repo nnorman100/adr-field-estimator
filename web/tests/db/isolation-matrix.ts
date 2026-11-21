@@ -75,6 +75,8 @@ const JOB_PROPOSAL = { id: '7a3c9e15-2b84-4d60-9f17-3e6a8c2d5b41', revision: 1, 
 const JOB_APPROVE = { revision: 1, approverName: 'Pat' };
 // A drying-log reading and a void (S5b-10): the suite's own ids, an air reading with no room.
 const JOB_READING = { id: '7e3c9a51-4b28-4d6f-8a10-2c5e7b9d3f46', kind: 'air', takenAt: '2026-11-20T09:30:00Z', temperatureF: 70, relativeHumidity: 50 };
+// A drying watch action (S5b-10): the suite's own request id and a facts hash of nothing.
+const JOB_WATCH_ACTION = { id: '5c8e2a71-3d94-4b6f-a0e2-9f1b7c4d8e53', action: 'extend', factsHash: '0'.repeat(64), confirmed: true, reason: 'Isolation check' };
 const JOB_READING_VOID = { changeId: '0f6b2d84-9a3c-4e71-b5d2-8c1e4a7f9b30', expectedState: 'active' };
 const JOB_SIGN = {
   id: '2d7f4a91-6c3b-4e85-9a12-7b5c8e0f3d64',
@@ -180,6 +182,9 @@ export const MATRIX: readonly MatrixRow[] = [
   row('api/jobs/[jobId]/drying-readings', 'GET', 'company', { own: 'cross' }),
   row('api/jobs/[jobId]/drying-readings', 'POST', 'company', { body: JOB_READING, own: 'cross' }),
   row('api/jobs/[jobId]/drying-readings/[readingId]/void', 'POST', 'company', { body: JOB_READING_VOID, own: 'cross' }),
+  // S5b-10: the drying watch, behind the `drying_watch` switch; another company's job is 404 to every role.
+  row('api/jobs/[jobId]/drying-watch', 'GET', 'company', { own: 'cross' }),
+  row('api/jobs/[jobId]/drying-watch/actions', 'POST', 'company', { body: JOB_WATCH_ACTION, own: 'cross' }),
   // S5a-11b: a signing link or document link of another company's job is 404 to every role, and
   // nothing is made; the bodies carry the suite's own ids.
   row('api/jobs/[jobId]/signing-link', 'POST', 'company', { body: JOB_LINK, own: 'cross' }),
