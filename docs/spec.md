@@ -309,7 +309,8 @@ An office-created job starts with no field owner. The first authorized estimator
 work on it becomes its field owner; office keeps customer details and assignment.
 
 Acceptance checks (built in the rebuilt app, S5b-1: `web/tests/db/office-jobs-api.test.ts`, "field and
-office ownership", and `web/tests/emu/field-owner.test.ts`). Under owner decision J3 (`docs/plans/S5.md`,
+office ownership", `web/tests/emu/draft-state-rules.test.ts` for the field rules and `web/tests/emu/draft-sync.test.ts`
+for the draft sync that writes the field owner). Under owner decision J3 (`docs/plans/S5.md`,
 section 8) the customer details and the property address may be set by the field owner, the owner and
 office while the job is unsigned; office keeps the assignment and the office notes (the job coordination),
 which the field owner cannot change; after signing only office and the owner correct the customer details

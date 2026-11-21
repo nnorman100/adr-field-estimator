@@ -6,8 +6,8 @@ import { placeholderOf } from './drafts';
 
 // The sync's Firestore writer (the draft life-cycle redesign, Design 2): in one transaction it reads
 // the job's marker and every one of its drafts, then writes what planSync (draft-lifecycle.ts) says.
-// Nothing calls it yet (slice 2); later slices switch archive, restore, Start, Move, Submit, Back to
-// editing, New job and Copy to it.
+// Archive, restore, Start, Move, Submit, Back to editing, New job, Copy and the repair passes all write
+// the job's drafts through it (sync-job.ts).
 //
 // The marker is one server-only document per job, `companies/{c}/draftLifecycle/{jobId}` =
 // `{ gen, v, draftIds, skipped }`: the version last written, the drafts that hold it (and the

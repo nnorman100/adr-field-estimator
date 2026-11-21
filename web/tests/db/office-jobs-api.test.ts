@@ -9,7 +9,8 @@ import type { Harness } from './team-harness';
 // office notes; the first estimator to capture becomes the field owner, once; the owner moves the
 // field work (owner decision J5); an estimator sees only the customer view. The four checks of
 // docs/spec.md 6.2 are the "field and office ownership" block. The field drafts are an in-memory
-// stand-in (draft-fake.ts); tests/emu/field-owner.test.ts checks the real writer and the field rules.
+// stand-in (draft-fake.ts); tests/emu/draft-sync.test.ts checks the real writer (the draft sync) and
+// tests/emu/draft-state-rules.test.ts the field rules.
 const live = vi.hoisted(() => ({ harness: null as Harness | null }));
 vi.mock('@/lib/auth/services', () => ({
   identityServices: () => live.harness!.identity,

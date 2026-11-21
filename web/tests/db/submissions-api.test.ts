@@ -665,26 +665,6 @@ describe('the worker', () => {
     expect(await runSubmissionRepair(h.handle.db, h.field, { markerGraceSeconds: 0 })).toEqual({ aborted: 0, marked: 0, failed: 0 });
   });
 
-  it('reopens a draft still fenced by an aborted attempt whose marker was written, in a company it visits', async () => {
-    live.service = shortWindow();
-    const stuck = await f.readyJob(ESTIMATOR_A, h.seed.a);
-    const body = { id: randomUUID(), draftId: stuck.draftId, digest: await manifestDigest({ ...stuck.manifest, photos: [] }) };
-    expect((await f.submit(ESTIMATOR_A, stuck.jobId, body)).body.error).toBe('digest_mismatch');
-    const [row] = await f.submissions(stuck.jobId);
-    expect(row).toMatchObject({ status: 'aborted', marker_state: 'done' });
-    // A fence for that epoch the release did not see (a state no route makes now).
-    await h.field.fence(h.seed.a, stuck.draftId, { submissionId: row!.id, epoch: row!.epoch, expiresAt: new Date(Date.now() + 60_000) });
-    // Other work in the same company, so the worker visits it.
-    const stalled = await f.readyJob(ESTIMATOR_A, h.seed.a);
-    h.field.gate.read = () => new Promise<void>(() => {});
-    void f.submitShown(ESTIMATOR_A, stalled.jobId, stalled.draftId, stalled.manifest);
-    await until(() => h.field.draft(h.seed.a, stalled.draftId)?.state === 'submitting', 'the stalled fence');
-    await expire();
-    expect(await runSubmissionRepair(h.handle.db, h.field, { markerGraceSeconds: 0 })).toEqual({ aborted: 1, marked: 2, failed: 0 });
-    expect(await f.expectOneOutcome(h.seed.a, stuck.jobId, stuck.draftId)).toBe('aborted');
-    expect(await f.expectOneOutcome(h.seed.a, stalled.jobId, stalled.draftId)).toBe('aborted');
-  });
-
   // r4 (b): an attempt's fence held at the field database (the draft sync, or the previous fence writer)
   // past its expiry; the worker aborts it and releases the draft, the owner archives the job, then the
   // held fence goes on. It is refused at the job's marker: the archived draft is never fenced.

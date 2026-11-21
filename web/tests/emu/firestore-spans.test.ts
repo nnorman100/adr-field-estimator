@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { InMemorySpanExporter, type ReadableSpan } from '@opentelemetry/sdk-trace-node';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { parseProjectionConfig } from '@/lib/config';
-import { firestoreDraftStore } from '@/lib/jobs/drafts';
+import { firestoreFenceStore } from '@/lib/submissions/fence';
 import { firestoreDraftStates } from '@/lib/photos/drafts';
 import { firestoreAccessStore, firestoreFor } from '@/lib/projection/firestore';
 import { startTracing, type TracingHandle } from '@/lib/telemetry/start';
@@ -33,7 +33,9 @@ describe('Firestore spans', () => {
       }),
     );
     const [company, draft, uid] = [randomUUID(), randomUUID(), `uid-${randomUUID()}`];
-    await firestoreDraftStore(db).ensure(company, randomUUID(), draft, uid);
+    await db.doc(`companies/${company}/drafts/${draft}`).create({ jobId: randomUUID(), fieldOwnerUid: uid, state: 'editing', field: {}, archiveRevision: 1, fieldOwnerRevision: 0 });
+    // A Submit's read of the fenced draft: one transaction on the drafts (none is fenced here, so it reads nothing).
+    await firestoreFenceStore(db).read(company, draft, randomUUID());
     await firestoreDraftStates(db).state(company, draft);
     const access = firestoreAccessStore(db);
     await access.grant({ companyId: company, authTenantId: 'tenant-x', uid, role: 'estimator', expiresAt: new Date(Date.now() + 1000), version: 1 });

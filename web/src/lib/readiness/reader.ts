@@ -21,7 +21,7 @@ import { firestoreSpan } from '@/lib/telemetry/spans';
 export type ReadinessRead =
   // The editing draft; `stamped` is false for a draft made before drafts carried their job id.
   | { outcome: 'read'; stamped: boolean; manifest: FieldManifest }
-  // No draft under the id, or only the record an archive or restore left there (src/lib/jobs/drafts.ts).
+  // No draft under the id, or only the placeholder an earlier version's archive or restore left there (src/lib/jobs/drafts.ts).
   | { outcome: 'missing' }
   // The draft names another job.
   | { outcome: 'other_job' }

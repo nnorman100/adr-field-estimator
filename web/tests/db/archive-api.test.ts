@@ -14,8 +14,9 @@ import type { FakeClaims, Harness } from './team-harness';
 // S5b-2, archive, restore and copy, through the real route files as the runtime role against a real
 // Postgres: archive hides an unsigned draft and every job route answers it with 410; restore returns
 // it as it was; a signed job has no archive; a copy of a signed job sent twice makes one draft. The
-// field drafts are the in-memory stand-in (tests/submissions/field-fake.ts); tests/emu/archive.test.ts
-// checks the real writer and the field rules on an archived draft.
+// field drafts are the in-memory stand-in (tests/submissions/field-fake.ts); tests/emu/draft-sync.test.ts
+// checks the real writer (the draft sync) and tests/emu/draft-state-rules.test.ts the field rules on an
+// archived draft.
 const live = vi.hoisted(() => ({ harness: null as Harness | null }));
 vi.mock('@/lib/auth/services', () => ({
   identityServices: () => live.harness!.identity,

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { canonicalManifest } from '@/lib/field/canonical';
 import { fenceStoreContract } from '../submissions/fence-contract';
 import { fakeField } from '../submissions/field-fake';
@@ -10,21 +11,16 @@ fenceStoreContract('in-memory', () => {
     store,
     async seed(company, draft, manifest, fieldOwnerUid = null) {
       store.put(company, draft, JSON.parse(canonicalManifest(manifest)), fieldOwnerUid);
+      // The job id the draft sync writes on every draft it makes.
+      store.stamp(company, draft, randomUUID());
     },
-    async peek(company, draft) {
-      const found = store.draft(company, draft);
-      if (!found) return null;
-      return {
-        state: found.state,
-        fence: found.fence ? { submissionId: found.fence.submissionId, epoch: found.fence.epoch } : null,
-        previous: found.previous,
-        fieldOwnerUid: found.fieldOwnerUid,
-        manifest: {
-          draft: found.field,
-          rooms: Object.entries(found.rooms).map(([id, field]) => ({ id, field })),
-          photos: Object.entries(found.photos).map(([id, field]) => ({ id, field })),
-        },
-      };
+    // As the draft sync leaves it (the stand-in's previous-version fence and marker write the same keys).
+    async place(company, draft, state, fence) {
+      const now = store.draft(company, draft);
+      // A fence of another epoch is replaced, as the sync replaces an aborted attempt's fence.
+      if (now?.state !== 'submitting') await store.fence(company, draft, fence);
+      else if (now.fence?.epoch !== fence.epoch) await store.fence(company, draft, fence, now.fence?.epoch);
+      if (state === 'submitted') await store.markSubmitted(company, draft, fence.epoch, fence.submissionId);
     },
   };
 });

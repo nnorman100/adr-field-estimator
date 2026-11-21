@@ -6,8 +6,8 @@ import { copiedManifest } from './copy-rule';
 import { draftOfOtherJob } from './drafts';
 
 // The draft life cycle as Postgres decides it (the draft life-cycle redesign, Design 2): one sync step
-// will be the only writer of a Firestore draft's life-cycle keys. This file is its pure part, and
-// nothing calls it yet (slice 2; later slices switch the writers to it):
+// (draft-sync.ts, called through sync-job.ts) is the only writer of a Firestore draft's life-cycle keys.
+// This file is its pure part:
 //
 // - desired(snapshot): what every draft of one job should hold, from one Postgres snapshot of the job
 //   taken with its field revision (jobs.field_revision, migration 0018), the version the sync writes at;
@@ -219,7 +219,7 @@ export function parseMarker(data: Record<string, unknown>): SyncMarker {
 
 /** A draft as Firestore holds it now, or null when there is none. */
 export type StoredDraft = {
-  // What an archive or restore left for a missing draft (src/lib/jobs/archive-store.ts): no draft.
+  // What an earlier version's archive or restore left for a missing draft (drafts.ts, Placeholder): no draft.
   placeholder: boolean;
   jobId: unknown;
   state: unknown;
