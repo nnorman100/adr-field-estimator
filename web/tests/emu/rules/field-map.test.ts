@@ -47,6 +47,8 @@ const DRAFT: Data = {
   roomOrder: ['kitchen', 'hall'],
   notes: 'Supply line under the sink.',
   summary: 'Category 2 water in the kitchen and hall.',
+  summarySource: 'ai',
+  aiNotes: { suggestions: ['Check the subfloor.'], unpricedWork: ['Replace the toe kick.'], testingAdvice: [] },
   scopeConfirmed: true,
   airMovers: 4,
   dehumidifiers: 1,

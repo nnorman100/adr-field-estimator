@@ -51,8 +51,9 @@ describe('field views', () => {
 });
 
 describe('Check Scope forms', () => {
-  it('covers every job-level key of field map v1 except the order and the summary', () => {
-    const keys = Object.keys(draftFieldSchema.shape).filter((key) => key !== 'roomOrder' && key !== 'summary');
+  it('covers every job-level key of the field map except the order and the summary keys', () => {
+    // The summary, its source and the accepted AI notes are the summary section's (S7-6).
+    const keys = Object.keys(draftFieldSchema.shape).filter((key) => !['roomOrder', 'summary', 'summarySource', 'aiNotes'].includes(key));
     expect(FACT_FIELDS.map((field) => field.key).sort()).toEqual(keys.sort());
     expect(ROOM_FIELDS.map((field) => field.key).sort()).toEqual(Object.keys(roomFieldSchema.shape).sort());
   });

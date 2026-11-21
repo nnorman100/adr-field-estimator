@@ -108,6 +108,16 @@ describe('summary draft facts', () => {
     expect(JSON.stringify(facts)).not.toContain('My own words.');
   });
 
+  it('leaves out the summary source and the AI notes accepted with an earlier draft (field map v3)', () => {
+    const facts = summaryFacts(
+      manifest({ summarySource: 'ai', aiNotes: { suggestions: ['Earlier accepted note.'], testingAdvice: ['Earlier advice.'] } }),
+      NO_EXTRA,
+    );
+    expect(Object.keys(facts.inspection)).not.toContain('summarySource');
+    expect(Object.keys(facts.inspection)).not.toContain('aiNotes');
+    expect(JSON.stringify(facts)).not.toContain('Earlier');
+  });
+
   it('refuses a room order that does not list the room documents exactly, as Submit does', () => {
     const unlisted = { ...manifest(), rooms: [...manifest().rooms, { id: 'added', field: { name: 'Den' } }] };
     expect(() => summaryFacts(unlisted, NO_EXTRA)).toThrow(SummaryFactsError);
