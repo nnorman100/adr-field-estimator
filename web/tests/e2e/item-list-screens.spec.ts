@@ -1,4 +1,4 @@
-import { test, expect as baseExpect, type Page } from '@playwright/test';
+import { test, expect as baseExpect, type Page, type Request } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { PASSWORD, readSeed, type TeamSeed } from './sign-in/seed';
 
@@ -119,24 +119,27 @@ test('a screen the person has left drops its late /api/me answer and records no 
   // Company settings' GET /api/me is held until the person has gone back (an in-app navigation).
   let release!: () => void;
   const held = new Promise<void>((resolve) => { release = resolve; });
+  const captured = Promise.withResolvers<Request>();
   let first = true;
   await page.route('**/api/me', async (route) => {
     if (!first) return route.continue();
     first = false;
+    captured.resolve(route.request());
     await held;
     await route.continue();
   });
   await page.getByRole('link', { name: 'Company settings' }).click();
   await expect(page).toHaveURL(new RegExp(`/sign-in/${team.address}/company$`));
+  // Company settings has sent its request (and it is held) before the person goes back.
+  const companyRequest = await captured.promise;
   await page.goBack();
   await expect(page.getByRole('heading', { name: `Signed in to ${team.companyName}` })).toBeVisible();
   // What the sign-in screen recorded, once its own item-list work is done.
   await page.evaluate((lock) => navigator.locks.request(lock, () => undefined), JSON.stringify(['ds-prices', owner.tenantId, owner.uid]));
   const before = await refusedAt();
 
-  const late = page.waitForResponse((response) => response.url().endsWith('/api/me'));
   release();
-  await late;
+  await companyRequest.response();
   await page.waitForTimeout(500);
   await page.evaluate((lock) => navigator.locks.request(lock, () => undefined), JSON.stringify(['ds-prices', owner.tenantId, owner.uid]));
   expect(await refusedAt()).toBe(before);

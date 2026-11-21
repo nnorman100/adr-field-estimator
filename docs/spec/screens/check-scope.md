@@ -92,8 +92,8 @@ job's field work is no longer yours…" (unsent changes stay on the phone, read 
   hidden at once and the saved copy for that person and company is erased. The same erase runs when
   the field gate's `GET /api/me` lets the person in without `prices_read`, whether or not Check
   Scope is open, and when the sign-in page or the Prices, Company settings, Team, Finish or Review
-  screen accepts a `GET /api/me` answer for the current sign-in without `prices_read` (a screen the
-  person has already left drops its answer). The refusal's time is recorded in localStorage before
+  screen accepts a `GET /api/me` answer for the current sign-in without `prices_read` (Company settings, Team, Finish
+  and Review drop an answer that arrives after the person has left them). The refusal's time is recorded in localStorage before
   the screen shows its answer and before the erase is tried, also on a phone without IndexedDB, so a
   copy that could not be erased is never shown and every read erases it first, in any tab and after a
   reload. A refusal recorded in another tab hides the list in an open Check Scope at once, without
