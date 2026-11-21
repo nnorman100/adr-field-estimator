@@ -463,10 +463,14 @@ export function JobScreens({
     return () => window.removeEventListener('beforeunload', warn);
   }, [returnGuarded, unsaved, writing, hasUnsent]);
   useEffect(() => {
-    if (!returnGuarded || !going || journal !== 'reading') return;
+    // The deadline belongs to confirming the journal. A live upload, save or office write in this page
+    // keeps the return waiting for its acknowledgement; an entry nothing here is sending (an older app's)
+    // or a read that does not finish is reported instead of showing "Saving…" forever.
+    const live = preparing > 0 || record !== null || coordination !== null || photos.length > 0;
+    if (!returnGuarded || !going || journal === 'clear' || live) return;
     const deadline = setTimeout(() => setLeaving('blocked'), JOURNAL_READ_MS);
     return () => clearTimeout(deadline);
-  }, [returnGuarded, going, journal]);
+  }, [returnGuarded, going, journal, preparing, record, coordination, photos.length]);
   useEffect(() => {
     if (!returnGuarded || !going || writing) return;
     const ready = setTimeout(() => {

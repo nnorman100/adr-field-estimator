@@ -204,6 +204,8 @@ function FinishActions({
   // A field ownership refusal keeps the checklist only once the job and its readiness are read again
   // and still match this draft.
   const prompted = problem && problem.next !== 'retry' && !problem.keepChecklist ? [] : items;
+  // Finish waits for the answer of that second readiness read, so no click meets a checklist not yet back.
+  const rechecking = checked.recheck > 0 && readinessJob !== null && advisory === undefined;
 
   async function finish() {
     if (!manifest) return;
@@ -311,7 +313,7 @@ function FinishActions({
             afterwards, use Back to editing. Finish needs a connection.
           </p>
           <Button
-            disabled={busy}
+            disabled={busy || rechecking}
             onClick={(event) => {
               const prompt = dialog.current;
               if (!prompt || prompted.length === 0) return void finish();
