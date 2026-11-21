@@ -1,12 +1,23 @@
 import {
   capturePhoto,
+  pausesForSignIn,
   photoStorageNearlyFull,
+  readPendingWork,
   readPhotoQueue,
   startPhotoQueue,
   type PhotoOwner,
   type PhotoQueueEntry,
   type PhotoUpload,
 } from '@/lib/field/photo-queue';
+
+function gpsTaggedJpeg() {
+  const exif = new TextEncoder().encode('Exif\0\0GPSLatitude=00.000000;GPSLongitude=00.000000');
+  const bytes = new Uint8Array(4 + 2 + exif.length + 2048);
+  bytes.set([0xff, 0xd8, 0xff, 0xe1, 0, exif.length + 2]);
+  bytes.set(exif, 6);
+  bytes.fill(7, 6 + exif.length);
+  return bytes;
+}
 
 function capture(owner: PhotoOwner, size: [number, number] = [80, 60], jobId = 'job', readable = true) {
   return (async () => {
@@ -15,14 +26,23 @@ function capture(owner: PhotoOwner, size: [number, number] = [80, 60], jobId = '
     const drawn = await new Promise<Blob>((resolve, reject) => {
       canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('Canvas did not encode'))), 'image/jpeg');
     });
-    // Bytes the canvas cannot decode, so the shareable copy cannot be made.
-    const picture = readable ? drawn : new Blob([new Uint8Array(2048).fill(7)], { type: 'image/jpeg' });
+    // A JPEG header with synthetic location metadata over bytes the canvas cannot decode, so no shareable copy can be made.
+    const picture = readable ? drawn : new Blob([gpsTaggedJpeg()], { type: 'image/jpeg' });
     try {
       return await capturePhoto(owner, { jobId, draftId: 'draft', field: { roomId: 'room', shotTag: 'overview' } }, picture);
     } catch (error) {
       return { error: (error as Error).name };
     }
   })();
+}
+
+function refusalCode(body: string): string | undefined {
+  try {
+    const { error } = JSON.parse(body) as { error?: unknown };
+    return typeof error === 'string' ? error : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function start(owner: PhotoOwner) {
@@ -36,18 +56,21 @@ function start(owner: PhotoOwner) {
         headers: entry.kind === 'original' ? { 'X-Photo-Sha256': entry.photoSha256 } : undefined,
       });
       if (response.ok) return { kind: 'receipt', ...(await response.json()) };
+      const reason = await response.text();
       return {
         kind: 'failure',
         status: response.status,
-        reason: await response.text(),
+        reason,
+        code: refusalCode(reason),
         retryAfter: response.headers.get('Retry-After'),
       };
     },
     async reference(entry: PhotoQueueEntry, written, signal) {
       await written();
       const response = await fetch(`/reference/${entry.photoId}`, { method: 'PUT', signal });
-      if (response.status === 401) return { kind: 'sign-in' };
-      return response.ok ? { kind: 'acknowledged' } : { kind: 'blocked', reason: await response.text() };
+      if (response.ok) return { kind: 'acknowledged' };
+      const reason = await response.text();
+      return pausesForSignIn(response.status, refusalCode(reason)) ? { kind: 'sign-in' } : { kind: 'blocked', reason };
     },
     signInRequired() {
       signInRequests += 1;
@@ -106,6 +129,7 @@ const photoHarness = {
   bytes,
   failSecondPayload,
   entries: readPhotoQueue,
+  pending: readPendingWork,
   storage: photoStorageNearlyFull,
   open(owner: PhotoOwner, ready = true) {
     queue?.stop();

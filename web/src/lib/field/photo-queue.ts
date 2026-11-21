@@ -1,8 +1,10 @@
+import { meOutcome } from '@/lib/sign-in/outcome';
 import { preparePhoto } from './photo';
 import {
   addCapture,
   changePhoto,
   readPayload,
+  readPendingWork,
   readPhotoQueue,
   requestOriginals,
   type PhotoOwner,
@@ -11,21 +13,17 @@ import {
   type PhotoUpload,
 } from './photo-queue-storage';
 
-export { readPhotoQueue, type PhotoOwner, type PhotoQueueEntry, type PhotoUpload };
+export { readPendingWork, readPhotoQueue, type PhotoOwner, type PhotoQueueEntry, type PhotoUpload };
 
 const CAPTURE_LOCK = 'ds-photo-capture';
 const DRAIN_LOCK = 'ds-photo-drain';
 const CAPTURED = 'ds-photo-captured';
 const FOREGROUND_INTERVAL_MS = 2_000;
-const UPLOAD_BASE_DEADLINE_MS = 30_000;
-const SLOWEST_UPLOAD_BYTES_PER_SECOND = 64 * 1024;
+// The photo route allows a request 300 seconds, so a progressing upload may use all of it.
+const UPLOAD_DEADLINE_MS = 300_000;
 const REFERENCE_DEADLINE_MS = 30_000;
-const UNPREPARED_REASON = 'This phone could not prepare a shareable copy of the photo. Send originals sends the full-size photo.';
+const UNPREPARED_REASON = 'This phone could not prepare a shareable copy of the photo. The full-size original stays on this phone.';
 const LOW_STORAGE_BYTES = 50 * 1024 * 1024;
-
-export function uploadDeadlineMs(bytes: number): number {
-  return UPLOAD_BASE_DEADLINE_MS + Math.ceil(bytes / SLOWEST_UPLOAD_BYTES_PER_SECOND) * 1_000;
-}
 
 async function sha256Of(bytes: ArrayBuffer): Promise<string> {
   const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
@@ -38,36 +36,49 @@ export async function capturePhoto(owner: PhotoOwner, target: PhotoTarget, file:
   // Serialise the canvas work across windows to bound image memory on a phone.
   const photo = await navigator.locks.request(CAPTURE_LOCK, async () => {
     const resized = await preparePhoto(file).catch(() => null);
-    // The camera's bytes can carry its location, so they are never sent as the shareable photo on their own:
-    // without a resized copy the capture stays stopped on the phone until the technician sends originals.
-    const copy = resized ?? file;
-    const data = await copy.arrayBuffer();
-    const photoSha256 = await sha256Of(data);
-    const entry: PhotoQueueEntry = {
+    const original = await file.arrayBuffer();
+    const originalSha256 = await sha256Of(original);
+    const common = {
       ...owner,
       ...target,
       field: { ...target.field, capturedAt: target.field.capturedAt ?? new Date(capturedAt).toISOString() },
       photoId,
-      photoSha256,
-      sha256: photoSha256,
-      contentType: copy.type,
-      kind: 'photo',
-      stage: resized ? 'queued' : 'blocked',
-      ...(resized ? {} : { reason: UNPREPARED_REASON }),
       capturedAt,
-      requested: resized !== null,
       attempts: 0,
       retryAt: 0,
     };
-    const payloads = [{ entry, data }];
-    if (resized) {
-      const original = await file.arrayBuffer();
-      payloads.push({
-        entry: { ...entry, kind: 'original', contentType: file.type, sha256: await sha256Of(original), requested: false },
-        data: original,
-      });
+    // The camera's bytes can carry its location, so they are never queued as the shareable photo. Without a
+    // resized copy the capture is kept only as a stopped original.
+    if (!resized) {
+      const entry: PhotoQueueEntry = {
+        ...common,
+        photoSha256: originalSha256,
+        sha256: originalSha256,
+        contentType: file.type,
+        kind: 'original',
+        stage: 'blocked',
+        reason: UNPREPARED_REASON,
+        requested: false,
+      };
+      await addCapture([{ entry, data: original }]);
+      return entry;
     }
-    await addCapture(payloads);
+    const data = await resized.arrayBuffer();
+    const photoSha256 = await sha256Of(data);
+    const entry: PhotoQueueEntry = {
+      ...common,
+      photoSha256,
+      sha256: photoSha256,
+      contentType: resized.type,
+      kind: 'photo',
+      stage: 'queued',
+      open: 1,
+      requested: true,
+    };
+    await addCapture([
+      { entry, data },
+      { entry: { ...entry, kind: 'original', contentType: file.type, sha256: originalSha256, requested: false }, data: original },
+    ]);
     return entry;
   });
   window.dispatchEvent(new Event(CAPTURED));
@@ -86,7 +97,7 @@ export async function photoStorageNearlyFull(): Promise<boolean> {
 
 type UploadResult =
   | { kind: 'receipt'; photoId: string; sha256: string }
-  | { kind: 'failure'; status: number; reason: string; retryAfter?: string | null };
+  | { kind: 'failure'; status: number; reason: string; code?: string; retryAfter?: string | null };
 type ReferenceResult = { kind: 'acknowledged' } | { kind: 'blocked'; reason: string } | { kind: 'sign-in' } | { kind: 'retry' };
 
 type PhotoTransport = {
@@ -100,6 +111,13 @@ type PhotoTransport = {
   signInRequired?(): void;
   storageError?(error: unknown): void;
 };
+
+// The refusals the field gate keeps work locked for (sync-gate.ts), by the server's code. A disabled
+// member is the owner's definitive stop, and any other refusal belongs to the job.
+export function pausesForSignIn(status: number, code?: string): boolean {
+  const { kind } = meOutcome(status, { error: code });
+  return kind !== 'signed-in' && kind !== 'unavailable' && kind !== 'member-disabled';
+}
 
 function retryTime(entry: PhotoQueueEntry, retryAfter?: string | null): number {
   const now = Date.now();
@@ -167,7 +185,7 @@ export function startPhotoQueue(owner: PhotoOwner, transport: PhotoTransport) {
           return;
         }
         let result: UploadResult;
-        const limit = attemptSignal(signal, uploadDeadlineMs(data.byteLength));
+        const limit = attemptSignal(signal, UPLOAD_DEADLINE_MS);
         try {
           result = await transport.upload(current, new Blob([data], { type: current.contentType }), limit.signal);
         } catch {
@@ -178,8 +196,8 @@ export function startPhotoQueue(owner: PhotoOwner, transport: PhotoTransport) {
         }
         if (signal.aborted) return;
         if (result.kind === 'failure') {
-          if (result.status === 401) lock();
-          else if (result.status === 0 || result.status === 429 || result.status >= 500) await retry(result.retryAfter);
+          if (result.status === 0 || result.status === 429 || result.status >= 500) await retry(result.retryAfter);
+          else if (pausesForSignIn(result.status, result.code)) lock();
           else await block(result.reason);
           return;
         }
@@ -231,7 +249,7 @@ export function startPhotoQueue(owner: PhotoOwner, transport: PhotoTransport) {
       await navigator.locks.request(DRAIN_LOCK, { ifAvailable: true }, async (lock) => {
         if (!lock) return;
         while (canRun()) {
-          const entries = readyEntries(await readPhotoQueue(person), Date.now());
+          const entries = readyEntries(await readPendingWork(person), Date.now());
           if (!entries.length) return;
           const work = async () => {
             while (canRun()) {

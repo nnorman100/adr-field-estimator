@@ -18,18 +18,23 @@ export type PhotoQueueEntry = PhotoUpload & {
   attempts: number;
   retryAt: number;
   reason?: string;
+  // Present only while the entry still has work to do, which is what the OPEN index holds.
+  open?: 1;
 };
 type Payload = { entry: PhotoQueueEntry; data: ArrayBuffer };
 
 const ENTRIES = 'entries';
 const BYTES = 'bytes';
 const OWNER = 'owner';
+const OPEN = 'open';
 const keyPath = ['tenantId', 'uid', 'jobId', 'photoId', 'kind'];
 const SPEC: DbSpec = {
   name: 'ds-queue',
   version: 1,
   upgrade(db) {
-    db.createObjectStore(ENTRIES, { keyPath }).createIndex(OWNER, ['tenantId', 'uid']);
+    const entries = db.createObjectStore(ENTRIES, { keyPath });
+    entries.createIndex(OWNER, ['tenantId', 'uid']);
+    entries.createIndex(OPEN, ['tenantId', 'uid', OPEN]);
     db.createObjectStore(BYTES, { keyPath });
   },
 };
@@ -100,6 +105,28 @@ export function readPhotoQueue(owner: PhotoOwner): Promise<PhotoQueueEntry[]> {
   });
 }
 
+// The entries that still have work to do, with the photo row each waiting original needs to learn
+// whether its photo has a receipt. Finished history is never read.
+export function readPendingWork(owner: PhotoOwner): Promise<PhotoQueueEntry[]> {
+  return run(ENTRIES, 'readonly', (transaction) => {
+    const store = transaction.objectStore(ENTRIES);
+    const open = store.index(OPEN).getAll(IDBKeyRange.only([owner.tenantId, owner.uid, 1]));
+    const parents: IDBRequest<PhotoQueueEntry | undefined>[] = [];
+    open.onsuccess = () => {
+      for (const entry of open.result as PhotoQueueEntry[]) {
+        if (entry.kind === 'original') parents.push(store.get(keyOf({ ...entry, kind: 'photo' })));
+      }
+    };
+    return () => {
+      const rows = new Map<string, PhotoQueueEntry>();
+      for (const entry of [...(open.result as PhotoQueueEntry[]), ...parents.map((request) => request.result)]) {
+        if (entry) rows.set(JSON.stringify(keyOf(entry)), entry);
+      }
+      return [...rows.values()].sort((a, b) => a.capturedAt - b.capturedAt);
+    };
+  });
+}
+
 export function readPayload(entry: PhotoUpload): Promise<ArrayBuffer | undefined> {
   return run(BYTES, 'readonly', (transaction) => {
     const request = transaction.objectStore(BYTES).get(keyOf(entry));
@@ -123,6 +150,8 @@ export function changePhoto(
       const current = request.result as PhotoQueueEntry | undefined;
       if (!current || current.stage !== expected.stage || current.sha256 !== expected.sha256) return;
       saved = { ...current, ...patch };
+      if (saved.stage === 'queued' || saved.stage === 'sent' || saved.stage === 'referenced') saved.open = 1;
+      else delete saved.open;
       entries.put(saved);
       if (saved.stage === 'done') transaction.objectStore(BYTES).delete(key);
     };
@@ -130,8 +159,7 @@ export function changePhoto(
   });
 }
 
-// The tap on one job's Photos screen releases that job's full-size photos, and the captures of that
-// job that could not be resized, which wait stopped for it.
+// The tap on one job's Photos screen releases that job's originals.
 export function requestOriginals(owner: PhotoOwner, jobId: string): Promise<void> {
   return run(ENTRIES, 'readwrite', (transaction) => {
     const request = transaction.objectStore(ENTRIES).index(OWNER).openCursor(ownerRange(owner));
@@ -139,9 +167,8 @@ export function requestOriginals(owner: PhotoOwner, jobId: string): Promise<void
       const cursor = request.result;
       if (!cursor) return;
       const entry = cursor.value as PhotoQueueEntry;
-      if (entry.jobId === jobId && !entry.requested) {
-        if (entry.kind === 'original' && entry.stage === 'queued') cursor.update({ ...entry, requested: true });
-        else if (entry.kind === 'photo' && entry.stage === 'blocked') cursor.update({ ...entry, requested: true, stage: 'queued', reason: undefined, retryAt: 0 });
+      if (entry.jobId === jobId && entry.kind === 'original' && entry.stage === 'queued' && !entry.requested) {
+        cursor.update({ ...entry, requested: true });
       }
       cursor.continue();
     };
