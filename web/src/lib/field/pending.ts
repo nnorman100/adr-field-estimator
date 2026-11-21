@@ -95,12 +95,13 @@ export type PendingPhoto = {
   resumed?: true;
 };
 // The unsent work an app update carries across its reload (update-keep.ts): photos with their ids
-// and bytes, the new job and saves with no answer, and the values a refused save left on a form.
+// and bytes, the new job, and the boxes a refused save left changed on a form. A customer or claim
+// save with no answer is never carried: its record is the server's and stays out of the phone's storage,
+// so the update waits until it is answered.
 export type KeptWork = {
   job: PendingJob | null;
   jobRefusal: JobRefusal | null;
   photos: Record<string, PendingPhoto[]>;
-  records: Record<string, PendingRecord>;
   refusals: Record<string, RecordRefusal>;
   coord: Record<string, PendingCoord>;
 };
@@ -186,6 +187,7 @@ const EMPTY = {
 let listsSent = 0;
 let state: State = { owner: null, ...EMPTY };
 const listeners = new Set<() => void>();
+const photoRemoved = new Set<(owner: string, photoId: string) => void>();
 
 function change(next: Partial<State>) {
   state = { ...state, ...next };
@@ -289,7 +291,13 @@ export const pending = {
     const { owner, job, jobRefusal, photos, records, refusals, coord } = state;
     const held = Object.fromEntries(Object.entries(photos).filter(([, list]) => list.length > 0));
     const none = [held, records, refusals, coord].every((one) => Object.keys(one).length === 0) && job === null && jobRefusal === null;
-    return owner === null || none ? null : { owner, work: { job, jobRefusal, photos: held, records, refusals, coord } };
+    return owner === null || none ? null : { owner, work: { job, jobRefusal, photos: held, refusals, coord } };
+  },
+  // A customer or claim save has no answer yet: it needs its whole record, which is never carried.
+  recordsHeld: (): boolean => Object.keys(state.records).length > 0,
+  // Told when a photo leaves the unsent photos (its reference is saved, or it is discarded).
+  onPhotoRemoved(listener: (owner: string, photoId: string) => void) {
+    photoRemoved.add(listener);
   },
   // Puts work carried across an update back, for `owner` only, and never over what is held already.
   // Nothing is sending after a reload, so every save waits to be sent again as it was.
@@ -313,7 +321,6 @@ export const pending = {
       job: state.job ?? (work.job && { ...work.job, sending: false }),
       jobRefusal: state.jobRefusal ?? work.jobRefusal,
       photos,
-      records: { ...idle(work.records), ...state.records },
       refusals: { ...work.refusals, ...state.refusals },
       coord: { ...idle(work.coord), ...state.coord },
     });
@@ -332,6 +339,7 @@ export const pending = {
   },
   removePhoto(jobId: string, photoId: string) {
     change({ photos: { ...state.photos, [jobId]: pending.photos(jobId).filter((photo) => photo.id !== photoId) } });
+    if (state.owner !== null) for (const listener of photoRemoved) listener(state.owner, photoId);
   },
   // The job as the server last answered it; an older revision never replaces a newer one.
   detail: (jobId: string): JobDetail | null => state.details[jobId] ?? null,

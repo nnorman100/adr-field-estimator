@@ -4,7 +4,7 @@ import { usePathname } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { applyWaitingWorker, NO_WORKER, watchFieldWorker, type WorkerState } from '@/lib/field/register-worker';
-import { forgetKept, keepBlock, keepForUpdate } from '@/lib/field/update-keep';
+import { keepBlock, keepForUpdate, releaseKept } from '@/lib/field/update-keep';
 import { pending, usePending } from '@/lib/field/pending';
 import { holdsWindow, whileNoFieldWindow } from '@/lib/field/window-lock';
 import { hasHeldUpdatePeer, holdUpdateWindow, subscribeToUpdate, updateBusy, updateRequired, whileActivatingUpdate } from '@/lib/update-activity';
@@ -133,7 +133,7 @@ function UpdateWatch({ children }: { children: ReactNode }) {
       setApplying(false);
     }
     async function release() {
-      if (owner) await forgetKept(owner).catch(() => undefined);
+      if (owner) await releaseKept(owner).catch(() => undefined);
       settle();
     }
   }, [canUpdate, replaced, unsupported, waitingUpdate]);

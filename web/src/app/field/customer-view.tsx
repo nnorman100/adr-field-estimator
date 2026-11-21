@@ -129,7 +129,7 @@ function RecordForm({
   const shown = mine?.values ?? { ...baseline, ...changed };
   const { markUnsaved } = job;
   const dirty = Object.entries(changed).some(([key, value]) => baseline[key] !== value);
-  const carried = mine?.edits ?? refusal?.edits;
+  const carried = refusal?.edits;
   const blocksUpdate = Object.entries(changed).some(([key, value]) => baseline[key] !== value && carried?.[key] !== value);
   useLayoutEffect(() => {
     markUnsaved(`record/${kind}`, dirty ? () => setEdits({}) : null, dirty, blocksUpdate);
@@ -151,8 +151,9 @@ function RecordForm({
     takeRefusal();
     setError(null);
     setNotice(null);
+    const changes = Object.fromEntries(Object.entries(changed).filter(([key, value]) => baseline[key] !== value));
     const attempt = {
-      ...(held ?? { kind, changeId: crypto.randomUUID(), revision: job.detail.job.revision, values: shown, edits: changed }),
+      ...(held ?? { kind, changeId: crypto.randomUUID(), revision: job.detail.job.revision, values: shown, edits: changes }),
       sending: true,
     };
     pending.setRecord(jobId, attempt);

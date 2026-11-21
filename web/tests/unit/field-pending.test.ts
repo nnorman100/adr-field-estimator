@@ -467,7 +467,8 @@ describe('work kept through an app update', () => {
     const kept = pending.kept();
     expect(kept?.owner).toBe('company-k/user-first');
     expect(kept?.work.photos[JOB]).toHaveLength(1);
-    expect(kept?.work.records[JOB]?.changeId).toBe('c9');
+    expect(kept?.work).not.toHaveProperty('records');
+    expect(pending.recordsHeld()).toBe(true);
   });
 
   it('puts the same work back for the same person, and resumes only a photo whose bytes were refused with 426', async () => {
@@ -491,7 +492,7 @@ describe('work kept through an app update', () => {
     expect(conflict?.resumed).toBeUndefined();
     expect(unsaved).toMatchObject({ id: 'p3', step: 'save-failed' });
     expect(unsaved?.resumed).toBeUndefined();
-    expect(pending.record(JOB)).toMatchObject({ changeId: 'c10', sending: false });
+    expect(pending.record(JOB)).toBeNull();
     expect(pending.refusal(JOB, 'customer')).toEqual(refusal);
     expect(pending.job()).toMatchObject({ id: 'j2', sending: false });
     expect(pending.jobRefusal()).toEqual({ propertyAddress: '3 Main St', message: 'Update needed' });
