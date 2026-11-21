@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { canonicalManifest } from '@/lib/field/canonical';
 import { fenceStoreContract } from '../submissions/fence-contract';
 import { fakeField } from '../submissions/field-fake';
@@ -10,6 +11,8 @@ fenceStoreContract('in-memory', () => {
     store,
     async seed(company, draft, manifest, fieldOwnerUid = null) {
       store.put(company, draft, JSON.parse(canonicalManifest(manifest)), fieldOwnerUid);
+      // The job id the draft sync writes on every draft it makes.
+      store.stamp(company, draft, randomUUID());
     },
     // As the draft sync leaves it (the stand-in's previous-version fence and marker write the same keys).
     async place(company, draft, state, fence) {

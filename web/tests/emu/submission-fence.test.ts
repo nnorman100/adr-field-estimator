@@ -34,18 +34,22 @@ beforeAll(() => {
 
 const draftPath = (company: string, draft: string) => `companies/${company}/drafts/${draft}`;
 
+// An editing draft as the draft sync makes it (the job id, the field owner, the state, the field map and
+// the revisions it was written at), with the phone's rooms and photo references.
 async function seed(company: string, draft: string, manifest: FieldManifest, fieldOwnerUid: string | null = null): Promise<void> {
   const ref = db.doc(draftPath(company, draft));
-  await ref.set({ ...(fieldOwnerUid === null ? {} : { fieldOwnerUid }), state: 'editing', field: manifest.draft ?? {} });
+  await ref.set({ jobId: randomUUID(), ...(fieldOwnerUid === null ? {} : { fieldOwnerUid }), state: 'editing', field: manifest.draft ?? {}, archiveRevision: 1, fieldOwnerRevision: 0 });
   for (const room of manifest.rooms) await ref.collection('rooms').doc(room.id).set({ field: room.field });
   for (const photo of manifest.photos) await ref.collection('photos').doc(photo.id).set({ field: photo.field });
 }
 
-// The keys the draft sync writes for a Submit's fence (`submitting`) and its marker (`submitted`).
+// The keys the draft sync writes for a Submit's fence (`submitting`) and its marker (`submitted`); the
+// marker also takes the job's new revision (a Submit raises it).
 async function place(company: string, draft: string, state: 'submitting' | 'submitted', fence: { submissionId: string; epoch: string; expiresAt: Date }): Promise<void> {
   await db.doc(draftPath(company, draft)).update({
     state,
     fence: { submissionId: fence.submissionId, epoch: fence.epoch, expiresAt: Timestamp.fromDate(fence.expiresAt) },
+    ...(state === 'submitted' ? { archiveRevision: 2 } : {}),
   });
 }
 
@@ -130,7 +134,7 @@ describe('the field rules on a draft Submit has fenced', () => {
     const next = randomUUID();
     // As the draft sync makes it: the job id, the field owner, `editing`, the field data and its provenance.
     await seed(company, next, MANIFEST, owner.uid);
-    await db.doc(draftPath(company, next)).update({ jobId: randomUUID(), previous: { draftId: randomUUID(), submissionId: randomUUID() }, archiveRevision: 3, fieldOwnerRevision: 0 });
+    await db.doc(draftPath(company, next)).update({ previous: { draftId: randomUUID(), submissionId: randomUUID() }, archiveRevision: 3 });
     await phoneWrites(owner.caller, company, next, 200);
     await phoneWrites(other.caller, company, next, 403);
     await phoneWrites(office.caller, company, next, 403);
