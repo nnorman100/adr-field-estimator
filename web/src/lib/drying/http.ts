@@ -106,3 +106,19 @@ export async function actOnWatch(request: Request, identity: Identity, context: 
     return json(created ? { receipt, watch } : { receipt }, created ? 201 : 200);
   });
 }
+
+// GET /api/jobs/{jobId}/outcome (behind `estimate_assist`): the close of a signed job, with its amounts
+// for the owner and office, whether and when it closed for anyone else with the job.
+export async function readOutcome(_request: Request, identity: Identity, context: RouteContext): Promise<Response> {
+  return respond(async () => json(await dryingServices().outcome.read(identity, await jobPathId(context))));
+}
+
+// POST /api/jobs/{jobId}/close  { id, expectedAgreementId, expectedRevision, finalAmount, actualDays, note }:
+// 201 with the new close, 200 with the original receipt for the same request again.
+export async function closeJob(request: Request, identity: Identity, context: RouteContext): Promise<Response> {
+  return respond(async () => {
+    const id = await jobPathId(context);
+    const { created, close } = await dryingServices().outcome.close(identity, id, await bodyText(request));
+    return json({ close }, created ? 201 : 200);
+  });
+}

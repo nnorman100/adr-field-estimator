@@ -93,6 +93,7 @@ describe('the known flags', () => {
       'readiness',
       'priced_extras',
       'drying_watch',
+      'estimate_assist',
     ]);
     expect(Object.isFrozen(FLAG_NAMES)).toBe(true);
     expect(ALL_OFF).toEqual({
@@ -106,6 +107,7 @@ describe('the known flags', () => {
       readiness: false,
       priced_extras: false,
       drying_watch: false,
+      estimate_assist: false,
     });
     expect(flagsFromRows([])).toEqual(ALL_OFF);
     expect(flagsFromRows(null)).toEqual(ALL_OFF);
@@ -154,7 +156,7 @@ describe('the known flags', () => {
     expect([...AI_FLAG_NAMES].sort()).toEqual(
       ['ai_job_summary', 'ai_meter_reading', 'ai_scope_fill', 'ai_summary', 'ai_voice_notes', 'live_voice'].sort(),
     );
-    expect(FLAG_NAMES.filter((n) => n !== 'price_books' && n !== 'priced_extras' && n !== 'readiness' && n !== 'drying_watch')).toEqual([
+    expect(FLAG_NAMES.filter((n) => n !== 'price_books' && n !== 'priced_extras' && n !== 'readiness' && n !== 'drying_watch' && n !== 'estimate_assist')).toEqual([
       ...AI_FLAG_NAMES,
     ]);
     expect(Object.keys(AI_FLAG_DETAILS).sort()).toEqual([...AI_FLAG_NAMES].sort());
