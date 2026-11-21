@@ -100,7 +100,10 @@ const dateOf = (at: Stamp) => (typeof at === 'string' ? new Date(at) : at);
 const dateOfMicros = (us: number) => new Date(Math.floor(us / 1000));
 // An instant in microseconds as the database writes one: YYYY-MM-DDTHH:MM:SS.ffffffZ, so an answer keeps
 // the microseconds every comparison here uses.
-const isoMicros = (us: number) => `${new Date(Math.floor(us / 1_000_000) * 1000).toISOString().slice(0, 19)}.${String(us % 1_000_000).padStart(6, '0')}Z`;
+function isoMicros(us: number): string {
+  const second = Math.floor(us / 1_000_000);
+  return `${new Date(second * 1000).toISOString().slice(0, 19)}.${String(us - second * 1_000_000).padStart(6, '0')}Z`;
+}
 
 // A reading with its instants worked out once: whole-millisecond dates for calendar days and output,
 // microseconds for every comparison.

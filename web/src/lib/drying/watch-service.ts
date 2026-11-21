@@ -184,33 +184,33 @@ async function decisionViews(tx: CompanyTransaction, companyId: string, receipts
   return receipts.map((receipt) => ({ action: receipt.action, reason: receipt.reason, at: receipt.at, by: { actorId: receipt.actor_id, displayName: names.get(receipt.actor_id) ?? null } }));
 }
 
-type Computed = { view: WatchView; facts: SignedFacts; watch: DryingWatch };
+type Loaded = { facts: SignedFacts; log: LogFacts | null };
 
-async function compute(tx: CompanyTransaction, caller: JobCaller, job: JobRow, now: string, known?: DryingWatch): Promise<Computed> {
+// What a status is worked out from besides the watch's receipts and the clock: the signed facts and the
+// reading log (none when the signed record keeps no plan).
+async function load(tx: CompanyTransaction, job: JobRow): Promise<Loaded> {
   if (job.status !== 'signed') throw new JobError('not_signed');
   const facts = await signedFacts(tx, job);
-  const watch = known ?? (await watchOf(tx, job));
-  if (!facts.plan) return { view: { jobId: job.id, status: 'unavailable', reason: 'no_plan' }, facts, watch };
-  const log = await logFacts(tx, job);
+  return { facts, log: facts.plan ? await logFacts(tx, job) : null };
+}
+
+async function viewOf(tx: CompanyTransaction, caller: JobCaller, job: JobRow, now: string, { facts, log }: Loaded, watch: DryingWatch): Promise<WatchView> {
+  if (!facts.plan || !log) return { jobId: job.id, status: 'unavailable', reason: 'no_plan' };
   const state = watchState({ plannedDays: facts.plan.plannedDays, rooms: facts.plan.rooms, setupAt: facts.setupAt, readings: log.readings, decisions: watch.receipts, at: now });
   const open = !watch.receipts.some((receipt) => receipt.action !== 'extend');
   return {
-    facts,
-    watch,
-    view: {
-      jobId: job.id,
-      agreementId: facts.agreementId,
-      factsHash: factsHash({ agreementId: facts.agreementId, state, log: log.version, revision: watch.revision }),
-      revision: watch.revision,
-      ...state,
-      summary: watchSummary(state),
-      decisions: await decisionViews(tx, job.companyId, watch.receipts),
-      suggestedDays: finished(state.status) ? state.dayNumber : null,
-      can: {
-        markDry: open && hasAny(caller, NEEDS.mark_dry),
-        extend: open && hasAny(caller, NEEDS.extend) && watch.receipts.length < MAX_EXTENSIONS,
-        close: open && hasAny(caller, NEEDS.close),
-      },
+    jobId: job.id,
+    agreementId: facts.agreementId,
+    factsHash: factsHash({ agreementId: facts.agreementId, state, log: log.version, revision: watch.revision }),
+    revision: watch.revision,
+    ...state,
+    summary: watchSummary(state),
+    decisions: await decisionViews(tx, job.companyId, watch.receipts),
+    suggestedDays: finished(state.status) ? state.dayNumber : null,
+    can: {
+      markDry: open && hasAny(caller, NEEDS.mark_dry),
+      extend: open && hasAny(caller, NEEDS.extend) && watch.receipts.length < MAX_EXTENSIONS,
+      close: open && hasAny(caller, NEEDS.close),
     },
   };
 }
@@ -238,7 +238,7 @@ export function watchService(db: Database): WatchService {
           await currentCaller(tx, caller, false);
           await requireWatchOn(tx, caller.companyId);
           const job = await jobAccess(tx, caller, jobId, READ);
-          return (await compute(tx, caller, job, await databaseNow(tx))).view;
+          return viewOf(tx, caller, job, await databaseNow(tx), await load(tx, job), await watchOf(tx, job));
         },
         { snapshot: true },
       );
@@ -259,14 +259,15 @@ export function watchService(db: Database): WatchService {
           const [view] = await decisionViews(tx, job.companyId, [accepted]);
           return { created: false, receipt: { id: input.id, ...view! } };
         }
-        const before = await compute(tx, caller, job, await databaseNow(tx), watch);
-        if (before.view.status === 'unavailable') throw new DryingError('no_plan');
-        if (before.view.factsHash !== input.factsHash) throw new DryingError('stale_facts');
+        const loaded = await load(tx, job);
+        const before = await viewOf(tx, caller, job, await databaseNow(tx), loaded, watch);
+        if (before.status === 'unavailable') throw new DryingError('no_plan');
+        if (before.factsHash !== input.factsHash) throw new DryingError('stale_facts');
         if (watch.receipts.some((receipt) => receipt.action !== 'extend')) throw new DryingError('watch_closed');
         if (input.action === 'extend' && watch.receipts.filter((receipt) => receipt.action === 'extend').length >= MAX_EXTENSIONS) throw new DryingError('extension_limit');
         const receipt: DryingWatchReceipt = {
           action: input.action,
-          agreement_id: before.facts.agreementId,
+          agreement_id: loaded.facts.agreementId,
           reason: input.reason,
           actor_id: caller.actorId,
           // Stamped again by the database's guard (0020) with its own clock.
@@ -287,10 +288,9 @@ export function watchService(db: Database): WatchService {
           refusedByDatabase(error);
         }
         await audit(tx, caller, 'drying_watch_action', job.id, { action: input.action, request: input.id, revision: next.revision });
-        const after = await compute(tx, caller, job, await databaseNow(tx));
-        const stored = after.watch.receipts.at(-1)!;
-        const [view] = await decisionViews(tx, job.companyId, [stored]);
-        return { created: true, receipt: { id: input.id, ...view! }, watch: after.view };
+        const after = await viewOf(tx, caller, job, await databaseNow(tx), loaded, await watchOf(tx, job));
+        if (after.status === 'unavailable') throw new DryingError('no_plan');
+        return { created: true, receipt: { id: input.id, ...after.decisions.at(-1)! }, watch: after };
       });
     },
   };
