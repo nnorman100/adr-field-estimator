@@ -18,8 +18,8 @@
 // numbered file in web/migrations, which the migrate job applied or the release stopped), the switch
 // defaults (FLAG_NAMES, all off until a company turns one on) and the prompt and model versions
 // (src/lib/ai/registry.ts). Standard input carries the repository's infra-test-<root>-* tags, which
-// the owner pushes after each Terraform apply (C6). The minimum phone version stays null until S6-6
-// adds MIN_CLIENT_EPOCH. It prints nothing secret: every field is a name, number, hash or command.
+// the owner pushes after each Terraform apply (C6). The minimum phone version is MIN_CLIENT_EPOCH
+// (src/lib/app-version.ts). It prints nothing secret: every field is a name, number, hash or command.
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
