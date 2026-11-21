@@ -32,11 +32,12 @@ describe('a save of the summary box', () => {
 
   it('keeps an accepted AI draft marked as AI when the technician edits it', () => {
     const stored: DraftField = { summary: 'AI words.', summarySource: 'ai' };
-    expect(summaryChanges('AI words, checked.', stored).changes).toEqual({ summary: 'AI words, checked.' });
+    expect(summaryChanges('AI words, checked.', stored).changes).toEqual({ summary: 'AI words, checked.', summarySource: 'ai' });
   });
 
   it('deletes the summary and its source when the box is emptied, and writes nothing when unchanged', () => {
     expect(summaryChanges('  ', { summary: 'Old.', summarySource: 'ai' }).changes).toEqual({ summary: null, summarySource: null });
+    expect(summaryChanges('  ', { summary: 'Old.' }).changes).toEqual({ summary: null, summarySource: null });
     expect(summaryChanges('', {}).changes).toEqual({});
     expect(summaryChanges('Same.', { summary: 'Same.', summarySource: 'manual' }).changes).toEqual({});
   });

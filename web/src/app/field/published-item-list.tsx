@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { companyAuth } from '@/lib/firebase-client';
-import { readPublishedItemList } from '@/lib/field/api';
+import { IDENTITY_REFUSALS, readPublishedItemList } from '@/lib/field/api';
 import type { User } from 'firebase/auth';
 import {
   eraseItemList,
@@ -64,9 +64,7 @@ function display(view: View): Display {
 // allows the list: the route's capability check (`not_allowed`) and the member route's identity
 // check (src/lib/auth/identity.ts, REFUSALS). A 403 or 404 from a captive portal or a proxy carries
 // none of them and is no answer.
-const ACCESS_REFUSALS = new Set([
-  'not_allowed', 'not_a_member', 'member_disabled', 'company_inactive', 'account_disabled', 'email_unverified', 'no_tenant', 'unknown_tenant',
-]);
+const ACCESS_REFUSALS = new Set(['not_allowed', ...IDENTITY_REFUSALS]);
 
 // What a refusal from the item-list route means for the copy on this phone. 'erase': the person may
 // no longer see this company's list. 'hide': the sign-in must be renewed, or completed with the

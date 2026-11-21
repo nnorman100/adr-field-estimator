@@ -39,13 +39,16 @@ export function proposalNotes(proposal: SummaryProposal['proposal']): Record<Not
 }
 
 // What a save of the summary box writes: the text as typed (or a delete when it is left empty), and
-// who wrote it. Nothing when it is what is stored.
+// who wrote it, always together, so a save from a stale copy never leaves a summary without its
+// source or a source without its summary. Nothing when it is what is stored.
 export function summaryChanges(text: string, stored: DraftField): FormResult {
   const changes: FieldChanges = {};
   const errors: Record<string, string> = {};
   if (text.trim() === '') {
-    if (stored.summary !== undefined) changes.summary = null;
-    if (stored.summarySource !== undefined) changes.summarySource = null;
+    if (stored.summary !== undefined || stored.summarySource !== undefined) {
+      changes.summary = null;
+      changes.summarySource = null;
+    }
     return { changes, errors };
   }
   if (text === stored.summary) return { changes, errors };
@@ -54,7 +57,7 @@ export function summaryChanges(text: string, stored: DraftField): FormResult {
     return { changes, errors };
   }
   changes.summary = text;
-  if (stored.summarySource !== 'ai') changes.summarySource = 'manual';
+  changes.summarySource = stored.summarySource === 'ai' ? 'ai' : 'manual';
   return { changes, errors };
 }
 

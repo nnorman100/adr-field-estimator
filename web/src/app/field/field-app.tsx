@@ -29,7 +29,7 @@ export function FieldApp({ me }: { me: DsMe }) {
       companyId: identity.companyId, actorId: identity.actorId, role: identity.role, capabilities: field.me.capabilities,
       readiness: field.gate.kind === 'open' && field.gate.facts.readiness === true,
       aiSummary: field.gate.kind === 'open' && field.gate.facts.aiSummary === true,
-      online: field.online, offlineCapture: field.offlineCapture,
+      online: field.online, offlineCapture: field.offlineCapture, askAgain: field.askAgain,
     };
   }, [field, user]);
   const companyId = session?.companyId;

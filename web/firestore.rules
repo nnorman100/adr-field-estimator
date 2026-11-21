@@ -113,7 +113,7 @@ service cloud.firestore {
     }
 
     // The accepted AI notes (field map v3, S7-6): at most 30 suggestions, 30 unpriced work items and
-    // 10 testing advice items, each a text of 1 to 1,000 characters on one line. Checking each list
+    // 10 testing advice items, each a text of 1 to 1,000 characters on one line (no LF, CR, U+2028 or U+2029). Checking each list
     // on its own costs more than a request may evaluate beside the other draft keys, so, as with
     // items below, the three lists are joined into one text by line breaks and checked with one
     // pattern, then split again: the same entries must come back, so every entry is text and none
@@ -127,7 +127,7 @@ service cloud.firestore {
         && n.get('suggestions', []) is list && n.get('suggestions', []).size() <= 30
         && n.get('unpricedWork', []) is list && n.get('unpricedWork', []).size() <= 30
         && n.get('testingAdvice', []) is list && n.get('testingAdvice', []).size() <= 10
-        && (all.size() == 0 || (joined.matches('[^\n]{1,1000}(\n[^\n]{1,1000})*')
+        && (all.size() == 0 || (joined.matches('[^\n\r\u2028\u2029]{1,1000}(\n[^\n\r\u2028\u2029]{1,1000})*')
           && joined.split('\n') == all)));
     }
 

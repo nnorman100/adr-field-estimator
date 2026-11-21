@@ -118,10 +118,13 @@ describe('field map v3 draft rules', () => {
       ['unpricedWork', MAX_AI_UNPRICED_WORK],
       ['testingAdvice', MAX_AI_TESTING_ADVICE],
     ] as const;
+    const breaks = [String.fromCharCode(0x0d), String.fromCharCode(0x2028), String.fromCharCode(0x2029)];
     for (const [key, max] of lists) {
       const full = notes(max);
       for (const list of [
         notes(max + 1),
+        ...breaks.flatMap((b) => [[`Two${b}lines`], [`${b}Starts with a break`], [`Ends with a break${b}`]]),
+        ...breaks.flatMap((b) => [[`first${b}`, ...full.slice(1)], [...full.slice(0, -1), `${b}last`]]),
         [''],
         ['n'.repeat(MAX_AI_NOTE + 1)],
         [7],

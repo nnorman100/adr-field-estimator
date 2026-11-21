@@ -295,6 +295,12 @@ export async function readPublishedItemList(user: User, signal: AbortSignal) {
   return answerOf(status, body, itemListResponseSchema);
 }
 
+// The 403 codes of the member routes' identity check (src/lib/auth/identity.ts, REFUSALS): the
+// person, their account or their company no longer allows the work. Not a refusal of one job.
+export const IDENTITY_REFUSALS: ReadonlySet<string> = new Set([
+  'account_disabled', 'no_tenant', 'unknown_tenant', 'email_unverified', 'not_a_member', 'member_disabled', 'company_inactive',
+]);
+
 const summaryProposal = z.object({
   result: z.object({
     id: z.string(),

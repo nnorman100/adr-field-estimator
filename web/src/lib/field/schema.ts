@@ -84,7 +84,7 @@ export const itemQuantity = z.string().regex(ITEM_QUANTITY);
  * every note of a list with one pattern over the list joined by line breaks (firestore.rules,
  * okNoteList), as they check a room's items.
  */
-export const aiNote = z.string().min(1).max(MAX_AI_NOTE).regex(/^[^\n]*$/, 'a note is one line');
+export const aiNote = z.string().min(1).max(MAX_AI_NOTE).regex(/^[^\n\r\u2028\u2029]*$/, 'a note is one line');
 
 /** The AI notes the technician ticked when accepting a summary draft (S7-6); each list is optional. */
 export const aiNotesSchema = z.strictObject({

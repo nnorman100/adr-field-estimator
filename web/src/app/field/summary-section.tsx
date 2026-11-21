@@ -2,7 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { draftSummaryWithAi } from '@/lib/field/api';
+import { draftSummaryWithAi, IDENTITY_REFUSALS } from '@/lib/field/api';
 import { MAX_SUMMARY } from '@/lib/field/schema';
 import { draftFieldWrites, type FieldDraft } from '@/lib/field/store';
 import { acceptChanges, NOTE_LISTS, noteId, proposalNotes, summaryChanges, type SummaryProposal } from '@/lib/field/summary';
@@ -34,6 +34,8 @@ export function SummarySection({ job, draft }: { job: JobContext; draft: FieldDr
   const [askError, setAskError] = useState<string | null>(null);
   const [waitUntil, setWaitUntil] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  // The draft was closed elsewhere: the job and its draft are read again, and nothing is written meanwhile.
+  const [rereading, setRereading] = useState(false);
   // The call id of a request that got no answer: sent again, it finds the same proposal. Any answer
   // from the server ends it, so the next request is a new call.
   const unanswered = useRef<string | null>(null);
@@ -68,7 +70,7 @@ export function SummarySection({ job, draft }: { job: JobContext; draft: FieldDr
   const waiting = waitUntil !== null && waitUntil > now;
 
   async function saveSummary() {
-    if (job.stale) return;
+    if (job.stale || rereading) return;
     const { changes, errors } = summaryChanges(text, stored);
     setFormError(errors.summary ?? null);
     setNotice(null);
@@ -99,7 +101,16 @@ export function SummarySection({ job, draft }: { job: JobContext; draft: FieldDr
     }
     unanswered.current = null;
     if (!answer.ok) {
-      if (!answer.code?.startsWith('ai_')) job.checkAccess({ status: answer.status, message: answer.message });
+      const identity = answer.status === 401 || (answer.status === 403 && IDENTITY_REFUSALS.has(answer.code ?? ''));
+      if (identity) job.session.askAgain();
+      if (answer.code === 'draft_not_editing') {
+        setRereading(true);
+        void job.reloadJob().finally(() => {
+          if (live.current) setRereading(false);
+        });
+      } else if (!answer.code?.startsWith('ai_') && (answer.status === 401 || !identity)) {
+        job.checkAccess({ status: answer.status, message: answer.message });
+      }
       setAskError(answer.message);
       if (answer.retryAfterSeconds) {
         setNow(Date.now());
@@ -116,7 +127,7 @@ export function SummarySection({ job, draft }: { job: JobContext; draft: FieldDr
   }
 
   async function accept() {
-    if (!review || job.stale) return;
+    if (!review || job.stale || rereading) return;
     const { changes, errors } = acceptChanges(review.summary, review.answer.proposal, review.ticked, stored.aiNotes ?? {});
     const found = errors.summary ?? errors.notes ?? null;
     setFormError(found);
@@ -173,7 +184,7 @@ export function SummarySection({ job, draft }: { job: JobContext; draft: FieldDr
           className={TEXTAREA}
         />
         {readOnly ? null : (
-          <Button type="submit" disabled={busy || job.stale}>
+          <Button type="submit" disabled={busy || job.stale || rereading}>
             {busy ? 'Saving…' : 'Save summary'}
           </Button>
         )}
@@ -195,7 +206,7 @@ export function SummarySection({ job, draft }: { job: JobContext; draft: FieldDr
       ) : null}
       {canAsk && !review ? (
         <div className="flex flex-col gap-1">
-          <Button type="button" variant="outline" disabled={asking || waiting || !job.session.online || job.stale} onClick={() => void ask()}>
+          <Button type="button" variant="outline" disabled={asking || waiting || rereading || !job.session.online || job.stale} onClick={() => void ask()}>
             {asking ? 'Drafting…' : 'Draft with AI'}
           </Button>
           {!job.session.online ? <p className="text-sm">Draft with AI needs a signal.</p> : null}
@@ -222,7 +233,7 @@ export function SummarySection({ job, draft }: { job: JobContext; draft: FieldDr
             rows={8}
             maxLength={MAX_SUMMARY}
             value={review.summary}
-            readOnly={readOnly}
+            readOnly={readOnly || busy}
             onChange={(event) => {
               const summary = event.target.value;
               setReview((current) => (current ? { ...current, summary } : current));
@@ -241,7 +252,7 @@ export function SummarySection({ job, draft }: { job: JobContext; draft: FieldDr
                       type="checkbox"
                       className="mt-0.5 size-6 shrink-0"
                       checked={review.ticked.has(id)}
-                      disabled={readOnly}
+                      disabled={readOnly || busy}
                       onChange={(event) => {
                         const on = event.target.checked;
                         setReview((current) => {
@@ -262,7 +273,7 @@ export function SummarySection({ job, draft }: { job: JobContext; draft: FieldDr
             </fieldset>
           ))}
           <div className="grid grid-cols-2 gap-3">
-            <Button type="button" disabled={busy || job.stale || readOnly} onClick={() => void accept()}>
+            <Button type="button" disabled={busy || job.stale || rereading || readOnly} onClick={() => void accept()}>
               Accept
             </Button>
             <Button type="button" variant="outline" disabled={busy} onClick={discard}>

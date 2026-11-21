@@ -21,6 +21,8 @@ export type FieldSession = {
   aiSummary: boolean;
   online: boolean;
   offlineCapture: boolean;
+  // Has the sync gate ask the server who this person is now (see FieldContextValue.askAgain).
+  askAgain: () => void;
 };
 
 // Watches the company sign-in: a person app is only its in-memory mirror. The screens are
