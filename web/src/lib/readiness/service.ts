@@ -88,12 +88,17 @@ async function recheck(tx: CompanyTransaction, caller: JobCaller, jobId: string)
   if (!hasAny(current, READINESS_NEEDS)) throw new JobError('not_allowed');
   const job = await jobAccess(tx, current, jobId, READINESS_NEEDS);
   if (job.status !== 'draft') return { job, editing: false };
+  return { job, editing: !(await hasPendingSubmission(tx, job)) };
+}
+
+// Whether a Submit of the job's current draft has its pending row: the draft is being decided, not open for editing.
+export async function hasPendingSubmission(tx: CompanyTransaction, job: Pick<JobRow, 'companyId' | 'id' | 'currentDraftId'>): Promise<boolean> {
   const [pending] = await tx
     .select({ id: jobSubmissions.id })
     .from(jobSubmissions)
-    .where(and(eq(jobSubmissions.companyId, caller.companyId), eq(jobSubmissions.jobId, jobId), eq(jobSubmissions.draftId, job.currentDraftId), eq(jobSubmissions.status, 'pending')))
+    .where(and(eq(jobSubmissions.companyId, job.companyId), eq(jobSubmissions.jobId, job.id), eq(jobSubmissions.draftId, job.currentDraftId), eq(jobSubmissions.status, 'pending')))
     .limit(1);
-  return { job, editing: pending === undefined };
+  return pending !== undefined;
 }
 
 // The drying log's setup reading, only when equipment is counted. A read that fails is not known.
@@ -109,7 +114,7 @@ async function setupReading(tx: CompanyTransaction, readings: SetupReadingSource
 // Whether a draft id is this job's in Postgres, read only (the rule of holdDraft in jobs/access.ts,
 // without its claim): held by this job in job_drafts, or held by no job and named by no other job's
 // submission.
-async function draftIsJobs(tx: CompanyTransaction, companyId: string, jobId: string, draftId: string): Promise<boolean> {
+export async function draftIsJobs(tx: CompanyTransaction, companyId: string, jobId: string, draftId: string): Promise<boolean> {
   const [claim] = await tx
     .select({ jobId: jobDrafts.jobId })
     .from(jobDrafts)

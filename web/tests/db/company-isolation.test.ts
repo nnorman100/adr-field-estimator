@@ -298,6 +298,9 @@ const idsOf = (victim: Side, company: Side = victim): Record<string, string> => 
   // No proposal is seeded (one needs a submitted, priced record); the other company's photo id stands
   // in, and approvals-api.test.ts sends a real proposal id across companies.
   approvalId: victim.ids.photoId,
+  // No drying reading is seeded here; the other company's photo id stands in, and
+  // drying-readings-api.test.ts uses real readings across companies.
+  readingId: victim.ids.photoId,
 });
 
 const rowsOfKind = (...kinds: MatrixRow['kind'][]) => MATRIX.filter((row) => kinds.includes(row.kind));
