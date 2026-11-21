@@ -3,7 +3,8 @@
 import type { Auth, User } from 'firebase/auth';
 import { onAuthStateChanged } from 'firebase/auth';
 import Link from 'next/link';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { ReviewDrying, dryingAccess, type DryingAccess } from '@/app/field/drying/review-drying';
 import { Button } from '@/components/ui/button';
 import { signatureAddress } from '@/lib/agreements/client';
 import { agreementAnswerOf, type SignedAgreement } from '@/lib/agreements/screen';
@@ -12,7 +13,7 @@ import { canRepriceOf } from '@/lib/estimates/reprice-screen';
 import type { EstimateView } from '@/lib/estimates/result';
 import { notReadyReasons, outcomeOf, reviewAnswerOf, reviewerOf, revisionOf, type Next, type ReviewJob, type Reviewer } from '@/lib/estimates/screen';
 import { noteItemListAccess } from '@/lib/field/ds-prices';
-import { signInOf, signOutOnRefusal, signOutOrShow, stillSameSignIn, type FailedSignOut } from '@/lib/field/sign-out';
+import { signInOf, signOutOnRefusal, signOutOrShow, stillSameSignIn, type FailedSignOut, type SignIn } from '@/lib/field/sign-out';
 import { belongsTo, callApi, companyAuth } from '@/lib/firebase-client';
 import { linkRightsOf, type DocumentLinkView } from '@/lib/links/screen';
 import { endsSession, meOutcome } from '@/lib/sign-in/outcome';
@@ -46,6 +47,7 @@ type Ready = {
   revision: number;
   estimate: EstimateView | null;
   agreement: SignedAgreement | null;
+  drying: { auth: Auth; signIn: SignIn; access: DryingAccess } | null;
 };
 
 type Phase =
@@ -71,16 +73,19 @@ export function ReviewScreen(props: ReviewScreenProps) {
 function Review({ address, companyName, tenantId, jobId, config }: ReviewScreenProps & { config: BrowserSignInConfig }) {
   const [phase, setPhase] = useState<Phase>({ name: 'checking' });
   const authRef = useRef<Auth | null>(null);
+  const loadGeneration = useRef(0);
 
   // Reads who is signed in, then the job and its current estimate, from the server.
   const load = useCallback(
     async (user: User) => {
-      const stale = () => authRef.current?.currentUser !== user;
+      // The sign-in this check is for, kept as the request goes.
+      const auth = authRef.current;
+      const from = signInOf(user);
+      if (!auth) return;
+      const generation = ++loadGeneration.current;
+      const stale = () => generation !== loadGeneration.current || !stillSameSignIn(authRef.current, from);
       if (stale()) return;
       setPhase({ name: 'checking' });
-      // The sign-in this check is for, kept as the request goes.
-      const auth = authRef.current!;
-      const from = signInOf(user);
       const me = await callApi(user, '/api/me');
       if (stale()) return;
       const outcome = meOutcome(me.status, me.body);
@@ -115,7 +120,11 @@ function Review({ address, companyName, tenantId, jobId, config }: ReviewScreenP
         if (!parsed?.agreement) return setPhase({ name: 'unavailable' });
         agreement = parsed.agreement;
       }
-      setPhase({ name: 'ready', user, reviewer, links: linkRightsOf(me.body), canReprice: canRepriceOf(me.body), revision, ...read, agreement });
+      const access = read.job.id === jobId ? dryingAccess(me.body) : null;
+      setPhase({
+        name: 'ready', user, reviewer, links: linkRightsOf(me.body), canReprice: canRepriceOf(me.body), revision, ...read, agreement,
+        drying: access ? { auth, signIn: from, access } : null,
+      });
     },
     [config, jobId, tenantId],
   );
@@ -186,7 +195,7 @@ function Review({ address, companyName, tenantId, jobId, config }: ReviewScreenP
   }
 }
 
-function ReviewBody({ user, reviewer, links, canReprice, revision: firstRevision, job, estimate: first, agreement: signedFirst, finishHref, reload }: Ready & { finishHref: string; reload: () => void }) {
+function ReviewBody({ user, reviewer, links, canReprice, revision: firstRevision, job, estimate: first, agreement: signedFirst, drying, finishHref, reload }: Ready & { finishHref: string; reload: () => void }) {
   // The estimate and the job revision it was read at, changed together: the Reprice banner's preview
   // is only good for the revision it was taken at.
   const [read, setRead] = useState<{ estimate: EstimateView | null; revision: number }>({ estimate: first, revision: firstRevision });
@@ -198,6 +207,45 @@ function ReviewBody({ user, reviewer, links, canReprice, revision: firstRevision
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<{ message: string; next: Next } | null>(null);
   const [confirmed, setConfirmed] = useState(false);
+  const [lost, setLost] = useState(false);
+  const checks = useRef(0);
+  const reloading = useRef(reload);
+  useLayoutEffect(() => {
+    reloading.current = reload;
+  });
+
+  // A signed review reads the job again on every foreground resume, including a page restored from
+  // the back-forward cache, and when a card's refusal is ambiguous. Only the newest answer counts,
+  // and a refusal stays until the review is read again.
+  const checkJob = useCallback(async () => {
+    if (document.visibilityState !== 'visible' || !navigator.onLine) return;
+    const mine = ++checks.current;
+    const answer = await callApi(user, `/api/jobs/${encodeURIComponent(job.id)}`);
+    if (mine !== checks.current) return;
+    if (answer.status === 401) reloading.current();
+    else if (answer.status === 403 || answer.status === 404 || answer.status === 410) setLost(true);
+  }, [user, job.id]);
+  const signed = agreement !== null;
+  const deny = useCallback(() => {
+    checks.current += 1;
+    setLost(true);
+  }, []);
+  useEffect(() => {
+    if (!signed) return;
+    const shown = () => void checkJob();
+    const restored = (event: PageTransitionEvent) => {
+      if (event.persisted) void checkJob();
+    };
+    document.addEventListener('visibilitychange', shown);
+    window.addEventListener('pageshow', restored);
+    window.addEventListener('online', shown);
+    return () => {
+      checks.current += 1;
+      document.removeEventListener('visibilitychange', shown);
+      window.removeEventListener('pageshow', restored);
+      window.removeEventListener('online', shown);
+    };
+  }, [checkJob, signed]);
 
   // Pricing is safe to send again: the same record and pin always answer the same estimate.
   async function price() {
@@ -221,9 +269,16 @@ function ReviewBody({ user, reviewer, links, canReprice, revision: firstRevision
 
   if (agreement) {
     return (
-      <FocusedPanel title="Signed">
-        <SignedAgreementView agreement={agreement} loadSignature={loadSignature} />
-        <DocumentLinks user={user} jobId={job.id} canSend={links.canSend} canRevoke={links.canRevoke} issued={issued.tokens} listed={issued.listed} />
+      <FocusedPanel title={lost ? 'This job could not be found' : 'Signed'}>
+        {lost ? <p>It may belong to someone else, or it was archived.</p> : <SignedAgreementView agreement={agreement} loadSignature={loadSignature} />}
+        {drying && agreement.record.job_id === job.id ? (
+          <ReviewDrying
+            key={JSON.stringify([drying.access.companyId, drying.access.actorId, drying.signIn.key, job.id])}
+            auth={drying.auth} signIn={drying.signIn} initial={drying.access} user={user} jobId={job.id} agreementId={agreement.id}
+            blocked={lost} onRefused={(status, ambiguous) => (status === 401 ? reload() : ambiguous ? void checkJob() : deny())} onIdentity={reload}
+          />
+        ) : null}
+        {lost ? null : <DocumentLinks user={user} jobId={job.id} canSend={links.canSend} canRevoke={links.canRevoke} issued={issued.tokens} listed={issued.listed} />}
       </FocusedPanel>
     );
   }

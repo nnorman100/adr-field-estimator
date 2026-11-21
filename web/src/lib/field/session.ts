@@ -17,6 +17,7 @@ export type FieldSession = {
   role: string;
   capabilities: string[];
   readiness: boolean;
+  dryingWatch: boolean;
   online: boolean;
   offlineCapture: boolean;
 };

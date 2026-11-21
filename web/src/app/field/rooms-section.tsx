@@ -59,14 +59,14 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
   const { checkAccess } = job;
 
   function loadLists() {
-    if (!job.session.online) return;
+    if (!job.session.online || job.lost) return;
     void readScopeLists(user, jobId).then((answer) => {
       setLists(answer.ok ? answer.value : null);
       setListsError(answer.ok ? null : 'The room types, items and prep tasks could not be read. ' + answer.message);
       if (!answer.ok && answer.status === 410) checkAccess(answer);
     });
   }
-  useEffect(loadLists, [user, jobId, job.session.online, checkAccess]);
+  useEffect(loadLists, [user, jobId, job.session.online, job.lost, checkAccess]);
 
   // Adding and removing rooms write the whole room order, so one waits for the other's local
   // write and the draft read after it: each is built, limit and journal before-state included, from
@@ -118,7 +118,7 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
 
   return (
     <Section title="Rooms" headingId="readiness-rooms">
-      {listsError ? (
+      {!job.lost && listsError ? (
         <div className="flex flex-col gap-2">
           <p role="alert">{listsError}</p>
           <Button type="button" variant="outline" onClick={loadLists}>
@@ -139,7 +139,7 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
               roomId={room.id}
               stored={room.field}
               number={room.number}
-              lists={lists}
+              lists={job.lost ? null : lists}
               listed={room.listed}
               removing={busy || writing}
               onRemove={room.listed ? () => remove(room.id, room.field.name ?? `Room ${room.number}`) : undefined}

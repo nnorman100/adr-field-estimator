@@ -325,7 +325,7 @@ export const pending = {
   refused(jobId: string, message: string, status: number): boolean {
     if (status !== 401 && (state.held[jobId] || state.moved[jobId])) {
       const known = state.moved[jobId];
-      if (!known?.revoked) change({ moved: { ...state.moved, [jobId]: { draft: known?.draft ?? null, draftId: known?.draftId ?? null, revoked: true } } });
+      if (!known?.revoked) change({ moved: { ...state.moved, [jobId]: { draft: known?.draft ?? null, draftId: known?.draftId ?? null, revoked: true } }, ...remarked(jobId) });
       return true;
     }
     pending.denyDetail(jobId, message);

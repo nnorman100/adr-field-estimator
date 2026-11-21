@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { readJob, type JobDetail, type Refusal } from '@/lib/field/api';
+import { companyAuth } from '@/lib/firebase-client';
+import { signInOf, stillSameSignIn } from '@/lib/field/sign-out';
+import { answerMessage, readJob, type JobDetail, type Refusal } from '@/lib/field/api';
 import { loadJobProjection, type JobProjection } from '@/lib/field/job-projection';
 import { watchJournal } from '@/lib/field/journal';
 import { journalFailed, readEntries } from '@/lib/field/journal-sync';
@@ -14,6 +16,7 @@ import { useDraftReadiness } from '@/lib/readiness/client';
 import { fixTarget } from '@/lib/readiness/fix';
 import type { ReadinessAnswer } from '@/lib/readiness/schema';
 import { CustomerView } from './customer-view';
+import { DryingCards } from './drying/drying-cards';
 import { PhotosView } from './photos-view';
 import { ScopeView } from './scope-view';
 import { CoordinationView } from './coordination-view';
@@ -43,6 +46,7 @@ function fieldWorkOf(session: FieldSession, detail: JobDetail): FieldWork {
 // Where a Fix lands when its own control is not there or not usable, as for a read-only draft.
 const FIX_FALLBACKS: Record<string, string> = { 'new-room-name': 'readiness-rooms', 'photo-room': 'readiness-photos' };
 const JOURNAL_READ_MS = 8_000;
+const EMPTY_FIELD_DRAFT: FieldDraft = { state: '', fieldOwnerUid: null, field: {}, rooms: [], photos: [] };
 
 const readsEveryDraft = (session: FieldSession) => session.role === 'owner' || session.role === 'office';
 const draftReadable = (session: FieldSession, detail: JobDetail) => readsEveryDraft(session) || fieldWorkOf(session, detail) === 'mine';
@@ -84,6 +88,8 @@ export type JobContext = {
   refuse: (refusal: Refusal) => void;
   // The field work moved away from this person: everything of theirs on screen is read only.
   moved: boolean;
+  // The job read was definitively refused. Forms may show the person's edits only.
+  lost: boolean;
   // Whether this person may change the field work now (the rules' own test).
   editable: boolean;
   // The job is archived (S5b-2): nothing of it is sent, and what is on screen stays, read only.
@@ -426,6 +432,18 @@ export function JobScreens({
   const recheck = useCallback(() => setRechecks((count) => count + 1), []);
   const currentRefId = draftAt ?? jobDraftId(detail, locator);
   const row = detail?.job;
+  const [dryingJob, setDryingJob] = useState(row ? { currentDraftId: row.currentDraftId, status: row.status } : null);
+  if (row && (dryingJob?.currentDraftId !== row.currentDraftId || dryingJob.status !== row.status)) {
+    setDryingJob({ currentDraftId: row.currentDraftId, status: row.status });
+  }
+  const lost = Boolean(denial) || movedState?.revoked === true;
+  const { config, tenantId } = session.client.person;
+  const signedIn = companyAuth({ config, tenantId }).currentUser;
+  const { key: signInKey } = signInOf(signedIn);
+  const dryingIsCurrent = useCallback(
+    () => signedIn?.uid === session.user.uid && stillSameSignIn(companyAuth({ config, tenantId }), { key: signInKey, user: signedIn }),
+    [config, tenantId, signInKey, signedIn, session.user.uid],
+  );
   const checking =
     (view === 'scope' || view === 'photos') && session.online && session.readiness && session.capabilities.includes('scope') &&
     !archived && !archiveChecking && movedState === null && draft !== null && draftError === null && draft.state === 'editing' &&
@@ -558,6 +576,31 @@ export function JobScreens({
     if (document.activeElement === element) focusedFix.current = readinessFix;
   }, [readinessFix, fix, draft, view]);
 
+  // The drying cards stay mounted through every state of this open job and sign-in, so an unsent
+  // reading and its retry survive; a lost, archived or checking job hides what they fetched.
+  const drying =
+    dryingJob && signInKey && session.capabilities.includes('jobs_read') ? (
+      <DryingCards
+        key={JSON.stringify([session.companyId, session.actorId, signInKey, jobId])}
+        session={{
+          user: session.user, jobId,
+          isCurrent: dryingIsCurrent, visible: view === 'scope', online: session.online,
+          canAdd: session.capabilities.includes('scope') && session.role !== 'office', office: session.role === 'office',
+          blocked: !row || lost || archived || archiveChecking || verifying !== null,
+          refreshOn: `${dryingJob.currentDraftId}:${dryingJob.status}`,
+          roomsOn: `${dryingJob.currentDraftId}:${rechecks}`,
+          markUnsaved, startSave, changed: recheck,
+        }}
+        watchEnabled={dryingJob.status === 'signed' && session.dryingWatch}
+        onRefused={(status, ambiguous) =>
+          ambiguous
+            ? reloadJob().then(() => undefined)
+            : status === 404
+              ? refuse({ status, message: answerMessage(status, null) })
+              : checkAccess({ status, message: answerMessage(status, null) })
+        }
+      />
+    ) : null;
   // An archived job (an old link, or archived here) shows that it is archived: every job route answers
   // it 410, and the field rules refuse every write to its draft. Screens of the job as read here stay,
   // read only, with whatever the person changed and did not save. A job opened from this phone's saved
@@ -568,6 +611,7 @@ export function JobScreens({
       <div className="flex flex-col gap-3">
         <FieldLink to={{ view: 'jobs', list: null }}>Back to jobs</FieldLink>
         <ArchivedNotice session={session} jobId={jobId} />
+        {drying}
       </div>
     );
   }
@@ -579,6 +623,7 @@ export function JobScreens({
           Try again
         </Button>
         <FieldLink to={{ view: 'jobs', list: null }}>Back to jobs</FieldLink>
+        {drying}
       </div>
     );
   }
@@ -600,13 +645,15 @@ export function JobScreens({
     fieldWork === 'nobody' &&
     detail.job.status === 'draft';
 
+  const shown = lost ? null : detail;
+  const shownDraft = lost && draft ? EMPTY_FIELD_DRAFT : draft;
   const context: JobContext = {
     session,
-    detail,
+    detail: shown,
     jobId,
     setDetail,
     reloadJob,
-    draft,
+    draft: shownDraft,
     // Until a newer locator's draft finishes loading, the old form remains bound to its own
     // document and read-only. Typed values from it must never be written onto a different draft.
     draftRef: { companyId: session.companyId, draftId: draftAt ?? currentDraftId },
@@ -614,11 +661,12 @@ export function JobScreens({
     checkAccess,
     refuse,
     moved,
+    lost,
     editable:
-      !moved && !archived && verifying === null && !gettingReady && draftAt === currentDraftId && draft !== null && canEditDraft(draft, session.user.uid, session.capabilities) && (session.online || session.offlineCapture),
+      !moved && !lost && !archived && verifying === null && !gettingReady && draftAt === currentDraftId && draft !== null && canEditDraft(draft, session.user.uid, session.capabilities) && (session.online || session.offlineCapture),
     archived,
-    held: archived || archiveChecking,
-    draftHeld: () => archived || archiveChecking || stillGettingReady.current,
+    held: lost || archived || archiveChecking,
+    draftHeld: () => lost || archived || archiveChecking || stillGettingReady.current,
     markUnsaved,
     startSave,
     stale: draft !== null && draftError !== null,
@@ -628,7 +676,7 @@ export function JobScreens({
   return (
     <div className="flex flex-col gap-4">
       <FieldLink to={{ view: 'jobs', list: null }}>Back to jobs</FieldLink>
-      <h2 className="text-xl font-semibold break-words">{detail ? detail.job.propertyAddress || 'No address yet' : 'Saved field work'}</h2>
+      <h2 className="text-xl font-semibold break-words">{shown ? shown.job.propertyAddress || 'No address yet' : 'Saved field work'}</h2>
       <nav aria-label="Job" className="flex flex-wrap gap-x-4">
         {TABS.filter((tab) => tab.view !== 'coordination' || session.capabilities.some((key) => key === 'coordination' || key === 'assignment')).map((tab) => (
           <FieldLink key={tab.view} to={{ view: tab.view, jobId }} current={tab.view === view} className={tab.view === view ? 'font-semibold' : undefined}>
@@ -689,7 +737,7 @@ export function JobScreens({
           {MOVED_TEXT}
         </p>
       ) : null}
-      {draftView && startable && detail ? <StartFieldWork context={{ ...context, detail }} /> : null}
+      {draftView && startable && shown ? <StartFieldWork context={{ ...context, detail: shown }} /> : null}
       {draftView && gettingReady && !moved && !archived ? (
         prepareTries < PREPARE_TRIES ? (
           <p role="status" className="rounded-md bg-foreground/5 p-3 text-sm">
@@ -722,11 +770,12 @@ export function JobScreens({
       {draftView && !draft && !draftError && cachedError ? <p role="status">{cachedError}</p> : null}
       {/* The views of one job stay mounted and only the open one shows, so moving between them
           keeps what the person has typed and not saved. */}
-      <div hidden={view !== 'scope'}>{draft ? <ScopeView key={draftAt} job={context} draft={draft} open={view === 'scope'} readinessFix={fix ? readinessFix : null} /> : null}</div>
-      <div hidden={view !== 'photos'}>{draft ? <PhotosView key={draftAt} job={context} draft={draft} open={view === 'photos'} readinessFix={fix ? readinessFix : null} /> : null}</div>
+      {drying}
+      <div hidden={view !== 'scope'}>{shownDraft ? <ScopeView key={draftAt} job={context} draft={shownDraft} open={view === 'scope'} readinessFix={fix ? readinessFix : null} /> : null}</div>
+      <div hidden={view !== 'photos'}>{shownDraft ? <PhotosView key={draftAt} job={context} draft={shownDraft} open={view === 'photos'} readinessFix={fix ? readinessFix : null} /> : null}</div>
       <div hidden={view !== 'customer'}>
-        {detail ? (
-          <CustomerView job={{ ...context, detail }} />
+        {shown || movedState?.revoked ? (
+          <CustomerView job={context} />
         ) : (
           <div className="flex flex-col gap-2">
             <p role="status">{error ?? 'Needs a connection'}</p>
@@ -738,10 +787,10 @@ export function JobScreens({
           </div>
         )}
       </div>
-      <div hidden={view !== 'coordination'}>{detail ? <CoordinationView job={{ ...context, detail }} open={view === 'coordination'} /> : null}</div>
+      <div hidden={view !== 'coordination'}>{shown || movedState?.revoked ? <CoordinationView job={context} open={view === 'coordination'} /> : null}</div>
       {/* Archive and Copy follow the person's keys and the job's state; the moved, read-only state
           limits only field editing. */}
-      {detail && !archived ? <JobActions job={{ ...context, detail }} /> : null}
+      {shown && !archived ? <JobActions job={{ ...context, detail: shown }} /> : null}
     </div>
   );
 }

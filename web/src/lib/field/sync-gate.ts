@@ -1,4 +1,5 @@
 import { SESSION_RULES } from '@/lib/auth/policy';
+import { dryingWatchEnabled } from '@/lib/drying/client';
 import { readinessEnabled } from '@/lib/readiness/feature';
 import { meOutcome, type MeOutcome } from '@/lib/sign-in/outcome';
 
@@ -32,7 +33,7 @@ export type MeAnswer = { status: number; body: unknown };
 
 export type AppCheckSeam = { mode: 'monitor' | 'enforce'; token(): Promise<unknown> };
 
-// What /api/me said about the person. The live readiness flag is used only by screens.
+// What /api/me said about the person. The live feature flags are used only by screens.
 export type MeFacts = {
   companyId: string;
   companyName: string;
@@ -41,6 +42,7 @@ export type MeFacts = {
   actorId?: string;
   expiresAt: number;
   readiness?: true;
+  dryingWatch?: true;
 };
 
 export type GateState =
@@ -97,7 +99,11 @@ export function judgeMe(answer: MeAnswer, now: number): Verdict {
   if (!Number.isFinite(expiresAt) || !accessCurrent(expiresAt, now)) return { kind: 'renewing' };
   return {
     kind: 'open',
-    facts: { ...facts, companyName: outcome.companyName, role: outcome.role, expiresAt, ...(readinessEnabled(answer.body) ? { readiness: true } : {}) },
+    facts: {
+      ...facts, companyName: outcome.companyName, role: outcome.role, expiresAt,
+      ...(readinessEnabled(answer.body) ? { readiness: true } : {}),
+      ...(dryingWatchEnabled(answer.body) ? { dryingWatch: true } : {}),
+    },
   };
 }
 

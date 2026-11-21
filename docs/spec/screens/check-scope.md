@@ -3,7 +3,8 @@
 Part of [Screen specs](README.md). Address: `/field?job={id}` (the default job view). Built in:
 `web/src/app/field/job-screens.tsx` (the job frame and its tabs), `scope-view.tsx`,
 `rooms-section.tsx`, `room-card.tsx`, `room-lists.tsx`, `equipment-suggestion.tsx`,
-`start-field-work.tsx`, `use-field-edit.ts`, `published-item-list.tsx`. Stages S5a-6, S5a-10, S5b-1, S6-3, S6-4, S6-8, S5b-11.
+`start-field-work.tsx`, `use-field-edit.ts`, `published-item-list.tsx`, and `drying/` (the drying
+log and watch cards, shared with signed [Review](review.md)). Stages S5a-6, S5a-10, S5b-1, S6-3, S6-4, S6-8, S5b-11, S5b-10 (10C, log and watch).
 
 ## Purpose
 
@@ -37,6 +38,36 @@ An accepted save asks the check again. A confirmed archive replaces the readines
 The summary of findings gap points to guidance in Check Scope while the separate summary editor is
 pending.
 
+## Drying log and watch
+
+Open **Drying log** on Check Scope to see active readings by room and time. The company owner and
+any estimator with access to the job can add or void a reading, including when someone else owns
+the field draft. Office staff can read the log. Select a room or Whole job and enter the time the
+reading was taken. Air readings show the five values the server calculates. Material readings use
+the meter's unit for both moisture and the optional dry standard. Thermal readings record the
+temperature difference and pattern. Voiding asks for confirmation and removes the reading from the
+active log.
+
+These actions need a connection. A lost save reply leaves the fields in place and offers **Save
+again**, which sends the same reading. A refusal keeps the entered values and shows why the save
+could not be confirmed or accepted. The unsent form lives on the open job screen and counts as
+unsaved input for Back to Finish. A local time that does not exist, or happens twice when the clocks
+change, is not guessed: the technician corrects it or chooses the first or second occurrence. When
+the server confirms the job is refused, the fetched job, customer, prices and drying data leave the
+screen and only the unsent reading, its refusal text and its exact retry stay while this job and
+sign-in are open. A watch decision whose reply was lost keeps its reason and a **Try again** button,
+even after the watch stops offering that action.
+
+On a signed job with the company’s drying-watch switch enabled, **Drying watch** shows the signed
+plan, current day, next due reading, last reading, room gaps and affected-air trend. An older
+signed job without saved drying days says there is no plan. A reading added or voided here
+refreshes the watch and the readiness check. Each room shows its affected material readings and dry
+standards, and a room with a missing dry standard is not counted as complete. The actions offered
+(mark dry, extension note, close monitoring) are the ones the server's watch answer permits for the
+person, office staff included; the office drying log itself stays read only. A monitoring decision
+requires an explicit confirmation and reason. If the facts changed, review them again before
+confirming. Extension notes leave the signed drying days as agreed.
+
 ## Who may see it and do what
 
 Only the person who owns the job's field work edits it, and only while the draft is being edited
@@ -46,7 +77,7 @@ Only the person who owns the job's field work edits it, and only while the draft
 |---|---|---|
 | Owner | every job's draft | edit only once the field work is theirs (Start field work on a job nobody owns, or a move to themself in [Job coordination](job-coordination.md)); if that move leaves the existing draft still naming the former owner, opening the job gets it ready ("Getting this job's field work ready…", see Key actions) |
 | Estimator | the job's header, tabs and Customer and claim on jobs they made or are assigned to; the draft (rooms, scope, photos) only while they own the job's field work (`draftReadable` in `job-screens.tsx`; `canRead` in `web/firestore.rules`) | Start field work on a job nobody owns; edit the jobs whose field work they own (a job that names them but whose draft does not yet is got ready as it opens, see Key actions) |
-| Office | every job's draft, read only | nothing: no `scope`; no Start field work |
+| Office | every job's draft, read only | nothing in the field work: no `scope`; no Start field work. On a signed job, the drying log stays read only and the drying watch offers the actions the server permits (see Drying log and watch) |
 | Superadmin support | nothing | nothing |
 | Different-company user | nothing: the job answers 404 and the field rules refuse the draft | nothing |
 
@@ -123,6 +154,8 @@ job's field work is no longer yours…" (unsent changes stay on the phone, read 
 | Read the room types, items and prep tasks | `GET /api/jobs/{id}/scope-lists` | `jobs_read` |
 | Read the company's published reference item list | `GET /api/prices/item-list`, offline copy in `ds-prices` | `prices_read` |
 | Start field work (become field owner) | `POST /api/jobs/{id}/field-owner` ("Nobody has started this job's field work yet. Whoever starts it owns it…"), offered on Check Scope and on [Photos](photos.md) only on a job nobody owns (`startable` in `job-screens.tsx`, `start-field-work.tsx`). When the job already names this person but its draft is not there or does not name them yet (a field step that did not get through: a first Start, a move, Back to editing, New job, Copy), there is no Start prompt any more: the job read gets it ready (the draft life-cycle redesign, slice 6: the read syncs the job's drafts from Postgres when they fell behind or the current draft is missing) and the screen shows "Getting this job's field work ready…" while it reads the job again (1, 2, 4, 8 and 8 seconds), then "This job's field work is not ready on this phone yet. Try again in a moment." with Try again. A 403 answer to Start drops the job from the screen, as any refusal of it does. | `scope` |
+| Read, add and void drying readings; read the rooms a reading may name | `GET`/`POST /api/jobs/{id}/drying-readings`, `POST …/{readingId}/void`, `GET /api/jobs/{id}/drying-rooms` (online only, never the draft journal) | read `jobs_read`; add and void `scope` ([Drying log](../../access/drying.md)) |
+| Read the drying watch and record a decision | `GET /api/jobs/{id}/drying-watch`, `POST …/drying-watch/actions`, flag `drying_watch` from `GET /api/me` | read `jobs_read`; Mark dry `scope` or `coordination`; Extend plan and Close monitoring `coordination` |
 | Save rooms, scope, counts, notes | the field database draft (`draftFieldWrites`), checked by `web/firestore.rules`; no server route | field owner with `scope` |
 
 Rules: `docs/access/jobs.md` (field owner), `docs/access/scope-lists.md`; draft lock while
@@ -130,7 +163,7 @@ submitting: `docs/access/submit.md`.
 
 ## Not built yet
 
-- Drying readings and the drying log, job close (S5b-10).
+- Job close (S5b-10).
 - Voice notes, scope suggestions from AI and meter-photo reading (S7).
 - Approving a named adjustment on a job (S5b-8). Reprice (S5b-6) is on Review before signing.
 - A normal Check Scope action that opens [Finish and review](finish.md): see "Mismatches to check".
