@@ -105,6 +105,44 @@ test.describe('what the worker keeps', () => {
 });
 
 test.describe('a deployment', () => {
+  test('offers a waiting update and reloads into it only after the technician taps', async ({ page, lane }) => {
+    const worker = await workerText(lane);
+    await openControlled(page, lane);
+    const shell = await (await fetch(`${lane.appUrl}/field`)).text();
+    lane.serve('/field', { type: 'text/html; charset=utf-8', body: shell.replace('</body>', '<!--updated-shell--></body>') });
+    lane.serve('/sw.js', { type: 'text/javascript; charset=utf-8', body: worker.replace(buildIdOf(worker), 'update-on-tap') });
+    await nudge(page);
+
+    const update = page.getByRole('button', { name: 'Update now' });
+    await expect(update).toBeEnabled();
+    expect(await page.content()).not.toContain('updated-shell');
+    const reloaded = page.waitForEvent('framenavigated', (frame) => frame === page.mainFrame());
+    await update.click();
+    await reloaded;
+    await page.waitForLoadState('domcontentloaded');
+    expect(await page.content()).toContain('updated-shell');
+    await expect(update).toBeHidden();
+    await expect(page.getByRole('heading', { name: COMPANY })).toBeVisible();
+  });
+
+  test('the new worker takes over naturally after the last controlled window closes', async ({ context, page, lane }) => {
+    const worker = await workerText(lane);
+    await openControlled(page, lane);
+    const other = await context.newPage();
+    await other.goto(`${lane.appUrl}/field`);
+    lane.serve('/sw.js', { type: 'text/javascript; charset=utf-8', body: worker.replace(buildIdOf(worker), 'all-windows-closed') });
+    await other.evaluate(async () => (await navigator.serviceWorker.getRegistration())!.update());
+    await expect.poll(() => other.evaluate(async () => (await navigator.serviceWorker.getRegistration())?.waiting?.state)).toBe('installed');
+    await page.close();
+    await expect.poll(() => cacheNames(other)).toContain(`ds-field-${buildIdOf(worker)}`);
+    await other.close();
+
+    const observer = await context.newPage();
+    await observer.goto('about:blank');
+    await observer.goto(`${lane.appUrl}/field`);
+    await expect.poll(() => cacheNames(observer)).toEqual(['ds-field-all-windows-closed']);
+  });
+
   test('installs the files the new build serves, not the copies this worker keeps', async ({ context, lane }) => {
     const worker = await workerText(lane);
     const page = await context.newPage();

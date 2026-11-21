@@ -1,4 +1,5 @@
 import { monitorAppCheck } from '@/lib/app-check';
+import { currentClientRefusal } from '@/lib/app-version';
 import { parseFlagName, type FlagName } from '@/lib/flags';
 import { takeLinkRequest } from '@/lib/links/address-limit';
 import { linkTokenHashOf } from '@/lib/links/token';
@@ -84,6 +85,13 @@ function ruled<H extends Handler>(rule: AccessRule, handler: H): H {
 /** The access rule that made a route handler, or null for a handler no rule wraps. */
 export function accessRuleOf(handler: unknown): AccessRule | null {
   return typeof handler === 'function' ? (RULES.get(handler as Handler) ?? null) : null;
+}
+
+/** Declared on job writes, outside the access wrapper, so an old client reaches no records. */
+export function requireCurrentClient(handler: Handler): Handler {
+  const rule = RULES.get(handler);
+  if (!rule) throw new Error('The job write must declare an access rule');
+  return ruled(rule, (request, context) => currentClientRefusal(request) ?? handler(request, context));
 }
 
 function refusal(code: string, status: number): Response {

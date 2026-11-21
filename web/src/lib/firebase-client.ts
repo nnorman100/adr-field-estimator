@@ -1,3 +1,4 @@
+import { apiFetch } from '@/lib/api-fetch';
 import { getApps, initializeApp } from 'firebase/app';
 import {
   GoogleAuthProvider,
@@ -228,7 +229,7 @@ export async function callApi(user: User, path: string, init: { method?: string;
   let response: Response;
   try {
     const token = await user.getIdToken();
-    response = await fetch(path, {
+    response = await apiFetch(path, {
       method: init.method ?? 'GET',
       headers: {
         Authorization: `Bearer ${token}`,
