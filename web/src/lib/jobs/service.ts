@@ -1,9 +1,13 @@
 import { and, asc, desc, eq, ne, or, sql, type SQL } from 'drizzle-orm';
-import { actors, auditEvents, jobAssignments, jobClaims, jobCustomers, jobs, jobSubmissions } from '@/db/schema';
+import { auditEvents, jobAssignments, jobClaims, jobCustomers, jobs, jobSubmissions } from '@/db/schema';
 import { holdAcrossOutsideCall, withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
-import { canSeeJob, claimDraft, hasAny, holdDraft, isOwnJob, jobAccess, JobError, lockedJob, ownsFieldWork, seesEveryJob, type JobCaller, type JobRow } from './access';
+import { canSeeJob, claimDraft, hasAny, holdDraft, isOwnJob, jobAccess, JobError, ownsFieldWork, seesEveryJob, type JobCaller, type JobRow } from './access';
+import type { DraftSync } from './draft-sync';
 import type { DraftFound, DraftLookup, DraftStore } from './drafts';
+import { afterFieldStep, stillMember, syncJobDrafts } from './sync-job';
+import { IdentityRefusal } from '@/lib/auth';
+import { isQueueTimeout } from '@/db/client';
 import { createDigest, type ClaimInput, type CreateJobInput, type CustomerInput, type ListQuery } from './schema';
 
 // The jobs of a company (S5a-3). Every function runs inside withCompany for the company of the
@@ -275,7 +279,7 @@ export async function rebuildableRecord(tx: CompanyTransaction, companyId: strin
   return { snapshotBytes: latest.snapshotBytes, previous: { draftId: latest.draftId, submissionId: latest.id } };
 }
 
-export function jobsService(db: Database, drafts: DraftStore): JobsService {
+export function jobsService(db: Database, drafts: DraftStore, sync: DraftSync): JobsService {
   async function inCompany<T>(companyId: string, run: (tx: CompanyTransaction) => Promise<T>): Promise<T> {
     try {
       return await withCompany(db, companyId, run);
@@ -345,36 +349,44 @@ export function jobsService(db: Database, drafts: DraftStore): JobsService {
           if (await findDraft(drafts, caller.companyId, input.draftId)) throw new JobError('conflict');
           await audit(tx, caller, 'job_created', row.id, { revision: row.revision });
         }
-        let ownerUid: string | null = null;
-        if (row.fieldOwnerActorId) {
-          const [actor] = await tx
-            .select({ uid: actors.uid })
-            .from(actors)
-            .where(and(eq(actors.companyId, caller.companyId), eq(actors.id, row.fieldOwnerActorId)));
-          ownerUid = actor?.uid ?? null;
-        }
-        return { created: inserted !== undefined, ownerUid, detail: await detailOf(tx, row) };
+        // What the projection needs; the answer is read after the field step.
+        return { created: inserted !== undefined, job: { id: row.id, currentDraftId: row.currentDraftId, revision: row.revision } };
       });
       try {
-        await inCompany(caller.companyId, async (tx) => {
-          await lockedJob(tx, caller.companyId, made.detail.job.id, { live: true });
-          await holdAcrossOutsideCall(tx);
-          const result = await drafts.ensure(caller.companyId, made.detail.job.id, input.draftId, made.ownerUid);
-          // A draft made for another job is never this job's.
-          if (result === 'taken') throw new JobError('conflict');
-          // Only an archived job's placeholder is there: no draft yet, so the same request again.
-          if (result === 'archived') throw new JobError('draft_unavailable');
-        });
-        await drafts.projectJob(caller.companyId, made.detail.job.id, {
-          currentDraftId: made.detail.job.currentDraftId, revision: made.detail.job.revision,
-        });
+        // The job's first draft, as the draft sync makes every draft (the draft life-cycle redesign, slice 5):
+        // empty, in the job's state, naming the field owner Postgres holds when the sync reads it, so a
+        // creation can never name an owner a later move replaced; a placeholder an older version left
+        // under the id is replaced, and nothing is written for one (sync-job.ts).
+        // Its answer only to a caller still an active member of an active company (afterFieldStep).
+        await afterFieldStep(db, caller, () => syncJobDrafts(db, sync, drafts, caller.companyId, made.job.id, { requireDraft: true }));
       } catch (error) {
-        if (error instanceof JobError) throw error;
+        if (error instanceof JobError || error instanceof IdentityRefusal || isQueueTimeout(error)) throw error;
         // Fixed text only: the SDK's message may quote a path.
         console.error('job draft unavailable', error instanceof Error ? error.name : 'unknown');
         throw new JobError('draft_unavailable');
       }
-      return { created: made.created, detail: made.detail };
+      // The job as Postgres holds it after the field step, read with the caller's access again (the caller
+      // still a member of an active company, in the same snapshot): a change committed meanwhile (an archive,
+      // a move) is the answer, not the row this request wrote. The locator follows that read, never the row.
+      const detail = await withCompany(
+        db,
+        caller.companyId,
+        async (tx) => {
+          await stillMember(tx, caller);
+          return detailOf(tx, await jobAccess(tx, caller, made.job.id, READ));
+        },
+        { snapshot: true },
+      );
+      // The locator write is a field step too: the caller is checked again after it, written or not.
+      await afterFieldStep(db, caller, async () => {
+        try {
+          await drafts.projectJob(caller.companyId, made.job.id, { currentDraftId: detail.job.currentDraftId, revision: detail.job.revision });
+        } catch (error) {
+          console.error('job draft unavailable', error instanceof Error ? error.name : 'unknown');
+          throw new JobError('draft_unavailable');
+        }
+      });
+      return { created: made.created, detail };
     },
 
     async list(caller, query) {

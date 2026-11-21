@@ -14,6 +14,7 @@ import { AgreementError } from './errors';
 import { readSignedRecord, SIGNED_FORMAT, signedRecordBytes, type SignedRecord } from './record';
 import { signDigest, type SignInput } from './schema';
 import type { SignerRole } from './screen';
+import { captureSample } from '@/lib/drying/history';
 
 // Sign on the phone (docs/plans/S5.md, S5a-11). The customer signs the job's current estimate on the
 // technician's phone: the signature image is received first through the photo receipt route
@@ -273,6 +274,9 @@ export async function signInTransaction(
       signedAt,
     })
     .returning(agreementColumns);
+  // The estimate history's sample of this agreement (S5b-10), whatever the estimate_assist switch: in a
+  // savepoint, so a sample that cannot be built or written never stops the signature.
+  await captureSample(tx, caller.companyId, jobId, input.id);
   if (link) await link.consume(tx, input.id);
   const [signed] = await tx
     .update(jobs)

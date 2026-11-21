@@ -57,7 +57,7 @@ const checked = (extra: Record<string, unknown> = {}) => ({
 describe('the readiness switch', () => {
   it('is a known flag, off unless stored exactly on, with an owner, a purpose and a review date', () => {
     expect(FLAG_NAMES).toContain('readiness');
-    expect(FEATURE_FLAG_NAMES).toEqual(['readiness', 'priced_extras']);
+    expect(FEATURE_FLAG_NAMES).toEqual(['readiness', 'priced_extras', 'drying_watch', 'estimate_assist']);
     expect(flagsFromRows([]).readiness).toBe(false);
     expect(flagsFromRows([{ flag: 'readiness', enabled: 'true' as unknown as boolean }]).readiness).toBe(false);
     expect(flagsFromRows([{ flag: 'readiness', enabled: true }]).readiness).toBe(true);
@@ -95,7 +95,7 @@ describe('/api/me', () => {
       expect(res.status).toBe(200);
       expect(res.headers.get('cache-control')).toBe('no-store');
       const body = (await res.json()) as { features: unknown };
-      expect(body.features).toEqual({ readiness: expected });
+      expect(body.features).toEqual({ readiness: expected, drying_watch: false, estimate_assist: false });
     }
   });
 });

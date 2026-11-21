@@ -11,7 +11,7 @@ import type { FieldManifest } from '@/lib/field/canonical';
 import { fieldId } from '@/lib/field/schema';
 import { desired, MalformedGenerationError, MalformedMarkerError, UnclaimedDraftError, type DraftContent, type JobDraftSnapshot } from './draft-lifecycle';
 import type { DraftSync, SyncResult } from './draft-sync';
-import { draftOfOtherJob, type DraftLookup } from './drafts';
+import { draftOfOtherJob, noDraft, type DraftLookup } from './drafts';
 
 // The draft life-cycle sync of one job (the draft life-cycle redesign, Design 2): read what Postgres
 // holds for the job in one snapshot with its field revision (jobs.field_revision, migration 0018),
@@ -328,6 +328,9 @@ export async function syncJobDrafts(
   lookup: DraftLookup,
   companyId: string,
   jobId: string,
+  // New job, Copy and Back to editing need the draft they make: one the sync leaves missing or a placeholder
+  // (a newer previous-version revision holds it) is 503, never success over no draft.
+  { requireDraft = false }: { requireDraft?: boolean } = {},
 ): Promise<{ result: SyncResult; currentDraftId: string }> {
   // The operator's generation and the job's marker in their shape first, before this step's own Postgres
   // writes (the claim below, a raised field revision): one that is not stops it with nothing changed.
@@ -360,7 +363,7 @@ export async function syncJobDrafts(
       // place, is made at a new version: at the version already synced the sync would write nothing. (A try
       // whose commit lost its answer needs no new version: the marker records the job revision it wrote at,
       // so the same field revision at a moved job revision is planned again, draft-lifecycle.ts.)
-      if (!found || found.placeholder) {
+      if (noDraft(found)) {
         await withCompany(db, companyId, (tx) =>
           tx
             .update(jobs)
@@ -397,5 +400,12 @@ export async function syncJobDrafts(
   // no failure of this request: that newer change, or the repair pass, writes the rest (the version is
   // not recorded as synced, syncJob).
   if (result.missing.includes(current)) throw new JobError('draft_unavailable');
+  if (requireDraft) {
+    const found = await lookup.findDraft(companyId, current).catch((error: unknown) => {
+      console.error('job draft sync unavailable', error instanceof Error ? error.name : 'unknown');
+      throw new JobError('draft_unavailable');
+    });
+    if (noDraft(found)) throw new JobError('draft_unavailable');
+  }
   return synced;
 }

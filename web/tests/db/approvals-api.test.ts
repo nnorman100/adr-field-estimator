@@ -744,6 +744,31 @@ describe('hardening (S5b-8 follow-ups)', () => {
     expect((await service.make(maker, jobId)).created).toBe(true);
   });
 
+  it('reads price_books under the company lock: a switch-off committed while the estimate waits answers not found and makes nothing', async () => {
+    await publish();
+    const { jobId } = await submittedJob();
+    const maker = { ...ESTIMATOR_CALLER(), capabilities: ['audit' as const, 'jobs_read' as const] };
+    const made = await interleaved(
+      async (tx) => {
+        await tx`SELECT id FROM companies WHERE id = ${h.seed.a} FOR UPDATE`;
+      },
+      () =>
+        estimatesService(h.handle.db)
+          .make(maker, jobId)
+          .then(
+            (result) => ({ result }),
+            (error: unknown) => ({ error }),
+          ),
+      async (tx) => {
+        await tx`UPDATE company_feature_flags SET enabled = false WHERE company_id = ${h.seed.a} AND flag = 'price_books'`;
+      },
+    );
+    expect(made.blocked).toBe(true);
+    expect(made.result).toMatchObject({ error: { code: 'not_found' } });
+    expect(await h.admin`SELECT count(*)::int AS n FROM job_estimates`).toEqual([{ n: 0 }]);
+    expect(await h.admin`SELECT count(*)::int AS n FROM job_price_pins`).toEqual([{ n: 0 }]);
+  });
+
   it('reads priced_extras under the company lock: a switch-off committed while the estimate waits leaves the approvals out', async () => {
     await publish();
     const { jobId } = await submittedJob();

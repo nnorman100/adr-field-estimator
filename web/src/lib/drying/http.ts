@@ -91,3 +91,34 @@ export async function voidReading(request: Request, identity: Identity, context:
     return json({ void: await dryingServices().readings.void(identity, id, readingId, await bodyText(request)) });
   });
 }
+
+// GET /api/jobs/{jobId}/drying-watch (behind `drying_watch`): the watch of a signed job.
+export async function readWatch(_request: Request, identity: Identity, context: RouteContext): Promise<Response> {
+  return respond(async () => json(await dryingServices().watch.read(identity, await jobPathId(context))));
+}
+
+// POST /api/jobs/{jobId}/drying-watch/actions  { id, action, factsHash, confirmed: true, reason }: 201
+// with the new receipt and the watch now, 200 with the accepted receipt alone for the same request again.
+export async function actOnWatch(request: Request, identity: Identity, context: RouteContext): Promise<Response> {
+  return respond(async () => {
+    const id = await jobPathId(context);
+    const { created, receipt, watch } = await dryingServices().watch.act(identity, id, await bodyText(request));
+    return json(created ? { receipt, watch } : { receipt }, created ? 201 : 200);
+  });
+}
+
+// GET /api/jobs/{jobId}/outcome (behind `estimate_assist`): the close of a signed job, with its amounts
+// for the owner and office, whether and when it closed for anyone else with the job.
+export async function readOutcome(_request: Request, identity: Identity, context: RouteContext): Promise<Response> {
+  return respond(async () => json(await dryingServices().outcome.read(identity, await jobPathId(context))));
+}
+
+// POST /api/jobs/{jobId}/close  { id, expectedAgreementId, expectedRevision, finalAmount, actualDays, note }:
+// 201 with the new close, 200 with the original receipt for the same request again.
+export async function closeJob(request: Request, identity: Identity, context: RouteContext): Promise<Response> {
+  return respond(async () => {
+    const id = await jobPathId(context);
+    const { created, close } = await dryingServices().outcome.close(identity, id, await bodyText(request));
+    return json({ close }, created ? 201 : 200);
+  });
+}

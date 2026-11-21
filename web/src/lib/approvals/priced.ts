@@ -20,6 +20,15 @@ export async function approvalSwitchesOn(tx: CompanyTransaction, companyId: stri
   return on.has('priced_extras') && on.has('price_books');
 }
 
+// The company's `price_books` switch is on now, which every estimate and price route needs.
+export async function priceBooksOn(tx: CompanyTransaction, companyId: string): Promise<boolean> {
+  const [flag] = await tx
+    .select({ enabled: companyFeatureFlags.enabled })
+    .from(companyFeatureFlags)
+    .where(and(eq(companyFeatureFlags.companyId, companyId), eq(companyFeatureFlags.flag, 'price_books')));
+  return flag?.enabled === true;
+}
+
 export async function pricedExtrasOn(tx: CompanyTransaction, companyId: string): Promise<boolean> {
   const [flag] = await tx
     .select({ enabled: companyFeatureFlags.enabled })

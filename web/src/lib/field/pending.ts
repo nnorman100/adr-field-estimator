@@ -265,10 +265,9 @@ export const pending = {
     delete refusals[key];
     change({ refusals });
   },
-  // The person chose to discard what they typed and did not send for this job: the text typed on
-  // `draftId` and the refused customer and claim changes go; writes already in flight stay.
-  discardUnsent(jobId: string, draftId: string) {
-    putTyped(jobId, Object.fromEntries(Object.entries(state.typed[jobId] ?? NO_DRAFTS).filter(([id]) => id !== draftId)));
+  // Discard text typed for this job and refused record edits. Keep writes that can still be retried.
+  discardUnsent(jobId: string) {
+    putTyped(jobId, NO_DRAFTS);
     pending.dropRefusal(jobId, 'customer');
     pending.dropRefusal(jobId, 'claim');
   },

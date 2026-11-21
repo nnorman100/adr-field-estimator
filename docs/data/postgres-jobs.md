@@ -103,13 +103,17 @@ owner's decisions, made before the file runs again. The table holds ids only.
 
 `0018_field_revision` adds four columns to `jobs` and one lookup; no table, row or policy is removed. They
 are the database part of the draft life-cycle redesign (Design 2): one sync step will write every Firestore
-draft of a job from Postgres, guarded by one version number. Copy records `copied_from_job_id`. Archive, Restore,
-Start field work, Move and Submit sync the job's drafts after their commit (`web/src/lib/jobs/sync-job.ts`): one read-only
+draft of a job from Postgres, guarded by one version number. Copy records `copied_from_job_id`. Every route that
+changes a draft's life cycle syncs the job's drafts after its commit: New job, Copy and Back to editing (which make
+the draft from its content: empty, the copy's signed source less its cleared keys, or the latest record), Archive,
+Restore, Start field work, Move and Submit (`web/src/lib/jobs/sync-job.ts`): one read-only
 snapshot of the job with its `field_revision`, the sync, then `field_synced_revision` raised to that version
 (`WHERE field_synced_revision < v`) unless a draft is to be written again. Submit syncs twice: after its intent
 row (the fence, the pending row's `submitting`) and after its decision (`submitted` or `editing`); the submission
-worker syncs a job whose decided row's request could not. Back to editing, New job and Copy switch to it in later
-slices. The scheduled worker's repair pass (`web/src/lib/jobs/sync-repair.ts`) syncs jobs still behind once their
+worker syncs a job whose decided row's request could not. No placeholder is written for a missing draft any more;
+one a previous version left is replaced by the draft at the next sync of the job, unless that version left a revision
+newer than the job's (the sync then reports it superseded and leaves it until a sync at a newer revision, or the
+operator's generation raise, writes over it). The scheduled worker's repair pass (`web/src/lib/jobs/sync-repair.ts`) syncs jobs still behind once their
 last change is more than 60 seconds old, so a field step that failed or was abandoned heals with no request from a
 phone: within one worker period while a pass's bounds hold every due job (100 companies, the most the lookup
 returns, and 200 jobs in each) and none of them fails. A larger backlog drains over the following periods. Within a company, each period's

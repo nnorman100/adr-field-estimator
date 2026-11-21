@@ -65,13 +65,19 @@ export function startDraft(tx: Transaction, ref: DocumentReference, left: Placeh
   else tx.create(ref, data);
 }
 
-export type DraftFound = { jobId: unknown; placeholder?: true };
+// `leftover`: no draft document, but rooms or photos left under its id (a draft lost without its nested
+// documents): the id is taken, and no draft is made over them.
+export type DraftFound = { jobId: unknown; placeholder?: true; leftover?: true };
+
+/** Whether what the lookup found holds no draft: nothing, a placeholder, or leftovers with no draft. */
+export const noDraft = (found: DraftFound | null): boolean => !found || found.placeholder === true || found.leftover === true;
 
 export type DraftLookup = {
   // The document under this id, with the job id written on it (undefined on a draft made before
   // `jobId`), and `placeholder: true` when it is a placeholder a previous-version archive or restore left
-  // where a draft was missing (no draft yet); null when there is none. Read before a request commits a
-  // draft id in Postgres, so a draft id the field database refuses is never committed.
+  // where a draft was missing (no draft yet), or `leftover: true` when there is no draft document but rooms
+  // or photos are left under the id; null when there is nothing. Read before a request commits a draft id
+  // in Postgres, so a draft id the field database refuses (leftovers included) is never committed.
   findDraft(companyId: string, draftId: string): Promise<DraftFound | null>;
 };
 
@@ -80,7 +86,14 @@ export function firestoreDraftLookup(db: Firestore): DraftLookup {
     async findDraft(companyId, draftId) {
       const draft = db.collection('companies').doc(companyId).collection('drafts').doc(draftId);
       const found = await firestoreSpan('get', 'drafts', () => draft.get());
-      if (!found.exists) return null;
+      if (!found.exists) {
+        // Rooms or photos left under the id with no draft: one of each collection is enough to tell.
+        for (const name of ['rooms', 'photos']) {
+          const left = await firestoreSpan('get', 'drafts', () => draft.collection(name).limit(1).get());
+          if (!left.empty) return { jobId: undefined, leftover: true };
+        }
+        return null;
+      }
       return placeholderOf(found) ? { jobId: found.get('jobId'), placeholder: true } : { jobId: found.get('jobId') };
     },
   };

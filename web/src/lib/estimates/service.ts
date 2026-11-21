@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { and, desc, eq, isNotNull, sql } from 'drizzle-orm';
 import { ZodError } from 'zod';
 import { auditEvents, companies, jobEstimates, jobPricePins, jobSubmissions, memberships, priceTableVersions, priceTableWorkingCopies } from '@/db/schema';
@@ -8,7 +9,7 @@ import type { Capability } from '@/lib/access';
 import { canonicalJson } from '@/lib/field/canonical';
 import { FieldMapError } from '@/lib/field/inspection';
 import { hasAny, jobAccess, JobError, type JobCaller, type JobRow } from '@/lib/jobs/access';
-import { approvedFor, pendingCount, pricedExtrasOn, roomNamesOf, withApprovals } from '@/lib/approvals/priced';
+import { approvedFor, pendingCount, priceBooksOn, pricedExtrasOn, roomNamesOf, withApprovals } from '@/lib/approvals/priced';
 import { advance } from '@/lib/jobs/service';
 import { readCompanyDocuments, type CompanyDocuments } from '@/lib/profile/documents';
 import { readJobDetails, type JobDetails } from '@/lib/submissions/details';
@@ -235,12 +236,13 @@ async function audit(tx: CompanyTransaction, caller: JobCaller, action: string, 
   await tx.insert(auditEvents).values({ companyId: caller.companyId, actorId: caller.actorId, action, target: jobId, details });
 }
 
-// The owner who reprices, or reads the reprice preview, is still the company's active owner when it commits: the operator's owner
+// The owner who reprices, or reads the reprice preview, is still the active owner of an active company when it commits: the operator's owner
 // replacement locks the company row and then the same membership row, so the company row is locked
 // first here too (the pin and audit rows need it anyway), and a replacement cannot slip between the
 // check and the write.
 export async function lockActiveOwner(tx: CompanyTransaction, caller: JobCaller): Promise<void> {
-  await tx.select({ id: companies.id }).from(companies).where(eq(companies.id, caller.companyId)).for('no key update');
+  const [company] = await tx.select({ status: companies.status }).from(companies).where(eq(companies.id, caller.companyId)).for('no key update');
+  if (company?.status !== 'active') throw new JobError('not_allowed');
   const [owner] = await tx
     .select({ id: memberships.id })
     .from(memberships)
@@ -436,9 +438,48 @@ async function present(tx: CompanyTransaction, caller: JobCaller, job: JobRow, r
   return estimateView(row, caller.capabilities, { documents: estimate.documents!, proposal, proposalSha256: proposalBytes(proposal).sha256 }, waiting);
 }
 
-// What the owner's Reprice banner shows (S5b-6) and what Reprice this draft confirms against: the
-// job's pinned version and the company's newest, each pricing the job's last committed record, the
-// pinned side with the approvals it is priced with (S5b-8). Called under the job's row lock.
+type RecordRow = { id: string; snapshotBytes: Buffer };
+
+function recordPricing(record: RecordRow): { pricing: EstimateJob; rooms: ReadonlyMap<string, string> } {
+  try {
+    const snapshot = readSnapshot(record.snapshotBytes);
+    return { pricing: pricingJob(snapshot), rooms: roomNamesOf(snapshot) };
+  } catch (error) {
+    if (error instanceof SnapshotError || error instanceof FieldMapError || error instanceof ZodError) throw new EstimateError('record_unreadable');
+    throw error;
+  }
+}
+
+function pricedSide(job: EstimateJob, version: VersionRow): PricedSide {
+  try {
+    return { price: priceText(priceInput(job, version).estimate.totals), refused: null };
+  } catch (error) {
+    if (error instanceof EstimateError && error.code === 'estimate_refused') return { price: null, refused: { stage: error.extra.stage ?? '' } };
+    throw error;
+  }
+}
+
+// The job's price before a reprice (S5b-8): the pin's stored estimate's own total, approvals and all,
+// never priced again; with no estimate yet, the submitted record's current approvals, as the estimate
+// would take them. The preview shows it and the confirmation checks it; only this is computed for the
+// confirmation, never the newest side.
+async function pinnedSideOf(tx: CompanyTransaction, caller: JobCaller, job: JobRow, pin: PinRow, record: RecordRow, pinned: VersionRow): Promise<PricedSide> {
+  const [stored] = await tx
+    .select({ pricedResult: jobEstimates.pricedResult })
+    .from(jobEstimates)
+    .where(and(eq(jobEstimates.companyId, caller.companyId), eq(jobEstimates.submissionId, record.id), eq(jobEstimates.pinId, pin.id)));
+  if (stored) return { price: priceText(readStoredEstimate(stored.pricedResult).totals), refused: null };
+  const { pricing, rooms } = recordPricing(record);
+  const approved =
+    job.status === 'submitted' && (await pricedExtrasOn(tx, caller.companyId))
+      ? await approvedFor(tx, caller.companyId, { submissionId: record.id, jobRevision: job.revision, pinId: pin.id })
+      : null;
+  return pricedSide(approved ? withApprovals(pricing, approved, rooms) : pricing, pinned);
+}
+
+// What the owner's Reprice banner shows (S5b-6): the job's pinned version and the company's newest,
+// each pricing the job's last committed record, the pinned side with the approvals it is priced with
+// (S5b-8). Called under the job's row lock.
 async function previewOf(tx: CompanyTransaction, caller: JobCaller, job: JobRow): Promise<RepricePreview> {
   const none: RepricePreview = { job: { revision: job.revision }, reprice: null };
   if (job.status === 'signed') return none;
@@ -450,44 +491,22 @@ async function previewOf(tx: CompanyTransaction, caller: JobCaller, job: JobRow)
   // A pinned job always has a committed record: its first price is made with one. It is the
   // current draft's while submitted, the one before Back to editing while a new draft is open.
   const record = (await lastSubmission(tx, caller.companyId, job.id))!;
-  let pricing: EstimateJob;
-  let rooms: ReadonlyMap<string, string>;
-  try {
-    const snapshot = readSnapshot(record.snapshotBytes);
-    pricing = pricingJob(snapshot);
-    rooms = roomNamesOf(snapshot);
-  } catch (error) {
-    if (error instanceof SnapshotError || error instanceof FieldMapError || error instanceof ZodError) throw new EstimateError('record_unreadable');
-    throw error;
-  }
-  // The pinned side is the pin's stored estimate's own total, approvals and all, never priced
-  // again; with no estimate yet, the submitted record's current approvals, as the estimate would
-  // take them.
-  const [stored] = await tx
-    .select({ pricedResult: jobEstimates.pricedResult })
-    .from(jobEstimates)
-    .where(and(eq(jobEstimates.companyId, caller.companyId), eq(jobEstimates.submissionId, record.id), eq(jobEstimates.pinId, pin.id)));
-  const approved =
-    !stored && job.status === 'submitted' && (await pricedExtrasOn(tx, caller.companyId))
-      ? await approvedFor(tx, caller.companyId, { submissionId: record.id, jobRevision: job.revision, pinId: pin.id })
-      : null;
-  const priced = (version: VersionRow, withApproved: boolean): PricedSide => {
-    try {
-      return { price: priceText(priceInput(approved && withApproved ? withApprovals(pricing, approved, rooms) : pricing, version).estimate.totals), refused: null };
-    } catch (error) {
-      if (error instanceof EstimateError && error.code === 'estimate_refused') return { price: null, refused: { stage: error.extra.stage ?? '' } };
-      throw error;
-    }
-  };
-  const pinnedSide: PricedSide = stored ? { price: priceText(readStoredEstimate(stored.pricedResult).totals), refused: null } : priced(pinned, true);
+  const pinnedSide = await pinnedSideOf(tx, caller, job, pin, record, pinned);
   return {
     job: { revision: job.revision },
     reprice: {
       pinned: { version: pinned.sequence, ...pinnedSide },
-      newest: { versionId: newest.id, version: newest.sequence, ...priced(newest, false) },
+      newest: { versionId: newest.id, version: newest.sequence, ...pricedSide(recordPricing(record).pricing, newest) },
     },
   };
 }
+
+// SHA-256 of the confirmation in a fixed key order: the same change id and body is the same request,
+// the same id with another body is refused (docs/plans/S5.md, section 1). The price is hashed, never kept.
+const repriceDigest = (input: RepriceInput): string =>
+  createHash('sha256')
+    .update(canonicalJson({ revision: input.revision, changeId: input.changeId, versionId: input.versionId, pinnedPrice: input.pinnedPrice }), 'utf8')
+    .digest('hex');
 
 export function estimatesService(db: Database): EstimatesService {
   return {
@@ -498,6 +517,7 @@ export function estimatesService(db: Database): EstimatesService {
         // until commit; the priced_extras switch read below is the one stored under the company lock.
         await lockCompany(tx, caller, 'share');
         await lockMember(tx, caller);
+        if (!(await priceBooksOn(tx, caller.companyId))) throw new JobError('not_found');
         const job = await jobAccess(tx, caller, jobId, MAKE, { lock: true });
         if (job.status === 'signed') throw new EstimateError('job_signed');
         if (job.status !== 'submitted') throw new EstimateError('not_submitted');
@@ -588,7 +608,9 @@ export function estimatesService(db: Database): EstimatesService {
       if (!hasAny(caller, REPRICE)) throw new JobError('not_allowed');
       return withCompany(db, caller.companyId, async (tx) => {
         await lockActiveOwner(tx, caller);
+        if (!(await priceBooksOn(tx, caller.companyId))) throw new JobError('not_found');
         const job = await jobAccess(tx, caller, jobId, REPRICE, { lock: true });
+        const digest = repriceDigest(input);
         const [done] = await tx
           .select({ details: auditEvents.details })
           .from(auditEvents)
@@ -601,8 +623,10 @@ export function estimatesService(db: Database): EstimatesService {
             ),
           );
         if (done) {
-          const first = done.details as RepriceAnswer & { request_revision: number; request_version_id: string };
-          if (first.request_revision !== input.revision || first.request_version_id !== input.versionId) throw new JobError('conflict');
+          const first = done.details as RepriceAnswer & { request_revision: number; request_version_id: string; request_digest?: string };
+          // An older row without the digest is compared on its revision and version.
+          const same = first.request_digest === undefined ? first.request_revision === input.revision && first.request_version_id === input.versionId : first.request_digest === digest;
+          if (!same) throw new JobError('conflict');
           return { job: { id: jobId, status: first.job_status, currentDraftId: first.job_draft, revision: first.job_revision }, pin: { sequence: first.sequence, version: first.version } };
         }
         if (job.status === 'signed') throw new EstimateError('job_signed');
@@ -615,12 +639,12 @@ export function estimatesService(db: Database): EstimatesService {
         if (version.id === pin.versionId) throw new EstimateError('prices_unchanged');
         // The owner confirms the before-price they saw: an approval edited, approved or ended since the
         // preview changes the pinned price without moving the job revision, and is refused (S5b-8).
-        const shown = await previewOf(tx, caller, job);
-        if (shown.reprice?.pinned.price !== input.pinnedPrice) throw new EstimateError('preview_stale');
+        const previous = (await versionById(tx, caller.companyId, pin.versionId))!;
+        const record = (await lastSubmission(tx, caller.companyId, jobId))!;
+        if ((await pinnedSideOf(tx, caller, job, pin, record, previous)).price !== input.pinnedPrice) throw new EstimateError('preview_stale');
         // A version this server cannot price is never pinned.
         versionTable(version);
         if (version.engineVersion !== ENGINE_VERSION) throw new EstimateError('prices_unreadable');
-        const previous = (await versionById(tx, caller.companyId, pin.versionId))!;
         const [made] = await tx
           .insert(jobPricePins)
           .values({ companyId: caller.companyId, jobId, sequence: pin.sequence + 1, versionId: version.id, reason: 'owner_reprice', pinnedByActorId: caller.actorId })
@@ -633,6 +657,7 @@ export function estimatesService(db: Database): EstimatesService {
           change_id: input.changeId,
           request_revision: input.revision,
           request_version_id: input.versionId,
+          request_digest: digest,
           job_status: next.status,
           job_draft: next.currentDraftId,
           job_revision: next.revision,
@@ -648,6 +673,7 @@ export function estimatesService(db: Database): EstimatesService {
       if (!hasAny(caller, REPRICE)) throw new JobError('not_allowed');
       return withCompany(db, caller.companyId, async (tx) => {
         await lockActiveOwner(tx, caller);
+        if (!(await priceBooksOn(tx, caller.companyId))) throw new JobError('not_found');
         const job = await jobAccess(tx, caller, jobId, REPRICE, { lock: true });
         return previewOf(tx, caller, job);
       });
@@ -662,6 +688,7 @@ export function estimatesService(db: Database): EstimatesService {
         caller.companyId,
         async (tx) => {
           await activeMember(tx, caller);
+          if (!(await priceBooksOn(tx, caller.companyId))) throw new JobError('not_found');
           const job = await jobAccess(tx, caller, jobId, READ);
           const none = { job: jobState(job), estimate: null };
           // A job being edited has no current estimate: the review of its last record is void (J4).

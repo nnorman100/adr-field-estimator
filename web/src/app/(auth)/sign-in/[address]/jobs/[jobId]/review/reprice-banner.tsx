@@ -87,7 +87,7 @@ export function RepriceBanner({ user, jobId, revision, onChanged }: { user: User
   };
 
   async function confirm(basis: Shown) {
-    const key = `${basis.versionId}/${basis.revision}`;
+    const key = `${basis.versionId}/${basis.revision}/${basis.pinnedPrice ?? ''}`;
     if (change.current?.key !== key) change.current = { key, id: crypto.randomUUID() };
     setBusy(true);
     const answer = await callApi(user, path, {

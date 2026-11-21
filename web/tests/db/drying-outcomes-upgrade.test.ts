@@ -16,7 +16,7 @@ import { fakeDrafts } from './draft-fake';
 import { digestOf, newJob, seedJob } from './job-harness';
 import { createDiscardDatabase, emptyDiscardDatabase, loginUrl } from './postgres-harness';
 import { agreementOf, bytesOf, newSubmission, seedCommitted, seedEstimate, seedPin, seedSignature, seedVersion } from './submission-harness';
-import { memoryBacking } from '../submissions/field-fake';
+import { fakeField, memoryBacking } from '../submissions/field-fake';
 
 // S5b-10 slice 10A: migration 0020 applied to a database that already holds a signed job and a draft
 // (beside drying-outcomes-tables.test.ts, which holds the tables' own checks; split for the file-length limit).
@@ -103,7 +103,8 @@ describe('migration 0020: applied to an existing database', () => {
       const handle = openDatabase({ APP_ENV: 'test', DATABASE_URL: loginUrl(database.databaseUrl, shared.roles.api) });
       try {
         const caller = { companyId: company!.id, actorId: actor!.id, uid: 'u1', role: 'owner' as const, capabilities: capabilitiesFor('owner', { priceBooks: false }) };
-        const jobs = jobsService(handle.db, fakeDrafts(memoryBacking()));
+        const backing = memoryBacking();
+        const jobs = jobsService(handle.db, fakeDrafts(backing), fakeField(backing));
         expect((await jobs.read(caller, chain.job.id)).job).toMatchObject({ id: chain.job.id, status: 'signed' });
         expect((await jobs.read(caller, draft.id)).job).toMatchObject({ id: draft.id, status: 'draft' });
         const signed = await agreementsService(handle.db).read(caller, chain.job.id);

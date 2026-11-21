@@ -27,7 +27,7 @@ export function jobsServices(): JobRoutesService {
     const drafts = firestoreDraftStore(firestore);
     const sync = firestoreDraftSync(firestore);
     service = {
-      ...jobsService(db, drafts),
+      ...jobsService(db, drafts, sync),
       ...officeService(db, drafts, sync),
       ...archiveService(db, firestoreArchiveStore(firestore), sync),
     };
