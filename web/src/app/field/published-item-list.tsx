@@ -7,13 +7,10 @@ import type { User } from 'firebase/auth';
 import {
   eraseItemList,
   governing,
-  hideItemList,
-  itemListHidden,
   readItemList,
   refusalStamp,
   replaceItemList,
-  showItemList,
-  watchItemListHidden,
+  unchanged,
   type ItemList,
   type SavedList,
   type Stamp,
@@ -68,8 +65,8 @@ function display(view: View): Display {
 const MEMBER_REFUSALS = new Set(['not_allowed', 'not_a_member', 'member_disabled', 'company_inactive', 'account_disabled']);
 
 // What a refusal from the item-list route means for the copy on this phone. 'erase': the person may
-// no longer see this company's list. 'hide': the sign-in must be renewed; the list is hidden until
-// access is confirmed again and the copy kept for after it.
+// no longer see this company's list. 'hide': the sign-in must be renewed; the list is hidden now
+// and the copy kept for after it.
 function refusalOf({ status, code }: { status: number; code?: string }): 'erase' | 'hide' | null {
   if (code === undefined) return null;
   if ((status === 403 && MEMBER_REFUSALS.has(code)) || (status === 404 && code === 'not_found') || (status === 401 && code === 'sign_in_revoked')) return 'erase';
@@ -124,7 +121,7 @@ function PublishedList({ session }: { session: FieldSession }) {
 
     function render() {
       if (!mounted.current) return;
-      const next = itemListHidden(owner) ? { list: null, notes: [UNAVAILABLE] } : display(view);
+      const next = display(view);
       setShown((before) => before.list?.versionId === next.list?.versionId && before.notes.join('\n') === next.notes.join('\n') ? before : next);
     }
 
@@ -174,7 +171,6 @@ function PublishedList({ session }: { session: FieldSession }) {
           view.answer = 'refused';
           view.shownList = null;
           view.warning = null;
-          if (refusal === 'hide') hideItemList(owner);
           render();
           if (refusal === 'erase') {
             view.saved = null;
@@ -188,9 +184,10 @@ function PublishedList({ session }: { session: FieldSession }) {
         return;
       }
 
-      const list = result.value.current;
-      showItemList(owner);
       const governs = governing(owner);
+      // An answer is dropped when a refusal was recorded after its request started.
+      if (!(await unchanged(owner, stamp).catch(() => false)) || !governs() || !sameSignIn()) return;
+      const list = result.value.current;
       const before = view.answer;
       if (!before || before === 'refused' || before.list?.versionId !== list?.versionId) view.warning = null;
       view.updated = view.shownList !== null && list !== null && view.shownList.versionId !== list.versionId;
@@ -230,14 +227,12 @@ function PublishedList({ session }: { session: FieldSession }) {
     }
 
     void load();
-    const unwatch = watchItemListHidden(render);
     const check = () => void refresh();
     window.addEventListener('pageshow', check);
     document.addEventListener('visibilitychange', check);
     const timer = online ? window.setInterval(check, CHECK_INTERVAL_MS) : undefined;
     return () => {
       disposed = true;
-      unwatch();
       request?.abort();
       window.clearInterval(timer);
       window.removeEventListener('pageshow', check);
