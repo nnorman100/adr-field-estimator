@@ -90,7 +90,7 @@ test('the owner reads the before/after preview in a dialog, cancels, then confir
 
   // The old estimate, its proposal and its signing actions are gone until the job is priced again.
   await expect(main.getByRole('heading', { name: 'Price this job' })).toBeVisible();
-  expect(sentReprice).toEqual([{ revision: 3, changeId: expect.any(String), versionId: preview.reprice.newest.versionId }]);
+  expect(sentReprice).toEqual([{ revision: 3, changeId: expect.any(String), versionId: preview.reprice.newest.versionId, pinnedPrice: preview.reprice.pinned.price }]);
   await expect(main.getByRole('heading', { name: 'Review before signing' })).toHaveCount(0);
   await expect(main.getByText('Proposal', { exact: true })).toHaveCount(0);
   await expect(main.getByRole('checkbox', { name: /I reviewed the proposal/ })).toHaveCount(0);

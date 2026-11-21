@@ -7,6 +7,9 @@ export const repriceBody = z.strictObject({
   revision: z.int().min(1).max(2_147_483_647),
   changeId: uuid,
   versionId: uuid,
+  // The pinned (before) price the preview showed the owner, null when it could not be priced: a
+  // confirmation is refused if it has changed since (S5b-8).
+  pinnedPrice: z.string().max(200).nullable(),
 });
 
 export type RepriceInput = z.infer<typeof repriceBody>;

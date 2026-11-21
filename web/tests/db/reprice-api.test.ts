@@ -176,8 +176,14 @@ async function readyToSign(claims: FakeClaims = ESTIMATOR_A) {
   return { ...job, version, estimate, signatureId };
 }
 
-const send = (claims: FakeClaims | null, jobId: string, body: unknown): Promise<Reply> =>
-  json(repriceRoute.POST(request(claims, `/api/jobs/${jobId}/reprice`, { method: 'POST', body }), params({ jobId })));
+// The pinned (before) price the owner's preview shows now, as the Reprice banner sends it back (S5b-8).
+const shownPinnedPrice = async (jobId: string): Promise<string | null> =>
+  ((await json(repriceRoute.GET(request(OWNER_A, `/api/jobs/${jobId}/reprice`), params({ jobId })))).body as Body).reprice?.pinned?.price ?? null;
+// A body without `pinnedPrice` gets the one the preview shows, as the screen sends it.
+const send = async (claims: FakeClaims | null, jobId: string, body: unknown): Promise<Reply> => {
+  const sent = body && typeof body === 'object' && !Array.isArray(body) && !('pinnedPrice' in body) ? { ...body, pinnedPrice: await shownPinnedPrice(jobId) } : body;
+  return json(repriceRoute.POST(request(claims, `/api/jobs/${jobId}/reprice`, { method: 'POST', body: sent }), params({ jobId })));
+};
 // The owner's confirmation as the screen sends it: the job revision it saw, a change id of its own and
 // the version it showed (the newest unless the test names another).
 async function reprice(claims: FakeClaims | null, jobId: string, extra: Record<string, unknown> = {}): Promise<Reply> {

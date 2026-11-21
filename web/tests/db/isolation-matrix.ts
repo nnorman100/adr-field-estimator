@@ -69,7 +69,7 @@ const JOB_CLAIM = { revision: 1, changeId: '8d2f4a90-61b3-4c7e-a5d8-0e9b3c1f7a24
 // Submit and Back to editing bodies (S5a-8): the suite's own ids, and a digest of nothing.
 const JOB_SUBMIT = { id: '6f1d9c34-2a7e-4b80-9c15-3e8a0d7b5f42', draftId: 'c4e8a2d6-7b19-4f53-8a0e-1d6b9f3c2e75', digest: '0'.repeat(64) };
 const JOB_NEXT_DRAFT = { draftId: '9a3b5c7d-1e2f-4a6b-8c9d-0e1f2a3b4c5d', fromDraftId: 'c4e8a2d6-7b19-4f53-8a0e-1d6b9f3c2e75' };
-const JOB_REPRICE = { revision: 1, changeId: '4d8b2f60-9c1e-4a73-8b05-2e7a6c1d9f38', versionId: '9b1e5c37-2d84-4f06-a3c9-6e0d8b4a1f52' };
+const JOB_REPRICE = { revision: 1, changeId: '4d8b2f60-9c1e-4a73-8b05-2e7a6c1d9f38', versionId: '9b1e5c37-2d84-4f06-a3c9-6e0d8b4a1f52', pinnedPrice: null };
 // S5b-8: a valid hourly proposal and an approval, so a refusal is the access rule's.
 const JOB_PROPOSAL = { id: '7a3c9e15-2b84-4d60-9f17-3e6a8c2d5b41', revision: 1, kind: 'hourly', description: 'Move contents', hours: '2' };
 const JOB_APPROVE = { revision: 1, approverName: 'Pat' };
