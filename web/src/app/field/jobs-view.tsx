@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { pending, usePending } from '@/lib/field/pending';
 import { Button } from '@/components/ui/button';
 import { listJobs, type JobListItem } from '@/lib/field/api';
@@ -39,7 +39,8 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
   const rows = denied ? null : jobs;
   // Changes each time the list starts to be read again from its first page, which ends every readiness check made.
   const [generation, setGeneration] = useState(0);
-  const markers = useReadinessMarkers(session.user, session.online && session.readiness && !archivedList ? rows : null, session.capabilities, generation);
+  const readinessRows = useMemo(() => shown === 'company' ? rows?.filter((row) => row.mine) ?? null : rows, [rows, shown]);
+  const markers = useReadinessMarkers(session.user, session.online && session.readiness && !archivedList ? readinessRows : null, session.capabilities, generation);
   // Only the newest request answers: a page asked for before the list was read again from its first
   // page is not added to it, and no page is asked for until that first page is back.
   const latest = useRef(0);

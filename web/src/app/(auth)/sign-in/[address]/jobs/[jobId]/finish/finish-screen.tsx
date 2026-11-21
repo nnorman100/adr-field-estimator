@@ -46,8 +46,11 @@ type Phase =
   | { name: 'not-found' }
   | ({ name: 'ready' } & Ready);
 
+// How long the job is read again after an ownership refusal, including the wait for a sign-in token.
+const RECHECK_WITHIN_MS = 4_000;
+
 // A refusal or failure shown above the actions, and what the person can do next.
-type Problem = { message: string; next: Next };
+type Problem = { message: string; next: Next; checklist?: 'checking' | 'current' };
 
 export function FinishScreen(props: FinishScreenProps) {
   if (!props.config) {
@@ -183,14 +186,16 @@ function FinishActions({
   const pendingDraft = useRef<{ draftId: string; fromDraftId: string } | null>(null);
   const dialog = useRef<HTMLDialogElement>(null);
   const back = useRef<HTMLButtonElement>(null);
+  // The revision the checklist is read for, and a count that asks for it to be read again.
+  const [checked, setChecked] = useState({ revision: readinessRevision, recheck: 0 });
   const readinessJob = useMemo(
-    () => readinessRevision !== null && current.status === 'draft' && current.currentDraftId === job.currentDraftId
-      ? { ...current, revision: readinessRevision }
+    () => checked.revision !== null && current.status === 'draft' && current.currentDraftId === job.currentDraftId
+      ? { ...current, revision: checked.revision }
       : null,
-    [readinessRevision, current, job.currentDraftId],
+    [checked.revision, current, job.currentDraftId],
   );
   const showArchived = () => setCurrent({ ...current, status: 'archived' });
-  const advisory = useDraftReadiness(user, readinessJob, manifest, 0, showArchived);
+  const advisory = useDraftReadiness(user, readinessJob, manifest, checked.recheck, showArchived);
   const items = useMemo(
     () => (manifest && advisory ? advisory.gaps.flatMap((gap) => {
       const fix = fixFor(gap, job.id, manifest, pricesManage ? `/sign-in/${address}/prices` : null, owner);
@@ -199,8 +204,11 @@ function FinishActions({
     [advisory, manifest, job.id, pricesManage, owner, address],
   );
 
-  // A refusal that says the job moved on (not a lost answer) ends the checklist it was read for.
-  const prompted = problem && problem.next !== 'retry' ? [] : items;
+  // A field ownership refusal keeps the checklist only once the job and its readiness are read again
+  // and still match this draft.
+  const prompted = problem && problem.next !== 'retry' && problem.checklist !== 'current' ? [] : items;
+  // The refusal is visible during the refresh. Finish waits for the job and the readiness answer.
+  const rechecking = problem?.checklist === 'checking' || (checked.recheck > 0 && readinessJob !== null && advisory === undefined);
 
   async function finish() {
     if (!manifest) return;
@@ -220,7 +228,42 @@ function FinishActions({
     }
     const outcome = outcomeOf(answer.status, answer.body);
     if (outcome.next !== 'retry') pendingSubmit.current = null;
-    setProblem(outcome);
+    const notOwner = answer.status === 403 && (answer.body as { error?: unknown } | null)?.error === 'not_field_owner';
+    const refresh = notOwner && checked.revision !== null;
+    setProblem(refresh ? { ...outcome, checklist: 'checking' } : outcome);
+    if (refresh) {
+      const currentChecklist = await recheckChecklist();
+      setProblem(currentChecklist ? { ...outcome, checklist: 'current' } : outcome);
+    }
+  }
+
+  // Reads the job again after an ownership refusal, which the server gives before looking at the
+  // draft, and asks for its readiness again. Answers whether this draft is still being edited.
+  async function recheckChecklist(): Promise<boolean> {
+    const refresh = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const answer = await Promise.race([
+      callApi(user, `/api/jobs/${encodeURIComponent(current.id)}`, { signal: refresh.signal }),
+      new Promise<null>((done) => {
+        timer = setTimeout(() => {
+          refresh.abort();
+          done(null);
+        }, RECHECK_WITHIN_MS);
+      }),
+    ]);
+    clearTimeout(timer);
+    if (!answer) return false;
+    if (answer.status === 410) {
+      showArchived();
+      return false;
+    }
+    const next = answer.status === 200 ? jobOf(answer.body) : null;
+    if (!next) return false;
+    setCurrent(next);
+    const revision = (answer.body as { job?: { revision?: unknown } } | null)?.job?.revision;
+    if (next.status !== 'draft' || next.currentDraftId !== job.currentDraftId || typeof revision !== 'number') return false;
+    setChecked((was) => ({ revision, recheck: was.recheck + 1 }));
+    return true;
   }
 
   async function backToEditing() {
@@ -266,7 +309,7 @@ function FinishActions({
       ) : null}
       <p role="status">{busy ? 'Saving…' : (notice ?? '')}</p>
 
-      {editing && summary && !(notice && current.currentDraftId !== job.currentDraftId) ? (
+      {editing && summary && current.currentDraftId === job.currentDraftId ? (
         <section aria-labelledby="finish-draft" className="flex flex-col gap-2">
           <h2 id="finish-draft" className="text-lg font-semibold">
             What will be recorded
@@ -290,7 +333,7 @@ function FinishActions({
             afterwards, use Back to editing. Finish needs a connection.
           </p>
           <Button
-            disabled={busy}
+            disabled={busy || rechecking}
             onClick={(event) => {
               const prompt = dialog.current;
               if (!prompt || prompted.length === 0) return void finish();
