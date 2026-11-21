@@ -503,3 +503,29 @@ test('the same version again on a phone that now refuses writes is kept without 
   await expect(page.getByText('This item list could not be saved on this phone.', { exact: true })).toHaveCount(0);
   expect(await storedKeys(page)).toEqual([keyOf(scope, first.current.versionId)]);
 });
+
+test('a refusal accepted in another tab hides the open list there at once, and a reload offline keeps it hidden', async ({ context, lane }) => {
+  const first = publication('2026-11-10T12:00:00Z', 'Other tab item');
+  serve(lane, ITEM_LIST, first);
+  const scope = await openScope(context, lane);
+  const { page } = scope;
+  await expect(page.getByText('Item list as of Nov 10, 2026', { exact: true })).toBeVisible();
+  await expectSaved(scope, first.current.versionId);
+  await page.evaluate(() => navigator.serviceWorker.ready);
+
+  // Another tab (sign-in, Prices, Company settings…) accepts a refusal but cannot erase the copy.
+  const other = await FieldPhone.open(context, lane);
+  await refuseWrites(other.page, ['ds-prices']);
+  lane.cut();
+  expect(await other.call('eraseItemList', scope.person, scope.companyId)).toBe(false);
+
+  // The Check Scope tab has no signal to ask the server: only the recorded refusal hides the list.
+  await expect(page.getByText(UNREADABLE)).toBeVisible();
+  await expect(page.getByText('Item list as of', { exact: false })).toHaveCount(0);
+  expect(await storedKeys(page)).toContainEqual(keyOf(scope, first.current.versionId));
+
+  await page.reload();
+  await expect(page.getByText('Connect to get the published item list.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Item list as of', { exact: false })).toHaveCount(0);
+  expect(await storedKeys(page)).not.toContainEqual(keyOf(scope, first.current.versionId));
+});

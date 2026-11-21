@@ -10,7 +10,7 @@ import type { BrowserSignInConfig } from '../../../../src/lib/config';
 import { companyAuth } from '../../../../src/lib/firebase-client';
 import { fieldWrite, mirrorSignIn, setAppCheckSeam, startFieldClient, stopFieldClient, type CacheKind, type FieldClient } from '../../../../src/lib/field-db';
 import { readLatestMe, saveMe, updateMe, type DsMe } from '../../../../src/lib/field/ds-me';
-import { readItemList } from '../../../../src/lib/field/ds-prices';
+import { eraseItemList, readItemList } from '../../../../src/lib/field/ds-prices';
 import { runFieldSync } from '../../../../src/lib/field/field-sync';
 import { openDatabase, transact, withDatabase, type DbSpec } from '../../../../src/lib/field/idb';
 import { appendEntry, forgetJournal, readJournal } from '../../../../src/lib/field/journal';
@@ -302,6 +302,11 @@ const f = {
     const saved = await readItemList({ tenantId: person.tenantId, uid: person.uid, companyId });
     return saved === null || saved === 'withheld' ? saved : (saved.list?.versionId ?? 'none');
   },
+
+  // A refusal of the company's item list accepted on this page, as the sign-in, Prices, Company
+  // settings, Team, Finish and Review screens accept one from GET /api/me: true when the copy is gone.
+  eraseItemList: (person: Pick<Person, 'tenantId' | 'uid'>, companyId: string) =>
+    eraseItemList({ tenantId: person.tenantId, uid: person.uid, companyId }),
 
   // The saved sign-in rows (ds-me): the sign-in page's save, the field check's update, and which
   // (tenant/person) row the shell would start from.

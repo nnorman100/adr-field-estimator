@@ -7,8 +7,10 @@ import type { User } from 'firebase/auth';
 import {
   eraseItemList,
   governing,
+  onRefusalElsewhere,
   readItemList,
   refusalStamp,
+  refusedSince,
   replaceItemList,
   unchanged,
   type ItemList,
@@ -37,7 +39,8 @@ type Answer = { list: ItemList | null } | 'refused';
 // What one open view knows. It outlives the effect below, which restarts when the connection
 // changes. `answer` is the newest the server gave this view (a list, no list, or a refusal) and
 // `saved` what the phone holds; the screen shows the answer when there is one and the saved copy
-// otherwise. A save changes only `saved` and `warning`.
+// otherwise. A save changes only `saved` and `warning`. `stamp` is the refusal stamp noted when what
+// is shown was asked for: a refusal recorded since, in any tab, hides it.
 type View = {
   loaded: boolean;
   online: boolean;
@@ -49,6 +52,7 @@ type View = {
   shownList: ItemList | null;
   updated: boolean;
   saving: Promise<void>;
+  stamp: Stamp | null;
 };
 
 function display(view: View): Display {
@@ -101,7 +105,7 @@ function PublishedList({ session }: { session: FieldSession }) {
   const mounted = useRef(true);
   const open = useRef<View>({
     loaded: false, online, saved: null, answer: null, warning: null, readProblem: null, fetchProblem: null,
-    shownList: null, updated: false, saving: Promise.resolve(),
+    shownList: null, updated: false, saving: Promise.resolve(), stamp: null,
   });
 
   useEffect(() => {
@@ -127,6 +131,20 @@ function PublishedList({ session }: { session: FieldSession }) {
       if (!mounted.current) return;
       const next = display(view);
       setShown((before) => before.list?.versionId === next.list?.versionId && before.notes.join('\n') === next.notes.join('\n') ? before : next);
+    }
+
+    // Hides what this view shows when a refusal has been recorded since it was asked for, in this
+    // tab or another. The tab that received the refusal erases the copy; a reload reads the counters
+    // and shows nothing the refusal covers (ds-prices.ts).
+    function hideIfRefused() {
+      if (!view.stamp || !refusedSince(owner, view.stamp)) return;
+      view.stamp = null;
+      // A save still queued for an earlier answer of this view is dropped.
+      governing(owner);
+      view.answer = 'refused';
+      view.shownList = null;
+      view.warning = null;
+      render();
     }
 
     function save(mine: { list: ItemList | null }, stamp: Stamp, governs: () => boolean, from: SignIn, signedInUser: User) {
@@ -196,6 +214,7 @@ function PublishedList({ session }: { session: FieldSession }) {
       if (!before || before === 'refused' || before.list?.versionId !== list?.versionId) view.warning = null;
       view.updated = view.shownList !== null && list !== null && view.shownList.versionId !== list.versionId;
       view.shownList = list;
+      view.stamp = stamp;
       view.fetchProblem = null;
       view.readProblem = null;
       const mine = { list };
@@ -210,6 +229,7 @@ function PublishedList({ session }: { session: FieldSession }) {
         if (!from) return;
         let read: SavedList = null;
         let problem: string | null = null;
+        const stamp = refusalStamp(owner);
         if (keep) {
           try {
             read = await readItemList(owner);
@@ -223,6 +243,9 @@ function PublishedList({ session }: { session: FieldSession }) {
           view.saved = read;
           view.readProblem = problem;
           view.shownList = read && read !== 'withheld' ? read.list : null;
+          view.stamp = stamp;
+          // A refusal recorded while the copy was read.
+          hideIfRefused();
         }
       }
       view.loaded = true;
@@ -231,12 +254,19 @@ function PublishedList({ session }: { session: FieldSession }) {
     }
 
     void load();
-    const check = () => void refresh();
+    const check = () => {
+      // Back from the back-forward cache or the background, where another tab's refusal may not
+      // have reached this page.
+      hideIfRefused();
+      void refresh();
+    };
+    const stopWatching = onRefusalElsewhere(owner, hideIfRefused);
     window.addEventListener('pageshow', check);
     document.addEventListener('visibilitychange', check);
     const timer = online ? window.setInterval(check, CHECK_INTERVAL_MS) : undefined;
     return () => {
       disposed = true;
+      stopWatching();
       request?.abort();
       window.clearInterval(timer);
       window.removeEventListener('pageshow', check);

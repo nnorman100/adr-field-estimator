@@ -76,6 +76,22 @@ export const refusalStamp = (owner: ListOwner): Stamp => stampOf(owner, owner.co
 
 const sameStamp = (left: Stamp, right: Stamp) => left[0] === right[0] && left[1] === right[1];
 
+// Whether a refusal has been recorded, in this tab or another, since `stamp` was noted. Read without
+// the lock: it only decides whether to hide what this page shows.
+export const refusedSince = (owner: ListOwner, stamp: Stamp): boolean => !sameStamp(stamp, refusalStamp(owner));
+
+// Calls `check` whenever another tab changes a refusal counter that covers this owner's list (the
+// browser's storage event, which never fires in the tab that made the change). Returns the unsubscribe.
+export function onRefusalElsewhere(owner: ListOwner, check: () => void): () => void {
+  const keys = new Set([COUNTER_PREFIX + scopeKey(owner), COUNTER_PREFIX + scopeKey({ tenantId: owner.tenantId, uid: owner.uid })]);
+  const listener = (event: StorageEvent) => {
+    // A null key: the other tab cleared the whole of localStorage.
+    if (event.storageArea === window.localStorage && (event.key === null || keys.has(event.key))) check();
+  };
+  window.addEventListener('storage', listener);
+  return () => window.removeEventListener('storage', listener);
+}
+
 // Whether a refusal came after the request that fetched a row of `companyId` started. A row that
 // kept no stamp (saved before rows did) was fetched before any refusal.
 function covered(person: Person, companyId: unknown, seen: unknown): boolean {

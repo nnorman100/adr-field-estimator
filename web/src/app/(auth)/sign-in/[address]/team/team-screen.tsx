@@ -8,7 +8,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import type { BrowserSignInConfig } from '@/lib/config';
 import { belongsTo, callApi, companyAuth } from '@/lib/firebase-client';
-import { signInOf, signOutOnRefusal, signOutOrShow, type FailedSignOut, type SignIn } from '@/lib/field/sign-out';
+import { noteItemListAccess } from '@/lib/field/ds-prices';
+import { signInOf, signOutOnRefusal, signOutOrShow, stillSameSignIn, type FailedSignOut, type SignIn } from '@/lib/field/sign-out';
 import type { LockReason } from '@/lib/field/unsent';
 import { endsSession, meOutcome } from '@/lib/sign-in/outcome';
 import { fullTeam, signedInMember } from '@/lib/team/screen';
@@ -73,6 +74,8 @@ function CompanyTeam({ address, companyName, tenantId, config }: TeamScreenProps
       }
       if (outcome.kind === 'unavailable') return setPhase({ name: 'unavailable' });
       if (outcome.kind !== 'signed-in') return setPhase({ name: 'finish-sign-in' });
+      // Without prices_read the person may no longer see the company's item list: it is erased.
+      if (stillSameSignIn(auth, from)) noteItemListAccess({ tenantId, uid: user.uid }, me);
       const member = signedInMember(me.body);
       if (!member) return setPhase({ name: 'unavailable' });
       // Not the owner: the team is never requested, so nothing of it reaches this phone.
