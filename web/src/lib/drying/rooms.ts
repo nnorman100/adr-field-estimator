@@ -19,23 +19,24 @@ export type ReadingRoom = { id: string; label: string };
 
 type RoomDoc = { id: string; field: unknown };
 
-// The room under `roomId` among a manifest's rooms, listed in the draft's room order (a room document
-// the order does not list is not one of the job's rooms), with a name the database keeps as a label.
-function roomIn(manifest: FieldManifest, roomId: string): ReadingRoom | null {
+/**
+ * A manifest's rooms a reading may name, in the draft's room order: each room the order lists (a room
+ * document the order does not list is not one of the job's rooms) with a name the database keeps as a
+ * label, that name being the label.
+ */
+export function roomsIn(manifest: FieldManifest): ReadingRoom[] {
   const order = (manifest.draft as { roomOrder?: unknown } | null | undefined)?.roomOrder;
-  if (!Array.isArray(order) || !order.includes(roomId)) return null;
-  const found = manifest.rooms.find((room: RoomDoc) => room.id === roomId);
-  const name = (found?.field as { name?: unknown } | null | undefined)?.name;
-  return found && roomLabelOk(name) ? { id: roomId, label: name } : null;
+  if (!Array.isArray(order)) return [];
+  return order.flatMap((roomId) => {
+    if (typeof roomId !== 'string') return [];
+    const found = manifest.rooms.find((room: RoomDoc) => room.id === roomId);
+    const name = (found?.field as { name?: unknown } | null | undefined)?.name;
+    return found && roomLabelOk(name) ? [{ id: roomId, label: name }] : [];
+  });
 }
 
-/** The room of a draft's manifest read from the field database, or null when it has none by that id. */
-export function draftRoom(manifest: FieldManifest, roomId: string): ReadingRoom | null {
-  return roomIn(manifest, roomId);
-}
-
-/** The room of the snapshot the job's current draft was committed with, or null. */
-export async function submittedRoom(tx: CompanyTransaction, job: JobRow, roomId: string): Promise<ReadingRoom | null> {
+/** The rooms of the snapshot the job's current draft was committed with (none without one). */
+export async function submittedRooms(tx: CompanyTransaction, job: JobRow): Promise<ReadingRoom[]> {
   const [committed] = await tx
     .select({ bytes: jobSubmissions.snapshotBytes })
     .from(jobSubmissions)
@@ -48,12 +49,12 @@ export async function submittedRoom(tx: CompanyTransaction, job: JobRow, roomId:
       ),
     )
     .limit(1);
-  if (!committed?.bytes) return null;
+  if (!committed?.bytes) return [];
   let manifest: FieldManifest;
   try {
     manifest = snapshotManifest(committed.bytes);
   } catch {
-    return null;
+    return [];
   }
-  return roomIn(manifest, roomId);
+  return roomsIn(manifest);
 }
