@@ -11,6 +11,11 @@ fenceStoreContract('in-memory', () => {
     async seed(company, draft, manifest, fieldOwnerUid = null) {
       store.put(company, draft, JSON.parse(canonicalManifest(manifest)), fieldOwnerUid);
     },
+    // As the draft sync leaves it (the stand-in's previous-version fence and marker write the same keys).
+    async place(company, draft, state, fence) {
+      if (store.draft(company, draft)?.state !== 'submitting') await store.fence(company, draft, fence);
+      if (state === 'submitted') await store.markSubmitted(company, draft, fence.epoch, fence.submissionId);
+    },
     async peek(company, draft) {
       const found = store.draft(company, draft);
       if (!found) return null;

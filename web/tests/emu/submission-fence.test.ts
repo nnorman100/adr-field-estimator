@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Firestore } from 'firebase-admin/firestore';
+import { FieldValue, Timestamp, type Firestore } from 'firebase-admin/firestore';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { parseProjectionConfig } from '@/lib/config';
 import type { FieldManifest } from '@/lib/field/canonical';
@@ -9,10 +9,12 @@ import { fenceStoreContract } from '../submissions/fence-contract';
 import { createTenant, projectId, signIn, signUp, withSecondFactor } from './auth-emulator';
 import { createDoc, updateDoc } from './rules/firestore-rest';
 
-// S5a-8: the real Firestore fence writer (src/lib/submissions/fence.ts) against the emulator, held
-// to the same contract as the database tests' stand-in, and the field rules on a fenced, submitted
-// and released draft and on the draft Back to editing makes, with real Auth emulator tokens: a
-// locked draft refuses every phone write. The routes are in tests/db/submissions-api.test.ts.
+// S5a-8: the real Firestore fence reader (src/lib/submissions/fence.ts) against the emulator, held to
+// the same contract as the database tests' stand-in, and the field rules on a fenced, submitted and
+// released draft and on the draft Back to editing makes, with real Auth emulator tokens: a locked draft
+// refuses every phone write. The drafts are left as the draft sync writes them (`place`, `release`,
+// `nextDraft`; the sync itself is checked against the emulator in draft-sync.test.ts). The routes are in
+// tests/db/submissions-api.test.ts.
 
 let db: Firestore;
 let store: FenceStore;
@@ -39,9 +41,23 @@ async function seed(company: string, draft: string, manifest: FieldManifest, fie
   for (const photo of manifest.photos) await ref.collection('photos').doc(photo.id).set({ field: photo.field });
 }
 
+// The keys the draft sync writes for a Submit's fence (`submitting`) and its marker (`submitted`).
+async function place(company: string, draft: string, state: 'submitting' | 'submitted', fence: { submissionId: string; epoch: string; expiresAt: Date }): Promise<void> {
+  await db.doc(draftPath(company, draft)).update({
+    state,
+    fence: { submissionId: fence.submissionId, epoch: fence.epoch, expiresAt: Timestamp.fromDate(fence.expiresAt) },
+  });
+}
+
+// What the draft sync writes when a Submit is aborted: back to `editing`, with no fence.
+async function release(company: string, draft: string): Promise<void> {
+  await db.doc(draftPath(company, draft)).update({ state: 'editing', fence: FieldValue.delete() });
+}
+
 fenceStoreContract('Firestore', () => ({
   store,
   seed,
+  place,
   async peek(company, draft) {
     const ref = db.doc(draftPath(company, draft));
     const doc = await ref.get();
@@ -106,17 +122,17 @@ describe('the field rules on a draft Submit has fenced', () => {
     await phoneWrites(owner.caller, company, submittedDraft, 200);
 
     const submitted = fenceOf();
-    expect(await store.fence(company, submittedDraft, submitted)).toEqual({ outcome: 'fenced' });
+    await place(company, submittedDraft, 'submitting', submitted);
     await phoneWrites(owner.caller, company, submittedDraft, 403);
-    expect(await store.markSubmitted(company, submittedDraft, submitted.epoch, submitted.submissionId)).toBe('marked');
+    await place(company, submittedDraft, 'submitted', submitted);
     await phoneWrites(owner.caller, company, submittedDraft, 403);
     // The phone cannot undo the server's keys either.
     expect(await updateDoc(owner.caller, draftPath(company, submittedDraft), { state: 'editing' })).toBe(403);
 
     const released = fenceOf();
-    await store.fence(company, releasedDraft, released);
+    await place(company, releasedDraft, 'submitting', released);
     await phoneWrites(owner.caller, company, releasedDraft, 403);
-    expect(await store.release(company, releasedDraft, released.epoch)).toBe('released');
+    await release(company, releasedDraft);
     await phoneWrites(owner.caller, company, releasedDraft, 200);
   });
 
@@ -127,30 +143,13 @@ describe('the field rules on a draft Submit has fenced', () => {
     const other = await member(tenant, company, 'estimator');
     const office = await member(tenant, company, 'office');
     const next = randomUUID();
-    expect(await store.createFrom(company, randomUUID(), next, owner.uid, MANIFEST, { draftId: randomUUID(), submissionId: randomUUID() })).toBe('created');
+    // As the draft sync makes it: the job id, the field owner, `editing`, the field data and its provenance.
+    await seed(company, next, MANIFEST, owner.uid);
+    await db.doc(draftPath(company, next)).update({ jobId: randomUUID(), previous: { draftId: randomUUID(), submissionId: randomUUID() } });
     await phoneWrites(owner.caller, company, next, 200);
     await phoneWrites(other.caller, company, next, 403);
     await phoneWrites(office.caller, company, next, 403);
     // Its provenance is the server's.
     expect(await updateDoc(owner.caller, draftPath(company, next), { previous: { draftId: 'x', submissionId: 'y' } })).toBe(403);
-  });
-
-  // Security audit F1, across a release: a next draft the previous version made carries no job id.
-  // Back to editing sent again (its job holds the draft id in Postgres first) stamps it when the
-  // provenance is the same, and from then on it is that job's alone.
-  it('take the job id onto a next draft made before it when the same Back to editing is sent again, and refuse it to another job', async () => {
-    const company = randomUUID();
-    const next = randomUUID();
-    const job = randomUUID();
-    const previous = { draftId: randomUUID(), submissionId: randomUUID() };
-    const made = { fieldOwnerUid: 'uid-owner', state: 'editing', field: { notes: 'made by the previous version' }, previous };
-    await db.doc(draftPath(company, next)).create(made);
-    const empty = { draft: {}, rooms: [], photos: [] };
-    expect(await store.createFrom(company, job, next, 'uid-owner', empty, { ...previous, submissionId: randomUUID() })).toBe('taken');
-    expect((await db.doc(draftPath(company, next)).get()).data()).toEqual(made);
-    expect(await store.createFrom(company, job, next, 'uid-owner', empty, previous)).toBe('exists');
-    expect((await db.doc(draftPath(company, next)).get()).data()).toEqual({ ...made, jobId: job });
-    expect(await store.createFrom(company, randomUUID(), next, 'uid-other', empty, previous)).toBe('taken');
-    expect((await db.doc(draftPath(company, next)).get()).data()).toEqual({ ...made, jobId: job });
   });
 });

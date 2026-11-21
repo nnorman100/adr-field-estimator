@@ -57,9 +57,10 @@ const SUBMIT: readonly Capability[] = ['scope'];
 // to lose (the worker runs every five minutes, docs/plans/S5.md section 4 step 6). While closeFence's
 // transaction is open, its row lock, not this margin, keeps a fence from landing after its row is
 // decided. A fence call still retrying after that transaction ended (cut off by the server's idle
-// limit, db/tenant.ts holdAcrossOutsideCall, or by the request's end) can land after the worker
-// aborted and released the row; only the worker's later reopen pass (repair.ts) may release it
-// again, and that pass visits only companies with other work due.
+// limit, db/tenant.ts holdAcrossOutsideCall, or by the request's end) is the draft sync's, which writes
+// only at the job's newest version: once the worker aborted the row, the late fence is refused at the
+// job's marker (src/lib/jobs/draft-sync.ts). The margin is no rollout measure: it keeps today's Submit
+// from closing a fence its own row is about to lose.
 export const SUBMIT_WINDOW_MS = 2 * 60 * 1000;
 export const FENCE_MARGIN_MS = 30 * 1000;
 

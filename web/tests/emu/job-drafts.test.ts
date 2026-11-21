@@ -7,9 +7,10 @@ import { firestoreAccessStore, firestoreFor } from '@/lib/projection/firestore';
 import { createTenant, projectId, signIn, signUp, withSecondFactor } from './auth-emulator';
 import { createDoc, deleteDoc, getDoc, listDocs, updateDoc } from './rules/firestore-rest';
 
-// The first field draft a new job gets (S5a-3), written by the real firebase-admin writer against
-// the Firestore emulator, then used the way the phone will: under web/firestore.rules, with real
-// Auth emulator tokens. The route and the job rows are in tests/db/jobs-api.test.ts.
+// The first field draft a new job gets (S5a-3), as the draft sync makes it (the sync itself is checked
+// against the emulator in draft-sync.test.ts), used the way the phone will: under web/firestore.rules,
+// with real Auth emulator tokens; the server's draft lookup and job locator against the emulator. The
+// route and the job rows are in tests/db/jobs-api.test.ts.
 
 let db: Firestore;
 let drafts: DraftStore;
@@ -41,8 +42,14 @@ async function member(tenantId: string, company: string, role: 'owner' | 'estima
 
 const path = (company: string, draft: string) => `companies/${company}/drafts/${draft}`;
 
+// A job's first draft as the draft sync makes it: the job id, the field owner (none while nobody owns
+// the field work), `editing` and an empty field map.
+async function firstDraft(company: string, job: string, draft: string, fieldOwnerUid: string | null): Promise<void> {
+  await db.doc(path(company, draft)).create({ jobId: job, ...(fieldOwnerUid === null ? {} : { fieldOwnerUid }), state: 'editing', field: {} });
+}
+
 describe('the first draft of a job', () => {
-  it('is made once, as an editing draft the field owner can use and nobody else can', async () => {
+  it('is an editing draft the field owner can use and nobody else can', async () => {
     const tenant = await createTenant('job-drafts-a');
     const company = randomUUID();
     const draft = randomUUID();
@@ -51,9 +58,7 @@ describe('the first draft of a job', () => {
     const office = await member(tenant, company, 'office');
     const job = randomUUID();
 
-    expect(await drafts.ensure(company, job, draft, owner.uid)).toBe('created');
-    const stored = (await db.doc(path(company, draft)).get()).data();
-    expect(stored).toEqual({ jobId: job, fieldOwnerUid: owner.uid, state: 'editing', field: {} });
+    await firstDraft(company, job, draft, owner.uid);
 
     // The phone's first writes: job-level field data and a room, under the rules.
     expect(await updateDoc(owner.caller, path(company, draft), { field: { yearBuilt: 1990, notes: 'wet carpet' } })).toBe(200);
@@ -68,31 +73,6 @@ describe('the first draft of a job', () => {
     expect(await updateDoc(owner.caller, path(company, draft), { fieldOwnerUid: other.uid })).toBe(403);
   });
 
-  it('is left as it is when the same create is sent again', async () => {
-    const company = randomUUID();
-    const draft = randomUUID();
-    const job = randomUUID();
-    expect(await drafts.ensure(company, job, draft, 'uid-1')).toBe('created');
-    await db.doc(path(company, draft)).update({ field: { notes: 'work done since' } });
-    expect(await drafts.ensure(company, job, draft, 'uid-1')).toBe('exists');
-    expect((await db.doc(path(company, draft)).get()).data()).toEqual({ jobId: job, fieldOwnerUid: 'uid-1', state: 'editing', field: { notes: 'work done since' } });
-  });
-
-  // Security audit F1, across a release: a draft the previous version made carries no job id, which
-  // proves nothing on its own. The create sent again (its job holds the draft id in Postgres first)
-  // stamps it, and from then on it is that job's alone.
-  it('takes the job id onto a draft made before it when the same create is sent again, and is then refused to another job', async () => {
-    const company = randomUUID();
-    const draft = randomUUID();
-    const job = randomUUID();
-    await db.doc(path(company, draft)).create({ fieldOwnerUid: 'uid-1', state: 'editing', field: { notes: 'made by the previous version' } });
-    expect(await drafts.ensure(company, job, draft, 'uid-1')).toBe('exists');
-    const stamped = { jobId: job, fieldOwnerUid: 'uid-1', state: 'editing', field: { notes: 'made by the previous version' } };
-    expect((await db.doc(path(company, draft)).get()).data()).toEqual(stamped);
-    expect(await drafts.ensure(company, randomUUID(), draft, 'uid-2')).toBe('taken');
-    expect(await drafts.ensure(company, job, draft, 'uid-1')).toBe('exists');
-    expect((await db.doc(path(company, draft)).get()).data()).toEqual(stamped);
-  });
 
   it('has no field owner while nobody owns the field work, and then nobody can edit it', async () => {
     const tenant = await createTenant('job-drafts-b');
@@ -101,20 +81,12 @@ describe('the first draft of a job', () => {
     const estimator = await member(tenant, company, 'estimator');
     const owner = await member(tenant, company, 'owner');
     const job = randomUUID();
-    expect(await drafts.ensure(company, job, draft, null)).toBe('created');
-    expect((await db.doc(path(company, draft)).get()).data()).toEqual({ jobId: job, state: 'editing', field: {} });
+    await firstDraft(company, job, draft, null);
     for (const who of [estimator, owner]) {
       expect(await updateDoc(who.caller, path(company, draft), { field: { notes: 'x' } })).toBe(403);
     }
   });
 
-  it('is made only in the company it was asked for', async () => {
-    const company = randomUUID();
-    const other = randomUUID();
-    const draft = randomUUID();
-    await drafts.ensure(company, randomUUID(), draft, 'uid-1');
-    expect((await db.doc(path(other, draft)).get()).exists).toBe(false);
-  });
 });
 
 describe('the server-owned job to current draft projection', () => {
@@ -126,7 +98,7 @@ describe('the server-owned job to current draft projection', () => {
     const owner = await member(tenant, company, 'estimator');
     const other = await member(tenant, company, 'estimator');
     const office = await member(tenant, company, 'office');
-    await drafts.ensure(company, job, draft, owner.uid);
+    await firstDraft(company, job, draft, owner.uid);
     await drafts.projectJob(company, job, { currentDraftId: draft, revision: 1 });
     const at = `companies/${company}/jobs/${job}`;
     expect((await db.doc(at).get()).data()).toEqual({ currentDraftId: draft, revision: 1 });
@@ -162,5 +134,32 @@ describe('the server-owned job to current draft projection', () => {
     await drafts.projectJob(company, job, current);
     expect((await doc.get()).data()).toEqual(current);
     expect((await doc.get()).updateTime!.toMillis()).toBe(written);
+  });
+});
+
+// The server's draft lookup (moved from archive.test.ts when the previous-version writers were removed).
+describe('the draft lookup', () => {
+  // A placeholder an earlier version's archive or restore left where a draft was missing is no draft:
+  // the draft sync replaces it.
+  it('reports a placeholder an earlier version left as a placeholder, and a draft as none', async () => {
+    const company = randomUUID();
+    const job = randomUUID();
+    const draft = randomUUID();
+    await db.doc(path(company, draft)).create({ jobId: job, state: 'absent', placeholder: true, archiveRevision: 6 });
+    expect(await drafts.findDraft(company, draft)).toEqual({ jobId: job, placeholder: true });
+    await db.doc(path(company, draft)).set({ jobId: job, fieldOwnerUid: 'uid-1', state: 'editing', field: {}, archiveRevision: 6 });
+    expect(await drafts.findDraft(company, draft)).toEqual({ jobId: job });
+    expect(await drafts.findDraft(company, randomUUID())).toBeNull();
+  });
+
+  // Slice 5 review round 3, R1: rooms or photos left under an id with no draft document take the id, so a
+  // request's claim of it is refused before it commits.
+  it('reports rooms or photos left under an id with no draft as leftovers, not as nothing', async () => {
+    const company = randomUUID();
+    for (const name of ['rooms', 'photos']) {
+      const draft = randomUUID();
+      await db.doc(`companies/${company}/drafts/${draft}/${name}/left-${name}`).set({ field: {} });
+      expect(await drafts.findDraft(company, draft)).toEqual({ jobId: undefined, leftover: true });
+    }
   });
 });

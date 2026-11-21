@@ -1,5 +1,6 @@
 import type { JobProjection } from '@/lib/field/job-projection';
-import { draftOfOtherJob, placeholderRefusal, type DraftStore } from '@/lib/jobs/drafts';
+import { draftOfOtherJob, type DraftStore } from '@/lib/jobs/drafts';
+import { placeholderRefusal, type PreviousDraftWriters } from '../submissions/previous-writers';
 import { emptyDraft, type Backing } from '../submissions/field-fake';
 
 // A stand-in for the field database's drafts as the jobs service writes them (src/lib/jobs/drafts.ts),
@@ -11,7 +12,7 @@ import { emptyDraft, type Backing } from '../submissions/field-fake';
 /** A draft's field owner as the record holds it. */
 export type DraftOwner = { fieldOwnerUid: string | null; fieldOwnerRevision?: number };
 
-export type FakeDrafts = DraftStore & {
+export type FakeDrafts = DraftStore & PreviousDraftWriters & {
   // The jobs projected (#407), by "company/job".
   projected: Map<string, JobProjection>;
   // Readers over the record, by "company/draft". A placeholder an archive or restore left is no

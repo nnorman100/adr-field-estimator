@@ -370,7 +370,7 @@ function holds(doc: ServerDoc, key: string, expected: unknown): boolean {
 export function draftRefusal(draft: ServerDoc, uid: string, role: RoleNow = null): RejectReason | null | 'unknown' {
   if ('missing' in draft) return 'no-access';
   if ('denied' in draft) return role === NO_ANSWER ? 'unknown' : role === 'estimator' ? 'owner-changed' : 'no-access';
-  // Archive keeps a finished draft's fence (src/lib/jobs/archive-store.ts), so a job finished and
+  // Archive keeps a finished draft's fence (the draft sync, src/lib/jobs/draft-lifecycle.ts), so a job finished and
   // then archived is still finished: Back to editing, never a new draft (J4).
   if (draft.data.state !== 'editing') return draft.data.state === 'archived' && draft.data.fence == null ? 'archived' : 'locked';
   if (draft.data.fieldOwnerUid !== uid) return 'owner-changed';

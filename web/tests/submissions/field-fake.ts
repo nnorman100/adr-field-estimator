@@ -2,11 +2,12 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import type { JobProjection } from '@/lib/field/job-projection';
 import type { FieldManifest } from '@/lib/field/canonical';
 import { MAX_PHOTO_REFS, MAX_ROOMS } from '@/lib/field/schema';
-import type { ArchiveResult, ArchiveStore } from '@/lib/jobs/archive-store';
+import type { ArchiveStore } from '@/lib/jobs/archive-store';
 import { assertVersion, parseGeneration, parseMarker, planSync, versionRefusal, type StoredDraft, type SyncMarker } from '@/lib/jobs/draft-lifecycle';
 import { draftIdsToRead, draftsToMake, resultOf, type DraftSync, type SyncResult } from '@/lib/jobs/draft-sync';
-import { placeholderRefusal as refusalOf, draftOfOtherJob, type DraftMade } from '@/lib/jobs/drafts';
-import type { FenceResult, FenceStore, Provenance } from '@/lib/submissions/fence';
+import { draftOfOtherJob } from '@/lib/jobs/drafts';
+import type { FenceStore, Provenance } from '@/lib/submissions/fence';
+import { placeholderRefusal as refusalOf, type ArchiveResult, type DraftMade, type FenceResult, type PreviousFieldWriters } from './previous-writers';
 
 // A stand-in for the field database's drafts as Submit sees them (src/lib/submissions/fence.ts):
 // each draft's state, fence, field map and nested documents. It is held to the same contract as
@@ -70,12 +71,12 @@ export const fileBacking = (path: string): Backing => ({
   },
 });
 
-type Method = keyof FenceStore | keyof ArchiveStore | keyof DraftSync;
+type Method = keyof FenceStore | keyof ArchiveStore | keyof DraftSync | keyof PreviousFieldWriters;
 
 // Also the archive, restore and copy writer of S5b-2 (src/lib/jobs/archive-store.ts) and the draft
 // life-cycle sync (src/lib/jobs/draft-sync.ts, the same plan as the real writer, planSync), on the one
 // record, so Submit, the jobs routes and the photo route see every draft as the real field database holds it.
-export type FakeField = FenceStore & ArchiveStore & DraftSync & {
+export type FakeField = FenceStore & ArchiveStore & DraftSync & PreviousFieldWriters & {
   // The sync's marker for a job, as the record holds it, or null.
   marker(companyId: string, jobId: string): SyncMarker | null;
   // Every field owner the sync wrote on a draft, by "company/draft", in order.

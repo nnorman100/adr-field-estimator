@@ -16,11 +16,6 @@ import { abortPending, writeMarker, type DecidedRow, type SubmitStore } from './
 //   died or could not reach Firestore) gets its job's draft sync: `submitted` after a commit,
 //   `editing` after an abort. (Every other job whose drafts fell behind Postgres is synced by the
 //   draft sync's own repair pass, src/lib/jobs/sync-repair.ts.)
-// - An aborted row whose marker is written and whose expiry passed within the last REOPEN_SECONDS
-//   has its release written again, so a draft still fenced by that epoch goes back to `editing`: a
-//   fence a previous-version Submit, still serving while a release rolls out, closed after its
-//   release. Only companies the lookup returns for other work are visited for this. (The draft
-//   life-cycle redesign removes it once no previous version serves.)
 // - A pending row whose lock, or whose job's, another transaction still holds past the lock limit
 //   (a fence call in progress) is left for the next pass and counted as failed; the pass goes on
 //   with the rest. The job row is locked before the submission row, as in every request.
@@ -31,9 +26,6 @@ import { abortPending, writeMarker, type DecidedRow, type SubmitStore } from './
 
 // A decided row's marker is the deciding request's to write first; the worker waits this long.
 export const MARKER_GRACE_SECONDS = 60;
-
-// How long after an aborted row's expiry the worker still writes its release again.
-export const REOPEN_SECONDS = 15 * 60;
 
 export type RepairSummary = { aborted: number; marked: number; failed: number };
 
@@ -111,30 +103,6 @@ export async function runSubmissionRepair(
       }
       if (await writeMarker(db, store, companyId, row)) summary.marked += 1;
       else summary.failed += 1;
-    }
-    const reopen = await withCompany(db, companyId, (tx) =>
-      tx
-        .select({ draftId: jobSubmissions.draftId, epoch: jobSubmissions.epoch })
-        .from(jobSubmissions)
-        .where(
-          and(
-            eq(jobSubmissions.companyId, companyId),
-            eq(jobSubmissions.status, 'aborted'),
-            eq(jobSubmissions.markerState, 'done'),
-            sql`${jobSubmissions.expiresAt} <= now()`,
-            sql`${jobSubmissions.expiresAt} > now() - make_interval(secs => ${REOPEN_SECONDS})`,
-          ),
-        )
-        .orderBy(jobSubmissions.createdAt)
-        .limit(maxRowsPerCompany),
-    );
-    for (const row of reopen) {
-      try {
-        if ((await store.release(companyId, row.draftId, row.epoch)) === 'released') summary.marked += 1;
-      } catch (error) {
-        console.error('submission marker unavailable', error instanceof Error ? error.name : 'unknown');
-        summary.failed += 1;
-      }
     }
   }
   return summary;
