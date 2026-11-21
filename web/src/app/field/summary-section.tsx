@@ -76,7 +76,10 @@ export function SummarySection({ job, draft }: { job: JobContext; draft: FieldDr
     setNotice(null);
     if (errors.summary) return;
     setError(null);
-    if (Object.keys(changes).length === 0) return setNotice('Nothing to save.');
+    if (Object.keys(changes).length === 0) {
+      setEdit(null);
+      return setNotice('Nothing to save.');
+    }
     const sent = edit;
     await save(draftFieldWrites(job.draftRef, changes), 'Summary saved.', () => {
       setEdit((current) => (current === sent ? null : current));
@@ -178,7 +181,7 @@ export function SummarySection({ job, draft }: { job: JobContext; draft: FieldDr
           aria-describedby="fact-summary-hint"
           value={text}
           onChange={(event) => {
-            setEdit(event.target.value);
+            setEdit(event.target.value === (stored.summary ?? '') ? null : event.target.value);
             setNotice(null);
           }}
           className={TEXTAREA}

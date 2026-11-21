@@ -19,8 +19,9 @@ the address, the tabs "Check Scope", "Customer and claim", "Photos" and, for the
 ## Summary of findings and Draft with AI
 
 The summary box (`fact-summary`) saves the draft's `summary`, the summary the documents print (S5
-decision J1), separate from Notes. A summary the technician types is saved as theirs
-(`summarySource` `manual`). With the company's `ai_summary` switch on (the live `/api/me` answer,
+decision J1), separate from Notes. A summary the technician types is saved as `summary` only,
+with no `summarySource` (an absent source means their own words), so phones on the previous release
+keep reading every draft while the switch is off. With the company's `ai_summary` switch on (the live `/api/me` answer,
 off by default), the field owner with `audit` sees **Draft with AI** below it; it needs a signal.
 The proposal shows under "AI draft, check it": the drafted summary in an editable box, and the
 suggestions, work with no price and testing advice as tick boxes. **Accept** writes the summary as
@@ -28,7 +29,7 @@ edited, `summarySource` `ai` and the ticked notes, added to the `aiNotes` accept
 identical note once, earlier notes first and never removed; a list over its size refuses the accept);
 **Discard** writes nothing. Nothing of a proposal reaches the draft without Accept
 (`acceptChanges` in `web/src/lib/field/summary.ts`). Editing an accepted AI summary keeps it marked
-`ai`; emptying the box deletes the summary and its source. A request that got no answer is sent
+`ai`; emptying the box deletes the summary, and its source when there is one. A request that got no answer is sent
 again with the same call id; an allowance refusal shows the server's words and keeps the button
 off until its Retry-After. The documents' use of `aiNotes` and the AI notice (V11) are a later
 S7-6 slice.

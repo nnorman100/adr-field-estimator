@@ -71,8 +71,8 @@ const ACCESS_REFUSALS = new Set(['not_allowed', ...IDENTITY_REFUSALS]);
 // role's second step; the list is hidden now and the copy kept for after it.
 function refusalOf({ status, code }: { status: number; code?: string }): 'erase' | 'hide' | null {
   if (code === undefined) return null;
-  if ((status === 403 && ACCESS_REFUSALS.has(code)) || (status === 404 && code === 'not_found') || (status === 401 && code === 'sign_in_revoked')) return 'erase';
   if ((status === 401 && code === 'sign_in_again') || (status === 403 && code === 'second_step_required')) return 'hide';
+  if ((status === 403 && ACCESS_REFUSALS.has(code)) || (status === 404 && code === 'not_found') || (status === 401 && code === 'sign_in_revoked')) return 'erase';
   return null;
 }
 

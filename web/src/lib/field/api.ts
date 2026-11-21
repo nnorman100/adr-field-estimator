@@ -299,6 +299,7 @@ export async function readPublishedItemList(user: User, signal: AbortSignal) {
 // person, their account or their company no longer allows the work. Not a refusal of one job.
 export const IDENTITY_REFUSALS: ReadonlySet<string> = new Set([
   'account_disabled', 'no_tenant', 'unknown_tenant', 'email_unverified', 'not_a_member', 'member_disabled', 'company_inactive',
+  'second_step_required',
 ]);
 
 const summaryProposal = z.object({
@@ -316,6 +317,8 @@ const summaryProposal = z.object({
   }),
 });
 
+const SUMMARY_DRAFT_UNAVAILABLE = 'The job’s current draft could not be opened just now. Nothing was saved and no AI draft was made. Try again.';
+
 export type SummaryDraftAnswer =
   | { ok: true; value: SummaryProposal }
   | { ok: false; status: number; message: string; code?: string; retryAfterSeconds?: number };
@@ -331,11 +334,12 @@ export async function draftSummaryWithAi(user: User, jobId: string, callId: stri
   if (answer.ok) return { ok: true, value: answer.value.result };
   const said = body as { error?: unknown; message?: unknown; retryAfterSeconds?: unknown } | null;
   const fixed = typeof said?.error === 'string' && said.error.startsWith('ai_') && typeof said.message === 'string' ? said.message : null;
+  const unopened = said?.error === 'draft_unavailable' ? SUMMARY_DRAFT_UNAVAILABLE : null;
   const wait = typeof said?.retryAfterSeconds === 'number' && said.retryAfterSeconds > 0 ? said.retryAfterSeconds : undefined;
   return {
     ok: false,
     status: answer.status,
-    message: fixed ?? answer.message,
+    message: fixed ?? unopened ?? answer.message,
     ...(answer.code ? { code: answer.code } : {}),
     ...(wait !== undefined ? { retryAfterSeconds: wait } : {}),
   };

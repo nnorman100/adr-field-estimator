@@ -4,9 +4,11 @@
 //
 // Who wrote the summary is kept in `summarySource`, which the documents read for the AI notice
 // (docs/plans/S7.md V11, a later S7-6 slice): `ai` from the technician's accept of an AI draft,
-// `manual` for a summary they typed with no AI draft accepted. Editing an accepted AI draft keeps
-// `ai`: it is still an AI draft the technician checked. Emptying the box deletes the summary and its
-// source. An AI draft reaches the field map only through `acceptChanges`, called by the technician's
+// no key at all for a summary they typed (an absent source means their own words). A typed save never
+// writes `manual` or any other v3 key, so phones on the previous release keep reading every draft
+// while the company's `ai_summary` switch is off. Editing an accepted AI draft keeps `ai`: it is
+// still an AI draft the technician checked. Emptying the box deletes the summary, and its source when
+// the draft has one. An AI draft reaches the field map only through `acceptChanges`, called by the technician's
 // Accept; the server route that drafts it never writes the draft.
 import type { SummaryProposal } from '@/lib/summary-draft/service';
 import { aiNotesSchema, draftFieldSchema, MAX_AI_SUGGESTIONS, MAX_AI_TESTING_ADVICE, MAX_AI_UNPRICED_WORK, type AiNotes, type DraftField } from './schema';
@@ -38,17 +40,15 @@ export function proposalNotes(proposal: SummaryProposal['proposal']): Record<Not
   return notes;
 }
 
-// What a save of the summary box writes: the text as typed (or a delete when it is left empty), and
-// who wrote it, always together, so a save from a stale copy never leaves a summary without its
-// source or a source without its summary. Nothing when it is what is stored.
+// What a save of the summary box writes: the text as typed (or a delete when it is left empty), with
+// `summarySource` `ai` only when the stored draft already has it, and deleted with the summary. A
+// typed summary writes no source. Nothing when it is what is stored.
 export function summaryChanges(text: string, stored: DraftField): FormResult {
   const changes: FieldChanges = {};
   const errors: Record<string, string> = {};
   if (text.trim() === '') {
-    if (stored.summary !== undefined || stored.summarySource !== undefined) {
-      changes.summary = null;
-      changes.summarySource = null;
-    }
+    if (stored.summary !== undefined) changes.summary = null;
+    if (stored.summarySource !== undefined) changes.summarySource = null;
     return { changes, errors };
   }
   if (text === stored.summary) return { changes, errors };
@@ -57,7 +57,7 @@ export function summaryChanges(text: string, stored: DraftField): FormResult {
     return { changes, errors };
   }
   changes.summary = text;
-  changes.summarySource = stored.summarySource === 'ai' ? 'ai' : 'manual';
+  if (stored.summarySource === 'ai') changes.summarySource = 'ai';
   return { changes, errors };
 }
 

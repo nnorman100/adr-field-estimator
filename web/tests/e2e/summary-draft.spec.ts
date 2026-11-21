@@ -82,7 +82,7 @@ test('the estimator types a summary, then accepts an edited AI draft with the no
   await summary.getByLabel('Summary of findings', { exact: true }).fill('Wet drywall in the kitchen.');
   await summary.getByRole('button', { name: 'Save summary' }).click();
   await expect(page.getByText('Summary saved.')).toBeVisible();
-  await expect.poll(() => storedField(company, ids.draftId)).toMatchObject({ summary: 'Wet drywall in the kitchen.', summarySource: 'manual' });
+  await expect.poll(() => storedField(company, ids.draftId)).toEqual({ summary: 'Wet drywall in the kitchen.' });
 
   const callIds: string[] = [];
   await proposeOnce(page, ids, callIds);
@@ -99,7 +99,7 @@ test('the estimator types a summary, then accepts an edited AI draft with the no
   expect(callIds[0]).toMatch(/^[0-9a-f-]{36}$/);
 
   // Shown is not saved: the stored draft is still the technician's own summary.
-  expect(await storedField(company, ids.draftId)).toEqual({ summary: 'Wet drywall in the kitchen.', summarySource: 'manual' });
+  expect(await storedField(company, ids.draftId)).toEqual({ summary: 'Wet drywall in the kitchen.' });
 
   await review.getByLabel('Drafted summary').fill(`${PROPOSAL.summary} Checked on site.`);
   await review.getByLabel('Photograph the toe kick.').check();
