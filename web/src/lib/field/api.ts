@@ -12,6 +12,7 @@ import { callApi } from '@/lib/firebase-client';
 import type { ClaimView, CustomerView, JobDetail, JobListItem, JobPage } from '@/lib/jobs/service';
 import { itemListResponseSchema } from '@/lib/prices/item-list';
 import { MAX_PHOTO_REFS } from './schema';
+import type { SummaryProposal } from './summary';
 import type { JobsList } from './views';
 
 const jobView = z.object({
@@ -76,6 +77,10 @@ const MESSAGES: Record<string, string> = {
   submission_in_progress: 'A Submit of this job is still finishing. Try again in a moment.',
   not_archived: 'This job is not archived any more.',
   not_signed: 'Only a signed job can be copied.',
+  // S7-6: the AI draft of the summary of findings.
+  call_reused: 'This AI draft request was already used. Ask again.',
+  draft_not_editing: 'This job is no longer being edited.',
+  draft_invalid: 'Some of this job’s scope does not read right. Check the rooms and save the scope first.',
 };
 
 export function answerMessage(status: number, body: unknown): string {
@@ -288,6 +293,56 @@ export async function readScopeLists(user: User, jobId: string): Promise<Answer<
 export async function readPublishedItemList(user: User, signal: AbortSignal) {
   const { status, body } = await callApi(user, '/api/prices/item-list', { signal });
   return answerOf(status, body, itemListResponseSchema);
+}
+
+// The 403 codes of the member routes' identity check (src/lib/auth/identity.ts, REFUSALS): the
+// person, their account or their company no longer allows the work. Not a refusal of one job.
+export const IDENTITY_REFUSALS: ReadonlySet<string> = new Set([
+  'account_disabled', 'no_tenant', 'unknown_tenant', 'email_unverified', 'not_a_member', 'member_disabled', 'company_inactive',
+  'second_step_required',
+]);
+
+const summaryProposal = z.object({
+  result: z.object({
+    id: z.string(),
+    callId: z.string(),
+    jobId: z.string(),
+    draftId: z.string(),
+    proposal: z.object({
+      summary: z.string(),
+      suggestions: z.array(z.string()),
+      unpriced_work: z.array(z.string()),
+      testing_advice: z.array(z.string()),
+    }),
+  }),
+});
+
+const SUMMARY_DRAFT_UNAVAILABLE = 'The job’s current draft could not be opened just now. Nothing was saved and no AI draft was made. Try again.';
+
+export type SummaryDraftAnswer =
+  | { ok: true; value: SummaryProposal }
+  | { ok: false; status: number; message: string; code?: string; retryAfterSeconds?: number };
+
+// Asks for an AI draft of the job's summary of findings (S7-6). The phone sends its own call id and
+// sends the same id again only after no answer came, so a lost answer finds the same proposal and
+// never pays for a second model call. 201 for a new proposal, 200 for the stored one. An AI refusal
+// carries the server's fixed words, and an allowance refusal how long to wait (Retry-After).
+// The proposal is only shown: nothing reaches the draft until the technician accepts it.
+export async function draftSummaryWithAi(user: User, jobId: string, callId: string): Promise<SummaryDraftAnswer> {
+  const { status, body } = await callApi(user, `/api/jobs/${jobId}/ai/summary-draft`, { method: 'POST', json: { callId } });
+  const answer = answerOf(status, body, summaryProposal, [200, 201]);
+  if (answer.ok) return { ok: true, value: answer.value.result };
+  const said = body as { error?: unknown; message?: unknown; retryAfterSeconds?: unknown } | null;
+  const fixed = typeof said?.error === 'string' && said.error.startsWith('ai_') && typeof said.message === 'string' ? said.message : null;
+  const unopened = said?.error === 'draft_unavailable' ? SUMMARY_DRAFT_UNAVAILABLE : null;
+  const wait = typeof said?.retryAfterSeconds === 'number' && said.retryAfterSeconds > 0 ? said.retryAfterSeconds : undefined;
+  return {
+    ok: false,
+    status: answer.status,
+    message: fixed ?? unopened ?? answer.message,
+    ...(answer.code ? { code: answer.code } : {}),
+    ...(wait !== undefined ? { retryAfterSeconds: wait } : {}),
+  };
 }
 
 export { SHOT_NAMES } from './schema';

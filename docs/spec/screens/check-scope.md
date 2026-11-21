@@ -10,10 +10,29 @@ Part of [Screen specs](README.md). Address: `/field?job={id}` (the default job v
 The technician's walk of the loss: year built, the job's rooms (name, room type, water category
 and class or mold condition, measurements, the room type's items and prep tasks), equipment counts
 (with the counts the rooms suggest: "Confirm or change the counts below; only the counts you enter
-are priced."), job charges, notes and the scope-confirmed box (`scope-view.tsx`). Edits are written to the job's field draft in the field database
+are priced."), job charges, notes and the scope-confirmed box (`scope-view.tsx`), then the summary of
+findings (`summary-section.tsx`, S7-6). Edits are written to the job's field draft in the field database
 (Firestore) on the phone, so they work with no signal when the phone keeps jobs. The job frame shows
 the address, the tabs "Check Scope", "Customer and claim", "Photos" and, for the owner and office,
 "Job coordination", and [Job actions](job-actions.md) below.
+
+## Summary of findings and Draft with AI
+
+The summary box (`fact-summary`) saves the draft's `summary`, the summary the documents print (S5
+decision J1), separate from Notes. A summary the technician types is saved as `summary` only,
+with no `summarySource` (an absent source means their own words), so phones on the previous release
+keep reading every draft while the switch is off. With the company's `ai_summary` switch on (the live `/api/me` answer,
+off by default), the field owner with `audit` sees **Draft with AI** below it; it needs a signal.
+The proposal shows under "AI draft, check it": the drafted summary in an editable box, and the
+suggestions, work with no price and testing advice as tick boxes. **Accept** writes the summary as
+edited, `summarySource` `ai` and the ticked notes, added to the `aiNotes` accepted before (per list, an
+identical note once, earlier notes first and never removed; a list over its size refuses the accept);
+**Discard** writes nothing. Without a signal an open proposal stays on screen and Accept waits until the phone is online with the switch confirmed on; a live answer that the switch is off closes it. Nothing of a proposal reaches the draft without Accept
+(`acceptChanges` in `web/src/lib/field/summary.ts`). Editing an accepted AI summary keeps it marked
+`ai`; emptying the box deletes the summary, and its source when there is one. A request that got no answer is sent
+again with the same call id; an allowance refusal shows the server's words and keeps the button
+off until its Retry-After. The documents' use of `aiNotes` and the AI notice (V11) are a later
+S7-6 slice.
 
 ## Ready to review?
 
@@ -34,8 +53,7 @@ and it waits, showing "Saving…", until this job's pending saves and photo send
 before it leaves. Discard clears the unsent values of every form on the job. The wait, its deadline
 and its failure handling are in [Finish](finish.md).
 An accepted save asks the check again. A confirmed archive replaces the readiness text and link with the archived notice.
-The summary of findings gap points to guidance in Check Scope while the separate summary editor is
-pending.
+The summary of findings gap points to the summary box on Check Scope.
 
 ## Who may see it and do what
 
@@ -123,7 +141,8 @@ job's field work is no longer yours…" (unsent changes stay on the phone, read 
 | Read the room types, items and prep tasks | `GET /api/jobs/{id}/scope-lists` | `jobs_read` |
 | Read the company's published reference item list | `GET /api/prices/item-list`, offline copy in `ds-prices` | `prices_read` |
 | Start field work (become field owner) | `POST /api/jobs/{id}/field-owner` ("Nobody has started this job's field work yet. Whoever starts it owns it…"), offered on Check Scope and on [Photos](photos.md) only on a job nobody owns (`startable` in `job-screens.tsx`, `start-field-work.tsx`). When the job already names this person but its draft is not there or does not name them yet (a field step that did not get through: a first Start, a move, Back to editing, New job, Copy), there is no Start prompt any more: the job read gets it ready (the draft life-cycle redesign, slice 6: the read syncs the job's drafts from Postgres when they fell behind or the current draft is missing) and the screen shows "Getting this job's field work ready…" while it reads the job again (1, 2, 4, 8 and 8 seconds), then "This job's field work is not ready on this phone yet. Try again in a moment." with Try again. A 403 answer to Start drops the job from the screen, as any refusal of it does. | `scope` |
-| Save rooms, scope, counts, notes | the field database draft (`draftFieldWrites`), checked by `web/firestore.rules`; no server route | field owner with `scope` |
+| Draft the summary with AI (proposal only) | `POST /api/jobs/{id}/ai/summary-draft`, switch `ai_summary` | field owner with `audit` |
+| Save rooms, scope, counts, notes, the summary, an accepted AI draft | the field database draft (`draftFieldWrites`), checked by `web/firestore.rules`; no server route | field owner with `scope` |
 
 Rules: `docs/access/jobs.md` (field owner), `docs/access/scope-lists.md`; draft lock while
 submitting: `docs/access/submit.md`.
@@ -134,7 +153,6 @@ submitting: `docs/access/submit.md`.
 - Voice notes, scope suggestions from AI and meter-photo reading (S7).
 - Approving a named adjustment on a job (S5b-8). Reprice (S5b-6) is on Review before signing.
 - A normal Check Scope action that opens [Finish and review](finish.md): see "Mismatches to check".
-- A field for the summary of findings that [Finish](finish.md) checks: see "Mismatches to check".
 
 ## Mismatches to check
 
@@ -143,12 +161,3 @@ submitting: `docs/access/submit.md`.
   that is being finished or finished, online, once the job reads) and from [Review](review.md)'s
   "Back to Finish and review" button (shown before pricing, including "Not finished yet", and on a priced,
   unsigned job). Otherwise by typing the address (see [README](README.md), item 1).
-- Notes (`fact-notes`) save to the draft's `notes` key, but the summary of findings is a separate
-  `summary` key that no field screen edits: `web/src/lib/field/forms.ts` excludes it from the
-  forms. [Finish](finish.md) reads `draft.summary` (`summaryWritten` in
-  `web/src/lib/submissions/screen.ts`), so a technician who fills in Notes and saves still sees "No
-  summary of findings yet" there. S5 decision J1 calls for a summary editor; it is not built. The
-  gap blocks pricing: with prices published and the scope confirmed, Finish still succeeds, then
-  "Price this job" is refused with `summary_missing` ("…finished without a summary of findings. Go back
-  to editing, write it, then finish again.", `web/src/lib/estimates/service.ts`), and no field screen
-  can write it.

@@ -88,10 +88,8 @@ Each is flagged for the owner or a later fix; no code was changed.
 5. Resolved: [docs/STATUS.md](../../STATUS.md) now has rows for the web app's screens (PRs #314 to
    #471 were added on 2026-11-19, for example "Job screens on the phone (S5a-6)" in
    `docs/status/s5-core-workflows.md`).
-6. No field screen edits the draft's summary of findings, which Finish checks (S5 decision J1). Notes
-   on Check Scope is a different key. An empty summary blocks pricing (`summary_missing`: Review says
-   go back and write it, and nothing in the field app can). See [check-scope.md](check-scope.md),
-   [finish.md](finish.md) and [review.md](review.md).
+6. Resolved: Check Scope has a summary of findings box (`fact-summary`, S7-6), which Finish checks
+   (S5 decision J1). See [check-scope.md](check-scope.md).
 7. The signed documents' links are shown only in the first successful signing answer. A signer who
    misses it cannot recover the addresses; see [review.md](review.md).
 8. Estimators and office hold `prices_read` while the company's prices are on, but no screen links

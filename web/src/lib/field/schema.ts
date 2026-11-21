@@ -1,4 +1,4 @@
-// Field map v2 (S5a-1, room inputs S5a-10): the `field` map of a draft, a room and a photo
+// Field map v3 (S5a-1, room inputs S5a-10, AI summary keys S7-6): the `field` map of a draft, a room and a photo
 // reference in the field database. The phone writes these maps directly; `web/firestore.rules` checks the same keys,
 // types and sizes (a unit test keeps the two key lists equal), and the server parses them again
 // before pricing (`toInspection` in ./inspection.ts).
@@ -31,6 +31,14 @@ export const MAX_PREP_TASK = 300;
 /** The longest findings note of one room. */
 export const MAX_FINDINGS = 2_000;
 export const MAX_CEILING_FT = 60;
+/** The accepted AI notes (S7-6): the document engine's sizes (AI_NOTES in src/engine/documents.ts). */
+export const MAX_AI_NOTE = 1_000;
+export const MAX_AI_SUGGESTIONS = 30;
+export const MAX_AI_UNPRICED_WORK = 30;
+export const MAX_AI_TESTING_ADVICE = 10;
+
+/** Who wrote the summary of findings: the technician, or an AI draft the technician accepted (S7-6). */
+export const SUMMARY_SOURCES = ['manual', 'ai'] as const;
 
 /** The categories a room may be: water categories 1 to 3, or mold. */
 export const ROOM_CATEGORIES = [1, 2, 3, 'mold'] as const;
@@ -71,6 +79,21 @@ export const fieldId = z.string().min(1).max(MAX_ID).regex(ID);
 export const ITEM_QUANTITY = /^(100000(\.0{1,2})?|\d{1,5}(\.\d{1,2})?)$/;
 export const itemQuantity = z.string().regex(ITEM_QUANTITY);
 
+/**
+ * One accepted AI note: 1 to 1,000 characters on one line. One line, so the field rules can check
+ * every note of a list with one pattern over the list joined by line breaks (firestore.rules,
+ * okNoteList), as they check a room's items.
+ */
+export const aiNote = z.string().min(1).max(MAX_AI_NOTE).regex(/^[^\n\r\u2028\u2029]*$/, 'a note is one line');
+
+/** The AI notes the technician ticked when accepting a summary draft (S7-6); each list is optional. */
+export const aiNotesSchema = z.strictObject({
+  suggestions: z.array(aiNote).max(MAX_AI_SUGGESTIONS).optional(),
+  unpricedWork: z.array(aiNote).max(MAX_AI_UNPRICED_WORK).optional(),
+  testingAdvice: z.array(aiNote).max(MAX_AI_TESTING_ADVICE).optional(),
+});
+export type AiNotes = z.infer<typeof aiNotesSchema>;
+
 export const draftFieldSchema = z.strictObject({
   yearBuilt: z
     .int()
@@ -86,6 +109,10 @@ export const draftFieldSchema = z.strictObject({
   notes: z.string().max(MAX_NOTES).optional(),
   /** The written summary of findings the documents need (owner decision J1). */
   summary: z.string().max(MAX_SUMMARY).optional(),
+  /** `ai` once the technician accepted an AI draft of the summary (S7-6, V11), else `manual`. */
+  summarySource: z.enum(SUMMARY_SOURCES).optional(),
+  /** The AI notes the technician accepted with a summary draft (S7-6). */
+  aiNotes: aiNotesSchema.optional(),
   scopeConfirmed: z.boolean().optional(),
   // Equipment counts and the days they run.
   airMovers: count().optional(),

@@ -1,5 +1,5 @@
 import { SESSION_RULES } from '@/lib/auth/policy';
-import { readinessEnabled } from '@/lib/readiness/feature';
+import { aiSummaryEnabled, readinessEnabled } from '@/lib/readiness/feature';
 import { meOutcome, type MeOutcome } from '@/lib/sign-in/outcome';
 
 // The sync gate (S6-3; docs/plans/S6.md section 3). The field client starts with its network off,
@@ -41,6 +41,8 @@ export type MeFacts = {
   actorId?: string;
   expiresAt: number;
   readiness?: true;
+  // The company's AI summary draft switch (S7-6), live only, like readiness.
+  aiSummary?: true;
 };
 
 export type GateState =
@@ -97,7 +99,7 @@ export function judgeMe(answer: MeAnswer, now: number): Verdict {
   if (!Number.isFinite(expiresAt) || !accessCurrent(expiresAt, now)) return { kind: 'renewing' };
   return {
     kind: 'open',
-    facts: { ...facts, companyName: outcome.companyName, role: outcome.role, expiresAt, ...(readinessEnabled(answer.body) ? { readiness: true } : {}) },
+    facts: { ...facts, companyName: outcome.companyName, role: outcome.role, expiresAt, ...(readinessEnabled(answer.body) ? { readiness: true } : {}), ...(aiSummaryEnabled(answer.body) ? { aiSummary: true } : {}) },
   };
 }
 

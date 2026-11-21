@@ -28,7 +28,9 @@ export type FieldStorage = 'kept' | 'online-only' | 'not-saved';
 // `actorId` is null only for a saved sign-in written before it was kept; the job screens then wait for
 // one online check (field-app.tsx).
 export type FieldMe = { companyId: string | null; role: string | null; capabilities: string[]; actorId: string | null };
-export type FieldContextValue = { client: FieldClient; me: FieldMe; gate: GateState; online: boolean; offlineCapture: boolean };
+// `askAgain` has the gate ask the server who this person is now: a screen that was told the sign-in
+// or the company no longer allows the work calls it, and the gate locks the shell if so.
+export type FieldContextValue = { client: FieldClient; me: FieldMe; gate: GateState; online: boolean; offlineCapture: boolean; askAgain: () => void };
 const FieldContext = createContext<FieldContextValue | null>(null);
 
 // The started client and who the person is (from the server when online, from ds-me offline).
@@ -331,7 +333,7 @@ export function FieldStore({
       ? { companyId: gate.facts.companyId, role: gate.facts.role, capabilities: gate.facts.capabilities, actorId: gate.facts.actorId ?? known.actorId ?? null }
       : { companyId: known.companyId ?? null, role: known.role ?? null, capabilities: known.capabilities ?? [], actorId: known.actorId ?? null };
   return (
-    <FieldContext.Provider value={{ client: phase.client, me: fieldMe, gate, online: reachable && gate.kind === 'open', offlineCapture: offlineCaptureAllowed(surface) }}>
+    <FieldContext.Provider value={{ client: phase.client, me: fieldMe, gate, online: reachable && gate.kind === 'open', offlineCapture: offlineCaptureAllowed(surface), askAgain: () => gateRef.current?.poke() }}>
       <div role="status" className="flex flex-col gap-2">
         {gateLine(gate, me.address, kept)}
       </div>

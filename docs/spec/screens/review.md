@@ -43,8 +43,8 @@ The screen decides by keys from `GET /api/me`: pricing by `audit`, signing and s
   not ready to sign). A signed job has no such button.
 - Pricing refused for an empty summary: "This job was finished without a summary of findings. Go back
   to editing, write it, then finish again." (`summary_missing`, checked after "scope not confirmed").
-  The field app has no editor for the summary (see "Mismatches to check"), so a job finished with only
-  Notes cannot get past this.
+  The way past it: Back to editing, then the Summary of findings box on Check Scope (type it, or
+  Draft with AI and accept it), then Finish again.
 - Not ready to sign: "Not ready to sign" with each reason, in this order (`notReadyReasons` in
   `web/src/lib/estimates/screen.ts`): details changed after pricing ("…go back to editing, then
   finish and review."); a missing job detail ("{detail}. The documents are shown again once it is
@@ -133,8 +133,8 @@ and it needs a new signature. Estimator and office never see the banner.
   the owner or office can, while prices are on. A document-link maker who moves from estimator to
   office keeps qualifying through `delivery_resend`, so losing `sign` alone does not end that link. A pending signing link can be replaced by anyone holding `sign` ("Make a
   new signing link").
-- Finish does not require a summary, but pricing does, and the field app cannot write one (see
-  [Check Scope](check-scope.md)): a technician can finish a job whose only text is Notes and then be
-  refused at "Price this job" with `summary_missing`.
+- Finish does not require a summary, but pricing does: a technician can finish a job whose only text
+  is Notes and then be refused at "Price this job" with `summary_missing`. The recovery is Back to
+  editing, the Summary of findings box on [Check Scope](check-scope.md), and Finish again.
 
 The screen's key checks match the routes in `docs/access/`.

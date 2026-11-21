@@ -17,8 +17,12 @@ export type FieldSession = {
   role: string;
   capabilities: string[];
   readiness: boolean;
+  // The company's AI summary draft switch (S7-6), from the live /api/me answer only.
+  aiSummary: boolean;
   online: boolean;
   offlineCapture: boolean;
+  // Has the sync gate ask the server who this person is now (see FieldContextValue.askAgain).
+  askAgain: () => void;
 };
 
 // Watches the company sign-in: a person app is only its in-memory mirror. The screens are

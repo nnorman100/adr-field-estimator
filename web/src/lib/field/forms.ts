@@ -12,7 +12,7 @@ import { draftFieldSchema, MAX_PREP_TASK, roomFieldSchema, type DraftField, type
 type Kind = 'int' | 'decimal' | 'text' | 'bool' | 'choice' | 'list';
 export type FormField<K extends string> = { key: K; label: string; kind: Kind; hint?: string };
 
-type FactKey = Exclude<keyof DraftField, 'roomOrder' | 'summary'>;
+type FactKey = Exclude<keyof DraftField, 'roomOrder' | 'summary' | 'summarySource' | 'aiNotes'>;
 type RoomKey = keyof RoomField;
 
 // The pre-1978 wording is the server's (src/engine/), so the phone says nothing about it here.
@@ -69,7 +69,7 @@ export const ROOM_FIELDS: FormField<RoomKey>[] = [
 
 export type FormValues = Record<string, string | boolean>;
 // The keys to write: a value to set, or null to delete the key.
-export type FieldChanges = Record<string, string | number | boolean | string[] | Record<string, string> | null>;
+export type FieldChanges = Record<string, string | number | boolean | string[] | Record<string, string> | Record<string, string[]> | null>;
 export type FormResult = { changes: FieldChanges; errors: Record<string, string> };
 
 const NUMBER = /^\d+(\.\d+)?$/;

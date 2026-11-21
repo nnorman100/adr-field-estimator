@@ -95,7 +95,7 @@ describe('/api/me', () => {
       expect(res.status).toBe(200);
       expect(res.headers.get('cache-control')).toBe('no-store');
       const body = (await res.json()) as { features: unknown };
-      expect(body.features).toEqual({ readiness: expected, drying_watch: false, estimate_assist: false });
+      expect(body.features).toEqual({ readiness: expected, drying_watch: false, estimate_assist: false, ai_summary: false });
     }
   });
 });

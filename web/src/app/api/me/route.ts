@@ -12,8 +12,8 @@ export const dynamic = 'force-dynamic';
 // the future (S6-3's sync gate), since a skipped renewal still answers 200. A renewal skipped
 // because the actor was busy leaves its outbox row due, so the next call tries it again.
 // `features` are the company switches the screens read (an allowlist, never the whole flag list):
-// `readiness` turns on "Ready to review?" (S5b-11), `drying_watch` the drying watch and `estimate_assist` the job close and estimate accuracy (S5b-10). The
-// server checks each again on its own routes.
+// `readiness` turns on "Ready to review?" (S5b-11), `drying_watch` the drying watch and `estimate_assist` the job close and estimate accuracy (S5b-10),
+// `ai_summary` the "Draft with AI" summary on Check Scope (S7-6). The server checks each again on its own routes.
 export const GET = memberRoute(async (_request, identity) => {
   await renewSignedInAccess(identity);
   const expiresAt = await fieldAccessExpiry(identity);
@@ -23,7 +23,7 @@ export const GET = memberRoute(async (_request, identity) => {
       actor: { id: identity.actorId, displayName: identity.displayName },
       role: identity.role,
       capabilities: identity.capabilities,
-      features: { readiness: identity.flags?.readiness === true, drying_watch: identity.flags?.drying_watch === true, estimate_assist: identity.flags?.estimate_assist === true },
+      features: { readiness: identity.flags?.readiness === true, drying_watch: identity.flags?.drying_watch === true, estimate_assist: identity.flags?.estimate_assist === true, ai_summary: identity.flags?.ai_summary === true },
       fieldAccessExpiresAt: expiresAt ? expiresAt.toISOString() : null,
     },
     { headers: { 'Cache-Control': 'no-store' } },

@@ -11,13 +11,13 @@ import type { FieldManifest } from '@/lib/field/canonical';
 // evaluation (web/tests/ai-evals/runner.ts) both build their request here, so the eval measures the
 // request the route sends.
 //
-// Facts: the draft's field map and rooms (field map v2), the number of photos, the walkthrough turns
+// Facts: the draft's field map and rooms (field map v3), the number of photos, the walkthrough turns
 // that passed screening, the voice-note transcripts the technician reviewed, and the meter readings
 // the technician accepted. The job's saved customer name and address are never read into them, and
 // every string goes through the shared prompt builder (web/src/lib/ai/prompt-facts.ts), which removes
 // that name, the address parts and anything shaped like coordinates a technician typed into free
-// text, before Model Armor or the model sees it. The technician's current summary is left out: it is
-// the field being drafted. The age rule line comes first, as the old prompt gave it.
+// text, before Model Armor or the model sees it. The technician's current summary, its source and the
+// accepted AI notes are left out: they are the fields being drafted. The age rule line comes first, as the old prompt gave it.
 
 // The year the pre-1978 rule turns on (docs/ARCHITECTURE.md, California clauses).
 export const TESTING_YEAR = 1978;
@@ -31,7 +31,7 @@ export type SummaryDraftOutput = z.infer<typeof summaryDraftOutput>;
 export type SummaryRoomFacts = RoomField & { photoCount: number };
 
 export type SummaryFacts = {
-  inspection: Omit<DraftField, 'summary' | 'roomOrder'> & { rooms: SummaryRoomFacts[] };
+  inspection: Omit<DraftField, 'summary' | 'summarySource' | 'aiNotes' | 'roomOrder'> & { rooms: SummaryRoomFacts[] };
   photoCount: number;
   // Words said on the walkthrough that passed screening, in order (S7-12; none until then).
   walkthrough: { speaker: 'technician' | 'assistant'; text: string }[];
@@ -58,8 +58,11 @@ export function summaryFacts(
   const draft = draftFieldSchema.safeParse(manifest.draft ?? {});
   if (!draft.success) throw new SummaryFactsError();
   const { roomOrder = [], ...inspection } = draft.data;
-  // The technician's own summary is the field being drafted, so the model does not get it.
+  // The technician's own summary, its source and the AI notes accepted with an earlier draft are
+  // the fields being drafted (field map v3), so the model does not get them.
   delete inspection.summary;
+  delete inspection.summarySource;
+  delete inspection.aiNotes;
   const byId = new Map(manifest.rooms.map((room) => [room.id, room.field ?? {}]));
   if (roomOrder.length !== byId.size || roomOrder.some((id) => !byId.has(id))) throw new SummaryFactsError();
   const photosIn = new Map<string, number>();
