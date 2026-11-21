@@ -7,7 +7,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import type { BrowserSignInConfig } from '@/lib/config';
 import { manifestDigest, type FieldManifest } from '@/lib/field/canonical';
-import { signInOf, signOutOnRefusal, signOutOrShow, type FailedSignOut } from '@/lib/field/sign-out';
+import { noteItemListAccess } from '@/lib/field/ds-prices';
+import { signInOf, signOutOnRefusal, signOutOrShow, stillSameSignIn, type FailedSignOut } from '@/lib/field/sign-out';
 import { belongsTo, callApi, companyAuth } from '@/lib/firebase-client';
 import { useDraftReadiness } from '@/lib/readiness/client';
 import { readinessEnabled } from '@/lib/readiness/feature';
@@ -84,6 +85,8 @@ function Finish({ address, companyName, tenantId, jobId, config }: FinishScreenP
       }
       if (outcome.kind === 'unavailable') return setPhase({ name: 'unavailable' });
       if (outcome.kind !== 'signed-in') return setPhase({ name: 'finish-sign-in' });
+      // Without prices_read the person may no longer see the company's item list: it is erased.
+      if (stillSameSignIn(auth, from)) noteItemListAccess({ tenantId, uid: user.uid }, me);
       const who = finisherOf(me.body);
       if (!who) return setPhase({ name: 'unavailable' });
       const answer = await callApi(user, `/api/jobs/${encodeURIComponent(jobId)}`);

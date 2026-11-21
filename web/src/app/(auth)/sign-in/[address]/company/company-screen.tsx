@@ -8,7 +8,8 @@ import { Button } from '@/components/ui/button';
 import type { BrowserSignInConfig } from '@/lib/config';
 import { canReadAiUsage } from '@/lib/ai/usage-screen';
 import { belongsTo, callApi, companyAuth } from '@/lib/firebase-client';
-import { signInOf, signOutOnRefusal, signOutOrShow, type FailedSignOut, type SignIn } from '@/lib/field/sign-out';
+import { noteItemListAccess } from '@/lib/field/ds-prices';
+import { signInOf, signOutOnRefusal, signOutOrShow, stillSameSignIn, type FailedSignOut, type SignIn } from '@/lib/field/sign-out';
 import type { LockReason } from '@/lib/field/unsent';
 import { pricesAccess } from '@/lib/prices/screen';
 import { profileView, signedInProfileManager } from '@/lib/profile/screen';
@@ -78,6 +79,8 @@ function CompanySettings({
       }
       if (outcome.kind === 'unavailable') return setPhase({ name: 'unavailable' });
       if (outcome.kind !== 'signed-in') return setPhase({ name: 'finish-sign-in' });
+      // Without prices_read the person may no longer see the company's item list: it is erased.
+      if (stillSameSignIn(auth, from)) noteItemListAccess({ tenantId, uid: user.uid }, me);
       const member = signedInProfileManager(me.body);
       if (!member) return setPhase({ name: 'unavailable' });
       // Not the owner: the profile is never requested, so nothing of it reaches this phone.

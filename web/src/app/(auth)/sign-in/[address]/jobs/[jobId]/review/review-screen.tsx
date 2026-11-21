@@ -11,7 +11,8 @@ import type { BrowserSignInConfig } from '@/lib/config';
 import { canRepriceOf } from '@/lib/estimates/reprice-screen';
 import type { EstimateView } from '@/lib/estimates/result';
 import { notReadyReasons, outcomeOf, reviewAnswerOf, reviewerOf, revisionOf, type Next, type ReviewJob, type Reviewer } from '@/lib/estimates/screen';
-import { signInOf, signOutOnRefusal, signOutOrShow, type FailedSignOut } from '@/lib/field/sign-out';
+import { noteItemListAccess } from '@/lib/field/ds-prices';
+import { signInOf, signOutOnRefusal, signOutOrShow, stillSameSignIn, type FailedSignOut } from '@/lib/field/sign-out';
 import { belongsTo, callApi, companyAuth } from '@/lib/firebase-client';
 import { linkRightsOf, type DocumentLinkView } from '@/lib/links/screen';
 import { endsSession, meOutcome } from '@/lib/sign-in/outcome';
@@ -89,6 +90,8 @@ function Review({ address, companyName, tenantId, jobId, config }: ReviewScreenP
       }
       if (outcome.kind === 'unavailable') return setPhase({ name: 'unavailable' });
       if (outcome.kind !== 'signed-in') return setPhase({ name: 'finish-sign-in' });
+      // Without prices_read the person may no longer see the company's item list: it is erased.
+      if (stillSameSignIn(auth, from)) noteItemListAccess({ tenantId, uid: user.uid }, me);
       const reviewer = reviewerOf(me.body);
       if (!reviewer) return setPhase({ name: 'unavailable' });
       const path = `/api/jobs/${encodeURIComponent(jobId)}`;
