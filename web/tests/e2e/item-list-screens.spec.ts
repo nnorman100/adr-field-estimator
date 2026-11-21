@@ -80,3 +80,31 @@ for (const [name, path] of screens) {
     await expect.poll(() => savedCount(page)).toBe(0);
   });
 }
+
+test('a screen records the refusal before it shows its answer, even while another tab holds the item-list lock', async ({ page, context }) => {
+  const owner = { tenantId: team.tenantId, uid: team.estimator.uid, companyId: team.companyId };
+  await signIn(page);
+  await saveCopy(page, owner);
+  const counter = () => page.evaluate((scope) => Number(localStorage.getItem(`ds-prices-erase/${JSON.stringify(scope)}`)) || 0, [owner.tenantId, owner.uid, owner.companyId]);
+
+  // Another tab (Check Scope in the middle of a slow save) holds the person's item-list lock. Its page
+  // is one that runs none of the app's item-list code.
+  const other = await context.newPage();
+  await other.goto('/no-such-page');
+  await other.evaluate((lock) => new Promise<void>((held) => {
+    void navigator.locks.request(lock, () => new Promise<void>((release) => {
+      (window as unknown as { releaseItemListLock: () => void }).releaseItemListLock = release;
+      held();
+    }));
+  }), JSON.stringify(['ds-prices', owner.tenantId, owner.uid]));
+
+  const before = await counter();
+  await page.goto(`/sign-in/${team.address}/company`);
+  await expect(page.getByRole('heading', { name: 'This screen is for the company owner' })).toBeVisible();
+  // Recorded already: a reload in any tab, even offline, now shows nothing of the saved copy.
+  expect(await counter()).toBe(before + 1);
+  expect(await savedCount(page)).toBe(1);
+
+  await other.evaluate(() => (window as unknown as { releaseItemListLock: () => void }).releaseItemListLock());
+  await expect.poll(() => savedCount(page)).toBe(0);
+});

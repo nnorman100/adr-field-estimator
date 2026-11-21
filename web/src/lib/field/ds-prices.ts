@@ -35,8 +35,8 @@ export function governing(owner: ListOwner): () => boolean {
 
 // What the phone records of the server's refusals: one counter per scope, the company's list
 // ([tenant, person, company]) or every list this person holds in this company tenant ([tenant,
-// person]), in localStorage so every tab and a reload see it. Only the cross-tab lock below reads
-// it to raise it, and a raise only adds one, so it never goes down. A request for the list notes
+// person]), in localStorage so every tab and a reload see it. A raise only adds one, so it never
+// goes down; it needs no lock, because two tabs raising at once still leave it higher than before. A request for the list notes
 // the counters when it starts (its stamp) and its answer is shown and saved only while they are
 // unchanged; a saved row keeps the stamp of the request that fetched it, and a row stamped below
 // the current counters is owed an erase: it is never shown, and every read erases it first. No
@@ -58,7 +58,6 @@ function counter(scope: Scope): number {
   }
 }
 
-// Under the lock only.
 function raise(scope: Scope): void {
   try {
     window.localStorage.setItem(COUNTER_PREFIX + scopeKey(scope), String(counter(scope) + 1));
@@ -76,17 +75,19 @@ export const refusalStamp = (owner: ListOwner): Stamp => stampOf(owner, owner.co
 
 const sameStamp = (left: Stamp, right: Stamp) => left[0] === right[0] && left[1] === right[1];
 
-// Whether a refusal has been recorded, in this tab or another, since `stamp` was noted. Read without
-// the lock: it only decides whether to hide what this page shows.
-export const refusedSince = (owner: ListOwner, stamp: Stamp): boolean => !sameStamp(stamp, refusalStamp(owner));
+// Whether a refusal has been recorded, in this tab or another, since `stamp` was noted: a counter
+// went up. Read without the lock: it only decides whether to hide what this page shows.
+export function refusedSince(owner: ListOwner, stamp: Stamp): boolean {
+  const now = refusalStamp(owner);
+  return now[0] > stamp[0] || now[1] > stamp[1];
+}
 
 // Calls `check` whenever another tab changes a refusal counter that covers this owner's list (the
 // browser's storage event, which never fires in the tab that made the change). Returns the unsubscribe.
 export function onRefusalElsewhere(owner: ListOwner, check: () => void): () => void {
   const keys = new Set([COUNTER_PREFIX + scopeKey(owner), COUNTER_PREFIX + scopeKey({ tenantId: owner.tenantId, uid: owner.uid })]);
   const listener = (event: StorageEvent) => {
-    // A null key: the other tab cleared the whole of localStorage.
-    if (event.storageArea === window.localStorage && (event.key === null || keys.has(event.key))) check();
+    if (event.storageArea === window.localStorage && event.key !== null && keys.has(event.key)) check();
   };
   window.addEventListener('storage', listener);
   return () => window.removeEventListener('storage', listener);
@@ -288,18 +289,16 @@ export function replaceItemList(owner: ListOwner, list: ItemList | null, authTim
 }
 
 // The server refused this company's list for this person (an item-list refusal, or GET /api/me
-// without prices_read): the refusal is recorded and the copy erased. True when the copy is gone;
-// when it is not, it is owed (a row stamped below the counter) and every read erases it first.
-export async function eraseItemList(owner: ListOwner): Promise<boolean> {
-  if (typeof indexedDB === 'undefined') return true;
-  // Recorded once: a retry of the same erase must not count as a new refusal, which would drop an
-  // answer asked for after access came back.
-  let recorded = false;
-  return twice(() => changing(owner, async (signal) => {
-    if (!recorded) raise(owner);
-    recorded = true;
-    await erase(owner, signal);
-  })).then(() => true, () => false);
+// without prices_read): the refusal is recorded at once, before this returns, so a screen that goes
+// on to show its answer never leaves it unrecorded behind another tab's held lock. The copy is then
+// erased under the lock. True when the copy is gone; when it is not, it is owed (a row stamped below
+// the counter) and every read erases it first.
+export function eraseItemList(owner: ListOwner): Promise<boolean> {
+  if (typeof indexedDB === 'undefined') return Promise.resolve(true);
+  // Recorded once: a retry of the erase must not count as a new refusal, which would drop an answer
+  // asked for after access came back.
+  raise(owner);
+  return twice(() => changing(owner, (signal) => erase(owner, signal))).then(() => true, () => false);
 }
 
 // Sign-out: every list this person holds in this company tenant goes. Throws, with the erase owed,

@@ -529,3 +529,83 @@ test('a refusal accepted in another tab hides the open list there at once, and a
   await expect(page.getByText('Item list as of', { exact: false })).toHaveCount(0);
   expect(await storedKeys(page)).not.toContainEqual(keyOf(scope, first.current.versionId));
 });
+
+// Holds the person's item-list lock in `page` until the returned function is called.
+async function holdItemListLock(page: Page, { tenantId, uid }: { tenantId: string; uid: string }) {
+  await page.evaluate((lock) => new Promise<void>((held) => {
+    void navigator.locks.request(lock, () => new Promise<void>((release) => {
+      (window as unknown as { releaseItemListLock: () => void }).releaseItemListLock = release;
+      held();
+    }));
+  }), JSON.stringify(['ds-prices', tenantId, uid]));
+  return () => page.evaluate(() => (window as unknown as { releaseItemListLock: () => void }).releaseItemListLock());
+}
+
+const companyCounterKey = ({ person, companyId }: Scope) => `ds-prices-erase/${JSON.stringify([person.tenantId, person.uid, companyId])}`;
+
+test('hiding a refused list keeps an answer asked for after the refusal', async ({ context, lane }) => {
+  const first = publication('2026-11-10T12:00:00Z', 'Refused item');
+  serve(lane, ITEM_LIST, first);
+  const scope = await openScope(context, lane);
+  const { page } = scope;
+  await expect(page.getByText('Item list as of Nov 10, 2026', { exact: true })).toBeVisible();
+  await expectSaved(scope, first.current.versionId);
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  const other = await FieldPhone.open(context, lane);
+
+  lane.cut();
+  await page.evaluate(() => window.dispatchEvent(new Event('offline')));
+  await expect(page.getByText(/No signal/)).toBeVisible();
+  // A refusal recorded by another tab whose storage event has not reached this page yet.
+  await page.evaluate((key) => localStorage.setItem(key, String((Number(localStorage.getItem(key)) || 0) + 1)), companyCounterKey(scope));
+  await expect(page.getByText('Item list as of Nov 10, 2026', { exact: true })).toBeVisible();
+
+  // Access is back: the reconnect asks again, and the answer waits for the lock the other tab holds.
+  const release = await holdItemListLock(other.page, scope.person);
+  const second = publication('2026-11-12T12:00:00Z', 'Returned item');
+  serve(lane, ITEM_LIST, second);
+  lane.restore();
+  const answered = page.waitForResponse((response) => response.url().endsWith(ITEM_LIST) && response.status() === 200);
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await answered;
+  const lock = JSON.stringify(['ds-prices', scope.person.tenantId, scope.person.uid]);
+  await expect.poll(() => page.evaluate(async (name) => (await navigator.locks.query()).pending?.some((request) => request.name === name) ?? false, lock)).toBe(true);
+
+  // The page comes to the foreground and hides the refused list; no new request can answer.
+  lane.cut();
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+  await expect(page.getByText(UNREADABLE)).toBeVisible();
+
+  await release();
+  await expect(page.getByText('Item list as of Nov 12, 2026', { exact: true })).toBeVisible();
+  await expectSaved(scope, second.current.versionId);
+});
+
+test('only a counter going up hides the list: another tab clearing its storage does not', async ({ context, lane }) => {
+  const first = publication('2026-11-10T12:00:00Z', 'Kept item');
+  serve(lane, ITEM_LIST, first);
+  const scope = await openScope(context, lane);
+  const { page } = scope;
+  await expect(page.getByText('Item list as of Nov 10, 2026', { exact: true })).toBeVisible();
+  const other = await FieldPhone.open(context, lane);
+
+  // A refusal in another tab, then access back: the list shown now was asked for after it.
+  expect(await other.call('eraseItemList', scope.person, scope.companyId)).toBe(true);
+  await expect(page.getByText(UNREADABLE)).toBeVisible();
+  await page.evaluate(() => window.dispatchEvent(new Event('pageshow')));
+  await expect(page.getByText('Item list as of Nov 10, 2026', { exact: true })).toBeVisible();
+  await expectSaved(scope, first.current.versionId);
+
+  // The other tab clears localStorage: the counters drop to nothing, which is no refusal.
+  lane.cut();
+  const cleared = page.evaluate(() => new Promise<void>((resolve) => {
+    window.addEventListener('storage', (event) => { if (event.key === null) resolve(); });
+  }));
+  await other.page.evaluate(() => localStorage.clear());
+  await cleared;
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+  // The hide, when it happens, is rendered on the next frames.
+  await page.waitForTimeout(500);
+  await expect(page.getByText('Item list as of Nov 10, 2026', { exact: true })).toBeVisible();
+  await expect(page.getByText(UNREADABLE)).toHaveCount(0);
+});

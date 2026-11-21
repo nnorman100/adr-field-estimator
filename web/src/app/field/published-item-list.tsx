@@ -139,8 +139,8 @@ function PublishedList({ session }: { session: FieldSession }) {
     function hideIfRefused() {
       if (!view.stamp || !refusedSince(owner, view.stamp)) return;
       view.stamp = null;
-      // A save still queued for an earlier answer of this view is dropped.
-      governing(owner);
+      // Only what is shown is hidden: an answer asked for since the refusal still comes in, and a
+      // save of an older one is refused by its own stamp check (ds-prices.ts).
       view.answer = 'refused';
       view.shownList = null;
       view.warning = null;
