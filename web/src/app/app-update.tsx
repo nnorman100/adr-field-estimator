@@ -7,7 +7,7 @@ import { applyWaitingWorker, NO_WORKER, watchFieldWorker, type WorkerState } fro
 import { forgetKept, keepBlock, keepForUpdate } from '@/lib/field/update-keep';
 import { pending, usePending } from '@/lib/field/pending';
 import { holdsWindow, whileNoFieldWindow } from '@/lib/field/window-lock';
-import { hasHeldUpdatePeer, holdUpdateWindow, subscribeToUpdate, updateBusy, updateRequired } from '@/lib/update-activity';
+import { hasHeldUpdatePeer, holdUpdateWindow, subscribeToUpdate, updateBusy, updateRequired, whileActivatingUpdate } from '@/lib/update-activity';
 
 const BUSY_TEXT = {
   camera: 'Close the camera before updating.',
@@ -53,15 +53,20 @@ function UpdateWatch({ children }: { children: ReactNode }) {
     let live = true;
     let timer: number | undefined;
     const check = async () => {
+      window.clearTimeout(timer);
+      if (document.visibilityState !== 'visible') return;
       const held = await hasHeldUpdatePeer();
       if (!live) return;
       setPeerHeld(held);
-      timer = window.setTimeout(() => void check(), PEER_CHECK_MS);
+      window.clearTimeout(timer);
+      if (document.visibilityState === 'visible') timer = window.setTimeout(() => void check(), PEER_CHECK_MS);
     };
+    document.addEventListener('visibilitychange', check);
     void check();
     return () => {
       live = false;
       window.clearTimeout(timer);
+      document.removeEventListener('visibilitychange', check);
     };
   }, [waitingUpdate]);
   useEffect(() => {
@@ -91,13 +96,12 @@ function UpdateWatch({ children }: { children: ReactNode }) {
         const carrying = pending.kept()?.owner ?? null;
         if (!(await keepForUpdate())) return 'not-kept';
         owner = carrying;
-        // The peer may have started work since the banner last checked.
-        if (waitingUpdate && (await hasHeldUpdatePeer())) {
-          setPeerHeld(true);
-          return 'peer-held';
-        }
-        if (updateBusy()) return false;
-        return waitingUpdate ? applyWaitingWorker(waitingUpdate) : true;
+        if (!waitingUpdate) return !updateBusy();
+        // The peer may have started work since the banner last checked, and may not start more
+        // until the worker has switched.
+        const applied = await whileActivatingUpdate(async () => (updateBusy() ? false : applyWaitingWorker(waitingUpdate)));
+        if (applied === 'peer-held') setPeerHeld(true);
+        return applied;
       };
       const updated = replaced || unsupported || holdsWindow() ? await activate() : await whileNoFieldWindow(activate);
       if (updated === true) {

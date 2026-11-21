@@ -7,23 +7,42 @@ const listeners = new Set<() => void>();
 const changed = () => listeners.forEach((listener) => listener());
 
 const UPDATE_WORK = 'ds-update-work:';
+// Held shared while a window takes its hold and exclusive while an update activates the waiting
+// worker, so protected work either shows in the activation's check or waits for it to finish.
+const UPDATE_ADMISSION = 'ds-update-admission';
 let windowLock: string | undefined;
 
+type Hold = { release: () => void; admitted: Promise<void> };
+
 // All activity in this window shares its name. Closing the window releases its locks.
-export function holdUpdateWindow(): () => void {
-  if (typeof window === 'undefined' || !navigator.locks) return () => undefined;
-  windowLock ??= UPDATE_WORK + crypto.randomUUID();
+function takeWindowHold(): Hold {
+  if (typeof window === 'undefined' || !navigator.locks) return { release: () => undefined, admitted: Promise.resolve() };
+  const { locks } = navigator;
+  const name = (windowLock ??= UPDATE_WORK + crypto.randomUUID());
   let release: () => void = () => undefined;
   const held = new Promise<void>((done) => { release = done; });
-  void navigator.locks.request(windowLock, { mode: 'shared' }, () => held).catch(() => undefined);
-  return release;
+  const admitted = locks
+    .request(UPDATE_ADMISSION, { mode: 'shared' }, () => new Promise<void>((granted) => {
+      locks.request(name, { mode: 'shared' }, () => { granted(); return held; }).catch(granted);
+    }))
+    .then(() => undefined, () => undefined);
+  return { release, admitted };
 }
+
+export const holdUpdateWindow = (): (() => void) => takeWindowHold().release;
 
 export async function hasHeldUpdatePeer(): Promise<boolean> {
   const snapshot = await navigator.locks?.query().catch(() => undefined);
   return [...(snapshot?.held ?? []), ...(snapshot?.pending ?? [])].some(
     ({ name }) => name?.startsWith(UPDATE_WORK) && name !== windowLock,
   );
+}
+
+// Runs `activate` while no other window can start protected work: the peer check and the worker's
+// switch happen under one exclusive lock. 'peer-held' when another window holds work already.
+export async function whileActivatingUpdate<T>(activate: () => Promise<T>): Promise<T | 'peer-held'> {
+  const run = async () => ((await hasHeldUpdatePeer()) ? 'peer-held' as const : activate());
+  return navigator.locks ? navigator.locks.request(UPDATE_ADMISSION, { mode: 'exclusive' }, run) : run();
 }
 
 export function subscribeToUpdate(listener: () => void): () => void {
@@ -46,24 +65,27 @@ export function updateBusy(): Kind | null {
   return counts.unsent ? 'unsent' : null;
 }
 
-export function beginUpdateActivity(kind: Kind): () => void {
-  const releaseWindow = holdUpdateWindow();
+// `admitted` settles once this activity shows to other windows, which is after any update that is
+// activating the worker has finished: work that sends to the server waits for it.
+export function beginUpdateActivity(kind: Kind): (() => void) & { admitted: Promise<void> } {
+  const { release, admitted } = takeWindowHold();
   counts[kind]++;
   changed();
   let ended = false;
-  return () => {
+  return Object.assign(() => {
     if (ended) return;
     ended = true;
-    releaseWindow();
+    release();
     counts[kind]--;
     changed();
-  };
+  }, { admitted });
 }
 
 // Holds an update off for the whole of `work`, from the person's action to its result.
 export async function whileUpdateHeld<T>(kind: Kind, work: () => Promise<T>): Promise<T> {
   const end = beginUpdateActivity(kind);
   try {
+    await end.admitted;
     return await work();
   } finally {
     end();

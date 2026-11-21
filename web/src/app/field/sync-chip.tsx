@@ -195,6 +195,7 @@ function ProblemPanel({
     setError(null);
     const endActivity = beginUpdateActivity('save');
     try {
+      await endActivity.admitted;
       setError(await work());
     } catch (error) {
       journalFailed(client, error);

@@ -129,6 +129,7 @@ export function PhotosView({ job, draft, open, readinessFix }: { job: JobContext
   async function finish(item: PendingPhoto) {
     const done = beginUpdateActivity('upload');
     try {
+      await done.admitted;
       await finishPhoto(item);
     } finally {
       done();
