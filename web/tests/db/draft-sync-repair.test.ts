@@ -60,11 +60,10 @@ describe('the draft sync repair pass', () => {
   });
 
   it('syncs each company’s jobs in that company only, and leaves a job already synced alone', async () => {
-    // A job whose drafts already hold Postgres's state (New job writes its draft on its own writer until
-    // the redesign's slice 5, so its first sync is the pass's).
+    // A job whose drafts already hold Postgres's state: New job syncs its first draft itself (slice 5).
     const synced = await officeJob();
-    expect(await repair(0)).toEqual({ synced: 1, failed: 0 });
     expect(await behind(synced.id)).toBe(false);
+    expect(await repair(0)).toEqual({ synced: 0, failed: 0 });
     const first = await archivedWithoutItsFieldStep();
     // A job of the other company whose field step did not get through either.
     const other = { id: randomUUID(), draftId: randomUUID() };

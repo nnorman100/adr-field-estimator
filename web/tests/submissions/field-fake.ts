@@ -103,8 +103,9 @@ export type FakeField = FenceStore & ArchiveStore & DraftSync & {
   // Makes the next call of a method fail as if Firestore were unreachable, before it changes anything;
   // a number makes that many calls in a row fail (a request that tries again meets it again).
   failNext: Partial<Record<Method, boolean | number>>;
-  // Makes the next call of a method do its work and then fail, as if Firestore's answer were lost.
-  loseNext: Partial<Record<Method, boolean>>;
+  // Makes the next call of a method do its work and then fail, as if Firestore's answer were lost; a number
+  // makes that many calls in a row lose theirs.
+  loseNext: Partial<Record<Method, boolean | number>>;
   // Awaited at the start of the next call of a method, so a test can hold one attempt mid-way.
   gate: Partial<Record<Method, () => Promise<void>>>;
   // Every call, by method name, in order.
@@ -159,8 +160,9 @@ export function fakeField(backing: Backing = memoryBacking()): FakeField {
     const record = backing.load();
     const result = work(record);
     backing.save(record);
-    if (fake.loseNext[method]) {
-      fake.loseNext[method] = false;
+    const losing = fake.loseNext[method];
+    if (losing) {
+      fake.loseNext[method] = typeof losing === 'number' && losing > 1 ? losing - 1 : false;
       throw new Error('field database answer lost');
     }
     return result;
