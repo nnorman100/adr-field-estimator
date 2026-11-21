@@ -56,10 +56,13 @@ from here (no Unassign button for them).
 
 Rules: `docs/access/jobs.md` ("Office jobs routes"), owner decision J5 (`docs/plans/S5.md`).
 
+For a signed job’s drying status, open [Drying watch on Check Scope](check-scope.md#drying-log-and-watch)
+or [signed Review](review.md). Closing monitoring records a drying decision. The job close is recorded
+separately.
+
 ## Not built yet
 
-- Recording a signed job's close (final invoiced amount, actual drying days) and drying-watch state
-  (S5b-10).
+- Recording a signed job's close (final invoiced amount, actual drying days) on this screen (S5b-10).
 - Approvals of added work and change orders (S5b-8, S5b-9).
 
 ## Mismatches to check

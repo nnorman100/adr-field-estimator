@@ -62,7 +62,7 @@ button can show and its request still be refused with 403 `not_field_owner`.
 - Finished: "Finished", "This draft is recorded and locked. Nobody can change it.", "Review the
   estimate" and, for `scope`, "Back to editing" (shown to the owner and to a visible non-owning
   estimator alike, refused unless the caller owns the field work).
-- Signed: "This job is signed".
+- Signed: "This job is signed". The [signed Review](review.md) has separate cards for the drying log and watch.
 - Errors: the server's message with "Try again" (same request) or "Reload the job".
 - Back to editing answered 503 after Postgres committed the new draft ID: the new draft may be
   missing. For the field owner, an estimator or the company owner, opening the job gets it ready: the

@@ -37,6 +37,28 @@ An accepted save asks the check again. A confirmed archive replaces the readines
 The summary of findings gap points to guidance in Check Scope while the separate summary editor is
 pending.
 
+## Drying log and watch
+
+Open **Drying log** on Check Scope to see active readings by room and time. The company owner and
+any estimator with access to the job can add or void a reading, including when someone else owns
+the field draft. Office staff can read the log. Select a room or Whole job and enter the time the
+reading was taken. Air readings show the five values the server calculates. Material readings use
+the meter's unit for both moisture and the optional dry standard. Thermal readings record the
+temperature difference and pattern. Voiding asks for confirmation and removes the reading from the
+active log.
+
+These actions need a connection. A lost save reply leaves the fields in place and offers **Save
+again**, which sends the same reading. A refusal keeps the entered values and shows why the save
+could not be confirmed or accepted. The unsent form lives on the open job screen.
+
+On a signed job with the company’s drying-watch switch enabled, **Drying watch** shows the signed
+plan, current day, next due reading, last reading, room gaps and affected-air trend. An older
+signed job without saved drying days says there is no plan. A reading added or voided here
+refreshes the watch. Owners can mark dry, add an extension note or close monitoring. Estimators
+can mark dry. Office staff can read the watch. A monitoring decision requires an explicit
+confirmation and reason. If the facts changed, review them again before confirming. Extension
+notes leave the signed drying days as agreed.
+
 ## Who may see it and do what
 
 Only the person who owns the job's field work edits it, and only while the draft is being edited

@@ -7,6 +7,9 @@ Part of [Screen specs](README.md). Address: `/sign-in/{address}/jobs/{id}/review
 `web/src/lib/estimates/reprice-screen.ts`, `web/src/lib/links/screen.ts`. Stages S5a-9, S5a-11,
 S5a-11b, S5b-6.
 
+On a signed Review, the [Drying log and watch](check-scope.md#drying-log-and-watch) remain available
+for monitoring work. The signed proposal and its evidence are displayed from the saved agreement.
+
 ## Purpose
 
 Price the finished job from the company's own prices, show the four documents (the proposal, the
@@ -14,8 +17,8 @@ itemized claim with the priced line items, the scope defense letter that carries
 fields, the photo audit log) and the staff-only notes, then let
 the customer sign on the phone or get a signing link. Signing, on the phone or by a link, makes both
 document links (the homeowner's and the adjuster's) in the same step; their addresses come back in
-the first successful signing answer only. A signed job opens read-only from the stored agreement
-with the state of those links, but not their addresses. Prices and the mandatory wording come from the
+the first successful signing answer only. On a signed job, Review shows the stored agreement read-only
+and the current state of those links. Prices and the mandatory wording come from the
 server (`web/src/engine/`); this screen never computes a price. Online only.
 
 ## Who may see it and do what

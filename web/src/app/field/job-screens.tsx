@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { companyAuth } from '@/lib/firebase-client';
+import { signInOf, stillSameSignIn } from '@/lib/field/sign-out';
 import { readJob, type JobDetail, type Refusal } from '@/lib/field/api';
 import { loadJobProjection, type JobProjection } from '@/lib/field/job-projection';
 import { watchJournal } from '@/lib/field/journal';
@@ -14,6 +16,7 @@ import { useDraftReadiness } from '@/lib/readiness/client';
 import { fixTarget } from '@/lib/readiness/fix';
 import type { ReadinessAnswer } from '@/lib/readiness/schema';
 import { CustomerView } from './customer-view';
+import { DryingCards } from './drying/drying-cards';
 import { PhotosView } from './photos-view';
 import { ScopeView } from './scope-view';
 import { CoordinationView } from './coordination-view';
@@ -426,6 +429,13 @@ export function JobScreens({
   const recheck = useCallback(() => setRechecks((count) => count + 1), []);
   const currentRefId = draftAt ?? jobDraftId(detail, locator);
   const row = detail?.job;
+  const { config, tenantId } = session.client.person;
+  const signedIn = companyAuth({ config, tenantId }).currentUser;
+  const { key: signInKey } = signInOf(signedIn);
+  const dryingIsCurrent = useCallback(
+    () => signedIn?.uid === session.user.uid && stillSameSignIn(companyAuth({ config, tenantId }), { key: signInKey, user: signedIn }),
+    [config, tenantId, signInKey, signedIn, session.user.uid],
+  );
   const checking =
     (view === 'scope' || view === 'photos') && session.online && session.readiness && session.capabilities.includes('scope') &&
     !archived && !archiveChecking && movedState === null && draft !== null && draftError === null && draft.state === 'editing' &&
@@ -722,6 +732,16 @@ export function JobScreens({
       {draftView && !draft && !draftError && cachedError ? <p role="status">{cachedError}</p> : null}
       {/* The views of one job stay mounted and only the open one shows, so moving between them
           keeps what the person has typed and not saved. */}
+      {row && !archived && !denial && signInKey && session.capabilities.includes('jobs_read') ? (
+        <DryingCards
+          key={JSON.stringify([session.companyId, session.actorId, signInKey, jobId, row.currentDraftId, row.status])}
+          session={{
+            user: session.user, jobId, isCurrent: dryingIsCurrent, visible: view === 'scope', online: session.online,
+            canAdd: session.capabilities.includes('scope') && session.role !== 'office', office: session.role === 'office',
+          }}
+          watchEnabled={row.status === 'signed' && session.dryingWatch}
+        />
+      ) : null}
       <div hidden={view !== 'scope'}>{draft ? <ScopeView key={draftAt} job={context} draft={draft} open={view === 'scope'} readinessFix={fix ? readinessFix : null} /> : null}</div>
       <div hidden={view !== 'photos'}>{draft ? <PhotosView key={draftAt} job={context} draft={draft} open={view === 'photos'} readinessFix={fix ? readinessFix : null} /> : null}</div>
       <div hidden={view !== 'customer'}>

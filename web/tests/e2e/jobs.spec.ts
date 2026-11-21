@@ -1,8 +1,9 @@
-import { test as base, expect as baseExpect, type Browser, type Locator, type Page } from '@playwright/test';
+import { test as base, expect as baseExpect, type APIRequestContext, type Browser, type Locator, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { hrefOf, type FieldView } from '../../src/lib/field/views';
 import { expectNoAxeViolations } from './a11y';
 import { JOBS_BASE_URL } from './jobs/backend';
+import { seedDryingAgreement } from './jobs/drying-fixture';
 import { adminSql, currentDraftOf, seedCompany, storedJobs, storedPhotos, type Company, type Person } from './jobs/seed';
 import { adminDb } from './offline/world';
 import { APP_CODE, fakeSecondStep, withSecondFactor } from './second-step/fake-totp';
@@ -551,5 +552,129 @@ test('the phone takes the photo that fills a job to its cap, then stops offering
   await expect(camera).toBeDisabled();
   await expect(camera).toHaveAccessibleDescription(reason);
   await expect(page.getByText(reason)).toBeVisible();
+  await expectNoSideways(page);
+});
+
+test('the drying log retries an air reading after a lost receipt and keeps exactly one active reading', async ({ page }) => {
+  const company = await seedCompany('drying-log', { estimator: 'estimator' });
+  await signIn(page, company, company.people.estimator!);
+  const jobId = await startJob(page, '41 Drying Lane');
+  const log = page.getByRole('region', { name: 'Drying log' });
+  const url = `**/api/jobs/${jobId}/drying-readings`;
+  const payloads: Array<string | null> = [];
+  let committed: number | undefined;
+  await page.route(url, async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback();
+    payloads.push(route.request().postData());
+    if (payloads.length !== 1) return route.fallback();
+    committed = (await route.fetch()).status();
+    await route.abort();
+  });
+
+  await page.getByRole('button', { name: 'Drying log', exact: true }).click();
+  await expect(log.getByText('No readings yet.')).toBeVisible();
+  await log.getByLabel('Room', { exact: true }).selectOption({ label: 'Whole job' });
+  await log.getByLabel('Taken at').fill('2026-11-20T10:00');
+  await log.getByLabel('Temperature (°F)').fill('70');
+  await log.getByLabel('Relative humidity (%)').fill('50');
+  await log.getByRole('button', { name: 'Save reading' }).click();
+  await expect(log.getByRole('alert')).toContainText('Could not confirm that the reading was saved');
+  expect(committed).toBe(201);
+  await expect(log.getByLabel('Temperature (°F)')).toHaveValue('70');
+  await page.context().setOffline(true);
+  await expect(log.getByText('Needs a connection')).toBeVisible();
+  await expect(log.getByRole('button', { name: 'Save again' })).toBeDisabled();
+  await page.context().setOffline(false);
+  const replay = page.waitForResponse((response) => response.url().endsWith('/drying-readings') && response.request().method() === 'POST');
+  await log.getByRole('button', { name: 'Save again' }).click();
+  expect((await replay).status()).toBe(200);
+  expect(payloads).toHaveLength(2);
+  expect(payloads[1]).toBe(payloads[0]);
+  await expect(log.getByRole('status')).toHaveText('Reading saved.');
+  await expect(log.getByText('54 grains/lb', { exact: true })).toHaveCount(1);
+  await expect(log.getByText('51 °F', { exact: true })).toBeVisible();
+  await expect(log.getByText('19 °F', { exact: true })).toBeVisible();
+  await expect(log.getByText('0.37 inHg', { exact: true })).toBeVisible();
+  await expect(log.getByText('25.3 Btu/lb', { exact: true })).toBeVisible();
+
+  const voidButton = log.getByRole('button', { name: 'Void reading' });
+  await voidButton.click();
+  const dialog = page.getByRole('dialog', { name: 'Void this reading?' });
+  await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(voidButton).toBeFocused();
+  await voidButton.click();
+  await dialog.getByRole('button', { name: 'Void reading' }).click();
+  await expect(log.getByText('No readings yet.')).toBeVisible();
+  await expectNoSideways(page);
+});
+
+async function openSignedDryingJob(page: Page, request: APIRequestContext) {
+  const company = await seedCompany('drying-watch', { owner: 'owner' });
+  const owner = company.people.owner!;
+  const headers = { Authorization: `Bearer ${withSecondFactor(await idTokenFor(company.tenantId, owner.email, PASSWORD))}` };
+  const id = randomUUID();
+  const draft = randomUUID();
+  const address = '42 Drying Lane';
+  expect((await request.post(`${JOBS_BASE_URL}/api/jobs`, { headers, data: { id, draftId: draft, propertyAddress: address } })).status()).toBe(201);
+  await seedDryingAgreement(company, id, draft, address);
+
+  await signIn(page, company, owner);
+  await main(page).getByRole('link', { name: address }).click();
+  await main(page).getByRole('link', { name: 'Check Scope' }).click();
+  return { id, headers };
+}
+
+test('signed drying watch rejects a stale confirmation and saves the reason after fresh confirmation', async ({ page, request }) => {
+  const { id, headers } = await openSignedDryingJob(page, request);
+  const watch = page.getByRole('region', { name: 'Drying watch' });
+  await expect(watch.getByText('Day 1 of 3 signed drying days.')).toBeVisible();
+  await expect(watch.getByText('0 of 1 signed rooms have affected material readings.')).toBeVisible();
+
+  await watch.getByRole('button', { name: 'Extend plan', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Extend plan', exact: true });
+  await dialog.getByLabel('Reason').fill('Return for a check tomorrow.');
+  const other = await request.post(`${JOBS_BASE_URL}/api/jobs/${id}/drying-readings`, {
+    headers,
+    data: { id: randomUUID(), kind: 'air', takenAt: new Date().toISOString(), temperatureF: 70, relativeHumidity: 50 },
+  });
+  expect(other.status()).toBe(201);
+  await dialog.getByRole('button', { name: 'Confirm extension' }).click();
+  await expect(watch.getByRole('alert')).toContainText('Readings or monitoring facts changed.');
+  await expect(dialog).not.toBeVisible();
+  await watch.getByRole('button', { name: 'Extend plan', exact: true }).click();
+  await expect(dialog.getByLabel('Reason')).toHaveValue('Return for a check tomorrow.');
+  await dialog.getByRole('button', { name: 'Confirm extension' }).click();
+  await expect(watch.getByText('Return for a check tomorrow.')).toBeVisible();
+  await expectNoSideways(page);
+});
+
+test('signed drying watch refreshes after a material reading is added and voided', async ({ page, request }) => {
+  await openSignedDryingJob(page, request);
+  const watch = page.getByRole('region', { name: 'Drying watch' });
+  await expect(watch.getByText('Day 1 of 3 signed drying days.')).toBeVisible();
+  await expect(watch.getByText('0 of 1 signed rooms have affected material readings.')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Drying log', exact: true }).click();
+  const log = page.getByRole('region', { name: 'Drying log' });
+  await log.getByLabel('Reading type').selectOption('material');
+  await log.getByLabel('Room', { exact: true }).selectOption({ label: 'Kitchen' });
+  await log.getByLabel('Taken at').fill(new Date(Date.now() - 86_400_000).toISOString().slice(0, 16));
+  await log.getByLabel('Material', { exact: true }).fill('Drywall');
+  await log.getByLabel('Meter unit', { exact: true }).fill('%WME');
+  await log.getByLabel('Moisture', { exact: true }).fill('10');
+  await log.getByLabel('Dry standard').fill('12');
+  await log.getByRole('button', { name: 'Save reading' }).click();
+  await expect(watch.getByText('Every latest affected material reading meets its dry standard.')).toBeVisible();
+  await log.getByRole('button', { name: 'Void reading' }).click();
+  await page.getByRole('dialog', { name: 'Void this reading?' }).getByRole('button', { name: 'Void reading' }).click();
+  await expect(watch.getByText('0 of 1 signed rooms have affected material readings.')).toBeVisible();
+
+  await watch.getByRole('button', { name: 'Mark dry', exact: true }).click();
+  const mark = page.getByRole('dialog', { name: 'Mark dry', exact: true });
+  await mark.getByLabel('Reason').fill('Confirmed by meter.');
+  await mark.getByRole('button', { name: 'Confirm mark dry' }).click();
+  await expect(watch.getByText('Marked dry by staff.')).toBeVisible();
+  await expect(watch.getByText('Confirmed by meter.')).toBeVisible();
   await expectNoSideways(page);
 });

@@ -4,6 +4,7 @@ import type { Auth, User } from 'firebase/auth';
 import { onAuthStateChanged } from 'firebase/auth';
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { ReviewDrying, dryingAccess, type DryingAccess } from '@/app/field/drying/review-drying';
 import { Button } from '@/components/ui/button';
 import { signatureAddress } from '@/lib/agreements/client';
 import { agreementAnswerOf, type SignedAgreement } from '@/lib/agreements/screen';
@@ -12,7 +13,7 @@ import { canRepriceOf } from '@/lib/estimates/reprice-screen';
 import type { EstimateView } from '@/lib/estimates/result';
 import { notReadyReasons, outcomeOf, reviewAnswerOf, reviewerOf, revisionOf, type Next, type ReviewJob, type Reviewer } from '@/lib/estimates/screen';
 import { noteItemListAccess } from '@/lib/field/ds-prices';
-import { signInOf, signOutOnRefusal, signOutOrShow, stillSameSignIn, type FailedSignOut } from '@/lib/field/sign-out';
+import { signInOf, signOutOnRefusal, signOutOrShow, stillSameSignIn, type FailedSignOut, type SignIn } from '@/lib/field/sign-out';
 import { belongsTo, callApi, companyAuth } from '@/lib/firebase-client';
 import { linkRightsOf, type DocumentLinkView } from '@/lib/links/screen';
 import { endsSession, meOutcome } from '@/lib/sign-in/outcome';
@@ -46,6 +47,7 @@ type Ready = {
   revision: number;
   estimate: EstimateView | null;
   agreement: SignedAgreement | null;
+  drying: { auth: Auth; signIn: SignIn; access: DryingAccess } | null;
 };
 
 type Phase =
@@ -71,16 +73,19 @@ export function ReviewScreen(props: ReviewScreenProps) {
 function Review({ address, companyName, tenantId, jobId, config }: ReviewScreenProps & { config: BrowserSignInConfig }) {
   const [phase, setPhase] = useState<Phase>({ name: 'checking' });
   const authRef = useRef<Auth | null>(null);
+  const loadGeneration = useRef(0);
 
   // Reads who is signed in, then the job and its current estimate, from the server.
   const load = useCallback(
     async (user: User) => {
-      const stale = () => authRef.current?.currentUser !== user;
+      // The sign-in this check is for, kept as the request goes.
+      const auth = authRef.current;
+      const from = signInOf(user);
+      if (!auth) return;
+      const generation = ++loadGeneration.current;
+      const stale = () => generation !== loadGeneration.current || !stillSameSignIn(authRef.current, from);
       if (stale()) return;
       setPhase({ name: 'checking' });
-      // The sign-in this check is for, kept as the request goes.
-      const auth = authRef.current!;
-      const from = signInOf(user);
       const me = await callApi(user, '/api/me');
       if (stale()) return;
       const outcome = meOutcome(me.status, me.body);
@@ -115,7 +120,11 @@ function Review({ address, companyName, tenantId, jobId, config }: ReviewScreenP
         if (!parsed?.agreement) return setPhase({ name: 'unavailable' });
         agreement = parsed.agreement;
       }
-      setPhase({ name: 'ready', user, reviewer, links: linkRightsOf(me.body), canReprice: canRepriceOf(me.body), revision, ...read, agreement });
+      const access = read.job.id === jobId ? dryingAccess(me.body) : null;
+      setPhase({
+        name: 'ready', user, reviewer, links: linkRightsOf(me.body), canReprice: canRepriceOf(me.body), revision, ...read, agreement,
+        drying: access ? { auth, signIn: from, access } : null,
+      });
     },
     [config, jobId, tenantId],
   );
@@ -186,7 +195,7 @@ function Review({ address, companyName, tenantId, jobId, config }: ReviewScreenP
   }
 }
 
-function ReviewBody({ user, reviewer, links, canReprice, revision: firstRevision, job, estimate: first, agreement: signedFirst, finishHref, reload }: Ready & { finishHref: string; reload: () => void }) {
+function ReviewBody({ user, reviewer, links, canReprice, revision: firstRevision, job, estimate: first, agreement: signedFirst, drying, finishHref, reload }: Ready & { finishHref: string; reload: () => void }) {
   // The estimate and the job revision it was read at, changed together: the Reprice banner's preview
   // is only good for the revision it was taken at.
   const [read, setRead] = useState<{ estimate: EstimateView | null; revision: number }>({ estimate: first, revision: firstRevision });
@@ -223,6 +232,12 @@ function ReviewBody({ user, reviewer, links, canReprice, revision: firstRevision
     return (
       <FocusedPanel title="Signed">
         <SignedAgreementView agreement={agreement} loadSignature={loadSignature} />
+        {drying && agreement.record.job_id === job.id ? (
+          <ReviewDrying
+            key={JSON.stringify([drying.access.companyId, drying.access.actorId, drying.signIn.key, job.id, agreement.id])}
+            auth={drying.auth} signIn={drying.signIn} initial={drying.access} user={user} jobId={job.id} agreementId={agreement.id}
+          />
+        ) : null}
         <DocumentLinks user={user} jobId={job.id} canSend={links.canSend} canRevoke={links.canRevoke} issued={issued.tokens} listed={issued.listed} />
       </FocusedPanel>
     );

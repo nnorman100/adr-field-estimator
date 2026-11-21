@@ -674,3 +674,55 @@ test('after replacing a document link with the list unreadable, Revoke reaches t
   await expect(panel.getByText("Homeowner's documents: revoked.")).toHaveCount(2);
   expect(deleted).toEqual([links.find((one) => one.id !== first.id)!.id]);
 });
+
+test('signed Review opens the drying log and asks for no watch when the company flag is off', async ({ page }) => {
+  const job = { id: randomUUID(), status: 'signed', currentDraftId: randomUUID(), revision: 4 };
+  const made = estimateFor(team, job.id, job.currentDraftId, 'estimator');
+  const sent = await playApi(page, job, { estimate: made, agreement: signedFor(made, randomUUID()) });
+  await page.route(new RegExp(`/api/jobs/${job.id}/drying-readings(?:[?]|$)`), (route) =>
+    route.fulfill({ json: { jobId: job.id, readings: [], next: null, canChange: true } }),
+  );
+  await page.route(`**/api/jobs/${job.id}/drying-rooms`, (route) =>
+    route.fulfill({ json: { jobId: job.id, rooms: [{ id: 'kitchen', label: 'Kitchen' }] } }),
+  );
+  const reads: string[] = [];
+  page.on('request', (request) => {
+    if (request.url().includes('/drying-')) reads.push(new URL(request.url()).pathname);
+  });
+
+  await signInTo(page, team.estimator);
+  await page.goto(`/sign-in/${team.address}/jobs/${job.id}/review`);
+  await expect(page.getByRole('heading', { name: 'Signed', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Drying watch' })).toHaveCount(0);
+  expect(reads).toEqual([]);
+  await page.getByRole('button', { name: 'Drying log', exact: true }).click();
+  const log = page.getByRole('region', { name: 'Drying log' });
+  await expect(log.getByText('No readings yet.')).toBeVisible();
+  await log.getByLabel('Room', { exact: true }).selectOption({ label: 'Kitchen' });
+  await expect(log.getByLabel('Room', { exact: true })).toHaveValue('kitchen');
+  expect(reads).toEqual(expect.arrayContaining([`/api/jobs/${job.id}/drying-readings`, `/api/jobs/${job.id}/drying-rooms`]));
+  expect(reads).not.toContain(`/api/jobs/${job.id}/drying-watch`);
+  expect(sent.filter((call) => call.startsWith('POST'))).toEqual([]);
+  await expectNoSideways(page);
+});
+
+test('an older signed job without a saved plan shows that the drying watch is unavailable', async ({ page }) => {
+  const job = { id: randomUUID(), status: 'signed', currentDraftId: randomUUID(), revision: 4 };
+  const made = estimateFor(team, job.id, job.currentDraftId, 'office');
+  await playApi(page, job, { estimate: made, agreement: signedFor(made, randomUUID()) });
+  await signInTo(page, team.office);
+  await page.route('**/api/me', async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    await route.fulfill({ response, json: { ...body, features: { ...body.features, drying_watch: true } } });
+  });
+  await page.route(`**/api/jobs/${job.id}/drying-watch`, (route) =>
+    route.fulfill({ json: { jobId: job.id, status: 'unavailable', reason: 'no_plan' } }),
+  );
+
+  await page.goto(`/sign-in/${team.address}/jobs/${job.id}/review`);
+  const watch = page.getByRole('region', { name: 'Drying watch' });
+  await expect(watch.getByText('No drying plan was saved with this signed job.')).toBeVisible();
+  await expect(watch.getByRole('button', { name: 'Mark dry' })).toHaveCount(0);
+  await expectNoSideways(page);
+});

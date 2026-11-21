@@ -837,3 +837,54 @@ test('after the field work moves, the old phone shows its unsent photo read only
   await expect(page.getByRole('button', { name: 'Send again' })).toBeDisabled();
   await expect(page.getByLabel('Take photo')).toHaveCount(0);
 });
+
+test('office sees an existing drying reading in Check Scope without add or void controls', async ({ page, request }) => {
+  await page.setViewportSize({ width: 320, height: 720 });
+  const company = await seedCompany('office-drying-log', { owner: 'owner', office: 'office' });
+  const { jobId, headers } = await seedJob(request, company, company.people.owner!, '82 Office Drying Lane', []);
+  const reading = await request.post(`${JOBS_BASE_URL}/api/jobs/${jobId}/drying-readings`, {
+    headers,
+    data: { id: randomUUID(), kind: 'thermal', takenAt: new Date().toISOString(), deltaTF: 8, pattern: 'cold_anomaly' },
+  });
+  expect(reading.status()).toBe(201);
+
+  await signIn(page, company, company.people.office!);
+  await openJob(page, '82 Office Drying Lane');
+  await main(page).getByRole('link', { name: 'Check Scope' }).click();
+  await page.getByRole('button', { name: 'Drying log', exact: true }).click();
+  const log = page.getByRole('region', { name: 'Drying log' });
+  await expect(log.getByText('Cold anomaly')).toBeVisible();
+  await expect(log.getByText('Read only.')).toBeVisible();
+  await expect(log.getByRole('button', { name: 'Save reading' })).toHaveCount(0);
+  await expect(log.getByRole('button', { name: 'Void reading' })).toHaveCount(0);
+  await expectNoSideways(page);
+});
+
+test('an assigned estimator can use the drying log without owning the draft and keeps a refused entry', async ({ page, request }) => {
+  const company = await seedCompany('assigned-drying-log', { owner: 'owner', estimator: 'estimator' });
+  const { jobId } = await seedJob(request, company, company.people.owner!, '83 Assigned Drying Lane', [company.people.estimator!]);
+  const draftId = await currentDraftOf(company.id, jobId);
+  const draft = adminDb().doc(`companies/${company.id}/drafts/${draftId}`);
+  await draft.set({ field: { roomOrder: ['hall'] } }, { merge: true });
+  await draft.collection('rooms').doc('hall').set({ field: { name: 'Hall' } });
+
+  await signIn(page, company, company.people.estimator!);
+  await openJob(page, '83 Assigned Drying Lane');
+  await main(page).getByRole('link', { name: 'Check Scope' }).click();
+  await page.getByRole('button', { name: 'Drying log', exact: true }).click();
+  const log = page.getByRole('region', { name: 'Drying log' });
+  await log.getByLabel('Reading type').selectOption('thermal');
+  await log.getByLabel('Taken at').fill('2026-11-20T10:00');
+  await log.getByLabel('Temperature difference (Δ°F)').fill('8');
+  await log.getByLabel('Room', { exact: true }).selectOption({ label: 'Hall' });
+
+  // The room was removed by the field owner after the estimator opened the form.
+  await draft.update({ 'field.roomOrder': [] });
+  await log.getByRole('button', { name: 'Save reading' }).click();
+  await expect(log.getByRole('alert')).toContainText('That room is no longer available.');
+  await expect(log.getByLabel('Temperature difference (Δ°F)')).toHaveValue('8');
+  await expect(log.getByLabel('Taken at')).toHaveValue('2026-11-20T10:00');
+  await log.getByLabel('Room', { exact: true }).selectOption({ label: 'Whole job' });
+  await log.getByRole('button', { name: 'Save reading' }).click();
+  await expect(log.getByText('Cold anomaly')).toBeVisible();
+});
