@@ -106,12 +106,19 @@ export async function keepForUpdate(): Promise<boolean> {
 // What was written for an update that did not go through is not needed.
 export function forgetKept(owner: string): Promise<void> {
   return bounded(
-    withDatabase(SPEC, (db) =>
-      transact(db, STORE, 'readwrite', (transaction) => {
+    withDatabase(SPEC, async (db) => {
+      // Only a row that exists is deleted: a phone with nothing kept never depends on its storage
+      // allowing a delete, so Discard and sign-out are not refused for it.
+      const row = await transact(db, STORE, 'readonly', (transaction) => {
+        const request = transaction.objectStore(STORE).get(owner);
+        return () => request.result as Stored | undefined;
+      });
+      if (row === undefined) return;
+      await transact(db, STORE, 'readwrite', (transaction) => {
         transaction.objectStore(STORE).delete(owner);
         return () => undefined;
-      }),
-    ),
+      });
+    }),
   );
 }
 
