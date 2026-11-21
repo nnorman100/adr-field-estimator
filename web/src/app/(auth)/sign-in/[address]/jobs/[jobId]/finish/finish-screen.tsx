@@ -124,8 +124,6 @@ function Finish({ address, companyName, tenantId, jobId, config }: FinishScreenP
     return () => {
       stop();
       window.removeEventListener('pageshow', restore);
-      // A closed screen drops its late answers (stale), so an old /api/me never erases a list given back since.
-      authRef.current = null;
     };
   }, [config, tenantId, load]);
 

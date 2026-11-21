@@ -123,16 +123,11 @@ function Review({ address, companyName, tenantId, jobId, config }: ReviewScreenP
   useEffect(() => {
     const auth = companyAuth({ config, tenantId });
     authRef.current = auth;
-    const stop = onAuthStateChanged(auth, (user) => {
+    return onAuthStateChanged(auth, (user) => {
       if (!user) return setPhase({ name: 'signed-out' });
       if (!belongsTo(user, tenantId)) return void signOutOrShow(() => signOutOnRefusal(auth, tenantId, config, 'not-this-company'), setPhase);
       void load(user);
     });
-    return () => {
-      stop();
-      // A closed screen drops its late answers (stale), so an old /api/me never erases a list given back since.
-      authRef.current = null;
-    };
   }, [config, tenantId, load]);
 
   const signInLink = (
