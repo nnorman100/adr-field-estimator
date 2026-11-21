@@ -188,6 +188,12 @@ async function interleaved<T>(
   }
 }
 
+// The pinned (before) price the owner's Reprice preview shows now, as the banner sends it back.
+async function pinnedShown(jobId: string): Promise<string | null> {
+  const answer = await json(repriceRoute.GET(request(OWNER_A, `/api/jobs/${jobId}/reprice`), params({ jobId })));
+  return (answer.body as Reply['body']).reprice?.pinned?.price ?? null;
+}
+
 const HOURLY = { kind: 'hourly', description: '  Move contents to the garage ', hours: '2.5' };
 const OWNER_NAME = ' Pat  Example ';
 
@@ -474,7 +480,7 @@ describe('proposals and approvals (S5b-8)', () => {
     const id = (await propose(ESTIMATOR_A, jobId, HOURLY)).body.approval.id as string;
     await approve(OWNER_A, jobId, id, { approverName: OWNER_NAME });
     const two = await publish('60.00');
-    const body = { revision: await revisionOf(jobId), changeId: randomUUID(), versionId: two.id };
+    const body = { revision: await revisionOf(jobId), changeId: randomUUID(), versionId: two.id, pinnedPrice: await pinnedShown(jobId) };
     expect((await repriceRoute.POST(request(OWNER_A, `/api/jobs/${jobId}/reprice`, { method: 'POST', body }), params({ jobId }))).status).toBe(200);
     expect(await h.admin`SELECT ended_reason FROM job_price_approvals WHERE id = ${id}`).toEqual([{ ended_reason: 'repriced' }]);
     expect((await list(ESTIMATOR_A, jobId)).body.approvals).toEqual([]);
@@ -692,5 +698,95 @@ describe('proposals and approvals (S5b-8)', () => {
       await h.admin.unsafe(`UPDATE memberships SET role = 'estimator', status = 'active' WHERE id = '${h.seed.estimatorA.membership}'`);
     }
     expect(await h.admin`SELECT approved_at IS NOT NULL AS approved, ended_at FROM job_price_approvals`).toEqual([{ approved: true, ended_at: null }]);
+  });
+});
+
+describe('hardening (S5b-8 follow-ups)', () => {
+  it('refuses a reprice confirmed against a before-price that an approval changed since the preview', async () => {
+    await publish();
+    const { jobId } = await submittedJob();
+    const id = (await propose(ESTIMATOR_A, jobId, HOURLY)).body.approval.id as string;
+    const two = await publish('60.00');
+    // The owner's preview: $2.00 x 120 sq ft = $240.00 before; the hourly row is not approved yet.
+    const seen = await pinnedShown(jobId);
+    expect(seen).toBe('$240.00');
+    // Meanwhile the owner approves the hourly row on another phone: the before-price is now $365.00, and
+    // the job revision has not moved.
+    await approve(OWNER_A, jobId, id, { approverName: OWNER_NAME });
+    const body = { revision: await revisionOf(jobId), changeId: randomUUID(), versionId: two.id };
+    const stale = await json(repriceRoute.POST(request(OWNER_A, `/api/jobs/${jobId}/reprice`, { method: 'POST', body: { ...body, pinnedPrice: seen } }), params({ jobId })));
+    expect(stale).toMatchObject({ status: 409, body: { error: 'preview_stale' } });
+    expect(await h.admin`SELECT count(*)::int AS n FROM job_price_pins WHERE job_id = ${jobId}`).toEqual([{ n: 1 }]);
+    expect(await h.admin`SELECT ended_at FROM job_price_approvals WHERE id = ${id}`).toEqual([{ ended_at: null }]);
+    // Confirmed against the price the preview shows now, it goes through.
+    expect(await pinnedShown(jobId)).toBe('$365.00');
+    const fresh = await json(repriceRoute.POST(request(OWNER_A, `/api/jobs/${jobId}/reprice`, { method: 'POST', body: { ...body, pinnedPrice: '$365.00' } }), params({ jobId })));
+    expect(fresh.status).toBe(200);
+    // A body without the price is refused as unreadable.
+    const missing = await json(repriceRoute.POST(request(OWNER_A, `/api/jobs/${jobId}/reprice`, { method: 'POST', body: { ...body, changeId: randomUUID() } }), params({ jobId })));
+    expect(missing).toMatchObject({ status: 400, body: { error: 'invalid_request' } });
+  });
+
+  it('refuses an estimate for a caller disabled or moved to another role after the sign-in, and for a suspended company', async () => {
+    await publish();
+    const { jobId } = await submittedJob();
+    const service = estimatesService(h.handle.db);
+    const maker = { ...ESTIMATOR_CALLER(), capabilities: ['audit' as const, 'jobs_read' as const] };
+    await h.admin`UPDATE memberships SET role = 'office' WHERE company_id = ${h.seed.a} AND actor_id = ${h.seed.estimatorA.actor}`;
+    await expect(service.make(maker, jobId)).rejects.toMatchObject({ code: 'not_allowed' });
+    await expect(service.read(maker, jobId)).rejects.toMatchObject({ code: 'not_allowed' });
+    await h.admin`UPDATE memberships SET role = 'estimator' WHERE company_id = ${h.seed.a} AND actor_id = ${h.seed.estimatorA.actor}`;
+    await h.admin`UPDATE companies SET status = 'suspended' WHERE id = ${h.seed.a}`;
+    await expect(service.make(maker, jobId)).rejects.toMatchObject({ code: 'not_allowed' });
+    await expect(service.read(maker, jobId)).rejects.toMatchObject({ code: 'not_allowed' });
+    await h.admin`UPDATE companies SET status = 'active' WHERE id = ${h.seed.a}`;
+    expect(await h.admin`SELECT count(*)::int AS n FROM job_estimates`).toEqual([{ n: 0 }]);
+    expect((await service.make(maker, jobId)).created).toBe(true);
+  });
+
+  it('reads price_books under the company lock: a switch-off committed while the estimate waits answers not found and makes nothing', async () => {
+    await publish();
+    const { jobId } = await submittedJob();
+    const maker = { ...ESTIMATOR_CALLER(), capabilities: ['audit' as const, 'jobs_read' as const] };
+    const made = await interleaved(
+      async (tx) => {
+        await tx`SELECT id FROM companies WHERE id = ${h.seed.a} FOR UPDATE`;
+      },
+      () =>
+        estimatesService(h.handle.db)
+          .make(maker, jobId)
+          .then(
+            (result) => ({ result }),
+            (error: unknown) => ({ error }),
+          ),
+      async (tx) => {
+        await tx`UPDATE company_feature_flags SET enabled = false WHERE company_id = ${h.seed.a} AND flag = 'price_books'`;
+      },
+    );
+    expect(made.blocked).toBe(true);
+    expect(made.result).toMatchObject({ error: { code: 'not_found' } });
+    expect(await h.admin`SELECT count(*)::int AS n FROM job_estimates`).toEqual([{ n: 0 }]);
+    expect(await h.admin`SELECT count(*)::int AS n FROM job_price_pins`).toEqual([{ n: 0 }]);
+  });
+
+  it('reads priced_extras under the company lock: a switch-off committed while the estimate waits leaves the approvals out', async () => {
+    await publish();
+    const { jobId } = await submittedJob();
+    const id = (await propose(ESTIMATOR_A, jobId, HOURLY)).body.approval.id as string;
+    await approve(OWNER_A, jobId, id, { approverName: OWNER_NAME });
+    const maker = { ...ESTIMATOR_CALLER(), capabilities: ['audit' as const, 'jobs_read' as const] };
+    // The operator holds the company row while switching priced_extras off; the estimate waits for it.
+    const made = await interleaved(
+      async (tx) => {
+        await tx`SELECT id FROM companies WHERE id = ${h.seed.a} FOR UPDATE`;
+      },
+      () => estimatesService(h.handle.db).make(maker, jobId),
+      async (tx) => {
+        await tx`UPDATE company_feature_flags SET enabled = false WHERE company_id = ${h.seed.a} AND flag = 'priced_extras'`;
+      },
+    );
+    expect(made.blocked).toBe(true);
+    // $2.00 x 120 sq ft = $240.00, without the approved $125.00 of hours.
+    expect(made.result.estimate.totals.low.total).toBe('240.00');
   });
 });

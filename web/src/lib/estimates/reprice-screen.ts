@@ -63,6 +63,7 @@ export function screenOutOfDate(status: number, body: unknown): boolean {
 const OUTCOMES: Record<string, string> = {
   prices_superseded: 'Newer prices were published while you were looking. The preview shows them now; check it again.',
   prices_unreadable: 'The newest prices cannot be read. Check the Prices page.',
+  preview_stale: 'The price before the change has changed since the preview. Check the updated preview.',
 };
 
 /** The message for a refused reprice, by the server's code. */

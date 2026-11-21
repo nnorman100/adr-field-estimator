@@ -24,7 +24,7 @@ export const REPRICE_CONFIRM = 'Reprice this draft';
 
 type Read = { name: 'loading' } | { name: 'unavailable' } | { name: 'ready'; preview: RepricePreview };
 // The one dialog instance: what it shows and what its Confirm sends.
-type Shown = { versionId: string; revision: number; lines: { before: string; after: string } };
+type Shown = { versionId: string; revision: number; pinnedPrice: string | null; lines: { before: string; after: string } };
 
 export function RepriceBanner({ user, jobId, revision, onChanged }: { user: User; jobId: string; revision: number; onChanged: () => void }) {
   const [read, setRead] = useState<Read>({ name: 'loading' });
@@ -83,16 +83,16 @@ export function RepriceBanner({ user, jobId, revision, onChanged }: { user: User
   if (!reprice) return null;
   const open = () => {
     setProblem(null);
-    setShown({ versionId: reprice.newest.versionId, revision: preview.job.revision, lines: repriceLines(reprice) });
+    setShown({ versionId: reprice.newest.versionId, revision: preview.job.revision, pinnedPrice: reprice.pinned.price, lines: repriceLines(reprice) });
   };
 
   async function confirm(basis: Shown) {
-    const key = `${basis.versionId}/${basis.revision}`;
+    const key = `${basis.versionId}/${basis.revision}/${basis.pinnedPrice ?? ''}`;
     if (change.current?.key !== key) change.current = { key, id: crypto.randomUUID() };
     setBusy(true);
     const answer = await callApi(user, path, {
       method: 'POST',
-      json: { revision: basis.revision, changeId: change.current.id, versionId: basis.versionId },
+      json: { revision: basis.revision, changeId: change.current.id, versionId: basis.versionId, pinnedPrice: basis.pinnedPrice },
     });
     // After a lost or failed answer the reprice may have been committed, so Review reads the job
     // again rather than keep an estimate that may be void.

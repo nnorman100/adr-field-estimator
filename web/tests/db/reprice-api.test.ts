@@ -176,8 +176,15 @@ async function readyToSign(claims: FakeClaims = ESTIMATOR_A) {
   return { ...job, version, estimate, signatureId };
 }
 
-const send = (claims: FakeClaims | null, jobId: string, body: unknown): Promise<Reply> =>
-  json(repriceRoute.POST(request(claims, `/api/jobs/${jobId}/reprice`, { method: 'POST', body }), params({ jobId })));
+const OWNER_CALLER = () => ({ companyId: h.seed.a, actorId: h.seed.ownerA.actor, uid: 'owner-a', role: 'owner' as const, capabilities: ['job_reprice' as const] });
+// The pinned (before) price the owner's preview shows now, as the Reprice banner sends it back (S5b-8).
+const shownPinnedPrice = async (jobId: string): Promise<string | null> =>
+  ((await json(repriceRoute.GET(request(OWNER_A, `/api/jobs/${jobId}/reprice`), params({ jobId })))).body as Body).reprice?.pinned?.price ?? null;
+// A body without `pinnedPrice` gets the one the preview shows, as the screen sends it.
+const send = async (claims: FakeClaims | null, jobId: string, body: unknown): Promise<Reply> => {
+  const sent = body && typeof body === 'object' && !Array.isArray(body) && !('pinnedPrice' in body) ? { ...body, pinnedPrice: await shownPinnedPrice(jobId) } : body;
+  return json(repriceRoute.POST(request(claims, `/api/jobs/${jobId}/reprice`, { method: 'POST', body: sent }), params({ jobId })));
+};
 // The owner's confirmation as the screen sends it: the job revision it saw, a change id of its own and
 // the version it showed (the newest unless the test names another).
 async function reprice(claims: FakeClaims | null, jobId: string, extra: Record<string, unknown> = {}): Promise<Reply> {
@@ -228,6 +235,7 @@ describe('the owner reprices a draft', () => {
         change_id: changeId,
         request_revision: seen,
         request_version_id: two.id,
+        request_digest: expect.stringMatching(/^[0-9a-f]{64}$/),
         job_status: 'submitted',
         job_draft: draftId,
         job_revision: seen + 1,
@@ -304,7 +312,8 @@ describe('the owner reprices a draft', () => {
   it('the same change sent twice, even after newer prices are published, makes one pin and one audit row and is answered the same', async () => {
     const { jobId } = await readyToSign();
     await publish(h.seed.a, '3.00');
-    const change = { revision: (await f.job(jobId)).revision, changeId: randomUUID(), versionId: (await h.admin<{ id: string }[]>`SELECT id::text FROM price_table_versions WHERE company_id = ${h.seed.a} AND sequence = 2`)[0]!.id };
+    // The same change is the same body, the price the preview showed at the first send included.
+    const change = { revision: (await f.job(jobId)).revision, changeId: randomUUID(), versionId: (await h.admin<{ id: string }[]>`SELECT id::text FROM price_table_versions WHERE company_id = ${h.seed.a} AND sequence = 2`)[0]!.id, pinnedPrice: await shownPinnedPrice(jobId) };
     const first = await send(OWNER_A, jobId, change);
     expect(first).toMatchObject({ status: 200, body: { pin: { sequence: 2, version: 2 } } });
     await publish(h.seed.a, '4.00');
@@ -319,7 +328,7 @@ describe('the owner reprices a draft', () => {
   it('a retry after the job moved on is answered with the original answer; the same change with another body is refused', async () => {
     const { jobId, draftId } = await readyToSign();
     const two = await publish(h.seed.a, '3.00');
-    const change = { revision: (await f.job(jobId)).revision, changeId: randomUUID(), versionId: two.id };
+    const change = { revision: (await f.job(jobId)).revision, changeId: randomUUID(), versionId: two.id, pinnedPrice: await shownPinnedPrice(jobId) };
     const first = await send(OWNER_A, jobId, change);
     expect(first.status).toBe(200);
     expect((await f.nextDraft(ESTIMATOR_A, jobId, { draftId: randomUUID(), fromDraftId: draftId })).status).toBe(201);
@@ -328,6 +337,81 @@ describe('the owner reprices a draft', () => {
     expect(await send(OWNER_A, jobId, { ...change, revision: change.revision + 1 })).toMatchObject({ status: 409, body: { error: 'conflict' } });
     expect(await send(OWNER_A, jobId, { ...change, versionId: randomUUID() })).toMatchObject({ status: 409, body: { error: 'conflict' } });
     expect(await everything(h.admin)).toBe(before);
+  });
+
+  it('binds the change id to the whole confirmation: the same body again is answered as the first time, another price is refused', async () => {
+    const { jobId } = await readyToSign();
+    const two = await publish(h.seed.a, '3.00');
+    const change = { revision: (await f.job(jobId)).revision, changeId: randomUUID(), versionId: two.id, pinnedPrice: await shownPinnedPrice(jobId) };
+    expect(change.pinnedPrice).toBe('$240.00');
+    const first = await send(OWNER_A, jobId, change);
+    expect(first.status).toBe(200);
+    expect(await send(OWNER_A, jobId, change)).toEqual(first);
+    const before = await everything(h.admin);
+    expect(await send(OWNER_A, jobId, { ...change, pinnedPrice: '$365.00' })).toMatchObject({ status: 409, body: { error: 'conflict' } });
+    expect(await send(OWNER_A, jobId, { ...change, pinnedPrice: null })).toMatchObject({ status: 409, body: { error: 'conflict' } });
+    expect(await everything(h.admin)).toBe(before);
+    expect(await repriceAudits(jobId)).toHaveLength(1);
+  });
+
+  it('an older audit row without the digest is still compared on its revision and version', async () => {
+    const { jobId } = await readyToSign();
+    const two = await publish(h.seed.a, '3.00');
+    const change = { revision: (await f.job(jobId)).revision, changeId: randomUUID(), versionId: two.id, pinnedPrice: await shownPinnedPrice(jobId) };
+    const first = await send(OWNER_A, jobId, change);
+    expect(first.status).toBe(200);
+    await h.admin`UPDATE audit_events SET details = details - 'request_digest' WHERE target = ${jobId} AND action = 'job_repriced'`;
+    expect(await send(OWNER_A, jobId, change)).toEqual(first);
+    expect(await send(OWNER_A, jobId, { ...change, revision: change.revision + 1 })).toMatchObject({ status: 409, body: { error: 'conflict' } });
+  });
+
+  it('a retry of a reprice the previous release made, sent without the price, is answered with the original answer', async () => {
+    const { jobId } = await readyToSign();
+    const two = await publish(h.seed.a, '3.00');
+    const change = { revision: (await f.job(jobId)).revision, changeId: randomUUID(), versionId: two.id, pinnedPrice: await shownPinnedPrice(jobId) };
+    const first = await send(OWNER_A, jobId, change);
+    expect(first.status).toBe(200);
+    const raw = { revision: change.revision, changeId: change.changeId, versionId: change.versionId };
+    const post = (body: unknown) => json(repriceRoute.POST(request(OWNER_A, `/api/jobs/${jobId}/reprice`, { method: 'POST', body }), params({ jobId })));
+    const before = await everything(h.admin);
+    expect(await post(raw)).toMatchObject({ status: 409, body: { error: 'conflict' } });
+    await h.admin`UPDATE audit_events SET details = details - 'request_digest' WHERE target = ${jobId} AND action = 'job_repriced'`;
+    const legacy = await everything(h.admin);
+    expect(await post(raw)).toEqual(first);
+    expect(await post({ ...raw, revision: raw.revision + 1 })).toMatchObject({ status: 409, body: { error: 'conflict' } });
+    expect(await everything(h.admin)).toBe(legacy);
+    expect(before).not.toBe(legacy);
+  });
+
+  it('a new confirmation without the price is 400 and writes nothing', async () => {
+    const { jobId } = await readyToSign();
+    const two = await publish(h.seed.a, '3.00');
+    const before = await everything(h.admin);
+    const raw = { revision: (await f.job(jobId)).revision, changeId: randomUUID(), versionId: two.id };
+    expect(await json(repriceRoute.POST(request(OWNER_A, `/api/jobs/${jobId}/reprice`, { method: 'POST', body: raw }), params({ jobId })))).toMatchObject({ status: 400, body: { error: 'invalid_request' } });
+    expect(await everything(h.admin)).toBe(before);
+    expect(await pins(jobId)).toHaveLength(1);
+  });
+
+  it('a suspended company, or price books switched off, is refused for the preview and the confirmation before the job is read', async () => {
+    const { jobId } = await readyToSign();
+    await publish(h.seed.a, '3.00');
+    const before = await everything(h.admin);
+    const call = {
+      preview: () => estimatesService(h.handle.db).repricePreview(OWNER_CALLER(), jobId),
+      confirm: async () => {
+        const [newest] = await h.admin<{ id: string }[]>`SELECT id::text FROM price_table_versions WHERE company_id = ${h.seed.a} ORDER BY sequence DESC LIMIT 1`;
+        return estimatesService(h.handle.db).reprice(OWNER_CALLER(), jobId, { revision: (await f.job(jobId)).revision, changeId: randomUUID(), versionId: newest!.id, pinnedPrice: '$240.00' });
+      },
+    };
+    await h.admin`UPDATE companies SET status = 'suspended' WHERE id = ${h.seed.a}`;
+    for (const run of [call.preview, call.confirm]) await expect(run()).rejects.toMatchObject({ code: 'not_allowed' });
+    await h.admin`UPDATE companies SET status = 'active' WHERE id = ${h.seed.a}`;
+    await h.admin`UPDATE company_feature_flags SET enabled = false WHERE company_id = ${h.seed.a} AND flag = 'price_books'`;
+    for (const run of [call.preview, call.confirm]) await expect(run()).rejects.toMatchObject({ code: 'not_found' });
+    await h.admin`UPDATE company_feature_flags SET enabled = true WHERE company_id = ${h.seed.a} AND flag = 'price_books'`;
+    expect(await everything(h.admin)).toBe(before);
+    expect((await call.confirm()).pin.version).toBe(2);
   });
 
   it('a second confirmation carrying the revision from before the first pin move is stale, even for the newest prices', async () => {

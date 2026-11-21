@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { and, asc, count, eq, inArray, isNotNull, isNull } from 'drizzle-orm';
-import { auditEvents, companies, jobEstimates, jobPriceApprovals, jobSubmissions, memberships } from '@/db/schema';
+import { auditEvents, jobEstimates, jobPriceApprovals, jobSubmissions } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import { scopeLines, type EstimateJob } from '@/engine/estimate';
 import { MAX_LINE_MULTIPLIERS } from '@/engine/inspection';
@@ -17,6 +17,8 @@ import { ZodError } from 'zod';
 import {
   confirmationPredatesReprice,
   currentPin,
+  lockCompany,
+  lockMember,
   currentSubmissionId,
   latestVersion,
   pinFirstPrice,
@@ -199,27 +201,6 @@ function hourlyRate(table: Table): string {
   const rate = item?.unit_price ?? '';
   if (!/^\d+(?:\.\d{1,2})?$/.test(rate) || Number(rate) <= 0 || Number(rate) > 10000) throw new ApprovalError('no_hourly_rate');
   return rate;
-}
-
-// The caller is still an active member with the role their sign-in gave, and stays so until the
-// transaction commits: a change of role or status locks the same membership row. The owner's approval
-// takes the row for update, as Reprice's owner lock does.
-async function lockMember(tx: CompanyTransaction, caller: JobCaller, mode: 'share' | 'update' = 'share'): Promise<void> {
-  const [member] = await tx
-    .select({ id: memberships.id })
-    .from(memberships)
-    .where(and(eq(memberships.companyId, caller.companyId), eq(memberships.actorId, caller.actorId), eq(memberships.role, caller.role), eq(memberships.status, 'active')))
-    .for(mode);
-  if (!member) throw new JobError('not_allowed');
-}
-
-// The caller's company is active, and stays so until the transaction commits: a suspension or an owner
-// replacement locks the same company row. Every approval transaction takes it first, then the
-// member's row, then the job's, the order the owner replacement takes them in. The owner's approval
-// takes the stronger lock the owner lock takes, so two of them never wait on each other's upgrade.
-async function lockCompany(tx: CompanyTransaction, caller: JobCaller, mode: 'share' | 'no key update'): Promise<void> {
-  const [company] = await tx.select({ status: companies.status }).from(companies).where(eq(companies.id, caller.companyId)).for(mode);
-  if (company?.status !== 'active') throw new JobError('not_allowed');
 }
 
 // The company's `priced_extras` switch is on under the job's lock; off, every route answers 404 (D5).
