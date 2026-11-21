@@ -11,6 +11,8 @@ import { preparePhoto } from '@/lib/field/photo';
 import { MAX_PHOTO_REFS, SHOT_TAGS, type PhotoField } from '@/lib/field/schema';
 import { draftDocs, draftPath, fieldRefusal, photoRefWrites, type FieldDraft } from '@/lib/field/store';
 import type { FieldClient } from '@/lib/field-db';
+import { BASELINE_SHOTS } from '@/lib/readiness/check';
+import { photoFix } from '@/lib/readiness/fix';
 import type { JobContext } from './job-screens';
 import { Choice, Outcome, Section } from './ui';
 
@@ -42,9 +44,18 @@ export function photoReferenceDone(client: FieldClient, jobId: string, photoId: 
 // Photos (S5a-6): the camera, a room and a shot tag for each photo, and the job's photos. A photo's
 // bytes go to the photo route (S5a-5) first; its reference (room and shot tag) is written to the
 // field draft only once the server holds the bytes.
-export function PhotosView({ job, draft, open }: { job: JobContext; draft: FieldDraft; open: boolean }) {
+export function PhotosView({ job, draft, open, readinessFix }: { job: JobContext; draft: FieldDraft; open: boolean; readinessFix: string | null }) {
+  const fix = photoFix(readinessFix);
   const [roomId, setRoomId] = useState('');
   const [shotTag, setShotTag] = useState('');
+  // The room and shot a Fix names are chosen once, then belong to this screen: they stay when the
+  // Fix link goes from the address or the readiness check is paused while the camera is open.
+  const [applied, setApplied] = useState<string | null>(null);
+  if (fix && readinessFix !== applied) {
+    setApplied(readinessFix);
+    setRoomId(draft.rooms.some((room) => room.id === fix.roomId) ? fix.roomId : '');
+    setShotTag(fix.shot);
+  }
   // Photos sent and not yet settled, kept for the life of the page (src/lib/field/pending.ts), so
   // leaving this screen never drops one: its id and bytes stay for "Send again".
   const jobId = job.jobId;
@@ -78,6 +89,8 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
   const full = held >= MAX_PHOTO_REFS;
   const roomOptions = [{ value: '', label: 'No room' }, ...draft.rooms.map((room) => ({ value: room.id, label: room.field.name ?? 'Room' }))];
   const roomName = (id: string | undefined) => draft.rooms.find((room) => room.id === id)?.field.name ?? null;
+  // The baseline shots the readiness check still lacks for the room chosen above, in its order.
+  const missingShots = BASELINE_SHOTS.filter((tag) => roomId !== '' && job.readiness.answer?.gaps.some((gap) => gap.roomId === roomId && gap.code === `shot:${tag}`));
 
   const update = (id: string, change: Partial<PendingPhoto>) => unsent.updatePhoto(jobId, id, change);
 
@@ -138,7 +151,7 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
 
   return (
     <div className="flex flex-col gap-4">
-      <h3 className="sr-only">Photos</h3>
+      <h3 id="readiness-photos" tabIndex={-1} className={fix && !cameraShown ? 'text-lg font-semibold' : 'sr-only'}>Photos</h3>
       {!job.session.online ? <p role="status">Needs a connection to send photos. Keep this window open until every photo is sent.</p> : null}
       {cameraShown ? (
         <Section title="Take a photo">
@@ -172,6 +185,27 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
               This job has the most photos it can hold ({MAX_PHOTO_REFS}).
             </p>
           ) : null}
+        </Section>
+      ) : null}
+      {cameraShown && missingShots.length > 0 ? (
+        <Section title={`Photos still needed${roomName(roomId) ? ` in ${roomName(roomId)}` : ''}`}>
+          <ul className="flex flex-col gap-2" aria-label="Baseline photos still needed">
+            {missingShots.map((tag) => (
+              <li key={tag}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  aria-pressed={shotTag === tag}
+                  onClick={() => {
+                    setShotTag(tag);
+                    camera.current?.focus();
+                  }}
+                >
+                  {`Add ${tag === 'overview' || tag === 'surface' ? 'an' : 'a'} ${SHOT_NAMES[tag].toLowerCase()} photo`}
+                </Button>
+              </li>
+            ))}
+          </ul>
         </Section>
       ) : null}
       <Outcome error={error} notice={null} />

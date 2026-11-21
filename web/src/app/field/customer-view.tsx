@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { saveClaim, saveCustomer, type Answer, type JobDetail } from '@/lib/field/api';
 import { pending, usePending, type RecordKind } from '@/lib/field/pending';
@@ -126,6 +126,12 @@ function RecordForm({
   const [notice, setNotice] = useState<string | null>(null);
   const changed = { ...refusal?.edits, ...edits };
   const shown = mine?.values ?? { ...reread(job.detail), ...changed };
+  const { markUnsaved } = job;
+  const dirty = Object.keys(changed).length > 0;
+  useEffect(() => {
+    markUnsaved(`record/${kind}`, dirty);
+    return () => markUnsaved(`record/${kind}`, false);
+  }, [markUnsaved, kind, dirty]);
 
   // Takes a kept refusal's changes into the form's own.
   function takeRefusal() {

@@ -7,7 +7,9 @@ import { listJobs, type JobListItem } from '@/lib/field/api';
 import type { FieldSession } from '@/lib/field/session';
 import { defaultList, type JobsList } from '@/lib/field/views';
 import { JOB_STATUS_LABELS } from '@/lib/jobs/status-labels';
+import { markerText } from '@/lib/readiness/client';
 import { archivalDone, ArchivedRow, UnfinishedArchivals } from './job-actions';
+import { useReadinessMarkers } from './readiness-markers';
 import { FieldLink } from './ui';
 
 const TITLES: Record<JobsList, string> = { company: 'Company jobs', mine: 'My jobs', archived: 'Archived drafts' };
@@ -35,6 +37,9 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
   // does not show them before its own answer.
   const denied = usePending(() => pending.listDenied());
   const rows = denied ? null : jobs;
+  // Changes each time the list starts to be read again from its first page, which ends every readiness check made.
+  const [generation, setGeneration] = useState(0);
+  const markers = useReadinessMarkers(session.user, session.online && session.readiness && !archivedList ? rows : null, session.capabilities, generation);
   // Only the newest request answers: a page asked for before the list was read again from its first
   // page is not added to it, and no page is asked for until that first page is back.
   const latest = useRef(0);
@@ -61,6 +66,7 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
   async function load(from: string | null) {
     if (!session.online) return;
     const mine = ++latest.current;
+    if (from === null) setGeneration((count) => count + 1);
     const sent = pending.listSend();
     const answer = await listJobs(session.user, shown, from);
     if (answer.ok || answer.denied) pending.listAnswered(sent, !answer.ok);
@@ -71,8 +77,12 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
   // again from its first page each time the connection comes back.
   useEffect(() => {
     if (!session.online) return;
-    void load(null);
+    let live = true;
+    void Promise.resolve().then(() => {
+      if (live) void load(null);
+    });
     return () => {
+      live = false;
       latest.current += 1;
       setBusy(true);
     };
@@ -163,17 +173,21 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
       ) : null}
       {!archivedList && rows !== null && rows.length > 0 ? (
         <ul className="flex flex-col gap-2" aria-label={TITLES[shown]}>
-          {rows.map((job) => (
-            <li key={job.id} className="rounded-md border border-foreground/20 p-3">
-              <FieldLink to={{ view: 'scope', jobId: job.id }} className="text-base font-medium">
-                {job.propertyAddress || 'No address yet'}
-              </FieldLink>
-              <p className="text-sm">
-                {job.customerName ? `${job.customerName} · ` : ''}
-                {JOB_STATUS_LABELS[job.status]} · started {new Date(job.createdAt).toLocaleDateString()}
-              </p>
-            </li>
-          ))}
+          {rows.map((job) => {
+            const marker = markers?.get(job.id);
+            return (
+              <li key={job.id} className="rounded-md border border-foreground/20 p-3">
+                <FieldLink to={{ view: 'scope', jobId: job.id }} className="text-base font-medium">
+                  {job.propertyAddress || 'No address yet'}
+                </FieldLink>
+                <p className="text-sm">
+                  {job.customerName ? `${job.customerName} · ` : ''}
+                  {JOB_STATUS_LABELS[job.status]} · started {new Date(job.createdAt).toLocaleDateString()}
+                </p>
+                {marker ? <p className="text-sm font-medium">{markerText(marker)}</p> : null}
+              </li>
+            );
+          })}
         </ul>
       ) : null}
       <p role="alert" className="text-sm font-medium text-red-800 empty:hidden">

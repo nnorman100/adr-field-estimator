@@ -185,7 +185,7 @@ export function RoomCard({
         void save();
       }}
     >
-      <h4 className="text-base font-semibold">{title}</h4>
+      <h4 id={id('heading')} tabIndex={-1} className="text-base font-semibold">{title}</h4>
       <Box id={id('name')} label="Room name" value={String(values.name)} onChange={set('name')} readOnly={readOnly} error={errors.name} />
       <Choice id={id('roomTypeId')} label="Room type" value={roomType.value} options={roomType.options} onChange={set('roomTypeId')} readOnly={readOnly} />
       <Choice

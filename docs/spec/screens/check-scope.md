@@ -3,7 +3,7 @@
 Part of [Screen specs](README.md). Address: `/field?job={id}` (the default job view). Built in:
 `web/src/app/field/job-screens.tsx` (the job frame and its tabs), `scope-view.tsx`,
 `rooms-section.tsx`, `room-card.tsx`, `room-lists.tsx`, `equipment-suggestion.tsx`,
-`start-field-work.tsx`, `use-field-edit.ts`, `published-item-list.tsx`. Stages S5a-6, S5a-10, S5b-1, S6-3, S6-4, S6-8.
+`start-field-work.tsx`, `use-field-edit.ts`, `published-item-list.tsx`. Stages S5a-6, S5a-10, S5b-1, S6-3, S6-4, S6-8, S5b-11.
 
 ## Purpose
 
@@ -14,6 +14,27 @@ are priced."), job charges, notes and the scope-confirmed box (`scope-view.tsx`)
 (Firestore) on the phone, so they work with no signal when the phone keeps jobs. The job frame shows
 the address, the tabs "Check Scope", "Customer and claim", "Photos" and, for the owner and office,
 "Job coordination", and [Job actions](job-actions.md) below.
+
+## Ready to review?
+
+With the company's `readiness` flag on, owners and estimators see the count of items to check,
+**Ready to review**, or **Readiness check unavailable** on an online editing draft they can read.
+The count describes the saved field manifest. A change must be stored before it clears a gap. Office,
+signed and archived views have no readiness controls. The check has no effect on draft edits,
+including work kept on the phone when the connection drops.
+
+A Fix link from [Finish](finish.md) opens Check Scope, Customer and claim, or Photos and focuses the
+matching control or section. A read-only draft focuses the Rooms or Check Scope heading when the
+control is not usable. Room links use the stable room ID. Photo links select the room and shot tag
+and keep them for the capture. Photos lists the baseline shots (overview, affected surface, moisture
+meter) the readiness check still lacks for the chosen room, each selecting that shot. **Back to
+Finish and review** stays on every tab of the job after a Fix and reopens Finish with current data;
+with any unsaved input (Office notes included) it offers Keep editing or Discard changes and go back,
+and it waits, showing "Saving…", until this job's pending saves and photo sends are acknowledged
+before it leaves. Discard clears only the unsent typed values; browser Back is not guarded (follow-up).
+An accepted save asks the check again. A confirmed archive replaces the readiness text and link with the archived notice.
+The summary of findings gap points to guidance in Check Scope while the separate summary editor is
+pending.
 
 ## Who may see it and do what
 
@@ -102,7 +123,7 @@ submitting: `docs/access/submit.md`.
 
 ## Mismatches to check
 
-- No Check Scope action opens Finish and review. It is reached from the sync chip's "Changes not
+- Outside the return link after Fix, Check Scope has no direct action that opens Finish and review. It is reached from the sync chip's "Changes not
   saved" sheet ("Go to Finish and review": only for a write refused because the draft was locked,
   that is being finished or finished, online, once the job reads) and from [Review](review.md)'s
   "Back to Finish and review" button (shown before pricing, including "Not finished yet", and on a priced,

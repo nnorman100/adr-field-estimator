@@ -147,10 +147,10 @@ export function Outcome({ error, notice }: { error: string | null; notice: strin
   );
 }
 
-export function Section({ title, children }: { title: string; children: ReactNode }) {
+export function Section({ title, headingId, children }: { title: string; headingId?: string; children: ReactNode }) {
   return (
     <section className="flex flex-col gap-3 border-t border-foreground/20 pt-4">
-      <h3 className="text-lg font-semibold">{title}</h3>
+      <h3 id={headingId} tabIndex={headingId ? -1 : undefined} className="text-lg font-semibold">{title}</h3>
       {children}
     </section>
   );
