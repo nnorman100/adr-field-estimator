@@ -21,7 +21,7 @@ function drawn(size: [number, number]) {
 
 // A decodable JPEG with an EXIF segment whose TIFF directory holds a GPS directory of synthetic
 // coordinates (0 degrees north, 0 degrees east), as a phone camera writes it.
-async function gpsJpeg(): Promise<Uint8Array> {
+async function gpsJpeg(): Promise<Uint8Array<ArrayBuffer>> {
   const picture = new Uint8Array(await (await drawn([80, 60])).arrayBuffer());
   const tiff = new DataView(new ArrayBuffer(128));
   const ascii = (offset: number, text: string) => [...text].forEach((c, i) => tiff.setUint8(offset + i, c.charCodeAt(0)));
