@@ -2,7 +2,7 @@
 
 Part of [Screen specs](README.md). Address: `/field` (every field view lives in this one page).
 Built in: `web/src/app/field/page.tsx`, `field-shell.tsx`, `field-store.tsx`, `field-app.tsx`,
-`banners.tsx`, `sync-chip.tsx`, `home-screen-sheet.tsx`. Stages S5a-6, S6-2, S6-3, S6-4.
+`banners.tsx`, `sync-chip.tsx`, `home-screen-sheet.tsx`. Stages S5a-6, S6-2, S6-3, S6-4, S6-5.
 
 ## Purpose
 
@@ -51,7 +51,11 @@ job views) with a sync chip for changes not yet saved.
   again to send, and kept changes removed or hidden after 30 days with access off.
 - Sync chip: shown while the signed-in person's screens are; its sheet "Changes not saved" lists
   refused or changed edits, one panel per job and reason (`web/src/lib/field/sync-status.ts`,
-  `sync-chip.tsx`). Each panel offers:
+  `sync-chip.tsx`). Photos the server refused for a reason of their job (finished, archived, owner
+  changed, no access) join the panel for that job and reason, with no journal entry needed
+  (`readRefusedPhotos` in `web/src/lib/field/photo-field.ts`); Discard also removes them, and Try
+  again asks the server again for them. When the phone's photo queue cannot be read, the chip says
+  "Couldn’t read photos on this phone" instead of "Saved". Each panel offers:
   - "Discard" (then "Discard changes" or "Keep them"): always.
   - "Try again": unless the job was finished or the edits were changed on another device.
   - "Save as new draft" ("Save as another new draft" once one exists): the button shows when the
@@ -76,7 +80,10 @@ job views) with a sync chip for changes not yet saved.
     when the reason changed to another, or "This job's field work is not kept on this phone, so there
     is nothing to copy." when the phone lacks the draft or a room the copy needs. What it makes: a new
     job (blank property address) whose draft is the field map and rooms this phone cached, with the
-    refused edits applied on top; no customer, claim, photos or photo references come with it.
+    refused edits applied on top; no customer, claim or sent photo references come with it. Photos still
+    waiting on this phone (queued copies and their originals) move to the new draft under new photo
+    ids, in one local transaction that can be retried (`moveQueuedPhotos` in
+    `web/src/lib/field/photo-queue-storage.ts`); photos already sent stay with the old job.
     "Save as another new draft" replaces the button's name only once the first new draft already holds
     other work ("A new draft was already saved from this job…").
   - "Go to Finish and review": only for a write refused because the draft was locked (it was being
@@ -91,7 +98,7 @@ job views) with a sync chip for changes not yet saved.
 | Keep or not keep jobs on the phone | the phone's Firestore cache and journal only, no server route |
 | Try again a refused change | the field database (Firestore) write again |
 | Save as new draft, step 1: the eligibility check (the button shows for a recorded `archived` or `owner-changed` refusal; pressing it first classifies fresh reads of the draft and job in the browser, `refusalNow` in `web/src/lib/field/journal-sync.ts`, and copies only for a job archived during editing or whose field work moved and that the person can still read; after they lost the job the answer is `no-access` and no request to make a job is sent. The job read is made only when the draft cannot decide alone, so that `no-access` rule has one exception: a draft that is still readable to the person and already says archived is not checked against the job. For example, a transfer commits but the draft is not stamped, so it still names the former estimator; the owner unassigns them, and only then archives the job (archiving first would make the unassignment answer 410) and the archive leaves that draft readable. The former estimator is then classified archived without a job read, and can reach step 2 with the work cached on their phone, although a read of the original job would answer 404) | server reads of the draft and the person's role, and of the job only when the draft does not decide (the field database and `GET /api/jobs/{id}`), no write |
-| Save as new draft, step 2: the copy, only when step 1 allows it (the new job has a blank address and no customer, claim or photos; the request names no source job, so the server does not recheck the original job) | `POST /api/jobs` with a new job and draft id and an empty address, then the field database |
+| Save as new draft, step 2: the copy, only when step 1 allows it (the new job has a blank address and no customer, claim or sent photos; waiting photo bytes on the phone move to it; the request names no source job, so the server does not recheck the original job) | `POST /api/jobs` with a new job and draft id and an empty address, then the field database |
 | Read a job named by an unsaved change | `GET /api/jobs/{id}` |
 | Reopen the Home Screen setup sheet (iPhone or iPad browser tab) | on the phone only, no server route |
 

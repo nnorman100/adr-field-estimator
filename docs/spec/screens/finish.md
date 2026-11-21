@@ -49,6 +49,11 @@ button can show and its request still be refused with 403 `not_field_owner`.
   connection…") with "Try again".
 - Being edited: the summary and, for `scope`, "Finish and review" (refused unless the caller owns the
   field work); a newer draft appeared: "Show the new draft".
+- Photos still waiting on this phone (S6-5, `hasWaitingPhotos` in `web/src/lib/field/photo-field.ts`):
+  when the job's queued photo copies have not all been sent, the page shows "Send this job's photos
+  first" with "Open Photos" and "Check again" instead of the Finish action, and Finish re-checks
+  just before it goes ahead. A waiting full-size original does not hold Finish; an unreadable queue
+  shows "We could not open this job".
 - Readiness prompt: focus starts on **Back**. Back or Escape closes it and returns focus to
   **Finish and review**. **Continue anyway** sends the ordinary Finish request once. A Fix link
   opens the appropriate field view. **Back to Finish and review** stays available across that job's
