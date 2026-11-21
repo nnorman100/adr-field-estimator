@@ -183,14 +183,16 @@ function FinishActions({
   const pendingDraft = useRef<{ draftId: string; fromDraftId: string } | null>(null);
   const dialog = useRef<HTMLDialogElement>(null);
   const back = useRef<HTMLButtonElement>(null);
+  // The revision the checklist is read for, and a count that asks for it to be read again.
+  const [checked, setChecked] = useState({ revision: readinessRevision, recheck: 0 });
   const readinessJob = useMemo(
-    () => readinessRevision !== null && current.status === 'draft' && current.currentDraftId === job.currentDraftId
-      ? { ...current, revision: readinessRevision }
+    () => checked.revision !== null && current.status === 'draft' && current.currentDraftId === job.currentDraftId
+      ? { ...current, revision: checked.revision }
       : null,
-    [readinessRevision, current, job.currentDraftId],
+    [checked.revision, current, job.currentDraftId],
   );
   const showArchived = () => setCurrent({ ...current, status: 'archived' });
-  const advisory = useDraftReadiness(user, readinessJob, manifest, 0, showArchived);
+  const advisory = useDraftReadiness(user, readinessJob, manifest, checked.recheck, showArchived);
   const items = useMemo(
     () => (manifest && advisory ? advisory.gaps.flatMap((gap) => {
       const fix = fixFor(gap, job.id, manifest, pricesManage ? `/sign-in/${address}/prices` : null, owner);
@@ -199,7 +201,8 @@ function FinishActions({
     [advisory, manifest, job.id, pricesManage, owner, address],
   );
 
-  // A field ownership refusal leaves this draft readable and its checklist current.
+  // A field ownership refusal keeps the checklist only once the job and its readiness are read again
+  // and still match this draft.
   const prompted = problem && problem.next !== 'retry' && !problem.keepChecklist ? [] : items;
 
   async function finish() {
@@ -220,7 +223,25 @@ function FinishActions({
     }
     const outcome = outcomeOf(answer.status, answer.body);
     if (outcome.next !== 'retry') pendingSubmit.current = null;
-    setProblem({ ...outcome, keepChecklist: answer.status === 403 && (answer.body as { error?: unknown } | null)?.error === 'not_field_owner' });
+    const notOwner = answer.status === 403 && (answer.body as { error?: unknown } | null)?.error === 'not_field_owner';
+    setProblem({ ...outcome, keepChecklist: notOwner && (await recheckChecklist()) });
+  }
+
+  // Reads the job again after an ownership refusal, which the server gives before looking at the
+  // draft, and asks for its readiness again. Answers whether this draft is still being edited.
+  async function recheckChecklist(): Promise<boolean> {
+    const answer = await callApi(user, `/api/jobs/${encodeURIComponent(current.id)}`);
+    if (answer.status === 410) {
+      showArchived();
+      return false;
+    }
+    const next = answer.status === 200 ? jobOf(answer.body) : null;
+    if (!next) return false;
+    setCurrent(next);
+    const revision = (answer.body as { job?: { revision?: unknown } } | null)?.job?.revision;
+    if (checked.revision === null || next.status !== 'draft' || next.currentDraftId !== job.currentDraftId || typeof revision !== 'number') return false;
+    setChecked((was) => ({ revision, recheck: was.recheck + 1 }));
+    return true;
   }
 
   async function backToEditing() {

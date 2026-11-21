@@ -3,7 +3,7 @@
 import { useEffect, useLayoutEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import type { ScopeLists } from '@/lib/field/api';
-import { editsAfterSave, roomChanges, roomTypeChoice, ROOM_FIELDS, withEdits, type FormValues, type RoomLists } from '@/lib/field/forms';
+import { editsAfterSave, editedResult, roomChanges, roomTypeChoice, ROOM_FIELDS, withEdits, type FormValues, type RoomLists } from '@/lib/field/forms';
 import { MAX_FINDINGS, type RoomField } from '@/lib/field/schema';
 import { roomFieldWrites } from '@/lib/field/store';
 import { NO_TYPED, pending, typedBefore, usePending } from '@/lib/field/pending';
@@ -117,18 +117,22 @@ export function RoomCard({
   const values = withEdits(ROOM_FIELDS, stored, edits);
   const [ownTyped, setOwnTyped] = useState(false);
   const result = roomChanges(values, stored, listEdits);
-  const unsaved = Object.keys(result.changes).length > 0 || Object.keys(result.errors).length > 0;
+  const unsaved = editedResult(result, edits);
   const dirty = unsaved || ownTyped;
   useEffect(() => {
     onDirty?.(roomId, dirty);
   }, [onDirty, roomId, dirty]);
   const { markUnsaved } = job;
   useLayoutEffect(() => {
-    markUnsaved(`room/${roomId}`, unsaved ? () => {
-      setEdits({});
-      setListEdits({});
-      setErrors({});
-    } : null);
+    markUnsaved(
+      `room/${roomId}`,
+      () => {
+        setEdits({});
+        setListEdits({});
+        setErrors({});
+      },
+      unsaved,
+    );
     return () => markUnsaved(`room/${roomId}`, null);
   }, [markUnsaved, roomId, unsaved]);
   const { busy, error, notice, setError, setNotice, save: saveEdit } = useFieldEdit(job);

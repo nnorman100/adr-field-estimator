@@ -7,6 +7,7 @@ import {
   CONFIRMED_FIELD,
   editsAfterSave,
   EQUIPMENT_FIELDS,
+  editedResult,
   factChanges,
   FACT_FIELDS,
   NOTES_FIELD,
@@ -44,7 +45,7 @@ export function ScopeView({ job, draft, open, readinessFix }: { job: JobContext;
   const marker = checking && row ? readinessMarker(row, answer, job.session.capabilities) : null;
   const { markUnsaved } = job;
   const result = factChanges(values, draft.field);
-  const unsaved = Object.keys(result.changes).length > 0 || Object.keys(result.errors).length > 0;
+  const unsaved = editedResult(result, edits);
   useLayoutEffect(() => {
     markUnsaved('scope', unsaved ? () => {
       setEdits({});

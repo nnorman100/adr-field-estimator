@@ -42,7 +42,7 @@ function fieldWorkOf(session: FieldSession, detail: JobDetail): FieldWork {
 
 // Where a Fix lands when its own control is not there or not usable, as for a read-only draft.
 const FIX_FALLBACKS: Record<string, string> = { 'new-room-name': 'readiness-rooms', 'photo-room': 'readiness-photos' };
-const RETURN_WAIT_MS = 8_000;
+const JOURNAL_READ_MS = 8_000;
 
 const readsEveryDraft = (session: FieldSession) => session.role === 'owner' || session.role === 'office';
 const draftReadable = (session: FieldSession, detail: JobDetail) => readsEveryDraft(session) || fieldWorkOf(session, detail) === 'mine';
@@ -82,8 +82,8 @@ export type JobContext = {
   // Nothing of the job is sent: it is archived, or a read of it must say first whether an archive or
   // another refusal changed it. What was typed stays, read only.
   held: boolean;
-  // Forms register how to clear their unsent values on discard, even on a hidden tab.
-  markUnsaved: (form: string, discard: (() => void) | null) => void;
+  // Each mounted form registers how to clear its unsent values on discard, and whether it holds any now.
+  markUnsaved: (form: string, discard: (() => void) | null, unsaved?: boolean) => void;
   // Keeps the return guard active during local preparation, before a write can be tracked elsewhere.
   startSave: () => (failed?: boolean) => void;
   // The last read of the draft did not get through, so the draft on screen may be older than what is
@@ -143,16 +143,19 @@ export function JobScreens({
   const [archivalsSeen] = useState(archivalsDone);
   const [draftError, setDraftError] = useState<string | null>(null);
   // The forms of this job on this screen that hold changes not saved (told by each form).
-  const unsavedForms = useRef(new Map<string, () => void>());
+  const unsavedForms = useRef(new Map<string, { discard: () => void; unsaved: boolean }>());
   const [hasUnsavedForms, setHasUnsavedForms] = useState(false);
-  const markUnsaved = useCallback((form: string, discard: (() => void) | null) => {
-    if (discard) unsavedForms.current.set(form, discard);
+  const markUnsaved = useCallback((form: string, discard: (() => void) | null, unsaved = true) => {
+    if (discard) unsavedForms.current.set(form, { discard, unsaved });
     else unsavedForms.current.delete(form);
-    setHasUnsavedForms(unsavedForms.current.size > 0);
+    setHasUnsavedForms([...unsavedForms.current.values()].some((one) => one.unsaved));
   }, []);
   const typed = usePending(() => pending.typed(jobId));
   const unsaved = hasUnsavedForms || Object.keys(typed).length > 0;
-  const hasUnsent = useCallback(() => unsavedForms.current.size > 0 || Object.keys(pending.typed(jobId)).length > 0, [jobId]);
+  const hasUnsent = useCallback(
+    () => [...unsavedForms.current.values()].some((form) => form.unsaved) || Object.keys(pending.typed(jobId)).length > 0,
+    [jobId],
+  );
   const [readDraft] = useState(draftReads);
   // A refusal waits for a read of the job to say what it meant (src/lib/field/pending.ts): nothing
   // is saved meanwhile.
@@ -460,10 +463,10 @@ export function JobScreens({
     return () => window.removeEventListener('beforeunload', warn);
   }, [returnGuarded, unsaved, writing, hasUnsent]);
   useEffect(() => {
-    if (!returnGuarded || !going) return;
-    const deadline = setTimeout(() => setLeaving('blocked'), RETURN_WAIT_MS);
+    if (!returnGuarded || !going || journal !== 'reading') return;
+    const deadline = setTimeout(() => setLeaving('blocked'), JOURNAL_READ_MS);
     return () => clearTimeout(deadline);
-  }, [returnGuarded, going]);
+  }, [returnGuarded, going, journal]);
   useEffect(() => {
     if (!returnGuarded || !going || writing) return;
     const ready = setTimeout(() => {
@@ -602,7 +605,7 @@ export function JobScreens({
                 <Button
                   variant="outline"
                   onClick={() => {
-                    for (const discard of unsavedForms.current.values()) discard();
+                    for (const form of unsavedForms.current.values()) form.discard();
                     pending.discardUnsent(jobId);
                     returnToFinish();
                   }}
