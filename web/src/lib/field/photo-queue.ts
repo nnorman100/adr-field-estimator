@@ -17,8 +17,15 @@ const CAPTURE_LOCK = 'ds-photo-capture';
 const DRAIN_LOCK = 'ds-photo-drain';
 const CAPTURED = 'ds-photo-captured';
 const FOREGROUND_INTERVAL_MS = 2_000;
-const ATTEMPT_DEADLINE_MS = 30_000;
+const UPLOAD_BASE_DEADLINE_MS = 30_000;
+const SLOWEST_UPLOAD_BYTES_PER_SECOND = 64 * 1024;
+const REFERENCE_DEADLINE_MS = 30_000;
+const UNPREPARED_REASON = 'This phone could not prepare a shareable copy of the photo. Send originals sends the full-size photo.';
 const LOW_STORAGE_BYTES = 50 * 1024 * 1024;
+
+export function uploadDeadlineMs(bytes: number): number {
+  return UPLOAD_BASE_DEADLINE_MS + Math.ceil(bytes / SLOWEST_UPLOAD_BYTES_PER_SECOND) * 1_000;
+}
 
 async function sha256Of(bytes: ArrayBuffer): Promise<string> {
   const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
@@ -31,7 +38,8 @@ export async function capturePhoto(owner: PhotoOwner, target: PhotoTarget, file:
   // Serialise the canvas work across windows to bound image memory on a phone.
   const photo = await navigator.locks.request(CAPTURE_LOCK, async () => {
     const resized = await preparePhoto(file).catch(() => null);
-    // If the canvas cannot make the copy, keep the supplied bytes. The route still checks type and size.
+    // The camera's bytes can carry its location, so they are never sent as the shareable photo on their own:
+    // without a resized copy the capture stays stopped on the phone until the technician sends originals.
     const copy = resized ?? file;
     const data = await copy.arrayBuffer();
     const photoSha256 = await sha256Of(data);
@@ -44,9 +52,10 @@ export async function capturePhoto(owner: PhotoOwner, target: PhotoTarget, file:
       sha256: photoSha256,
       contentType: copy.type,
       kind: 'photo',
-      stage: 'queued',
+      stage: resized ? 'queued' : 'blocked',
+      ...(resized ? {} : { reason: UNPREPARED_REASON }),
       capturedAt,
-      requested: true,
+      requested: resized !== null,
       attempts: 0,
       retryAt: 0,
     };
@@ -78,7 +87,7 @@ export async function photoStorageNearlyFull(): Promise<boolean> {
 type UploadResult =
   | { kind: 'receipt'; photoId: string; sha256: string }
   | { kind: 'failure'; status: number; reason: string; retryAfter?: string | null };
-type ReferenceResult = { kind: 'acknowledged' } | { kind: 'blocked'; reason: string } | { kind: 'retry' };
+type ReferenceResult = { kind: 'acknowledged' } | { kind: 'blocked'; reason: string } | { kind: 'sign-in' } | { kind: 'retry' };
 
 type PhotoTransport = {
   canSend(): boolean;
@@ -87,6 +96,8 @@ type PhotoTransport = {
   // same id, and the acknowledgement must come from the server.
   reference(entry: PhotoQueueEntry, written: () => Promise<void>, signal: AbortSignal): Promise<ReferenceResult>;
   changed?(photoId: string, sending: boolean): void;
+  // The server refused the sign-in. The queue stops sending and keeps every entry for the next sign-in.
+  signInRequired?(): void;
   storageError?(error: unknown): void;
 };
 
@@ -97,6 +108,23 @@ function retryTime(entry: PhotoQueueEntry, retryAfter?: string | null): number {
   if (!retryAfter) return jittered;
   const requested = /^\d+$/.test(retryAfter) ? now + Number(retryAfter) * 1_000 : Date.parse(retryAfter);
   return Number.isFinite(requested) ? Math.max(jittered, requested) : jittered;
+}
+
+// Safari added AbortSignal.any in 17.4. Earlier field browsers still need both aborts.
+function attemptSignal(parent: AbortSignal, ms: number): { signal: AbortSignal; release(): void } {
+  const deadline = AbortSignal.timeout(ms);
+  if (typeof AbortSignal.any === 'function') return { signal: AbortSignal.any([parent, deadline]), release() {} };
+  const fallback = new AbortController();
+  const cancel = () => fallback.abort(parent.aborted ? parent.reason : deadline.reason);
+  parent.addEventListener('abort', cancel, { once: true });
+  deadline.addEventListener('abort', cancel, { once: true });
+  return {
+    signal: fallback.signal,
+    release() {
+      parent.removeEventListener('abort', cancel);
+      deadline.removeEventListener('abort', cancel);
+    },
+  };
 }
 
 function readyEntries(entries: PhotoQueueEntry[], now: number): PhotoQueueEntry[] {
@@ -114,22 +142,21 @@ export function startPhotoQueue(owner: PhotoOwner, transport: PhotoTransport) {
   const lifetime = new AbortController();
   const { signal } = lifetime;
   let draining = false;
-  const canRun = () => !signal.aborted && document.visibilityState === 'visible' && transport.canSend();
+  let signedOut = false;
+  const canRun = () => !signal.aborted && !signedOut && document.visibilityState === 'visible' && transport.canSend();
+  const lock = () => {
+    if (signedOut) return;
+    signedOut = true;
+    transport.signInRequired?.();
+  };
 
+  // Foreground and connection decide when to start an operation. The outcome of one already sent is
+  // recorded until the queue is stopped, whatever the page is doing now.
   async function send(entry: PhotoQueueEntry): Promise<void> {
     let current = entry;
     const retry = (retryAfter?: string | null) =>
       changePhoto(current, { attempts: current.attempts + 1, retryAt: retryTime(current, retryAfter) });
     const block = (reason: string) => changePhoto(current, { stage: 'blocked', reason });
-    const deadline = AbortSignal.timeout(ATTEMPT_DEADLINE_MS);
-    // Safari added AbortSignal.any in 17.4. Earlier field browsers still need both aborts.
-    const fallback = typeof AbortSignal.any === 'function' ? undefined : new AbortController();
-    const cancel = () => fallback?.abort(signal.aborted ? signal.reason : deadline.reason);
-    if (fallback) {
-      signal.addEventListener('abort', cancel, { once: true });
-      deadline.addEventListener('abort', cancel, { once: true });
-    }
-    const attempt = fallback?.signal ?? AbortSignal.any([signal, deadline]);
     transport.changed?.(entry.photoId, true);
     try {
       if (current.stage === 'queued') {
@@ -140,15 +167,19 @@ export function startPhotoQueue(owner: PhotoOwner, transport: PhotoTransport) {
           return;
         }
         let result: UploadResult;
+        const limit = attemptSignal(signal, uploadDeadlineMs(data.byteLength));
         try {
-          result = await transport.upload(current, new Blob([data], { type: current.contentType }), attempt);
+          result = await transport.upload(current, new Blob([data], { type: current.contentType }), limit.signal);
         } catch {
           if (!signal.aborted) await retry();
           return;
+        } finally {
+          limit.release();
         }
-        if (!canRun()) return;
+        if (signal.aborted) return;
         if (result.kind === 'failure') {
-          if (result.status === 0 || result.status === 429 || result.status === 401 || result.status >= 500) await retry(result.retryAfter);
+          if (result.status === 401) lock();
+          else if (result.status === 0 || result.status === 429 || result.status >= 500) await retry(result.retryAfter);
           else await block(result.reason);
           return;
         }
@@ -166,8 +197,9 @@ export function startPhotoQueue(owner: PhotoOwner, transport: PhotoTransport) {
       }
 
       if (!canRun()) return;
+      const limit = attemptSignal(signal, REFERENCE_DEADLINE_MS);
       const written = async () => {
-        attempt.throwIfAborted();
+        limit.signal.throwIfAborted();
         if (current.stage === 'referenced') return;
         const saved = await changePhoto(current, { stage: 'referenced' });
         if (!saved) throw new Error('The photo queue entry changed.');
@@ -175,20 +207,19 @@ export function startPhotoQueue(owner: PhotoOwner, transport: PhotoTransport) {
       };
       let result: ReferenceResult;
       try {
-        result = await transport.reference(current, written, attempt);
+        result = await transport.reference(current, written, limit.signal);
       } catch {
         if (!signal.aborted) await retry();
         return;
+      } finally {
+        limit.release();
       }
-      if (!canRun()) return;
+      if (signal.aborted) return;
       if (result.kind === 'acknowledged' && current.stage === 'referenced') await changePhoto(current, { stage: 'done' });
       else if (result.kind === 'blocked') await block(result.reason);
+      else if (result.kind === 'sign-in') lock();
       else await retry();
     } finally {
-      if (fallback) {
-        signal.removeEventListener('abort', cancel);
-        deadline.removeEventListener('abort', cancel);
-      }
       transport.changed?.(entry.photoId, false);
     }
   }
@@ -231,9 +262,9 @@ export function startPhotoQueue(owner: PhotoOwner, transport: PhotoTransport) {
 
   return {
     drain,
-    async sendOriginals() {
+    async sendOriginals(jobId: string) {
       if (signal.aborted) return;
-      await requestOriginals(person);
+      await requestOriginals(person, jobId);
       await drain();
     },
     stop() {

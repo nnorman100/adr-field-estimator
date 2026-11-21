@@ -130,14 +130,19 @@ export function changePhoto(
   });
 }
 
-export function requestOriginals(owner: PhotoOwner): Promise<void> {
+// The tap on one job's Photos screen releases that job's full-size photos, and the captures of that
+// job that could not be resized, which wait stopped for it.
+export function requestOriginals(owner: PhotoOwner, jobId: string): Promise<void> {
   return run(ENTRIES, 'readwrite', (transaction) => {
     const request = transaction.objectStore(ENTRIES).index(OWNER).openCursor(ownerRange(owner));
     request.onsuccess = () => {
       const cursor = request.result;
       if (!cursor) return;
       const entry = cursor.value as PhotoQueueEntry;
-      if (entry.kind === 'original' && entry.stage === 'queued' && !entry.requested) cursor.update({ ...entry, requested: true });
+      if (entry.jobId === jobId && !entry.requested) {
+        if (entry.kind === 'original' && entry.stage === 'queued') cursor.update({ ...entry, requested: true });
+        else if (entry.kind === 'photo' && entry.stage === 'blocked') cursor.update({ ...entry, requested: true, stage: 'queued', reason: undefined, retryAt: 0 });
+      }
       cursor.continue();
     };
     return () => undefined;
