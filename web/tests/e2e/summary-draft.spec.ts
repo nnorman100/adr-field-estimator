@@ -184,3 +184,34 @@ test('a lost answer is asked again with the same call id, and the switch off sho
   await expect(page.getByLabel('Summary of findings', { exact: true })).toBeEditable();
   await expect(page.getByRole('button', { name: 'Draft with AI' })).toHaveCount(0);
 });
+
+test('turning the switch off closes an open AI draft, and nothing of it can be accepted', async ({ page }) => {
+  const company = await seedCompany('summary-ai-off', { owner: 'owner', estimator: 'estimator' });
+  await flagOn(company);
+  await signIn(page, company, company.people.estimator!);
+  const ids = await startJob(page, company, '24 Example Street, Testville, CA 90000');
+
+  await proposeOnce(page, ids, []);
+  await page.getByRole('button', { name: 'Draft with AI' }).click();
+  const review = page.getByRole('region', { name: 'AI draft, check it' });
+  await expect(review).toBeVisible();
+  await review.getByLabel('Photograph the toe kick.').check();
+  await expect(review.getByRole('button', { name: 'Accept' })).toBeEnabled();
+
+  await adminSql()`UPDATE company_feature_flags SET enabled = false WHERE company_id = ${company.id} AND flag = 'ai_summary'`;
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  const reread = page.waitForResponse((answer) => new URL(answer.url()).pathname === '/api/me' && answer.ok());
+  await page.evaluate(() => {
+    Reflect.deleteProperty(document, 'visibilityState');
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  expect((await (await reread).json()).features?.ai_summary).not.toBe(true);
+
+  await expect(review).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Accept' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Draft with AI' })).toHaveCount(0);
+  expect(await storedField(company, ids.draftId)).toEqual({});
+});

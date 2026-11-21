@@ -57,6 +57,12 @@ export function SummarySection({ job, draft }: { job: JobContext; draft: FieldDr
 
   const readOnly = !job.editable;
   const { markUnsaved } = job;
+  // The AI draft is this person's only while the company's switch is on and they hold `audit`. A
+  // live /api/me answer that turns the switch off (online, so not a gap in the signal) closes an open
+  // proposal, and Accept writes nothing of it.
+  const aiAllowed = job.session.capabilities.includes('audit') && (job.session.aiSummary || !job.session.online);
+  const canAsk = job.session.aiSummary && job.session.capabilities.includes('audit') && !readOnly;
+  if (review !== null && !aiAllowed) setReview(null);
   const unsaved = (edit !== null && summaryChanges(edit, stored).changes.summary !== undefined) || review !== null;
   useLayoutEffect(() => {
     markUnsaved('summary', unsaved ? () => {
@@ -66,7 +72,6 @@ export function SummarySection({ job, draft }: { job: JobContext; draft: FieldDr
     return () => markUnsaved('summary', null);
   }, [markUnsaved, unsaved]);
 
-  const canAsk = job.session.aiSummary && job.session.capabilities.includes('audit') && !readOnly;
   const waiting = waitUntil !== null && waitUntil > now;
 
   async function saveSummary() {
@@ -130,7 +135,7 @@ export function SummarySection({ job, draft }: { job: JobContext; draft: FieldDr
   }
 
   async function accept() {
-    if (!review || job.stale || rereading) return;
+    if (!review || !aiAllowed || job.stale || rereading) return;
     const { changes, errors } = acceptChanges(review.summary, review.answer.proposal, review.ticked, stored.aiNotes ?? {});
     const found = errors.summary ?? errors.notes ?? null;
     setFormError(found);
