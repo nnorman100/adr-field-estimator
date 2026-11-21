@@ -214,9 +214,9 @@ function ReviewBody({ user, reviewer, links, canReprice, revision: firstRevision
     reloading.current = reload;
   });
 
-  // The job is read again to confirm its access: on a card's refusal and on every foreground resume,
-  // including a page restored from the back-forward cache. Only the newest answer counts, and a
-  // refusal stays until the review is read again.
+  // A signed review reads the job again on every foreground resume, including a page restored from
+  // the back-forward cache, and when a card's refusal is ambiguous. Only the newest answer counts,
+  // and a refusal stays until the review is read again.
   const checkJob = useCallback(async () => {
     if (document.visibilityState !== 'visible' || !navigator.onLine) return;
     const mine = ++checks.current;
@@ -225,7 +225,13 @@ function ReviewBody({ user, reviewer, links, canReprice, revision: firstRevision
     if (answer.status === 401) reloading.current();
     else if (answer.status === 403 || answer.status === 404 || answer.status === 410) setLost(true);
   }, [user, job.id]);
+  const signed = agreement !== null;
+  const deny = useCallback(() => {
+    checks.current += 1;
+    setLost(true);
+  }, []);
   useEffect(() => {
+    if (!signed) return;
     const shown = () => void checkJob();
     const restored = (event: PageTransitionEvent) => {
       if (event.persisted) void checkJob();
@@ -239,7 +245,7 @@ function ReviewBody({ user, reviewer, links, canReprice, revision: firstRevision
       window.removeEventListener('pageshow', restored);
       window.removeEventListener('online', shown);
     };
-  }, [checkJob]);
+  }, [checkJob, signed]);
 
   // Pricing is safe to send again: the same record and pin always answer the same estimate.
   async function price() {
@@ -261,14 +267,6 @@ function ReviewBody({ user, reviewer, links, canReprice, revision: firstRevision
     </Button>
   );
 
-  if (lost && !agreement) {
-    return (
-      <FocusedPanel title="This job could not be found">
-        <p>It may belong to someone else, or it was archived.</p>
-      </FocusedPanel>
-    );
-  }
-
   if (agreement) {
     return (
       <FocusedPanel title={lost ? 'This job could not be found' : 'Signed'}>
@@ -277,7 +275,7 @@ function ReviewBody({ user, reviewer, links, canReprice, revision: firstRevision
           <ReviewDrying
             key={JSON.stringify([drying.access.companyId, drying.access.actorId, drying.signIn.key, job.id])}
             auth={drying.auth} signIn={drying.signIn} initial={drying.access} user={user} jobId={job.id} agreementId={agreement.id}
-            blocked={lost} onRefused={() => void checkJob()} onIdentity={reload}
+            blocked={lost} onRefused={(status, ambiguous) => (status === 401 ? reload() : ambiguous ? void checkJob() : deny())} onIdentity={reload}
           />
         ) : null}
         {lost ? null : <DocumentLinks user={user} jobId={job.id} canSend={links.canSend} canRevoke={links.canRevoke} issued={issued.tokens} listed={issued.listed} />}

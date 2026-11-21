@@ -51,8 +51,8 @@ export function ReviewDrying({
   initial: DryingAccess;
   // The signed job is refused or its access was lost: fetched data is hidden, the unsent form stays.
   blocked: boolean;
-  // A card was refused: the review reads the job again to confirm.
-  onRefused: (status: number) => void;
+  // A card was refused: a definite denial is applied at once, an ambiguous one is checked.
+  onRefused: (status: number, ambiguous: boolean) => void;
   // The signed-in person changed or was refused: the review starts over.
   onIdentity: () => void;
 }) {
@@ -64,7 +64,10 @@ export function ReviewDrying({
   useLayoutEffect(() => {
     latest.current = { onRefused, onIdentity };
   });
-  const refused = useCallback((status: number) => latest.current.onRefused(status), []);
+  const refused = useCallback(
+    (status: number, ambiguous: boolean) => latest.current.onRefused(status, ambiguous),
+    [],
+  );
   const identity = useCallback(() => latest.current.onIdentity(), []);
 
   // Review has no field sync gate. Recheck its live feature flag and identity on foreground resume.
@@ -82,10 +85,12 @@ export function ReviewDrying({
       const answer = await dryingRequest(user, '/api/me', current.signal);
       if (current.signal.aborted || !isCurrent()) return;
       if (answer.status === 200) {
-        const latest = dryingAccess(answer.body);
-        if (latest?.actorId === initial.actorId && latest.companyId === initial.companyId)
-          setAccess(latest);
-        else identity();
+        if (meFacts(answer.body) && meActor(answer.body).actorId) {
+          const latest = dryingAccess(answer.body);
+          if (latest?.actorId === initial.actorId && latest.companyId === initial.companyId)
+            setAccess(latest);
+          else identity();
+        }
       } else if (accessRefused(answer.status)) {
         identity();
       }

@@ -28,10 +28,14 @@ export function DryingCards({
   });
   const checking = useRef(false);
   const refuse = useCallback((status: number, ambiguous = false) => {
-    if (!ambiguous) setRefused(true);
+    if (!ambiguous) {
+      setRefused(true);
+      void parent.current(status, false);
+      return;
+    }
     if (checking.current) return;
     checking.current = true;
-    void Promise.resolve(parent.current(status, ambiguous)).finally(() => {
+    void Promise.resolve(parent.current(status, true)).finally(() => {
       checking.current = false;
     });
   }, []);

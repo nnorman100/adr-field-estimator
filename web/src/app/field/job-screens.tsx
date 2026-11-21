@@ -589,7 +589,13 @@ export function JobScreens({
           markUnsaved, startSave, changed: recheck,
         }}
         watchEnabled={dryingJob.status === 'signed' && session.dryingWatch}
-        onRefused={(status, ambiguous) => (ambiguous ? reloadJob().then(() => undefined) : checkAccess({ status, message: answerMessage(status, null) }))}
+        onRefused={(status, ambiguous) =>
+          ambiguous
+            ? reloadJob().then(() => undefined)
+            : status === 404
+              ? refuse({ status, message: answerMessage(status, null) })
+              : checkAccess({ status, message: answerMessage(status, null) })
+        }
       />
     ) : null;
   // An archived job (an old link, or archived here) shows that it is archived: every job route answers
@@ -643,7 +649,7 @@ export function JobScreens({
     jobId,
     setDetail,
     reloadJob,
-    draft,
+    draft: lost ? null : draft,
     // Until a newer locator's draft finishes loading, the old form remains bound to its own
     // document and read-only. Typed values from it must never be written onto a different draft.
     draftRef: { companyId: session.companyId, draftId: draftAt ?? currentDraftId },
@@ -760,8 +766,8 @@ export function JobScreens({
       {/* The views of one job stay mounted and only the open one shows, so moving between them
           keeps what the person has typed and not saved. */}
       {drying}
-      <div hidden={view !== 'scope'}>{draft ? <ScopeView key={draftAt} job={context} draft={draft} open={view === 'scope'} readinessFix={fix ? readinessFix : null} /> : null}</div>
-      <div hidden={view !== 'photos'}>{draft ? <PhotosView key={draftAt} job={context} draft={draft} open={view === 'photos'} readinessFix={fix ? readinessFix : null} /> : null}</div>
+      <div hidden={view !== 'scope'}>{draft && !lost ? <ScopeView key={draftAt} job={context} draft={draft} open={view === 'scope'} readinessFix={fix ? readinessFix : null} /> : null}</div>
+      <div hidden={view !== 'photos'}>{draft && !lost ? <PhotosView key={draftAt} job={context} draft={draft} open={view === 'photos'} readinessFix={fix ? readinessFix : null} /> : null}</div>
       <div hidden={view !== 'customer'}>
         {shown ? (
           <CustomerView job={{ ...context, detail: shown }} />

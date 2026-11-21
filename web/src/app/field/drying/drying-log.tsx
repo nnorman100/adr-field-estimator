@@ -219,7 +219,7 @@ export function DryingLog({
     rooms.setResult({ kind: 'refused', status });
   }
 
-  async function save(pending: PendingAdd) {
+  async function save(pending: PendingAdd, replay = false) {
     if (!canChange || inFlight.current || !session.online || !visible || !session.isCurrent()) return;
     setFormNotice(null);
     setFormError(null);
@@ -254,7 +254,8 @@ export function DryingLog({
       );
       return;
     }
-    setPendingAdd(null);
+    if (!(replay && (accessRefused(answer.status) || code === 'draft_unavailable')))
+      setPendingAdd(null);
     if (accessRefused(answer.status)) refuse(answer.status);
     setFormError(
       refusals('save')[code] ??
@@ -267,6 +268,7 @@ export function DryingLog({
   async function voidReading(pending: PendingVoid) {
     if (!canChange || inFlight.current || !session.online || !visible || !session.isCurrent()) return;
     const readingId = pending.entry.id;
+    const replay = readingId in retryVoids;
     setVoidError(null);
     setVoidNotice(null);
     setRetryVoids((current) => ({ ...current, [readingId]: pending }));
@@ -303,8 +305,8 @@ export function DryingLog({
       );
       return;
     }
-    resolved();
     const code = dryingErrorCode(answer.body) ?? '';
+    if (!(replay && accessRefused(answer.status) && code !== 'reading_not_found')) resolved();
     if (accessRefused(answer.status) && code !== 'reading_not_found') refuse(answer.status);
     else {
       log.refresh();
@@ -414,7 +416,7 @@ export function DryingLog({
                 setFormNotice(null);
               }}
               submit={(reading, accepted) => void save({ reading, accepted })}
-              saveAgain={() => pendingAdd && void save(pendingAdd)}
+              saveAgain={() => pendingAdd && void save(pendingAdd, true)}
             />
         ) : null}
         {voiding && !refusal ? (

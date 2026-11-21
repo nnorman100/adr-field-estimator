@@ -220,7 +220,7 @@ export function DryingWatch({
     if (
       prompt &&
       (session.refused ||
-        result.kind === 'refused' ||
+        (!retry && result.kind === 'refused') ||
         (!retry && watch && watch.agreementId !== prompt.watch.agreementId))
     )
       dialog.current?.close();
@@ -237,6 +237,7 @@ export function DryingWatch({
     )
       return;
     if (!reason.trim()) return setError('Enter a reason.');
+    const replay = retry !== null;
     const payload: ActionRequest = retry ?? {
       id: crypto.randomUUID(),
       action: prompt.action.action,
@@ -284,10 +285,11 @@ export function DryingWatch({
       );
       return;
     }
-    settle(settled);
+    const refusedAccess = [401, 403, 404, 410].includes(answer.status);
+    if (!(replay && refusedAccess)) settle(settled);
     dialog.current?.close();
     const code = dryingErrorCode(answer.body);
-    if ([401, 403, 404, 410].includes(answer.status)) {
+    if (refusedAccess) {
       session.onRefused(answer.status, answer.status === 404);
       setResult({ kind: 'refused', status: answer.status });
       setError('Can’t save. Monitoring access changed.');
