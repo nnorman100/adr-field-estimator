@@ -2,11 +2,21 @@ import { doc, getDocFromServer } from 'firebase/firestore';
 import { fieldUser, settle, type FieldClient } from '@/lib/field-db';
 import { sendQueuedPhoto } from './api';
 import { canonicalJson } from './canonical';
-import { journaledEdit, readEntries } from './journal-sync';
-import { acknowledgeQueuedPhoto, readPhotoQueue, startPhotoQueue, whilePhotoQueueIdle, type PhotoOwner, type PhotoQueueEntry } from './photo-queue';
+import type { RejectReason } from './journal';
+import { journaledEdit, readEntries, refusalNow } from './journal-sync';
+import {
+  acknowledgeQueuedPhoto,
+  readPhotoQueue,
+  resumeQueuedPhoto,
+  startPhotoQueue,
+  whilePhotoQueueIdle,
+  type PhotoOwner,
+  type PhotoQueueEntry,
+} from './photo-queue';
 import { discardQueuedPhotos, hasPhotoBytes } from './photo-queue-storage';
 import { pending } from './pending';
-import { fieldRefusal, photoRefWrites } from './store';
+import { draftPath, fieldRefusal, photoRefWrites } from './store';
+import type { GateState } from './sync-gate';
 import { queuedPhotoDone, readUnsent } from './unsent';
 
 // Firestore owns the write once it has been handed off. A cancelled upload drainer stops waiting,
@@ -28,7 +38,26 @@ export async function hasWaitingPhotos(owner: PhotoOwner, jobId: string, draftId
   );
 }
 
-type Result = { kind: 'acknowledged' } | { kind: 'retry' } | { kind: 'sign-in' } | { kind: 'blocked'; reason: string };
+// The company photos may be sent to: the one the open gate names, and only for a person whose role takes photos.
+export function photoCompanyOf(state: GateState): string | null {
+  return state.kind === 'open' && state.facts.capabilities.includes('photos') ? state.facts.companyId : null;
+}
+
+// Why the server refused a photo's job, in the words the Photos screen shows.
+const REFUSAL_TEXT: Record<RejectReason, string> = {
+  locked: 'This job was finished.',
+  archived: 'This job was archived.',
+  'owner-changed': 'Another person owns this job’s field work now.',
+  'role-changed': 'Your role no longer changes field work.',
+  'no-access': 'This job is not in your list.',
+};
+
+// The photos the server refused for a reason of their job, which only the recovery sheet can settle.
+export async function readRefusedPhotos(owner: PhotoOwner): Promise<PhotoQueueEntry[]> {
+  return (await readPhotoQueue(owner)).filter((entry) => entry.kind === 'photo' && entry.stage === 'blocked' && entry.refusal);
+}
+
+type Result = { kind: 'acknowledged' } | { kind: 'retry' } | { kind: 'sign-in' } | { kind: 'blocked'; reason: string; refusal?: NonNullable<PhotoQueueEntry['refusal']> };
 
 async function saveReference(
   client: FieldClient,
@@ -39,8 +68,10 @@ async function saveReference(
   canWrite: () => boolean,
 ): Promise<Result> {
   const ref = { companyId, draftId: entry.draftId };
+  const activeDraft = draftPath(ref);
   const writes = photoRefWrites(ref, entry.photoId, entry.field);
   const path = writes[0]!.path;
+  let journaled = false;
   try {
     // The response may have been lost after the SDK committed the reference or after the journal
     // pruned its entry. Only a server read can settle that case.
@@ -55,13 +86,16 @@ async function saveReference(
     }
     const existing = (await whileAvailable(readEntries(client), signal)).find((record) => record.writes.some((write) => write.path === path));
     if (existing) {
-      return existing.state === 'pending'
-        ? { kind: 'retry' }
-        : { kind: 'blocked', reason: 'The photo is stored. Its room and tag could not be saved.' };
+      if (existing.state === 'pending') return { kind: 'retry' };
+      return {
+        kind: 'blocked',
+        reason: existing.reason ? REFUSAL_TEXT[existing.reason] : 'The photo is stored. Its room and tag could not be saved.',
+      };
     }
     signal.throwIfAborted();
     if (!canWrite()) return { kind: 'retry' };
     const edit = await whileAvailable(journaledEdit(client, ref, writes, entry.jobId, new Map([[path, null]])), signal);
+    journaled = true;
     // The journal keeps following the server promise even when the phone goes offline.
     void edit.acknowledged.catch(() => undefined);
     await written();
@@ -71,8 +105,11 @@ async function saveReference(
     if (signal.aborted) return { kind: 'retry' };
     const refusal = fieldRefusal(error);
     if (refusal?.status === 401) return { kind: 'sign-in' };
-    if (refusal) return { kind: 'blocked', reason: refusal.message };
-    return { kind: 'retry' };
+    if (!refusal) return { kind: 'retry' };
+    const reason = await whileAvailable(refusalNow(client, activeDraft, entry.jobId), signal).catch(() => 'no-answer' as const);
+    if (reason === null || reason === 'no-answer') return { kind: 'retry' };
+    // A journal entry made for this reference carries the refusal in the sheet already.
+    return { kind: 'blocked', reason: REFUSAL_TEXT[reason], ...(journaled ? {} : { refusal: { reason, draftPath: activeDraft } }) };
   }
 }
 
@@ -82,10 +119,16 @@ export function mountFieldPhotos(client: FieldClient, company: () => string | nu
     async upload(entry, bytes, signal) {
       const user = fieldUser(client.person);
       if (!user || user.uid !== entry.uid) return { kind: 'failure', status: 401, reason: 'Sign in again to continue.' };
+      const companyId = company();
+      if (!companyId) return { kind: 'failure', status: 0, reason: 'Waiting to send.' };
       const answer = await whileAvailable(sendQueuedPhoto(user, entry, bytes, signal), signal);
-      return answer.ok ? { kind: 'receipt', ...answer.value } : {
-        kind: 'failure', status: answer.status, reason: answer.message, code: answer.code, retryAfter: answer.retryAfter,
-      };
+      if (answer.ok) return { kind: 'receipt', ...answer.value };
+      const failure = { kind: 'failure' as const, status: answer.status, reason: answer.message, code: answer.code, retryAfter: answer.retryAfter };
+      if (entry.kind !== 'photo' || answer.status !== 410) return failure;
+      const path = draftPath({ companyId, draftId: entry.draftId });
+      const found = await whileAvailable(refusalNow(client, path, entry.jobId), signal).catch(() => 'no-answer' as const);
+      const reason = found === null || found === 'no-answer' ? 'archived' : found;
+      return { ...failure, reason: REFUSAL_TEXT[reason], refusal: { reason, draftPath: path } };
     },
     async reference(entry, written, signal) {
       const companyId = company();
@@ -99,6 +142,18 @@ export function mountFieldPhotos(client: FieldClient, company: () => string | nu
     },
     signInRequired,
   });
+}
+
+// Try again for photos the server refused for their job: once the job takes edits again they
+// go back to the step they stopped at.
+export async function retryRefusedPhotos(client: FieldClient, photos: readonly PhotoQueueEntry[]): Promise<'queued' | 'refused' | 'no-answer'> {
+  const first = photos[0];
+  if (!first?.refusal) return 'no-answer';
+  const reason = await refusalNow(client, first.refusal.draftPath, first.jobId);
+  if (reason === 'no-answer') return 'no-answer';
+  if (reason) return 'refused';
+  for (const photo of photos) await resumeQueuedPhoto(photo);
+  return 'queued';
 }
 
 export async function finishRecoveredPhotos(

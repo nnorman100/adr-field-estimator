@@ -51,19 +51,26 @@ const DAY = 24 * 60 * 60 * 1000;
 
 // What GET /api/me answers from now on, for every window of the lane: signed in with the access
 // record running out at `expiresAt` (null: no record), or a refusal code.
-export function serveMe(lane: NetworkLane, answer: { expiresAt: Date | null } | { status: number; error: string }): void {
-  lane.serve('/api/me', meAnswer(answer));
+export function serveMe(
+  lane: NetworkLane,
+  answer: { expiresAt: Date | null } | { status: number; error: string },
+  access: { capabilities?: string[]; companyId?: string } = {},
+): void {
+  lane.serve('/api/me', meAnswer(answer, access));
 }
 
-function meAnswer(answer: { expiresAt: Date | null } | { status: number; error: string }) {
+function meAnswer(
+  answer: { expiresAt: Date | null } | { status: number; error: string },
+  { capabilities = ['scope'], companyId = 'company-field' }: { capabilities?: string[]; companyId?: string } = {},
+) {
   const body =
     'error' in answer
       ? { error: answer.error }
       : {
-          company: { id: 'company-field', name: 'Field Test' },
+          company: { id: companyId, name: 'Field Test' },
           actor: { id: 'actor-field', displayName: null },
           role: 'estimator',
-          capabilities: ['scope'],
+          capabilities,
           fieldAccessExpiresAt: answer.expiresAt ? answer.expiresAt.toISOString() : null,
         };
   return { type: 'application/json', status: 'error' in answer ? answer.status : 200, body: JSON.stringify(body) };

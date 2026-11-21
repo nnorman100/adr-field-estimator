@@ -125,10 +125,11 @@ export async function photoStorageNearlyFull(): Promise<boolean> {
   }
 }
 
+type Refusal = NonNullable<PhotoQueueEntry['refusal']>;
 type UploadResult =
   | { kind: 'receipt'; photoId: string; sha256: string }
-  | { kind: 'failure'; status: number; reason: string; code?: string; retryAfter?: string | null };
-type ReferenceResult = { kind: 'acknowledged' } | { kind: 'blocked'; reason: string } | { kind: 'sign-in' } | { kind: 'retry' };
+  | { kind: 'failure'; status: number; reason: string; code?: string; retryAfter?: string | null; refusal?: Refusal };
+type ReferenceResult = { kind: 'acknowledged' } | { kind: 'blocked'; reason: string; refusal?: Refusal } | { kind: 'sign-in' } | { kind: 'retry' };
 
 type PhotoTransport = {
   canSend(): boolean;
@@ -201,6 +202,11 @@ export async function whilePhotoQueueIdle<T>(work: () => Promise<T>): Promise<T>
   return await navigator.locks.request(DRAIN_LOCK, options, () => navigator.locks.request(CAPTURE_LOCK, options, work));
 }
 
+// The person's reason to try a refused photo again has cleared: it goes back to the step it stopped at.
+export async function resumeQueuedPhoto(entry: PhotoQueueEntry): Promise<void> {
+  await changePhoto(entry, { stage: entry.receipt ? 'sent' : 'queued', attempts: 0, retryAt: 0 }, ['reason', 'refusal']);
+}
+
 export async function acknowledgeQueuedPhoto(entry: PhotoQueueEntry): Promise<void> {
   const saved = await changePhoto(entry, { stage: 'done' });
   if (saved && !(await hasPhotoBytes(entry))) queuedPhotoDone(entry.tenantId, entry.uid, entry.photoId);
@@ -227,7 +233,8 @@ export function startPhotoQueue(owner: PhotoOwner, transport: PhotoTransport) {
     let current = entry;
     const retry = (retryAfter?: string | null) =>
       changePhoto(current, { attempts: current.attempts + 1, retryAt: retryTime(current, retryAfter) });
-    const block = (reason: string) => changePhoto(current, { stage: 'blocked', reason });
+    const block = (reason: string, refusal?: Refusal) =>
+      changePhoto(current, { stage: 'blocked', reason, ...(refusal ? { refusal } : {}) }, refusal ? [] : ['refusal']);
     transport.changed?.(entry.photoId, true);
     try {
       if (current.stage === 'queued') {
@@ -251,7 +258,7 @@ export function startPhotoQueue(owner: PhotoOwner, transport: PhotoTransport) {
         if (result.kind === 'failure') {
           if (retriesLater(result.status, result.code)) await retry(result.retryAfter);
           else if (pausesForSignIn(result.status, result.code)) lock();
-          else await block(result.reason);
+          else await block(result.reason, result.refusal);
           return;
         }
         if (result.photoId !== current.photoId || result.sha256 !== current.sha256) {
@@ -292,7 +299,7 @@ export function startPhotoQueue(owner: PhotoOwner, transport: PhotoTransport) {
       }
       if (signal.aborted) return;
       if (result.kind === 'acknowledged' && current.stage === 'referenced') await acknowledgeQueuedPhoto(current);
-      else if (result.kind === 'blocked') await block(result.reason);
+      else if (result.kind === 'blocked') await block(result.reason, result.refusal);
       else if (result.kind === 'sign-in') lock();
       else await retry();
     } finally {

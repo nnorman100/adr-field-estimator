@@ -10,7 +10,7 @@ import { runFieldSync } from '@/lib/field/field-sync';
 import { contentHidden, evaluate, onWorkRemoved, takeRemoved } from '@/lib/field/retention';
 import { askToPersist, keepAnswer, saveKeepAnswer, type KeepAnswer } from '@/lib/field/keep-consent';
 import { offlineCaptureAllowed, type FieldSurface } from '@/lib/field/platform';
-import { mountFieldPhotos } from '@/lib/field/photo-field';
+import { mountFieldPhotos, photoCompanyOf } from '@/lib/field/photo-field';
 import { sessionValid, type GateState, type SyncGate } from '@/lib/field/sync-gate';
 import { readUnsent, unsentWork } from '@/lib/field/unsent';
 import { holdWindow } from '@/lib/field/window-lock';
@@ -219,9 +219,7 @@ export function FieldStore({
           return setPhase({ kind: 'removed' in event ? 'removed' : 'reopen' });
         }
         if ('me' in event) return setKnown(event.me);
-        photoCompany = event.state.kind === 'open' && event.state.facts.capabilities.includes('photos')
-          ? event.state.facts.companyId
-          : null;
+        photoCompany = photoCompanyOf(event.state);
         if (photoCompany) photos?.resume();
         setGate(event.state);
         setNow(Date.now());

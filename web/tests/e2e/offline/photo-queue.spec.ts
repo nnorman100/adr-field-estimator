@@ -133,6 +133,18 @@ test('a kept capture survives reload, and the existing discard erases only that 
   expect(await payloads(page)).toHaveLength(2);
 });
 
+test('discard also erases the person’s completed photo records', async ({ context, photoServer }) => {
+  const page = await open(context, photoServer);
+  await capture(page);
+  await start(page);
+  await page.evaluate(() => window.photoHarness.originals());
+  await expect.poll(async () => (await entries(page)).every(({ stage }) => stage === 'done')).toBe(true);
+  expect(await entries(page)).toHaveLength(2);
+  expect(await page.evaluate((owner) => window.photoHarness.unsent(owner), OWNER)).toBe('none');
+  expect(await page.evaluate((owner) => window.photoHarness.discard(owner), OWNER)).toBe('discarded');
+  expect(await entries(page)).toEqual([]);
+});
+
 test('moving unsent photos to a new draft assigns one fresh id and keeps both payloads on retry', async ({ context, photoServer }) => {
   const page = await open(context, photoServer);
   await capture(page);

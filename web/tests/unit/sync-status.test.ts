@@ -19,7 +19,8 @@ import {
   type RejectReason,
 } from '@/lib/field/journal';
 import { copyWrites, newDraftIds } from '@/lib/field/new-draft';
-import { changedFields, chipText, syncStatus } from '@/lib/field/sync-status';
+import type { PhotoQueueEntry } from '@/lib/field/photo-queue-storage';
+import { changedFields, chipText, draftGroups, syncStatus } from '@/lib/field/sync-status';
 
 // What the field screens' sync chip and "Can't save" sheet offer (S6-4b; docs/plans/S6/S6-4.md),
 // what Save as new draft writes, and what Try again sends.
@@ -291,5 +292,31 @@ describe('an Online only phone’s journal', () => {
     expect(chipText(syncStatus(await readJournal(owner), true))).toBe('Saved');
     expect(told).toBe(3);
     stop();
+  });
+});
+
+describe('photos the server refused for their job', () => {
+  const refused = (reason: RejectReason, draftPath = DRAFT, photoId = 'photo-1'): PhotoQueueEntry => ({
+    tenantId: 't', uid: 'ana', jobId: draftPath === DRAFT ? 'job-1' : 'job-2', draftId: draftPath.split('/').at(-1)!, field: {},
+    photoId, kind: 'photo', sha256: 'a', photoSha256: 'a', contentType: 'image/jpeg', stage: 'blocked', capturedAt: 1, requested: true,
+    attempts: 0, retryAt: 0, refusal: { reason, draftPath },
+  });
+
+  it.each([
+    ['archived', 'job archived', true],
+    ['owner-changed', 'another person owns it', true],
+    ['no-access', 'no access', false],
+    ['locked', 'job finished', false],
+  ] as const)('a photo refused as %s is a recovery problem of its own with no journal entry', (reason, short, saveAsNew) => {
+    const status = syncStatus([], true, [refused(reason)]);
+    expect(chipText(status)).toBe(`Can’t save: ${short}`);
+    expect(status.problems).toMatchObject([{ jobId: 'job-1', saveAsNew, entries: [], photos: [{ photoId: 'photo-1' }] }]);
+  });
+
+  it('joins the journal’s problem for the same job and reason, and keeps other jobs apart', () => {
+    const status = syncStatus([entry('rejected', 'archived')], true, [refused('archived'), refused('archived', OTHER, 'photo-2')]);
+    expect(status.problems).toHaveLength(2);
+    expect(status.problems[0]).toMatchObject({ jobId: 'job-1', entries: [{ reason: 'archived' }], photos: [{ photoId: 'photo-1' }] });
+    expect(draftGroups(status.problems[0]!)).toEqual([{ entries: [expect.anything()], photos: [expect.anything()] }]);
   });
 });

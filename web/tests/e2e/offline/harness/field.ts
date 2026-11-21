@@ -14,11 +14,12 @@ import { readItemList } from '../../../../src/lib/field/ds-prices';
 import { runFieldSync } from '../../../../src/lib/field/field-sync';
 import { openDatabase, transact, withDatabase, type DbSpec } from '../../../../src/lib/field/idb';
 import { appendEntry, forgetJournal, readJournal } from '../../../../src/lib/field/journal';
-import { basesOf, journaledEdit } from '../../../../src/lib/field/journal-sync';
-import { mountFieldPhotos } from '../../../../src/lib/field/photo-field';
+import { basesOf, journaledEdit, readEntries } from '../../../../src/lib/field/journal-sync';
+import { mountFieldPhotos, photoCompanyOf, readRefusedPhotos } from '../../../../src/lib/field/photo-field';
 import { capturePhoto, readPhotoQueue } from '../../../../src/lib/field/photo-queue';
 import { evaluate } from '../../../../src/lib/field/retention';
 import { signOutDiscarding, signOutKeeping, signOutOnRefusal } from '../../../../src/lib/field/sign-out';
+import { syncStatus } from '../../../../src/lib/field/sync-status';
 import type { GateState, SyncGate } from '../../../../src/lib/field/sync-gate';
 import { readUnsent, unsentKey, type LockReason } from '../../../../src/lib/field/unsent';
 
@@ -102,9 +103,16 @@ const f = {
     return capturePhoto(person, { jobId, draftId, field: { shotTag: 'overview' } }, image);
   },
   queuedPhotos: readPhotoQueue,
-  photoDrain(person: Person, companyId: string) {
+  async photoRecovery(person: Person) {
+    return syncStatus(await readEntries(get(person).client), true, await readRefusedPhotos(person));
+  },
+  photoDrain(person: Person) {
     const current = get(person);
-    mountFieldPhotos(current.client, () => current.gate?.current().kind === 'open' ? companyId : null, () => current.gate?.poke());
+    mountFieldPhotos(
+      current.client,
+      () => (current.gate ? photoCompanyOf(current.gate.current()) : null),
+      () => current.gate?.poke(),
+    );
   },
   // Signs in on the company's own app, as the sign-in page does.
   async signIn(person: Omit<Person, 'uid'>, email: string, password: string): Promise<string> {

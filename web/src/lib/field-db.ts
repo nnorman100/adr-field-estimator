@@ -28,7 +28,7 @@ import { companyAuth } from '@/lib/firebase-client';
 import { forgetItemLists } from '@/lib/field/ds-prices';
 import { meKey } from '@/lib/field/ds-me';
 import { discardKept } from '@/lib/field/update-keep';
-import { forgetUnsent, keepPhotosHere, mayHaveUnsent, noteWrite, readUnsent, settled, writesNow } from '@/lib/field/unsent';
+import { forgetUnsent, keepPhotosHere, mayHaveUnsent, noteWrite, settled, writesNow } from '@/lib/field/unsent';
 import { stopPhotoQueue, whilePhotoQueueIdle } from '@/lib/field/photo-queue';
 import { discardQueuedPhotos } from '@/lib/field/photo-queue-storage';
 import { addingEntries, forgetJournal, journalInMemory, readJournal } from '@/lib/field/journal';
@@ -298,12 +298,7 @@ export async function discardFieldWork(
       if (!discarded) return 'failed';
     }
     if (stillWanted && !stillWanted()) return 'kept';
-    const photos = async () => {
-      const mark = readUnsent(person.tenantId, person.uid);
-      return mark === 'unreadable' || mark.queuedPhotos?.length
-        ? discardQueuedPhotos(person, undefined, stillWanted)
-        : stillWanted?.() ?? true;
-    };
+    const photos = () => discardQueuedPhotos(person, undefined, stillWanted);
     const removed = await (navigator.locks ? whilePhotoQueueIdle(photos) : photos()).catch(() => 'failed' as const);
     if (removed === 'failed') return 'failed';
     if (!removed) return 'kept';

@@ -1,4 +1,5 @@
 import { transact, withDatabase, type DbSpec } from './idb';
+import type { RejectReason } from './journal';
 import type { PhotoField } from './schema';
 import { noteQueuedPhoto, queuedPhotoDone } from './unsent';
 
@@ -19,6 +20,9 @@ export type PhotoQueueEntry = PhotoUpload & {
   attempts: number;
   retryAt: number;
   reason?: string;
+  // Why the server refused the job itself, with the draft it was asked about: the Changes not saved
+  // sheet offers this photo's recovery. Absent when a journal entry already carries the refusal.
+  refusal?: { reason: RejectReason; draftPath: string };
   // The server has registered this photo: its receipt matched. An original may send once its photo has one.
   receipt?: true;
   // Present only while the entry has work to do that is allowed now, which is what the OPEN index holds.
@@ -43,6 +47,12 @@ const SPEC: DbSpec = {
   },
 };
 const STORAGE_DEADLINE_MS = 5_000;
+export const QUEUE_CHANGED = 'ds-photo-queue-changed';
+
+function queueChanged<T>(result: T): T {
+  window.dispatchEvent(new Event(QUEUE_CHANGED));
+  return result;
+}
 
 function keyOf(entry: PhotoUpload): string[] {
   return [entry.tenantId, entry.uid, entry.jobId, entry.photoId, entry.kind];
@@ -169,7 +179,7 @@ export function discardQueuedPhotos(
       };
     }
     return () => wanted;
-  });
+  }).then(queueChanged);
 }
 
 // Move unpublished photos with their originals in one commit. A retry after that commit finds
@@ -207,6 +217,7 @@ export async function moveQueuedPhotos(
             requested: entry.kind === 'photo',
           };
           delete next.reason;
+          delete next.refusal;
           delete next.receipt;
           if (entry.kind === 'photo') next.open = 1;
           else delete next.open;
@@ -223,13 +234,15 @@ export async function moveQueuedPhotos(
     return () => [...ids.keys()];
   });
   for (const id of moved) queuedPhotoDone(owner.tenantId, owner.uid, id);
+  queueChanged(undefined);
 }
 
 // Use the current row so a tap on Send originals is not overwritten by an in-flight upload.
 // A row discarded or moved since the read is never recreated.
 export function changePhoto(
   expected: PhotoQueueEntry,
-  patch: Partial<Pick<PhotoQueueEntry, 'stage' | 'retryAt' | 'attempts' | 'reason' | 'receipt'>>,
+  patch: Partial<Pick<PhotoQueueEntry, 'stage' | 'retryAt' | 'attempts' | 'reason' | 'receipt' | 'refusal'>>,
+  clear: readonly ('reason' | 'refusal')[] = [],
 ): Promise<PhotoQueueEntry | undefined> {
   const stores = patch.stage === 'done' ? [ENTRIES, BYTES] : ENTRIES;
   return run(stores, 'readwrite', (transaction) => {
@@ -241,6 +254,7 @@ export function changePhoto(
       const current = request.result as PhotoQueueEntry | undefined;
       if (!current || current.stage !== expected.stage || current.sha256 !== expected.sha256) return;
       saved = { ...current, ...patch };
+      for (const name of clear) delete saved[name];
       const active = saved.stage === 'queued' || saved.stage === 'sent' || saved.stage === 'referenced';
       if (active && (saved.kind === 'photo' || saved.requested)) saved.open = 1;
       else delete saved.open;
@@ -248,7 +262,7 @@ export function changePhoto(
       if (saved.stage === 'done') transaction.objectStore(BYTES).delete(key);
     };
     return () => saved;
-  });
+  }).then((saved) => (saved && (expected.refusal || saved.refusal) ? queueChanged(saved) : saved));
 }
 
 // The tap on one job's Photos screen releases that job's originals.

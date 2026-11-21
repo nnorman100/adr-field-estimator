@@ -5,6 +5,7 @@
 // with no refusal, is "Changed on another device", never "Can't save".
 import { FACT_FIELDS, ROOM_FIELDS } from './forms';
 import { jobOf, type JournalEntry, type RejectReason } from './journal';
+import type { PhotoQueueEntry } from './photo-queue-storage';
 
 export type ProblemReason = 'finished' | Exclude<RejectReason, 'locked'> | 'unknown' | 'changed';
 
@@ -18,6 +19,8 @@ export type Problem = {
   // The job the edits were made on (journal.ts JournalEntry.jobId), when known.
   jobId: string | null;
   entries: JournalEntry[];
+  // The photos the server refused for the same job and reason, whose bytes wait on this phone.
+  photos: PhotoQueueEntry[];
   // Save as new draft: only for a job archived while it was being edited, or field work that moved
   // (owner decision J5), and never after the person's own Finish, also when that job was archived
   // after (that path is Back to editing, J4); only with the job the edits were made on known, which
@@ -40,8 +43,9 @@ function reasonOf(entries: readonly JournalEntry[]): ProblemReason {
   return newest.reason === 'locked' ? 'finished' : newest.reason;
 }
 
-// `canSaveAsNew`: the person may start a job and does field work (jobs_create and scope).
-export function syncStatus(entries: readonly JournalEntry[], canSaveAsNew: boolean): SyncStatus {
+// `canSaveAsNew`: the person may start a job and does field work (jobs_create and scope). `photos`:
+// the queue's photos the server refused for a reason of their job (photo-field.ts readRefusedPhotos).
+export function syncStatus(entries: readonly JournalEntry[], canSaveAsNew: boolean, photos: readonly PhotoQueueEntry[] = []): SyncStatus {
   const refused = new Map<string, JournalEntry[]>();
   const changed = new Map<string, JournalEntry[]>();
   let waiting = 0;
@@ -52,24 +56,38 @@ export function syncStatus(entries: readonly JournalEntry[], canSaveAsNew: boole
       into.set(entry.draftPath, [...(into.get(entry.draftPath) ?? []), entry]);
     }
   }
-  const problem = (key: string, draftPath: string, group: JournalEntry[], reason: ProblemReason): Problem => ({
+  const problem = (key: string, draftPath: string, group: JournalEntry[], reason: ProblemReason, jobId: string | null): Problem => ({
     key,
     draftPath,
     reason,
-    jobId: jobOf(group),
+    jobId,
     entries: group,
-    saveAsNew: canSaveAsNew && jobOf(group) !== null && (reason === 'archived' || reason === 'owner-changed'),
+    photos: [],
+    saveAsNew: canSaveAsNew && jobId !== null && (reason === 'archived' || reason === 'owner-changed'),
     tryAgain: reason !== 'finished' && reason !== 'changed',
   });
   const byJob = new Map<string, Problem>();
-  const add = (path: string, group: JournalEntry[], reason: ProblemReason) => {
-    const key = `${jobOf(group) ?? path}\u0000${reason}`;
+  const add = (path: string, group: JournalEntry[], reason: ProblemReason, jobId = jobOf(group)) => {
+    const key = `${jobId ?? path}\u0000${reason}`;
     const found = byJob.get(key);
-    byJob.set(key, found ? { ...found, entries: [...found.entries, ...group].sort((a, b) => a.seq - b.seq), jobId: found.jobId ?? jobOf(group) } : problem(key, path, group, reason));
+    byJob.set(
+      key,
+      found
+        ? { ...found, entries: [...found.entries, ...group].sort((a, b) => a.seq - b.seq), jobId: found.jobId ?? jobId }
+        : problem(key, path, group, reason, jobId),
+    );
+    return key;
   };
   for (const [path, group] of refused) add(path, group, reasonOf(group));
   for (const [path, group] of changed) add(path, group, 'changed');
-  const kind = refused.size > 0 ? 'cant-save' : changed.size > 0 ? 'changed' : waiting > 0 ? 'on-phone' : 'saved';
+  for (const photo of photos) {
+    if (!photo.refusal) continue;
+    const reason = photo.refusal.reason === 'locked' ? 'finished' : photo.refusal.reason;
+    const key = add(photo.refusal.draftPath, [], reason, photo.jobId);
+    const found = byJob.get(key)!;
+    byJob.set(key, { ...found, photos: [...found.photos, photo] });
+  }
+  const kind = refused.size > 0 || photos.some((photo) => photo.refusal) ? 'cant-save' : changed.size > 0 ? 'changed' : waiting > 0 ? 'on-phone' : 'saved';
   return { kind, waiting, problems: [...byJob.values()] };
 }
 
@@ -79,6 +97,15 @@ export function byDraft(entries: readonly JournalEntry[]): JournalEntry[][] {
   const drafts = new Map<string, JournalEntry[]>();
   for (const entry of entries) drafts.set(entry.draftPath, [...(drafts.get(entry.draftPath) ?? []), entry]);
   return [...drafts.values()];
+}
+
+// A problem's edits and refused photos together, one draft at a time.
+export function draftGroups(problem: { entries: readonly JournalEntry[]; photos: readonly PhotoQueueEntry[] }): { entries: JournalEntry[]; photos: PhotoQueueEntry[] }[] {
+  const groups = new Map<string, { entries: JournalEntry[]; photos: PhotoQueueEntry[] }>();
+  const group = (path: string) => groups.get(path) ?? groups.set(path, { entries: [], photos: [] }).get(path)!;
+  for (const entry of problem.entries) group(entry.draftPath).entries.push(entry);
+  for (const photo of problem.photos) if (photo.refusal) group(photo.refusal.draftPath).photos.push(photo);
+  return [...groups.values()];
 }
 
 export const SAVED = 'Saved';
