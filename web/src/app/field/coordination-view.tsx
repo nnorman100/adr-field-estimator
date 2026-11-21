@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   assignEstimator,
@@ -133,11 +133,15 @@ function Coordination({ job, view, setView, reread }: { job: JobContext & { deta
     pending.setCoordWrite(jobId, attempt);
     setError(null);
     setNotice(null);
+    // A Back to Finish waiting on this write is told when it failed, before the slot is freed.
+    const endSave = job.startSave();
     const answer = await send(user, jobId, attempt.request);
     // No answer, or a 503 (saved, but its field draft step did not get through): kept to send again
     // as it was. Any other answer settles it.
     const unanswered = !answer.ok && (answer.status === 0 || answer.status === 503);
-    if (!pending.settleCoordWrite(jobId, attempt.key, unanswered ? 'unanswered' : 'answered')) return false;
+    const settled = pending.settleCoordWrite(jobId, attempt.key, unanswered ? 'unanswered' : 'answered');
+    endSave(settled && !answer.ok);
+    if (!settled) return false;
     if (answer.ok) {
       // Every path of a retry ends the same way: what was typed for this request is the view's now.
       const sentNotes = attempt.request.kind === 'notes' ? attempt.request.notes : null;
@@ -182,10 +186,10 @@ function Coordination({ job, view, setView, reread }: { job: JobContext & { deta
   const mayMove = caps.includes('field_owner_transfer') && view.status !== 'signed' && view.status !== 'archived' && !archived && (targets.length > 0 || heldMove !== null);
   const notesHeld = held?.request.kind === 'notes';
   const { markUnsaved } = job;
-  const notesUnsaved = notes !== null && notes !== view.notes;
-  useEffect(() => {
-    markUnsaved('notes', notesUnsaved);
-    return () => markUnsaved('notes', false);
+  const notesUnsaved = notes !== null && notes !== (held?.request.kind === 'notes' ? held.request.notes : view.notes);
+  useLayoutEffect(() => {
+    markUnsaved('notes', notesUnsaved ? () => setNotes(null) : null);
+    return () => markUnsaved('notes', null);
   }, [markUnsaved, notesUnsaved]);
 
   return (

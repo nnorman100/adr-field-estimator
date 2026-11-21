@@ -856,11 +856,13 @@ describe('the worker', () => {
       },
     });
     const writes = h.field.stateWrites.length;
+    // The syncs of this call only (New job's own sync in the setup is not one of them).
+    const calls = h.field.calls.length;
     const began = Date.now();
     const synced = await syncJob(db, h.field, h.seed.a, jobId);
     expect(synced).toMatchObject({ result: { outcome: 'synced' }, currentDraftId: draftId });
     expect(Date.now() - began).toBeLessThan(8_000);
-    expect(h.field.calls.filter((call) => call === 'sync').length).toBeGreaterThanOrEqual(2);
+    expect(h.field.calls.slice(calls).filter((call) => call === 'sync').length).toBeGreaterThanOrEqual(2);
     expect(h.field.stateWrites.length).toBe(writes);
   });
 

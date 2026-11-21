@@ -26,13 +26,6 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
   const earlier = typedBefore(drafts, draftId);
   const name = typed.roomName;
   const setName = (text: string) => pending.typeRoomName(jobId, draftId, text);
-  // A name typed and not added counts as unsaved input once the job is archived.
-  const { markUnsaved } = job;
-  const nameTyped = name !== '';
-  useEffect(() => {
-    markUnsaved('new-room', nameTyped);
-    return () => markUnsaved('new-room', false);
-  }, [markUnsaved, nameTyped]);
   // Rooms with changes typed and not saved, and rooms the draft no longer lists that had some when
   // the field work moved to someone else: they stay on screen, read only, as last read (J5).
   const [dirty, setDirty] = useState<Record<string, true>>({});
@@ -81,13 +74,16 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
   const unreadable = "Can't save. The rooms saved on this phone could not be read. Open the job again.";
   async function remove(roomId: string, label: string) {
     if (writing || !window.confirm(`Remove ${label} from this job?`) || !pending.startRoomWrite(jobId, draftId)) return;
+    const prepared = job.startSave();
+    let failed = true;
     const sent = typed.rooms[roomId]?.at ?? 0;
     try {
       const edit = await removeRoomEdit(job.session.db, job.draftRef, roomId).catch(() => null);
       if (!edit) return setError(unreadable);
-      await saveEdit(edit.writes, `${label} removed.`, undefined, () => pending.settleRoomRemoved(jobId, draftId, roomId, sent), edit.base);
+      failed = !(await saveEdit(edit.writes, `${label} removed.`, undefined, () => pending.settleRoomRemoved(jobId, draftId, roomId, sent), edit.base));
     } finally {
       pending.endRoomWrite(jobId, draftId);
+      prepared(failed);
     }
   }
 
@@ -96,15 +92,19 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
     const checked = roomName(name);
     if (!checked) return setError('Give the room a name.');
     if (!pending.startRoomWrite(jobId, draftId)) return;
+    const prepared = job.startSave();
+    let failed = true;
     const roomId = crypto.randomUUID();
     const sent = typed.nameAt;
     try {
       const edit = await addRoomEdit(job.session.db, job.draftRef, roomId, checked).catch(() => null);
       if (!edit) return setError(unreadable);
       if (edit === 'full') return setError(`A job holds at most ${MAX_ROOMS} rooms.`);
-      if (await saveEdit(edit.writes, `${checked} added.`, undefined, undefined, edit.base)) pending.settleRoomName(jobId, draftId, sent);
+      failed = !(await saveEdit(edit.writes, `${checked} added.`, undefined, undefined, edit.base));
+      if (!failed) pending.settleRoomName(jobId, draftId, sent);
     } finally {
       pending.endRoomWrite(jobId, draftId);
+      prepared(failed);
     }
   }
 

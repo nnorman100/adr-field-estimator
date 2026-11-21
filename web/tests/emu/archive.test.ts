@@ -320,6 +320,17 @@ describe('a missing draft of an archived job', () => {
     expect(await store.findDraft(a.id, randomUUID())).toBeNull();
   });
 
+  // Slice 5 review round 3, R1: rooms or photos left under an id with no draft document take the id, so a
+  // request's claim of it is refused before it commits.
+  it('reports rooms or photos left under an id with no draft as leftovers, not as nothing', async () => {
+    const a = await company('lookup-leftover');
+    for (const name of ['rooms', 'photos']) {
+      const draft = randomUUID();
+      await db.doc(`companies/${a.id}/drafts/${draft}/${name}/left-${name}`).set({ field: {} });
+      expect(await store.findDraft(a.id, draft)).toEqual({ jobId: undefined, leftover: true });
+    }
+  });
+
   it('gives way only to a restored placeholder of the same job that holds its revision', async () => {
     const company = randomUUID();
     const job = randomUUID();

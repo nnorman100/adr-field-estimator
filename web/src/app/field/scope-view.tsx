@@ -1,12 +1,13 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useLayoutEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   CHARGE_FIELDS,
   CONFIRMED_FIELD,
   editsAfterSave,
   EQUIPMENT_FIELDS,
+  editedResult,
   factChanges,
   FACT_FIELDS,
   NOTES_FIELD,
@@ -43,10 +44,14 @@ export function ScopeView({ job, draft, open, readinessFix }: { job: JobContext;
   const { checking, answer } = job.readiness;
   const marker = checking && row ? readinessMarker(row, answer, job.session.capabilities) : null;
   const { markUnsaved } = job;
-  const unsaved = Object.keys(edits).length > 0;
-  useEffect(() => {
-    markUnsaved('scope', unsaved);
-    return () => markUnsaved('scope', false);
+  const result = factChanges(values, draft.field);
+  const unsaved = editedResult(result, edits);
+  useLayoutEffect(() => {
+    markUnsaved('scope', unsaved ? () => {
+      setEdits({});
+      setErrors({});
+    } : null);
+    return () => markUnsaved('scope', null);
   }, [markUnsaved, unsaved]);
   const set = (key: string) => (value: string | boolean) => {
     setEdits((current) => ({ ...current, [key]: value }));
@@ -55,7 +60,7 @@ export function ScopeView({ job, draft, open, readinessFix }: { job: JobContext;
 
   async function save() {
     if (job.stale) return;
-    const { changes, errors: found } = factChanges(values, draft.field);
+    const { changes, errors: found } = result;
     setErrors(found);
     setNotice(null);
     if (Object.keys(found).length > 0) return setError('Check the boxes marked below.');

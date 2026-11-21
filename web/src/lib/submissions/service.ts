@@ -1,21 +1,21 @@
 import { randomUUID } from 'node:crypto';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { isQueueTimeout } from '@/db/client';
-import { actors, auditEvents, evidenceObjects, jobs, jobSubmissions } from '@/db/schema';
+import { auditEvents, evidenceObjects, jobs, jobSubmissions } from '@/db/schema';
 import { holdAcrossOutsideCall, withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
-import { confirmationPredatesReprice } from '@/lib/estimates/service';
 import { manifestDigest, type FieldManifest } from '@/lib/field/canonical';
 import { roomFieldSchema } from '@/lib/field/schema';
-import { claimDraft, hasAny, holdDraft, jobAccess, JobError, lockedJob, type JobCaller, type JobRow } from '@/lib/jobs/access';
+import { claimDraft, hasAny, holdDraft, jobAccess, JobError, type JobCaller, type JobRow } from '@/lib/jobs/access';
 import { jobPriceTable, namesPriceIds, priceIdsKnown, PricesUnreadable } from '@/lib/scope-lists/version';
 import { readJobDetails } from './details';
 import { SubmissionError, type SubmissionErrorCode } from './errors';
-import { afterFieldStep, syncJobDrafts } from '@/lib/jobs/sync-job';
+import { noDraft } from '@/lib/jobs/drafts';
+import { afterFieldStep, stillMember, syncJobDrafts } from '@/lib/jobs/sync-job';
 import type { DraftSync } from '@/lib/jobs/draft-sync';
 import type { FenceStore } from './fence';
 import { submitDigest, type NextDraftInput, type SubmitInput } from './schema';
-import { manifestProblem, SNAPSHOT_FORMAT, snapshotBytes, snapshotManifest, storedManifest, type Snapshot } from './snapshot';
+import { manifestProblem, SNAPSHOT_FORMAT, snapshotBytes, storedManifest, type Snapshot } from './snapshot';
 
 // Submit and Back to editing (S5a-8; docs/plans/S5.md, section 4). Field work lives in the Firestore
 // field draft until Submit; Submit closes a fence on the draft, writes one immutable submission
@@ -180,7 +180,7 @@ export async function writeMarker(db: Database, store: SubmitStore, companyId: s
           tx.select({ currentDraftId: jobs.currentDraftId }).from(jobs).where(and(eq(jobs.companyId, companyId), eq(jobs.id, row.jobId))),
         );
         const found = job ? await store.findDraft(companyId, job.currentDraftId) : null;
-        if (job && (!found || found.placeholder)) {
+        if (job && noDraft(found)) {
           console.error('submission marker refused', 'draft_missing');
           return;
         }
@@ -394,7 +394,7 @@ export function submissionsService(db: Database, store: SubmitStore, options: Su
     // A missing draft (or a placeholder left where one was) holds no field work to submit: never made
     // here for a fence.
     const found = await field(() => store.findDraft(caller.companyId, row.draftId));
-    if (!found || found.placeholder) return 'draft_missing';
+    if (noDraft(found)) return 'draft_missing';
     let synced: Awaited<ReturnType<typeof syncJobDrafts>>;
     try {
       synced = await syncJobDrafts(db, store, store, caller.companyId, row.jobId);
@@ -404,7 +404,7 @@ export function submissionsService(db: Database, store: SubmitStore, options: Su
       // photos left under its id are a conflict): draft_missing, as if the lookup had found it gone;
       // otherwise the draft's conflict, or the field database unavailable.
       const again = await field(() => store.findDraft(caller.companyId, row.draftId));
-      if (!again || again.placeholder) return 'draft_missing';
+      if (noDraft(again)) return 'draft_missing';
       throw new SubmissionError(error.code === 'conflict' ? 'conflict' : 'submissions_unavailable');
     }
     const { result } = synced;
@@ -469,8 +469,9 @@ export function submissionsService(db: Database, store: SubmitStore, options: Su
         // claim, so the refused id commits nothing.
         if (input.draftId === input.fromDraftId) throw new SubmissionError('conflict');
         // The job's latest record: a new draft is made only from it.
+        // Its id and draft only: the draft sync reads the record's bytes itself, after the commit.
         const [latest] = await tx
-          .select()
+          .select({ id: jobSubmissions.id, draftId: jobSubmissions.draftId })
           .from(jobSubmissions)
           .where(
             and(
@@ -515,43 +516,37 @@ export function submissionsService(db: Database, store: SubmitStore, options: Su
           await audit(tx, caller.companyId, caller.actorId, 'job_back_to_editing', jobId, { revision: next!.revision });
           changed = true;
         }
-        let ownerUid: string | null = null;
-        if (next!.fieldOwnerActorId) {
-          const [actor] = await tx
-            .select({ uid: actors.uid })
-            .from(actors)
-            .where(and(eq(actors.companyId, caller.companyId), eq(actors.id, next!.fieldOwnerActorId)));
-          ownerUid = actor?.uid ?? null;
-        }
-        // A reprice after the record clears its scope confirmation (pricing plan 3): the next draft starts
-        // with scope unconfirmed, so Finish needs a fresh confirmation for the new prices.
-        const clearScope = await confirmationPredatesReprice(tx, caller.companyId, jobId, source!.draftId);
-        return { job: next!, source: source!, changed, ownerUid, clearScope };
+        return { job: next!, changed };
       });
-      // The next draft version, from the submitted record (never from the old draft, whose phone
-      // copy may differ), with where it came from. A retry makes it if it is missing.
-      await inCompany(caller.companyId, async (tx) => {
-        await lockedJob(tx, caller.companyId, jobId, { live: true });
-        await holdAcrossOutsideCall(tx);
-        const manifest = snapshotManifest(made.source.snapshotBytes!);
-        if (made.clearScope) {
-          manifest.draft = Object.fromEntries(Object.entries((manifest.draft ?? {}) as Record<string, unknown>).filter(([key]) => key !== 'scopeConfirmed'));
-        }
-        const result = await field(() =>
-          store.createFrom(caller.companyId, jobId, input.draftId, made.ownerUid, manifest, {
-            draftId: made.source.draftId,
-            submissionId: made.source.id,
-          }),
-        );
-        // A draft made for another job or from another submission is never this one (security audit F1).
-        if (result === 'taken') throw new SubmissionError('conflict');
-        // Only an archived job's placeholder is there: no draft yet, so the same request again.
-        if (result === 'archived') throw new JobError('draft_unavailable');
-      });
-      await field(() => store.projectJob(caller.companyId, jobId, {
-        currentDraftId: made.job.currentDraftId, revision: made.job.revision,
-      }));
-      return { created: made.changed, job: jobState(made.job) };
+      // The next draft version, as the draft sync makes every draft (the draft life-cycle redesign, slice 5):
+      // from the job's latest committed record (never from the old draft, whose phone copy may differ), with
+      // where it came from, less the scope confirmation when an owner reprice postdates it (pricing plan 3),
+      // naming the field owner Postgres holds when the sync reads it. A retry makes it if it is missing; a
+      // draft another job holds under the id is 409; a placeholder an older version left is replaced. Its
+      // 503 stays Submit's own (submissions_unavailable), as the phone reads it; its answer goes only to a
+      // caller still an active member of an active company (afterFieldStep).
+      await afterFieldStep(db, caller, () =>
+        syncJobDrafts(db, store, store, caller.companyId, jobId, { requireDraft: true }).catch((error: unknown) => {
+          if (error instanceof JobError && error.code === 'draft_unavailable') throw new SubmissionError('submissions_unavailable');
+          throw error;
+        }),
+      );
+      // The job as Postgres holds it after the field step, read with the caller's access again: a change
+      // committed meanwhile (an archive) is the answer, not the row this request wrote. The locator follows
+      // that read.
+      const job = await withCompany(
+        db,
+        caller.companyId,
+        async (tx) => {
+          // The caller still a member of an active company, in the same snapshot as the job read.
+          await stillMember(tx, caller);
+          return jobAccess(tx, caller, jobId, SUBMIT);
+        },
+        { snapshot: true },
+      );
+      // The locator write is a field step too: the caller is checked again after it, written or not.
+      await afterFieldStep(db, caller, () => field(() => store.projectJob(caller.companyId, jobId, { currentDraftId: job.currentDraftId, revision: job.revision })));
+      return { created: made.changed, job: jobState(job) };
     },
   };
 }

@@ -69,6 +69,14 @@ export function printable(text: string): boolean {
   return !/[\p{C}\p{Zl}\p{Zp}]|(?! )\p{Zs}/u.test(text);
 }
 
+const NOT_SPACE = /[^\s\u0085\u00a0\u1680\u180e\u2000-\u200b\u2028\u2029\u202f\u205f\u3000\ufeff]/u;
+const CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u;
+
+/** Text kept exactly as entered: a character that is not whitespace (Unicode spaces included) and no control or line-separator character. */
+export function enteredText(value: string): boolean {
+  return NOT_SPACE.test(value) && !CONTROL.test(value);
+}
+
 export function oneLine(value: string): string {
   return value.split(/\s+/u).filter(Boolean).join(' ');
 }
@@ -129,6 +137,10 @@ export type PriceLine = {
   priceRow?: string | null;
   priceBracket?: { upToSf: number | null; unitPrice: string } | null;
   bracketMode?: string | null;
+  /** The owner-approved custom multiplier already in this line's unit price and total (S5b-8). */
+  multiplier?: Dec;
+  /** A unit or flat addition's wording without its price, for a proposal that hides line prices (S5b-8). */
+  withoutPrice?: string;
 };
 
 /** A line on the itemized claim, money as Decimal strings. */

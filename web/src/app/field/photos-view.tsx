@@ -139,13 +139,20 @@ export function PhotosView({ job, draft, open, readinessFix }: { job: JobContext
     setError(null);
     if (!file || job.moved || heldNow()) return;
     const capturedAt = new Date().toISOString();
-    const bytes = await preparePhoto(file);
-    if (!bytes) return setError('This picture could not be read. Take the photo with the camera.');
-    const item: PendingPhoto = { id: crypto.randomUUID(), bytes, field: fieldOf(roomId, shotTag, capturedAt), step: 'sending' };
-    if (!notePhoto(job.session.client.person.tenantId, job.session.user.uid, item.id)) {
-      return setError('This phone could not record the photo as unsent. Try again.');
+    const prepared = job.startSave();
+    let item: PendingPhoto | undefined;
+    try {
+      const bytes = await preparePhoto(file).catch(() => null);
+      if (!bytes) return setError('This picture could not be read. Take the photo with the camera.');
+      const id = crypto.randomUUID();
+      if (!notePhoto(job.session.client.person.tenantId, job.session.user.uid, id)) {
+        return setError('This phone could not record the photo as unsent. Try again.');
+      }
+      item = { id, bytes, field: fieldOf(roomId, shotTag, capturedAt), step: 'sending' };
+      unsent.addPhoto(jobId, item);
+    } finally {
+      prepared(!item);
     }
-    unsent.addPhoto(jobId, item);
     await finish(item);
   }
 

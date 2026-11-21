@@ -213,6 +213,14 @@ export function roomChanges(values: FormValues, stored: RoomField, lists: RoomLi
   return result;
 }
 
+// Whether the result has a change or a problem in a box the person edited (or a list they edited): a box
+// they never touched, whatever its stored value parses to, is not unsaved input.
+export function editedResult(result: FormResult, edits: FormValues): boolean {
+  return [...Object.keys(result.changes), ...Object.keys(result.errors)].some(
+    (key) => key in edits || key === 'items' || key === 'prepTasks' || key.startsWith('items.'),
+  );
+}
+
 type RoomTypeOption = ScopeLists['roomTypes'][number];
 
 // The room type picker: one Other, which is an absent room type ('' clears the key) and the price

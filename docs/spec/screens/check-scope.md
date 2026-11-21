@@ -31,7 +31,8 @@ meter) the readiness check still lacks for the chosen room, each selecting that 
 Finish and review** stays on every tab of the job after a Fix and reopens Finish with current data;
 with any unsaved input (Office notes included) it offers Keep editing or Discard changes and go back,
 and it waits, showing "Saving…", until this job's pending saves and photo sends are acknowledged
-before it leaves. Discard clears only the unsent typed values; browser Back is not guarded (follow-up).
+before it leaves. Discard clears the unsent values of every form on the job. The wait, its deadline
+and its failure handling are in [Finish](finish.md).
 An accepted save asks the check again. A confirmed archive replaces the readiness text and link with the archived notice.
 The summary of findings gap points to guidance in Check Scope while the separate summary editor is
 pending.

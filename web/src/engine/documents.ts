@@ -6,6 +6,7 @@ import { companySetupMissing } from './company-setup';
 import { Dec, HUNDRED, money, percentText } from './decimal';
 import type { JObj, Json } from './json';
 import type { Inspection } from './inspection';
+import { ADDITION } from './price-v2';
 import { LAYOUT_SETTINGS, layoutKeys, letterOf, ROOM_WORDS, roomWordsFor } from './proposal-letter';
 import { letterParagraph, equipmentSizing } from './sizing';
 import type { Table } from './table';
@@ -402,14 +403,19 @@ export function makeDocuments(input: {
   const single = priced.totals.mode === 'single';
   const explanation = typeof estimate.explanation === 'string' ? estimate.explanation : null;
   const approved = data.extras.filter((extra) => extra.approval);
-  const extraLines = items.filter((item) => item.group === 'extras');
+  // The hourly additional work lines only; a unit or flat addition's line already carries its approved wording.
+  const extraLines = items.filter((item) => item.group === 'extras' && item.code !== ADDITION);
   approved.forEach((extra, index) => {
     const line = extraLines[index];
     if (line) line.description = wording(extra, clauseCompany);
   });
-  const covered = new Set(approved.map((extra) => extra.description));
+  const covered = new Set([
+    ...approved.map((extra) => extra.description),
+    ...(data.additions ?? []).filter((addition) => addition.approvedAt !== null).map((addition) => plain(addition.description)),
+  ]);
   const unpriced = ai.unpriced_work.filter((note) => !covered.has(plain(note)));
-  const pending = data.extras.filter((extra) => extra.approval === null).length;
+  const pending =
+    data.extras.filter((extra) => extra.approval === null).length + (data.additions ?? []).filter((addition) => addition.approvedAt === null).length;
   const age = before
     ? `Due to property age (${data.yearBuilt}), California State Law requires third-party lead and asbestos testing prior to destructive demolition.`
     : `The home was built in ${data.yearBuilt}. Therefore, no lead or asbestos testing is required prior to the start of work.`;
@@ -434,7 +440,11 @@ export function makeDocuments(input: {
     ...(before ? [TESTING] : []),
     PROTECTION.replaceAll('{company}', () => clauseCompany),
   ];
-  const recommendations = [...mandated, ...items.filter((item) => item.group !== 'job_charges').map((item) => item.description), ADDITIONAL];
+  const scope = items.filter((item) => item.group !== 'job_charges');
+  const recommendations = [...mandated, ...scope.map((item) => item.description), ADDITIONAL];
+  const proposed = input.table.policy.show_line_breakdown
+    ? recommendations
+    : [...mandated, ...scope.map((item) => item.withoutPrice ?? item.description), ADDITIONAL];
   const words = roomWordsFor(data.rooms, roomWords);
   const customer = input.customerName.trim();
   const license = identity?.license ?? '';
@@ -481,7 +491,7 @@ export function makeDocuments(input: {
     lead_notice_required: before,
     property_address: data.address,
     proposed_cost: (high ?? low).toString(),
-    recommendations,
+    recommendations: proposed,
     ...layoutKeys(settings, () =>
       letterOf({ rooms: data.rooms, words, lines: items, table: input.table, findings: [age], recommendations: mandated, additional: ADDITIONAL }),
     ),
@@ -495,7 +505,6 @@ export function makeDocuments(input: {
     compliance_notes: [age, ...clauses],
     estimate,
     iicrc_defense_letter: letter,
-    pending_extras: pending,
     photo_audit_log: photos.map((photo) => photo.row),
     schema_version: 3,
     signable:

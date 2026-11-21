@@ -202,7 +202,9 @@ describe('moving the field work (owner decision J5)', () => {
     h.field.put(h.seed.a, made.draftId, MANIFEST);
     expect((await submitDraft(ESTIMATOR_A, made.id, { id: randomUUID(), draftId: made.draftId, digest: await manifestDigest(MANIFEST) })).status).toBe(201);
     const later = randomUUID();
+    // Back to editing's field step (the draft sync, or the previous writer) fails, on its one more try too.
     h.field.failNext.createFrom = true;
+    h.field.failNext.sync = 2;
     expect(await nextDraft(ESTIMATOR_A, made.id, { draftId: later, fromDraftId: made.draftId })).toEqual({
       status: 503,
       body: { error: 'submissions_unavailable' },
@@ -299,18 +301,25 @@ describe('moving the field work (owner decision J5)', () => {
     const hold = latch();
     let arrived = false;
     const named = h.drafts.setFieldOwner;
+    const ensure = h.drafts.ensure;
     const all = ['sync', ...methods] as (keyof Harness['field']['gate'])[];
     const gate = async () => {
       if (arrived) return;
       arrived = true;
       for (const method of all) delete h.field.gate[method];
       h.drafts.setFieldOwner = named;
+      h.drafts.ensure = ensure;
       await hold.wait;
     };
     for (const method of all) h.field.gate[method] = gate;
     h.drafts.setFieldOwner = async (...args) => {
       await gate();
       return named(...args);
+    };
+    // New job's previous writer, which named the owner its request read.
+    h.drafts.ensure = async (...args) => {
+      await gate();
+      return ensure(...args);
     };
     return { reached: () => arrived, open: hold.open };
   }
@@ -396,10 +405,10 @@ describe('moving the field work (owner decision J5)', () => {
     expect(draftOf(later)?.fieldOwnerUid).toBe('estimator-a');
   });
 
-  // The archive's sync made Back to editing's missing draft from its record, archived. While the restore's
-  // field step has not got through, Back to editing's retry finds that draft and it stays closed; the
-  // restore sent again opens it.
-  it('keeps Back to editing’s draft closed until the restore reaches the field database', async () => {
+  // The archive's sync made Back to editing's missing draft from its record, archived. The restore commits
+  // and its field step does not get through; Back to editing's retry is itself a sync of the job now (slice 5),
+  // so it opens the draft as Postgres says, and the restore sent again finds it so.
+  it('opens Back to editing’s draft on its own retry once the restore has committed, whichever field step gets through', async () => {
     const { id, draftId, later, submissionId } = await draftNeverMade();
     const { revision } = (await read(OWNER_A, id)).body.job as { revision: number };
     expect((await archive(OWNER_A, id, { revision, changeId: randomUUID() })).status).toBe(200);
@@ -408,7 +417,7 @@ describe('moving the field work (owner decision J5)', () => {
     const once = { revision: revision + 1, changeId: randomUUID() };
     expect(await restore(OWNER_A, id, once)).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
     expect((await nextDraft(ESTIMATOR_A, id, { draftId: later, fromDraftId: draftId })).status).toBe(200);
-    expect(h.field.draft(h.seed.a, later)).toMatchObject({ state: 'archived', rooms: { kitchen: { name: 'Kitchen' } } });
+    expect(h.field.draft(h.seed.a, later)).toMatchObject({ state: 'editing', rooms: { kitchen: { name: 'Kitchen' } } });
     expect((await restore(OWNER_A, id, once)).status).toBe(200);
     expect((await nextDraft(ESTIMATOR_A, id, { draftId: later, fromDraftId: draftId })).status).toBe(200);
     expect(h.field.draft(h.seed.a, later)).toMatchObject({
@@ -423,7 +432,9 @@ describe('moving the field work (owner decision J5)', () => {
   // the archive's sync makes it, empty and archived, and the restore's opens it; the same create again finds it.
   it('makes the draft of a New job that was never made when the job is archived, and opens it on the restore', async () => {
     const ids = { id: randomUUID(), draftId: randomUUID() };
+    // New job's field step (the draft sync, or the previous writer) fails, on its one more try too.
     h.drafts.failNext = { on: true, afterWrite: false };
+    h.field.failNext.sync = 2;
     expect((await create(OFFICE_A, { ...ids, propertyAddress: '40 Office Road' })).status).toBe(503);
     const { revision } = (await read(OWNER_A, ids.id)).body.job as { revision: number };
     expect((await archive(OWNER_A, ids.id, { revision, changeId: randomUUID() })).status).toBe(200);
@@ -591,8 +602,10 @@ describe('moving the field work (owner decision J5)', () => {
     await h.admin`UPDATE job_submissions SET status = 'committed', snapshot_bytes = ${bytes}, snapshot_sha256 = ${createHash('sha256').update(bytes).digest('hex')} WHERE id = ${row.id}`;
     await h.admin`UPDATE jobs SET status = 'submitted', revision = revision + 1 WHERE id = ${id}`;
     const second = randomUUID();
-    expect((await nextDraft(ESTIMATOR_A, id, { draftId: second, fromDraftId: first })).status).toBe(201);
-    h.field.remove(h.seed.a, second);
+    // Back to editing's own sync cannot make the next draft from that record either (it is not whole): it
+    // commits in Postgres and answers 503, the draft missing.
+    expect(await nextDraft(ESTIMATOR_A, id, { draftId: second, fromDraftId: first })).toEqual({ status: 503, body: { error: 'submissions_unavailable' } });
+    expect(h.field.draft(h.seed.a, second)).toBeNull();
     const { revision } = (await coordination(OWNER_A, id)).body;
     expect(await transfer(OWNER_A, id, { revision, changeId: randomUUID(), toActorId: estimatorA2 })).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
     expect({ repeated, first: h.field.draft(h.seed.a, first) }).toMatchObject({ repeated, first: { jobId: id, fieldOwnerUid: 'estimator-a2' } });
@@ -783,6 +796,144 @@ describe('moving the field work (owner decision J5)', () => {
     const { revision } = (await coordination(OWNER_A, id)).body;
     expect((await transfer(OWNER_A, id, { revision, changeId: randomUUID(), toActorId: estimatorA2 })).status).toBe(200);
     expect(h.field.draft(h.seed.a, draftId)).toMatchObject({ jobId: id, state: 'editing', fieldOwnerUid: 'estimator-a2' });
+  });
+
+  // r5 (creation): a Back to editing or a New job held at its field step (the draft sync, or the previous
+  // writer that named the owner it read before) while the field work moves to another estimator. The draft
+  // is made naming the new owner, never the one the creating request read: the move's own sync makes it, and
+  // the held creation is refused at the job's marker.
+  it('a draft a creation makes never names an owner a move replaced while it was held (r5)', async () => {
+    const { id, draftId } = await claimedJob();
+    h.field.put(h.seed.a, draftId, MANIFEST);
+    expect((await submitDraft(ESTIMATOR_A, id, { id: randomUUID(), draftId, digest: await manifestDigest(MANIFEST) })).status).toBe(201);
+    const later = randomUUID();
+    const editing = holdStep(['createFrom']);
+    const backToEditing = nextDraft(ESTIMATOR_A, id, { draftId: later, fromDraftId: draftId });
+    await until(() => editing.reached(), 'Back to editing at its field step');
+    const { revision } = (await coordination(OWNER_A, id)).body;
+    expect((await transfer(OWNER_A, id, { revision, changeId: randomUUID(), toActorId: estimatorA2 })).status).toBe(200);
+    editing.open();
+    expect((await backToEditing).status).toBe(201);
+    expect(h.field.draft(h.seed.a, later)).toMatchObject({ jobId: id, state: 'editing', fieldOwnerUid: 'estimator-a2', previous: { draftId } });
+    expect(h.field.ownerWrites.filter((write) => write.at === `${h.seed.a}/${later}`).map((write) => write.fieldOwnerUid)).not.toContain('estimator-a');
+
+    // New job, by an estimator who owns its field work as they start it.
+    const ids = { id: randomUUID(), draftId: randomUUID() };
+    const making = holdStep([]);
+    const created = create(ESTIMATOR_A, { ...ids, propertyAddress: '7 Held Street' });
+    await until(() => making.reached(), 'New job at its field step');
+    expect((await assign(OFFICE_A, ids.id, estimatorA2)).status).toBe(201);
+    const moved = (await coordination(OWNER_A, ids.id)).body;
+    expect((await transfer(OWNER_A, ids.id, { revision: moved.revision, changeId: randomUUID(), toActorId: estimatorA2 })).status).toBe(200);
+    making.open();
+    expect((await created).status).toBe(201);
+    expect(h.field.draft(h.seed.a, ids.draftId)).toMatchObject({ jobId: ids.id, state: 'editing', fieldOwnerUid: 'estimator-a2' });
+  });
+
+  // Rollback: a previous version's archive left a placeholder (`archived`) where New job's draft was missing,
+  // and the job is live again in Postgres. The next field step replaces it with the job's draft, as Postgres
+  // says; no placeholder is written for a missing draft any more.
+  it('replaces a placeholder a previous version left over a live job’s missing draft with the draft, on the next field step', async () => {
+    const ids = { id: randomUUID(), draftId: randomUUID() };
+    // New job's field step fails (the draft sync, or the previous writer), on its one more try too.
+    h.drafts.failNext = { on: true, afterWrite: false };
+    h.field.failNext.sync = 2;
+    expect((await create(ESTIMATOR_A, { ...ids, propertyAddress: '8 Rolled Back Road' })).status).toBe(503);
+    const { revision } = (await read(OWNER_A, ids.id)).body.job as { revision: number };
+    // The previous version archived it (its placeholder at the next revision), then restored it in Postgres.
+    expect(await h.field.archiveDraft(h.seed.a, ids.id, ids.draftId, revision + 1)).toBe('set');
+    expect(h.field.draft(h.seed.a, ids.draftId)).toMatchObject({ placeholder: true, state: 'archived' });
+    await h.admin`UPDATE jobs SET revision = revision + 1 WHERE id = ${ids.id}`;
+    await h.admin`UPDATE jobs SET revision = revision + 1 WHERE id = ${ids.id}`;
+    const writes = h.field.stateWrites.length;
+    // The same New job again.
+    expect((await create(ESTIMATOR_A, { ...ids, propertyAddress: '8 Rolled Back Road' })).status).toBe(200);
+    const made = h.field.draft(h.seed.a, ids.draftId);
+    expect(made?.placeholder).toBeUndefined();
+    expect(made).toMatchObject({ jobId: ids.id, state: 'editing', fieldOwnerUid: 'estimator-a', archiveRevision: revision + 2 });
+    // Nothing writes a placeholder now: every draft a sync makes is a real draft.
+    expect(Object.values(h.field.data()).filter((draft) => draft.placeholder)).toEqual([]);
+    expect(h.field.stateWrites.slice(writes)).toEqual([{ at: `${h.seed.a}/${ids.draftId}`, state: 'editing' }]);
+  });
+
+  // Slice 5 review R1: New job and Back to editing answer only a caller still a member after their field step.
+  // (An archive committed while their sync waited, answered 410, is in archive-api.test.ts's overlap cases.)
+  it('answers New job and Back to editing after their field step only to a caller still a member', async () => {
+    const ids = { id: randomUUID(), draftId: randomUUID() };
+    const making = await heldSync(() => create(ESTIMATOR_A, { ...ids, propertyAddress: '9 Waiting Way' }));
+    await h.admin`UPDATE memberships SET status = 'disabled' WHERE id = ${h.seed.estimatorA.membership}`;
+    making.open();
+    expect(await making.running).toEqual({ status: 403, body: { error: 'not_allowed' } });
+    await h.admin`UPDATE memberships SET status = 'active' WHERE id = ${h.seed.estimatorA.membership}`;
+
+    const { id, draftId } = await claimedJob();
+    h.field.put(h.seed.a, draftId, MANIFEST);
+    expect((await submitDraft(ESTIMATOR_A, id, { id: randomUUID(), draftId, digest: await manifestDigest(MANIFEST) })).status).toBe(201);
+    const editing = await heldSync(() => nextDraft(ESTIMATOR_A, id, { draftId: randomUUID(), fromDraftId: draftId }));
+    await h.admin`UPDATE memberships SET status = 'disabled' WHERE id = ${h.seed.estimatorA.membership}`;
+    editing.open();
+    expect(await editing.running).toEqual({ status: 403, body: { error: 'not_allowed' } });
+  });
+
+  // Slice 5 review round 2, R1: a member disabled while New job's or Back to editing's locator is written
+  // gets no details of the job.
+  it('gives a member disabled while New job’s or Back to editing’s locator was written no details of the job', async () => {
+    const disableOnProjection = (target: { projectJob: (...args: never[]) => Promise<void> }) => {
+      const project = target.projectJob;
+      target.projectJob = async (...args) => {
+        target.projectJob = project;
+        await h.admin`UPDATE memberships SET status = 'disabled' WHERE id = ${h.seed.estimatorA.membership}`;
+        return project(...args);
+      };
+    };
+    disableOnProjection(h.drafts);
+    expect(await create(ESTIMATOR_A, { id: randomUUID(), draftId: randomUUID(), propertyAddress: '11 Waiting Way' })).toEqual({ status: 403, body: { error: 'not_allowed' } });
+    await h.admin`UPDATE memberships SET status = 'active' WHERE id = ${h.seed.estimatorA.membership}`;
+
+    const { id, draftId } = await claimedJob();
+    h.field.put(h.seed.a, draftId, MANIFEST);
+    expect((await submitDraft(ESTIMATOR_A, id, { id: randomUUID(), draftId, digest: await manifestDigest(MANIFEST) })).status).toBe(201);
+    disableOnProjection(h.field);
+    expect(await nextDraft(ESTIMATOR_A, id, { draftId: randomUUID(), fromDraftId: draftId })).toEqual({ status: 403, body: { error: 'not_allowed' } });
+  });
+
+  // Slice 5 review round 3, R2: a placeholder a newer previous-version revision holds is no draft: 503.
+  it('answers New job’s retry 503 while a newer previous-version placeholder holds its draft id', async () => {
+    const ids = { id: randomUUID(), draftId: randomUUID() };
+    h.drafts.failNext = { on: true, afterWrite: false };
+    h.field.failNext.sync = 2;
+    expect((await create(ESTIMATOR_A, { ...ids, propertyAddress: '12 Held Back Road' })).status).toBe(503);
+    expect(await h.field.archiveDraft(h.seed.a, ids.id, ids.draftId, 50)).toBe('set');
+    expect(await create(ESTIMATOR_A, { ...ids, propertyAddress: '12 Held Back Road' })).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
+    expect(h.field.draft(h.seed.a, ids.draftId)).toMatchObject({ placeholder: true, state: 'archived' });
+  });
+
+  // Slice 5 review round 3, R3: the locator follows the job as read after the field step: a Back to editing
+  // that committed while New job's retry waited (its own field step failed, no locator) is its draft.
+  it('projects the job’s locator from the job as read after the field step', async () => {
+    const ids = { id: randomUUID(), draftId: randomUUID() };
+    expect((await create(ESTIMATOR_A, { ...ids, propertyAddress: '13 Moving On Road' })).status).toBe(201);
+    h.field.put(h.seed.a, ids.draftId, MANIFEST);
+    expect((await submitDraft(ESTIMATOR_A, ids.id, { id: randomUUID(), draftId: ids.draftId, digest: await manifestDigest(MANIFEST) })).status).toBe(201);
+    const retry = await heldSync(() => create(ESTIMATOR_A, { ...ids, propertyAddress: '13 Moving On Road' }));
+    const next = randomUUID();
+    h.field.failNext.sync = 2;
+    expect((await nextDraft(ESTIMATOR_A, ids.id, { draftId: next, fromDraftId: ids.draftId })).status).toBe(503);
+    retry.open();
+    const answer = await retry.running;
+    expect(answer).toMatchObject({ status: 200, body: { job: { currentDraftId: next } } });
+    expect(h.drafts.projected.get(`${h.seed.a}/${ids.id}`)).toEqual({ currentDraftId: next, revision: (answer.body as { job: { revision: number } }).job.revision });
+  });
+
+  // Slice 5 review round 3, R4: the access check answers before the failed locator write's 503.
+  it('answers 403, not the locator’s 503, when the member is disabled and the locator write fails', async () => {
+    const project = h.drafts.projectJob;
+    h.drafts.projectJob = async () => {
+      h.drafts.projectJob = project;
+      await h.admin`UPDATE memberships SET status = 'disabled' WHERE id = ${h.seed.estimatorA.membership}`;
+      throw new Error('field database unreachable');
+    };
+    expect(await create(ESTIMATOR_A, { id: randomUUID(), draftId: randomUUID(), propertyAddress: '14 Failing Road' })).toEqual({ status: 403, body: { error: 'not_allowed' } });
   });
 
   it('refuses the company owner field work they do not own, until they move it to themself', async () => {
