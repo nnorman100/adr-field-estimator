@@ -110,8 +110,8 @@ async function open(context: BrowserContext, server: PhotoServer) {
 }
 
 const entries = (page: Page) => page.evaluate((owner) => window.photoHarness.entries(owner), OWNER);
-const capture = (page: Page, jobId = 'job', readable = true) =>
-  page.evaluate(([owner, job, ok]) => window.photoHarness.capture(owner, [80, 60], job, ok), [OWNER, jobId, readable] as const);
+const capture = (page: Page, jobId = 'job') =>
+  page.evaluate(([owner, job]) => window.photoHarness.capture(owner, [80, 60], job), [OWNER, jobId] as const);
 const payloads = (page: Page) => page.evaluate(() => window.photoHarness.bytes());
 const start = (page: Page, owner = OWNER, ready = true) =>
   page.evaluate(([person, connected]) => window.photoHarness.open(person, connected), [owner, ready] as const);
@@ -307,15 +307,15 @@ test('a reference acknowledged while the app is hidden is recorded', async ({ co
   await expect.poll(() => entries(page)).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'photo', stage: 'done' })]));
 });
 
-test('a GPS-tagged capture the canvas cannot resize is kept only as a stopped original, and nothing is ever sent for it', async ({ context, photoServer }) => {
+test('a GPS-tagged capture whose canvas encoding fails is kept verbatim as a stopped original, and nothing is ever sent for it', async ({ context, photoServer }) => {
   const page = await open(context, photoServer);
   const uploads: Upload[] = [];
   photoServer.upload = (upload) => {
     uploads.push(upload);
     receipt(upload);
   };
-  const saved = await capture(page, 'job', false);
-  expect(saved).toMatchObject({ kind: 'original', stage: 'blocked', requested: false, reason: expect.stringMatching(/shareable copy/) });
+  const { entry, fixtureSha256 } = await page.evaluate((owner) => window.photoHarness.captureGps(owner), OWNER);
+  expect(entry).toMatchObject({ kind: 'original', stage: 'blocked', requested: false, reason: expect.stringMatching(/shareable copy/) });
   await start(page);
   await page.evaluate(() => window.photoHarness.originals('job'));
   await page.clock.install();
@@ -323,7 +323,7 @@ test('a GPS-tagged capture the canvas cannot resize is kept only as a stopped or
   expect(uploads).toEqual([]);
   expect(photoServer.objects.size).toBe(0);
   expect(await entries(page)).toEqual([expect.objectContaining({ kind: 'original', stage: 'blocked' })]);
-  expect(await payloads(page)).toEqual([expect.objectContaining({ kind: 'original' })]);
+  expect(await payloads(page)).toEqual([expect.objectContaining({ kind: 'original', width: 80, height: 60, sha256: fixtureSha256 })]);
 });
 
 test('a sign-in refusal keeps the work for the next sign-in, and a disabled member stops the photo with the reason', async ({ context, photoServer }) => {
@@ -371,21 +371,99 @@ test('a second-step refusal keeps the work for the next sign-in instead of stopp
   expect(await payloads(page)).toHaveLength(2);
 });
 
-test('the foreground check reads only work still to do and the photo rows its waiting originals need', async ({ context, photoServer }) => {
+test('the foreground check reads only work allowed now: untapped originals stay out until a tap brings them in', async ({ context, photoServer }) => {
   const page = await open(context, photoServer);
   await capture(page, 'job-a');
   await capture(page, 'job-b');
   await start(page);
   await expect.poll(() => entries(page).then((all) => all.filter(({ kind, stage }) => kind === 'photo' && stage === 'done'))).toHaveLength(2);
-  await page.evaluate(() => window.photoHarness.originals('job-a'));
-  await expect.poll(() => entries(page).then((all) => all.filter(({ kind, stage }) => kind === 'original' && stage === 'done'))).toHaveLength(1);
-  expect(await entries(page)).toHaveLength(4);
-  const pending = await page.evaluate((owner) => window.photoHarness.pending(owner), OWNER);
-  expect(pending.map(({ jobId, kind, stage }) => [jobId, kind, stage]).sort()).toEqual([
-    ['job-b', 'original', 'queued'],
-    ['job-b', 'photo', 'done'],
+  const pending = () => page.evaluate((owner) => window.photoHarness.pending(owner), OWNER);
+  expect(await pending()).toEqual([]);
+
+  const held: Upload[] = [];
+  photoServer.upload = (upload) => { held.push(upload); };
+  await page.evaluate(() => { void window.photoHarness.originals('job-a'); });
+  await expect.poll(() => held.length).toBe(1);
+  expect((await pending()).map(({ jobId, kind, stage }) => [jobId, kind, stage]).sort()).toEqual([
+    ['job-a', 'original', 'queued'],
+    ['job-a', 'photo', 'done'],
   ]);
+  receipt(held[0]!);
+  await expect.poll(pending).toEqual([]);
+  expect(await entries(page)).toHaveLength(4);
   expect(await page.evaluate((owner) => window.photoHarness.pending(owner), OTHER)).toEqual([]);
+});
+
+test('an original goes once its photo is registered and the tap is made, even when the photo’s reference was refused', async ({ context, photoServer }) => {
+  const page = await open(context, photoServer);
+  await capture(page);
+  const uploads: Upload[] = [];
+  photoServer.upload = (upload) => {
+    uploads.push(upload);
+    receipt(upload);
+  };
+  photoServer.reference = (response) => response.writeHead(409).end('The draft was finished.');
+  await start(page);
+  await expect.poll(() => entries(page)).toEqual(expect.arrayContaining([
+    expect.objectContaining({ kind: 'photo', stage: 'blocked', reason: 'The draft was finished.', receipt: true }),
+  ]));
+  expect(uploads.map(({ kind }) => kind)).toEqual(['photo']);
+  await page.evaluate(() => window.photoHarness.originals('job'));
+  await expect.poll(() => entries(page)).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'original', stage: 'done' })]));
+  expect(uploads.map(({ kind }) => kind)).toEqual(['photo', 'original']);
+});
+
+test('an original with no registered photo stays on the phone after the tap', async ({ context, photoServer }) => {
+  const page = await open(context, photoServer);
+  await capture(page);
+  const uploads: Upload[] = [];
+  photoServer.upload = (upload) => {
+    uploads.push(upload);
+    upload.response.writeHead(409).end('A different photo already uses this id.');
+  };
+  await start(page);
+  await expect.poll(() => entries(page)).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'photo', stage: 'blocked' })]));
+  await page.evaluate(() => window.photoHarness.originals('job'));
+  await page.clock.install();
+  await page.clock.runFor(10_000);
+  expect(uploads.map(({ kind }) => kind)).toEqual(['photo']);
+  expect(await entries(page)).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'original', stage: 'queued', requested: true })]));
+  expect(await payloads(page)).toHaveLength(2);
+});
+
+test('an App Check refusal is retried with a fresh token and does not pause the sign-in', async ({ context, photoServer }) => {
+  const page = await open(context, photoServer);
+  await capture(page);
+  await page.clock.install();
+  let attempts = 0;
+  photoServer.upload = (upload) => {
+    attempts += 1;
+    if (attempts === 1) upload.response.writeHead(401, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: 'app_check_required' }));
+    else receipt(upload);
+  };
+  await start(page);
+  await expect.poll(async () => (await entries(page)).find(({ kind }) => kind === 'photo')).toMatchObject({ stage: 'queued', attempts: 1 });
+  await page.clock.runFor(10_000);
+  await expect.poll(() => entries(page)).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'photo', stage: 'done' })]));
+  expect(await page.evaluate(() => window.photoHarness.signInRequests())).toBe(0);
+});
+
+test('an App Check refusal of the reference is retried and does not pause the sign-in', async ({ context, photoServer }) => {
+  const page = await open(context, photoServer);
+  await capture(page);
+  await page.clock.install();
+  let references = 0;
+  photoServer.reference = (response) => {
+    references += 1;
+    if (references === 1) response.writeHead(401, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: 'app_check_required' }));
+    else response.writeHead(204).end();
+  };
+  await start(page);
+  await expect.poll(() => references).toBe(1);
+  await expect.poll(async () => (await entries(page)).find(({ kind }) => kind === 'photo')).toMatchObject({ stage: 'referenced', attempts: 1 });
+  await page.clock.runFor(10_000);
+  await expect.poll(() => entries(page)).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'photo', stage: 'done' })]));
+  expect(await page.evaluate(() => window.photoHarness.signInRequests())).toBe(0);
 });
 
 test('a sign-in refusal of the reference keeps the saved reference and the bytes for the next sign-in', async ({ context, photoServer }) => {
@@ -406,14 +484,16 @@ test('a sign-in refusal of the reference keeps the saved reference and the bytes
   expect(await payloads(page)).toHaveLength(2);
 });
 
-test('the upload and the reference each get their own deadline, and the upload may use the route’s 300 seconds', async ({ context, photoServer }) => {
+test('the upload and the reference each get their own deadline, and the upload one grows with the bytes', async ({ context, photoServer }) => {
   const page = await open(context, photoServer);
   await capture(page);
   await start(page);
   await expect.poll(() => entries(page)).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'photo', stage: 'done' })]));
   const deadlines = (await page.evaluate(() => window.photoHarness.timeouts())).filter((ms) => ms !== 5_000);
   expect(deadlines).toHaveLength(2);
-  expect(deadlines).toEqual([300_000, 30_000]);
+  expect(deadlines[0]).toBeGreaterThan(30_000);
+  expect(deadlines[0]).toBeLessThanOrEqual(300_000);
+  expect(deadlines[1]).toBe(30_000);
 });
 
 test('Send originals on one job leaves another job’s originals waiting', async ({ context, photoServer }) => {

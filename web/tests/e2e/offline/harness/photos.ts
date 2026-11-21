@@ -4,36 +4,92 @@ import {
   photoStorageNearlyFull,
   readPendingWork,
   readPhotoQueue,
+  retriesLater,
   startPhotoQueue,
   type PhotoOwner,
   type PhotoQueueEntry,
   type PhotoUpload,
 } from '@/lib/field/photo-queue';
 
-function gpsTaggedJpeg() {
-  const exif = new TextEncoder().encode('Exif\0\0GPSLatitude=00.000000;GPSLongitude=00.000000');
-  const bytes = new Uint8Array(4 + 2 + exif.length + 2048);
-  bytes.set([0xff, 0xd8, 0xff, 0xe1, 0, exif.length + 2]);
-  bytes.set(exif, 6);
-  bytes.fill(7, 6 + exif.length);
-  return bytes;
+function drawn(size: [number, number]) {
+  const canvas = document.createElement('canvas');
+  [canvas.width, canvas.height] = size;
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('Canvas did not encode'))), 'image/jpeg');
+  });
 }
 
-function capture(owner: PhotoOwner, size: [number, number] = [80, 60], jobId = 'job', readable = true) {
+// A decodable JPEG with an EXIF segment whose TIFF directory holds a GPS directory of synthetic
+// coordinates (0 degrees north, 0 degrees east), as a phone camera writes it.
+async function gpsJpeg(): Promise<Uint8Array> {
+  const picture = new Uint8Array(await (await drawn([80, 60])).arrayBuffer());
+  const tiff = new DataView(new ArrayBuffer(128));
+  const ascii = (offset: number, text: string) => [...text].forEach((c, i) => tiff.setUint8(offset + i, c.charCodeAt(0)));
+  ascii(0, 'MM');
+  tiff.setUint16(2, 42);
+  tiff.setUint32(4, 8);
+  tiff.setUint16(8, 1);
+  tiff.setUint16(10, 0x8825);
+  tiff.setUint16(12, 4);
+  tiff.setUint32(14, 1);
+  tiff.setUint32(18, 26);
+  tiff.setUint32(22, 0);
+  tiff.setUint16(26, 4);
+  const entry = (at: number, tag: number, type: number, count: number) => {
+    tiff.setUint16(at, tag);
+    tiff.setUint16(at + 2, type);
+    tiff.setUint32(at + 4, count);
+  };
+  entry(28, 1, 2, 2);
+  ascii(36, 'N');
+  entry(40, 2, 5, 3);
+  tiff.setUint32(48, 80);
+  entry(52, 3, 2, 2);
+  ascii(60, 'E');
+  entry(64, 4, 5, 3);
+  tiff.setUint32(72, 104);
+  for (const at of [80, 88, 96, 104, 112, 120]) tiff.setUint32(at + 4, 1);
+  const payload = new Uint8Array(6 + tiff.byteLength);
+  payload.set(new TextEncoder().encode('Exif\0\0'));
+  payload.set(new Uint8Array(tiff.buffer), 6);
+  const segment = new Uint8Array(4 + payload.length);
+  segment.set([0xff, 0xe1, (payload.length + 2) >> 8, (payload.length + 2) & 0xff]);
+  segment.set(payload, 4);
+  return Uint8Array.from([...picture.slice(0, 2), ...segment, ...picture.slice(2)]);
+}
+
+async function sha256Hex(data: BufferSource) {
+  return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', data)), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function capture(owner: PhotoOwner, size: [number, number] = [80, 60], jobId = 'job') {
   return (async () => {
-    const canvas = document.createElement('canvas');
-    [canvas.width, canvas.height] = size;
-    const drawn = await new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('Canvas did not encode'))), 'image/jpeg');
-    });
-    // A JPEG header with synthetic location metadata over bytes the canvas cannot decode, so no shareable copy can be made.
-    const picture = readable ? drawn : new Blob([gpsTaggedJpeg()], { type: 'image/jpeg' });
+    const picture = await drawn(size);
     try {
       return await capturePhoto(owner, { jobId, draftId: 'draft', field: { roomId: 'room', shotTag: 'overview' } }, picture);
     } catch (error) {
       return { error: (error as Error).name };
     }
   })();
+}
+
+// Captures the GPS-tagged JPEG while canvas encoding fails after the picture decoded, so no shareable copy can be made.
+async function captureGps(owner: PhotoOwner, jobId = 'job') {
+  const fixture = await gpsJpeg();
+  const toBlob = HTMLCanvasElement.prototype.toBlob;
+  HTMLCanvasElement.prototype.toBlob = function (callback) {
+    callback(null);
+  };
+  try {
+    const entry = await capturePhoto(
+      owner,
+      { jobId, draftId: 'draft', field: { roomId: 'room', shotTag: 'overview' } },
+      new Blob([fixture], { type: 'image/jpeg' }),
+    );
+    return { entry, fixtureSha256: await sha256Hex(fixture) };
+  } finally {
+    HTMLCanvasElement.prototype.toBlob = toBlob;
+  }
 }
 
 function refusalCode(body: string): string | undefined {
@@ -70,7 +126,9 @@ function start(owner: PhotoOwner) {
       const response = await fetch(`/reference/${entry.photoId}`, { method: 'PUT', signal });
       if (response.ok) return { kind: 'acknowledged' };
       const reason = await response.text();
-      return pausesForSignIn(response.status, refusalCode(reason)) ? { kind: 'sign-in' } : { kind: 'blocked', reason };
+      const code = refusalCode(reason);
+      if (retriesLater(response.status, code)) return { kind: 'retry' };
+      return pausesForSignIn(response.status, code) ? { kind: 'sign-in' } : { kind: 'blocked', reason };
     },
     signInRequired() {
       signInRequests += 1;
@@ -85,14 +143,14 @@ async function bytes() {
     open.onerror = () => reject(open.error);
   });
   try {
-    return await new Promise<{ kind: string; size: number; width: number; height: number }[]>((resolve, reject) => {
+    return await new Promise<{ kind: string; size: number; width: number; height: number; sha256: string }[]>((resolve, reject) => {
       const request = db.transaction('bytes').objectStore('bytes').getAll();
       request.onerror = () => reject(request.error);
       request.onsuccess = () => {
         void Promise.all(
           (request.result as { kind: string; data: ArrayBuffer }[]).map(async ({ kind, data }) => {
             const bitmap = await createImageBitmap(new Blob([data])).catch(() => null);
-            const result = { kind, size: data.byteLength, width: bitmap?.width ?? 0, height: bitmap?.height ?? 0 };
+            const result = { kind, size: data.byteLength, width: bitmap?.width ?? 0, height: bitmap?.height ?? 0, sha256: await sha256Hex(data) };
             bitmap?.close();
             return result;
           }),
@@ -126,6 +184,7 @@ AbortSignal.timeout = (ms: number) => {
 };
 const photoHarness = {
   capture,
+  captureGps,
   bytes,
   failSecondPayload,
   entries: readPhotoQueue,

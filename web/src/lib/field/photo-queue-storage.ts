@@ -18,7 +18,10 @@ export type PhotoQueueEntry = PhotoUpload & {
   attempts: number;
   retryAt: number;
   reason?: string;
-  // Present only while the entry still has work to do, which is what the OPEN index holds.
+  // The server has registered this photo: its receipt matched. An original may send once its photo has one.
+  receipt?: true;
+  // Present only while the entry has work to do that is allowed now, which is what the OPEN index holds.
+  // An original is allowed from the tap on.
   open?: 1;
 };
 type Payload = { entry: PhotoQueueEntry; data: ArrayBuffer };
@@ -138,7 +141,7 @@ export function readPayload(entry: PhotoUpload): Promise<ArrayBuffer | undefined
 // A row discarded or moved since the read is never recreated.
 export function changePhoto(
   expected: PhotoQueueEntry,
-  patch: Partial<Pick<PhotoQueueEntry, 'stage' | 'retryAt' | 'attempts' | 'reason'>>,
+  patch: Partial<Pick<PhotoQueueEntry, 'stage' | 'retryAt' | 'attempts' | 'reason' | 'receipt'>>,
 ): Promise<PhotoQueueEntry | undefined> {
   const stores = patch.stage === 'done' ? [ENTRIES, BYTES] : ENTRIES;
   return run(stores, 'readwrite', (transaction) => {
@@ -150,7 +153,8 @@ export function changePhoto(
       const current = request.result as PhotoQueueEntry | undefined;
       if (!current || current.stage !== expected.stage || current.sha256 !== expected.sha256) return;
       saved = { ...current, ...patch };
-      if (saved.stage === 'queued' || saved.stage === 'sent' || saved.stage === 'referenced') saved.open = 1;
+      const active = saved.stage === 'queued' || saved.stage === 'sent' || saved.stage === 'referenced';
+      if (active && (saved.kind === 'photo' || saved.requested)) saved.open = 1;
       else delete saved.open;
       entries.put(saved);
       if (saved.stage === 'done') transaction.objectStore(BYTES).delete(key);
@@ -168,7 +172,7 @@ export function requestOriginals(owner: PhotoOwner, jobId: string): Promise<void
       if (!cursor) return;
       const entry = cursor.value as PhotoQueueEntry;
       if (entry.jobId === jobId && entry.kind === 'original' && entry.stage === 'queued' && !entry.requested) {
-        cursor.update({ ...entry, requested: true });
+        cursor.update({ ...entry, requested: true, open: 1 });
       }
       cursor.continue();
     };
