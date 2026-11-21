@@ -7,6 +7,7 @@ is the index; it links to the detailed docs instead of copying them:
 - Estimate assist (counts, range, warnings, job close): [estimate-assist.md](estimate-assist.md)
 - Live walkthrough instructions for the rebuilt app (each section, and what changed from the old text): [ai/live-instructions.md](ai/live-instructions.md)
 - Live walkthrough build review (historical, October 7, 2026): [gemini-live-build-review.md](gemini-live-build-review.md)
+- What an AI prompt leaves out (customer name, address, contact details, coordinates) and what can still get through: [ai/prompt-redaction.md](ai/prompt-redaction.md)
 - Pricing and mandatory wording (server math, never a model): [pricing-source.md](pricing-source.md)
 - Live protocol checkpoints and the feature-switch procedure: [firebase-isolation.md](firebase-isolation.md)
 - What personal data reaches a model: [DATA.md](DATA.md)
