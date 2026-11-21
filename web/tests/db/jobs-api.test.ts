@@ -509,16 +509,6 @@ describe('listing and reading', () => {
     expect((await read(OFFICE_A, mine.id)).status).toBe(200);
   });
 
-  // The draft life-cycle redesign, slice 6: the field owner's read gets a lost first draft ready again.
-  it('makes a new job’s lost first draft again, empty, at its field owner’s read', async () => {
-    const started = await seedJob(OWNER_A);
-    expect((await read(OWNER_A, started.id)).body).not.toHaveProperty('draftMissing');
-    h.drafts.remove(`${h.seed.a}/${started.draftId}`);
-    const lost = await read(OWNER_A, started.id);
-    expect(lost.status).toBe(200);
-    expect(h.field.draft(h.seed.a, started.draftId)).toMatchObject({ jobId: started.id, state: 'editing', field: {} });
-    expect(lost.body.job.currentDraftId).toBe(started.draftId);
-  });
 
   it('shows an estimator a job they own in the field even when someone else started it', async () => {
     const started = await seedJob(OWNER_A);

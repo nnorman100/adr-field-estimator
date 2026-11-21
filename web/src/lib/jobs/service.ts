@@ -271,18 +271,16 @@ export function jobsService(db: Database, drafts: DraftStore, sync: DraftSync): 
   // behind Postgres (a field step that did not get through) or the current draft is missing or only a
   // placeholder, the read syncs the job, so the phone opens what Postgres says with no Start field work
   // again. Best effort: the read never fails for it (the field screens read the draft and, while it is not
-  // there yet, read the job again); true when it synced, so the answer is read again.
-  async function prepare(caller: JobCaller, row: JobRow): Promise<boolean> {
-    if (row.status === 'archived' || !ownsFieldWork(caller, row)) return false;
+  // there yet, read the job again).
+  async function prepare(caller: JobCaller, row: JobRow): Promise<void> {
+    if (row.status === 'archived' || !ownsFieldWork(caller, row)) return;
     try {
       const behind = row.fieldSyncedRevision < row.fieldRevision;
-      if (!behind && !noDraft(await drafts.findDraft(caller.companyId, row.currentDraftId))) return false;
+      if (!behind && !noDraft(await drafts.findDraft(caller.companyId, row.currentDraftId))) return;
       await syncJobDrafts(db, sync, drafts, caller.companyId, row.id);
-      return true;
     } catch (error) {
       if (isQueueTimeout(error)) throw error;
       console.error('job draft prepare unavailable', error instanceof Error ? error.name : 'unknown');
-      return false;
     }
   }
 
@@ -405,32 +403,30 @@ export function jobsService(db: Database, drafts: DraftStore, sync: DraftSync): 
     async read(caller, jobId) {
       need(caller, READ);
       const read = (tx: CompanyTransaction) => jobAccess(tx, caller, jobId, READ);
-      const first = await inCompany(caller.companyId, async (tx) => {
-        const found = await read(tx);
-        return { row: found, detail: await detailOf(tx, found) };
-      });
-      let detail = first.detail;
-      // After a prepare, the job as Postgres holds it then, the caller still a member of an active company.
-      if (await prepare(caller, first.row)) {
-        detail = await withCompany(
-          db,
-          caller.companyId,
-          async (tx) => {
-            await stillMember(tx, caller);
-            return detailOf(tx, await read(tx));
-          },
-          { snapshot: true },
-        );
-      }
-      // Lazy population repairs existing jobs on an authorized online open; no bulk backfill.
+      const first = await inCompany(caller.companyId, async (tx) => read(tx));
+      // The field owner's drafts got ready first (best effort), then the locator as Postgres holds the job
+      // then (best effort too: the field screens read the draft the job names when the locator is old or
+      // missing, so a field database outage never keeps the job's customer and claim from its reader).
+      await prepare(caller, first);
       try {
-        await drafts.projectJob(caller.companyId, jobId, {
-          currentDraftId: detail.job.currentDraftId, revision: detail.job.revision,
-        });
+        const now = await withCompany(db, caller.companyId, async (tx) => read(tx), { snapshot: true });
+        // Lazy population repairs existing jobs on an authorized online open; no bulk backfill.
+        await drafts.projectJob(caller.companyId, jobId, { currentDraftId: now.currentDraftId, revision: now.revision });
       } catch (error) {
+        if (error instanceof JobError || isQueueTimeout(error)) throw error;
         console.error('job projection unavailable', error instanceof Error ? error.name : 'unknown');
-        throw new JobError('draft_unavailable');
       }
+      // The answer, after the last field operation: the job as Postgres holds it then, in one read-only
+      // snapshot, only to a caller still an active member of an active company with their role.
+      const detail = await withCompany(
+        db,
+        caller.companyId,
+        async (tx) => {
+          await stillMember(tx, caller);
+          return detailOf(tx, await read(tx));
+        },
+        { snapshot: true },
+      );
       return detail;
     },
 

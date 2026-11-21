@@ -402,6 +402,9 @@ export const pending = {
   // job (archived or not, S5b-2) says whether it is archived, and an archived answer is newer than
   // any request made before it. Answers false when the job was refused or archived since, so the
   // answer no longer counts.
+  // Whether the read sent under `mark` is still the newest that showed the job (no later read was
+  // answered): what it started (its locator and draft reads) is applied only while it is.
+  newestRead: (jobId: string, mark: number): boolean => mark >= (state.readAt[jobId] ?? 0),
   // A read sent before the newest read that showed the job no longer counts either.
   readAnswered(jobId: string, answer: Answer<unknown>, mark: number): boolean {
     if (mark < pending.mark(jobId) || mark < (state.readAt[jobId] ?? 0)) return false;

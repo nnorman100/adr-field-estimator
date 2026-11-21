@@ -44,8 +44,8 @@ Only the person who owns the job's field work edits it, and only while the draft
 
 | Role | Sees | Can do |
 |---|---|---|
-| Owner | every job's draft | edit only once the field work is theirs (Start field work on a job nobody owns, or a move to themself in [Job coordination](job-coordination.md)); if that move leaves the existing draft still naming the former owner, the owner gets the Start field work recovery prompt (see Key actions) |
-| Estimator | the job's header, tabs and Customer and claim on jobs they made or are assigned to; the draft (rooms, scope, photos) only while they own the job's field work (`draftReadable` in `job-screens.tsx`; `canRead` in `web/firestore.rules`) | Start field work on a job nobody owns, or again on a job that names them but whose draft does not yet (see Key actions); edit the jobs whose field work they own |
+| Owner | every job's draft | edit only once the field work is theirs (Start field work on a job nobody owns, or a move to themself in [Job coordination](job-coordination.md)); if that move leaves the existing draft still naming the former owner, opening the job gets it ready ("Getting this job's field work ready…", see Key actions) |
+| Estimator | the job's header, tabs and Customer and claim on jobs they made or are assigned to; the draft (rooms, scope, photos) only while they own the job's field work (`draftReadable` in `job-screens.tsx`; `canRead` in `web/firestore.rules`) | Start field work on a job nobody owns; edit the jobs whose field work they own (a job that names them but whose draft does not yet is got ready as it opens, see Key actions) |
 | Office | every job's draft, read only | nothing: no `scope`; no Start field work |
 | Superadmin support | nothing | nothing |
 | Different-company user | nothing: the job answers 404 and the field rules refuse the draft | nothing |

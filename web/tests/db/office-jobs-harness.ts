@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, expect } from 'vitest';
+import { manifestDigest } from '@/lib/field/canonical';
 import type { FakeClaims, Harness } from './team-harness';
 
 // Shared setup of the office jobs tests (office-jobs-api.test.ts and office-jobs-field-owner.test.ts):
@@ -146,6 +147,32 @@ export async function officeJob(): Promise<{ id: string; draftId: string }> {
   const made = await create(OFFICE_A, { ...ids, propertyAddress: '40 Office Road' });
   expect(made.status).toBe(201);
   return ids;
+}
+
+// An office job assigned to both estimators, its field work started by the first (shared by the field owner
+// and job read suites).
+export async function claimedJob(): Promise<{ id: string; draftId: string }> {
+  const made = await officeJob();
+  await assign(OFFICE_A, made.id, h.seed.estimatorA.actor);
+  await assign(OFFICE_A, made.id, estimatorA2);
+  expect((await claim(ESTIMATOR_A, made.id)).status).toBe(201);
+  return made;
+}
+
+// A claimed job submitted, then Back to editing committed a new draft id and its field step (the draft
+// sync, or the previous writer) failed, on its one more try too: the job's current draft is missing.
+export async function draftNeverMade(): Promise<{ id: string; draftId: string; later: string; submissionId: string }> {
+  const made = await claimedJob();
+  h.field.put(h.seed.a, made.draftId, MANIFEST);
+  expect((await submitDraft(ESTIMATOR_A, made.id, { id: randomUUID(), draftId: made.draftId, digest: await manifestDigest(MANIFEST) })).status).toBe(201);
+  const later = randomUUID();
+  h.field.failNext.createFrom = true;
+  h.field.failNext.sync = 2;
+  expect(await nextDraft(ESTIMATOR_A, made.id, { draftId: later, fromDraftId: made.draftId })).toEqual({ status: 503, body: { error: 'submissions_unavailable' } });
+  expect((await read(OWNER_A, made.id)).body.job).toMatchObject({ status: 'draft', currentDraftId: later });
+  expect(h.field.draft(h.seed.a, later)).toBeNull();
+  const [record] = await h.admin<{ id: string }[]>`SELECT id::text AS id FROM job_submissions WHERE job_id = ${made.id} AND status = 'committed'`;
+  return { ...made, later, submissionId: record!.id };
 }
 
 export function setUpOfficeJobsDatabase(live: { harness: Harness | null }): void {

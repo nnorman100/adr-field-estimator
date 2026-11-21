@@ -37,11 +37,11 @@ from here (no Unassign button for them).
 - Unanswered write: "A move of the field work / Assigning an estimator / Unassigning an estimator /
   Saving the notes was…" with "Send the unanswered change again". A move can also answer 503 ("Saved,
   but the field work could not be updated just now. Try again."): the move is committed on the server
-  but the draft does not name the new owner yet. The owner can send the same move again, or the
-  person moved to (an estimator, or the owner moving it to themself while the existing draft still
-  names the former owner) can open Check Scope or Photos and use "Start field work" to finish it
-  ([Check Scope](check-scope.md) lists every trigger of that prompt and which ones Start can repair:
-  this recovery finishes a move onto an existing draft, and it cannot make a job's first draft).
+  but the draft does not name the new owner yet. The owner can send the same move again; otherwise
+  the person moved to (an estimator, or the owner moving it to themself) gets it ready by opening the
+  job, whose read syncs the job's drafts ("Getting this job's field work ready…" meanwhile, see
+  [Check Scope](check-scope.md)), and the draft sync's repair pass finishes it within a few minutes
+  with no request.
 - Done: "The field work was moved.", "The estimator was assigned.", "Notes saved.".
 
 ## Key actions and server routes

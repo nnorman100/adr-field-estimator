@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { manifestDigest } from '@/lib/field/canonical';
 import { latch, until } from './submission-flow';
-import { ESTIMATOR_A, ESTIMATOR_A2, MANIFEST, OFFICE_A, OWNER_A, OWNER_B, archive, assign, audits, claim, coordination, count, create, draftOf, estimatorA2, everything, h, nextDraft, officeJob, read, restore, sendPhoto, submitDraft, transfer, unassign, setUpOfficeJobsDatabase } from './office-jobs-harness';
+import { ESTIMATOR_A, ESTIMATOR_A2, MANIFEST, OFFICE_A, OWNER_A, OWNER_B, archive, claimedJob, draftNeverMade, assign, audits, claim, coordination, count, create, draftOf, estimatorA2, everything, h, nextDraft, officeJob, read, restore, sendPhoto, submitDraft, transfer, unassign, setUpOfficeJobsDatabase } from './office-jobs-harness';
 import type { Harness } from './team-harness';
 
 // S5b-1, moving the field work (owner decision J5), split out of office-jobs-api.test.ts for its length:
@@ -19,13 +19,6 @@ vi.mock('@/lib/submissions/services', () => ({ submissionsServices: () => live.h
 setUpOfficeJobsDatabase(live);
 
 describe('moving the field work (owner decision J5)', () => {
-  async function claimedJob() {
-    const made = await officeJob();
-    await assign(OFFICE_A, made.id, h.seed.estimatorA.actor);
-    await assign(OFFICE_A, made.id, estimatorA2);
-    expect((await claim(ESTIMATOR_A, made.id)).status).toBe(201);
-    return made;
-  }
 
   it('moves the field work to an assigned estimator, audited, and the phone that held it can add no more', async () => {
     const { id, draftId } = await claimedJob();
@@ -197,23 +190,6 @@ describe('moving the field work (owner decision J5)', () => {
   // failed), and the phone that knew the submitted draft id is gone. The move, and the new owner's
   // Start field work, make the job's current draft from its latest record, with where it came from,
   // as Back to editing's retry does, instead of answering 503 every time.
-  async function draftNeverMade() {
-    const made = await claimedJob();
-    h.field.put(h.seed.a, made.draftId, MANIFEST);
-    expect((await submitDraft(ESTIMATOR_A, made.id, { id: randomUUID(), draftId: made.draftId, digest: await manifestDigest(MANIFEST) })).status).toBe(201);
-    const later = randomUUID();
-    // Back to editing's field step (the draft sync, or the previous writer) fails, on its one more try too.
-    h.field.failNext.createFrom = true;
-    h.field.failNext.sync = 2;
-    expect(await nextDraft(ESTIMATOR_A, made.id, { draftId: later, fromDraftId: made.draftId })).toEqual({
-      status: 503,
-      body: { error: 'submissions_unavailable' },
-    });
-    expect((await read(OWNER_A, made.id)).body.job).toMatchObject({ status: 'draft', currentDraftId: later });
-    expect(h.field.draft(h.seed.a, later)).toBeNull();
-    const [record] = await h.admin<{ id: string }[]>`SELECT id::text AS id FROM job_submissions WHERE job_id = ${made.id} AND status = 'committed'`;
-    return { ...made, later, submissionId: record!.id };
-  }
 
   it('makes the current draft Back to editing never made when the field work moves, from the job’s latest record', async () => {
     const { id, draftId, later, submissionId } = await draftNeverMade();

@@ -354,6 +354,56 @@ test('the field owner sees the field work being got ready, then edits it, with n
   await expect(page.getByRole('status').filter({ hasText: 'Getting this job’s field work ready' })).toHaveCount(0);
 });
 
+// Slice 6 review R6 (and R4, the company owner): an archived placeholder a previous version left over a
+// restored job's missing draft is not the job archived: the screen gets the field work ready.
+test('an archived placeholder over a live job’s draft is got ready, not shown as an archived job', async ({ page, request }) => {
+  test.setTimeout(120_000);
+  const company = await seedCompany('placeholder-ready', { owner: 'owner' });
+  const { jobId } = await seedJob(request, company, company.people.owner!, '18 Placeholder Path', []);
+  let first = true;
+  await page.route(`**/api/jobs/${jobId}`, async (route) => {
+    if (!first || route.request().method() !== 'GET') return route.continue();
+    first = false;
+    const answer = await route.fetch();
+    const at = adminDb().doc(`companies/${company.id}/drafts/${await currentDraftOf(company.id, jobId)}`);
+    await adminDb().recursiveDelete(at);
+    await at.set({ placeholder: true, jobId, state: 'archived' });
+    return route.fulfill({ response: answer });
+  });
+  await signIn(page, company, company.people.owner!);
+  await openJob(page, '18 Placeholder Path');
+  await expect(page.getByRole('status').filter({ hasText: 'Getting this job’s field work ready' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'This job is archived' })).toHaveCount(0);
+  await expect(page.getByLabel('Year built')).toBeEditable();
+});
+
+// Slice 6 review R5: what the field owner typed stays on screen while the field work is got ready again.
+test('the field owner’s typed scope stays on screen while the field work is got ready again', async ({ page, request, context }) => {
+  test.setTimeout(120_000);
+  const company = await seedCompany('typed-kept', { owner: 'owner' });
+  const { jobId } = await seedJob(request, company, company.people.owner!, '19 Kept Close', []);
+  await signIn(page, company, company.people.owner!);
+  await openJob(page, '19 Kept Close');
+  await expect(page.getByLabel('Year built')).toBeEditable();
+  await page.getByLabel('Year built').fill('1977');
+  // The phone goes offline and back; the job read it makes then answers, and the draft is lost before the
+  // phone reads it again.
+  let lose = true;
+  await page.route(`**/api/jobs/${jobId}`, async (route) => {
+    if (!lose || route.request().method() !== 'GET') return route.continue();
+    lose = false;
+    const answer = await route.fetch();
+    await adminDb().recursiveDelete(adminDb().doc(`companies/${company.id}/drafts/${await currentDraftOf(company.id, jobId)}`));
+    return route.fulfill({ response: answer });
+  });
+  await context.setOffline(true);
+  await context.setOffline(false);
+  await expect(page.getByRole('status').filter({ hasText: 'Getting this job’s field work ready' })).toBeVisible();
+  await expect(page.getByLabel('Year built')).toHaveValue('1977');
+  await expect(page.getByLabel('Year built')).toBeEditable();
+  await expect(page.getByLabel('Year built')).toHaveValue('1977');
+});
+
 test('the company owner keeps an unsaved room change on screen after moving the field work, whatever happens to the room', async ({ page, request }) => {
   test.setTimeout(120_000);
   const company = await seedCompany('owner-keeps-room', { owner: 'owner', first: 'estimator' });

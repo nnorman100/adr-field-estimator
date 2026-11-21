@@ -65,12 +65,10 @@ button can show and its request still be refused with 403 `not_field_owner`.
 - Signed: "This job is signed".
 - Errors: the server's message with "Try again" (same request) or "Reload the job".
 - Back to editing answered 503 after Postgres committed the new draft ID: the new draft may be
-  missing. For the field owner, an estimator or the company owner, opening Check Scope or Photos
-  then offers the "Start field work" recovery, which rebuilds the missing draft from the last
-  submission ([Check Scope](check-scope.md)). Until then, Back to editing again works only on this
-  screen as it stands (it keeps the request's IDs, so the retry is the same request); if the field
-  owner reloads or leaves and reopens Finish, it cannot load the missing draft and shows "We could
-  not open this job" with no Back to editing button.
+  missing. For the field owner, an estimator or the company owner, opening the job gets it ready: the
+  job read makes the missing draft from the last submission ("Getting this job's field work ready…"
+  meanwhile, [Check Scope](check-scope.md)). Back to editing again also works on this screen as it
+  stands (it keeps the request's IDs, so the retry is the same request).
 
 ## Key actions and server routes
 
