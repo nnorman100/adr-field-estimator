@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import type { ScopeLists } from '@/lib/field/api';
 import { editsAfterSave, roomChanges, roomTypeChoice, ROOM_FIELDS, withEdits, type FormValues, type RoomLists } from '@/lib/field/forms';
@@ -106,6 +106,7 @@ export function RoomCard({
   // Only the boxes the person changed; the rest always show the room as last read.
   const [edits, setEdits] = useState<FormValues>({});
   const [listEdits, setListEdits] = useState<RoomLists>({});
+  const [errors, setErrors] = useState<Record<string, string>>({});
   // A prep task typed and not added yet (RoomPrepTasks), kept on the page (src/lib/field/pending.ts).
   const { jobId } = job;
   const { draftId } = job.draftRef;
@@ -115,16 +116,21 @@ export function RoomCard({
   const setOwnTask = (text: string) => pending.typeTask(jobId, draftId, roomId, text, { field: stored, number });
   const values = withEdits(ROOM_FIELDS, stored, edits);
   const [ownTyped, setOwnTyped] = useState(false);
-  const dirty = Object.keys(edits).length > 0 || Object.keys(listEdits).length > 0 || ownTyped;
+  const result = roomChanges(values, stored, listEdits);
+  const unsaved = Object.keys(result.changes).length > 0 || Object.keys(result.errors).length > 0;
+  const dirty = unsaved || ownTyped;
   useEffect(() => {
     onDirty?.(roomId, dirty);
   }, [onDirty, roomId, dirty]);
   const { markUnsaved } = job;
-  useEffect(() => {
-    markUnsaved(`room/${roomId}`, dirty);
-    return () => markUnsaved(`room/${roomId}`, false);
-  }, [markUnsaved, roomId, dirty]);
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  useLayoutEffect(() => {
+    markUnsaved(`room/${roomId}`, unsaved ? () => {
+      setEdits({});
+      setListEdits({});
+      setErrors({});
+    } : null);
+    return () => markUnsaved(`room/${roomId}`, null);
+  }, [markUnsaved, roomId, unsaved]);
   const { busy, error, notice, setError, setNotice, save: saveEdit } = useFieldEdit(job);
   const readOnly = !job.editable || !listed;
   const set = (key: string) => (value: string) => {
@@ -140,7 +146,7 @@ export function RoomCard({
 
   async function save() {
     if (job.stale || readOnly) return;
-    const { changes, errors: found } = roomChanges(values, stored, listEdits);
+    const { changes, errors: found } = result;
     setErrors(found);
     setNotice(null);
     if (Object.keys(found).length > 0) return setError('Check the boxes marked in this room.');

@@ -47,7 +47,7 @@ type Phase =
   | ({ name: 'ready' } & Ready);
 
 // A refusal or failure shown above the actions, and what the person can do next.
-type Problem = { message: string; next: Next };
+type Problem = { message: string; next: Next; keepChecklist?: boolean };
 
 export function FinishScreen(props: FinishScreenProps) {
   if (!props.config) {
@@ -199,8 +199,8 @@ function FinishActions({
     [advisory, manifest, job.id, pricesManage, owner, address],
   );
 
-  // A refusal that says the job moved on (not a lost answer) ends the checklist it was read for.
-  const prompted = problem && problem.next !== 'retry' ? [] : items;
+  // A field ownership refusal leaves this draft readable and its checklist current.
+  const prompted = problem && problem.next !== 'retry' && !problem.keepChecklist ? [] : items;
 
   async function finish() {
     if (!manifest) return;
@@ -220,7 +220,7 @@ function FinishActions({
     }
     const outcome = outcomeOf(answer.status, answer.body);
     if (outcome.next !== 'retry') pendingSubmit.current = null;
-    setProblem(outcome);
+    setProblem({ ...outcome, keepChecklist: answer.status === 403 && (answer.body as { error?: unknown } | null)?.error === 'not_field_owner' });
   }
 
   async function backToEditing() {

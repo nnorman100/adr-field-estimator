@@ -9,7 +9,7 @@ import { adminSql, currentDraftOf, type Company } from './seed';
 
 const SHOTS = ['overview', 'surface', 'meter'] as const;
 
-export async function completeJob(company: Company, jobId: string): Promise<{ draftId: string; roomId: string }> {
+export async function completeJob(company: Company, jobId: string): Promise<{ draftId: string }> {
   const db = adminSql();
   const table = parseTable({
     items: [{ item_id: 'extraction', group: 'treatment', name: 'Water extraction', unit: 'sf', quantity_source: 'room:wet_floor', unit_price: '2.00' }],
@@ -43,5 +43,5 @@ export async function completeJob(company: Company, jobId: string): Promise<{ dr
     `;
     await draft.collection('photos').doc(objectId).set({ field: { roomId, shotTag, capturedAt: new Date().toISOString() } });
   }
-  return { draftId, roomId };
+  return { draftId };
 }

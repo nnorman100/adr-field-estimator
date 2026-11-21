@@ -40,6 +40,7 @@ Status labels (`JOB_STATUS_LABELS` in `src/lib/jobs/status-labels.ts`): "In prog
 - When the current sign-in has `scope` and the company has enabled `readiness`, visible editing rows
   can show a count of items to check or **Ready to review**. The row needs a current check matching
   its ID and revision. A slow or failed check leaves the row usable with its regular status.
+  **Company jobs** requests readiness only for rows that also belong on the person's own list.
   The list asks for up to three checks at once. "Show more jobs" keeps the checks and markers of
   rows already shown; a list read again from its first page, a sign-in change or a changed row
   revision starts them again. Office, submitted, signed and archived rows have no readiness marker.

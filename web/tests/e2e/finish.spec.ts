@@ -206,7 +206,7 @@ test('office sees the draft but cannot finish it', async ({ page }) => {
 test.describe('Ready to review', () => {
   test.use({ baseURL: JOBS_BASE_URL, viewport: { width: 320, height: 720 } });
 
-  async function openJob(page: Page, flag = true) {
+  async function openJob(page: Page, flag = true, storage = 'Online only') {
     const company = await seedCompany('readiness', { estimator: 'estimator', office: 'office', owner: 'owner' });
     if (flag) await adminSql()`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${company.id}, 'readiness', true)`;
     const signIn = async (role: 'estimator' | 'office' | 'owner') => {
@@ -224,7 +224,7 @@ test.describe('Ready to review', () => {
     };
     await signIn('estimator');
     await page.getByRole('link', { name: 'Open the field app' }).click();
-    await page.getByRole('button', { name: 'Online only', exact: true }).click();
+    await page.getByRole('button', { name: storage, exact: true }).click();
     await page.getByRole('link', { name: 'New job' }).click();
     await page.getByLabel('Property address').fill('15 Example Street');
     await page.getByRole('button', { name: 'Start job' }).click();
@@ -239,6 +239,262 @@ test.describe('Ready to review', () => {
       return Boolean(from && new URL(from).pathname === finishPath && new URL(answer.url()).pathname === `/api/jobs/${jobId}/readiness` && answer.ok());
     });
   }
+
+  async function followYearFix(page: Page, jobId: string, finishPath: string) {
+    const first = checked(page, jobId, finishPath);
+    await page.goto(finishPath);
+    await (await first).finished();
+    await page.getByRole('button', { name: 'Finish and review' }).click();
+    await page.getByRole('dialog', { name: 'Ready to review?' }).getByRole('link', { name: 'Fix: Add the year built' }).click();
+  }
+
+  test('the return waits for a sent claim and rechecks hidden edits before leaving', async ({ page }) => {
+    const { jobId, finishPath } = await openJob(page);
+    await followYearFix(page, jobId, finishPath);
+    const year = page.getByLabel('Year built');
+    await expect(year).toBeEditable();
+    await page.getByRole('link', { name: 'Customer and claim' }).click();
+    const claim = page.getByLabel('Claim number');
+    await claim.fill('Claim 123');
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    await page.route(`**/api/jobs/${jobId}/claim`, async (route) => {
+      if (route.request().method() === 'PUT') {
+        started.resolve();
+        await release.promise;
+      }
+      await route.continue();
+    });
+
+    const back = page.getByRole('link', { name: 'Back to Finish and review' });
+    const warning = page.getByRole('alert').filter({ hasText: 'Some changes are not saved' });
+    try {
+      await page.getByRole('button', { name: 'Save claim' }).click();
+      await started.promise;
+      await back.click();
+      await expect(page.getByRole('status').filter({ hasText: /^Saving…$/ })).toBeVisible();
+      expect(await page.evaluate(() => window.dispatchEvent(new Event('beforeunload', { cancelable: true })))).toBe(false);
+      await page.getByRole('link', { name: 'Check Scope' }).click();
+      await year.fill('1985');
+    } finally {
+      release.resolve();
+    }
+    await expect(warning).toBeVisible();
+    await expect(year).toHaveValue('1985');
+    await warning.getByRole('button', { name: 'Discard changes and go back' }).click();
+    await expect(page).toHaveURL(new RegExp(`${finishPath}$`));
+  });
+
+  test('browser Back warns about unsaved Fix edits and cancel keeps them', async ({ page }) => {
+    const { jobId, finishPath } = await openJob(page);
+    await followYearFix(page, jobId, finishPath);
+    const year = page.getByLabel('Year built');
+    await year.click();
+    await year.fill('1985');
+    const warned = page.waitForEvent('dialog');
+    const back = page.evaluate(() => window.history.back());
+    const dialog = await warned;
+    await dialog.dismiss();
+    await back;
+    expect(dialog.type()).toBe('beforeunload');
+    await expect(page).toHaveURL(/\/field\?/);
+    await expect(year).toHaveValue('1985');
+    await year.fill('');
+    await page.getByRole('link', { name: 'Back to Finish and review' }).click();
+    await expect(page).toHaveURL(new RegExp(`${finishPath}$`));
+  });
+
+  test('a stalled journal read stops the return and keeps the Fix destination', async ({ page }) => {
+    const { jobId, finishPath } = await openJob(page, true, 'Keep jobs on this phone');
+    await followYearFix(page, jobId, finishPath);
+    const year = page.getByLabel('Year built');
+    await expect(year).toBeEditable();
+    await page.evaluate(() => {
+      const transaction = IDBDatabase.prototype.transaction;
+      IDBDatabase.prototype.transaction = function (...args) {
+        const opened = transaction.apply(this, args);
+        if (this.name === 'ds-journal' && opened.mode === 'readonly') {
+          Object.defineProperty(opened, 'oncomplete', { set: () => undefined });
+        }
+        return opened;
+      };
+    });
+    await page.getByRole('link', { name: 'Back to Finish and review' }).click();
+    await expect(page.getByRole('status').filter({ hasText: /^Saving…$/ })).toBeVisible();
+    await expect(page.getByRole('alert').filter({ hasText: 'Could not confirm that the changes were saved' })).toBeVisible({ timeout: 10_000 });
+    await expect(page).toHaveURL(/\/field\?/);
+    await expect(year).toBeEditable();
+  });
+
+  test('a queued edit from an older app still blocks return by its draft path', async ({ page }) => {
+    const { company, jobId, finishPath } = await openJob(page, true, 'Keep jobs on this phone');
+    await followYearFix(page, jobId, finishPath);
+    await expect(page.getByLabel('Year built')).toBeEditable();
+    const draftPath = `companies/${company.id}/drafts/${await currentDraftOf(company.id, jobId)}`;
+    await page.evaluate(({ tenantId, uid, draftPath }) => new Promise<void>((resolve, reject) => {
+      const open = indexedDB.open('ds-journal', 1);
+      open.onerror = () => reject(open.error);
+      open.onsuccess = () => {
+        const db = open.result;
+        const transaction = db.transaction('entries', 'readwrite');
+        transaction.onabort = () => reject(transaction.error);
+        transaction.oncomplete = () => {
+          db.close();
+          resolve();
+        };
+        transaction.objectStore('entries').add({
+          id: crypto.randomUUID(), tenantId, uid, draftPath, at: Date.now(), state: 'pending',
+          writes: [{ path: draftPath, op: 'update', fields: { 'field.yearBuilt': 1985 } }],
+        });
+      };
+    }), { tenantId: company.tenantId, uid: company.people.estimator!.uid, draftPath });
+    await page.getByRole('link', { name: 'Back to Finish and review' }).click();
+    await expect(page.getByRole('alert').filter({ hasText: 'Could not confirm that the changes were saved' })).toBeVisible({ timeout: 10_000 });
+    await expect(page).toHaveURL(/\/field\?/);
+  });
+
+  test('discard clears mounted forms and cancelling the return keeps the photo upload', async ({ page }) => {
+    const { jobId, finishPath } = await openJob(page);
+    await page.getByLabel('New room name').fill('Kitchen');
+    await page.getByRole('button', { name: 'Add room' }).click();
+    await expect(page.getByText('Kitchen added.')).toBeVisible();
+    await followYearFix(page, jobId, finishPath);
+    const year = page.getByLabel('Year built');
+    const roomName = page.getByLabel('New room name');
+    const kitchen = page.getByRole('form', { name: 'Kitchen' }).getByLabel('Room name');
+    const customer = page.getByLabel('Customer name');
+    const claim = page.getByLabel('Claim number');
+    const back = page.getByRole('link', { name: 'Back to Finish and review' });
+    await expect(year).toBeEditable();
+    await page.getByRole('link', { name: 'Photos' }).click();
+    await page.evaluate(() => {
+      const toBlob = HTMLCanvasElement.prototype.toBlob;
+      const ready = new Promise<void>((resolve) => document.addEventListener('release-test-photo', () => resolve(), { once: true }));
+      HTMLCanvasElement.prototype.toBlob = function (...args) {
+        void ready.then(() => toBlob.apply(this, args));
+      };
+    });
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    let firstSend = true;
+    await page.route(`**/api/jobs/${jobId}/photos/*?kind=photo`, async (route) => {
+      if (route.request().method() !== 'PUT' || !firstSend) return route.continue();
+      firstSend = false;
+      started.resolve();
+      await release.promise;
+      await route.abort();
+    });
+    try {
+      await page.getByLabel('Take photo').setInputFiles({
+        name: 'overview.png',
+        mimeType: 'image/png',
+        buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAZ0lEQVR4nBWMQQ0AQAyDqmRKqgQlU1IlU1JFl+NJCBIaZARaFHSoSGKGMQOzTJhjykh4sDF4cfDhYokfm89C4KAgscP6y1027LFlJTLEP82SkCMlEjec/+CWC3dcOYkO9d92aejR0gf/sEsBLaIzfQAAAABJRU5ErkJggg==', 'base64'),
+      });
+      await back.click();
+      await expect(page.getByRole('status').filter({ hasText: /^Saving…$/ })).toBeVisible();
+      await page.getByRole('button', { name: 'Keep editing' }).click();
+      await page.evaluate(() => document.dispatchEvent(new Event('release-test-photo')));
+      await started.promise;
+      await page.getByRole('link', { name: 'Check Scope' }).click();
+      await year.fill('1985');
+      await roomName.fill('Garage');
+      await kitchen.fill('Kitchen edit');
+      await page.getByRole('link', { name: 'Customer and claim' }).click();
+      await customer.fill('Test customer');
+      await claim.fill('Claim 123');
+      await back.click();
+      await page.getByRole('button', { name: 'Discard changes and go back' }).click();
+      await page.getByRole('button', { name: 'Keep editing' }).click();
+      await expect(customer).toHaveValue('');
+      await expect(claim).toHaveValue('');
+      await page.getByRole('link', { name: 'Check Scope' }).click();
+      await expect(year).toHaveValue('');
+      await expect(roomName).toHaveValue('');
+      await expect(kitchen).toHaveValue('Kitchen');
+      await page.getByRole('link', { name: 'Photos' }).click();
+      await expect(page.getByText('Sending the photo…')).toBeVisible();
+      await back.click();
+      await expect(page.getByRole('status').filter({ hasText: /^Saving…$/ })).toBeVisible();
+    } finally {
+      release.resolve();
+    }
+    await expect(page.getByRole('alert').filter({ hasText: 'Could not confirm that the changes were saved' })).toBeVisible();
+    const retry = page.getByRole('button', { name: 'Send again' });
+    await retry.click();
+    await expect(retry).toBeHidden();
+    await back.click();
+    await expect(page).toHaveURL(new RegExp(`${finishPath}$`));
+    await expect(page.getByText('1 photo', { exact: true })).toBeVisible();
+  });
+
+  test('turning readiness off after following Fix still allows the return', async ({ page }) => {
+    const { company, jobId, finishPath } = await openJob(page);
+    await followYearFix(page, jobId, finishPath);
+    const year = page.getByLabel('Year built');
+    await expect(year).toBeFocused();
+    const marker = page.getByRole('status').filter({ hasText: /^\d+ items? to check$/ });
+    await expect(marker).toBeVisible();
+    await adminSql()`UPDATE company_feature_flags SET enabled = false WHERE company_id = ${company.id} AND flag = 'readiness'`;
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await expect(marker).toBeHidden();
+    const reread = page.waitForResponse((answer) => new URL(answer.url()).pathname === '/api/me' && answer.ok());
+    await page.evaluate(() => {
+      Reflect.deleteProperty(document, 'visibilityState');
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    expect((await (await reread).json()).features?.readiness).not.toBe(true);
+    await expect(year).toBeEditable();
+    await page.getByRole('link', { name: 'Back to Finish and review' }).click();
+    await expect(page).toHaveURL(new RegExp(`${finishPath}$`));
+    await expect(page.getByRole('button', { name: 'Finish and review' })).toBeVisible();
+    await expect(page.locator('dialog')).toHaveCount(0);
+  });
+
+  test('Company jobs skips readiness for another person’s rows but Finish keeps their current checklist', async ({ page }) => {
+    const { company, jobId, finishPath, signIn } = await openJob(page);
+    await page.goto(`/sign-in/${company.address}`);
+    await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+    await expect(page.getByRole('heading', { name: `Sign in to ${company.name}` })).toBeVisible();
+    await signIn('owner');
+    await page.getByRole('link', { name: 'Open the field app' }).click();
+    const choice = page.getByRole('button', { name: 'Online only', exact: true });
+    const newJob = page.getByRole('link', { name: 'New job' });
+    await expect(choice.or(newJob)).toBeVisible();
+    if (await choice.isVisible()) await choice.click();
+    await newJob.click();
+    await page.getByLabel('Property address').fill('17 Example Street');
+    await page.getByRole('button', { name: 'Start job' }).click();
+    await expect(page.getByLabel('Year built')).toBeEditable();
+    const ownJob = new URL(page.url()).searchParams.get('job')!;
+    const checks: string[] = [];
+    const observe = (request: Request) => {
+      const pathname = new URL(request.url()).pathname;
+      if (pathname.endsWith('/readiness')) checks.push(pathname);
+    };
+    page.on('request', observe);
+    await page.getByRole('link', { name: 'Back to jobs' }).click();
+    const companyJobs = page.getByRole('list', { name: 'Company jobs' });
+    await expect(companyJobs.getByText('15 Example Street')).toBeVisible();
+    await expect(companyJobs.getByRole('listitem').filter({ hasText: '17 Example Street' }).getByText(/to check/)).toBeVisible();
+    expect(checks).toEqual([`/api/jobs/${ownJob}/readiness`]);
+    page.off('request', observe);
+
+    const first = checked(page, jobId, finishPath);
+    await page.goto(finishPath);
+    await (await first).finished();
+    const finish = page.getByRole('button', { name: 'Finish and review' });
+    const dialog = page.getByRole('dialog', { name: 'Ready to review?' });
+    await finish.click();
+    const refused = page.waitForResponse((answer) => new URL(answer.url()).pathname === `/api/jobs/${jobId}/submissions`);
+    await dialog.getByRole('button', { name: 'Continue anyway' }).click();
+    expect(await (await refused).json()).toMatchObject({ error: 'not_field_owner' });
+    await expect(page.getByRole('alert').filter({ hasText: 'Reload the job' })).toBeVisible();
+    await finish.click();
+    await expect(dialog.getByRole('link', { name: 'Fix: Add the year built' })).toBeVisible();
+  });
 
   test('Fix opens the saved field and Continue anyway commits one submission', async ({ page }) => {
     const { jobId, finishPath } = await openJob(page);

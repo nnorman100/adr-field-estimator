@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   assignEstimator,
@@ -182,10 +182,10 @@ function Coordination({ job, view, setView, reread }: { job: JobContext & { deta
   const mayMove = caps.includes('field_owner_transfer') && view.status !== 'signed' && view.status !== 'archived' && !archived && (targets.length > 0 || heldMove !== null);
   const notesHeld = held?.request.kind === 'notes';
   const { markUnsaved } = job;
-  const notesUnsaved = notes !== null && notes !== view.notes;
-  useEffect(() => {
-    markUnsaved('notes', notesUnsaved);
-    return () => markUnsaved('notes', false);
+  const notesUnsaved = notes !== null && notes !== (held?.request.kind === 'notes' ? held.request.notes : view.notes);
+  useLayoutEffect(() => {
+    markUnsaved('notes', notesUnsaved ? () => setNotes(null) : null);
+    return () => markUnsaved('notes', null);
   }, [markUnsaved, notesUnsaved]);
 
   return (

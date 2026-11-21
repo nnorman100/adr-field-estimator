@@ -20,7 +20,8 @@ suggestions use the room's existing overview, affected surface and moisture mete
 can open Prices from the checklist's price row only when `/api/me` grants `prices_manage`; that link
 is labelled Open Prices, not Fix. Everyone else is directed to their company owner. A confirmed
 archive (HTTP 410), from the check or from Submit, shows the archived state
-instead of the prompt. Any other definitive Submit refusal also ends the prompt for that checklist.
+instead of the prompt. A `not_field_owner` Submit refusal keeps the current checklist and Fix links
+available. Other definitive Submit refusals end the prompt for that checklist.
 A gap for a scope that is already confirmed (confirmed before a reprice) is explained as Finish, Back
 to editing, then confirm again, with no link.
 
@@ -50,7 +51,11 @@ button can show and its request still be refused with 403 `not_field_owner`.
   field work); a newer draft appeared: "Show the new draft".
 - Readiness prompt: focus starts on **Back**. Back or Escape closes it and returns focus to
   **Finish and review**. **Continue anyway** sends the ordinary Finish request once. A Fix link
-  opens the appropriate field view. Returning to Finish reads the job, the draft and the flag again.
+  opens the appropriate field view. **Back to Finish and review** stays available across that job's
+  tabs and after a flag change. The return offers a chance to save or discard unsent form edits and
+  waits up to eight seconds for the job's saves to be acknowledged. If the wait expires, the person
+  stays on the job with the existing save and retry controls. Use **Keep editing** to cancel a pending
+  return. Returning to Finish reads the job, the draft and the flag again.
 - Finish goes ahead directly when the check has no matching gaps or is still pending. An unavailable
   or timed-out check and the flag being off leave the Finish action available.
 - Finished: "Finished", "This draft is recorded and locked. Nobody can change it.", "Review the

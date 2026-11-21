@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { readJob, type JobDetail, type Refusal } from '@/lib/field/api';
 import { loadJobProjection, type JobProjection } from '@/lib/field/job-projection';
@@ -8,7 +8,7 @@ import { watchJournal } from '@/lib/field/journal';
 import { journalFailed, readEntries } from '@/lib/field/journal-sync';
 import { newerDetail, pending, usePending } from '@/lib/field/pending';
 import type { FieldSession } from '@/lib/field/session';
-import { canEditDraft, draftReads, fieldRefusal, IncompleteFieldData, InvalidFieldData, SUPERSEDED, type DraftRef, type FieldDraft } from '@/lib/field/store';
+import { canEditDraft, draftPath, draftReads, fieldRefusal, IncompleteFieldData, InvalidFieldData, SUPERSEDED, type DraftRef, type FieldDraft } from '@/lib/field/store';
 import type { JobView } from '@/lib/field/views';
 import { useDraftReadiness } from '@/lib/readiness/client';
 import { fixTarget } from '@/lib/readiness/fix';
@@ -42,6 +42,7 @@ function fieldWorkOf(session: FieldSession, detail: JobDetail): FieldWork {
 
 // Where a Fix lands when its own control is not there or not usable, as for a read-only draft.
 const FIX_FALLBACKS: Record<string, string> = { 'new-room-name': 'readiness-rooms', 'photo-room': 'readiness-photos' };
+const RETURN_WAIT_MS = 8_000;
 
 const readsEveryDraft = (session: FieldSession) => session.role === 'owner' || session.role === 'office';
 const draftReadable = (session: FieldSession, detail: JobDetail) => readsEveryDraft(session) || fieldWorkOf(session, detail) === 'mine';
@@ -81,9 +82,10 @@ export type JobContext = {
   // Nothing of the job is sent: it is archived, or a read of it must say first whether an archive or
   // another refusal changed it. What was typed stays, read only.
   held: boolean;
-  // A form of the job tells whether it holds changes not saved; the screen keeps such a form when the
-  // job turns out archived.
-  markUnsaved: (form: string, unsaved: boolean) => void;
+  // Forms register how to clear their unsent values on discard, even on a hidden tab.
+  markUnsaved: (form: string, discard: (() => void) | null) => void;
+  // Keeps the return guard active during local preparation, before a write can be tracked elsewhere.
+  startSave: () => (failed?: boolean) => void;
   // The last read of the draft did not get through, so the draft on screen may be older than what is
   // stored: boxes stay open, but nothing is saved over it until it is read again.
   stale: boolean;
@@ -141,17 +143,16 @@ export function JobScreens({
   const [archivalsSeen] = useState(archivalsDone);
   const [draftError, setDraftError] = useState<string | null>(null);
   // The forms of this job on this screen that hold changes not saved (told by each form).
-  const [unsavedForms, setUnsavedForms] = useState<Record<string, true>>({});
-  const markUnsaved = useCallback((form: string, unsaved: boolean) => {
-    setUnsavedForms((current) => {
-      if (Boolean(current[form]) === unsaved) return current;
-      const next = { ...current };
-      if (unsaved) next[form] = true;
-      else delete next[form];
-      return next;
-    });
+  const unsavedForms = useRef(new Map<string, () => void>());
+  const [hasUnsavedForms, setHasUnsavedForms] = useState(false);
+  const markUnsaved = useCallback((form: string, discard: (() => void) | null) => {
+    if (discard) unsavedForms.current.set(form, discard);
+    else unsavedForms.current.delete(form);
+    setHasUnsavedForms(unsavedForms.current.size > 0);
   }, []);
-  const unsaved = Object.keys(unsavedForms).length > 0;
+  const typed = usePending(() => pending.typed(jobId));
+  const unsaved = hasUnsavedForms || Object.keys(typed).length > 0;
+  const hasUnsent = useCallback(() => unsavedForms.current.size > 0 || Object.keys(pending.typed(jobId)).length > 0, [jobId]);
   const [readDraft] = useState(draftReads);
   // A refusal waits for a read of the job to say what it meant (src/lib/field/pending.ts): nothing
   // is saved meanwhile.
@@ -385,32 +386,52 @@ export function JobScreens({
     if (movedState && draft && (draftAt ?? draftId)) pending.keepDraft(jobId, draft, (draftAt ?? draftId)!);
   }, [movedState, draft, draftAt, draftId, jobId]);
 
-  const readinessOn = session.readiness && session.capabilities.includes('scope') && detail?.job.status === 'draft' && !archived && !movedState && !archiveChecking;
-  const fix = readinessOn ? fixTarget(readinessFix, view) : null;
+  const returnAllowed = session.capabilities.includes('scope') && detail?.job.status === 'draft' && !archived && !movedState && !archiveChecking;
+  const target = fixTarget(readinessFix, view);
+  const fix = session.readiness && returnAllowed ? target : null;
   // Once a Fix brought the person here, the way back to Finish stays for this job's other tabs too.
   const [fromFinish, setFromFinish] = useState(false);
   if (fix && !fromFinish) setFromFinish(true);
   const finishHref = `/sign-in/${address}/jobs/${jobId}/finish`;
-  const returnGuarded = fromFinish && readinessOn;
+  const returnGuarded = fromFinish && returnAllowed;
   // Back to Finish asks to save or discard while any form holds unsaved input, then waits until this
   // job's field writes and photo sends have the server's acknowledgement: Finish reads the manifest
   // from the field database, not from this phone.
-  const [leaving, setLeaving] = useState<'no' | 'choosing' | 'going'>('no');
+  const [leaving, setLeaving] = useState<'no' | 'choosing' | 'going' | 'blocked'>('no');
   if (leaving === 'choosing' && !unsaved) setLeaving('no');
-  const recordInFlight = usePending(() => pending.record(jobId)?.sending === true || pending.coordWrite(jobId)?.sending === true);
-  const photosInFlight = usePending(() => pending.photos(jobId)).some((photo) => photo.step === 'sending' || photo.step === 'saving');
-  const [journalBusy, setJournalBusy] = useState<boolean | null>(null);
+  const [preparing, setPreparing] = useState(0);
+  const startSave = useCallback(() => {
+    setPreparing((count) => count + 1);
+    return (failed = false) => {
+      setPreparing((count) => count - 1);
+      if (failed) setLeaving((current) => current === 'going' ? 'blocked' : current);
+    };
+  }, []);
+  const record = usePending(() => pending.record(jobId));
+  const coordination = usePending(() => pending.coordWrite(jobId));
+  const photos = usePending(() => pending.photos(jobId));
+  const [journal, setJournal] = useState<'reading' | 'pending' | 'clear' | 'failed'>('reading');
   const fieldClient = session.client;
+  const currentPath = row ? draftPath({ companyId: session.companyId, draftId: row.currentDraftId }) : null;
+  const going = leaving === 'going';
   useEffect(() => {
-    if (!returnGuarded || leaving !== 'going') return;
+    if (!returnGuarded) return;
     let live = true;
     let reads = 0;
     const load = async () => {
       const mine = ++reads;
+      if (!live) return;
+      setJournal('reading');
       try {
-        const entries = await readEntries(fieldClient);
-        if (live && mine === reads) setJournalBusy(entries.some((entry) => entry.state === 'pending' && entry.jobId === jobId));
+        const entries = (await readEntries(fieldClient)).filter((entry) =>
+          entry.jobId === jobId || (!entry.jobId && entry.draftPath === currentPath),
+        );
+        if (live && mine === reads) {
+          setJournal(entries.some((entry) => entry.state !== 'pending') ? 'failed' : entries.length ? 'pending' : 'clear');
+        }
       } catch (error) {
+        if (!live || mine !== reads) return;
+        setJournal('failed');
         journalFailed(fieldClient, error);
       }
     };
@@ -420,22 +441,54 @@ export function JobScreens({
       live = false;
       stop();
     };
-  }, [returnGuarded, leaving, fieldClient, jobId]);
-  const writing = journalBusy !== false || recordInFlight || photosInFlight;
+  }, [returnGuarded, going, fieldClient, jobId, currentPath]);
+  const failed = journal === 'failed' || record?.sending === false || coordination?.sending === false || photos.some((photo) => photo.step === 'send-failed' || photo.step === 'save-failed');
+  const writing = journal !== 'clear' || preparing > 0 || record !== null || coordination !== null || photos.length > 0;
+  if (returnGuarded && going && failed) setLeaving('blocked');
   const returnToFinish = () => {
-    setJournalBusy(null);
+    setJournal('reading');
     setLeaving('going');
   };
+  useLayoutEffect(() => {
+    if (!returnGuarded || !(unsaved || writing)) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      if (!writing && !hasUnsent()) return;
+      event.preventDefault();
+      event.returnValue = true;
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [returnGuarded, unsaved, writing, hasUnsent]);
   useEffect(() => {
-    // Finish uses a separate Firestore client. End the field document after its writes settle.
-    // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- The browser must load a separate document to release the field client's connections.
-    if (returnGuarded && leaving === 'going' && !writing) window.location.assign(finishHref);
-  }, [returnGuarded, leaving, writing, finishHref]);
+    if (!returnGuarded || !going) return;
+    const deadline = setTimeout(() => setLeaving('blocked'), RETURN_WAIT_MS);
+    return () => clearTimeout(deadline);
+  }, [returnGuarded, going]);
   useEffect(() => {
-    if (!fix) {
+    if (!returnGuarded || !going || writing) return;
+    const ready = setTimeout(() => {
+      if (hasUnsent()) return setLeaving('choosing');
+      // Finish opens a separate Firestore client and reads the current draft and flag.
+      setLeaving('no');
+      // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- Release the field client's connections.
+      window.location.assign(finishHref);
+    }, 0);
+    return () => clearTimeout(ready);
+  }, [returnGuarded, going, writing, finishHref, hasUnsent]);
+  useEffect(() => {
+    if (!returnGuarded) return;
+    const restore = (event: PageTransitionEvent) => {
+      if (event.persisted) setLeaving('no');
+    };
+    window.addEventListener('pageshow', restore);
+    return () => window.removeEventListener('pageshow', restore);
+  }, [returnGuarded]);
+  useEffect(() => {
+    if (!readinessFix) {
       focusedFix.current = null;
       return;
     }
+    if (!fix) return;
     if (focusedFix.current === readinessFix) return;
     const usable = (found: HTMLElement) =>
       !found.closest('[hidden]') && !found.matches(':disabled') && !((found instanceof HTMLInputElement || found instanceof HTMLTextAreaElement) && found.readOnly);
@@ -508,6 +561,7 @@ export function JobScreens({
     archived,
     held: archived || archiveChecking,
     markUnsaved,
+    startSave,
     stale: draft !== null && draftError !== null,
     readiness: { checking, answer: checking ? advisory : undefined, recheck },
   };
@@ -532,7 +586,7 @@ export function JobScreens({
             onClick={(event) => {
               event.preventDefault();
               if (leaving === 'going') return;
-              if (unsaved) setLeaving('choosing');
+              if (preparing === 0 && hasUnsent()) setLeaving('choosing');
               else returnToFinish();
             }}
           >
@@ -548,7 +602,8 @@ export function JobScreens({
                 <Button
                   variant="outline"
                   onClick={() => {
-                    if (currentRefId) pending.discardUnsent(jobId, currentRefId);
+                    for (const discard of unsavedForms.current.values()) discard();
+                    pending.discardUnsent(jobId);
                     returnToFinish();
                   }}
                 >
@@ -564,6 +619,9 @@ export function JobScreens({
                 Keep editing
               </Button>
             </div>
+          ) : null}
+          {leaving === 'blocked' ? (
+            <p role="alert" className="text-sm">Could not confirm that the changes were saved. Check the job for changes to retry, then try returning again.</p>
           ) : null}
         </div>
       ) : null}

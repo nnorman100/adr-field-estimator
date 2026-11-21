@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useLayoutEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { saveClaim, saveCustomer, type Answer, type JobDetail } from '@/lib/field/api';
 import { pending, usePending, type RecordKind } from '@/lib/field/pending';
@@ -125,12 +125,13 @@ function RecordForm({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const changed = { ...refusal?.edits, ...edits };
-  const shown = mine?.values ?? { ...reread(job.detail), ...changed };
+  const baseline = mine?.values ?? reread(job.detail);
+  const shown = mine?.values ?? { ...baseline, ...changed };
   const { markUnsaved } = job;
-  const dirty = Object.keys(changed).length > 0;
-  useEffect(() => {
-    markUnsaved(`record/${kind}`, dirty);
-    return () => markUnsaved(`record/${kind}`, false);
+  const dirty = Object.entries(changed).some(([key, value]) => baseline[key] !== value);
+  useLayoutEffect(() => {
+    markUnsaved(`record/${kind}`, dirty ? () => setEdits({}) : null);
+    return () => markUnsaved(`record/${kind}`, null);
   }, [markUnsaved, kind, dirty]);
 
   // Takes a kept refusal's changes into the form's own.
