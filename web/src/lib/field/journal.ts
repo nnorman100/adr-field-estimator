@@ -28,6 +28,7 @@
 // is not made. While any entry is here the person's
 // unsent mark (./unsent.ts) stays set, so the sign-in pages ask before anything is discarded.
 import { canonicalJson } from './canonical';
+import { beginUpdateActivity } from '@/lib/update-activity';
 import { ReopenTheApp, transact, withDatabase, type DbSpec } from './idb';
 
 export const JOURNAL_DB = 'ds-journal';
@@ -123,6 +124,21 @@ const ownerRange = (owner: Owner) => IDBKeyRange.only([owner.tenantId, owner.uid
 const inMemory = new Map<string, JournalEntry[]>();
 let memorySeq = 0;
 
+// While this page's memory holds an entry of a (tenant, person), nothing but this page has it: an
+// app update must not reload the page, whether the entry is waiting, refused or unresolved. The hold
+// ends when the last entry is resolved or discarded.
+const memoryHolds = new Map<string, () => void>();
+function holdWhileInMemory(owner: Owner): void {
+  const key = ownerKey(owner);
+  const unresolved = (inMemory.get(key)?.length ?? 0) > 0;
+  const hold = memoryHolds.get(key);
+  if (unresolved && !hold) memoryHolds.set(key, beginUpdateActivity('unsent'));
+  else if (!unresolved && hold) {
+    memoryHolds.delete(key);
+    hold();
+  }
+}
+
 // This (tenant, person)'s entries live in this page's memory from now on, never in IndexedDB.
 export function journalInMemory(owner: Owner): void {
   if (!inMemory.has(ownerKey(owner))) inMemory.set(ownerKey(owner), []);
@@ -188,6 +204,7 @@ export async function appendEntry(
   if (memory) {
     const entry = { ...row, seq: (memorySeq += 1) };
     memory.push(entry);
+    holdWhileInMemory(owner);
     changed(owner);
     return entry;
   }
@@ -246,6 +263,7 @@ function changeEntry(entry: Pick<JournalEntry, 'seq' | 'tenantId' | 'uid'>, chan
       if (next === null) memory.splice(at, 1);
       else memory[at] = next;
     }
+    holdWhileInMemory(entry);
     changed(entry);
     return Promise.resolve();
   }
@@ -281,6 +299,7 @@ export const markChanged = (entry: JournalEntry): Promise<void> => changeEntry(e
 // company's or person's entries stay.
 export function forgetJournal(owner: Owner): Promise<void> {
   inMemory.get(ownerKey(owner))?.splice(0);
+  holdWhileInMemory(owner);
   return withDatabase(SPEC, (db) =>
     transact(db, JOURNAL_STORE, 'readwrite', (transaction) => {
       const index = transaction.objectStore(JOURNAL_STORE).index(JOURNAL_OWNER_INDEX);

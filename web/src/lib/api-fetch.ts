@@ -1,5 +1,5 @@
 import { CLIENT_EPOCH, CLIENT_EPOCH_HEADER, UPDATE_REQUIRED } from './app-version';
-import { beginUpdateActivity, requireAppUpdate } from './update-activity';
+import { requireAppUpdate, whileUpdateHeld } from './update-activity';
 
 const READS = ['GET', 'HEAD', 'OPTIONS'];
 const isWrite = (method: string | undefined): boolean => !READS.includes((method ?? 'GET').toUpperCase());
@@ -21,10 +21,5 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
 // token and App Check preparation before the request, and reading the answer after it.
 export async function trackedWrite<T>(method: string | undefined, activity: 'save' | 'upload', work: () => Promise<T>): Promise<T> {
   if (typeof window === 'undefined' || !isWrite(method)) return work();
-  const end = beginUpdateActivity(activity);
-  try {
-    return await work();
-  } finally {
-    end();
-  }
+  return whileUpdateHeld(activity, work);
 }

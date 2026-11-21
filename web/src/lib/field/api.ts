@@ -5,7 +5,7 @@
 //
 // Answers are parsed before use; an answer of another shape counts as no answer. Messages come from
 // the status and the server's fixed error code only.
-import { apiFetch, trackedWrite } from '@/lib/api-fetch';
+import { apiFetch } from '@/lib/api-fetch';
 import type { User } from 'firebase/auth';
 import { z } from 'zod';
 import { appCheckHeaders } from '@/lib/app-check-client';
@@ -238,16 +238,14 @@ async function authorized(user: User, path: string, init: RequestInit = {}): Pro
 export async function sendPhoto(user: User, jobId: string, photoId: string, bytes: Blob): Promise<Answer<{ photoId: string }>> {
   // The bytes themselves rather than the Blob: the same body on every send, whatever the browser
   // does with a Blob it streams.
-  return trackedWrite('PUT', 'upload', async () => {
-    const response = await authorized(user, `/api/jobs/${jobId}/photos/${photoId}?kind=photo`, {
-      method: 'PUT',
-      headers: { 'Content-Type': bytes.type || 'application/octet-stream' },
-      body: new Uint8Array(await bytes.arrayBuffer()),
-    });
-    if (!response) return { ok: false, status: 0, message: answerMessage(0, null) } as const;
-    const body = await response.json().catch(() => null);
-    return answerOf(response.status, body, receipt, [200, 201]);
+  const response = await authorized(user, `/api/jobs/${jobId}/photos/${photoId}?kind=photo`, {
+    method: 'PUT',
+    headers: { 'Content-Type': bytes.type || 'application/octet-stream' },
+    body: new Uint8Array(await bytes.arrayBuffer()),
   });
+  if (!response) return { ok: false, status: 0, message: answerMessage(0, null) };
+  const body = await response.json().catch(() => null);
+  return answerOf(response.status, body, receipt, [200, 201]);
 }
 
 // A photo's bytes as a local address for an <img>; the server's refusal (401, 403, 404, or 410 for

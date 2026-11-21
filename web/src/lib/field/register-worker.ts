@@ -9,11 +9,13 @@
 const register = () => navigator.serviceWorker.register('/sw.js', { scope: '/', updateViaCache: 'none' });
 
 // What a window knows of its worker. `waiting`: a new build downloaded and not yet running.
-// `replaced`: another window already made a new worker the controller of this one, so this window
-// runs old code under it and only needs to reload. `unsupported`: no worker here (an old browser,
+// `replaced`: a new worker became the controller of this window since it opened, so this window
+// runs old code under it and only needs to reload. `active`: this window opened with no worker in
+// control and one is active now, which may have come with a newer build than this window runs, so a
+// plain reload is how it gets that build. `unsupported`: no worker here (an old browser,
 // `next dev`), so a plain reload loads the new build from the server.
-export type WorkerState = { waiting: ServiceWorker | null; replaced: boolean; unsupported: boolean };
-export const NO_WORKER: WorkerState = { waiting: null, replaced: false, unsupported: false };
+export type WorkerState = { waiting: ServiceWorker | null; replaced: boolean; active: boolean; unsupported: boolean };
+export const NO_WORKER: WorkerState = { waiting: null, replaced: false, active: false, unsupported: false };
 
 export function watchFieldWorker(report: (state: WorkerState) => void): () => void {
   if (!('serviceWorker' in navigator)) {
@@ -23,16 +25,19 @@ export function watchFieldWorker(report: (state: WorkerState) => void): () => vo
   const hour = 60 * 60 * 1000;
   let stop = () => { window.removeEventListener('load', start); };
   let live = true;
-  const controlled = navigator.serviceWorker.controller !== null;
-  let replaced = false;
+  // The worker in control when this window opened; the registration below is read after that, so a
+  // change that already happened is found by comparing, never by hearing it.
+  const first = navigator.serviceWorker.controller;
   const start = () => void register().then((registration) => {
     if (!live) return;
     let installer: ServiceWorker | null = null;
-    const show = () => report({ waiting: registration.waiting, replaced, unsupported: false });
-    const swapped = () => {
-      if (controlled) replaced = true;
-      show();
-    };
+    const show = () =>
+      report({
+        waiting: registration.waiting,
+        replaced: first !== null && navigator.serviceWorker.controller !== first,
+        active: first === null && registration.active !== null,
+        unsupported: false,
+      });
     const installing = () => {
       installer?.removeEventListener('statechange', show);
       installer = registration.installing;
@@ -44,7 +49,7 @@ export function watchFieldWorker(report: (state: WorkerState) => void): () => vo
       if (document.visibilityState === 'visible') void registration.update().then(show).catch(() => undefined);
     };
     registration.addEventListener('updatefound', installing);
-    navigator.serviceWorker.addEventListener('controllerchange', swapped);
+    navigator.serviceWorker.addEventListener('controllerchange', show);
     document.addEventListener('visibilitychange', check);
     window.addEventListener('pageshow', check);
     window.addEventListener('online', check);
@@ -52,7 +57,7 @@ export function watchFieldWorker(report: (state: WorkerState) => void): () => vo
     stop = () => {
       installer?.removeEventListener('statechange', show);
       registration.removeEventListener('updatefound', installing);
-      navigator.serviceWorker.removeEventListener('controllerchange', swapped);
+      navigator.serviceWorker.removeEventListener('controllerchange', show);
       document.removeEventListener('visibilitychange', check);
       window.removeEventListener('pageshow', check);
       window.removeEventListener('online', check);

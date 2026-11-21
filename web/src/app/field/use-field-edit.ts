@@ -6,7 +6,6 @@ import { ReopenTheApp } from '@/lib/field/idb';
 import { JournalNotSaved, type DocWrite } from '@/lib/field/journal';
 import { journaledEdit } from '@/lib/field/journal-sync';
 import { draftDocs, fieldRefusal, type FieldDraft } from '@/lib/field/store';
-import { beginUpdateActivity } from '@/lib/update-activity';
 import type { JobContext } from './job-screens';
 
 // A form waits for local persistence, so the technician can keep working with no signal.
@@ -47,11 +46,6 @@ export function useFieldEdit(job: JobContext) {
       // The SDK's local transaction is finished; update the draft before clearing the form's edits.
       await job.reloadDraft('cache');
       onPhone = true;
-      // An edit held only in this window's memory is not safe until the server has it.
-      if (job.session.client.cache !== 'persistent') {
-        const held = beginUpdateActivity('save');
-        void acknowledged.then(held, held);
-      }
       if (current()) {
         locallySaved();
         setNotice(job.session.client.cache === 'persistent'

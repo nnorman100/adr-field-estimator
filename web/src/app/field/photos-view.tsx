@@ -139,11 +139,12 @@ export function PhotosView({ job, draft, open, readinessFix }: { job: JobContext
     const db = job.session.db;
     if (job.moved) return update(item.id, { step: 'send-failed', message: 'Not sent: another person now owns this job’s field work.' });
     if (heldNow()) return update(item.id, { step: 'send-failed', message: heldMessage() });
+    if (item.draftId !== job.draftRef.draftId) return update(item.id, { step: 'send-failed', message: 'Not sent: this photo was taken for an earlier draft of the job.' });
     if (!db || !job.session.online) return update(item.id, { step: 'send-failed', message: 'Needs a connection. Send it again when connected.' });
     update(item.id, { step: 'sending', message: undefined });
     const sent = await sendPhoto(job.session.user, jobId, item.id, item.bytes);
     if (!sent.ok) {
-      update(item.id, { step: 'send-failed', message: sent.message });
+      update(item.id, { step: 'send-failed', message: sent.message, updateRefused: sent.status === 426 ? true : undefined });
       return job.checkAccess(sent);
     }
     if (heldNow()) return update(item.id, { step: 'send-failed', message: heldMessage() });
@@ -185,7 +186,7 @@ export function PhotosView({ job, draft, open, readinessFix }: { job: JobContext
       if (!notePhoto(job.session.client.person.tenantId, job.session.user.uid, id)) {
         return setError('This phone could not record the photo as unsent. Try again.');
       }
-      item = { id, bytes, field: fieldOf(roomId, shotTag, capturedAt), step: 'sending' };
+      item = { id, bytes, field: fieldOf(roomId, shotTag, capturedAt), step: 'sending', draftId: job.draftRef.draftId };
       unsent.addPhoto(jobId, item);
     } finally {
       prepared(!item);

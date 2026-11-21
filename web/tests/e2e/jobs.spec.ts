@@ -1,5 +1,6 @@
 import { test as base, expect as baseExpect, type Browser, type Locator, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+import { CLIENT_EPOCH, CLIENT_EPOCH_HEADER } from '../../src/lib/app-version';
 import { hrefOf, type FieldView } from '../../src/lib/field/views';
 import { expectNoAxeViolations } from './a11y';
 import { JOBS_BASE_URL } from './jobs/backend';
@@ -484,7 +485,7 @@ test("a save that meets someone else's change keeps their change", async ({ page
 
   // Meanwhile the office saves the claim from another device.
   const office = company.people.office!;
-  const headers = { Authorization: `Bearer ${withSecondFactor(await idTokenFor(company.tenantId, office.email, PASSWORD))}` };
+  const headers = { Authorization: `Bearer ${withSecondFactor(await idTokenFor(company.tenantId, office.email, PASSWORD))}`, [CLIENT_EPOCH_HEADER]: String(CLIENT_EPOCH) };
   const read = await request.get(`${JOBS_BASE_URL}/api/jobs/${jobId}`, { headers });
   const { job, claim } = await read.json();
   const saved = await request.put(`${JOBS_BASE_URL}/api/jobs/${jobId}/claim`, {

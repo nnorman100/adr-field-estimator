@@ -354,7 +354,7 @@ describe('POST /api/jobs/{jobId}/ai/summary-draft', () => {
         controller.enqueue(new Uint8Array(512).fill(0x20));
       },
     });
-    const init = { method: 'POST', headers: request(ESTIMATOR_A, path).headers, body: endless, duplex: 'half' };
+    const init = { method: 'POST', headers: request(ESTIMATOR_A, path, { method: 'POST' }).headers, body: endless, duplex: 'half' };
     const res = await json(summaryRoute.POST(new Request(`http://localhost${path}`, init as RequestInit), params({ jobId: job.jobId })));
     expect(res).toMatchObject({ status: 400, body: { error: 'invalid_request' } });
     expect(pulled).toBeLessThan(10);

@@ -8,6 +8,7 @@ import { sendSignature } from '@/lib/agreements/client';
 import { agreementAnswerOf, signedBy, signedHow, signedWhen, signOutcomeOf, SIGNER_NAME_LIMIT, type SignedAgreement, type SignNext } from '@/lib/agreements/screen';
 import type { EstimateView } from '@/lib/estimates/result';
 import { callApi } from '@/lib/firebase-client';
+import { beginUpdateActivity, whileUpdateHeld } from '@/lib/update-activity';
 import { documentLinksOf, issuedLinksOf, type DocumentLinkView } from '@/lib/links/screen';
 import { ItemizedClaim, PhotoLog, Proposal } from './review-documents';
 import { clearPad, padPng, SignaturePad } from './signature-pad';
@@ -45,6 +46,9 @@ export function SigningForm({
   const [problem, setProblem] = useState<{ message: string; next: SignNext } | null>(null);
 
   const nameMissing = name.trim() === '';
+  // The name and drawing stay on this window only: an update waits until they are signed or cleared.
+  const entered = name !== '' || drawn;
+  useEffect(() => (entered ? beginUpdateActivity('unsent') : undefined), [entered]);
 
   // A refusal that the same request would only meet again: the next Sign makes new ids (from the
   // drawing as it is then), so it is a new request rather than a repeat of the refused one.
@@ -64,7 +68,9 @@ export function SigningForm({
     if (canvasRef.current) clearPad(canvasRef.current);
   }
 
-  async function sign() {
+  const sign = () => whileUpdateHeld('save', signNow);
+
+  async function signNow() {
     setChecked(true);
     if (nameMissing || !drawn || busy) return;
     setBusy(true);
