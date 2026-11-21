@@ -53,10 +53,12 @@ const test = base.extend<{ photoServer: PhotoServer }>({
     const server = createServer((request, response) => {
       const path = request.url ?? '/';
       if (path === '/') {
-        response.writeHead(200, { 'Content-Type': 'text/html' });
+        // The page and script are fetched on connections that close, so an upload always opens a fresh one:
+        // a browser quietly resends a request that a reused connection drops, which would hide a cut.
+        response.writeHead(200, { 'Content-Type': 'text/html', Connection: 'close' });
         response.end('<!doctype html><meta charset="utf-8"><script src="/queue.js"></script>');
       } else if (path === '/queue.js') {
-        response.writeHead(200, { 'Content-Type': 'text/javascript' }).end(script);
+        response.writeHead(200, { 'Content-Type': 'text/javascript', Connection: 'close' }).end(script);
       } else if (path.startsWith('/upload/')) {
         const [, , photoId, kind] = path.split('/');
         const hash = createHash('sha256');
@@ -277,6 +279,68 @@ test('a lost upload receipt is retried with the same id and bytes even on an old
   expect([...photoServer.objects.get(`${photoId}/photo`)!]).toEqual([attempts[0]!.sha256]);
   expect([...photoServer.registry]).toEqual([photoId]);
   expect([...photoServer.references]).toEqual([photoId]);
+});
+
+// What the server committed for a photo whose upload was interrupted, however many times it was sent:
+// one object for the photo, one registry row and one reference, all from the same bytes.
+function expectOneCommittedPhoto(photoServer: PhotoServer, attempts: Upload[]) {
+  const { photoId, sha256 } = attempts[0]!;
+  expect(attempts.at(-1)).toMatchObject({ photoId, sha256, kind: 'photo' });
+  expect([...photoServer.objects.keys()]).toEqual([`${photoId}/photo`]);
+  expect([...photoServer.objects.get(`${photoId}/photo`)!]).toEqual([sha256]);
+  expect([...photoServer.registry]).toEqual([photoId]);
+  expect([...photoServer.references]).toEqual([photoId]);
+}
+
+test('a page closed while the photo upload is in flight resumes with the same id and bytes and ends with one object', async ({ context, photoServer }) => {
+  let page = await open(context, photoServer);
+  await capture(page);
+  const attempts: Upload[] = [];
+  photoServer.upload = (upload) => {
+    attempts.push(upload);
+    if (attempts.length > 1) receipt(upload);
+  };
+  await start(page);
+  await expect.poll(() => attempts.length).toBe(1);
+  const dropped = new Promise<void>((resolve) => attempts[0]!.response.once('close', resolve));
+  await page.close();
+  await dropped;
+  // The server stores what it received after the phone has gone, so no answer can reach the queue.
+  photoServer.commit(attempts[0]!);
+  expect(attempts[0]!.response.writableFinished).toBe(false);
+
+  page = await open(context, photoServer);
+  expect(await entries(page)).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'photo', stage: 'queued' })]));
+  await start(page);
+  await expect.poll(() => entries(page)).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'photo', stage: 'done' })]));
+  expect(attempts).toHaveLength(2);
+  expectOneCommittedPhoto(photoServer, attempts);
+  expect(await payloads(page)).toEqual([expect.objectContaining({ kind: 'original' })]);
+});
+
+test('a network cut during the photo upload is retried when the network is back with the same id and bytes and ends with one object', async ({ context, photoServer }) => {
+  const page = await open(context, photoServer);
+  await capture(page);
+  const attempts: Upload[] = [];
+  photoServer.upload = (upload) => {
+    attempts.push(upload);
+    if (attempts.length > 1) receipt(upload);
+  };
+  await start(page);
+  await expect.poll(() => attempts.length).toBe(1);
+  await context.setOffline(true);
+  attempts[0]!.response.destroy();
+  await expect.poll(async () => (await entries(page)).find(({ kind }) => kind === 'photo')?.attempts).toBeGreaterThan(0);
+  expect((await entries(page)).find(({ kind }) => kind === 'photo')).toMatchObject({ stage: 'queued' });
+  expect(attempts).toHaveLength(1);
+  expect(photoServer.objects.size).toBe(0);
+  expect(await payloads(page)).toHaveLength(2);
+
+  await context.setOffline(false);
+  await expect.poll(() => entries(page), { timeout: 30_000 }).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'photo', stage: 'done' })]));
+  expect(attempts).toHaveLength(2);
+  expectOneCommittedPhoto(photoServer, attempts);
+  expect(await payloads(page)).toEqual([expect.objectContaining({ kind: 'original' })]);
 });
 
 test('an answer that arrives while the app is hidden is still recorded, and Retry-After still holds', async ({ context, photoServer }) => {
