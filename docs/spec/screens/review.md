@@ -5,7 +5,7 @@ Part of [Screen specs](README.md). Address: `/sign-in/{address}/jobs/{id}/review
 `review-documents.tsx`, `signing.tsx`, `signature-pad.tsx`, `send-link.tsx`,
 `document-links.tsx`, `reprice-banner.tsx`), `web/src/lib/estimates/screen.ts`,
 `web/src/lib/estimates/reprice-screen.ts`, `web/src/lib/links/screen.ts`. Stages S5a-9, S5a-11,
-S5a-11b, S5b-6.
+S5a-11b, S5b-6, S5b-10 (10C, drying log and watch).
 
 On a signed Review, the [Drying log and watch](check-scope.md#drying-log-and-watch) remain available
 for monitoring work. The signed proposal and its evidence are displayed from the saved agreement.

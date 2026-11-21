@@ -3,7 +3,8 @@
 Part of [Screen specs](README.md). Address: `/field?job={id}` (the default job view). Built in:
 `web/src/app/field/job-screens.tsx` (the job frame and its tabs), `scope-view.tsx`,
 `rooms-section.tsx`, `room-card.tsx`, `room-lists.tsx`, `equipment-suggestion.tsx`,
-`start-field-work.tsx`, `use-field-edit.ts`, `published-item-list.tsx`. Stages S5a-6, S5a-10, S5b-1, S6-3, S6-4, S6-8, S5b-11.
+`start-field-work.tsx`, `use-field-edit.ts`, `published-item-list.tsx`, and `drying/` (the drying
+log and watch cards, shared with signed [Review](review.md)). Stages S5a-6, S5a-10, S5b-1, S6-3, S6-4, S6-8, S5b-11, S5b-10 (10C, log and watch).
 
 ## Purpose
 
@@ -64,8 +65,8 @@ refreshes the watch and the readiness check. Each room shows its affected materi
 standards, and a room with a missing dry standard is not counted as complete. The actions offered
 (mark dry, extension note, close monitoring) are the ones the server's watch answer permits for the
 person, office staff included; the office drying log itself stays read only. A monitoring decision
-requires an explicit confirmation and reason. If the facts changed, review them again before confirming. Extension
-notes leave the signed drying days as agreed.
+requires an explicit confirmation and reason. If the facts changed, review them again before
+confirming. Extension notes leave the signed drying days as agreed.
 
 ## Who may see it and do what
 
@@ -153,6 +154,8 @@ job's field work is no longer yours…" (unsent changes stay on the phone, read 
 | Read the room types, items and prep tasks | `GET /api/jobs/{id}/scope-lists` | `jobs_read` |
 | Read the company's published reference item list | `GET /api/prices/item-list`, offline copy in `ds-prices` | `prices_read` |
 | Start field work (become field owner) | `POST /api/jobs/{id}/field-owner` ("Nobody has started this job's field work yet. Whoever starts it owns it…"), offered on Check Scope and on [Photos](photos.md) only on a job nobody owns (`startable` in `job-screens.tsx`, `start-field-work.tsx`). When the job already names this person but its draft is not there or does not name them yet (a field step that did not get through: a first Start, a move, Back to editing, New job, Copy), there is no Start prompt any more: the job read gets it ready (the draft life-cycle redesign, slice 6: the read syncs the job's drafts from Postgres when they fell behind or the current draft is missing) and the screen shows "Getting this job's field work ready…" while it reads the job again (1, 2, 4, 8 and 8 seconds), then "This job's field work is not ready on this phone yet. Try again in a moment." with Try again. A 403 answer to Start drops the job from the screen, as any refusal of it does. | `scope` |
+| Read, add and void drying readings; read the rooms a reading may name | `GET`/`POST /api/jobs/{id}/drying-readings`, `POST …/{readingId}/void`, `GET /api/jobs/{id}/drying-rooms` (online only, never the draft journal) | read `jobs_read`; add and void `scope` ([Drying log](../../access/drying.md)) |
+| Read the drying watch and record a decision | `GET /api/jobs/{id}/drying-watch`, `POST …/drying-watch/actions`, flag `drying_watch` from `GET /api/me` | read `jobs_read`; Mark dry `scope` or `coordination`; Extend plan and Close monitoring `coordination` |
 | Save rooms, scope, counts, notes | the field database draft (`draftFieldWrites`), checked by `web/firestore.rules`; no server route | field owner with `scope` |
 
 Rules: `docs/access/jobs.md` (field owner), `docs/access/scope-lists.md`; draft lock while
