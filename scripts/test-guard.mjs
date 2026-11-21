@@ -11,7 +11,11 @@
 //      or `continue-on-error`, adds an error-swallowing command to an existing
 //      step, or could let a workflow approve itself (write access to pull
 //      requests, issues, checks or statuses, a dropped `permissions:` key, a
-//      new secret, or the label's name).
+//      new secret, or the label's name). It also asks when `defaults.run.shell`
+//      or `defaults.run.working-directory` is new or changed (workflow level or
+//      in an existing job), when an actions/checkout step gains or changes a
+//      ref, repository, path or sparse-checkout input, or when an existing
+//      job gets a new checkout step.
 //      Workflows that never run on pull requests (deploys, releases) are
 //      checked for self-approval only.
 //   3. A changed, deleted or renamed stored answer (fixtures; their Markdown
@@ -21,15 +25,19 @@
 //      (moving, renaming or replacing a test passes).
 //   6. A newly added skip, only, todo or expected-failure marker.
 //   7. Fewer assertion lines than before across the changed test files.
+//   8. A test script in a package.json (one the config's testScripts names)
+//      removed, or changed so that a word of its command is gone or it now
+//      ignores failures. New test scripts and added commands pass.
 // New test files, new tests, new fixtures, docs and ordinary workflow edits
 // (runners, timeouts, pins, new jobs and steps, run text) pass without it.
 //
 // Usage: node scripts/test-guard.mjs <base-commit>
 // Config: .github/test-guard.json, read from the base commit:
 //   { "unguarded": [globs], "guard": [globs], "workflows": [globs],
-//     "protected": [globs], "fixtures": [globs], "tests": [globs] }
+//     "protected": [globs], "fixtures": [globs], "tests": [globs],
+//     "testScripts": { "path/to/package.json": [script-name globs] } }
 // The first of unguarded, guard, workflows and protected that matches a path
-// decides its rule; fixtures and tests apply on top.
+// decides its rule; fixtures, tests and testScripts apply on top.
 // No dependencies: CI runs the base branch's copy of this file with plain node.
 
 import { execFileSync } from 'node:child_process';
@@ -347,6 +355,32 @@ function changedControl(base, head) {
   return out;
 }
 
+// defaults.run.shell and defaults.run.working-directory decide how every step of a
+// workflow or job runs, so a new or changed one is treated like a step's `shell:`.
+function changedDefaults(base, head) {
+  const out = [];
+  for (const key of ['shell', 'working-directory']) {
+    const after = head?.defaults?.run?.[key];
+    if (after != null && stable(after) !== stable(base?.defaults?.run?.[key])) {
+      out.push(`\`defaults.run.${key}\``);
+    }
+  }
+  return out;
+}
+
+// What a checkout step checks out is decided by these inputs.
+const CHECKOUT_INPUTS = ['ref', 'repository', 'path', 'sparse-checkout'];
+const usesCheckout = (step) =>
+  step && typeof step === 'object' && /^actions\/checkout(?:@|$)/.test(String(step.uses ?? ''));
+function changedCheckout(base, head) {
+  const out = [];
+  for (const key of CHECKOUT_INPUTS) {
+    const after = head.with?.[key];
+    if (after != null && stable(after) !== stable(base.with?.[key])) out.push(`\`with.${key}\``);
+  }
+  return out;
+}
+
 function matrixLeaves(matrix, prefix = '') {
   if (matrix == null || typeof matrix !== 'object') return [`${prefix}=${stable(matrix)}`];
   if (Array.isArray(matrix)) return matrix.map((v) => `${prefix}[]=${stable(v)}`);
@@ -435,6 +469,10 @@ export function checkWorkflow(path, baseText, headText, addedLines, baseChecks =
     }
   }
 
+  for (const what of changedDefaults(base, head)) {
+    v.push(`${path}: workflow has a new or changed ${what}`);
+  }
+
   for (const [id, bj] of Object.entries(base.jobs)) {
     const hj = head.jobs[id];
     if (!isMap(hj)) {
@@ -447,6 +485,9 @@ export function checkWorkflow(path, baseText, headText, addedLines, baseChecks =
     }
     for (const what of changedControl(bj, hj))
       v.push(`${path}: job ${id} has a new or changed ${what}`);
+    for (const what of changedDefaults(bj, hj)) {
+      v.push(`${path}: job ${id} has a new or changed ${what}`);
+    }
     const needs = (j) => (Array.isArray(j.needs) ? j.needs : j.needs == null ? [] : [j.needs]);
     const stillNeeds = new Set(needs(hj).map(String));
     for (const n of needs(bj)) {
@@ -488,6 +529,11 @@ export function checkWorkflow(path, baseText, headText, addedLines, baseChecks =
       for (const what of changedControl(bs, hs)) {
         v.push(`${path}: job ${id} step "${label}" has a new or changed ${what}`);
       }
+      if (usesCheckout(hs)) {
+        for (const what of changedCheckout(bs, hs)) {
+          v.push(`${path}: job ${id} checkout step has a new or changed ${what}`);
+        }
+      }
       const old = countBy(linesOf(bs.run).map((l) => l.trim()));
       for (const l of linesOf(hs.run)) {
         const t = l.trim();
@@ -498,6 +544,11 @@ export function checkWorkflow(path, baseText, headText, addedLines, baseChecks =
         }
       }
     }
+    headSteps.forEach((hs, k) => {
+      if (!used.has(k) && usesCheckout(hs)) {
+        v.push(`${path}: job ${id} has a new checkout step (it decides what the job tests)`);
+      }
+    });
   }
   return v;
 }
@@ -519,10 +570,14 @@ const SKIP_MARKERS = [
 const JS_TEST =
   /^\s*(?:it|test)\s*(?:\.\s*(?:skip|only|todo|fixme|fails?|concurrent|sequential|skipIf\s*\([^)]*\)|runIf\s*\([^)]*\)|each\s*\([^)]*\))\s*)?\(\s*(?:(['"`])((?:\\.|(?!\1).)*)\1)?/;
 const PY_TEST = /^\s*(?:async\s+)?def\s+(test_\w*)\s*\(/;
+// A Terraform test (`run "name" {` in a .tftest.hcl file).
+const TF_TEST = /^\s*run\s+"([^"]*)"\s*\{/;
 
 export function testName(line) {
   const py = PY_TEST.exec(line);
   if (py) return `def ${py[1]}`;
+  const tf = TF_TEST.exec(line);
+  if (tf) return `run ${tf[1]}`;
   const js = JS_TEST.exec(line);
   if (js) return js[2] != null ? `test ${js[2]}` : `test ${line.trim()}`;
   return null;
@@ -580,6 +635,49 @@ export function checkTests(removed, added) {
   return v;
 }
 
+// ------------------------------------------------- package.json scripts
+
+// baseText / headText: the package.json before and after; names: script-name
+// globs. A test script that is removed, loses a word of its command, or newly
+// ignores failures needs the label. Appending commands or adding scripts passes.
+export function checkTestScripts(path, baseText, headText, names) {
+  const isName = matcher(names);
+  const scriptsOf = (text) => {
+    if (text == null) return {};
+    try {
+      const scripts = JSON.parse(text).scripts;
+      return scripts && typeof scripts === 'object' ? scripts : {};
+    } catch {
+      return null;
+    }
+  };
+  const base = scriptsOf(baseText);
+  const head = scriptsOf(headText);
+  if (base == null || head == null) return [`${path}: could not read its scripts as JSON`];
+  const v = [];
+  for (const [name, before] of Object.entries(base)) {
+    if (!isName(name)) continue;
+    if (!Object.hasOwn(head, name)) {
+      v.push(`${path}: test script removed: ${name}`);
+      continue;
+    }
+    const after = String(head[name]);
+    const have = countBy(after.split(/\s+/).filter(Boolean));
+    const lost = [];
+    for (const word of String(before).split(/\s+/).filter(Boolean)) {
+      if (have.get(word)) have.set(word, have.get(word) - 1);
+      else lost.push(word);
+    }
+    if (lost.length) {
+      v.push(`${path}: test script ${name} no longer has: ${lost.join(' ').slice(0, 140)}`);
+    }
+    if (BYPASS_COMMANDS.some((r) => r.test(after) && !r.test(String(before)))) {
+      v.push(`${path}: test script ${name} now ignores failures: ${after.slice(0, 140)}`);
+    }
+  }
+  return v;
+}
+
 // ------------------------------------------------------------------ run
 
 function git(args) {
@@ -598,16 +696,26 @@ function show(commit, path) {
   }
 }
 
+// Reads added and removed lines only inside hunks (after a line starting with @@, up to the
+// next line starting with "diff --git"). A content line starting with ++ or -- is a real
+// change, not a file header, so it is not filtered by prefix.
 function diffLines(diff) {
   const removed = [];
   const added = [];
+  let inHunk = false;
   for (const line of diff.split('\n')) {
-    if (line.startsWith('+++') || line.startsWith('---')) continue;
-    if (line.startsWith('+')) added.push(line.slice(1));
+    if (line.startsWith('diff --git')) inHunk = false;
+    else if (line.startsWith('@@')) inHunk = true;
+    else if (!inHunk) continue;
+    else if (line.startsWith('+')) added.push(line.slice(1));
     else if (line.startsWith('-')) removed.push(line.slice(1));
   }
   return { removed, added };
 }
+
+// Flags that make git print the text of a change whatever the pull request's own
+// .gitattributes, textconv or external diff settings say.
+const DIFF_TEXT_FLAGS = ['--text', '--no-ext-diff', '--no-textconv'];
 
 export function runGuard(base) {
   // Read the rules from the base commit, so a pull request cannot loosen
@@ -622,6 +730,7 @@ export function runGuard(base) {
   const isProtected = matcher(config.protected);
   const isFixture = matcher(config.fixtures);
   const isTest = matcher(config.tests);
+  const testScripts = config.testScripts || {};
 
   const range = `${base}...HEAD`;
   const mergeBase = git(['merge-base', base, 'HEAD']).trim();
@@ -654,8 +763,8 @@ export function runGuard(base) {
       diffLines(
         git(
           status === 'R'
-            ? ['diff', '-U0', '-M', range, '--', from, to]
-            : ['diff', '-U0', range, '--', to],
+            ? ['diff', '-U0', ...DIFF_TEXT_FLAGS, '-M', range, '--', from, to]
+            : ['diff', '-U0', ...DIFF_TEXT_FLAGS, range, '--', to],
         ),
       );
 
@@ -680,6 +789,14 @@ export function runGuard(base) {
           violations.push(`Stored answer changed (${status}): ${path}`);
         }
       }
+    }
+
+    if (Object.hasOwn(testScripts, from) && (status === 'D' || (status === 'R' && from !== to))) {
+      violations.push(`File with test scripts removed or moved (${status}): ${from}`);
+    } else if (Object.hasOwn(testScripts, to)) {
+      violations.push(
+        ...checkTestScripts(to, show(mergeBase, to), show('HEAD', to), testScripts[to]),
+      );
     }
 
     if (status === 'D' && isTest(from)) {

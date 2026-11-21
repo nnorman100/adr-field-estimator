@@ -76,9 +76,12 @@ describe('full CSP is observation only', () => {
       expect(headers(path).get('content-security-policy-report-only')).toContain('script-src');
     }
     for (const suffix of ['', '/', '?kind=original']) {
-      const sent = headers(`/api/jobs/job-id/photos/photo-id${suffix}`);
-      expect(sent.has('content-security-policy-report-only')).toBe(false);
-      expect(sent.has('reporting-endpoints')).toBe(false);
+      for (const base of ['/api/jobs/job-id/photos/photo-id', '/api/platform/companies/company-id/jobs/job-id/photos/photo-id']) {
+        const sent = headers(`${base}${suffix}`);
+        expect(sent.has('content-security-policy-report-only')).toBe(false);
+        expect(sent.has('reporting-endpoints')).toBe(false);
+      }
     }
+    expect(headers('/api/platform/companies/company-id/jobs/job-id').has('content-security-policy-report-only')).toBe(true);
   });
 });

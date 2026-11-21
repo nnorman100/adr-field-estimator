@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { pending } from '@/lib/field/pending';
 import { claimFieldOwner, type JobDetail } from '@/lib/field/api';
 import type { JobContext } from './job-screens';
 import { Outcome } from './ui';
@@ -23,15 +24,18 @@ export function StartFieldWork({ context, resume }: { context: JobContext & { de
     setError(null);
     const answer = await claimFieldOwner(context.session.user, context.jobId);
     setBusy(false);
+    if (answer.ok || answer.status !== 410) pending.setMissingDraft(context.jobId, null);
     if (answer.ok) {
       // The draft now names this person as its field owner: read it again.
       await context.reloadJob();
       return;
     }
     setError(answer.message);
-    // Someone else started it meanwhile, the job moved on, or the job was saved and its draft was not
-    // (503): read it again, which decides what the screen offers.
-    if (answer.status === 409 || answer.status === 404 || answer.status === 503) await context.reloadJob();
+    // Archived (410): it is shown archived now, and read again. Someone else started it meanwhile, the
+    // job moved on, or the job was saved and its draft was not (503): read it again, which decides what
+    // the screen offers.
+    if (answer.status === 410) context.checkAccess(answer);
+    else if (answer.status === 409 || answer.status === 404 || answer.status === 503) await context.reloadJob();
   }
 
   return (

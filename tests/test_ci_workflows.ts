@@ -1,18 +1,26 @@
 // Repo-wide workflow rules, run by vitest in the required node CI job. Ported from
-// tests/test_ci_config.py (workflows exist, every job on the switchable self-hosted runner with no
-// Docker services or containers, CodeQL sets up node before init) and the workflow-wiring tests in
+// tests/test_ci_config.py (workflows exist, every job on the fixed GitHub-hosted runner with no
+// Docker services or containers) and the workflow-wiring tests in
 // tests/test_ci_legacy_scope.py (no legacy CI jobs, the node job keeps the rebuild's checks on every
 // pull request). Also checks that these ported guards stay in
 // the vitest run the node job executes.
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { evaluateStep, load, ROOT, WORKFLOWS, type Data } from './workflow_support.ts';
+import {
+  actionSteps,
+  evaluateStep,
+  isPinnedUses,
+  load,
+  ROOT,
+  WORKFLOWS,
+  type Data,
+} from './workflow_support.ts';
 
-// The Actions budget stop blocks GitHub-hosted jobs, so every job defaults to the self-hosted pool
-// and the repository variable CI_RUNNER (for example ubuntu-latest) switches it back. See
-// docs/runbook/ci.md, "CI runners".
-const RUNNER = "${{ vars.CI_RUNNER || 'dryscope-linux' }}";
+// The repository is public, so every job runs on a fixed standard GitHub-hosted runner (free for
+// public repositories) and never on a self-hosted one, which a pull request could compromise. No
+// variable switches it. See docs/runbook/ci.md, "CI runners".
+const RUNNER = 'ubuntu-latest';
 const WORKFLOW_FILES = readdirSync(WORKFLOWS)
   .filter((name) => /\.y[^/]*ml$/.test(name))
   .sort();
@@ -24,28 +32,73 @@ const lintScript = (): string =>
 
 describe('every workflow', () => {
   it('includes the expected workflows', () => {
-    for (const name of [
-      'ai-evals.yml',
-      'ci.yml',
-      'codeql.yml',
-      'deploy.yml',
-      'test-guard.yml',
-      'web.yml',
-      'web-release.yml',
-    ]) {
+    for (const name of ['ai-evals.yml', 'ci.yml', 'test-guard.yml', 'web.yml', 'web-release.yml']) {
       expect(WORKFLOW_FILES).toContain(name);
     }
   });
 
-  it.each(WORKFLOW_FILES)('%s runs every job on the switchable runner, without Docker', (name) => {
-    const jobs = Object.entries(workflow(name).jobs as Record<string, Data>);
-    expect(jobs.length).toBeGreaterThan(0);
-    for (const [job, config] of jobs) {
-      expect(config['runs-on'], `${name} job ${job}`).toBe(RUNNER);
-      // The self-hosted job container has no Docker daemon for service or job containers.
-      expect(config, `${name} job ${job}`).not.toHaveProperty('services');
-      expect(config, `${name} job ${job}`).not.toHaveProperty('container');
+  it('excludes the retired deploy workflow', () => {
+    expect(WORKFLOW_FILES).not.toContain('deploy.yml');
+  });
+
+  it('has no CodeQL workflow, because code scanning default setup replaces it', () => {
+    expect(WORKFLOW_FILES).not.toContain('codeql.yml');
+  });
+
+  it.each(WORKFLOW_FILES)('%s pins every action step to a full commit SHA', (name) => {
+    for (const [job, config] of Object.entries(workflow(name).jobs)) {
+      actionSteps(config).forEach((step, index) => {
+        if (Object.hasOwn(step, 'uses')) {
+          expect(
+            isPinnedUses(step.uses),
+            `${name} job ${job} step ${index + 1} must use a full commit SHA`,
+          ).toBe(true);
+        }
+      });
     }
+  });
+
+  it('rejects a tagged action inside a parallel step group', () => {
+    const pinned = `actions/checkout@${'a'.repeat(40)}`;
+    const job = {
+      steps: [
+        { uses: pinned },
+        { parallel: [{ uses: pinned }, { uses: 'actions/setup-node@v7' }] },
+      ],
+    };
+    const refs = actionSteps(job).map((step) => step.uses);
+    expect(refs).toEqual([pinned, pinned, 'actions/setup-node@v7']);
+    expect(refs.map((ref) => isPinnedUses(ref))).toEqual([true, true, false]);
+  });
+
+  it.each(WORKFLOW_FILES)(
+    '%s runs every job on the fixed GitHub-hosted runner, without Docker',
+    (name) => {
+      const jobs = Object.entries(workflow(name).jobs as Record<string, Data>);
+      expect(jobs.length).toBeGreaterThan(0);
+      for (const [job, config] of jobs) {
+        expect(config['runs-on'], `${name} job ${job}`).toBe(RUNNER);
+        // No service or job containers: every job installs what it needs itself (docs/runbook/ci.md).
+        expect(config, `${name} job ${job}`).not.toHaveProperty('services');
+        expect(config, `${name} job ${job}`).not.toHaveProperty('container');
+      }
+    },
+  );
+});
+
+// GitHub's default job limit is 360 minutes; on a pool of three runner places one hung job would
+// hold a third of CI for six hours.
+describe('job time limits', () => {
+  it.each([
+    ['ci.yml', 'node'],
+    ['ci.yml', 'audit'],
+    ['test-guard.yml', 'test-guard'],
+  ])('%s job %s has a time limit', (name, job) => {
+    // A whole number of minutes below GitHub's 360-minute default.
+    const limit = workflow(name).jobs[job]['timeout-minutes'];
+    expect(Number.isInteger(limit)).toBe(true);
+    expect(limit).toBeGreaterThan(0);
+    expect(limit).toBeLessThan(360);
   });
 });
 
@@ -107,42 +160,8 @@ describe('ci.yml', () => {
   });
 });
 
-describe('codeql.yml', () => {
-  const analyze = () => workflow('codeql.yml').jobs.analyze;
-
-  it('sets up node before init', () => {
-    // CodeQL's JavaScript/TypeScript extractor needs node; the self-hosted container has none.
-    const uses: string[] = analyze().steps.map((s: Data) => s.uses ?? '');
-    const node = uses.findIndex((use) => use.startsWith('actions/setup-node@'));
-    const init = uses.findIndex((use) => use.startsWith('github/codeql-action/init@'));
-    expect(node).toBeGreaterThanOrEqual(0);
-    expect(init).toBeGreaterThanOrEqual(0);
-    expect(node).toBeLessThan(init);
-  });
-
-  it('still runs weekly and on pushes to master', () => {
-    const triggers = workflow('codeql.yml').on;
-    expect(triggers.schedule).toEqual([{ cron: '23 9 * * 1' }]);
-    expect(triggers.push.branches).toEqual(['master']);
-  });
-
-  it('runs only JavaScript/TypeScript on every pull request', () => {
-    const job = analyze();
-    expect(job).not.toHaveProperty('if');
-    expect(job.strategy.matrix.language).toEqual(['javascript-typescript']);
-    expect(job.steps[0].uses.startsWith('actions/checkout@')).toBe(true);
-    expect(job.steps[0].with['fetch-depth']).toBe(0);
-    expect(workflow('codeql.yml').on.pull_request.branches).toEqual(['master']);
-    expect(scopeGatedParts(workflow('codeql.yml'))).toEqual([]);
-    for (const step of job.steps) expect(step).not.toHaveProperty('if');
-    const uses: string[] = job.steps.map((s: Data) => s.uses ?? '');
-    expect(uses.some((u) => u.startsWith('github/codeql-action/init@'))).toBe(true);
-    expect(uses.some((u) => u.startsWith('github/codeql-action/analyze@'))).toBe(true);
-  });
-});
-
 describe('the step-condition evaluator', () => {
-  // Guards for the evaluator the CodeQL check relies on, so a broken port cannot pass vacuously.
+  // Guards for the step-condition evaluator, so a broken port cannot pass vacuously.
   it.each([
     ["matrix.language != 'python' || steps.scope.outputs.run == 'true'", { run: 'true' }, true],
     ["'python' != 'python' || steps.scope.outputs.run == 'true'", { run: 'false' }, false],
@@ -179,9 +198,3 @@ function scopeGatedParts(config: Data): string[] {
   }
   return gated;
 }
-
-describe('deploy.yml', () => {
-  it('can only be triggered manually', () => {
-    expect(Object.keys(workflow('deploy.yml').on)).toEqual(['workflow_dispatch']);
-  });
-});

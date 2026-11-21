@@ -12,7 +12,7 @@ import pytest
 from scripts import auto_deploy as auto
 from scripts import auto_deploy_helpers as helpers
 from scripts import stamp_hosting
-from tests.test_auto_deploy import FakeRunner, release, summary  # noqa: F401
+from tests.test_legacy_release_cli import FakeRunner, release, summary  # noqa: F401
 
 ROOT = Path(__file__).resolve().parents[1]
 

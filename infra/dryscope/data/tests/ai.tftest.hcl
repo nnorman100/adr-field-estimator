@@ -147,7 +147,7 @@ run "evaluation_workflow_binding_takes_tests_principal_set_on_the_eval_account" 
   command = plan
 
   variables {
-    workload_identity_principal_set = "principalSet://iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/dryscope-${var.environment}/attribute.repository_id/987654321"
+    workload_identity_principal_set = "principalSet://iam.googleapis.com/projects/570228742694/locations/global/workloadIdentityPools/dryscope-${var.environment}/attribute.repository_id/987654321"
   }
 
   assert {

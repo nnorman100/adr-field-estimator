@@ -1,9 +1,10 @@
 import { sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { transactionSpan } from '../lib/telemetry/spans';
+import type { dryingSchema } from './drying-schema';
 import type { schema } from './schema';
 
-export type Database = PostgresJsDatabase<typeof schema>;
+export type Database = PostgresJsDatabase<typeof schema & typeof dryingSchema>;
 export type CompanyTransaction = Parameters<Parameters<Database['transaction']>[0]>[0];
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -21,20 +22,41 @@ export class CompanyContextError extends Error {
 // connection used next for another company, or for no company, carries nothing over.
 //
 // The company id must come from the verified sign-in, never from a URL, header or body.
+//
+// `snapshot`: a read-only transaction that reads one snapshot (repeatable read), so several queries in
+// it never see a commit made between them (the draft sync's read of a job, jobs/sync-job.ts).
 export async function withCompany<T>(
   db: Database,
   companyId: string,
   run: (tx: CompanyTransaction) => Promise<T>,
+  options: { snapshot?: boolean } = {},
 ): Promise<T> {
   if (typeof companyId !== 'string' || !UUID.test(companyId)) {
     throw new CompanyContextError('withCompany needs a company id that is a uuid');
   }
   return transactionSpan(() =>
-    db.transaction(async (tx) => {
-      await tx.execute(sql`SELECT set_config('app.company_id', ${companyId.toLowerCase()}, true)`);
-      return run(tx);
-    }),
+    db.transaction(
+      async (tx) => {
+        await tx.execute(sql`SELECT set_config('app.company_id', ${companyId.toLowerCase()}, true)`);
+        return run(tx);
+      },
+      options.snapshot === true ? { accessMode: 'read only', isolationLevel: 'repeatable read' } : undefined,
+    ),
   );
+}
+
+// Every transaction that waits on Firestore or Identity Platform while it is open calls this before
+// the call, so the connection's 30 s idle limit (db/client.ts) does not end it mid-call: for this
+// transaction only, it may sit idle as long as a request may run (Cloud Run's 300 s). They are:
+// - Firestore: Submit's fence (submissions/service.ts closeFence); the draft lookup before a claim
+//   commits and the draft made under its job's lock, in New job (jobs/service.ts create), Copy
+//   (jobs/archive.ts copy) and Back to editing (submissions/service.ts backToEditing); the job's
+//   drafts read before a claim or reassignment (jobs/office.ts draftsToName); a member's access record written by the
+//   outbox (projection/outbox.ts projectOnce).
+// - Identity Platform: member disable (team/service.ts disable) and the operator's owner
+//   invitation or replacement and second-step reset (platform/service.ts).
+export async function holdAcrossOutsideCall(tx: CompanyTransaction): Promise<void> {
+  await tx.execute(sql`SET LOCAL idle_in_transaction_session_timeout = '300s'`);
 }
 
 export class OperatorContextError extends Error {
@@ -50,6 +72,9 @@ export type OperatorContext = {
   companyId?: string;
   // A read-only transaction: any write in it fails.
   readOnly?: boolean;
+  // With readOnly: the transaction reads one snapshot (repeatable read), so several queries in it
+  // never see a commit made between them (the support view of a company's jobs, S5b-5).
+  snapshot?: boolean;
 };
 
 // Runs a platform operator's work in one transaction. It sets app.operator_id for that transaction
@@ -79,6 +104,8 @@ export async function withOperator<T>(
       if (row?.active !== true) throw new OperatorContextError('not an active platform operator');
       return run(tx);
     },
-    context.readOnly === true ? { accessMode: 'read only' } : undefined,
+    context.readOnly === true
+      ? { accessMode: 'read only', ...(context.snapshot === true ? { isolationLevel: 'repeatable read' as const } : {}) }
+      : undefined,
   );
 }

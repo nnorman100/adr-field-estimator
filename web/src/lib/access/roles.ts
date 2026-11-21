@@ -21,6 +21,8 @@ export const BASE_CAPABILITIES = Object.freeze({
     'sign',
     'live',
     'jobs_archive',
+    'job_reprice',
+    'additions_approve',
     'team_manage',
     'profile_manage',
     'delivery_manage',
@@ -52,7 +54,7 @@ export const BASE_CAPABILITIES = Object.freeze({
 } as const);
 
 // These two exist only while price books are switched on (PRICE_BOOKS_ENABLED today). Everyone may
-// read prices; only the owner manages them.
+// read prices and the published Check Scope item list; only the owner manages prices.
 export const PRICE_CAPABILITIES = Object.freeze({
   owner: ['prices_read', 'prices_manage'],
   estimator: ['prices_read'],
@@ -68,6 +70,18 @@ export const CAPABILITIES: readonly Capability[] = Object.freeze([
   ...BASE_CAPABILITIES.owner,
   ...PRICE_CAPABILITIES.owner,
 ]);
+
+// Actions only the platform operator takes, each through an operatorRoute under /api/platform/. No
+// company role holds them, an owner included, so none is a capability key. The table under
+// "Operator-only actions" in docs/access/superadmin.md lists the same names
+// (tests/unit/operator-actions.test.ts).
+export const OPERATOR_ACTIONS = Object.freeze([
+  // S8-3: the records check after a restore, read-only, one audit row per run.
+  'records_check',
+  // S5b-5: the read-only support view of a company's jobs, agreements, photos and evidence, one
+  // audit row per view.
+  'support_jobs_view',
+] as const);
 
 // The company switches that decide which keys exist. The flag is passed in, not read from the
 // environment here, so a caller cannot forget it; the company's switches supply it (web/src/lib/flags/).

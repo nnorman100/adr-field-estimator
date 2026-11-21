@@ -1,17 +1,23 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { readJob, type JobDetail, type Refusal } from '@/lib/field/api';
 import { loadJobProjection, type JobProjection } from '@/lib/field/job-projection';
+import { watchJournal } from '@/lib/field/journal';
+import { journalFailed, readEntries } from '@/lib/field/journal-sync';
 import { newerDetail, pending, usePending } from '@/lib/field/pending';
 import type { FieldSession } from '@/lib/field/session';
 import { canEditDraft, draftReads, fieldRefusal, IncompleteFieldData, InvalidFieldData, SUPERSEDED, type DraftRef, type FieldDraft } from '@/lib/field/store';
 import type { JobView } from '@/lib/field/views';
+import { useDraftReadiness } from '@/lib/readiness/client';
+import { fixTarget } from '@/lib/readiness/fix';
+import type { ReadinessAnswer } from '@/lib/readiness/schema';
 import { CustomerView } from './customer-view';
 import { PhotosView } from './photos-view';
 import { ScopeView } from './scope-view';
 import { CoordinationView } from './coordination-view';
+import { ArchivedNotice, JobActions } from './job-actions';
 import { StartFieldWork } from './start-field-work';
 import { FieldLink } from './ui';
 
@@ -34,6 +40,9 @@ function fieldWorkOf(session: FieldSession, detail: JobDetail): FieldWork {
   return owner === session.actorId ? 'mine' : 'other';
 }
 
+// Where a Fix lands when its own control is not there or not usable, as for a read-only draft.
+const FIX_FALLBACKS: Record<string, string> = { 'new-room-name': 'readiness-rooms', 'photo-room': 'readiness-photos' };
+
 const readsEveryDraft = (session: FieldSession) => session.role === 'owner' || session.role === 'office';
 const draftReadable = (session: FieldSession, detail: JobDetail) => readsEveryDraft(session) || fieldWorkOf(session, detail) === 'mine';
 
@@ -55,8 +64,10 @@ export type JobContext = {
   draft: FieldDraft | null;
   draftRef: DraftRef;
   reloadDraft: (source?: 'cache') => Promise<void>;
-  // Takes a refusal of the photo route or the field database (null for none): 401 or 403 drops the
-  // job from the screen; a 404 may be a missing photo, so the job is read again and that decides.
+  // Takes a refusal of the photo route or the field database (null for none): 401, or 403 while this
+  // person's field work is not on this phone, drops the job from the screen; a 403 while it is may be
+  // a move (J5) or an archive made elsewhere, a 404 a missing photo, and a 410 an archive (S5b-2), so
+  // the job is read again, nothing is saved until a read answers, and the read decides.
   checkAccess: (refusal: Refusal | null) => void;
   // Takes the server's refusal of the job to this person (null for none). While their field work is
   // on this phone it stays, read only (owner decision J5); otherwise the job goes from the screen.
@@ -65,9 +76,20 @@ export type JobContext = {
   moved: boolean;
   // Whether this person may change the field work now (the rules' own test).
   editable: boolean;
+  // The job is archived (S5b-2): nothing of it is sent, and what is on screen stays, read only.
+  archived: boolean;
+  // Nothing of the job is sent: it is archived, or a read of it must say first whether an archive or
+  // another refusal changed it. What was typed stays, read only.
+  held: boolean;
+  // A form of the job tells whether it holds changes not saved; the screen keeps such a form when the
+  // job turns out archived.
+  markUnsaved: (form: string, unsaved: boolean) => void;
   // The last read of the draft did not get through, so the draft on screen may be older than what is
   // stored: boxes stay open, but nothing is saved over it until it is read again.
   stale: boolean;
+  // The advisory readiness answer for this draft: `checking` while this screen asks for it, `answer`
+  // undefined until it is back and null when it is unusable; `recheck` asks again after an accepted save.
+  readiness: { checking: boolean; answer: Extract<ReadinessAnswer, { status: 'checked' }> | null | undefined; recheck: () => void };
 };
 
 
@@ -75,7 +97,10 @@ export type JobContext = {
 // draft from the field database, read once and again after each save, so what is on screen is what
 // is stored. Office, the owner who is not the field owner, and anyone once the draft is no longer
 // being edited see the field work read-only, as the rules hold it.
-export function JobScreens({ session, jobId, view }: { session: FieldSession; jobId: string; view: JobView }) {
+export function JobScreens({
+  session, jobId, view, readinessFix, address,
+}: { session: FieldSession; jobId: string; view: JobView; readinessFix: string | null; address: string }) {
+  const focusedFix = useRef<string | null>(null);
   const [read, setRead] = useState<{ detail: JobDetail; mark: number } | null>(null);
   // A save that settled after an earlier screen of this job closed posts the job it got back
   // (src/lib/field/pending.ts); the newer of that and this screen's own read is the job shown. Once
@@ -83,7 +108,10 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   const posted = usePending(() => pending.detail(jobId));
   const mark = usePending(() => pending.mark(jobId));
   const denial = usePending(() => pending.denial(jobId));
-  const detail = newerDetail(read?.mark === mark ? read.detail : null, posted);
+  // A refused job list (a suspended company, a removed member) takes every cached copy of a job, with
+  // its address and customer, off screen until a list is answered again (src/lib/field/pending.ts).
+  const listDenied = usePending(() => pending.listDenied());
+  const detail = listDenied ? null : newerDetail(read !== null && read.mark >= mark ? read.detail : null, posted);
   const setDetail = useCallback(
     (next: JobDetail, sentAt: number) => {
       if (!pending.publishDetail(jobId, next, sentAt)) return;
@@ -106,8 +134,30 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   // did not get through): Start field work, sent again, sets it.
   const [ownerUnset, setOwnerUnset] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The job is archived (S5b-2), as the newest answer about it said: a read of it (410, or the job),
+  // or an archive or restore done on this page (src/lib/field/pending.ts).
+  const archivedSaid = usePending(() => pending.archived(jobId));
+  const archivalsDone = usePending(() => pending.archivalsDone(jobId));
+  const [archivalsSeen] = useState(archivalsDone);
   const [draftError, setDraftError] = useState<string | null>(null);
+  // The forms of this job on this screen that hold changes not saved (told by each form).
+  const [unsavedForms, setUnsavedForms] = useState<Record<string, true>>({});
+  const markUnsaved = useCallback((form: string, unsaved: boolean) => {
+    setUnsavedForms((current) => {
+      if (Boolean(current[form]) === unsaved) return current;
+      const next = { ...current };
+      if (unsaved) next[form] = true;
+      else delete next[form];
+      return next;
+    });
+  }, []);
+  const unsaved = Object.keys(unsavedForms).length > 0;
   const [readDraft] = useState(draftReads);
+  // A refusal waits for a read of the job to say what it meant (src/lib/field/pending.ts): nothing
+  // is saved meanwhile.
+  const verifying = usePending(() => pending.verifying(jobId));
+  // An archive with no sure answer is being checked: nothing of the job is sent from any section.
+  const archiveChecking = usePending(() => pending.archiveChecking(jobId));
 
   // The server refused the job to this person: every copy of it goes, unless their field work is on
   // this phone (owner decision J5, src/lib/field/pending.ts), when it stays, read only.
@@ -139,10 +189,10 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   const reloadDraft = useCallback(
     async (currentDraftId?: string, source?: 'cache', job?: JobDetail) => {
       const draftId = currentDraftId ?? locator?.currentDraftId ?? detail?.job.currentDraftId;
-      if (!draftId || !session.db || !mayReadDraft(job ?? detail)) return;
+      if (!draftId || !session.db || !mayReadDraft(job ?? detail) || pending.missingDraft(jobId)) return;
       try {
         const found = await readDraft(session.db, { companyId: session.companyId, draftId }, source);
-        if (found === SUPERSEDED) return;
+        if (found === SUPERSEDED || pending.missingDraft(jobId)) return;
         setDraftAt(draftId);
         setDraft(found);
         // The job names this person but the draft read (an owner reads every draft) names someone else:
@@ -151,6 +201,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
         setOwnerUnset(found !== null && named !== null && fieldWorkOf(session, named) === 'mine' && found.fieldOwnerUid !== session.user.uid);
         setDraftError(found ? null : 'The field work of this job is not there yet. Try again in a moment.');
       } catch (error) {
+        if (pending.missingDraft(jobId)) return;
         const refusal = fieldRefusal(error);
         if (refusal) return refuseDraft(refusal, job ?? detail);
         // A read that did not get through keeps the draft as last read on screen, and with it any
@@ -165,26 +216,41 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
         );
       }
     },
-    [detail, locator, session, refuseDraft, readDraft, mayReadDraft],
+    [detail, locator, session, refuseDraft, readDraft, mayReadDraft, jobId],
   );
 
   // The locator first, then the draft it names; trying again repeats both. `job` is the job just read,
   // which the state of this render does not hold yet.
   const openDraft = useCallback(
     async (job?: JobDetail) => {
+      // A job read that says nothing of a missing draft (the lookup may not have got through) keeps what
+      // an earlier read said of this same draft; Start field work, or another draft, clears it.
+      if (job) {
+        const mine = fieldWorkOf(session, job) === 'mine' && !pending.moved(jobId);
+        const kept = pending.missingDraft(jobId) === job.job.currentDraftId;
+        pending.setMissingDraft(jobId, mine && (job.draftMissing || kept) ? job.job.currentDraftId : null);
+      }
       if (!mayReadDraft(job ?? detail)) {
         setDraftError(null);
         return;
+      }
+      // The job read says the current draft is not in the field database: no locator or draft read can
+      // get through (the rules dereference the draft), and Start field work makes it again.
+      if (pending.missingDraft(jobId)) {
+        setDraftError(null);
+        return setOwnerUnset(true);
       }
       try {
         // The API populated this server-owned locator, including for jobs made before S6. Read
         // the document itself to warm the person cache; never cache the API response.
         const head = await loadJobProjection(session.db, session.companyId, jobId);
+        if (pending.missingDraft(jobId)) return;
         if (!head) throw new Error('Job locator unavailable');
         setLocator(head);
         setCachedError(null);
         await reloadDraft(head.currentDraftId, undefined, job ?? detail ?? undefined);
       } catch (error) {
+        if (pending.missingDraft(jobId)) return;
         const refusal = fieldRefusal(error);
         if (refusal) refuseDraft(refusal, job ?? detail);
         else setDraftError('The field work could not be opened. Try again when connected.');
@@ -215,28 +281,26 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   const reloadJob = useCallback(async () => {
     // Server access of a moved job stays revoked: nothing more is asked of it.
     if (!session.online || pending.moved(jobId)?.revoked) return null;
-    const sentAt = pending.mark(jobId);
+    const sentAt = pending.markRead();
     return apply(await readJob(session.user, jobId), sentAt);
   }, [apply, session, jobId]);
 
   const checkAccess = useCallback(
     (refusal: Refusal | null) => {
       if (!refusal) return;
-      if (refusal.status === 401 || refusal.status === 403) return refuse(refusal);
-      if (refusal.status !== 404) return;
-      const sentAt = pending.mark(jobId);
-      void readJob(session.user, jobId).then((answer) => {
-        if (pending.readAnswered(jobId, answer, sentAt) && !answer.ok && answer.denied && pending.denial(jobId)) setDraft(null);
-      });
+      if (refusal.status === 401 || (refusal.status === 403 && !pending.held(jobId))) return refuse(refusal);
+      if (refusal.status !== 403 && refusal.status !== 404 && refusal.status !== 410) return;
+      if (refusal.status === 410) pending.archivedSeen(jobId);
+      pending.verify(jobId);
     },
-    [refuse, jobId, session.user],
+    [refuse, jobId],
   );
 
   // The first read; each job is its own component (keyed by the parent).
   useEffect(() => {
     if (!session.online) return;
     let live = true;
-    const sentAt = pending.mark(jobId);
+    const sentAt = pending.markRead();
     void readJob(session.user, jobId).then((answer) => {
       // A refusal that comes back after this screen closed still drops the job for the next one.
       if (live) void apply(answer, sentAt);
@@ -279,6 +343,18 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     return () => { live = false; };
   }, [session.online, session.db, session.companyId, jobId, draft, denial, readDraft]);
 
+  // An archive or restore of this job was done on this page, from this screen or any other: read it again.
+  useEffect(() => {
+    if (archivalsDone !== archivalsSeen) void Promise.resolve().then(() => reloadJob());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [archivalsDone]);
+
+  // A refusal waits for a read of the job: read it again.
+  useEffect(() => {
+    if (verifying !== null) void Promise.resolve().then(() => reloadJob());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [verifying]);
+
   // A photo that settled after an earlier screen of this job closed changed the draft: read it again.
   useEffect(() => {
     // Read after this render, as an answer to the change the store posted.
@@ -290,12 +366,101 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   // read does. A refusal then keeps the work on screen instead of dropping the job (J5).
   const held = (detail !== null && detail.job.fieldOwnerActorId === session.actorId) || draft?.fieldOwnerUid === session.user.uid;
   useEffect(() => pending.hold(jobId, held), [jobId, held]);
+  // Archived as the newest answer about the job said, or as its field draft on screen says.
+  const archived = archivedSaid || draft?.state === 'archived';
+  const [rechecks, setRechecks] = useState(0);
+  const recheck = useCallback(() => setRechecks((count) => count + 1), []);
+  const currentRefId = draftAt ?? locator?.currentDraftId ?? detail?.job.currentDraftId;
+  const row = detail?.job;
+  const checking =
+    (view === 'scope' || view === 'photos') && session.online && session.readiness && session.capabilities.includes('scope') &&
+    !archived && !archiveChecking && movedState === null && draft !== null && draftError === null && draft.state === 'editing' &&
+    row?.status === 'draft' && row.currentDraftId === currentRefId;
+  const manifest = useMemo(() => (draft ? { draft: draft.field, rooms: draft.rooms, photos: draft.photos } : null), [draft]);
+  const archiveSeen = useCallback(() => checkAccess({ status: 410, message: 'This job is archived.' }), [checkAccess]);
+  const advisory = useDraftReadiness(session.user, checking ? row! : null, manifest, rechecks, archiveSeen);
   // The draft as last read goes with a moved job, for a screen of it opened again on this page.
   const draftId = locator?.currentDraftId ?? detail?.job.currentDraftId ?? null;
   useEffect(() => {
     if (movedState && draft && (draftAt ?? draftId)) pending.keepDraft(jobId, draft, (draftAt ?? draftId)!);
   }, [movedState, draft, draftAt, draftId, jobId]);
 
+  const readinessOn = session.readiness && session.capabilities.includes('scope') && detail?.job.status === 'draft' && !archived && !movedState && !archiveChecking;
+  const fix = readinessOn ? fixTarget(readinessFix, view) : null;
+  // Once a Fix brought the person here, the way back to Finish stays for this job's other tabs too.
+  const [fromFinish, setFromFinish] = useState(false);
+  if (fix && !fromFinish) setFromFinish(true);
+  const finishHref = `/sign-in/${address}/jobs/${jobId}/finish`;
+  const returnGuarded = fromFinish && readinessOn;
+  // Back to Finish asks to save or discard while any form holds unsaved input, then waits until this
+  // job's field writes and photo sends have the server's acknowledgement: Finish reads the manifest
+  // from the field database, not from this phone.
+  const [leaving, setLeaving] = useState<'no' | 'choosing' | 'going'>('no');
+  if (leaving === 'choosing' && !unsaved) setLeaving('no');
+  const recordInFlight = usePending(() => pending.record(jobId)?.sending === true || pending.coordWrite(jobId)?.sending === true);
+  const photosInFlight = usePending(() => pending.photos(jobId)).some((photo) => photo.step === 'sending' || photo.step === 'saving');
+  const [journalBusy, setJournalBusy] = useState<boolean | null>(null);
+  const fieldClient = session.client;
+  useEffect(() => {
+    if (!returnGuarded || leaving !== 'going') return;
+    let live = true;
+    let reads = 0;
+    const load = async () => {
+      const mine = ++reads;
+      try {
+        const entries = await readEntries(fieldClient);
+        if (live && mine === reads) setJournalBusy(entries.some((entry) => entry.state === 'pending' && entry.jobId === jobId));
+      } catch (error) {
+        journalFailed(fieldClient, error);
+      }
+    };
+    void Promise.resolve().then(load);
+    const stop = watchJournal({ tenantId: fieldClient.person.tenantId, uid: fieldClient.person.uid }, () => void load());
+    return () => {
+      live = false;
+      stop();
+    };
+  }, [returnGuarded, leaving, fieldClient, jobId]);
+  const writing = journalBusy !== false || recordInFlight || photosInFlight;
+  const returnToFinish = () => {
+    setJournalBusy(null);
+    setLeaving('going');
+  };
+  useEffect(() => {
+    // Finish uses a separate Firestore client. End the field document after its writes settle.
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- The browser must load a separate document to release the field client's connections.
+    if (returnGuarded && leaving === 'going' && !writing) window.location.assign(finishHref);
+  }, [returnGuarded, leaving, writing, finishHref]);
+  useEffect(() => {
+    if (!fix) {
+      focusedFix.current = null;
+      return;
+    }
+    if (focusedFix.current === readinessFix) return;
+    const usable = (found: HTMLElement) =>
+      !found.closest('[hidden]') && !found.matches(':disabled') && !((found instanceof HTMLInputElement || found instanceof HTMLTextAreaElement) && found.readOnly);
+    const fallbackId = FIX_FALLBACKS[fix] ?? (view === 'scope' ? 'readiness-scope' : null);
+    const element = [fix, fallbackId].map((id) => (id ? document.getElementById(id) : null)).find(
+      (found): found is HTMLElement => found instanceof HTMLElement && usable(found),
+    );
+    if (!element) return;
+    element.focus();
+    if (document.activeElement === element) focusedFix.current = readinessFix;
+  }, [readinessFix, fix, draft, view]);
+
+  // An archived job (an old link, or archived here) shows that it is archived: every job route answers
+  // it 410, and the field rules refuse every write to its draft. Screens of the job as read here stay,
+  // read only, with whatever the person changed and did not save. A job opened from this phone's saved
+  // field work (no job read yet) whose forms hold changes not saved keeps them mounted, read only, so
+  // they are not lost; a job with none is the notice alone.
+  if (archived && !detail && !(draft && unsaved)) {
+    return (
+      <div className="flex flex-col gap-3">
+        <FieldLink to={{ view: 'jobs', list: null }}>Back to jobs</FieldLink>
+        <ArchivedNotice session={session} jobId={jobId} />
+      </div>
+    );
+  }
   if (!detail && (denial || (error && (!locator || !draft)))) {
     return (
       <div className="flex flex-col gap-2">
@@ -319,6 +484,8 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   const startable =
     session.capabilities.includes('scope') &&
     !moved &&
+    !archived &&
+    !archiveChecking &&
     detail !== null &&
     ((fieldWork === 'nobody' && detail.job.status === 'draft') || (ownerUnset && fieldWork === 'mine'));
 
@@ -337,8 +504,12 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     refuse,
     moved,
     editable:
-      !moved && !ownerUnset && draftAt === currentDraftId && draft !== null && canEditDraft(draft, session.user.uid, session.capabilities) && (session.online || session.offlineCapture),
+      !moved && !archived && verifying === null && !ownerUnset && draftAt === currentDraftId && draft !== null && canEditDraft(draft, session.user.uid, session.capabilities) && (session.online || session.offlineCapture),
+    archived,
+    held: archived || archiveChecking,
+    markUnsaved,
     stale: draft !== null && draftError !== null,
+    readiness: { checking, answer: checking ? advisory : undefined, recheck },
   };
   const onDraftViews = view === 'scope' || view === 'photos';
 
@@ -353,6 +524,50 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
           </FieldLink>
         ))}
       </nav>
+      {returnGuarded ? (
+        <div className="flex flex-col gap-2">
+          <a
+            className="inline-flex min-h-11 items-center self-start underline"
+            href={finishHref}
+            onClick={(event) => {
+              event.preventDefault();
+              if (leaving === 'going') return;
+              if (unsaved) setLeaving('choosing');
+              else returnToFinish();
+            }}
+          >
+            Back to Finish and review
+          </a>
+          {leaving === 'choosing' ? (
+            <div role="alert" className="flex flex-col gap-2 rounded-md border border-foreground/40 p-3 text-sm">
+              <p>Some changes are not saved. Save them first, or discard them and go back to Finish and review.</p>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" onClick={() => setLeaving('no')}>
+                  Keep editing
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    if (currentRefId) pending.discardUnsent(jobId, currentRefId);
+                    returnToFinish();
+                  }}
+                >
+                  Discard changes and go back
+                </Button>
+              </div>
+            </div>
+          ) : null}
+          {leaving === 'going' && writing ? (
+            <div className="flex flex-col gap-2 text-sm">
+              <p role="status">Saving…</p>
+              <Button variant="outline" className="self-start" onClick={() => setLeaving('no')}>
+                Keep editing
+              </Button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      {archived ? <ArchivedNotice session={session} jobId={jobId} /> : null}
       {moved ? (
         <p role="alert" className="rounded-md bg-foreground/5 p-3 text-sm">
           {MOVED_TEXT}
@@ -360,7 +575,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       ) : null}
       {onDraftViews && startable && detail ? <StartFieldWork context={{ ...context, detail }} resume={ownerUnset && fieldWork === 'mine'} /> : null}
       {onDraftViews && !moved && !reader && fieldWork === 'other' ? <p className="rounded-md bg-foreground/5 p-3 text-sm">{OTHER_OWNS_TEXT}</p> : null}
-      {onDraftViews && draft !== null && !moved && !context.editable && !(fieldWork === 'other' && !reader) ? (
+      {onDraftViews && draft !== null && !moved && !archived && !context.editable && !(fieldWork === 'other' && !reader) ? (
         <p className="rounded-md bg-foreground/5 p-3 text-sm">
           Read only. Only the estimator who owns this job&rsquo;s field work changes it, while the job is being edited.
         </p>
@@ -377,8 +592,8 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       {onDraftViews && !draft && !draftError && cachedError ? <p role="status">{cachedError}</p> : null}
       {/* The views of one job stay mounted and only the open one shows, so moving between them
           keeps what the person has typed and not saved. */}
-      <div hidden={view !== 'scope'}>{draft ? <ScopeView key={draftAt} job={context} draft={draft} /> : null}</div>
-      <div hidden={view !== 'photos'}>{draft ? <PhotosView key={draftAt} job={context} draft={draft} open={view === 'photos'} /> : null}</div>
+      <div hidden={view !== 'scope'}>{draft ? <ScopeView key={draftAt} job={context} draft={draft} open={view === 'scope'} readinessFix={fix ? readinessFix : null} /> : null}</div>
+      <div hidden={view !== 'photos'}>{draft ? <PhotosView key={draftAt} job={context} draft={draft} open={view === 'photos'} readinessFix={fix ? readinessFix : null} /> : null}</div>
       <div hidden={view !== 'customer'}>
         {detail ? (
           <CustomerView job={{ ...context, detail }} />
@@ -394,6 +609,9 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
         )}
       </div>
       <div hidden={view !== 'coordination'}>{detail ? <CoordinationView job={{ ...context, detail }} open={view === 'coordination'} /> : null}</div>
+      {/* Archive and Copy follow the person's keys and the job's state; the moved, read-only state
+          limits only field editing. */}
+      {detail && !archived ? <JobActions job={{ ...context, detail }} /> : null}
     </div>
   );
 }

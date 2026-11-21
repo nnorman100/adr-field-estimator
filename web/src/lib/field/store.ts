@@ -1,6 +1,7 @@
 // The phone's reads and writes of one job's field draft in the field database (S5a-6), through the
-// Firebase web SDK. Screens enqueue writes through fieldWrite on the shell's person client;
-// local receipts and server acknowledgements are separate (./local-edit.ts). The rules (web/firestore.rules)
+// Firebase web SDK. Screens hand an edit's document writes to journaledEdit (./journal-sync.ts),
+// which journals them and enqueues them through fieldWrite on the shell's person client; local
+// receipts and server acknowledgements are separate (./local-edit.ts). The rules (web/firestore.rules)
 // let only the draft's field owner, while it is `editing`, change only the `field` maps; each write
 // here changes nothing else, and its values come from ./forms.ts, checked by the same schema.
 //
@@ -14,14 +15,16 @@ import {
   getDocs,
   getDocFromCache,
   getDocsFromCache,
-  setDoc,
-  updateDoc,
   writeBatch,
+  type DocumentData,
+  type DocumentReference,
   type Firestore,
+  type UpdateData,
 } from 'firebase/firestore';
 import { answerMessage, type Refusal } from './api';
 import type { FieldChanges } from './forms';
-import { draftFieldSchema, photoFieldSchema, roomFieldSchema, type DraftField, type PhotoField, type RoomField } from './schema';
+import type { DocWrite, Docs } from './journal';
+import { draftFieldSchema, MAX_ROOMS, photoFieldSchema, roomFieldSchema, type DraftField, type PhotoField, type RoomField } from './schema';
 
 export type DraftRef = { companyId: string; draftId: string };
 
@@ -35,6 +38,17 @@ export type FieldDraft = {
 };
 
 export const draftPath = ({ companyId, draftId }: DraftRef) => `companies/${companyId}/drafts/${draftId}`;
+
+// The draft's documents as a screen holds them (null: none), so an edit records what it was built on.
+export function draftDocs(ref: DraftRef, draft: FieldDraft | null): Docs {
+  const path = draftPath(ref);
+  if (!draft) return new Map();
+  return new Map<string, Record<string, unknown>>([
+    [path, { field: draft.field }],
+    ...draft.rooms.map((room) => [`${path}/rooms/${room.id}`, { field: room.field }] as [string, Record<string, unknown>]),
+    ...draft.photos.map((photo) => [`${path}/photos/${photo.id}`, { field: photo.field }] as [string, Record<string, unknown>]),
+  ]);
+}
 
 // A stored map that does not follow the field map (./schema.ts). The draft is not shown at all
 // rather than shown as empty or partial work.
@@ -73,14 +87,16 @@ function mapOf<T>(schema: { safeParse: (value: unknown) => { success: boolean; d
 // The draft, rooms and photo references through the sync-gated client, or explicitly from the
 // cache after a local edit. Returns null when there is no such draft. Throws InvalidFieldData when a stored map does not
 // follow the field map, IncompleteFieldData when the room order lists a room the read did not get.
-export async function loadDraft(db: Firestore, ref: DraftRef, source?: 'cache'): Promise<FieldDraft | null> {
+// A read for room writes ('roomsFromCache') is from the cache too, and reads no photo reference:
+// `photos` is empty.
+export async function loadDraft(db: Firestore, ref: DraftRef, source?: 'cache' | 'roomsFromCache'): Promise<FieldDraft | null> {
   const path = draftPath(ref);
-  const readDoc = source === 'cache' ? getDocFromCache : getDoc;
-  const readDocs = source === 'cache' ? getDocsFromCache : getDocs;
+  const readDoc = source ? getDocFromCache : getDoc;
+  const readDocs = source ? getDocsFromCache : getDocs;
   const [draft, rooms, photos] = await Promise.all([
     readDoc(doc(db, path)),
     readDocs(collection(db, path, 'rooms')),
-    readDocs(collection(db, path, 'photos')),
+    source === 'roomsFromCache' ? null : readDocs(collection(db, path, 'photos')),
   ]);
   if (!draft.exists()) return null;
   const data = draft.data();
@@ -93,7 +109,7 @@ export async function loadDraft(db: Firestore, ref: DraftRef, source?: 'cache'):
     fieldOwnerUid: typeof data.fieldOwnerUid === 'string' ? data.fieldOwnerUid : null,
     field,
     rooms: order.map((id) => ({ id, field: byId.get(id)! })),
-    photos: photos.docs.map((photo) => ({ id: photo.id, field: mapOf<PhotoField>(photoFieldSchema, photo.data().field) })),
+    photos: (photos?.docs ?? []).map((photo) => ({ id: photo.id, field: mapOf<PhotoField>(photoFieldSchema, photo.data().field) })),
   };
 }
 
@@ -130,48 +146,95 @@ export function draftReads() {
   };
 }
 
+// Each edit is described as document writes (./journal.ts DocWrite), so the recovery journal can
+// keep it and make it again after a restart, then applyWrites makes them in one batch.
+
 // The changed keys of one `field` map, by dotted path, so a save never overwrites a key it did not
 // change; a null deletes the key.
 function dotted(changes: FieldChanges): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(changes).map(([key, value]) => [`field.${key}`, value === null ? deleteField() : value]),
-  );
+  return Object.fromEntries(Object.entries(changes).map(([key, value]) => [`field.${key}`, value]));
 }
 
-export async function saveDraftField(db: Firestore, ref: DraftRef, changes: FieldChanges): Promise<void> {
-  if (Object.keys(changes).length === 0) return;
-  await updateDoc(doc(db, draftPath(ref)), dotted(changes));
+export function draftFieldWrites(ref: DraftRef, changes: FieldChanges): DocWrite[] {
+  if (Object.keys(changes).length === 0) return [];
+  return [{ path: draftPath(ref), op: 'update', fields: dotted(changes) }];
 }
 
 // A new room: its document and its place at the end of the room order, in one batch, so a room is
 // never listed without its document or the other way round.
-export async function addRoom(db: Firestore, ref: DraftRef, roomId: string, name: string, order: readonly string[]): Promise<void> {
+export function addRoomWrites(ref: DraftRef, roomId: string, name: string, order: readonly string[]): DocWrite[] {
   const path = draftPath(ref);
-  const batch = writeBatch(db);
-  batch.set(doc(db, path, 'rooms', roomId), { field: { name } });
-  batch.update(doc(db, path), { 'field.roomOrder': [...order.filter((id) => id !== roomId), roomId] });
-  await batch.commit();
+  return [
+    { path: `${path}/rooms/${roomId}`, op: 'set', data: { field: { name } } },
+    { path, op: 'update', fields: { 'field.roomOrder': [...order.filter((id) => id !== roomId), roomId] } },
+  ];
+}
+
+// What an Add or Remove of a room is built from: the draft and its rooms read from the phone's cache
+// while the page-level room-write guard is held (./pending.ts startRoomWrite), never what a screen
+// last rendered. A screen that remounted between another room write's journal record and its local
+// batch can still show the old order; building from it would drop that room, mislead the room limit
+// and journal a stale before-state. `base` is that same read, for the journal (draftDocs).
+export type RoomEdit = { writes: DocWrite[]; base: FieldDraft };
+
+// Null when the cache has no such draft; 'full' when the cached order already holds MAX_ROOMS.
+export async function addRoomEdit(db: Firestore, ref: DraftRef, roomId: string, name: string): Promise<RoomEdit | 'full' | null> {
+  const base = await loadDraft(db, ref, 'roomsFromCache');
+  if (!base) return null;
+  const order = base.field.roomOrder ?? [];
+  if (order.length >= MAX_ROOMS) return 'full';
+  return { writes: addRoomWrites(ref, roomId, name, order), base };
+}
+
+export async function removeRoomEdit(db: Firestore, ref: DraftRef, roomId: string): Promise<RoomEdit | null> {
+  const base = await loadDraft(db, ref, 'roomsFromCache');
+  return base ? { writes: removeRoomWrites(ref, roomId, base.field.roomOrder ?? []), base } : null;
 }
 
 // Removes a room: its document and its place in the room order, in one batch (the rules let only
 // the field owner delete a room, while the draft is editing). A photo tagged to it shows untagged.
-export async function removeRoom(db: Firestore, ref: DraftRef, roomId: string, order: readonly string[]): Promise<void> {
+export function removeRoomWrites(ref: DraftRef, roomId: string, order: readonly string[]): DocWrite[] {
   const path = draftPath(ref);
-  const batch = writeBatch(db);
-  batch.delete(doc(db, path, 'rooms', roomId));
-  batch.update(doc(db, path), { 'field.roomOrder': order.filter((id) => id !== roomId) });
-  await batch.commit();
+  return [
+    { path: `${path}/rooms/${roomId}`, op: 'delete' },
+    { path, op: 'update', fields: { 'field.roomOrder': order.filter((id) => id !== roomId) } },
+  ];
 }
 
-export async function saveRoomField(db: Firestore, ref: DraftRef, roomId: string, changes: FieldChanges): Promise<void> {
-  if (Object.keys(changes).length === 0) return;
-  await updateDoc(doc(db, draftPath(ref), 'rooms', roomId), dotted(changes));
+export function roomFieldWrites(ref: DraftRef, roomId: string, changes: FieldChanges): DocWrite[] {
+  if (Object.keys(changes).length === 0) return [];
+  return [{ path: `${draftPath(ref)}/rooms/${roomId}`, op: 'update', fields: dotted(changes) }];
 }
 
 // A photo's reference, written once its bytes have a receipt (S5a-5), and again when its room or
 // shot tag changes. The whole map is written: it has two keys, both chosen on screen.
-export async function savePhotoRef(db: Firestore, ref: DraftRef, photoId: string, field: PhotoField): Promise<void> {
-  await setDoc(doc(db, draftPath(ref), 'photos', photoId), { field });
+export function photoRefWrites(ref: DraftRef, photoId: string, field: PhotoField): DocWrite[] {
+  return [{ path: `${draftPath(ref)}/photos/${photoId}`, op: 'set', data: { field } }];
+}
+
+type Writer = {
+  set(ref: DocumentReference, data: DocumentData): unknown;
+  update(ref: DocumentReference, data: UpdateData<DocumentData>): unknown;
+  delete(ref: DocumentReference): unknown;
+};
+
+// Adds the writes, absolute values only, to a batch or a transaction. A null in an update removes
+// that key.
+export function stageWrites(db: Firestore, writer: Writer, writes: readonly DocWrite[]): void {
+  for (const write of writes) {
+    const target = doc(db, write.path);
+    if (write.op === 'delete') writer.delete(target);
+    else if (write.op === 'set') writer.set(target, write.data);
+    else writer.update(target, Object.fromEntries(Object.entries(write.fields).map(([key, value]) => [key, value === null ? deleteField() : value])));
+  }
+}
+
+// Makes the writes in one batch: all of them land or none.
+export async function applyWrites(db: Firestore, writes: readonly DocWrite[]): Promise<void> {
+  if (writes.length === 0) return;
+  const batch = writeBatch(db);
+  stageWrites(db, batch, writes);
+  await batch.commit();
 }
 
 // Whether this person may change the draft's field work now: the rules' own test (canEdit).

@@ -33,7 +33,7 @@ describe('Firestore spans', () => {
       }),
     );
     const [company, draft, uid] = [randomUUID(), randomUUID(), `uid-${randomUUID()}`];
-    await firestoreDraftStore(db).ensure(company, draft, uid);
+    await firestoreDraftStore(db).ensure(company, randomUUID(), draft, uid);
     await firestoreDraftStates(db).state(company, draft);
     const access = firestoreAccessStore(db);
     await access.grant({ companyId: company, authTenantId: 'tenant-x', uid, role: 'estimator', expiresAt: new Date(Date.now() + 1000), version: 1 });
@@ -45,7 +45,7 @@ describe('Firestore spans', () => {
     const ours = spans.filter((s) => s.instrumentationScope.name === 'dryscope-web');
     expect(spans.length).toBeGreaterThan(ours.length);
     expect(ours.map((s) => s.name)).toEqual([
-      'firestore.create drafts',
+      'firestore.runTransaction drafts',
       'firestore.get drafts',
       'firestore.runTransaction access',
       'firestore.runTransaction access',
@@ -53,7 +53,7 @@ describe('Firestore spans', () => {
     ]);
     expect(ours[0]!.attributes).toEqual({
       'db.system.name': 'gcp.firestore',
-      'db.operation.name': 'create',
+      'db.operation.name': 'runTransaction',
       'db.collection.name': 'drafts',
     });
     // Every span, the SDK's included.

@@ -1,3 +1,4 @@
+import { draftOfOtherJob } from '@/lib/jobs/drafts';
 import type { SummaryDraftBoundary, SummaryDraftReader } from '@/lib/summary-draft/service';
 import type { FakeField } from '../submissions/field-fake';
 
@@ -7,9 +8,9 @@ import type { FakeField } from '../submissions/field-fake';
 
 export function fieldSummaryReader(field: FakeField): SummaryDraftReader {
   return {
-    async read(companyId, draftId) {
+    async read(companyId, jobId, draftId) {
       const draft = field.draft(companyId, draftId);
-      if (!draft) return null;
+      if (!draft || draftOfOtherJob(draft.jobId, jobId)) return null;
       return {
         state: draft.state,
         manifest: {

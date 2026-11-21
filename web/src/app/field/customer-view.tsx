@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { saveClaim, saveCustomer, type Answer, type JobDetail } from '@/lib/field/api';
 import { pending, usePending, type RecordKind } from '@/lib/field/pending';
@@ -38,8 +38,9 @@ const claimOf = (detail: JobDetail): Values => ({ ...detail.claim, dateOfLoss: d
 // may save follows owner decision J3: the estimator who owns the field work, the owner and office,
 // while the job is unsigned; the server decides, and its refusal is shown.
 export function CustomerView({ job }: { job: CustomerJob }) {
-  // Read only once the field work moved away from this person: what they typed stays, unsaved (J5).
-  const canSave = job.session.capabilities.some((key) => key === 'scope' || key === 'coordination') && !job.moved;
+  // Read only once the field work moved away from this person (J5), or the job is archived (S5b-2):
+  // what they typed stays, unsaved.
+  const canSave = job.session.capabilities.some((key) => key === 'scope' || key === 'coordination') && !job.moved && !job.held;
   return (
     <div className="flex flex-col gap-4">
       <h3 className="sr-only">Customer and claim</h3>
@@ -125,6 +126,12 @@ function RecordForm({
   const [notice, setNotice] = useState<string | null>(null);
   const changed = { ...refusal?.edits, ...edits };
   const shown = mine?.values ?? { ...reread(job.detail), ...changed };
+  const { markUnsaved } = job;
+  const dirty = Object.keys(changed).length > 0;
+  useEffect(() => {
+    markUnsaved(`record/${kind}`, dirty);
+    return () => markUnsaved(`record/${kind}`, false);
+  }, [markUnsaved, kind, dirty]);
 
   // Takes a kept refusal's changes into the form's own.
   function takeRefusal() {
@@ -161,8 +168,10 @@ function RecordForm({
     }
     // Not this person's to see any more: every copy of the job goes, unless their field work is on
     // this phone (J5), when it stays, read only. Changed elsewhere: read the job again; the person's
-    // edits stay on top of the new values.
+    // edits stay on top of the new values. Archived elsewhere (410): the job is read again, and its
+    // screens stay, read only, with these edits.
     if (answer.denied) job.refuse({ status: answer.status, message: answer.message });
+    if (answer.status === 410) job.checkAccess(answer);
     if (answer.stale) await job.reloadJob();
     if (!refused) setError(answer.message);
   }

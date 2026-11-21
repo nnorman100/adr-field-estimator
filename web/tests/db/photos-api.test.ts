@@ -92,7 +92,7 @@ async function newJob(claims: FakeClaims): Promise<{ jobId: string; draftId: str
 
 const rows = () => h.admin`SELECT job_id, object_id, kind, object_name, sha256, size_bytes, content_type, created_by_actor_id FROM evidence_objects ORDER BY created_at, kind`;
 const auditCount = async (action: string) => Number((await h.admin`SELECT count(*) AS n FROM audit_events WHERE action = ${action}`)[0]!.n);
-const lockDraft = (companyId: string, draftId: string, state: string) => h.draftStates.set.set(`${companyId}/${draftId}`, state);
+const lockDraft = (companyId: string, draftId: string, state: string) => h.field.lock(companyId, draftId, state);
 
 describe('storing a photo', () => {
   it('stores the bytes once under the job’s own path and answers the receipt', async () => {
@@ -269,7 +269,7 @@ describe('a photo and the draft', () => {
 
   it('takes the photo that brings the draft to its cap, then refuses a new one and still settles a sent one', async () => {
     const { jobId, draftId } = await newJob(ESTIMATOR_A);
-    const refs = (count: number) => h.draftStates.refs.set(`${h.seed.a}/${draftId}`, count);
+    const refs = (count: number) => h.field.setPhotoRefs(h.seed.a, draftId, count);
     const last = { id: randomUUID(), bytes: image('three hundredth') };
     refs(MAX_PHOTO_REFS - 1);
     const kept = await sendPhoto(ESTIMATOR_A, jobId, last.id, last.bytes);
@@ -285,6 +285,37 @@ describe('a photo and the draft', () => {
     expect(await auditCount('photo_received')).toBe(1);
   });
 
+  it('counts the photos the server stored, so the 301st is refused although the phone wrote no reference', async () => {
+    const { jobId } = await newJob(ESTIMATOR_A);
+    for (let n = 0; n < MAX_PHOTO_REFS; n += 1) expect((await sendPhoto(ESTIMATOR_A, jobId, randomUUID(), image(`stored ${n}`))).status).toBe(201);
+    const creates = h.evidence.creates.length;
+    expect(await sendPhoto(ESTIMATOR_A, jobId, randomUUID(), image('one too many'))).toEqual({ status: 409, body: { error: 'photo_limit' } });
+    expect(h.evidence.creates).toHaveLength(creates);
+    expect(await rows()).toHaveLength(MAX_PHOTO_REFS);
+  }, 120_000);
+
+  it('takes one of two new photos racing for the last place and leaves at most one object unregistered', async () => {
+    const { jobId } = await newJob(ESTIMATOR_A);
+    for (let n = 0; n < MAX_PHOTO_REFS - 1; n += 1) expect((await sendPhoto(ESTIMATOR_A, jobId, randomUUID(), image(`stored ${n}`))).status).toBe(201);
+    // Both pass the first count and both store their bytes before either is registered.
+    const create = h.evidence.create;
+    let release!: () => void;
+    const bothStored = new Promise<void>((resolve) => (release = resolve));
+    let stored = 0;
+    h.evidence.create = async (...args: Parameters<typeof create>) => {
+      const made = await create(...args);
+      stored += 1;
+      if (stored === 2) release();
+      await bothStored;
+      return made;
+    };
+    const answers = await Promise.all([sendPhoto(ESTIMATOR_A, jobId, randomUUID(), image('racer one')), sendPhoto(ESTIMATOR_A, jobId, randomUUID(), image('racer two'))]);
+    expect(answers.map((answer) => answer.status).sort()).toEqual([201, 409]);
+    expect(answers.find((answer) => answer.status === 409)!.body).toEqual({ error: 'photo_limit' });
+    expect(await rows()).toHaveLength(MAX_PHOTO_REFS);
+    expect(h.evidence.objects.size).toBeLessThanOrEqual(MAX_PHOTO_REFS + 1);
+  }, 120_000);
+
   it('refuses a new photo for a job that is no longer a draft, whatever the draft says', async () => {
     for (const status of ['submitted', 'signed']) {
       const { jobId } = await newJob(ESTIMATOR_A);
@@ -299,7 +330,7 @@ describe('a photo and the draft', () => {
     h.draftStates.fail = true;
     expect(await sendPhoto(ESTIMATOR_A, jobId, randomUUID(), image('a'))).toEqual({ status: 503, body: { error: 'photos_unavailable' } });
     h.draftStates.fail = false;
-    h.drafts.made.delete(`${h.seed.a}/${draftId}`);
+    h.field.remove(h.seed.a, draftId);
     expect(await sendPhoto(ESTIMATOR_A, jobId, randomUUID(), image('b'))).toEqual({ status: 503, body: { error: 'photos_unavailable' } });
     expect(h.evidence.creates).toEqual([]);
   });
@@ -368,6 +399,12 @@ describe('the full-size original', () => {
     expect((await put(ESTIMATOR_A, jobId, photoId, 'original', original, { 'X-Photo-Sha256': 'abc' })).status).toBe(400);
     expect([...h.evidence.objects.keys()].filter((name) => name.includes('/originals/'))).toEqual([]);
     expect((await rows()).map((row) => row.kind)).toEqual(['photo']);
+  });
+
+  it('ignores a proposal header, which only a signature carries', async () => {
+    const { jobId, photoId, copyHash } = await registered();
+    const sent = await put(ESTIMATOR_A, jobId, photoId, 'original', image('original', JPEG), { 'X-Photo-Sha256': copyHash, 'X-Proposal-Sha256': 'not a hash' });
+    expect(sent.status).toBe(201);
   });
 
   it('may arrive after the job was signed and its draft locked, and changes nothing in the job', async () => {

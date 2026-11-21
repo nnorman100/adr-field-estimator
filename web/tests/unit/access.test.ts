@@ -11,6 +11,7 @@ import {
   type Capability,
   type Role,
 } from '@/lib/access';
+import { READINESS_NEEDS } from '@/lib/readiness/service';
 
 // The matrix in docs/access/roles.md (docs/ACCESS.md lists it) is the owner-approved intent. The table is read from that file here,
 // so a change to either side without the other fails this test.
@@ -46,8 +47,8 @@ const off = { priceBooks: false };
 describe('access table against docs/access/roles.md', () => {
   const matrix = docMatrix();
 
-  it('lists exactly 23 keys in the document, and the table knows the same keys', () => {
-    expect(matrix.size).toBe(23);
+  it('lists exactly 25 keys in the document, and the table knows the same keys', () => {
+    expect(matrix.size).toBe(25);
     expect([...CAPABILITIES].sort()).toEqual([...matrix.keys()].sort());
   });
 
@@ -97,7 +98,7 @@ describe('price flag', () => {
   it('lists the price keys only in the table that includes them', () => {
     expect(CAPABILITIES).toContain('prices_read');
     expect(CAPABILITIES).toContain('prices_manage');
-    expect(CAPABILITIES).toHaveLength(23);
+    expect(CAPABILITIES).toHaveLength(25);
   });
 });
 
@@ -155,6 +156,18 @@ describe('table integrity', () => {
     for (const role of ROLES) {
       const keys = capabilitiesFor(role, on);
       expect(new Set(keys).size).toBe(keys.length);
+    }
+  });
+});
+
+// "Ready to review?" (S5b-11, docs/access/readiness.md) adds no key: it is scope work, as Submit is, so
+// the owner and the estimator with the job read it and office does not, with price books on or off.
+describe('the readiness check', () => {
+  it('needs scope, which the owner and the estimator hold and office does not', () => {
+    expect(READINESS_NEEDS).toEqual(['scope']);
+    for (const flags of [on, off]) {
+      const holds = (role: Role) => READINESS_NEEDS.some((key) => can(role, key, flags));
+      expect({ owner: holds('owner'), estimator: holds('estimator'), office: holds('office') }).toEqual({ owner: true, estimator: true, office: false });
     }
   });
 });

@@ -176,9 +176,15 @@ const VISITS: Visit[] = [
     },
   },
   {
-    name: 'operator: companies, a company and its team',
+    name: 'operator: companies, a company, its team, its jobs and one job',
     baseURL: APP_CHECK_BASE_URL,
-    screens: ['/operator/[tenantId]', '/operator/[tenantId]/companies/[companyId]', '/operator/[tenantId]/companies/[companyId]/team'],
+    screens: [
+      '/operator/[tenantId]',
+      '/operator/[tenantId]/companies/[companyId]',
+      '/operator/[tenantId]/companies/[companyId]/team',
+      '/operator/[tenantId]/companies/[companyId]/jobs',
+      '/operator/[tenantId]/companies/[companyId]/jobs/[jobId]',
+    ],
     run: async (page, seed, project) => {
       await fakeSecondStep(page, { factors: ['Authenticator app'] });
       const fake = new FakePlatform();
@@ -195,6 +201,14 @@ const VISITS: Visit[] = [
       await expect(page.getByRole('heading', { name: company.name, level: 1 })).toBeVisible();
       await open(page, `/operator/${seed.tenantOperators}/companies/${company.id}/team`);
       await expect(page.getByRole('heading', { name: `${company.name}: team` })).toBeVisible();
+      // S5b-5: the read-only jobs view and one job, with an evidence image fetched on request.
+      await open(page, `/operator/${seed.tenantOperators}/companies/${company.id}/jobs`);
+      await expect(page.getByRole('heading', { name: `${company.name}: jobs` })).toBeVisible();
+      await open(page, `/operator/${seed.tenantOperators}/companies/${company.id}/jobs/${fake.detail!.job.id}`);
+      const evidence = page.getByRole('main').getByRole('region', { name: 'Evidence' });
+      await evidence.getByRole('button', { name: 'Show photo 1' }).click();
+      await expect(evidence.getByRole('img', { name: 'Photo 1' })).toBeVisible();
+      expect(fake.made('GET', /\/photos\//)).toHaveLength(1);
       expect(fake.calls.length).toBeGreaterThan(0);
     },
   },

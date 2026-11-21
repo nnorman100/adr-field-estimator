@@ -46,47 +46,64 @@ const TERRAFORM_TAG = (root: string) =>
 
 const Revision = z.string().regex(REVISION);
 
-export const ReleaseManifest = z
-  .strictObject({
-  schema: z.literal(1),
-  version: z.string().regex(VERSION),
-  environment: z.literal('test'),
-  commit: z.string().regex(COMMIT),
-  image: z.string().regex(IMAGE),
-  imageDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
-  revision: Revision,
-  replaced: z
-    .array(z.strictObject({ revision: Revision, percent: z.int().min(1).max(100) }))
-    .min(1)
-    .refine((split) => split.reduce((sum, r) => sum + r.percent, 0) === 100, {
-      error: 'the replaced traffic must add up to 100',
-    }),
-  migrationLevel: z.string().regex(MIGRATION).nullable(),
-  terraformTags: z.strictObject({
-    data: z.string().regex(TERRAFORM_TAG('data')).nullable(),
-    app: z.string().regex(TERRAFORM_TAG('app')).nullable(),
-  }),
-  ai: z.array(
-    z.strictObject({
-      feature: z.enum(AI_FEATURES),
-      model: z.string().min(1),
-      promptVersion: z
-        .string()
-        .regex(/^[0-9a-f]{64}$/)
+// One manifest shape; only the switch defaults differ between writing this release's manifest and
+// reading an earlier one's (see PreviousReleaseManifest).
+const manifestSchema = (
+  switchDefaults: z.ZodType<Partial<Record<(typeof FLAG_NAMES)[number], false>>>,
+) =>
+  z
+    .strictObject({
+      schema: z.literal(1),
+      version: z.string().regex(VERSION),
+      environment: z.literal('test'),
+      commit: z.string().regex(COMMIT),
+      image: z.string().regex(IMAGE),
+      imageDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+      revision: Revision,
+      replaced: z
+        .array(z.strictObject({ revision: Revision, percent: z.int().min(1).max(100) }))
+        .min(1)
+        .refine((split) => split.reduce((sum, r) => sum + r.percent, 0) === 100, {
+          error: 'the replaced traffic must add up to 100',
+        }),
+      migrationLevel: z.string().regex(MIGRATION).nullable(),
+      terraformTags: z.strictObject({
+        data: z.string().regex(TERRAFORM_TAG('data')).nullable(),
+        app: z.string().regex(TERRAFORM_TAG('app')).nullable(),
+      }),
+      ai: z.array(
+        z.strictObject({
+          feature: z.enum(AI_FEATURES),
+          model: z.string().min(1),
+          promptVersion: z
+            .string()
+            .regex(/^[0-9a-f]{64}$/)
+            .nullable(),
+        }),
+      ),
+      switchDefaults,
+      minClientEpoch: z.int().nonnegative().nullable(),
+      firstRelease: z.boolean(),
+      rollback: z
+        .strictObject({ command: z.string().min(1), database: z.literal(DATABASE_RULE) })
         .nullable(),
-    }),
-  ),
-  switchDefaults: z.record(z.enum(FLAG_NAMES), z.literal(false)),
-  minClientEpoch: z.int().nonnegative().nullable(),
-  firstRelease: z.boolean(),
-  rollback: z.strictObject({ command: z.string().min(1), database: z.literal(DATABASE_RULE) }).nullable(),
-  run: z.url({ protocol: /^https$/ }),
-  })
-  .refine((manifest) => (manifest.rollback === null) === manifest.firstRelease, {
-    error: 'only the first recorded release has no rollback, and it has none',
-    path: ['rollback'],
-  });
+      run: z.url({ protocol: /^https$/ }),
+    })
+    .refine((manifest) => (manifest.rollback === null) === manifest.firstRelease, {
+      error: 'only the first recorded release has no rollback, and it has none',
+      path: ['rollback'],
+    });
+
+// The manifest this release writes: every switch it knows, each off.
+export const ReleaseManifest = manifestSchema(z.record(z.enum(FLAG_NAMES), z.literal(false)));
 export type ReleaseManifest = z.infer<typeof ReleaseManifest>;
+
+// An earlier release's manifest, as a rerun of the record reads it for the rollback target. That release
+// may predate a switch this one knows, so any known switch may be missing; one it lists is still a known
+// switch, off.
+export const PreviousReleaseManifest = manifestSchema(
+  z.partialRecord(z.enum(FLAG_NAMES), z.literal(false)),
+);
 
 export type ManifestInput = {
   version: string;
@@ -107,7 +124,8 @@ export type ManifestInput = {
 export function parseTraffic(split: string): { revision: string; percent: number }[] {
   return split.split(',').map((pair) => {
     const at = pair.lastIndexOf('=');
-    const percent = at > 0 && /^\d{1,3}$/.test(pair.slice(at + 1)) ? Number(pair.slice(at + 1)) : NaN;
+    const percent =
+      at > 0 && /^\d{1,3}$/.test(pair.slice(at + 1)) ? Number(pair.slice(at + 1)) : NaN;
     return { revision: pair.slice(0, at), percent };
   });
 }
@@ -134,8 +152,11 @@ export function newestTerraformTag(root: string, tags: readonly string[]): strin
 }
 
 /** The revision the previous published release put out, as the whole of the traffic to restore. */
-export function releasedBefore(previous: unknown, input: Pick<ManifestInput, 'version' | 'revision'>) {
-  const parsed = ReleaseManifest.safeParse(previous);
+export function releasedBefore(
+  previous: unknown,
+  input: Pick<ManifestInput, 'version' | 'revision'>,
+) {
+  const parsed = PreviousReleaseManifest.safeParse(previous);
   if (!parsed.success) throw new Error('the previous release manifest is not valid');
   if (parsed.data.version === input.version || parsed.data.revision === input.revision) {
     throw new Error('the previous release manifest is this release, not an earlier one');
@@ -144,7 +165,9 @@ export function releasedBefore(previous: unknown, input: Pick<ManifestInput, 've
 }
 
 /** The exact command that puts the replaced traffic back on the test service. */
-export function rollbackCommand(replaced: readonly { revision: string; percent: number }[]): string {
+export function rollbackCommand(
+  replaced: readonly { revision: string; percent: number }[],
+): string {
   const split = replaced.map((r) => `${r.revision}=${r.percent}`).join(',');
   return `gcloud run services update-traffic ${SERVICE} --to-revisions=${split} --region=${REGION} --project=${PROJECT}`;
 }
@@ -155,9 +178,14 @@ export function buildManifest(input: ManifestInput): ReleaseManifest {
     throw new Error('a first release has no previous release');
   }
   const replaced =
-    input.previousRelease === undefined ? parseTraffic(input.replaced) : releasedBefore(input.previousRelease, input);
+    input.previousRelease === undefined
+      ? parseTraffic(input.replaced)
+      : releasedBefore(input.previousRelease, input);
   const digest = IMAGE.exec(input.image)?.[1] ?? '';
-  const terraformTags = { data: newestTerraformTag('data', input.tags), app: newestTerraformTag('app', input.tags) };
+  const terraformTags = {
+    data: newestTerraformTag('data', input.tags),
+    app: newestTerraformTag('app', input.tags),
+  };
   const manifest = {
     schema: 1,
     version: input.version,
@@ -244,11 +272,15 @@ async function main(argv: string[]) {
     ...given,
     migrations: readdirSync(migrations),
     tags: input.split('\n'),
-    ...(previousRelease === undefined ? {} : { previousRelease: JSON.parse(readFileSync(previousRelease, 'utf8')) }),
+    ...(previousRelease === undefined
+      ? {}
+      : { previousRelease: JSON.parse(readFileSync(previousRelease, 'utf8')) }),
   });
   writeFileSync(given.out, `${JSON.stringify(manifest, null, 2)}\n`);
   writeFileSync(given.notes, releaseNotes(manifest));
-  console.log(`manifest: ${manifest.version} ${manifest.revision} migrations=${manifest.migrationLevel ?? 'none'}`);
+  console.log(
+    `manifest: ${manifest.version} ${manifest.revision} migrations=${manifest.migrationLevel ?? 'none'}`,
+  );
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

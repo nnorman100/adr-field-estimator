@@ -109,6 +109,9 @@ describe('who may use the operator routes', () => {
     const handlers = await platformHandlers();
     expect(handlers.map((found) => found.name).sort()).toEqual([
       'GET platform/companies',
+      'GET platform/companies/[companyId]/jobs',
+      'GET platform/companies/[companyId]/jobs/[jobId]',
+      'GET platform/companies/[companyId]/jobs/[jobId]/photos/[photoId]',
       'GET platform/companies/[companyId]/prices',
       'GET platform/companies/[companyId]/team',
       'PATCH platform/companies/[companyId]/members/[membershipId]',
@@ -119,6 +122,7 @@ describe('who may use the operator routes', () => {
       'POST platform/companies/[companyId]/members/[membershipId]/enable',
       'POST platform/companies/[companyId]/members/[membershipId]/reset-second-step',
       'POST platform/companies/[companyId]/owner',
+      'POST platform/companies/[companyId]/records-check',
       'POST platform/companies/[companyId]/status',
       'POST platform/companies/[companyId]/tenant',
       'PUT platform/companies/[companyId]/ai-settings',

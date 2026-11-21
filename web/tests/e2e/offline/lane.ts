@@ -37,8 +37,9 @@ type Side = {
 
 // `status` is 200 unless set: a test can stand in for one API answer (S6-3's GET /api/me).
 export type StaticFile = { type: string; body: string | Buffer; status?: number };
-// An answer worked out per request, from the request's headers and address (with its query).
-export type Responder = (headers: IncomingHttpHeaders, url: string) => Promise<StaticFile>;
+// An answer worked out per request, from the request's headers, address (with its query), method
+// and body.
+export type Responder = (headers: IncomingHttpHeaders, url: string, request: { method: string; body: Buffer }) => Promise<StaticFile>;
 
 export class NetworkLane {
   private readonly sides = new Map<Target, Side>();
@@ -193,8 +194,11 @@ export class NetworkLane {
           res.writeHead(file.status ?? 200, { 'Content-Type': file.type, 'Cache-Control': 'no-store' });
           res.end(file.body);
         };
-        if (typeof own === 'function') own(req.headers, req.url ?? '/').then(send, () => res.destroy());
-        else send(own);
+        if (typeof own === 'function') {
+          const chunks: Buffer[] = [];
+          req.on('data', (chunk: Buffer) => chunks.push(chunk));
+          req.on('end', () => void own(req.headers, req.url ?? '/', { method: req.method ?? 'GET', body: Buffer.concat(chunks) }).then(send, () => res.destroy()));
+        } else send(own);
         return;
       }
       const path = new URL(req.url ?? '/', 'http://lane').pathname;

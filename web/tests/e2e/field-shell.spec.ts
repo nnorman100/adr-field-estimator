@@ -9,7 +9,11 @@ import { ME_DB, ME_DB_VERSION, ME_STORE } from '../../src/lib/field/ds-me';
 import { sessionValid } from '../../src/lib/field/sync-gate';
 import { unsentKey } from '../../src/lib/field/unsent';
 import { KEEP_YES } from '../../src/app/field/field-store-text';
+import { JOBS_BASE_URL } from './jobs/backend';
+import { adminSql, seedCompany } from './jobs/seed';
 import { expectWorkerRuns } from './service-workers';
+import { randomUUID } from 'node:crypto';
+import { idTokenFor } from './sign-in/emulator';
 import { PASSWORD, readSeed, type ProjectSeed } from './sign-in/seed';
 
 // The field shell's own screens (S6-2) in Chromium and WebKit at phone width: it starts from the
@@ -276,6 +280,9 @@ test.describe('on an iPhone in a Safari tab', () => {
     await expectAccessible(page);
     await sheet.getByRole('button', { name: 'Got it' }).click();
     await expect(sheet).toBeHidden();
+    // The dialog closes at once but the phone saves "seen" from its close event a moment later;
+    // reloading before that would show the sheet again.
+    await expect.poll(() => page.evaluate(() => window.localStorage.getItem('dryscope.homeScreenSheetSeen'))).toBe('1');
 
     await page.reload();
     await expect(page.getByRole('heading', { name: 'Sign in to continue' })).toBeVisible();
@@ -448,4 +455,74 @@ test('signing out with unsent work asks to keep or discard it', async ({ page })
   await expect(page.getByRole('heading', { name: `Sign in to ${A}` })).toBeVisible();
   await expect(dialog).toBeHidden();
   await expect(page.getByText('kept on this phone')).toHaveCount(0);
+});
+
+test.describe('field readiness markers', () => {
+  test.use({ baseURL: JOBS_BASE_URL, viewport: { width: 320, height: 720 }, serviceWorkers: 'block' });
+
+  test('a failed row stays usable while another row and Check Scope show their counts', async ({ page }) => {
+    const company = await seedCompany('readiness-list', { estimator: 'estimator' });
+    await adminSql()`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${company.id}, 'readiness', true)`;
+    await page.goto(`/sign-in/${company.address}`);
+    await page.getByLabel('Email').fill(company.people.estimator!.email);
+    await page.getByLabel('Password').fill(PASSWORD);
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await page.getByRole('link', { name: 'Open the field app' }).click();
+    await page.getByRole('button', { name: 'Online only', exact: true }).click();
+
+    async function addJob(address: string) {
+      await page.getByRole('link', { name: 'New job' }).click();
+      await page.getByLabel('Property address').fill(address);
+      await page.getByRole('button', { name: 'Start job' }).click();
+      await expect(page.getByLabel('Year built')).toBeEditable();
+      return new URL(page.url()).searchParams.get('job')!;
+    }
+
+    const failed = await addJob('10 Example Street');
+    await page.getByRole('link', { name: 'Back to jobs' }).click();
+    await addJob('20 Example Street');
+    await expect(page.getByText(/\d+ items to check/)).toBeVisible();
+
+    await page.route(`**/api/jobs/${failed}/readiness`, (route) => route.abort('failed'));
+    const refused = page.waitForEvent('requestfailed', (request) => new URL(request.url()).pathname === `/api/jobs/${failed}/readiness`);
+    await page.getByRole('link', { name: 'Back to jobs' }).click();
+    await refused;
+    const failedRow = page.getByRole('listitem').filter({ hasText: '10 Example Street' });
+    const workingRow = page.getByRole('listitem').filter({ hasText: '20 Example Street' });
+    await expect(workingRow.getByText(/\d+ items to check/)).toBeVisible();
+    await expect(failedRow.getByRole('link', { name: '10 Example Street' })).toBeVisible();
+    await expect(failedRow.getByText(/items? to check|Ready to review/)).toHaveCount(0);
+  });
+
+  test('Show more jobs checks only the rows added and keeps the markers already shown', async ({ page, request }) => {
+    const company = await seedCompany('readiness-pages', { estimator: 'estimator' });
+    await adminSql()`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${company.id}, 'readiness', true)`;
+    const token = await idTokenFor(company.tenantId, company.people.estimator!.email, PASSWORD);
+    for (let start = 1; start <= 30; start += 5) {
+      const replies = await Promise.all(Array.from({ length: 5 }, (_, offset) => request.post(`${JOBS_BASE_URL}/api/jobs`, {
+        headers: { Authorization: `Bearer ${token}` },
+        data: { id: randomUUID(), draftId: randomUUID(), propertyAddress: `${start + offset} Paging Street` },
+      })));
+      expect(replies.map((reply) => reply.status())).toEqual([201, 201, 201, 201, 201]);
+    }
+    const asked = new Map<string, number>();
+    page.on('request', (sent) => {
+      const found = /^\/api\/jobs\/([^/]+)\/readiness$/.exec(new URL(sent.url()).pathname);
+      if (found) asked.set(found[1]!, (asked.get(found[1]!) ?? 0) + 1);
+    });
+
+    await page.goto(`/sign-in/${company.address}`);
+    await page.getByLabel('Email').fill(company.people.estimator!.email);
+    await page.getByLabel('Password').fill(PASSWORD);
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await page.getByRole('link', { name: 'Open the field app' }).click();
+    await page.getByRole('button', { name: 'Online only', exact: true }).click();
+    const markers = page.getByText(/\d+ items? to check/);
+    await expect(markers).toHaveCount(25);
+    expect(asked.size).toBe(25);
+    await page.getByRole('button', { name: 'Show more jobs' }).click();
+    await expect(markers).toHaveCount(30);
+    expect(asked.size).toBe(30);
+    expect([...asked.values()].every((count) => count === 1)).toBe(true);
+  });
 });

@@ -116,6 +116,103 @@ describe('inviting', () => {
     expect(await everything(h.admin)).toBe(before);
   });
 
+  // Security audit F5: a slow sign-in service never holds a database connection with a
+  // transaction open, for the owner's invitation or for an operator's resend.
+  it('makes the sign-in account with no transaction open, then writes the invitation', async () => {
+    const seen: number[] = [];
+    const team = teamService(
+      h.handle.db,
+      {
+        async ensureAccount() {
+          const [row] = await h.admin<{ n: number }[]>`
+            SELECT count(*)::int AS n FROM pg_stat_activity
+            WHERE datname = current_database() AND application_name = 'dryscope-web' AND state LIKE 'idle in transaction%'
+          `;
+          seen.push(row!.n);
+        },
+        revokeSessions: async () => {},
+      },
+      async () => {},
+    );
+    const { invitation } = await team.invite(
+      h.seed.a,
+      { kind: 'member', actorId: h.seed.ownerA.actor },
+      { email: 'held@example.test', role: 'office' },
+      new Date(),
+    );
+    const resent = await team.resend(h.seed.a, { kind: 'operator', operatorId: h.seed.operator }, invitation.id, new Date());
+    expect(resent.invitation.status).toBe('pending');
+    expect(seen).toEqual([0, 0]);
+    expect(await h.admin`SELECT action, actor_id, operator_actor_id FROM audit_events WHERE target = ${invitation.id} ORDER BY id`).toEqual([
+      { action: 'invitation_created', actor_id: h.seed.ownerA.actor, operator_actor_id: null },
+      { action: 'invitation_resent', actor_id: null, operator_actor_id: h.seed.operator },
+    ]);
+  });
+
+  // An owner replaced while the sign-in account was being made writes no invitation afterwards.
+  it('refuses an invite or resend whose owner was disabled while the sign-in account was made', async () => {
+    const { invitation } = await invited();
+    const team = teamService(
+      h.handle.db,
+      {
+        async ensureAccount() {
+          await h.admin`UPDATE memberships SET status = 'disabled' WHERE id = ${h.seed.ownerA.membership}`;
+        },
+        revokeSessions: async () => {},
+      },
+      async () => {},
+    );
+    const by = { kind: 'member' as const, actorId: h.seed.ownerA.actor };
+    await expect(team.invite(h.seed.a, by, { email: 'late@example.test', role: 'office' }, new Date())).rejects.toMatchObject({
+      code: 'not_allowed',
+    });
+    await expect(team.resend(h.seed.a, by, invitation.id, new Date())).rejects.toMatchObject({ code: 'not_allowed' });
+    expect(await h.admin`SELECT count(*)::int AS n FROM invitations WHERE email = 'late@example.test'`).toEqual([{ n: 0 }]);
+    expect(await h.admin`SELECT action FROM audit_events WHERE target = ${invitation.id} ORDER BY id`).toEqual([{ action: 'invitation_created' }]);
+  });
+
+  // Two resends of one invitation: the one that commits last never moves its renewal backward.
+  it('never shortens an invitation when an earlier resend commits after a later one', async () => {
+    const { invitation } = await invited();
+    const team = teamService(h.handle.db, { ensureAccount: async () => {}, revokeSessions: async () => {} }, async () => {});
+    const by = { kind: 'member' as const, actorId: h.seed.ownerA.actor };
+    const start = Date.now();
+    const later = await team.resend(h.seed.a, by, invitation.id, new Date(start + 60_000));
+    const earlier = await team.resend(h.seed.a, by, invitation.id, new Date(start + 30_000));
+    expect(Date.parse(later.invitation.expiresAt)).toBe(start + 60_000 + 7 * DAY_MS);
+    expect(earlier.invitation.expiresAt).toBe(later.invitation.expiresAt);
+    const [row] = await h.admin<{ expires: Date; updated: Date }[]>`
+      SELECT expires_at AS expires, updated_at AS updated FROM invitations WHERE id = ${invitation.id}
+    `;
+    expect(row!.expires.getTime()).toBe(start + 60_000 + 7 * DAY_MS);
+    expect(row!.updated.getTime()).toBe(start + 60_000);
+  });
+
+  // The resend's first read takes no row lock, so it never waits behind another invitation action.
+  it('reads the invitation before making the sign-in account without waiting on its row lock', { timeout: 30_000 }, async () => {
+    const { invitation } = await invited();
+    let accountMade!: () => void;
+    const made = new Promise<void>((resolve) => {
+      accountMade = resolve;
+    });
+    let lockTaken!: () => void;
+    const locked = new Promise<void>((resolve) => {
+      lockTaken = resolve;
+    });
+    const held = h.admin.begin(async (tx) => {
+      await tx`SELECT id FROM invitations WHERE id = ${invitation.id} FOR UPDATE`;
+      lockTaken();
+      await made;
+    });
+    await locked;
+    const team = teamService(h.handle.db, { ensureAccount: async () => accountMade(), revokeSessions: async () => {} }, async () => {});
+    const resent = team.resend(h.seed.a, { kind: 'member', actorId: h.seed.ownerA.actor }, invitation.id, new Date());
+    resent.catch(() => {});
+    await made;
+    await held;
+    expect((await resent).invitation.status).toBe('pending');
+  });
+
   it('needs a sign-in under 15 minutes old', async () => {
     const response = await invite(
       request({ ...owner(), signedInAgo: 16 * 60 }, `/api/companies/${h.seed.a}/invitations`, {

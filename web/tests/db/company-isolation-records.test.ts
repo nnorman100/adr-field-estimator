@@ -5,6 +5,7 @@ import { GENERATED_API_ROUTES } from '@/lib/api-routes.generated';
 import { linkFlow, type Body } from './link-flow';
 import type { FakeClaims, Harness } from './team-harness';
 import { callKey, handlersOf, MATRIX, matrixKey, pathFor, routeModules, uncalled, type MatrixRow, type RouteModule } from './isolation-matrix';
+import { digestOf } from './job-harness';
 
 // S5a-12, the S5a half of the company-isolation gate (`npm run test:isolation`, beside
 // company-isolation.test.ts; docs/access/isolation-gate.md). That suite calls every route with ids
@@ -28,8 +29,17 @@ vi.mock('@/lib/auth/services', () => ({
   serverDatabase: () => live.harness!.handle.db,
 }));
 vi.mock('@/lib/team/services', () => ({ teamServices: () => live.harness!.team }));
+// The readiness check (S5b-11) reads the field drafts through the shared field stand-in.
+vi.mock('@/lib/readiness/services', async () => {
+  const { readinessService } = await import('@/lib/readiness/service');
+  const { standIn } = await import('./readiness-fake');
+  return { readinessServices: () => readinessService(live.harness!.handle.db, () => standIn(live.harness!.field)) };
+});
 vi.mock('@/lib/prices/services', () => ({ pricesServices: () => live.harness!.prices }));
-vi.mock('@/lib/jobs/services', () => ({ jobsServices: () => live.harness!.jobs }));
+vi.mock('@/lib/jobs/services', () => ({
+  jobsServices: () => live.harness!.jobs,
+  runQueuedDraftSyncRepair: async () => ({ synced: 0, failed: 0 }),
+}));
 vi.mock('@/lib/photos/services', () => ({ photosServices: () => live.harness!.photos }));
 vi.mock('@/lib/submissions/services', () => ({
   submissionsServices: () => live.harness!.submissions,
@@ -40,12 +50,16 @@ vi.mock('@/lib/summary-draft/services', async () => {
   const { summaryDraftService } = await import('@/lib/summary-draft/service');
   const { fieldSummaryReader, refusingBoundary } = await import('./summary-draft-fake');
   return {
-    summaryDraftServices: () => summaryDraftService(live.harness!.handle.db, fieldSummaryReader(live.harness!.field), refusingBoundary),
+    summaryDraftServices: () => summaryDraftService(live.harness!.handle.db, () => fieldSummaryReader(live.harness!.field), refusingBoundary),
   };
 });
 vi.mock('@/lib/estimates/services', async () => {
   const { estimatesService } = await import('@/lib/estimates/service');
   return { estimatesServices: () => estimatesService(live.harness!.handle.db) };
+});
+vi.mock('@/lib/approvals/services', async () => {
+  const { approvalsService } = await import('@/lib/approvals/service');
+  return { approvalsServices: () => approvalsService(live.harness!.handle.db) };
 });
 vi.mock('@/lib/agreements/services', async () => {
   const { agreementsService } = await import('@/lib/agreements/service');
@@ -139,11 +153,13 @@ type Side = {
     photoId: string;
     signatureId: string;
     assignmentId: string;
+    // The drying-log reading seeded on the job (S5b-10).
+    readingId: string;
     homeowner: { id: string; token: string };
     adjuster: { id: string; token: string };
     usedToken: string;
   };
-  pending: { jobId: string; photoId: string; assignmentId: string; token: string };
+  pending: { jobId: string; photoId: string; assignmentId: string; readingId: string; token: string };
   // Every id, hash and name of the company's rows that the other company's rows do not share, its
   // live tokens and its customers' names: what would show the company in an answer or a row.
   markers: string[];
@@ -207,17 +223,49 @@ async function signedSide(name: 'A' | 'B', companyId: string, estimator: FakeCla
   };
   const signedAssignment = await coordinate(linked.jobId, `Office Notes Line ${name}`);
   const pendingAssignment = await coordinate(pending.jobId, `Office Notes Second ${name}`);
+  // S5b-10 (0020, no routes yet): a drying reading on each job, and on the signed job a close, its
+  // estimate history sample (the close's baseline) and a drying watch action, written as slice 10B will.
+  const [agreement] = await h.admin<{ id: string }[]>`SELECT id::text FROM agreements WHERE job_id = ${linked.jobId}`;
+  const readingIds: Record<string, string> = {};
+  for (const jobId of [linked.jobId, pending.jobId]) {
+    const readingId = randomUUID();
+    readingIds[jobId] = readingId;
+    await h.admin`
+      INSERT INTO drying_readings (id, company_id, job_id, kind, room_id, room_label, taken_at, payload, request_digest, created_by_actor_id)
+      VALUES (${readingId}, ${companyId}, ${jobId}, 'material', 'room-1', ${`Drying Room ${name}`}, now(),
+              ${h.admin.json({ material: 'Drywall', moisture: 18, unit: '%WME', dry_standard: 12, affected: true, note: `Drying Note ${name}` })},
+              ${digestOf(readingId)}, ${estimatorActorId})
+    `;
+  }
+  await h.admin`
+    INSERT INTO estimate_history (company_id, job_id, agreement_id, signed_at, price_mode, low_cents, high_cents)
+    VALUES (${companyId}, ${linked.jobId}, ${agreement!.id}, now(), 'range', 110000, 140000)
+  `;
+  const closeId = randomUUID();
+  await h.admin`
+    INSERT INTO job_closes (id, company_id, job_id, agreement_id, revision, request_digest, final_cents, actual_days, note, baseline_agreement_id, price_mode,
+                            baseline_low_cents, baseline_high_cents, landed, closed_by_actor_id)
+    VALUES (${closeId}, ${companyId}, ${linked.jobId}, ${agreement!.id}, 1, ${digestOf(closeId)}, 125000, 4, ${`Close Note ${name}`}, ${agreement!.id}, 'range',
+            110000, 140000, 'inside', ${estimatorActorId})
+  `;
+  const watchRequest = randomUUID();
+  const watch = {
+    revision: 1,
+    receipts: [{ action: 'extend', agreement_id: agreement!.id, reason: `Watch Reason ${name}`, actor_id: estimatorActorId, request_id: watchRequest, request_digest: digestOf(watchRequest) }],
+  };
+  await h.admin`UPDATE job_coordination SET drying_watch = ${h.admin.json(watch)} WHERE job_id = ${linked.jobId}`;
   return {
     signed: {
       jobId: linked.jobId,
       photoId: linked.photoId,
       signatureId: signed.signatureId,
       assignmentId: signedAssignment,
+      readingId: readingIds[linked.jobId]!,
       homeowner: issued.homeowner,
       adjuster: issued.adjuster,
       usedToken: linked.token,
     },
-    pending: { jobId: pending.jobId, photoId: pending.photoId, assignmentId: pendingAssignment, token: pending.token },
+    pending: { jobId: pending.jobId, photoId: pending.photoId, assignmentId: pendingAssignment, readingId: readingIds[pending.jobId]!, token: pending.token },
     names: [
       customer.name,
       customer.address,
@@ -228,6 +276,10 @@ async function signedSide(name: 'A' | 'B', companyId: string, estimator: FakeCla
       `Terms Line ${name}`,
       `Office Notes Line ${name}`,
       `Office Notes Second ${name}`,
+      `Drying Room ${name}`,
+      `Drying Note ${name}`,
+      `Close Note ${name}`,
+      `Watch Reason ${name}`,
     ],
     tokens: [linked.token, pending.token, issued.homeowner.token, issued.adjuster.token],
   };
@@ -235,6 +287,8 @@ async function signedSide(name: 'A' | 'B', companyId: string, estimator: FakeCla
 
 async function seedSides(): Promise<void> {
   await l.setUp();
+  // Priced extras too (S5b-8), so the proposal and approval routes are reached and refused by their access rule, not the switch.
+  await h.admin`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${h.seed.a}, 'priced_extras', true), (${h.seed.b}, 'priced_extras', true)`;
   const [officeB] = await h.admin<{ id: string }[]>`
     INSERT INTO actors (company_id, auth_tenant_id, uid, email) VALUES (${h.seed.b}, 'tenant-b', 'office-b', 'office-b@example.test') RETURNING id
   `;
@@ -284,6 +338,8 @@ beforeEach(async () => {
   live.harness = h;
   made = new Set();
   await seedSides();
+  // Readiness and the drying watch on in both companies, so their routes answer by job access, not only by their switches.
+  await h.admin`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${h.seed.a}, 'readiness', true), (${h.seed.b}, 'readiness', true), (${h.seed.a}, 'drying_watch', true), (${h.seed.b}, 'drying_watch', true)`;
 });
 
 afterAll(async () => {
@@ -324,6 +380,10 @@ const idsOf = (victim: Side, job: 'signed' | 'pending', company: Side = victim):
   linkId: victim.signed.homeowner.id,
   signatureId: victim.signed.signatureId,
   assignmentId: victim[job].assignmentId,
+  // No proposal is seeded here; the job's photo id stands in (approvals-api.test.ts uses real ones).
+  approvalId: victim[job].photoId,
+  // The drying-log reading seeded on the job (S5b-10).
+  readingId: victim[job].readingId,
 });
 
 const directions = (): [Side, Side][] => [
@@ -372,9 +432,14 @@ describe('the S5a routes', () => {
   // Reads and deletes: a photo stored under the caller's own job is the caller's own, whatever its id.
   it('refuse the caller’s own job with the other company’s link, photo or signature ids', async () => {
     const before = await everything(h.admin);
-    const rows = s5aRows().filter((row) => row.kind === 'company' && row.own === 'cross' && row.method !== 'PUT' && /\[(linkId|photoId|signatureId|assignmentId)\]/.test(row.route));
+    const rows = s5aRows().filter((row) => row.kind === 'company' && row.own === 'cross' && row.method !== 'PUT' && /\[(linkId|photoId|signatureId|assignmentId|readingId)\]/.test(row.route));
     expect(rows.map(matrixKey)).toEqual(
-      expect.arrayContaining(['DELETE api/jobs/[jobId]/document-links/[linkId]', 'GET api/jobs/[jobId]/photos/[photoId]', 'DELETE api/jobs/[jobId]/assignments/[assignmentId]']),
+      expect.arrayContaining([
+        'DELETE api/jobs/[jobId]/document-links/[linkId]',
+        'GET api/jobs/[jobId]/photos/[photoId]',
+        'DELETE api/jobs/[jobId]/assignments/[assignmentId]',
+        'POST api/jobs/[jobId]/drying-readings/[readingId]/void',
+      ]),
     );
     for (const [attacker, victim] of directions()) {
       for (const [role, claims] of Object.entries(attacker.people)) {
@@ -397,7 +462,9 @@ describe('the S5a routes', () => {
           for (const row of reads) {
             const answer = await call(row, claims.uid, claims, idsOf(self, job));
             const where = `${self.name} ${role}: ${row.method} ${row.route} on its ${job} job`;
-            expect({ where, status: [200, 403, 404].includes(answer.status) }).toEqual({ where, status: true });
+            // The drying watch is a signed job's (S5b-10): the job with a pending signing link is 409.
+            const allowed = row.route === 'api/jobs/[jobId]/drying-watch' && job === 'pending' ? [409] : [200, 403, 404];
+            expect({ where, status: allowed.includes(answer.status) }).toEqual({ where, status: true });
             expect({ where, leaked: leaks(answer.text, other) }).toEqual({ where, leaked: [] });
           }
         }
@@ -406,6 +473,22 @@ describe('the S5a routes', () => {
       for (const route of ['api/jobs', 'api/jobs/[jobId]/estimate', 'api/jobs/[jobId]/agreements', 'api/jobs/[jobId]/document-links', 'api/jobs/[jobId]/coordination']) {
         const answer = await call({ route, method: 'GET' }, 'owner', self.people.owner, idsOf(self, 'signed'));
         expect({ route, as: self.name, status: answer.status, own: leaks(answer.text, self).length > 0 }).toEqual({ route, as: self.name, status: 200, own: true });
+      }
+      // The drying watch answers the company's own owner about its signed job (S5b-10), so its refusals
+      // above are job access, not the switch.
+      const watched = await call({ route: 'api/jobs/[jobId]/drying-watch', method: 'GET' }, 'owner', self.people.owner, idsOf(self, 'signed'));
+      expect({ as: self.name, status: watched.status, jobId: (JSON.parse(watched.text) as { jobId?: string }).jobId }).toEqual({ as: self.name, status: 200, jobId: idsOf(self, 'signed').jobId });
+      // Readiness answers the company's own owner about both of its jobs (neither is editing now), so its
+      // refusals above are job access, not the switch.
+      for (const job of ['signed', 'pending'] as const) {
+        const ids = idsOf(self, job);
+        const answer = await call({ route: 'api/jobs/[jobId]/readiness', method: 'GET' }, 'owner', self.people.owner, ids);
+        expect({ as: self.name, job, status: answer.status, body: JSON.parse(answer.text) as unknown }).toEqual({
+          as: self.name,
+          job,
+          status: 200,
+          body: { status: 'unavailable', jobId: ids.jobId, reason: 'not_editing' },
+        });
       }
       const link = await call({ route: 'api/jobs/[jobId]/signing-link', method: 'GET' }, 'owner', self.people.owner, idsOf(self, 'pending'));
       expect({ as: self.name, status: link.status, own: leaks(link.text, self).length > 0 }).toEqual({ as: self.name, status: 200, own: true });
@@ -494,12 +577,13 @@ const NOT_FILLED: Record<string, string> = {
   member_voice_settings: 'S7 Live: live-tables.test.ts',
   voice_notes: 'S7 Live: live-tables.test.ts',
   price_table_working_copies: 'S4 Prices: company-isolation.test.ts seeds and attacks it',
+  job_price_approvals: 'S5b-8 table: price-approvals-table.test.ts checks it; the S5b-8 server slice adds its routes',
 };
 
 // What a copied row needs to look new, so a table's own insert guard (which runs before the row
 // policy) lets it through to the policy: a planted row is then refused by the policy itself.
 const FRESH: Record<string, Record<string, unknown>> = {
-  jobs: { revision: 1, status: 'draft', last_change_id: null },
+  jobs: { revision: 1, status: 'draft', last_change_id: null, field_revision: 0, field_synced_revision: 0 },
   job_submissions: { status: 'pending', snapshot_bytes: null, snapshot_sha256: null, decided_at: null, marker_state: 'pending' },
   price_table_versions: { sequence: 1 },
 };

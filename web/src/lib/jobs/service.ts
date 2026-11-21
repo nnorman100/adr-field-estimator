@@ -1,9 +1,13 @@
 import { and, asc, desc, eq, ne, or, sql, type SQL } from 'drizzle-orm';
-import { actors, auditEvents, jobAssignments, jobClaims, jobCustomers, jobs } from '@/db/schema';
-import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
+import { auditEvents, jobAssignments, jobClaims, jobCustomers, jobs, jobSubmissions } from '@/db/schema';
+import { holdAcrossOutsideCall, withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
-import { canSeeJob, draftSubmitted, hasAny, isOwnJob, jobAccess, JobError, lockedJob, seesEveryJob, type JobCaller, type JobRow } from './access';
-import type { DraftStore } from './drafts';
+import { canSeeJob, claimDraft, hasAny, holdDraft, isOwnJob, jobAccess, JobError, ownsFieldWork, seesEveryJob, type JobCaller, type JobRow } from './access';
+import type { DraftSync } from './draft-sync';
+import type { DraftFound, DraftLookup, DraftStore } from './drafts';
+import { afterFieldStep, stillMember, syncJobDrafts } from './sync-job';
+import { IdentityRefusal } from '@/lib/auth';
+import { isQueueTimeout } from '@/db/client';
 import { createDigest, type ClaimInput, type CreateJobInput, type CustomerInput, type ListQuery } from './schema';
 
 // The jobs of a company (S5a-3). Every function runs inside withCompany for the company of the
@@ -46,7 +50,9 @@ export type ClaimView = {
   deductible: string;
 };
 
-export type JobDetail = { job: JobView; customer: CustomerView; claim: ClaimView };
+// `draftMissing` is set by the job read alone, when the field database holds no draft under the job's
+// current draft id (Back to editing committed the id but its field step failed): Start field work makes it.
+export type JobDetail = { job: JobView; customer: CustomerView; claim: ClaimView; draftMissing?: true };
 
 export type JobListItem = Pick<JobView, 'id' | 'status' | 'propertyAddress' | 'revision' | 'createdAt' | 'updatedAt'> & {
   customerName: string;
@@ -120,7 +126,8 @@ async function readCustomer(tx: CompanyTransaction, companyId: string, jobId: st
   return row ?? EMPTY_CUSTOMER;
 }
 
-async function readClaim(tx: CompanyTransaction, companyId: string, jobId: string): Promise<ClaimView> {
+// The job's claim, the fields the documents print (also the readiness check's, src/lib/readiness/service.ts).
+export async function readClaim(tx: CompanyTransaction, companyId: string, jobId: string): Promise<ClaimView> {
   const [row] = await tx
     .select({
       carrier: jobClaims.carrier,
@@ -168,26 +175,132 @@ function sameValues<T extends Record<string, unknown>>(stored: T, input: Record<
 // The list's cursor is the last row's creation time as the database wrote it (microseconds, which
 // a JavaScript Date would round) and its id: a keyset, so a page never repeats or skips a row that
 // is added meanwhile.
-const CURSOR_TIME = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d{1,6})?[+-]\d{2}(:\d{2})?$/;
+const CURSOR_TIME = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})(?:\.\d{1,6})?[+-](\d{2})(?::(\d{2}))?$/;
 const CURSOR_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-function encodeCursor(time: string, id: string): string {
+// A real calendar date and clock time and a usable offset, so the database never rejects a cursor
+// that got past here.
+function isTimestamp(time: string): boolean {
+  const found = CURSOR_TIME.exec(time);
+  if (!found) return false;
+  const [year, month, day, hour, minute, second, offsetHour, offsetMinute] = found.slice(1).map((part) => Number(part ?? 0)) as [number, number, number, number, number, number, number, number];
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  return year >= 1 && date.getUTCMonth() === month - 1 && date.getUTCDate() === day && hour <= 23 && minute <= 59 && second <= 59 && offsetHour <= 15 && offsetMinute <= 59;
+}
+
+export function encodeCursor(time: string, id: string): string {
   return Buffer.from(`${time}|${id}`).toString('base64url');
 }
 
-function decodeCursor(cursor: string): { time: string; id: string } {
+export function decodeCursor(cursor: string): { time: string; id: string } {
   const [time, id, ...rest] = Buffer.from(cursor, 'base64url').toString().split('|');
-  if (rest.length > 0 || !time || !id || !CURSOR_TIME.test(time) || !CURSOR_ID.test(id)) throw new JobError('invalid_request');
+  if (rest.length > 0 || !time || !id || !isTimestamp(time) || !CURSOR_ID.test(id)) throw new JobError('invalid_request');
   return { time, id };
 }
 
-export function jobsService(db: Database, drafts: DraftStore): JobsService {
+// One keyset page of jobs, newest first: the caller's scope filters in `scope`, the cursor decoded by
+// `decodeCursor`. Each entry is the row and its list item; the list's callers add what is theirs.
+export async function jobPage(
+  tx: CompanyTransaction,
+  scope: SQL[],
+  after: { time: string; id: string } | null,
+  limit: number,
+): Promise<{ entries: { job: JobRow; item: Omit<JobListItem, 'mine'> }[]; nextCursor: string | null }> {
+  const where = [...scope];
+  if (after) {
+    where.push(
+      or(
+        sql`${jobs.createdAt} < ${after.time}::timestamptz`,
+        and(sql`${jobs.createdAt} = ${after.time}::timestamptz`, sql`${jobs.id} > ${after.id}::uuid`),
+      )!,
+    );
+  }
+  const rows = await tx
+    .select({
+      job: jobs,
+      // As the database wrote it, so the next page starts exactly after this row.
+      createdKey: sql<string>`${jobs.createdAt}::text`,
+      customerName: jobCustomers.name,
+    })
+    .from(jobs)
+    .leftJoin(jobCustomers, and(eq(jobCustomers.companyId, jobs.companyId), eq(jobCustomers.jobId, jobs.id)))
+    .where(and(...where))
+    .orderBy(desc(jobs.createdAt), asc(jobs.id))
+    .limit(limit + 1);
+  const page = rows.slice(0, limit);
+  const last = page[page.length - 1];
+  return {
+    entries: page.map(({ job, customerName }) => ({
+      job,
+      item: {
+        id: job.id,
+        status: job.status,
+        propertyAddress: job.propertyAddress,
+        revision: job.revision,
+        createdAt: job.createdAt.toISOString(),
+        updatedAt: job.updatedAt.toISOString(),
+        customerName: customerName ?? '',
+      },
+    })),
+    nextCursor: rows.length > limit && last ? encodeCursor(last.createdKey, last.job.id) : null,
+  };
+}
+
+// The field database's draft under this id, read before the request commits it (security audit F1).
+export async function findDraft(drafts: DraftLookup, companyId: string, draftId: string): Promise<DraftFound | null> {
+  try {
+    return await drafts.findDraft(companyId, draftId);
+  } catch (error) {
+    // Fixed text only: the SDK's message may quote a path.
+    console.error('job draft unavailable', error instanceof Error ? error.name : 'unknown');
+    throw new JobError('draft_unavailable');
+  }
+}
+
+// The record a missing current draft is made from: the job's latest committed submission, while the
+// job is being edited (`draft`) on this draft. Back to editing put the job on this draft from that
+// record and claimed it in the same commit; nothing is submitted since, or the job would not be
+// `draft`. Null when the draft is not one Back to editing made (a new job's first draft): Start field
+// work answers 503 then, and the job read does not offer it.
+export async function rebuildableRecord(tx: CompanyTransaction, companyId: string, jobId: string, draftId: string) {
+  const [row] = await tx
+    .select({ status: jobs.status, currentDraftId: jobs.currentDraftId })
+    .from(jobs)
+    .where(and(eq(jobs.companyId, companyId), eq(jobs.id, jobId)));
+  if (row?.status !== 'draft' || row.currentDraftId !== draftId) return null;
+  const [latest] = await tx
+    .select({ id: jobSubmissions.id, draftId: jobSubmissions.draftId, snapshotBytes: jobSubmissions.snapshotBytes })
+    .from(jobSubmissions)
+    .where(and(eq(jobSubmissions.companyId, companyId), eq(jobSubmissions.jobId, jobId), eq(jobSubmissions.status, 'committed')))
+    .orderBy(desc(jobSubmissions.createdAt))
+    .limit(1);
+  if (!latest?.snapshotBytes || latest.draftId === draftId) return null;
+  return { snapshotBytes: latest.snapshotBytes, previous: { draftId: latest.draftId, submissionId: latest.id } };
+}
+
+export function jobsService(db: Database, drafts: DraftStore, sync: DraftSync): JobsService {
   async function inCompany<T>(companyId: string, run: (tx: CompanyTransaction) => Promise<T>): Promise<T> {
     try {
       return await withCompany(db, companyId, run);
     } catch (error) {
       if (errorCode(error) === CHECK_VIOLATION) throw new JobError('invalid_request');
       throw error;
+    }
+  }
+
+  // Whether Start field work can make this job's current draft: the caller owns the field work (no other
+  // caller learns whether a draft exists), the field database holds none, and a committed record is there
+  // to make it from. A lookup that does not get through says nothing; it never fails the read.
+  async function draftMissing(caller: JobCaller, detail: JobDetail): Promise<boolean> {
+    if (detail.job.status !== 'draft' || !ownsFieldWork(caller, detail.job)) return false;
+    try {
+      if (await drafts.findDraft(caller.companyId, detail.job.currentDraftId)) return false;
+      const record = await inCompany(caller.companyId, (tx) => rebuildableRecord(tx, caller.companyId, detail.job.id, detail.job.currentDraftId));
+      return record !== null;
+    } catch (error) {
+      console.error('job draft unavailable', error instanceof Error ? error.name : 'unknown');
+      return false;
     }
   }
 
@@ -218,41 +331,62 @@ export function jobsService(db: Database, drafts: DraftStore): JobsService {
           const [existing] = await tx
             .select()
             .from(jobs)
-            .where(and(eq(jobs.companyId, caller.companyId), eq(jobs.id, input.id)));
+            .where(and(eq(jobs.companyId, caller.companyId), eq(jobs.id, input.id)))
+            .for('update');
           // No such job: the draft id is another job's. Same id: it is a retry only when the body is
           // the same and the caller may see that job.
           if (!existing || existing.requestDigest !== digest || !canSeeJob(caller, existing)) throw new JobError('conflict');
           if (existing.status === 'archived') throw new JobError('archived');
+          // A retry holds its draft id for the job in Postgres (security audit F1), in this transaction, which
+          // commits before the field database is touched: a draft the previous version made is stamped only
+          // once the claim is committed, so a lost answer from that stamp never leaves it unclaimed.
+          if (!(await holdDraft(tx, caller.companyId, existing.id, input.draftId))) throw new JobError('conflict');
           row = existing;
         } else {
-          if (await draftSubmitted(tx, caller.companyId, input.draftId)) throw new JobError('conflict');
+          if (!(await claimDraft(tx, caller.companyId, row.id, input.draftId))) throw new JobError('conflict');
+          // A draft id claimed now was never this job's: a draft already under it was made for another.
+          await holdAcrossOutsideCall(tx);
+          if (await findDraft(drafts, caller.companyId, input.draftId)) throw new JobError('conflict');
           await audit(tx, caller, 'job_created', row.id, { revision: row.revision });
         }
-        let ownerUid: string | null = null;
-        if (row.fieldOwnerActorId) {
-          const [actor] = await tx
-            .select({ uid: actors.uid })
-            .from(actors)
-            .where(and(eq(actors.companyId, caller.companyId), eq(actors.id, row.fieldOwnerActorId)));
-          ownerUid = actor?.uid ?? null;
-        }
-        return { created: inserted !== undefined, ownerUid, detail: await detailOf(tx, row) };
+        // What the projection needs; the answer is read after the field step.
+        return { created: inserted !== undefined, job: { id: row.id, currentDraftId: row.currentDraftId, revision: row.revision } };
       });
       try {
-        await inCompany(caller.companyId, async (tx) => {
-          await lockedJob(tx, caller.companyId, made.detail.job.id, { live: true });
-          await drafts.ensure(caller.companyId, input.draftId, made.ownerUid);
-        });
-        await drafts.projectJob(caller.companyId, made.detail.job.id, {
-          currentDraftId: made.detail.job.currentDraftId, revision: made.detail.job.revision,
-        });
+        // The job's first draft, as the draft sync makes every draft (the draft life-cycle redesign, slice 5):
+        // empty, in the job's state, naming the field owner Postgres holds when the sync reads it, so a
+        // creation can never name an owner a later move replaced; a placeholder an older version left
+        // under the id is replaced, and nothing is written for one (sync-job.ts).
+        // Its answer only to a caller still an active member of an active company (afterFieldStep).
+        await afterFieldStep(db, caller, () => syncJobDrafts(db, sync, drafts, caller.companyId, made.job.id, { requireDraft: true }));
       } catch (error) {
-        if (error instanceof JobError) throw error;
+        if (error instanceof JobError || error instanceof IdentityRefusal || isQueueTimeout(error)) throw error;
         // Fixed text only: the SDK's message may quote a path.
         console.error('job draft unavailable', error instanceof Error ? error.name : 'unknown');
         throw new JobError('draft_unavailable');
       }
-      return { created: made.created, detail: made.detail };
+      // The job as Postgres holds it after the field step, read with the caller's access again (the caller
+      // still a member of an active company, in the same snapshot): a change committed meanwhile (an archive,
+      // a move) is the answer, not the row this request wrote. The locator follows that read, never the row.
+      const detail = await withCompany(
+        db,
+        caller.companyId,
+        async (tx) => {
+          await stillMember(tx, caller);
+          return detailOf(tx, await jobAccess(tx, caller, made.job.id, READ));
+        },
+        { snapshot: true },
+      );
+      // The locator write is a field step too: the caller is checked again after it, written or not.
+      await afterFieldStep(db, caller, async () => {
+        try {
+          await drafts.projectJob(caller.companyId, made.job.id, { currentDraftId: detail.job.currentDraftId, revision: detail.job.revision });
+        } catch (error) {
+          console.error('job draft unavailable', error instanceof Error ? error.name : 'unknown');
+          throw new JobError('draft_unavailable');
+        }
+      });
+      return { created: made.created, detail };
     },
 
     async list(caller, query) {
@@ -274,42 +408,12 @@ export function jobsService(db: Database, drafts: DraftStore): JobsService {
         )`;
         const where: SQL[] = [eq(jobs.companyId, caller.companyId), archived ? eq(jobs.status, 'archived') : ne(jobs.status, 'archived')];
         if (!company) where.push(or(eq(jobs.createdByActorId, caller.actorId), eq(jobs.fieldOwnerActorId, caller.actorId), assigned)!);
-        if (after) {
-          where.push(
-            or(
-              sql`${jobs.createdAt} < ${after.time}::timestamptz`,
-              and(sql`${jobs.createdAt} = ${after.time}::timestamptz`, sql`${jobs.id} > ${after.id}::uuid`),
-            )!,
-          );
-        }
-        const rows = await tx
-          .select({
-            job: jobs,
-            // As the database wrote it, so the next page starts exactly after this row.
-            createdKey: sql<string>`${jobs.createdAt}::text`,
-            customerName: jobCustomers.name,
-          })
-          .from(jobs)
-          .leftJoin(jobCustomers, and(eq(jobCustomers.companyId, jobs.companyId), eq(jobCustomers.jobId, jobs.id)))
-          .where(and(...where))
-          .orderBy(desc(jobs.createdAt), asc(jobs.id))
-          .limit(query.limit + 1);
-        const page = rows.slice(0, query.limit);
-        const last = page[page.length - 1];
+        const { entries, nextCursor } = await jobPage(tx, where, after, query.limit);
         return {
-          jobs: page.map(({ job, customerName }) => ({
-            id: job.id,
-            status: job.status,
-            propertyAddress: job.propertyAddress,
-            revision: job.revision,
-            createdAt: job.createdAt.toISOString(),
-            updatedAt: job.updatedAt.toISOString(),
-            customerName: customerName ?? '',
-            // Every row of a caller's own list is theirs (made, owned in the field or assigned); in the
-            // company list only an estimator is ever assigned, and they never get that list.
-            mine: !company || isOwnJob(caller, job),
-          })),
-          nextCursor: rows.length > query.limit && last ? encodeCursor(last.createdKey, last.job.id) : null,
+          // Every row of a caller's own list is theirs (made, owned in the field or assigned); in the
+          // company list only an estimator is ever assigned, and they never get that list.
+          jobs: entries.map(({ job, item }) => ({ ...item, mine: !company || isOwnJob(caller, job) })),
+          nextCursor,
         };
       });
     },
@@ -326,7 +430,7 @@ export function jobsService(db: Database, drafts: DraftStore): JobsService {
         console.error('job projection unavailable', error instanceof Error ? error.name : 'unknown');
         throw new JobError('draft_unavailable');
       }
-      return detail;
+      return (await draftMissing(caller, detail)) ? { ...detail, draftMissing: true } : detail;
     },
 
     async saveCustomer(caller, jobId, input) {

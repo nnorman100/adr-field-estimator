@@ -80,18 +80,21 @@ and ceilings".
 
 ## Evaluation tests
 
-Run by CI (provider-free, `python -m pytest tests`, `npm test`): `test_audit_retry.py`,
+Provider-free legacy tests (the legacy Python suite is retired from CI as of 2026-11-10; it is not run there): `test_audit_retry.py`,
 `test_live*.py`, `test_voice_notes.py`, `test_voice_note_gate.py`, `test_late_transcript_gate.py`,
-`test_scope.py`, `test_claims.py`, `test_claims_documents.py` with `tests/golden/v1-documents.json`, `test_insights.py`,
+`test_scope.py`, `test_insights.py`,
 `test_drying_watch.py`, `test_readiness.py` (includes the `scripts/readiness_eval.py` accept and
 reject cases), `test_sizing.py`, `test_estimate_warnings.py`, `test_outcomes.py`, `test_outcome_history.py`,
-`test_pricing_v2.py`, `test_logging.py`.
+`test_logging.py`.
 
-Real-service checks, run by hand with synthetic data and **not** in CI: `scripts/verify_scope_extraction.py`,
-`verify_estimate_prompts.py`, `verify_estimate_batch3.py`, `verify_job_summaries.py` and
-`verify_drying_summaries.py` (`--live` is a separate release gate), `verify_live_reliability.py`,
-`verify_live_release.py`, `verify_workspace_database.py`. Record their results separately from
-mock tests.
+Real-service checks, run by hand with synthetic data and **not** in CI. `scripts/verify_live_reliability.py` still runs
+(a direct Vertex session). **Historical, no longer runnable:** `scripts/verify_scope_extraction.py` and
+`verify_estimate_batch3.py` (they import the retired backend, which stopped importing when the first company's price
+book was removed), and the `--live` mode of `verify_job_summaries.py` and `verify_drying_summaries.py` (it imports
+`backend.main`); their default fixture mode needs no model and is unaffected. The live release verifier
+(`verify_live_release.py`, with the three-of-three readiness-audio bar) and the priced-extra audit cases (also a
+three-of-three bar) were removed from the repository, so those bars are historical too. Record the results of any
+check you run separately from mock tests.
 
 There is no automatic accuracy or hallucination score on the audit or scope prompts gating a
 release, and physical-iPhone Live behaviour is open until observed on a device (`AGENTS.md`

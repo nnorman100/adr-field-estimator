@@ -1,6 +1,8 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { ConfigError, parseBrowserSignInConfig, parseConfig, parseLocalSignInFixture } from '@/lib/config';
 import { isSignInAddress, noSignInDirectory, signInPageFor, type SignInDirectory } from '@/lib/sign-in';
@@ -56,6 +58,72 @@ describe('GET /api/sign-in/{address}', () => {
   it('fails closed, never claiming "not recognised", when no database is configured', async () => {
     vi.stubEnv('APP_ENV', 'test');
     await expect(get('company-a')).rejects.toThrow(/DATABASE_URL/);
+  });
+
+  // Security audit F5: a lookup the full pool could not serve within its queue limit.
+  it('answers 503, quoting nothing, when no database connection came free in time', async () => {
+    const refused = Object.assign(new Error('QUEUE_TIMEOUT: Waited more than 10 seconds for a connection'), { code: 'QUEUE_TIMEOUT' });
+    vi.doMock('@/lib/sign-in/services', () => ({
+      signInDirectory: () => ({
+        pageFor: async () => {
+          throw refused;
+        },
+      }),
+    }));
+    try {
+      const res = await get('company-a');
+      expect(res.status).toBe(503);
+      expect(res.headers.get('cache-control')).toBe('no-store');
+      expect(await res.json()).toEqual({ error: 'sign_in_unavailable' });
+    } finally {
+      vi.doUnmock('@/lib/sign-in/services');
+    }
+  });
+
+  // Security audit F5: a company sign-in page, and every screen under its address, whose lookup
+  // found no free connection says "busy, try again shortly" on the same address (its error boundary).
+  describe('company sign-in pages', () => {
+    const lookupFails = (error: Error) => {
+      vi.doMock('next/server', async (original) => ({ ...(await original<typeof import('next/server')>()), connection: async () => {} }));
+      vi.doMock('@/lib/sign-in/services', () => ({
+        signInDirectory: () => ({
+          pageFor: async () => {
+            throw error;
+          },
+        }),
+      }));
+    };
+    const shown = async (digest: string) => {
+      const { default: SignInError } = await import('@/app/(auth)/sign-in/[address]/error');
+      const error = Object.assign(new Error('An error occurred in the Server Components render.'), { digest });
+      return renderToStaticMarkup(createElement(SignInError, { error, reset: () => {} }));
+    };
+    afterEach(() => {
+      vi.doUnmock('next/server');
+      vi.doUnmock('@/lib/sign-in/services');
+    });
+
+    it('shows "busy, try again shortly" when no database connection came free in time', async () => {
+      lookupFails(Object.assign(new Error('QUEUE_TIMEOUT: Waited more than 10 seconds for a connection'), { code: 'QUEUE_TIMEOUT' }));
+      const { loadSignInScreen } = await import('@/app/(auth)/sign-in/[address]/load');
+      const { SIGN_IN_BUSY } = await import('@/app/(auth)/sign-in/[address]/busy');
+      const thrown = (await loadSignInScreen('company-a', null).catch((error: unknown) => error)) as { digest?: string };
+      expect(thrown.digest).toBe(SIGN_IN_BUSY);
+      const page = await shown(thrown.digest!);
+      expect(page).toContain('DryScope is busy');
+      expect(page).toContain('Try again shortly.');
+      expect(page).not.toContain('http-equiv');
+    });
+
+    it('leaves any other failed lookup to the app\'s own error page', async () => {
+      const failed = new Error('connection refused');
+      lookupFails(failed);
+      const { loadSignInScreen } = await import('@/app/(auth)/sign-in/[address]/load');
+      await expect(loadSignInScreen('company-a', null)).rejects.toBe(failed);
+      const page = await shown('1234567890');
+      expect(page).toContain('Something went wrong');
+      expect(page).not.toContain('busy');
+    });
   });
 
   it('answers 404 for a malformed address without opening a database', async () => {

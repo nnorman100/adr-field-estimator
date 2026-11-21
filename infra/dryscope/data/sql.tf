@@ -22,6 +22,20 @@ resource "google_sql_database_instance" "main" {
     deletion_protection_enabled = true
     user_labels                 = local.labels
 
+    # D-023 / DATA-2: deleting the instance must not delete its backups. Retained backups: the
+    # automated and on-demand backups stay (automated ones roll off one a day by the instance's
+    # retained-backup count, at most 30 days; on-demand ones stay until deleted, and none are taken).
+    # Final backup: one more backup is taken at deletion and kept sql_final_backup_days (at most 35).
+    # Both are stored at the project level, billed as backup storage
+    # (documents/docs.cloud.google.com/sql/docs/postgres/backup-recovery/backups, .../manage-standard-backups).
+    # The instance restarts once when these are first switched on.
+    retain_backups_on_delete = true
+
+    final_backup_config {
+      enabled        = true
+      retention_days = var.sql_final_backup_days
+    }
+
     backup_configuration {
       enabled    = true
       start_time = "09:00"

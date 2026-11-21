@@ -4,8 +4,8 @@
 
 import { z } from 'zod';
 
-import { Dec } from './decimal';
-import { canonical, sha256, type Json } from './json';
+import { Dec, HUNDRED } from './decimal';
+import { canonical, sha256, type JObj, type Json } from './json';
 import {
   AFFECTED_BANDS,
   CATEGORIES,
@@ -126,7 +126,7 @@ function knownSource(text: string): boolean {
   }
 }
 
-type DecimalRule = { min?: string; max: string; places: number; cents?: boolean; blank?: boolean };
+type DecimalRule = { min?: string; max?: string; places: number; cents?: boolean; blank?: boolean };
 
 /**
  * A Decimal string within the rule's range and places, kept as money (2 places) or normalized.
@@ -134,7 +134,7 @@ type DecimalRule = { min?: string; max: string; places: number; cents?: boolean;
  */
 function decimal(rule: DecimalRule) {
   const low = Dec.parse(rule.min ?? '0');
-  const high = Dec.parse(rule.max);
+  const high = rule.max === undefined ? null : Dec.parse(rule.max);
   return z.string().transform((raw, ctx) => {
     const text = raw.trim();
     if (rule.blank && text === '') return '';
@@ -142,8 +142,8 @@ function decimal(rule: DecimalRule) {
       ? 'must be a decimal number written as text, such as "12.50"'
       : (text.split('.')[1] ?? '').length > rule.places
         ? `must have at most ${rule.places} decimal places`
-        : Dec.parse(text).cmp(low) < 0 || Dec.parse(text).cmp(high) > 0
-          ? `must be from ${rule.min ?? '0'} to ${rule.max}`
+        : Dec.parse(text).cmp(low) < 0 || (high !== null && Dec.parse(text).cmp(high) > 0)
+          ? `must be from ${rule.min ?? '0'}${rule.max === undefined ? ' up' : ` to ${rule.max}`}`
           : null;
     if (problem) {
       ctx.addIssue({ code: 'custom', message: problem });
@@ -574,6 +574,20 @@ const ASSIST = z.strictObject({
     .default({ '1': '0', '2': '0', '3': '0' }),
 });
 
+/**
+ * Price-point rounding (S4-4e): the customer price rounds up to the next amount ending in `ending`
+ * within each `step`, in whole dollars. Absent means off, so an older table keeps its hash.
+ */
+const PRICE_POINT = z
+  .strictObject({
+    step: decimal({ min: '10', max: '10000', places: 0 }),
+    ending: decimal({ max: '9999', places: 0 }),
+  })
+  .refine((rule) => Dec.parse(rule.ending).lt(Dec.parse(rule.step)), {
+    path: ['ending'],
+    message: 'must be below the step',
+  });
+
 const POLICY = z.strictObject({
   estimate_mode: z.enum(['range', 'single']).default('range'),
   area_basis: z.enum(['demolition', 'demolition_with_waste', 'wet_floor']).default('demolition'),
@@ -600,6 +614,7 @@ const POLICY = z.strictObject({
   room_type_pricing: z.boolean().default(false),
   size_tiers: SIZE_TIER_LIMITS.default(BLANK_TIERS),
   room_types: z.array(ROOM_TYPE).max(MAX_ROOM_TYPES).default([]),
+  price_point: PRICE_POINT.optional(),
 });
 
 const TRADE = z.strictObject({
@@ -608,10 +623,44 @@ const TRADE = z.strictObject({
   minimum_charge: decimal({ max: '100000', places: 2 }).default('0'),
 });
 
-type TableBody = { items: ParsedItem[]; trades?: ParsedTrade[]; policy: z.output<typeof POLICY> };
+/**
+ * A company's named adjustment (S5b-7): a discount or a charge, a percent of the price or a fixed
+ * amount. None are seeded; the engine applies one only when it is approved on the job.
+ */
+const ADJUSTMENT = z
+  .strictObject({
+    adjustment_id: z.string().regex(ITEM_ID, 'must be 2 to 40 lowercase letters, digits or _'),
+    name: z
+      .string()
+      .refine((value) => chars(value) >= 1 && chars(value) <= 60, { message: 'must be 1 to 60 characters' })
+      .refine((value) => !/\p{Cc}/u.test(value), { message: 'must not contain control characters' }),
+    kind: z.enum(['percent', 'amount']),
+    direction: z.enum(['discount', 'charge']),
+    value: decimal({ places: 2 }),
+  })
+  .superRefine((adjustment, ctx) => {
+    const value = Dec.parse(adjustment.value);
+    if (adjustment.kind === 'percent' && adjustment.direction === 'discount' && value.cmp(HUNDRED) > 0) {
+      ctx.addIssue({ code: 'custom', path: ['value'], message: 'a percent discount must be at most 100' });
+    }
+  });
+
+export type NamedAdjustment = z.output<typeof ADJUSTMENT>;
+
+type TableBody = {
+  items: ParsedItem[];
+  trades?: ParsedTrade[];
+  adjustments?: NamedAdjustment[];
+  policy: z.output<typeof POLICY>;
+};
 
 export const PriceTableV3 = z
-  .strictObject({ items: z.array(ITEM).max(MAX_ITEMS), trades: z.array(TRADE).max(MAX_TRADES).optional(), policy: POLICY })
+  .strictObject({
+    items: z.array(ITEM).max(MAX_ITEMS),
+    trades: z.array(TRADE).max(MAX_TRADES).optional(),
+    adjustments: z.array(ADJUSTMENT).optional(),
+    policy: POLICY,
+  })
   .superRefine((table, ctx) => {
     const ids = new Set<string>();
     const codes = new Set<string>();
@@ -638,12 +687,24 @@ export const PriceTableV3 = z
         ctx.addIssue({ code: 'custom', path: ['items', index, 'trade'], message: 'names no trade heading' });
       }
     });
+    const adjustments = new Set<string>();
+    (table.adjustments ?? []).forEach((adjustment, index) => {
+      if (adjustments.has(adjustment.adjustment_id)) {
+        ctx.addIssue({ code: 'custom', path: ['adjustments', index], message: 'repeats an adjustment id' });
+      }
+      adjustments.add(adjustment.adjustment_id);
+    });
   })
   .transform((table): TableBody => {
     const body: TableBody = { items: table.items, policy: table.policy };
     if (table.trades?.length) {
       body.trades = [...table.trades].sort((left, right) =>
         left.trade_id < right.trade_id ? -1 : left.trade_id > right.trade_id ? 1 : 0,
+      );
+    }
+    if (table.adjustments?.length) {
+      body.adjustments = [...table.adjustments].sort((left, right) =>
+        left.adjustment_id < right.adjustment_id ? -1 : left.adjustment_id > right.adjustment_id ? 1 : 0,
       );
     }
     return body;
@@ -796,6 +857,9 @@ export function hasCushionBrackets(policy: Policy): boolean {
 /** SHA-256 of the canonical JSON of the parsed table, items in id order. */
 export function contentHash(table: Table): string {
   const items = [...table.items].sort((a, b) => (a.item_id < b.item_id ? -1 : a.item_id > b.item_id ? 1 : 0));
-  const body = table.trades ? { items, trades: table.trades, policy: table.policy } : { items, policy: table.policy };
+  // Optional keys stay out of the hash when absent, so an older table keeps its hash.
+  const body: JObj = { items: items as unknown as Json, policy: table.policy as unknown as Json };
+  if (table.trades) body.trades = table.trades as unknown as Json;
+  if (table.adjustments) body.adjustments = table.adjustments as unknown as Json;
   return sha256(canonical(body as unknown as Json));
 }

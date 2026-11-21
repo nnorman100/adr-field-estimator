@@ -30,7 +30,7 @@ vi.mock('@/lib/summary-draft/services', async () => {
   const { summaryDraftService } = await import('@/lib/summary-draft/service');
   const { fieldSummaryReader, refusingBoundary } = await import('./summary-draft-fake');
   return {
-    summaryDraftServices: () => summaryDraftService(live.harness!.handle.db, fieldSummaryReader(live.harness!.field), refusingBoundary),
+    summaryDraftServices: () => summaryDraftService(live.harness!.handle.db, () => fieldSummaryReader(live.harness!.field), refusingBoundary),
   };
 });
 vi.mock('@/lib/estimates/services', async () => {
@@ -77,8 +77,10 @@ beforeAll(async () => {
 beforeEach(async () => {
   h = await resetTeamDatabase(base, live.harness);
   live.harness = h;
-  // The estimate, signing and link routes are behind price books; every job route must answer.
-  await h.admin`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${h.seed.a}, 'price_books', true)`;
+  // The estimate, signing and link routes are behind price books and the readiness route behind its
+  // own switch; every job route must answer. Priced extras too (S5b-8), so the proposal and approval
+  // routes are reached and answer 410, not the switch's 404, and the drying watch (S5b-10).
+  await h.admin`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${h.seed.a}, 'price_books', true), (${h.seed.a}, 'priced_extras', true), (${h.seed.a}, 'readiness', true), (${h.seed.a}, 'drying_watch', true)`;
 });
 
 afterAll(async () => {
@@ -160,7 +162,7 @@ describe('archive', () => {
     // first. Restore is the one way back. The estimator who made the job is answered the same.
     expect(await read(ESTIMATOR_A, jobId)).toEqual({ status: 410, body: { error: 'archived' } });
     const modules = await routeModules(join(APP_DIR, 'api/jobs/[jobId]'));
-    const ids = { jobId, photoId: randomUUID(), assignmentId: randomUUID(), linkId: randomUUID() };
+    const ids = { jobId, photoId: randomUUID(), assignmentId: randomUUID(), linkId: randomUUID(), approvalId: randomUUID() };
     const called: string[] = [];
     for (const [folder, module] of modules) {
       const route = folder === '' ? 'api/jobs/[jobId]' : `api/jobs/[jobId]/${folder}`;
@@ -210,7 +212,8 @@ describe('archive', () => {
 
   it('answers 503 when the field draft is not reached, and the same request again archives it', async () => {
     const { jobId, draftId } = await draftJob();
-    h.field.failNext.archiveDraft = true;
+    // Unreachable for the request and its one try again.
+    h.field.failNext.sync = 2;
     const once = change(1);
     expect(await archive(OWNER_A, jobId, once)).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
     expect(h.field.draft(h.seed.a, draftId)?.state).toBe('editing');
@@ -254,6 +257,7 @@ describe('copy', () => {
   it('copied twice with the same ids makes one draft, from the signed record, with its approval cleared', async () => {
     const { jobId: source, manifest, address } = await signedJob();
     const ids = { id: randomUUID(), draftId: randomUUID() };
+    const calls = h.field.calls.length;
     const first = await copy(ESTIMATOR_A, source, ids);
     expect(first).toMatchObject({
       status: 201,
@@ -262,7 +266,10 @@ describe('copy', () => {
     const again = await copy(ESTIMATOR_A, source, ids);
     expect(again).toEqual({ ...first, status: 200 });
     expect(await h.admin`SELECT 1 FROM jobs WHERE id = ${ids.id}`).toHaveLength(1);
-    expect(h.field.calls.filter((call) => call === 'createCopy')).toHaveLength(2);
+    // The copy names its source in Postgres (0018), so its first draft can be rebuilt from the signed record.
+    expect(await h.admin`SELECT copied_from_job_id::text AS source FROM jobs WHERE id = ${ids.id}`).toEqual([{ source }]);
+    // One draft sync each; the second finds the draft as Postgres says.
+    expect(h.field.calls.slice(calls).filter((call) => call === 'sync')).toHaveLength(2);
     // The rooms and the scope, less the approval; no photo (it stays the signed job's evidence).
     const { scopeConfirmed, ...kept } = manifest.draft as Record<string, unknown>;
     expect(scopeConfirmed).toBe(true);
@@ -274,6 +281,10 @@ describe('copy', () => {
       rooms: Object.fromEntries(manifest.rooms.map((room) => [room.id, room.field])),
       photos: {},
       previous: null,
+      jobId: ids.id,
+      // The legacy keys the draft sync writes while older versions may serve: the job and coordination revisions.
+      archiveRevision: 1,
+      fieldOwnerRevision: 0,
     });
     expect(await auditOf(ids.id)).toEqual(['job_copied']);
     const [audit] = await h.admin<{ details: Record<string, unknown> }[]>`SELECT details FROM audit_events WHERE target = ${ids.id}`;
@@ -282,6 +293,23 @@ describe('copy', () => {
     expect((await f.job(source)).status).toBe('signed');
     const copied: FieldManifest = { draft: kept, rooms: manifest.rooms, photos: [] };
     expect((await f.submitShown(ESTIMATOR_A, ids.id, ids.draftId, copied)).answer.status).toBe(201);
+  });
+
+  it('gives a copy made before 0018 its source when the same copy is sent again', async () => {
+    const { jobId: source } = await signedJob();
+    const ids = { id: randomUUID(), draftId: randomUUID() };
+    expect((await copy(ESTIMATOR_A, source, ids)).status).toBe(201);
+    // As the previous version left it: no source on the row (set aside without the triggers).
+    await h.admin.begin(async (sql) => {
+      await sql`SET LOCAL session_replication_role = replica`;
+      await sql`UPDATE jobs SET copied_from_job_id = NULL WHERE id = ${ids.id}`;
+    });
+    const [before] = await h.admin<{ field: number }[]>`SELECT field_revision::int AS field FROM jobs WHERE id = ${ids.id}`;
+    expect((await copy(ESTIMATOR_A, source, ids)).status).toBe(200);
+    // Setting the source is a life-cycle input: the field revision rises, the job revision stays.
+    expect(await h.admin`SELECT copied_from_job_id::text AS source, revision, field_revision::int AS field FROM jobs WHERE id = ${ids.id}`).toEqual([
+      { source, revision: 1, field: before!.field + 1 },
+    ]);
   });
 
   it('refuses another body under the same id, and copies only a signed job', async () => {
@@ -313,36 +341,116 @@ describe('copy', () => {
     expect(await everything(h.admin)).toBe(before);
     expect(h.field.draft(h.seed.a, earlier)).toEqual(stored);
   });
+
+  // Security audit F1, across a release: the previous version made the copy and its draft with no
+  // claim and no job id on the draft. The same copy sent again claims the draft id for the copy in
+  // Postgres first, then stamps the draft; a draft id Postgres holds for another job is refused and
+  // its draft not stamped.
+  it('claims and stamps a copy draft the previous version made when the same copy is sent again, and refuses one another job holds', async () => {
+    const { jobId: source } = await signedJob();
+    const ids = { id: randomUUID(), draftId: randomUUID() };
+    expect((await copy(OWNER_A, source, ids)).status).toBe(201);
+    await h.admin`DELETE FROM job_drafts WHERE draft_id = ${ids.draftId}`;
+    h.field.unstamp(h.seed.a, ids.draftId);
+    const { jobId: other } = await draftJob();
+    await h.admin`INSERT INTO job_drafts (company_id, draft_id, job_id) VALUES (${h.seed.a}, ${ids.draftId}, ${other})`;
+    const stored = structuredClone(h.field.draft(h.seed.a, ids.draftId));
+    expect(await copy(OWNER_A, source, ids)).toEqual({ status: 409, body: { error: 'conflict' } });
+    expect(h.field.draft(h.seed.a, ids.draftId)).toEqual(stored);
+    expect(stored?.jobId).toBeUndefined();
+
+    await h.admin`DELETE FROM job_drafts WHERE draft_id = ${ids.draftId}`;
+    expect((await copy(OWNER_A, source, ids)).status).toBe(200);
+    expect(await h.admin`SELECT job_id::text AS job FROM job_drafts WHERE draft_id = ${ids.draftId}`).toEqual([{ job: ids.id }]);
+    expect(h.field.draft(h.seed.a, ids.draftId)).toEqual({ ...stored, jobId: ids.id });
+  });
+
+  // Security audit F1: the claim commits before the stamp, so a lost answer from the stamp never leaves
+  // a copy draft the previous version made stamped without its claim.
+  // Slice 5 review R1: a copy answers only a caller still a member after its field step. (An archive committed
+  // while its sync waited, answered 410, is among the overlap cases below.)
+  it('answers a copy after its field step only to a caller still a member', async () => {
+    const { jobId: source } = await signedJob();
+    const other = { id: randomUUID(), draftId: randomUUID() };
+    const waiting = holdEither(['sync']);
+    const copyingAgain = copy(ESTIMATOR_A, source, other);
+    await waiting.arrived;
+    await h.admin`UPDATE memberships SET status = 'disabled' WHERE id = ${h.seed.estimatorA.membership}`;
+    waiting.open();
+    expect(await copyingAgain).toEqual({ status: 403, body: { error: 'not_allowed' } });
+  });
+
+  // Slice 5 review round 2, R1: a member disabled while the copy's locator is written gets no details.
+  it('gives a member disabled while the copy’s locator was written no details of the copy', async () => {
+    const { jobId: source } = await signedJob();
+    const project = h.field.projectJob;
+    h.field.projectJob = async (...args) => {
+      h.field.projectJob = project;
+      await h.admin`UPDATE memberships SET status = 'disabled' WHERE id = ${h.seed.estimatorA.membership}`;
+      return project(...args);
+    };
+    expect(await copy(ESTIMATOR_A, source, { id: randomUUID(), draftId: randomUUID() })).toEqual({ status: 403, body: { error: 'not_allowed' } });
+  });
+
+  it('commits the claim before stamping a copy draft the previous version made, so a lost answer leaves it claimed', async () => {
+    const { jobId: source } = await signedJob();
+    const ids = { id: randomUUID(), draftId: randomUUID() };
+    expect((await copy(OWNER_A, source, ids)).status).toBe(201);
+    await h.admin`DELETE FROM job_drafts WHERE draft_id = ${ids.draftId}`;
+    h.field.unstamp(h.seed.a, ids.draftId);
+    // The draft sync stamps it and loses its answer, on its try and its one more try.
+    h.field.loseNext.sync = 2;
+    expect((await copy(OWNER_A, source, ids)).status).toBe(503);
+    expect(h.field.draft(h.seed.a, ids.draftId)?.jobId).toBe(ids.id);
+    expect(await h.admin`SELECT job_id::text AS job FROM job_drafts WHERE draft_id = ${ids.draftId}`).toEqual([{ job: ids.id }]);
+    expect((await copy(OWNER_A, source, ids)).status).toBe(200);
+  });
+
+  it('refuses a copy onto a draft the field database holds for another job, and commits nothing', async () => {
+    const { jobId: source } = await signedJob();
+    const foreign = randomUUID();
+    const key = `${h.seed.a}/${foreign}`;
+    h.drafts.plant(key, { fieldOwnerUid: 'estimator-a2', jobId: randomUUID() });
+    const before = await everything(h.admin);
+    const stored = structuredClone(h.field.draft(h.seed.a, foreign));
+    const id = randomUUID();
+    expect(await copy(OWNER_A, source, { id, draftId: foreign })).toEqual({ status: 409, body: { error: 'conflict' } });
+    expect(await everything(h.admin)).toBe(before);
+    expect(h.field.draft(h.seed.a, foreign)).toEqual(stored);
+    expect((await copy(OWNER_A, source, { id, draftId: randomUUID() })).status).toBe(201);
+  });
 });
 
 // Holds the next call of a field method at its start until `open`, which may come before the call.
-function hold(method: keyof FakeField['gate']): { arrived: Promise<void>; open: () => void } {
+// Holds the next call of whichever of these methods comes first (the draft sync, or the previous writer
+// it replaces), so a sequence is held at the same step on either; the other gates go.
+function holdEither(methods: (keyof FakeField['gate'])[]): { arrived: Promise<void>; open: () => void } {
   let open!: () => void;
   const opened = new Promise<void>((resolve) => (open = resolve));
   let arrive!: () => void;
   const arrived = new Promise<void>((resolve) => (arrive = resolve));
-  h.field.gate[method] = async () => {
+  const gate = async () => {
+    for (const method of methods) delete h.field.gate[method];
     arrive();
     await opened;
   };
+  for (const method of methods) h.field.gate[method] = gate;
   return { arrived, open };
 }
-
-// Waits for a step that may instead be waiting on a lock another held request has.
-const briefly = (step: Promise<unknown>) => Promise.race([step, new Promise((resolve) => setTimeout(resolve, 1000))]);
 
 describe('overlapping requests', () => {
   it('leaves a copy archived when the owner archives it before its field draft is made', async () => {
     const { jobId: source } = await signedJob();
     const ids = { id: randomUUID(), draftId: randomUUID() };
-    const made = hold('createCopy');
+    // Held at its field step: the draft sync, or the previous writer it replaces.
+    const made = holdEither(['sync', 'createCopy']);
     const copying = copy(ESTIMATOR_A, source, ids);
     await made.arrived;
-    const archiving = archive(OWNER_A, ids.id, change(1));
-    await briefly(archiving);
+    // The archive commits (and syncs) while the copy's field step is held: nothing holds the job's lock now.
+    expect((await archive(OWNER_A, ids.id, change(1))).status).toBe(200);
     made.open();
-    expect((await copying).status).toBe(201);
-    expect((await archiving).status).toBe(200);
+    // The copy's answer is the copy as Postgres holds it after its field step: archived (slice 5).
+    expect(await copying).toEqual({ status: 410, body: { error: 'archived' } });
     expect(h.field.draft(h.seed.a, ids.draftId)?.state).toBe('archived');
   });
 
@@ -350,45 +458,46 @@ describe('overlapping requests', () => {
     const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
     expect((await f.submitShown(ESTIMATOR_A, jobId, draftId, manifest)).answer.status).toBe(201);
     const next = randomUUID();
-    const made = hold('createFrom');
+    // Held at its field step: the draft sync, or the previous writer it replaces.
+    const made = holdEither(['sync', 'createFrom']);
     const editing = f.nextDraft(ESTIMATOR_A, jobId, { draftId: next, fromDraftId: draftId });
     await made.arrived;
-    const archiving = archive(OWNER_A, jobId, change((await f.job(jobId)).revision));
-    await briefly(archiving);
+    // The archive commits (and syncs) while Back to editing's field step is held.
+    expect((await archive(OWNER_A, jobId, change((await f.job(jobId)).revision))).status).toBe(200);
     made.open();
-    expect((await editing).status).toBe(201);
-    expect((await archiving).status).toBe(200);
+    // Back to editing's answer is the job as Postgres holds it after its field step: archived (slice 5).
+    expect(await editing).toMatchObject({ status: 410, body: { error: 'archived' } });
     expect(h.field.draft(h.seed.a, next)?.state).toBe('archived');
   });
 
+  // r4 (a) of the draft life-cycle redesign: an archive and a restore are held at the field database (the
+  // draft sync, or the previous archive and restore writers alike); Submit then commits and marks the
+  // draft submitted; the late archive and restore land after it and must not reopen it.
   it('never leaves a submitted job’s draft open when an archive and a restore land after a Submit', async () => {
     const { jobId, draftId, manifest } = await f.readyJob(ESTIMATOR_A, h.seed.a);
     const revision = (await f.job(jobId)).revision;
-    const archived = hold('archiveDraft');
-    const restored = hold('restoreDraft');
-    const marked = hold('markSubmitted');
+    const archived = holdEither(['sync', 'archiveDraft']);
     const archiving = archive(OWNER_A, jobId, change(revision));
     await archived.arrived;
+    const restored = holdEither(['sync', 'restoreDraft']);
     const restoring = restore(OWNER_A, jobId, change(revision + 1));
-    await briefly(restored.arrived);
-    const submitting = f.submitShown(ESTIMATOR_A, jobId, draftId, manifest);
-    await briefly(marked.arrived);
+    await restored.arrived;
+    expect((await f.submitShown(ESTIMATOR_A, jobId, draftId, manifest)).answer.status).toBe(201);
+    expect(h.field.draft(h.seed.a, draftId)?.state).toBe('submitted');
     archived.open();
     expect((await archiving).status).toBe(200);
     restored.open();
     expect((await restoring).status).toBe(200);
-    marked.open();
-    await submitting;
-    // Whichever way the requests met, the draft holds the job's state and no marker is left unwritten.
-    const { status } = await f.job(jobId);
-    expect(h.field.draft(h.seed.a, draftId)?.state).toBe(status === 'submitted' ? 'submitted' : 'editing');
+    expect((await f.job(jobId)).status).toBe('submitted');
+    expect(h.field.draft(h.seed.a, draftId)?.state).toBe('submitted');
     expect((await f.submissions(jobId)).filter((row) => row.marker_state === 'pending')).toEqual([]);
   });
 
   it('opens the field draft on the restore sent again after the job was saved meanwhile', async () => {
     const { jobId, draftId } = await draftJob();
     await archive(OWNER_A, jobId, change(1));
-    h.field.failNext.restoreDraft = true;
+    // Unreachable for the request and its one try again.
+    h.field.failNext.sync = 2;
     const once = change(2);
     expect(await restore(OWNER_A, jobId, once)).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
     expect(h.field.draft(h.seed.a, draftId)?.state).toBe('archived');

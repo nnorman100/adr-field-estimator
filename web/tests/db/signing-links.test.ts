@@ -111,6 +111,12 @@ afterAll(async () => {
   await base?.server.stop();
 });
 
+// The technician's phone sending a signature, bound to the proposal it was drawn for.
+const phoneSignature = (jobId: string, signatureId: string, proposalSha256: string) => {
+  const built = request(ESTIMATOR_A, `/api/jobs/${jobId}/photos/${signatureId}?kind=signature`, { method: 'PUT', body: image('phone') });
+  built.headers.set('X-Proposal-Sha256', proposalSha256);
+  return built;
+};
 const signedImage = async (token: string) => signedSignatureRoute.GET(l.linkRequest(token, '/api/sign/signature'), params({}));
 const photo = (token: string | null, photoId: string) => signPhotoRoute.GET(l.linkRequest(token, `/api/sign/photos/${photoId}`), params({ photoId }));
 // Everything stored about links and their audit rows, as text, to search for a token.
@@ -410,7 +416,7 @@ describe('signing through a link', () => {
   it('a link and the technician’s phone signing at once give one agreement', async () => {
     const { jobId, token, estimate } = await l.linkedJob();
     const onPhone = randomUUID();
-    const sent = await json(photoRoute.PUT(request(ESTIMATOR_A, `/api/jobs/${jobId}/photos/${onPhone}?kind=signature`, { method: 'PUT', body: image('phone') }), params({ jobId, photoId: onPhone })));
+    const sent = await json(photoRoute.PUT(phoneSignature(jobId, onPhone, estimate.proposalSha256), params({ jobId, photoId: onPhone })));
     expect(sent.status).toBe(201);
     const viaLink = randomUUID();
     expect((await l.sendSignature(token, viaLink, image('link'))).status).toBe(201);
@@ -506,7 +512,7 @@ describe('voiding', () => {
   it('a job signed on the phone voids its link', async () => {
     const { jobId, token, estimate } = await l.linkedJob();
     const onPhone = randomUUID();
-    await photoRoute.PUT(request(ESTIMATOR_A, `/api/jobs/${jobId}/photos/${onPhone}?kind=signature`, { method: 'PUT', body: image('phone') }), params({ jobId, photoId: onPhone }));
+    await photoRoute.PUT(phoneSignature(jobId, onPhone, estimate.proposalSha256), params({ jobId, photoId: onPhone }));
     const body = { id: randomUUID(), estimateId: estimate.id, proposalSha256: estimate.proposalSha256, signatureId: onPhone, signerName: 'Casey Customer', documentsConfirmed: true };
     expect((await agreementsRoute.POST(request(ESTIMATOR_A, `/api/jobs/${jobId}/agreements`, { method: 'POST', body }), params({ jobId }))).status).toBe(201);
     expect(await l.view(token)).toMatchObject({ status: 410, body: { error: 'link_voided' } });

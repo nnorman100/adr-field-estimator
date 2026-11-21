@@ -4,14 +4,12 @@ This is the single record of what is deployed in `alert-disaster-field-2026`. Ot
 instead of repeating production state. Append one row per deploy or traffic change, oldest first, and
 never rewrite earlier rows; add a correcting row instead.
 
-Releases made by the automatic deploy workflow (`.github/workflows/deploy.yml`) are not appended here:
-an automated run cannot commit to protected `master`. Each one is recorded in the job summary of its
-run in the Actions history (source commit, backend revision and tag, Hosting version and release,
-rollback pair, check results), and the serving backend and frontend are still read from `/api/health`
-and `node scripts/verify_hosting.js`. Manual releases keep appending rows as described below. Read
-the newest Deploy run as well as the newest row when you need to know what is serving; a manual
-release made while automation is enabled should say so in its row. See
-[Automatic deploys](docs/firebase-isolation.md#automatic-deploys).
+Historical automated releases made by the retired `deploy.yml` workflow are recorded in their
+GitHub Actions job summaries. Each summary records the source commit, backend revision and tag,
+Hosting version and release, rollback pair and check results. The old app is retired and
+switched off, and the product rule in `docs/architecture/product-rules.md` says its project is never
+deployed to or changed, so the manual commands in the [release runbook](docs/runbook/releases.md)
+are historical records, not current instructions. This log stays as provenance.
 
 - **Date (UTC)**: day of the deploy or traffic change.
 - **Backend revision (tag)**: Cloud Run revision suffix of `alert-disaster-field-estimator` and its URL tag;
@@ -45,8 +43,8 @@ the revision that serves traffic instead.
     both the frontend displayed version and backend `version`.
   - **GitHub Releases**: the repository's Releases page lists each production version tag and the merged
     pull requests in plain words.
-- **One-step rollback to a version**: `python3 scripts/auto_deploy.py --rollback <YYYY.MM.DD-N>` or the
-  **Deploy** workflow's `version` input. See [Rollback](docs/firebase-isolation.md#rollback), including
+- **One-step rollback to a version (historical; the retired project is never deployed or changed)**:
+  `python3 scripts/auto_deploy.py --rollback <YYYY.MM.DD-N>`. See [Rollback](docs/firebase-isolation.md#rollback), including
   when it stops for a data migration, a rules or index change, or a baseline that would turn off a
   feature now serving.
 
@@ -82,6 +80,8 @@ Before promoting a backend, complete the
 [Firestore TTL policy check](docs/firebase-isolation.md#firestore-ttl-policies).
 
 ### ADR price book
+
+Historical: these steps no longer run. `scripts/migrate_price_books.py` imports `backend/adr_price_book.py`, which was removed from the repository (see [pricing source](docs/pricing-source.md)).
 
 ADR's rates are ADR's own price-book data, and no other company falls back to them. ADR already holds its book from the 2026-10-26 setup row below, so this check should find nothing to write. Run it after the release that removes the default, with the owner's go for any `--apply`. It prints only counts and content hashes, and writes only ADR's records.
 

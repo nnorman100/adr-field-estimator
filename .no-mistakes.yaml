@@ -33,10 +33,13 @@ protected_paths:
   - "package.json"
   - "web/package.json"
 
-# Review findings get up to two automatic fix rounds (the built-in default is 0,
-# which parks every finding for a person). Matches the global setting.
+# No automatic review fix rounds (owner, 2026-11-17, option B). Every review
+# finding goes to the worker, who fixes it and may add or tighten tests. An
+# automatic fix that added the regression test AGENTS.md requires was refused
+# because web/tests/** is a protected path, which stopped runs eight times on
+# 2026-11-17. Protected paths stay; the Test guard still blocks weakened tests.
 auto_fix:
-  review: 2
+  review: 0
 
 # The pipeline's Test step runs lint, type check, unit tests and the emulator
 # suite. GitHub CI is still the official gate: database, end-to-end, build, test
@@ -45,16 +48,16 @@ auto_fix:
 commands:
   # The run worktree starts with tracked files only, so install both packages.
   prepare: "npm ci --prefer-offline && npm --prefix web ci --prefer-offline"
-  # Root lint and vitest, then web type check, lint, unit tests and the Firebase
+  # Root format check, lint and vitest, then web type check, lint, unit tests and the Firebase
   # emulator suite (demo- project only, needs Java 21+, takes a few minutes). Only test:emu gets
   # EMU_PORTS=auto (free emulator ports per run, so concurrent runs never collide); the unit
   # step must see the defaults.
-  test: "npm run lint && npx vitest run && npm --prefix web run typecheck && npm --prefix web run lint && npm --prefix web test && EMU_PORTS=auto npm --prefix web run test:emu"
+  test: "npm run format:check && npm run lint && npx vitest run && npm --prefix web run typecheck && npm --prefix web run lint && npm --prefix web test && EMU_PORTS=auto npm --prefix web run test:emu"
 
 test:
   instructions: |
-    Testing in the pipeline: the local test run is exactly `npm run lint`,
-    `npx vitest run`, `npm --prefix web run typecheck`, `npm --prefix web run
+    Testing in the pipeline: the local test run is exactly `npm run format:check`,
+    `npm run lint`, `npx vitest run`, `npm --prefix web run typecheck`, `npm --prefix web run
     lint`, `npm --prefix web test` (unit) and `EMU_PORTS=auto npm --prefix web
     run test:emu` (Firebase emulators on free ports). Do not run `npm run test:db`, `npm run test:e2e`,
     `npm run test:browser`, `npm run build`, the root Firestore emulator suites
@@ -63,3 +66,7 @@ test:
     is the official gate. A scenario whose evidence is one of those CI suites is
     recorded as covered by that suite, not as inconclusive: do not escalate it or
     ask for a decision, and name the covering suite in the result.
+    Field, job and office screen scenarios are covered by the browser specs in
+    web/tests/e2e that CI's e2e jobs run: for each such scenario, name the spec
+    file and the test in it that exercises the scenario and record it as covered
+    by CI e2e; a scenario with no matching spec is reported as untested.

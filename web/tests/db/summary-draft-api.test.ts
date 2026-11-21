@@ -24,6 +24,8 @@ const live = vi.hoisted(() => ({
   reading: null as null | (() => Promise<void>),
   // Runs as the AI boundary reserves the call in the ledger, after the request's call id lookup.
   reserving: null as null | (() => Promise<void>),
+  // How many times the service asked for the field reader.
+  readersBuilt: 0,
 }));
 vi.mock('@/lib/auth/services', () => ({
   identityServices: () => live.harness!.identity,
@@ -70,12 +72,19 @@ vi.mock('@/lib/summary-draft/services', async () => {
       });
       const reader = fieldSummaryReader(live.harness!.field);
       const reading = {
-        read: async (companyId: string, draftId: string) => {
+        read: async (companyId: string, jobId: string, draftId: string) => {
           await live.reading?.();
-          return reader.read(companyId, draftId);
+          return reader.read(companyId, jobId, draftId);
         },
       };
-      return summaryDraftService(live.harness!.handle.db, reading, () => boundary);
+      return summaryDraftService(
+        live.harness!.handle.db,
+        () => {
+          live.readersBuilt += 1;
+          return reading;
+        },
+        () => boundary,
+      );
     },
   };
 });
@@ -124,6 +133,7 @@ beforeEach(async () => {
   live.during = null;
   live.reading = null;
   live.reserving = null;
+  live.readersBuilt = 0;
   // The switch on for both companies, so a refusal of B's owner is the job's, not the switch's.
   await h.admin`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${h.seed.a}, 'ai_summary', true), (${h.seed.b}, 'ai_summary', true)`;
 });
@@ -379,6 +389,41 @@ describe('POST /api/jobs/{jobId}/ai/summary-draft', () => {
     expect(await advice(undefined)).toEqual([]);
     const stored = (await results()).map((row) => row.output.testing_advice);
     expect(stored.filter((list: string[]) => list.length > 0)).toEqual([ANSWER.testing_advice]);
+  });
+
+  it('stores and answers nothing when the company is suspended while the model runs', async () => {
+    const job = await editingJob();
+    live.during = async () => {
+      await h.admin`UPDATE companies SET status = 'suspended' WHERE id = ${h.seed.a}`;
+    };
+    expect(await draftSummary(ESTIMATOR_A, job.jobId)).toMatchObject({ status: 403, body: { error: 'company_inactive' } });
+    expect(await results()).toEqual([]);
+  });
+
+  it('reads no draft that another job claimed or stamped, and calls no model', async () => {
+    const job = await editingJob();
+    const other = await editingJob();
+    h.field.stamp(h.seed.a, job.draftId, other.jobId);
+    expect(await draftSummary(ESTIMATOR_A, job.jobId)).toMatchObject({ status: 503, body: { error: 'draft_unavailable' } });
+    h.field.stamp(h.seed.a, job.draftId, job.jobId);
+    await h.admin`UPDATE job_drafts SET job_id = ${other.jobId} WHERE company_id = ${h.seed.a} AND draft_id = ${job.draftId}`;
+    expect(await draftSummary(ESTIMATOR_A, job.jobId)).toMatchObject({ status: 409, body: { error: 'conflict' } });
+    expect(live.requests).toEqual([]);
+    expect(await results()).toEqual([]);
+  });
+
+  it('builds the field reader only when the draft is read: not for a switched-off, unknown or replayed request', async () => {
+    const job = await editingJob();
+    const callId = randomUUID();
+    await h.admin`UPDATE company_feature_flags SET enabled = false WHERE company_id = ${h.seed.a} AND flag = 'ai_summary'`;
+    expect((await draftSummary(ESTIMATOR_A, job.jobId)).status).toBe(403);
+    expect((await draftSummary(OWNER_B, job.jobId)).status).toBe(404);
+    expect(live.readersBuilt).toBe(0);
+    await h.admin`UPDATE company_feature_flags SET enabled = true WHERE company_id = ${h.seed.a} AND flag = 'ai_summary'`;
+    expect((await draftSummary(ESTIMATOR_A, job.jobId, callId)).status).toBe(201);
+    expect(live.readersBuilt).toBe(1);
+    expect((await draftSummary(ESTIMATOR_A, job.jobId, callId)).status).toBe(200);
+    expect(live.readersBuilt).toBe(1);
   });
 
   it('answers the switch-off refusal when ai_summary is off, reading the draft and spending nothing', async () => {

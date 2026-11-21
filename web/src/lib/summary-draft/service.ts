@@ -1,13 +1,13 @@
 import { createHash } from 'node:crypto';
 import { sql } from 'drizzle-orm';
-import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
+import { holdAcrossOutsideCall, withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import { capabilitiesFor } from '@/lib/access';
 import { aiRefusal, type AiCallerContext, type AiOutcome, type AiRefusal, type AiRequest } from '@/lib/ai/call';
 import type { JobIdentity } from '@/lib/ai/prompt-facts';
-import type { Identity } from '@/lib/auth';
+import { IdentityRefusal, type Identity } from '@/lib/auth';
 import type { FieldManifest } from '@/lib/field/canonical';
 import { accessFlags } from '@/lib/flags';
-import { jobAccess, JobError, type JobRow } from '@/lib/jobs/access';
+import { holdDraft, jobAccess, JobError, type JobRow } from '@/lib/jobs/access';
 import {
   summaryDraftRequest,
   summaryFacts,
@@ -73,10 +73,12 @@ export class SummaryDraftRefused extends Error {
 
 // The field database's view of a draft, read only.
 export type SummaryDraftReader = {
-  // The draft's state and field data now, or null when there is no such draft; `too_many_rooms` or
-  // `too_many_photos` when a nested collection is over its cap.
+  // The draft's state and field data now, or null when there is no such draft or it was made for
+  // another job than `jobId`; `too_many_rooms` or `too_many_photos` when a nested collection is over
+  // its cap.
   read(
     companyId: string,
+    jobId: string,
     draftId: string,
   ): Promise<{ state: string; manifest: FieldManifest } | 'too_many_rooms' | 'too_many_photos' | null>;
 };
@@ -198,10 +200,13 @@ async function spoken(
   };
 }
 
-// The caller as they are now: their membership is read again and held (FOR SHARE) until the
-// transaction ends, so a role change or a disable made while the model ran is seen here, and one made
-// after this check waits for the answer to be stored.
+// The caller as they are now: their company is still active and their membership is read again and
+// held (FOR SHARE) until the transaction ends, so a suspension, a role change or a disable made while
+// the model ran is seen here, and a membership change made after this check waits for the answer to
+// be stored.
 async function currentCaller(tx: CompanyTransaction, caller: Identity): Promise<Identity> {
+  const [company] = rows<{ status: string }>(await tx.execute(sql`SELECT status FROM companies WHERE id = ${caller.companyId}::uuid`));
+  if (company?.status !== 'active') throw new IdentityRefusal('company_inactive');
   const [membership] = rows<{ role: string }>(
     await tx.execute(sql`
       SELECT role FROM memberships
@@ -229,6 +234,9 @@ async function editableJob(
 ): Promise<{ current: Identity; job: JobRow; attempts: number }> {
   const current = await currentCaller(tx, caller);
   const job = await jobAccess(tx, current, jobId, ['audit'], { fieldWork: true, lock: true });
+  // The job's current draft is this job's: its id is held for the job here, as every field step holds
+  // it, so a draft another job claimed is never read or answered for.
+  if (!(await holdDraft(tx, caller.companyId, job.id, job.currentDraftId))) throw new JobError('conflict');
   const [row] = rows<{ attempts: number; open: boolean }>(
     await tx.execute(sql`
       SELECT count(*)::int AS attempts, coalesce(bool_or(status IN ('pending', 'committed')), false) AS open
@@ -249,7 +257,7 @@ async function identityOf(tx: CompanyTransaction, companyId: string, job: JobRow
   return { customerName: customer?.name ?? '', propertyAddress: job.propertyAddress };
 }
 
-export function summaryDraftService(db: Database, reader: SummaryDraftReader, boundary: () => SummaryDraftBoundary): SummaryDraftService {
+export function summaryDraftService(db: Database, reader: () => SummaryDraftReader, boundary: () => SummaryDraftBoundary): SummaryDraftService {
   return {
     async draft(caller, jobId, callIdInput) {
       const callId = callIdInput.toLowerCase();
@@ -270,7 +278,8 @@ export function summaryDraftService(db: Database, reader: SummaryDraftReader, bo
         if (caller.flags?.ai_summary !== true) throw new SummaryDraftRefused(aiRefusal('feature_off'));
         const prior = await priorCall(tx, companyId, callId);
         if (prior.ledger) return { replayed: replay(prior.result, caller, job) };
-        const read = await reader.read(companyId, job.currentDraftId);
+        await holdAcrossOutsideCall(tx);
+        const read = await reader().read(companyId, job.id, job.currentDraftId);
         if (read === null) throw new JobError('draft_unavailable');
         if (read === 'too_many_rooms' || read === 'too_many_photos') throw new SummaryDraftError('draft_invalid');
         if (read.state !== 'editing') throw new SummaryDraftError('draft_not_editing');

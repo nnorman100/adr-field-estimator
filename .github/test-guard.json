@@ -4,12 +4,24 @@
   "workflows": [".github/workflows/*.yml", ".github/workflows/*.yaml"],
   "protected": [
     ".github/**",
+    "**/.gitattributes",
     "scripts/readiness_eval.py",
     "scripts/verify_*.py",
     "playwright.config.js",
     "playwright.isolated.config.js",
+    "web/vitest*.config.*",
+    "web/playwright*.config.*",
     "firestore.rules"
   ],
-  "fixtures": ["tests/fixtures/**", "tests/golden/**"],
-  "tests": ["tests/**"]
+  "fixtures": [
+    "tests/fixtures/**",
+    "tests/golden/**",
+    "web/tests/ai-evals/stored/**",
+    "web/tests/ai-evals/data/**"
+  ],
+  "tests": ["tests/**", "web/tests/**", "infra/**/tests/**", "infra/**/*.tftest.hcl"],
+  "testScripts": {
+    "package.json": ["test", "test:*"],
+    "web/package.json": ["test", "test:*"]
+  }
 }

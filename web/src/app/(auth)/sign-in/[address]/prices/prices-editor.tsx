@@ -12,6 +12,7 @@ import { ItemCard } from './item-card';
 import { ItemsByHeading } from './price-list';
 import { FileSection, PreviewSection, PublishSection, VersionsSection } from './publish-panel';
 import { RoomPays } from './room-pays';
+import { AdjustmentsSection } from './adjustments-section';
 import { HeadingsSection, RoomTypesSection, SettingsSection, SizesSection } from './settings-sections';
 import { Hint, Section, WholeFieldCheck, useBusy } from './ui';
 
@@ -143,6 +144,7 @@ export function PricesEditor({
       <SizesSection table={draft} onChange={edit} />
       <HeadingsSection table={draft} onChange={edit} />
       <RoomTypesSection table={draft} onChange={edit} />
+      <AdjustmentsSection table={draft} onChange={edit} />
       </Fragment>
       </WholeFieldCheck.Provider>
       <PreviewSection user={user} table={draft} dirty={dirty} unfinished={unfinished} lock={setLocked} />

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import type { ScopeLists } from '@/lib/field/api';
 import { MAX_PREP_TASK, MAX_PREP_TASKS, MAX_ROOM_ITEMS } from '@/lib/field/schema';
@@ -23,6 +23,8 @@ const UNITS: Record<string, string> = {
   visit: 'visits',
   room: 'rooms',
 };
+
+export const itemUnitLabel = (unit: string): string => UNITS[unit] ?? unit;
 
 export function RoomItems({
   id,
@@ -76,7 +78,7 @@ export function RoomItems({
               <div className="min-w-0 flex-1">
                 <Box
                   id={`${id}-${itemId}`}
-                  label={`${nameOf(itemId)}${unit ? ` (${UNITS[unit] ?? unit})` : ''}`}
+                  label={`${nameOf(itemId)}${unit ? ` (${itemUnitLabel(unit)})` : ''}`}
                   value={current[itemId] ?? ''}
                   onChange={(value) => onChange({ ...current, [itemId]: value })}
                   readOnly={readOnly}
@@ -158,6 +160,10 @@ export function RoomPrepTasks({
   templates,
   error,
   readOnly,
+  onTyped,
+  own,
+  setOwn,
+  earlier,
 }: {
   id: string;
   stored: string[];
@@ -166,9 +172,19 @@ export function RoomPrepTasks({
   templates: string[];
   error: string | undefined;
   readOnly: boolean;
+  // Told whether a task of their own is typed and not added.
+  onTyped: (typed: boolean) => void;
+  // The prep task typed and not added yet, held on the page (src/lib/field/pending.ts) so the room's
+  // card stays on screen with it after a move (owner decision J5).
+  own: string;
+  setOwn: (text: string) => void;
+  // Prep tasks typed and not added on an earlier draft of the job: shown read only, never added here.
+  earlier: string[];
 }) {
   const [pick, setPick] = useState('');
-  const [own, setOwn] = useState('');
+  useEffect(() => {
+    onTyped(own !== '');
+  }, [onTyped, own]);
   const tasks = edited ?? stored;
   const full = tasks.length >= MAX_PREP_TASKS;
   // A template's words are copied into the room when picked, so the record keeps them as they were.
@@ -197,6 +213,9 @@ export function RoomPrepTasks({
           </li>
         ))}
       </ol>
+      {earlier.map((text, at) => (
+        <Box key={at} id={`${id}-earlier-${at}`} label="Your earlier prep task" value={text} onChange={() => undefined} readOnly />
+      ))}
       {/* Typed and not added when the field work moved away: shown, read only (owner decision J5). */}
       {readOnly && own ? <Box id={`${id}-own`} label="Your own prep task" value={own} onChange={() => undefined} readOnly /> : null}
       {readOnly || full ? null : (

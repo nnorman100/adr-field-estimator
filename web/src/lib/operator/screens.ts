@@ -94,6 +94,34 @@ export const STATUS_LABELS: Record<CompanyStatus, string> = {
   archived: 'Archived',
 };
 
+// A date of a job or a record in the support view, in the phone's own time zone.
+export function supportDate(iso: string): string {
+  return new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(iso));
+}
+
+// What a photo that could not be read because the connection is down says.
+export const PHOTO_OFFLINE_MESSAGE = 'Needs a connection. Check the signal, then try again.';
+
+// The number each photo carries in the signed photo log (its place in the log, from 1), by photo id.
+export function signedPhotoNumbers(photoLog: readonly unknown[]): Map<string, number> {
+  const numbers = new Map<string, number>();
+  photoLog.forEach((photo, index) => {
+    const id = photo !== null && typeof photo === 'object' ? (photo as Record<string, unknown>).id : undefined;
+    if (typeof id === 'string' && id && !numbers.has(id)) numbers.set(id, index + 1);
+  });
+  return numbers;
+}
+
+// An evidence row's name. A photo of the signed log takes the log's number, so the two sections
+// agree; any other row (a photo outside the log, an original, the signature) is named by what it is
+// and the order it was received in, which never reads as a number of the log.
+export function evidenceLabel(item: { kind: 'photo' | 'original' | 'signature'; photoId: string }, signed: ReadonlyMap<string, number>, index: number): string {
+  const number = item.kind === 'photo' ? signed.get(item.photoId) : undefined;
+  if (number !== undefined) return `Photo ${number}`;
+  const name = item.kind === 'photo' ? 'Photo outside the signed log' : item.kind === 'original' ? 'Full-size original' : 'Signature';
+  return `${name} (received ${index + 1})`;
+}
+
 // The words for an operator action the server refused, from its fixed error code.
 export function operatorErrorMessage(code: string | null): string {
   switch (code) {
@@ -128,6 +156,14 @@ export function operatorErrorMessage(code: string | null): string {
     default:
       return 'That did not work. Try again.';
   }
+}
+
+// What a failed read of the support view says: with no answer at all, that it needs a connection;
+// otherwise the words for the server's code. A refusal that ends the sign-in never shows here: the
+// operator session removes the screen and asks for a new sign-in (operator-session.tsx).
+export function supportReadMessage(status: number, code: string): string {
+  if (status === 0) return 'Needs a connection. Check the signal, then open this page again.';
+  return operatorErrorMessage(code);
 }
 
 // A refusal that only a new sign-in clears: the sign-in is too old for a change to a team or a

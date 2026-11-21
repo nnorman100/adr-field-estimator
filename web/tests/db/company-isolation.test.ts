@@ -27,23 +27,36 @@ vi.mock('@/lib/auth/services', () => ({
 }));
 vi.mock('@/lib/team/services', () => ({ teamServices: () => live.harness!.team }));
 vi.mock('@/lib/prices/services', () => ({ pricesServices: () => live.harness!.prices }));
-vi.mock('@/lib/jobs/services', () => ({ jobsServices: () => live.harness!.jobs }));
+vi.mock('@/lib/jobs/services', () => ({
+  jobsServices: () => live.harness!.jobs,
+  runQueuedDraftSyncRepair: async () => ({ synced: 0, failed: 0 }),
+}));
 vi.mock('@/lib/photos/services', () => ({ photosServices: () => live.harness!.photos }));
 vi.mock('@/lib/submissions/services', () => ({
   submissionsServices: () => live.harness!.submissions,
   runQueuedSubmissionRepair: async () => ({ aborted: 0, marked: 0, failed: 0 }),
 }));
 vi.mock('@/lib/platform/services', () => ({ platformServices: () => live.harness!.platform }));
+// The readiness check (S5b-11) reads the field drafts through the shared field stand-in.
+vi.mock('@/lib/readiness/services', async () => {
+  const { readinessService } = await import('@/lib/readiness/service');
+  const { standIn } = await import('./readiness-fake');
+  return { readinessServices: () => readinessService(live.harness!.handle.db, () => standIn(live.harness!.field)) };
+});
 vi.mock('@/lib/estimates/services', async () => {
   const { estimatesService } = await import('@/lib/estimates/service');
   return { estimatesServices: () => estimatesService(live.harness!.handle.db) };
+});
+vi.mock('@/lib/approvals/services', async () => {
+  const { approvalsService } = await import('@/lib/approvals/service');
+  return { approvalsServices: () => approvalsService(live.harness!.handle.db) };
 });
 // The AI summary draft (S7-6) over the field stand-in; a model call here would be a failure.
 vi.mock('@/lib/summary-draft/services', async () => {
   const { summaryDraftService } = await import('@/lib/summary-draft/service');
   const { fieldSummaryReader, refusingBoundary } = await import('./summary-draft-fake');
   return {
-    summaryDraftServices: () => summaryDraftService(live.harness!.handle.db, fieldSummaryReader(live.harness!.field), refusingBoundary),
+    summaryDraftServices: () => summaryDraftService(live.harness!.handle.db, () => fieldSummaryReader(live.harness!.field), refusingBoundary),
   };
 });
 vi.mock('@/lib/agreements/services', async () => {
@@ -130,7 +143,10 @@ async function seedSides(): Promise<void> {
     [h.seed.b, h.seed.ownerB.actor],
   ] as const) {
     await h.admin`INSERT INTO audit_events (company_id, actor_id, action, target) VALUES (${company}, ${by}, 'seeded_event', ${company})`;
-    await h.admin`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${company}, 'price_books', true)`;
+    // Priced extras too (S5b-8), so the proposal and approval routes are reached and refused by their access rule, not the switch.
+    await h.admin`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${company}, 'price_books', true), (${company}, 'priced_extras', true)`;
+    // Readiness and the drying watch on, so their routes are refused by job access and not only by their switches.
+    await h.admin`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${company}, 'readiness', true), (${company}, 'drying_watch', true)`;
     await h.admin`INSERT INTO access_projection_outbox (company_id, actor_id) VALUES (${company}, ${by})`;
   }
   // Each company has a working copy and a published version, named so a leak of either shows.
@@ -287,6 +303,12 @@ const idsOf = (victim: Side, company: Side = victim): Record<string, string> => 
   linkId: victim.ids.photoId,
   signatureId: victim.ids.photoId,
   assignmentId: victim.ids.assignmentId,
+  // No proposal is seeded (one needs a submitted, priced record); the other company's photo id stands
+  // in, and approvals-api.test.ts sends a real proposal id across companies.
+  approvalId: victim.ids.photoId,
+  // No drying reading is seeded here; the other company's photo id stands in, and
+  // drying-readings-api.test.ts uses real readings across companies.
+  readingId: victim.ids.photoId,
 });
 
 const rowsOfKind = (...kinds: MatrixRow['kind'][]) => MATRIX.filter((row) => kinds.includes(row.kind));
@@ -321,6 +343,16 @@ const OPEN: Record<string, OpenCheck> = {
     expect(JSON.parse(answer.text), where).toEqual({ message: 'hello' });
     expect(leaks(answer.text, victim), where).toEqual([]);
   },
+  // S5b-5: HEAD on the operator's support views is refused for anyone, before any sign-in check.
+  ...Object.fromEntries(
+    ['jobs', 'jobs/[jobId]', 'jobs/[jobId]/photos/[photoId]'].map((route): [string, OpenCheck] => [
+      `HEAD api/platform/companies/[companyId]/${route}`,
+      (answer, where, _attacker, victim) => {
+        expect(answer.status, where).toBe(405);
+        expect(leaks(answer.text, victim), where).toEqual([]);
+      },
+    ]),
+  ),
   // Write-only error reports: the answer is how many of the one report sent were logged, nothing else.
   'POST api/client-errors': (answer, where, _attacker, victim) => {
     expect(answer.status, where).toBe(202);
@@ -383,8 +415,17 @@ describe('the calls the suite makes', () => {
     ]);
   });
 
-  it('lists exactly five open answers: the caller’s own sign-in, the sign-in page, health, echo and error reports', () => {
-    expect(Object.keys(OPEN).sort()).toEqual(['GET api/health', 'GET api/me', 'GET api/sign-in/[address]', 'POST api/client-errors', 'POST api/echo']);
+  it('lists exactly the open answers: the caller’s own sign-in, the sign-in page, health, echo, error reports and the support views’ HEAD refusal', () => {
+    expect(Object.keys(OPEN).sort()).toEqual([
+      'GET api/health',
+      'GET api/me',
+      'GET api/sign-in/[address]',
+      'HEAD api/platform/companies/[companyId]/jobs',
+      'HEAD api/platform/companies/[companyId]/jobs/[jobId]',
+      'HEAD api/platform/companies/[companyId]/jobs/[jobId]/photos/[photoId]',
+      'POST api/client-errors',
+      'POST api/echo',
+    ]);
   });
 });
 
@@ -507,7 +548,7 @@ describe('every route, called with the other company’s ids', () => {
     for (const row of creates) {
       for (const [attacker, victim] of directions()) {
         const victimBefore = await rowsOf(victim.companyId);
-        const draftsBefore = h.drafts.made.size;
+        const draftsBefore = h.drafts.owners().length;
         for (const [role, claims] of Object.entries(attacker.people)) {
           // The other company's own job and draft ids, in the body.
           const body = { id: victim.ids.jobId, draftId: victim.ids.draftId };
@@ -525,7 +566,7 @@ describe('every route, called with the other company’s ids', () => {
         const own = await h.admin`SELECT company_id FROM jobs WHERE id = ${victim.ids.jobId}`;
         expect(own.map((found) => found.company_id).sort()).toEqual([attacker.companyId, victim.companyId].sort());
         // One draft was made, in the attacker's own company: never a write into the other's.
-        const made = [...h.drafts.made.keys()].slice(draftsBefore);
+        const made = h.drafts.owners().map(([at]) => at).slice(draftsBefore);
         expect(made).toEqual([`${attacker.companyId}/${victim.ids.draftId}`]);
       }
     }

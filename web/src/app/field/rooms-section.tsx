@@ -4,8 +4,9 @@ import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { readScopeLists, type ScopeLists } from '@/lib/field/api';
 import { roomName } from '@/lib/field/forms';
+import { NO_TYPED, pending, typedBefore, usePending } from '@/lib/field/pending';
 import { MAX_ROOMS, type RoomField } from '@/lib/field/schema';
-import { addRoom, removeRoom, type FieldDraft } from '@/lib/field/store';
+import { addRoomEdit, removeRoomEdit, type FieldDraft } from '@/lib/field/store';
 import type { JobContext } from './job-screens';
 import { RoomCard } from './room-card';
 import { Box, Outcome, Section } from './ui';
@@ -17,7 +18,21 @@ import { useFieldEdit } from './use-field-edit';
 export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraft }) {
   const [lists, setLists] = useState<ScopeLists | null>(null);
   const [listsError, setListsError] = useState<string | null>(null);
-  const [name, setName] = useState('');
+  // A name typed and not added, kept on the page (src/lib/field/pending.ts).
+  const jobId = job.jobId;
+  const draftId = job.draftRef.draftId;
+  const drafts = usePending(() => pending.typed(jobId));
+  const typed = drafts[draftId] ?? NO_TYPED;
+  const earlier = typedBefore(drafts, draftId);
+  const name = typed.roomName;
+  const setName = (text: string) => pending.typeRoomName(jobId, draftId, text);
+  // A name typed and not added counts as unsaved input once the job is archived.
+  const { markUnsaved } = job;
+  const nameTyped = name !== '';
+  useEffect(() => {
+    markUnsaved('new-room', nameTyped);
+    return () => markUnsaved('new-room', false);
+  }, [markUnsaved, nameTyped]);
   // Rooms with changes typed and not saved, and rooms the draft no longer lists that had some when
   // the field work moved to someone else: they stay on screen, read only, as last read (J5).
   const [dirty, setDirty] = useState<Record<string, true>>({});
@@ -44,39 +59,65 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
     setKept([...still, ...gone]);
   }
   const { busy, error, notice, setError, save: saveEdit } = useFieldEdit(job);
+  const writing = usePending(() => pending.roomWriting(jobId, draftId));
   const readOnly = !job.editable;
   const full = draft.rooms.length >= MAX_ROOMS;
   const { user } = job.session;
-  const jobId = job.jobId;
+  const { checkAccess } = job;
 
   function loadLists() {
     if (!job.session.online) return;
     void readScopeLists(user, jobId).then((answer) => {
       setLists(answer.ok ? answer.value : null);
       setListsError(answer.ok ? null : 'The room types, items and prep tasks could not be read. ' + answer.message);
+      if (!answer.ok && answer.status === 410) checkAccess(answer);
     });
   }
-  useEffect(loadLists, [user, jobId, job.session.online]);
+  useEffect(loadLists, [user, jobId, job.session.online, checkAccess]);
 
   // Adding and removing rooms write the whole room order, so one waits for the other's local
-  // write and the draft read after it: each starts from the order the phone holds.
+  // write and the draft read after it: each is built, limit and journal before-state included, from
+  // the phone's cache read again under the guard (src/lib/field/store.ts addRoomEdit, removeRoomEdit).
+  const unreadable = "Can't save. The rooms saved on this phone could not be read. Open the job again.";
   async function remove(roomId: string, label: string) {
-    if (busy || !window.confirm(`Remove ${label} from this job?`)) return;
-    await saveEdit((db) => removeRoom(db, job.draftRef, roomId, draft.field.roomOrder ?? []), `${label} removed.`);
+    if (writing || !window.confirm(`Remove ${label} from this job?`) || !pending.startRoomWrite(jobId, draftId)) return;
+    const sent = typed.rooms[roomId]?.at ?? 0;
+    try {
+      const edit = await removeRoomEdit(job.session.db, job.draftRef, roomId).catch(() => null);
+      if (!edit) return setError(unreadable);
+      await saveEdit(edit.writes, `${label} removed.`, undefined, () => pending.settleRoomRemoved(jobId, draftId, roomId, sent), edit.base);
+    } finally {
+      pending.endRoomWrite(jobId, draftId);
+    }
   }
 
   async function add() {
-    if (busy) return;
+    if (writing) return;
     const checked = roomName(name);
     if (!checked) return setError('Give the room a name.');
+    if (!pending.startRoomWrite(jobId, draftId)) return;
     const roomId = crypto.randomUUID();
-    await saveEdit((db) => addRoom(db, job.draftRef, roomId, checked, draft.field.roomOrder ?? []), `${checked} added.`, () => {
-      setName((current) => current === name ? '' : current);
-    });
+    const sent = typed.nameAt;
+    try {
+      const edit = await addRoomEdit(job.session.db, job.draftRef, roomId, checked).catch(() => null);
+      if (!edit) return setError(unreadable);
+      if (edit === 'full') return setError(`A job holds at most ${MAX_ROOMS} rooms.`);
+      if (await saveEdit(edit.writes, `${checked} added.`, undefined, undefined, edit.base)) pending.settleRoomName(jobId, draftId, sent);
+    } finally {
+      pending.endRoomWrite(jobId, draftId);
+    }
   }
 
+  // Rooms the draft does not list that still hold text typed and not added (on this draft or an
+  // earlier one), apart from the ones kept above.
+  const unlisted = [
+    ...kept,
+    ...Object.entries(typed.rooms).map(([id, room]) => ({ id, field: room.field, number: room.number })),
+    ...Object.entries(earlier.rooms).map(([id, room]) => ({ id, field: room.field, number: room.number })),
+  ].filter((room, at, all) => !draft.rooms.some((listed) => listed.id === room.id) && all.findIndex((one) => one.id === room.id) === at);
+
   return (
-    <Section title="Rooms">
+    <Section title="Rooms" headingId="readiness-rooms">
       {listsError ? (
         <div className="flex flex-col gap-2">
           <p role="alert">{listsError}</p>
@@ -90,7 +131,7 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
         {/* One list, so a room that leaves the draft keeps its card, and what was typed in it. */}
         {[
           ...draft.rooms.map((room, index) => ({ id: room.id, field: room.field, number: index + 1, listed: true })),
-          ...kept.filter((room) => !draft.rooms.some((listed) => listed.id === room.id)).map((room) => ({ ...room, listed: false })),
+          ...unlisted.map((room) => ({ ...room, listed: false })),
         ].map((room) => (
           <li key={room.id}>
             <RoomCard
@@ -99,7 +140,8 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
               stored={room.field}
               number={room.number}
               lists={lists}
-              removing={busy}
+              listed={room.listed}
+              removing={busy || writing}
               onRemove={room.listed ? () => remove(room.id, room.field.name ?? `Room ${room.number}`) : undefined}
               onDirty={onDirty}
             />
@@ -108,6 +150,10 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
       </ul>
       {/* A name typed and not added when the field work moved away: shown, read only (owner decision J5). */}
       {readOnly && name ? <Box id="new-room-name" label="New room name" value={name} onChange={() => undefined} readOnly /> : null}
+      {/* Names typed and not added on an earlier draft of the job: read only, never added to this one. */}
+      {earlier.roomNames.map((text, at) => (
+        <Box key={at} id={`new-room-name-earlier-${at}`} label="Your earlier room name" value={text} onChange={() => undefined} readOnly />
+      ))}
       {readOnly ? null : (
         <form
           className="flex flex-col gap-2"
@@ -118,7 +164,7 @@ export function RoomsSection({ job, draft }: { job: JobContext; draft: FieldDraf
           }}
         >
           <Box id="new-room-name" label="New room name" value={name} onChange={setName} readOnly={full} />
-          <Button type="submit" variant="outline" disabled={busy || full || job.stale}>
+          <Button type="submit" variant="outline" disabled={busy || writing || full || job.stale}>
             {busy ? 'Adding…' : 'Add room'}
           </Button>
           {full ? <p className="text-sm">A job holds at most {MAX_ROOMS} rooms.</p> : null}

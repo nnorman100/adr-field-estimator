@@ -1,4 +1,5 @@
-import type { EstimateEnd } from '@/engine/estimate';
+import type { ProposalEnd } from '@/engine/estimate';
+import { dollars } from '@/engine/values';
 import type { EstimateView } from './result';
 
 // What the Review before signing screen decides in the browser, as pure functions so they are
@@ -20,6 +21,12 @@ export function reviewerOf(body: unknown): Reviewer | null {
   return { canPrice: capabilities.includes('audit'), canSign: capabilities.includes('sign') };
 }
 
+/** The job's revision in an estimate route's answer, which the Reprice banner checks its preview against; null for an answer without one. */
+export function revisionOf(body: unknown): number | null {
+  const revision = field(field(body, 'job'), 'revision');
+  return typeof revision === 'number' ? revision : null;
+}
+
 export type ReviewJob = { id: string; status: string; currentDraftId: string };
 
 export type ReviewAnswer = { job: ReviewJob; estimate: EstimateView | null };
@@ -39,30 +46,56 @@ export function reviewAnswerOf(body: unknown): ReviewAnswer | null {
 }
 
 /** A money string from the server ("1234.50") as the documents print it ("$1,234.50"). No arithmetic. */
-export function dollars(amount: string): string {
-  const match = /^(-?)(\d+)\.(\d{2})$/.exec(amount);
-  if (!match) return amount;
-  const [, sign, whole, cents] = match;
-  return `${sign}$${whole!.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${cents}`;
+export { dollars };
+
+type Priced = { mode: 'range' | 'single'; low: { total: string }; high: { total: string } | null };
+
+/** A price as the proposal states it: one amount, or the range from low to high. */
+export function priceText(totals: Priced): string {
+  return totals.mode === 'range' && totals.high ? `${dollars(totals.low.total)} to ${dollars(totals.high.total)}` : dollars(totals.low.total);
+}
+
+/** The customer price line the review and the proposal print. */
+export function customerPriceLine(totals: Priced): string {
+  return totals.mode === 'range' && totals.high ? `Customer estimate range: ${priceText(totals)}` : `Price: ${priceText(totals)}`;
 }
 
 /** The customer price, and the itemized total beside it (ARCHITECTURE.md, Product rules §2). */
 export function priceLines(totals: EstimateView['totals']): { customer: string; itemized: string } {
-  const itemized = `Itemized total: ${dollars(totals.low.total)}`;
-  if (totals.mode === 'single' || !totals.high) return { customer: `Price: ${dollars(totals.low.total)}`, itemized };
-  return { customer: `Customer estimate range: ${dollars(totals.low.total)} to ${dollars(totals.high.total)}`, itemized };
+  return { customer: customerPriceLine(totals), itemized: `Itemized total: ${dollars(totals.low.total)}` };
+}
+
+/** The price-point adjustment of each end the customer price shows, untaxed (S4-4e); null when neither end has one. */
+export function pricePointLine(low: ProposalEnd, high: ProposalEnd | null): string | null {
+  if (!low.price_point && !high?.price_point) return null;
+  const amount = (end: ProposalEnd): string => dollars(end.price_point ?? '0.00');
+  if (!high) return `Price-point adjustment (not taxed): ${amount(low)}`;
+  return `Price-point adjustment (not taxed): ${amount(low)} at the low end, ${amount(high)} at the high end`;
 }
 
 /** One end's charges in the order the engine adds them into its total: the subtotal, then each adjustment it charged. */
-export function chargeRows(end: EstimateEnd, afterHoursLabel: string): Array<{ label: string; amount: string }> {
+export function chargeRows(
+  end: ProposalEnd,
+  afterHoursLabel: string,
+  withPricePoint = true,
+  withNamed = true,
+): Array<{ label: string; amount: string; spaced?: true }> {
   const adjustments = [
     { label: afterHoursLabel, amount: end.after_hours },
     ...end.trade_minimums.map((row) => ({ label: `${row.name} trade minimum`, amount: row.amount })),
     { label: 'Minimum job charge', amount: end.minimum_charge },
     { label: 'Overhead and profit', amount: end.overhead_profit },
     { label: 'Sales tax', amount: end.tax },
+    // Rounding up to the company's price point comes last, outside every bucket and untaxed (S4-4e).
+    { label: 'Price-point adjustment', amount: withPricePoint ? (end.price_point ?? '0.00') : '0.00' },
   ];
-  return [{ label: 'Subtotal', amount: end.subtotal }, ...adjustments.filter((row) => row.amount !== '0.00')];
+  // The named adjustment comes after rounding (S5b-7): a discount as a negative amount, and no row when it came to nothing.
+  const named = withNamed && end.adjustment && end.adjustment.amount !== '0.00' ? [end.adjustment] : [];
+  return [
+    { label: 'Subtotal', amount: end.subtotal },
+    ...adjustments.filter((row) => row.amount !== '0.00'),
+    ...named.map((row) => ({ label: row.name, amount: row.direction === 'discount' ? `-${row.amount}` : row.amount, spaced: true as const })),
+  ];
 }
 
 // The engine's pricing warnings by code (src/engine/price-v2.ts), in plain words. The advisory
@@ -143,6 +176,9 @@ export function notReadyReasons(estimate: EstimateView): string[] {
   for (const missing of estimate.missingDetails) reasons.push(`${missing}. The documents are shown again once it is added on the job.`);
   for (const missing of estimate.staffNotes.companySetupMissing) reasons.push(`Company settings: ${missing} is not filled in. The owner adds it on Company settings.`);
   if (estimate.documents?.unpricedWork.length) reasons.push('Some work has no price. Go back to editing and change the scope.');
+  if (estimate.documents?.pendingExtras) {
+    reasons.push('Additions or additional work are waiting for the owner to approve them. Go back to editing, finish, propose them again and have the owner approve before making the estimate.');
+  }
   if (reasons.length === 0) reasons.push('The scope has no priced work yet. Go back to editing and add the work.');
   return reasons;
 }
@@ -171,11 +207,15 @@ const REFUSED: Record<string, string> = {
   documents: 'The documents need the property address, the year built and at least one room. Add them, then finish again.',
 };
 
+/** The fixed sentence for an engine refusal's stage; an unknown stage reads as the pricing one. */
+export function refusedText(stage: unknown): string {
+  return (typeof stage === 'string' ? REFUSED[stage] : undefined) ?? REFUSED.pricing!;
+}
+
 export function outcomeOf(status: number, body: unknown): { message: string; next: Next } {
   const code = field(body, 'error');
   if (code === 'estimate_refused') {
-    const stage = field(body, 'stage');
-    return { message: (typeof stage === 'string' ? REFUSED[stage] : undefined) ?? REFUSED.pricing!, next: 'done' };
+    return { message: refusedText(field(body, 'stage')), next: 'done' };
   }
   const known = typeof code === 'string' ? OUTCOMES[code] : undefined;
   if (known) return known;

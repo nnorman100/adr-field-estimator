@@ -1,5 +1,6 @@
 import type { Firestore } from 'firebase-admin/firestore';
 import type { FieldDoc } from '@/lib/field/canonical';
+import { draftOfOtherJob } from '@/lib/jobs/drafts';
 import { MAX_PHOTO_REFS, MAX_ROOMS } from '@/lib/field/schema';
 import { firestoreSpan } from '@/lib/telemetry/spans';
 import type { SummaryDraftReader } from './service';
@@ -14,7 +15,7 @@ const docs = (snapshot: { docs: { id: string; get(field: string): unknown }[] })
 
 export function firestoreSummaryDraftReader(db: Firestore): SummaryDraftReader {
   return {
-    async read(companyId, draftId) {
+    async read(companyId, jobId, draftId) {
       const ref = db.collection('companies').doc(companyId).collection('drafts').doc(draftId);
       return firestoreSpan('runTransaction', 'drafts', () =>
         db.runTransaction(
@@ -22,6 +23,8 @@ export function firestoreSummaryDraftReader(db: Firestore): SummaryDraftReader {
             const draft = await tx.get(ref);
             if (!draft.exists) return null;
             const data = draft.data();
+            // A draft stamped for another job is never read; one made before the stamp names none.
+            if (draftOfOtherJob(data?.jobId, jobId)) return null;
             // One above each cap detects overflow without reading an attacker-sized collection.
             const rooms = await tx.get(ref.collection('rooms').limit(MAX_ROOMS + 1));
             if (rooms.size > MAX_ROOMS) return 'too_many_rooms' as const;

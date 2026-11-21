@@ -56,7 +56,7 @@ the read-only operator policy (an operator reads through `withOperator`; every w
 | Table | What it holds | Runtime rights |
 | --- | --- | --- |
 | `job_assignments` | An estimator assigned to a job: `id` made on the phone, `job_id`, `estimator_actor_id`, `request_digest` (SHA-256 of the assign request), `assigned_by_actor_id`, `assigned_at`, and `ended_at` with `ended_by_actor_id` once unassigned. At most one active row per job and estimator | `SELECT`, `INSERT`, and `UPDATE` of `ended_at` and `ended_by_actor_id`; a trigger keeps every other column as made, lets an active row end once (the time from the clock) and freezes an ended row |
-| `job_coordination` | At most one row per job: `office_notes` (up to 4,000 characters; line breaks and tabs, no other control character), `revision` (the coordination revision: 1 when the row is made, up by one with each note or field owner change), `last_change_id` | `SELECT`, `INSERT`, and `UPDATE` of `office_notes`, `revision`, `last_change_id` and `updated_at` |
+| `job_coordination` | At most one row per job: `office_notes` (up to 4,000 characters; line breaks and tabs, no other control character), `revision` (the coordination revision: 1 when an office save or field owner change makes the row, 0 when the first drying watch action makes it since 0020, up by one with each note or field owner change), `last_change_id`; since 0020 also `drying_watch`, the drying watch's accepted actions with their own revision, apart from the coordination revision ([Drying log and outcomes](postgres-drying-outcomes.md)) | `SELECT`, `INSERT`, and `UPDATE` of `office_notes`, `revision`, `last_change_id` and `updated_at`, and since 0020 of `drying_watch` |
 | `agreement_corrections` | A correction of a signed job's `property_address`, `customer_name`, `customer_phone` or `customer_email` beside its agreement (same job): `id` made on the phone, `field`, `value` (one line, the corrected column's limits), `request_digest`, `created_by_actor_id`, `created_at` | `SELECT`, `INSERT`; never changed or removed, and the agreement it sits beside never changes |
 
 - Who owns a job's field work is `jobs.field_owner_actor_id` (0010): empty on an office user's job until the
@@ -68,3 +68,90 @@ the read-only operator policy (an operator reads through `withOperator`; every w
 - Personal data: `job_coordination.office_notes` is free text the office writes and may hold personal
   details (a gate code, a phone number); `agreement_corrections.value` holds the corrected address, name,
   phone or email. `job_assignments` holds ids and times only. Audit details hold ids and revisions only.
+
+## Draft claims (`0016_job_drafts`, security audit F1)
+
+`0016_job_drafts` adds one table; nothing earlier changes. `job_drafts` claims each Firestore field draft id
+once per company for one job: `company_id`, `draft_id` (made on the phone), `job_id`, with the
+key on company and draft id. The server claims a draft id in the same transaction that puts a job on it (a
+new job, a copy, Back to editing), after the job row, and a draft id already claimed, by another job or by
+an earlier draft of the same job, or named by any submission, is 409 `conflict`. So no job takes another
+job's draft, even one that job submitted and moved on from, including one the previous version (still
+serving while a release migrates) put a job on without claiming it. A retry of a create, copy or Back to editing
+holds its draft id for the job in the table (claimed by the job, or claimed for it now when no job has
+claimed it and no other job's submission names it) in a transaction that commits before it touches the
+field database, and only then stamps the job id on a draft made before drafts carried it, so a lost answer
+from that stamp never leaves the draft stamped without its claim. The first capture and the owner's move name the
+field owner only on drafts the table gives the job: the drafts of its own submissions and its current draft
+that no job has claimed are claimed for the job first, a submitted draft another job claimed is left out,
+and a current draft another job claimed is 409. The
+runtime has `SELECT` and `INSERT` only, under forced row-level security with company policies and the
+read-only operator policy, so a claim never moves or goes away.
+
+The file fills the table from each job's current draft and the draft of each of its submissions, reading the
+jobs and submissions as their owner with row-level security unforced for that one transaction and forced again
+before it ends. Before the fill it checks the existing data (security audit F1, step 5) and stops, changing
+nothing, with an error naming each job by company and job id, when a draft id is named by more than one job,
+or when a job in status `draft` is on a draft that was already submitted (a committed submission of its
+current draft; Submit writes the Firestore draft's `submitted` state from that record, so the check reads
+the record in Postgres rather than Firestore). A draft submitted in Firestore alone, which SQL cannot see, is
+checked by the owner before 0016 runs, read only, with `npm run platform:check-draft-states`
+([migrations runbook](../runbook/migrations.md#before-0016_job_drafts-security-audit-f1)). Which job keeps a draft, and how a stuck job moves on, are the
+owner's decisions, made before the file runs again. The table holds ids only.
+
+## The field revision (`0018_field_revision`, draft life-cycle redesign slice 1)
+
+`0018_field_revision` adds four columns to `jobs` and one lookup; no table, row or policy is removed. They
+are the database part of the draft life-cycle redesign (Design 2): one sync step will write every Firestore
+draft of a job from Postgres, guarded by one version number. Copy records `copied_from_job_id`. Every route that
+changes a draft's life cycle syncs the job's drafts after its commit: New job, Copy and Back to editing (which make
+the draft from its content: empty, the copy's signed source less its cleared keys, or the latest record), Archive,
+Restore, Start field work, Move and Submit (`web/src/lib/jobs/sync-job.ts`): one read-only
+snapshot of the job with its `field_revision`, the sync, then `field_synced_revision` raised to that version
+(`WHERE field_synced_revision < v`) unless a draft is to be written again. Submit syncs twice: after its intent
+row (the fence, the pending row's `submitting`) and after its decision (`submitted` or `editing`); the submission
+worker syncs a job whose decided row's request could not. No placeholder is written for a missing draft any more;
+one a previous version left is replaced by the draft at the next sync of the job, unless that version left a revision
+newer than the job's (the sync then reports it superseded and leaves it until a sync at a newer revision, or the
+operator's generation raise, writes over it). The scheduled worker's repair pass (`web/src/lib/jobs/sync-repair.ts`) syncs jobs still behind once their
+last change is more than 60 seconds old, so a field step that failed or was abandoned heals with no request from a
+phone: within one worker period while a pass's bounds hold every due job (100 companies, the most the lookup
+returns, and 200 jobs in each) and none of them fails. A larger backlog drains over the following periods. Within a company, each period's
+pass starts one page further on (and wraps around), so no fixed set of jobs that keep failing can hold the front of the
+list. Companies past the 100 wait for a later pass, the one waiting longest first: a company can wait while 100 or
+more others each hold an older job that keeps failing (a lookup paged across companies is a follow-up migration). A job
+counts as synced only once its watermark covers the version it was due at.
+
+- `field_revision` (starts at 0) rises by exactly one, inside the database, every time an input of the
+  drafts' life cycle changes: the job's `status`, `current_draft_id`, `field_owner_actor_id` or `copied_from_job_id`; its
+  `job_coordination` row being made at revision 1 or more (one made at revision 0, by the first drying watch action,
+  does not) or its `revision` moving; a `job_submissions` row being made or its
+  `status` moving; a draft id claimed in `job_drafts`; and the sign-in `uid` of the person who owns the
+  field work (`actors`). Nothing else moves it: not the address, the job `revision` alone, office notes saved
+  without a coordination revision, a submission's marker, an email, or the watermark below. The runtime may
+  ask for a bump (`field_revision + 1`) and nothing else; a bump from another table runs as the caller and
+  is refused when the caller cannot change the job (an active platform operator), so no input is committed
+  without its bump. Like the field owner, a bump keeps the job `revision` (the 0015 trigger is widened for
+  the field columns).
+- `field_synced_revision` (starts at 0): the highest field revision the sync has written to Firestore. The
+  runtime may set it.
+- `field_changed_at`: when the field revision last rose (the clock at the bump), set by the trigger only.
+- `copied_from_job_id`: the job a copy was made from, in the same company (a foreign key), set once and
+  never changed or cleared. Copy sets it when it inserts the copy, or on a retry while it is empty. A
+  trigger on the `job_copied` audit row (`details.copiedFrom`, written in the copy's transaction) sets it
+  too while it is empty, so copies the previous version makes during a rollout or after an allowed
+  rollback get it. 0018 fills it for existing copies from those audit rows.
+- `job_field_sync_due_companies(max, grace)` returns, on the 0005 pattern, the ids of companies with a job
+  whose `field_synced_revision` is behind its `field_revision` and whose last change is more than `grace`
+  seconds old, the one waiting longest first. The repair pass uses it (`web/src/lib/jobs/sync-repair.ts`).
+
+A bump from another table locks the job row after that table's row, so every writer locks the job row
+first. The submission worker does so before it aborts an expired attempt since #482
+(`web/src/lib/submissions/repair.ts`, test release 2026.11.19-7). That release must be serving before
+0018 is applied, and no rollback goes behind it afterwards: an older worker deadlocks against Submit once
+the triggers exist; the [test release runbook](../runbook/test-release.md) states that rollback floor and how to tell
+whether 0018 is applied (the migration job's executions, and `migration_ledger` whenever they cannot confirm it). 0018
+waits at most 5 seconds for each lock (`SET LOCAL lock_timeout`), so a blocked run fails with nothing applied. The job
+revision guard lets an update that changes only these field columns keep the job `revision`; an update
+that changes nothing is still refused, so the sync writes the watermark only when it is newer
+(`WHERE field_synced_revision < v`).

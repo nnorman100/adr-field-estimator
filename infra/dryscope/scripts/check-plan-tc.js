@@ -26,6 +26,7 @@ const TC_APIS = [
   'monitoring.googleapis.com',
   'recaptchaenterprise.googleapis.com',
   'run.googleapis.com',
+  'servicehealth.googleapis.com',
   'telemetry.googleapis.com',
 ];
 
@@ -131,6 +132,10 @@ function addTcData(env, { sa, others, grants, attrs, absent, optional }) {
       7,
       30,
     ),
+    // Deleting the instance keeps its backups and takes one more, kept at most 35 days (D-023).
+    'settings.0.retain_backups_on_delete': true,
+    'settings.0.final_backup_config.0.enabled': true,
+    'settings.0.final_backup_config.0.retention_days': between(1, 35),
   };
   const schedule = 'google_firestore_backup_schedule.field_daily';
   others.push(schedule);

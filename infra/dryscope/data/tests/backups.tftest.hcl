@@ -94,3 +94,49 @@ run "exactly_30_cloud_sql_backups_is_accepted" {
     error_message = "30 retained backups is the limit and is accepted."
   }
 }
+
+run "cloud_sql_keeps_its_backups_after_deletion_and_takes_a_final_one" {
+  command = plan
+
+  assert {
+    condition     = google_sql_database_instance.main.settings[0].retain_backups_on_delete == true
+    error_message = "Deleting the instance keeps its automated and on-demand backups."
+  }
+  assert {
+    condition     = google_sql_database_instance.main.settings[0].final_backup_config[0].enabled == true && google_sql_database_instance.main.settings[0].final_backup_config[0].retention_days == 30
+    error_message = "A final backup is taken at deletion and kept 30 days, inside the 35-day window."
+  }
+}
+
+run "a_final_backup_kept_past_35_days_is_refused" {
+  command = plan
+
+  variables {
+    sql_final_backup_days = 36
+  }
+
+  expect_failures = [var.sql_final_backup_days]
+}
+
+run "a_final_backup_kept_for_no_days_is_refused" {
+  command = plan
+
+  variables {
+    sql_final_backup_days = 0
+  }
+
+  expect_failures = [var.sql_final_backup_days]
+}
+
+run "exactly_35_final_backup_days_is_accepted" {
+  command = plan
+
+  variables {
+    sql_final_backup_days = 35
+  }
+
+  assert {
+    condition     = google_sql_database_instance.main.settings[0].final_backup_config[0].retention_days == 35
+    error_message = "35 days is the limit and is accepted."
+  }
+}

@@ -58,6 +58,7 @@ type Body = {
   job: { id: string; status: string; currentDraftId: string; fieldOwnerActorId: string | null; propertyAddress: string; revision: number };
   customer: { name: string; phone: string; email: string };
   claim: { dateOfLoss: string | null };
+  draftMissing?: true;
   jobs: { id: string; mine: boolean; customerName: string; propertyAddress: string; revision: number }[];
   nextCursor: string | null;
   error: string;
@@ -139,7 +140,7 @@ describe('creating a job', () => {
     expect(first.body.claim.dateOfLoss).toBeNull();
     expect(await jobCount()).toBe(1);
     expect(await auditCount('job_created')).toBe(1);
-    expect([...h.drafts.made]).toEqual([[`${h.seed.a}/${ids.draftId}`, { fieldOwnerUid: 'estimator-a' }]]);
+    expect(h.drafts.owners()).toEqual([[`${h.seed.a}/${ids.draftId}`, { fieldOwnerUid: 'estimator-a', fieldOwnerRevision: 0 }]]);
     expect(h.drafts.projected.get(`${h.seed.a}/${ids.id}`)).toEqual({ currentDraftId: ids.draftId, revision: 1 });
   });
 
@@ -154,7 +155,9 @@ describe('creating a job', () => {
     const ids = newIds();
     await create(ESTIMATOR_A, { ...ids, propertyAddress: '12 Sample Way' });
     const before = await everything(h.admin);
+    // No refused request reaches the field database: no draft writer (the sync, or the previous one).
     const drafts = h.drafts.calls.length;
+    const field = h.field.calls.length;
     for (const body of [
       { ...ids, propertyAddress: '99 Other Road' },
       { ...ids, draftId: randomUUID(), propertyAddress: '12 Sample Way' },
@@ -164,6 +167,7 @@ describe('creating a job', () => {
     }
     expect(await everything(h.admin)).toBe(before);
     expect(h.drafts.calls).toHaveLength(drafts);
+    expect(h.field.calls.slice(field)).toEqual([]);
   });
 
   it('answers 409 when the draft id is another job’s', async () => {
@@ -173,28 +177,89 @@ describe('creating a job', () => {
     expect(await jobCount()).toBe(1);
   });
 
+  it('answers 409 when the field database holds the draft id for another job, and leaves that draft as it is', async () => {
+    // Security audit F1: a draft made for another job is never taken as this job's, even where
+    // Postgres does not know the id (a draft made before the job id was written on drafts).
+    const draftId = randomUUID();
+    const key = `${h.seed.a}/${draftId}`;
+    h.drafts.plant(key, { fieldOwnerUid: 'estimator-a2', jobId: randomUUID() });
+    const before = await everything(h.admin);
+    const id = randomUUID();
+    expect(await create(ESTIMATOR_A, { id, draftId })).toEqual({ status: 409, body: { error: 'conflict' } });
+    expect(h.drafts.owner(key)).toEqual({ fieldOwnerUid: 'estimator-a2' });
+    // Nothing is committed in Postgres, so the same job id with a fresh draft id is a new job.
+    expect(await everything(h.admin)).toBe(before);
+    expect((await create(ESTIMATOR_A, { id, draftId: randomUUID() })).status).toBe(201);
+  });
+
+  // Security audit F1, across a release: the previous version (still serving while the migration
+  // runs) made the job and its draft with no claim and no job id on the draft, which proves nothing on
+  // its own. The same create sent again claims the draft id for the job in Postgres first, then
+  // stamps the draft; a draft id Postgres holds for another job is refused and its draft not stamped.
+  it('claims and stamps a draft the previous version made when the same create is sent again, and refuses one another job holds', async () => {
+    const ids = newIds();
+    expect((await create(ESTIMATOR_A, ids)).status).toBe(201);
+    const key = `${h.seed.a}/${ids.draftId}`;
+    await h.admin`DELETE FROM job_drafts WHERE draft_id = ${ids.draftId}`;
+    h.drafts.unstamp(key);
+    expect((await create(ESTIMATOR_A, ids)).status).toBe(200);
+    expect(await h.admin`SELECT job_id::text AS job FROM job_drafts WHERE draft_id = ${ids.draftId}`).toEqual([{ job: ids.id }]);
+    expect(h.drafts.jobOf(key)).toBe(ids.id);
+
+    const held = newIds();
+    expect((await create(ESTIMATOR_A, held)).status).toBe(201);
+    const other = newIds();
+    expect((await create(ESTIMATOR_A, other)).status).toBe(201);
+    const heldKey = `${h.seed.a}/${held.draftId}`;
+    await h.admin`DELETE FROM job_drafts WHERE draft_id = ${held.draftId}`;
+    await h.admin`INSERT INTO job_drafts (company_id, draft_id, job_id) VALUES (${h.seed.a}, ${held.draftId}, ${other.id})`;
+    h.drafts.unstamp(heldKey);
+    const stored = structuredClone(h.drafts.owner(heldKey));
+    expect(await create(ESTIMATOR_A, held)).toEqual({ status: 409, body: { error: 'conflict' } });
+    expect(h.drafts.jobOf(heldKey)).toBeUndefined();
+    expect(h.drafts.owner(heldKey)).toEqual(stored);
+    expect(await h.admin`SELECT job_id::text AS job FROM job_drafts WHERE draft_id = ${held.draftId}`).toEqual([{ job: other.id }]);
+  });
+
+  // Security audit F1: the claim commits before the stamp. When the field database stamps a draft the
+  // previous version made and its answer is lost, the draft is never left stamped without its claim.
+  it('commits the claim before stamping a draft the previous version made, so a lost answer leaves it claimed', async () => {
+    const ids = newIds();
+    expect((await create(ESTIMATOR_A, ids)).status).toBe(201);
+    const key = `${h.seed.a}/${ids.draftId}`;
+    await h.admin`DELETE FROM job_drafts WHERE draft_id = ${ids.draftId}`;
+    h.drafts.unstamp(key);
+    // The draft sync stamps it and loses its answer, on its try and its one more try.
+    h.field.loseNext.sync = 2;
+    expect(await create(ESTIMATOR_A, ids)).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
+    expect(h.drafts.jobOf(key)).toBe(ids.id);
+    expect(await h.admin`SELECT job_id::text AS job FROM job_drafts WHERE draft_id = ${ids.draftId}`).toEqual([{ job: ids.id }]);
+    expect((await create(ESTIMATOR_A, ids)).status).toBe(200);
+  });
+
   it('makes the draft on a retry when the first attempt saved the job and lost the draft', async () => {
     const ids = newIds();
-    h.drafts.failNext.on = true;
+    // The draft sync fails on its try and its one more try.
+    h.field.failNext.sync = 2;
     expect(await create(ESTIMATOR_A, ids)).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
     expect(await jobCount()).toBe(1);
-    expect(h.drafts.made.size).toBe(0);
+    expect(h.drafts.owners().length).toBe(0);
     const retry = await create(ESTIMATOR_A, ids);
     expect(retry.status).toBe(200);
     expect(retry.body.job.id).toBe(ids.id);
     expect(await jobCount()).toBe(1);
     expect(await auditCount('job_created')).toBe(1);
-    expect([...h.drafts.made.keys()]).toEqual([`${h.seed.a}/${ids.draftId}`]);
+    expect(h.drafts.owners().map(([at]) => at)).toEqual([`${h.seed.a}/${ids.draftId}`]);
   });
 
   it('makes no second draft when the draft was written but its answer was lost', async () => {
     const ids = newIds();
-    h.drafts.failNext.on = true;
-    h.drafts.failNext.afterWrite = true;
+    // The draft sync writes the draft and loses its answer, on its try and its one more try.
+    h.field.loseNext.sync = 2;
     expect((await create(ESTIMATOR_A, ids)).status).toBe(503);
-    expect(h.drafts.made.size).toBe(1);
+    expect(h.drafts.owners().length).toBe(1);
     expect((await create(ESTIMATOR_A, ids)).status).toBe(200);
-    expect(h.drafts.made.size).toBe(1);
+    expect(h.drafts.owners().length).toBe(1);
     expect(await jobCount()).toBe(1);
   });
 
@@ -214,8 +279,8 @@ describe('creating a job', () => {
     const office = await create(OFFICE_A, byOffice);
     expect(office.status).toBe(201);
     expect(office.body.job.fieldOwnerActorId).toBeNull();
-    expect(h.drafts.made.get(`${h.seed.a}/${byOffice.draftId}`)).toEqual({ fieldOwnerUid: null });
-    expect(h.drafts.made.get(`${h.seed.a}/${byOwner.draftId}`)).toEqual({ fieldOwnerUid: 'owner-a' });
+    expect(h.drafts.owner(`${h.seed.a}/${byOffice.draftId}`)).toEqual({ fieldOwnerUid: null, fieldOwnerRevision: 0 });
+    expect(h.drafts.owner(`${h.seed.a}/${byOwner.draftId}`)).toEqual({ fieldOwnerUid: 'owner-a', fieldOwnerRevision: 0 });
   });
 
   it('makes the other company’s own job from the other company’s ids, and touches nothing of the first', async () => {
@@ -226,7 +291,7 @@ describe('creating a job', () => {
     expect(made.body.job.id).toBe(ids.id);
     expect(await jobCount()).toBe(2);
     expect(await h.admin`SELECT * FROM jobs WHERE company_id = ${h.seed.a}`).toEqual(before);
-    expect([...h.drafts.made.keys()].sort()).toEqual([`${h.seed.a}/${ids.draftId}`, `${h.seed.b}/${ids.draftId}`].sort());
+    expect(h.drafts.owners().map(([at]) => at).sort()).toEqual([`${h.seed.a}/${ids.draftId}`, `${h.seed.b}/${ids.draftId}`].sort());
   });
 
   it.each([
@@ -240,6 +305,7 @@ describe('creating a job', () => {
     expect(await create(ESTIMATOR_A, body)).toEqual({ status: 400, body: { error: 'invalid_request' } });
     expect(await jobCount()).toBe(0);
     expect(h.drafts.calls).toEqual([]);
+    expect(h.field.calls).toEqual([]);
   });
 
   it('refuses a call with no sign-in', async () => {
@@ -442,6 +508,16 @@ describe('listing and reading', () => {
     expect((await read(ESTIMATOR_A2, theirs.id)).status).toBe(200);
     expect((await read(OWNER_A, theirs.id)).status).toBe(200);
     expect((await read(OFFICE_A, mine.id)).status).toBe(200);
+  });
+
+  it('does not say draftMissing for a new job’s first draft, which Start field work has no record to make', async () => {
+    const started = await seedJob(OWNER_A);
+    expect((await read(OWNER_A, started.id)).body.draftMissing).toBeUndefined();
+    h.drafts.remove(`${h.seed.a}/${started.draftId}`);
+    const lost = await read(OWNER_A, started.id);
+    expect(lost.status).toBe(200);
+    expect(lost.body.draftMissing).toBeUndefined();
+    expect(lost.body.job.currentDraftId).toBe(started.draftId);
   });
 
   it('shows an estimator a job they own in the field even when someone else started it', async () => {

@@ -73,6 +73,16 @@ variable "sql_pitr_log_days" {
   }
 }
 
+variable "sql_final_backup_days" {
+  type        = number
+  description = "Days the final backup Cloud SQL takes when the instance is deleted is kept: 1 to 35 (D-023: deleted data leaves every backup within 35 days). Google's default is 30."
+
+  validation {
+    condition     = var.sql_final_backup_days >= 1 && var.sql_final_backup_days <= 35
+    error_message = "sql_final_backup_days must be between 1 and 35 (D-023, the 35-day backup window)."
+  }
+}
+
 variable "evidence_soft_delete_days" {
   type        = number
   description = "Days a deleted evidence object stays recoverable: 7 in every environment (D-023: 28 days as a noncurrent version plus 7 of soft delete keeps the window at 35 days)."
@@ -91,12 +101,15 @@ variable "workload_identity_principal_set" {
   # D-024: only the numeric repository id. A repository name can be deleted and registered again by
   # someone else, and the name form would then trust their workflows; the numeric id is never reused
   # (documents/docs.cloud.google.com/iam/docs/workload-identity-federation-with-deployment-pipelines).
+  # The pool's project number is pinned to this project (570228742694): a pool in another
+  # project may be bound on these accounts (docs.cloud.google.com/iam/docs/workload-identity-federation,
+  # "Principal types"), but that project's owner decides which identities it admits.
   validation {
     condition = var.workload_identity_principal_set == "" || can(regex(
-      "^principalSet://iam\\.googleapis\\.com/projects/[0-9]+/locations/global/workloadIdentityPools/dryscope-${var.environment}/attribute\\.repository_id/[0-9]+$",
+      "^principalSet://iam\\.googleapis\\.com/projects/570228742694/locations/global/workloadIdentityPools/dryscope-${var.environment}/attribute\\.repository_id/[0-9]+$",
       var.workload_identity_principal_set,
     ))
-    error_message = "Pass a principalSet from this environment's own pool (dryscope-<environment>, never a pool shared with the other environment) scoped to one repository by its numeric id (attribute.repository_id/<digits>). The repository-name form (attribute.repository) is refused (D-024), and the pool-wide wildcard lets every identity in the pool impersonate the deploy account."
+    error_message = "Pass a principalSet from this environment's own pool (projects/570228742694/.../dryscope-<environment>: never a pool in another Google Cloud project, whose owner decides who it admits, and never a pool shared with the other environment) scoped to one repository by its numeric id (attribute.repository_id/<digits>). The repository-name form (attribute.repository) is refused (D-024), and the pool-wide wildcard lets every identity in the pool impersonate the deploy account."
   }
 }
 

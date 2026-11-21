@@ -1,5 +1,6 @@
 import { FieldValue, Timestamp, type DocumentReference, type Firestore } from 'firebase-admin/firestore';
 import type { FieldDoc, FieldManifest } from '@/lib/field/canonical';
+import { draftOfOtherJob, firestoreDraftLookup, placeholderOf, placeholderRefusal, startDraft, type DraftLookup, type DraftMade } from '@/lib/jobs/drafts';
 import { firestoreJobProjectionStore, type JobProjectionStore } from '@/lib/jobs/projection';
 import { MAX_PHOTO_REFS, MAX_ROOMS } from '@/lib/field/schema';
 import { firestoreSpan } from '@/lib/telemetry/spans';
@@ -16,6 +17,7 @@ import { firestoreSpan } from '@/lib/telemetry/spans';
 //             archived (S5b-2, src/lib/jobs/archive-store.ts), when no Submit is in flight
 //   fence     { submissionId, epoch, expiresAt } while submitting and after; removed on release
 //   previous  { draftId, submissionId } on a draft Back to editing made: where it came from
+//   jobId     the job the draft was made for (src/lib/jobs/drafts.ts, security audit F1)
 //
 // A seam, so the route tests run without Firestore; tests/emu/ checks this writer against the
 // emulator with the same contract the stand-in is held to (tests/submissions/fence-contract.ts).
@@ -35,7 +37,7 @@ export type FenceResult =
 
 export type Provenance = { draftId: string; submissionId: string };
 
-export type FenceStore = JobProjectionStore & {
+export type FenceStore = JobProjectionStore & DraftLookup & {
   // Closes the fence: `editing` becomes `submitting` with this fence. `replacing` names an epoch
   // whose submission is known to be aborted; a fence of exactly that epoch is replaced.
   fence(companyId: string, draftId: string, fence: Fence, replacing?: string): Promise<FenceResult>;
@@ -49,16 +51,22 @@ export type FenceStore = JobProjectionStore & {
   // After an abort: `submitting` with this epoch goes back to `editing`. Anything else (another
   // epoch's fence, already editing or submitted, no draft) is left as it is.
   release(companyId: string, draftId: string, epoch: string): Promise<'released' | 'not_fenced'>;
-  // Back to editing: a new `editing` draft holding the given field data, with its provenance.
-  // Made whole or not at all; `exists` when the draft is already there (a retry), and nothing is
-  // changed then.
+  // Back to editing: a new `editing` draft of the job holding the given field data, with its
+  // provenance. Made whole or not at all; `exists` when the draft is already there with the same job
+  // and provenance (a retry), and nothing is changed then, except that a draft made before `jobId`
+  // takes it (the caller holds the draft id for this job in Postgres first); `taken` when the draft
+  // there was made for another job or from another submission, and nothing is changed either;
+  // `archived` when only an archived job's placeholder is there (src/lib/jobs/archive-store.ts): no
+  // draft exists, none is made over it until the restore, and the request is sent again. A restored
+  // job's placeholder gives way to the draft, which keeps its revision.
   createFrom(
     companyId: string,
+    jobId: string,
     draftId: string,
     fieldOwnerUid: string | null,
     manifest: FieldManifest,
     previous: Provenance,
-  ): Promise<'created' | 'exists'>;
+  ): Promise<DraftMade>;
 };
 
 type StoredFence = { submissionId: string; epoch: string };
@@ -81,6 +89,7 @@ export function firestoreFenceStore(db: Firestore): FenceStore {
 
   return {
     ...firestoreJobProjectionStore(db),
+    ...firestoreDraftLookup(db),
     async fence(companyId, draftId, fence, replacing) {
       const ref = draftRef(companyId, draftId);
       return inTransaction<FenceResult>(async (tx) => {
@@ -157,11 +166,25 @@ export function firestoreFenceStore(db: Firestore): FenceStore {
       });
     },
 
-    async createFrom(companyId, draftId, fieldOwnerUid, manifest, previous) {
+    async createFrom(companyId, jobId, draftId, fieldOwnerUid, manifest, previous) {
       const ref = draftRef(companyId, draftId);
-      return inTransaction<'created' | 'exists'>(async (tx) => {
-        if ((await tx.get(ref)).exists) return 'exists';
-        tx.create(ref, {
+      return inTransaction<DraftMade>(async (tx) => {
+        const found = await tx.get(ref);
+        const left = placeholderOf(found);
+        if (left) {
+          const refused = placeholderRefusal(left, jobId);
+          if (refused) return refused;
+        } else if (found.exists) {
+          const from = found.get('previous') as Record<string, unknown> | undefined;
+          const same = from?.draftId === previous.draftId && from?.submissionId === previous.submissionId;
+          const stamped = found.get('jobId');
+          if (!same || draftOfOtherJob(stamped, jobId)) return 'taken';
+          // A draft made before `jobId` takes it: the caller holds the draft id for this job in Postgres.
+          if (stamped === undefined) tx.update(ref, { jobId });
+          return 'exists';
+        }
+        startDraft(tx, ref, left, {
+          jobId,
           ...(fieldOwnerUid === null ? {} : { fieldOwnerUid }),
           state: 'editing',
           field: manifest.draft ?? {},

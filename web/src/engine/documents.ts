@@ -6,12 +6,13 @@ import { companySetupMissing } from './company-setup';
 import { Dec, HUNDRED, money, percentText } from './decimal';
 import type { JObj, Json } from './json';
 import type { Inspection } from './inspection';
+import { ADDITION } from './price-v2';
 import { LAYOUT_SETTINGS, layoutKeys, letterOf, ROOM_WORDS, roomWordsFor } from './proposal-letter';
 import { letterParagraph, equipmentSizing } from './sizing';
 import type { Table } from './table';
 import { aiNote, plain, technicianStatement } from './text';
 import { priceAndRange, type End, type Totals } from './totals';
-import { chars, collapse, lineJson, oneLine, type PriceLine } from './values';
+import { adjustmentLines, chars, collapse, lineJson, oneLine, type AdjustmentText, type PriceLine } from './values';
 
 
 const PHOTO_LOCATION_PRIVACY =
@@ -321,10 +322,35 @@ function addressee(claim: Claim | null): string {
     .join('\n');
 }
 
-function estimateSentence(total: Dec, low: Dec, high: Dec | null, explanation: string | null, single: boolean): string {
-  if (single) return `Itemized total: $${total.format(',.2f')}.`;
+function pricePointSentence(low: Dec, high: Dec | null): string {
+  const amount = (value: Dec): string => `$${value.format(',.2f')}`;
+  if (high === null) return low.isZero() ? '' : `Price-point adjustment (not taxed): ${amount(low)}.`;
+  if (low.isZero() && high.isZero()) return '';
+  return `Price-point adjustment (not taxed): ${amount(low)} at the low end and ${amount(high)} at the high end.`;
+}
+
+function adjustmentSentence(low: End, high: End | null): string {
+  const text = (end: End): { adjustment?: AdjustmentText } => {
+    const row = end.adjustment;
+    return row
+      ? { adjustment: { name: row.name, direction: row.direction, before: row.before.format('.2f'), amount: row.amount.format('.2f'), after: row.after.format('.2f') } }
+      : {};
+  };
+  return adjustmentLines(text(low), high && text(high)).join('\n');
+}
+
+function estimateSentence(
+  total: Dec,
+  low: Dec,
+  high: Dec | null,
+  explanation: string | null,
+  single: boolean,
+  adjustment: string,
+): string {
+  const own = adjustment ? `\n${adjustment}` : '';
+  if (single) return `Itemized total: $${total.format(',.2f')}.${own}`;
   const sentence = `Itemized total: $${total.format(',.2f')}. Customer estimate range: $${low.format(',.2f')} to $${(high ?? low).format(',.2f')}.`;
-  return explanation ? `${sentence} ${explanation}` : sentence;
+  return `${explanation ? `${sentence} ${explanation}` : sentence}${own}`;
 }
 
 function letterhead(parts: string[]): string {
@@ -346,6 +372,8 @@ export function makeDocuments(input: {
   settings?: Json;
   /** Each room's findings note and prep tasks, in the record's room order (S5a-10); absent means none. */
   rooms?: Json[];
+  /** The id of the named adjustment approved on the job, applied after price-point rounding (S5b-7). */
+  adjustment?: string;
 }): JObj {
   const ai = parse(AI, input.ai, 'ai');
   const settings = parse(LAYOUT_SETTINGS, input.settings, 'settings');
@@ -366,7 +394,7 @@ export function makeDocuments(input: {
   }
   if (data.packagePrice !== null) fail('Update the app and clear the old package-tier selection before auditing.');
   const before = data.yearBuilt < 1978;
-  const priced = priceAndRange(data, input.table);
+  const priced = priceAndRange(data, input.table, input.adjustment);
   const estimate = estimateOf(priced.totals, input.table);
   const items = priced.lines.map((line) => ({ ...line }));
   const total = money(priced.totals.low.total);
@@ -375,18 +403,28 @@ export function makeDocuments(input: {
   const single = priced.totals.mode === 'single';
   const explanation = typeof estimate.explanation === 'string' ? estimate.explanation : null;
   const approved = data.extras.filter((extra) => extra.approval);
-  const extraLines = items.filter((item) => item.group === 'extras');
+  // The hourly additional work lines only; a unit or flat addition's line already carries its approved wording.
+  const extraLines = items.filter((item) => item.group === 'extras' && item.code !== ADDITION);
   approved.forEach((extra, index) => {
     const line = extraLines[index];
     if (line) line.description = wording(extra, clauseCompany);
   });
-  const covered = new Set(approved.map((extra) => extra.description));
+  const covered = new Set([
+    ...approved.map((extra) => extra.description),
+    ...(data.additions ?? []).filter((addition) => addition.approvedAt !== null).map((addition) => plain(addition.description)),
+  ]);
   const unpriced = ai.unpriced_work.filter((note) => !covered.has(plain(note)));
-  const pending = data.extras.filter((extra) => extra.approval === null).length;
+  const pending =
+    data.extras.filter((extra) => extra.approval === null).length + (data.additions ?? []).filter((addition) => addition.approvedAt === null).length;
   const age = before
     ? `Due to property age (${data.yearBuilt}), California State Law requires third-party lead and asbestos testing prior to destructive demolition.`
     : `The home was built in ${data.yearBuilt}. Therefore, no lead or asbestos testing is required prior to the start of work.`;
-  const clauses = [...(before ? [PRETEST] : []), EXCLUSIONS.replaceAll('{company}', clauseCompany), REPRICE, VALIDITY];
+  const clauses = [
+    ...(before ? [PRETEST] : []),
+    EXCLUSIONS.replaceAll('{company}', () => clauseCompany),
+    REPRICE,
+    VALIDITY,
+  ];
   const observations = [age];
   if (data.technicianNotes.trim()) observations.push(`Technician observations: ${data.technicianNotes.trim()}`);
   const statement = technicianStatement(data.technicianTranscript);
@@ -398,8 +436,15 @@ export function makeDocuments(input: {
       observations.push(`Photo ${index + 1} (${photo.room}) — supporting photo; no verified meter reading.`);
     }
   });
-  const mandated = [...(before ? [TESTING] : []), PROTECTION.replaceAll('{company}', clauseCompany)];
-  const recommendations = [...mandated, ...items.filter((item) => item.group !== 'job_charges').map((item) => item.description), ADDITIONAL];
+  const mandated = [
+    ...(before ? [TESTING] : []),
+    PROTECTION.replaceAll('{company}', () => clauseCompany),
+  ];
+  const scope = items.filter((item) => item.group !== 'job_charges');
+  const recommendations = [...mandated, ...scope.map((item) => item.description), ADDITIONAL];
+  const proposed = input.table.policy.show_line_breakdown
+    ? recommendations
+    : [...mandated, ...scope.map((item) => item.withoutPrice ?? item.description), ADDITIONAL];
   const words = roomWordsFor(data.rooms, roomWords);
   const customer = input.customerName.trim();
   const license = identity?.license ?? '';
@@ -420,7 +465,22 @@ export function makeDocuments(input: {
     ...(sizing ? [sizing] : []),
     `Scope:\n${recommendations.join('\n')}`,
     clauses.join('\n'),
-    estimateSentence(total, low, high, explanation, single),
+    estimateSentence(
+      total,
+      low,
+      high,
+      explanation,
+      single,
+      [
+        pricePointSentence(
+          money(priced.totals.low.pricePoint),
+          priced.totals.mode === 'range' && priced.totals.high ? money(priced.totals.high.pricePoint) : null,
+        ),
+        adjustmentSentence(priced.totals.low, priced.totals.mode === 'range' ? priced.totals.high : null),
+      ]
+        .filter((text) => text)
+        .join('\n'),
+    ),
     ['Sincerely,', identity?.signoff ?? '', companyName].filter((line) => line.trim()).join('\n'),
   ].join('\n\n');
   const proposal: JObj = {
@@ -431,7 +491,7 @@ export function makeDocuments(input: {
     lead_notice_required: before,
     property_address: data.address,
     proposed_cost: (high ?? low).toString(),
-    recommendations,
+    recommendations: proposed,
     ...layoutKeys(settings, () =>
       letterOf({ rooms: data.rooms, words, lines: items, table: input.table, findings: [age], recommendations: mandated, additional: ADDITIONAL }),
     ),
@@ -445,7 +505,6 @@ export function makeDocuments(input: {
     compliance_notes: [age, ...clauses],
     estimate,
     iicrc_defense_letter: letter,
-    pending_extras: pending,
     photo_audit_log: photos.map((photo) => photo.row),
     schema_version: 3,
     signable:

@@ -213,10 +213,10 @@ def init_scope_repo(tmp_path):
     return repo, base_sha
 
 
-# The Actions budget stop blocks GitHub-hosted jobs, so every job defaults to the self-hosted pool
-# and the repository variable CI_RUNNER (for example ubuntu-latest) switches it back. See
-# docs/runbook/ci.md, "CI runners".
-RUNNER = "${{ vars.CI_RUNNER || 'dryscope-linux' }}"
+# The repository is public, so every job runs on a fixed standard GitHub-hosted runner (free for
+# public repositories) and never on a self-hosted one, which a pull request could compromise. No
+# variable switches it. See docs/runbook/ci.md, "CI runners".
+RUNNER = 'ubuntu-latest'
 WORKFLOWS = sorted((ROOT / '.github' / 'workflows').glob('*.y*ml'))
 
 
@@ -225,27 +225,20 @@ def workflow_jobs(path):
 
 
 def test_workflows_exist():
-    assert {path.name for path in WORKFLOWS} >= {
+    names = {path.name for path in WORKFLOWS}
+    assert names >= {
         'ci.yml',
-        'codeql.yml',
-        'deploy.yml',
         'test-guard.yml',
         'web.yml',
     }
+    assert 'deploy.yml' not in names
 
 
 @pytest.mark.parametrize('path', WORKFLOWS, ids=lambda path: path.name)
-def test_every_job_runs_on_the_switchable_runner(path):
+def test_every_job_runs_on_the_github_hosted_runner(path):
     for name, job in workflow_jobs(path):
         assert job.get('runs-on') == RUNNER, f'{path.name} job {name}'
         # The self-hosted job container has no Docker daemon for service or job containers.
         assert 'services' not in job and 'container' not in job, f'{path.name} job {name}'
 
 
-def test_codeql_sets_up_node_before_init():
-    """CodeQL's JavaScript/TypeScript extractor needs node; the self-hosted container has none."""
-    jobs = dict(workflow_jobs(ROOT / '.github' / 'workflows' / 'codeql.yml'))
-    uses = [step.get('uses', '') for step in jobs['analyze']['steps']]
-    node = [i for i, use in enumerate(uses) if use.startswith('actions/setup-node@')]
-    init = [i for i, use in enumerate(uses) if use.startswith('github/codeql-action/init@')]
-    assert node and init and node[0] < init[0]

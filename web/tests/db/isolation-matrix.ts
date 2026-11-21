@@ -23,7 +23,7 @@ import { starterTable } from '@/lib/prices/starter';
 //               is never read, so every company user without the token is refused (404)
 export type RouteKind = 'company' | 'invitation' | 'operator' | 'service' | 'session' | 'public' | 'link';
 
-export type Method = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
+export type Method = 'GET' | 'HEAD' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
 
 export type MatrixRow = {
   // The route file's folder under src/app, as the file system spells it.
@@ -69,6 +69,15 @@ const JOB_CLAIM = { revision: 1, changeId: '8d2f4a90-61b3-4c7e-a5d8-0e9b3c1f7a24
 // Submit and Back to editing bodies (S5a-8): the suite's own ids, and a digest of nothing.
 const JOB_SUBMIT = { id: '6f1d9c34-2a7e-4b80-9c15-3e8a0d7b5f42', draftId: 'c4e8a2d6-7b19-4f53-8a0e-1d6b9f3c2e75', digest: '0'.repeat(64) };
 const JOB_NEXT_DRAFT = { draftId: '9a3b5c7d-1e2f-4a6b-8c9d-0e1f2a3b4c5d', fromDraftId: 'c4e8a2d6-7b19-4f53-8a0e-1d6b9f3c2e75' };
+const JOB_REPRICE = { revision: 1, changeId: '4d8b2f60-9c1e-4a73-8b05-2e7a6c1d9f38', versionId: '9b1e5c37-2d84-4f06-a3c9-6e0d8b4a1f52' };
+// S5b-8: a valid hourly proposal and an approval, so a refusal is the access rule's.
+const JOB_PROPOSAL = { id: '7a3c9e15-2b84-4d60-9f17-3e6a8c2d5b41', revision: 1, kind: 'hourly', description: 'Move contents', hours: '2' };
+const JOB_APPROVE = { revision: 1, approverName: 'Pat' };
+// A drying-log reading and a void (S5b-10): the suite's own ids, an air reading with no room.
+const JOB_READING = { id: '7e3c9a51-4b28-4d6f-8a10-2c5e7b9d3f46', kind: 'air', takenAt: '2026-11-20T09:30:00Z', temperatureF: 70, relativeHumidity: 50 };
+// A drying watch action (S5b-10): the suite's own request id and a facts hash of nothing.
+const JOB_WATCH_ACTION = { id: '5c8e2a71-3d94-4b6f-a0e2-9f1b7c4d8e53', action: 'extend', factsHash: '0'.repeat(64), confirmed: true, reason: 'Isolation check' };
+const JOB_READING_VOID = { changeId: '0f6b2d84-9a3c-4e71-b5d2-8c1e4a7f9b30', expectedState: 'active' };
 const JOB_SIGN = {
   id: '2d7f4a91-6c3b-4e85-9a12-7b5c8e0f3d64',
   estimateId: '5b8e1c47-3f2a-4d96-8e01-4c7a9b2d6f15',
@@ -126,6 +135,7 @@ export const MATRIX: readonly MatrixRow[] = [
   row(`${COMPANY}/members/[membershipId]/enable`, 'POST', 'company', { own: 'cross' }),
 
   row(PRICES, 'GET', 'company', { self: true, own: 'list' }),
+  row(`${PRICES}/item-list`, 'GET', 'company', { self: true, own: 'list' }),
   row(`${PRICES}/working-copy`, 'PUT', 'company', { self: true, body: { expectedRevision: STALE, table: starterTable() } }),
   row(`${PRICES}/preview`, 'POST', 'company', { self: true, body: {} }),
   row(`${PRICES}/publish`, 'POST', 'company', {
@@ -150,6 +160,15 @@ export const MATRIX: readonly MatrixRow[] = [
   // S5a-9: the estimate takes no body; another company's job is 404 to every role.
   row('api/jobs/[jobId]/estimate', 'POST', 'company', { own: 'cross' }),
   row('api/jobs/[jobId]/estimate', 'GET', 'company', { own: 'cross' }),
+  // S5b-6: Reprice names the revision, change and price version; another company's job is 404 to every role.
+  row('api/jobs/[jobId]/reprice', 'POST', 'company', { body: JOB_REPRICE, own: 'cross' }),
+  // S5b-6: the owner's before/after preview; another company's job is 404 to every role.
+  row('api/jobs/[jobId]/reprice', 'GET', 'company', { own: 'cross' }),
+  // S5b-8: proposals and approvals; another company's job is 404 to every role, and nothing is written.
+  row('api/jobs/[jobId]/approvals', 'GET', 'company', { own: 'cross' }),
+  row('api/jobs/[jobId]/approvals', 'POST', 'company', { body: JOB_PROPOSAL, own: 'cross' }),
+  row('api/jobs/[jobId]/approvals/[approvalId]', 'PUT', 'company', { body: { ...JOB_PROPOSAL, id: '1e6b4d82-7c39-4f05-a8d2-5b9e3c7a0f64' }, own: 'cross' }),
+  row('api/jobs/[jobId]/approvals/[approvalId]/approve', 'POST', 'company', { body: JOB_APPROVE, own: 'cross' }),
   // S7-6: the AI summary draft names the phone's own call id; another company's job is 404 to every
   // role, before the switch or the draft is read, and no model is called.
   row('api/jobs/[jobId]/ai/summary-draft', 'POST', 'company', { body: { callId: '2d7e9b41-6c3a-4f85-a0d2-8e1b5c9f3a76' }, own: 'cross' }),
@@ -159,6 +178,16 @@ export const MATRIX: readonly MatrixRow[] = [
   row('api/jobs/[jobId]/agreements', 'GET', 'company', { own: 'cross' }),
   // S5a-10: what Check Scope picks from; another company's job is 404 to every role.
   row('api/jobs/[jobId]/scope-lists', 'GET', 'company', { own: 'cross' }),
+  // S5b-11 Ready to review?: read-only, behind the `readiness` switch; scope work on the job.
+  row('api/jobs/[jobId]/readiness', 'GET', 'company', { own: 'cross' }),
+  // S5b-10: the drying log of another company's job is 404 to every role, and no reading is stored or
+  // voided; the bodies carry the suite's own ids.
+  row('api/jobs/[jobId]/drying-readings', 'GET', 'company', { own: 'cross' }),
+  row('api/jobs/[jobId]/drying-readings', 'POST', 'company', { body: JOB_READING, own: 'cross' }),
+  row('api/jobs/[jobId]/drying-readings/[readingId]/void', 'POST', 'company', { body: JOB_READING_VOID, own: 'cross' }),
+  // S5b-10: the drying watch, behind the `drying_watch` switch; another company's job is 404 to every role.
+  row('api/jobs/[jobId]/drying-watch', 'GET', 'company', { own: 'cross' }),
+  row('api/jobs/[jobId]/drying-watch/actions', 'POST', 'company', { body: JOB_WATCH_ACTION, own: 'cross' }),
   // S5a-11b: a signing link or document link of another company's job is 404 to every role, and
   // nothing is made; the bodies carry the suite's own ids.
   row('api/jobs/[jobId]/signing-link', 'POST', 'company', { body: JOB_LINK, own: 'cross' }),
@@ -215,6 +244,16 @@ export const MATRIX: readonly MatrixRow[] = [
   row(`${PLATFORM_ONE}/owner`, 'POST', 'operator', { body: { email: 'boss@example.test', replace: true } }),
   row(`${PLATFORM_ONE}/team`, 'GET', 'operator'),
   row(`${PLATFORM_ONE}/prices`, 'GET', 'operator'),
+  // S5b-5: the read-only support view of a company's jobs, one job and one photo's bytes.
+  row(`${PLATFORM_ONE}/jobs`, 'GET', 'operator'),
+  row(`${PLATFORM_ONE}/jobs/[jobId]`, 'GET', 'operator'),
+  row(`${PLATFORM_ONE}/jobs/[jobId]/photos/[photoId]`, 'GET', 'operator', { query: '?kind=photo' }),
+  // Their HEAD is refused with 405 before any sign-in check, read or audit, for anyone.
+  row(`${PLATFORM_ONE}/jobs`, 'HEAD', 'public'),
+  row(`${PLATFORM_ONE}/jobs/[jobId]`, 'HEAD', 'public'),
+  row(`${PLATFORM_ONE}/jobs/[jobId]/photos/[photoId]`, 'HEAD', 'public', { query: '?kind=photo' }),
+  // S8-3: the records check's first page; a later page also needs the operator's own run id.
+  row(`${PLATFORM_ONE}/records-check`, 'POST', 'operator', { body: {} }),
   row(`${PLATFORM_ONE}/members/[membershipId]`, 'PATCH', 'operator', { body: { role: 'office' } }),
   row(`${PLATFORM_ONE}/members/[membershipId]/enable`, 'POST', 'operator'),
   row(`${PLATFORM_ONE}/members/[membershipId]/reset-second-step`, 'POST', 'operator', { body: { confirmedBy: 'phone' } }),

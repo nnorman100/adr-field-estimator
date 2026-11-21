@@ -1,9 +1,9 @@
-"""The shared legacy scope script, which only the CodeQL Python analysis still uses, and ci.yml.
+"""The shared legacy scope script, which no workflow calls any more, and ci.yml.
 
 As of 2026-11-10 the legacy Python suite, the legacy Playwright browser suite and the legacy
-Firestore emulator tests are retired from CI and their jobs are removed from ci.yml. CodeQL keeps scanning the legacy Python, scoped
-by scripts/ci_legacy_scope.sh. The DryScope rebuild's checks (web/, infra/dryscope, required docs,
-file length, test guard, audit) must keep running on every PR.
+Firestore emulator tests are retired from CI and their jobs are removed from ci.yml. The CodeQL
+workflow that last called scripts/ci_legacy_scope.sh is removed too (D-037). The DryScope rebuild's checks (web/, infra/dryscope, required docs, file
+length, test guard, audit) must keep running on every PR.
 """
 
 import json
@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from tests.test_ci_config import evaluate_step_condition, init_scope_repo, load_ci_workflow
+from tests.test_ci_config import init_scope_repo, load_ci_workflow
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'scripts' / 'ci_legacy_scope.sh'
@@ -113,7 +113,6 @@ def test_scope_skips_rebuild_and_doc_only_changes(tmp_path, event_name, changed_
         'scripts/file_length_baselines.json',
         'ops/vault-backup/vault_backup.py',
         'docs/ai-inventory.md',
-        'docs/adr-pricing-source.md',
         'docs/pricing-source.md',
         'pyproject.toml',
         'eslint.config.js',
@@ -202,43 +201,6 @@ def scope_gated_parts(workflow):
             if step.get('id') == 'scope' or runs_script or 'steps.scope.' in step.get('if', ''):
                 gated.append(label)
     return gated
-
-
-def codeql_condition(step, language):
-    condition = step['if'].replace('matrix.language', f"'{language}'")
-    return lambda outputs: evaluate_step_condition(condition, outputs, False)
-
-
-@pytest.mark.parametrize('language', ['python', 'javascript-typescript'])
-@pytest.mark.parametrize('scope_outputs', [{'run': 'true'}, {'run': 'false'}, {}])
-def test_codeql_scopes_only_the_python_analysis(language, scope_outputs):
-    job = load_workflow('codeql.yml')['jobs']['analyze']
-    assert 'if' not in job, 'both Analyze checks are required and must report on every PR'
-    assert job['strategy']['matrix']['language'] == ['javascript-typescript', 'python']
-    steps = job['steps']
-    assert steps[0]['uses'].startswith('actions/checkout@')
-    # A plain 0 (full history) for both legs: an expression such as `&& 0 || 1` would evaluate to 1
-    # because 0 is falsy, giving a shallow clone that lacks the base commit and defeats the skip.
-    assert steps[0]['with']['fetch-depth'] == 0
-    check_scope_step(steps[1], 'CodeQL Python analysis')
-    assert steps[1]['if'] == "matrix.language == 'python'"
-    for step in steps[2:]:
-        label = step.get('name') or step.get('uses')
-        runs = codeql_condition(step, language)(scope_outputs)
-        if language == 'javascript-typescript':
-            assert runs, f'{label} must always run for JavaScript/TypeScript'
-        else:
-            assert runs == (scope_outputs.get('run') == 'true'), label
-    uses = [s.get('uses', '') for s in steps]
-    assert any(u.startswith('github/codeql-action/init@') for u in uses)
-    assert any(u.startswith('github/codeql-action/analyze@') for u in uses)
-
-
-def test_codeql_still_runs_weekly_and_on_pushes():
-    triggers = load_workflow('codeql.yml')
-    triggers = triggers.get('on') or triggers.get(True)
-    assert triggers['schedule'] == [{'cron': '23 9 * * 1'}]
-    assert triggers['push']['branches'] == ['master']
 
 
 def run_commands(job):

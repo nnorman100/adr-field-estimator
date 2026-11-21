@@ -83,6 +83,7 @@ Status: accepted (owner, Nov 10, 2026). Exception to Technology Standard 2.2.
 Reason: the standard puts the build server and CI runner on a Google Cloud VM with no public IP. That needs the company domain and Google Cloud organization, which do not exist yet. Until they do, the build server and CI runner stay on a Hostinger VPS.
 Known effect: this server cannot reach the test Cloud SQL address, so release migrations are moving inside Google (a Cloud Run job, PR #297). Until that lands, the `migrate` job in `.github/workflows/web-release.yml` runs them from the self-hosted runner through the Cloud SQL Auth Proxy.
 Ends when the company domain and Google Cloud organization exist.
+Superseded in part (Nov 20, 2026): the CI runner part. The repository is public, and GitHub advises against self-hosted runners for public repositories, so every workflow job runs on GitHub-hosted `ubuntu-latest` and the `CI_RUNNER` fallback to the self-hosted pool is removed (`docs/runbook/ci.md`). The `migrate` job's self-hosted runner and Cloud SQL Auth Proxy path no longer exists. The build server part of this decision stands.
 
 ### D-014: DryScope may use more than three agents (Nov 6, 2026)
 
@@ -144,10 +145,12 @@ Decision: the Standard's 35 days is made true, not reworded. On evidence buckets
 Basis: Google's own suggested setup is Object Versioning and soft delete on the same bucket, with Object Lifecycle Management deleting noncurrent versions after a number of days (`documents/docs.cloud.google.com/storage/docs/object-versioning`). DryScope never overwrites evidence (uploads use `ifGenerationMatch=0` and the app role cannot delete), so old versions arise only from deliberate deletion.
 Consequences: small Terraform change in the data root, High risk, owner-applied, together with the missing Firestore backup schedule (`docs/plans/TC.md`). `docs/DATA.md` records the window as planned until it is applied.
 
-### D-024: GitHub keyless sign-in trusts the numeric repository id only (Nov 12, 2026, G7)
+### D-024: GitHub keyless sign-in binds the deploy account by numeric repository ID (Nov 12, 2026, G7)
 
 Status: accepted (owner, Nov 12, 2026).
 Decision: DryScope keeps service-account impersonation for now, and its deploy principal is restricted to the numeric `repository_id`; the repository-name form is dropped. The starter template uses direct resource access for new projects. Terraform validation change, High risk, owner-applied (`docs/plans/TC.md`).
+
+On Nov 19, 2026, the owner also tightened the test provider's condition to require the repository and owner IDs, ref, environment, workflow ref and event name. The full condition and mapping are in the [test release runbook](runbook/test-release.md).
 
 ### D-025: Offline capture on iPhone needs the installed Home Screen app (Nov 12, 2026, G8)
 
@@ -169,11 +172,12 @@ Decision: no current GA Gemini Flash model is served from `us-central1`, so text
 Status: accepted (owner, Nov 12, 2026).
 Decision: no agent is built in S7. The first agent will be ADK TypeScript 2.x on Cloud Run, with its own service and account, fixed actions, an audit log, human approval, and Model Armor on its model calls. Agent Gateway and Agent Identity are not relied on, because they need the Google Cloud organization, which does not exist yet. A2UI is not adopted until an agent answers with screens and the A2UI React renderer is at 1.0 or later and supports spec 1.0. Trigger reworded 2026-11-13 (owner): React renderer at 1.0 or later supporting spec 1.0. Detail: `docs/plans/S7.md` (decision V10).
 
-### D-029: Pipeline reviewer is ChatGPT (GPT-6 Astra); builders are Claude only (Nov 13, 2026, Standard 2.10)
+### D-029: Pipeline reviewer is ChatGPT (GPT-6 Astra); builder family rule amended by Standard 2.11 (Nov 13, 2026, Standard 2.10)
 
 Status: accepted (owner, Nov 13, 2026, choice "A"). Supersedes D-015.
 Decision: the pipeline review agent is ChatGPT (GPT-6 Astra), with no Grok or Gemini fallback. Builders are Claude only, so the reviewer is always a different model family from the builder. Technology Standard 2.10 records the same change; the Standard is now at 2.10.
 Update 2026-11-14 (owner): the reviewer is now ChatGPT GPT-6.1 Sol, replacing GPT-6 Astra, to conserve tokens; OpenAI lists it as near-Astra performance at a lower cost. Builders stay Claude only, so the reviewer is still a different model family. The rest of this decision is unchanged.
+Update 2026-11-19 (owner approved Nov 14, 2026; Technology Standard 2.11): builders are no longer Claude only. The builder's model family is chosen by which family has the most allowance left, and the pipeline reviewer is always the other family, never the builder's own. The rule that the reviewer is a different family from the builder is unchanged.
 
 ### D-030: Stronger company sign-in after the sign-in security review (Nov 14, 2026)
 
@@ -184,3 +188,74 @@ Decision:
 2. Email enumeration protection is on for every tenant. The tenant command (`npm run platform:create-tenant`) sets both settings on a new tenant; the owner-run `npm run platform:secure-tenants` brings existing tenants up to them (read-only unless `--apply`).
 3. The operator's sign-in must be under 15 minutes old (D7) for company status, tenant binding, feature switches and AI limits as well as team and second-step changes. Reads and creating a new company keep the 12-hour sign-in.
 Consequences: an office user with no authenticator app is asked to set one up at their next sign-in, and an office invitation is accepted only after it is set up. Existing tenants keep their old settings until the owner runs the update command.
+
+### Owner decisions of Nov 14, 2026: D-031 to D-035
+
+The owner approved these on Nov 14, 2026. The pull requests named below carried them out; the decisions are recorded here in one batch.
+
+### D-031: The three TC-9 grants stay without IAM conditions (Nov 14, 2026, option A)
+
+Status: accepted (owner, Nov 14, 2026, option A).
+Context: the TC plan asked for every new TC-9 grant to name one account and one condition. Three grants cannot usefully carry one.
+Decision: these three grants each name one account and carry no IAM condition: `roles/telemetry.tracesWriter` for `dryscope-api-<env>` (Telemetry and Cloud Trace do not report a resource that a condition can scope, so a condition would silently drop every span); `roles/logging.logWriter` for `dryscope-deploy-test`, test only (a log entry has no IAM resource of its own); and `roles/secretmanager.secretAccessor` for `dryscope-synthetic-test`, granted on the one secret `dryscope-test-synthetic-password` itself.
+Consequences: the plan check (`infra/dryscope/scripts/check-plan-tc.js`) holds exactly these three grants with no condition. Built in PR #383; recorded in `docs/plans/TC.md` (section 13) and `infra/dryscope/README.md` ("Accepted risks"). The owner applies the Terraform.
+
+### D-032: The browser tests run as parallel shards (Nov 14, 2026)
+
+Status: accepted (owner, Nov 14, 2026).
+Context: the CI browser test job took 19 to 20 minutes under server load and was cancelled at its 20-minute limit with no verdict.
+Decision: the `e2e` job in `.github/workflows/web.yml` is split into two Playwright shards that run in parallel, with the time limit unchanged.
+Consequences: built in PR #384. Raised later to four shards with two workers each in PR #420 (Nov 17, 2026). Local runs stay unsharded.
+
+### D-033: The old app's CI checks are removed; the old app is retired in S8 (Nov 14, 2026, option A)
+
+Status: accepted (owner, Nov 14, 2026, option A).
+Decision: the old app's Python dependency audit and Python CodeQL check are removed, and its Deploy workflow runs by hand only. The npm audit and every required check name stay. The old app's files stay in the repository until S8 retires and removes them (S8-23 in `docs/plans/S8.md`).
+Consequences: built in PR #395; `docs/runbook/ci.md` ("Legacy CI retired").
+
+### D-034: Fixed browser security headers now; the full content security policy later (Nov 14, 2026)
+
+Status: accepted (owner, Nov 14, 2026, "all recommended" on the sign-in and company-separation security review, finding F7).
+Decision: every page and API answer now carries fixed security headers: a framing ban, `nosniff`, a referrer policy, HTTPS-only and a small enforced content security policy. The one exception is the photo-item path (`/api/jobs/{jobId}/photos/{photoId}`), which takes the headers but not the small policy; a successful image read sets its own stricter `default-src 'none'; sandbox` policy, while upload receipts and JSON errors on that path carry none. A full script and connect content security policy comes later: first in report-only mode, enforced only after its reports show it blocks nothing the app needs, after the owner's phone check on the test copy (`docs/security-csp.md`) and a separate owner approval; clean reports alone are not enough.
+Consequences: fixed headers built in PR #385; the full policy in report-only mode built in PR #403 (`docs/security-csp.md`). Nothing enforces the full policy yet; the phone check is still pending.
+
+### D-035: Offline retention redesigned as one routine (Nov 14, 2026, option 1)
+
+Status: accepted (owner, Nov 14, 2026, option 1).
+Context: three review rounds of the S6-3 follow-up each found another sign-in-again path that skipped the retention cleanup of offline work.
+Decision: offline retention is redesigned from scratch as one central routine with a small explicit state machine for refusal and retention, instead of patching each path. Every entry point calls it.
+Consequences: built in PR #388 (`web/src/lib/field/retention.ts`), with a property-based test over random sequences of sign-outs, refusals, storage failures and day changes.
+
+### Departures recorded after the standards audit of Nov 19, 2026: D-036 to D-039
+
+The build-practice audit against the Technology Standard (Nov 19, 2026) found four departures that were decided or known but not written here, as the Standard's "Exceptions" rule asks. The owner answered its decisions on Nov 19, 2026 ("1a 2a 3a 4a"); D-036 and D-037 carry answers 3a and 4a, and D-038 and D-039 record earlier owner decisions and a known gap. Each stays until the condition named in its own entry is met or the owner changes it.
+
+### D-036: Terraform plan and apply stay hand-run by the owner until the organization exists (Nov 19, 2026, option 3a)
+
+Status: accepted (owner, Nov 19, 2026, option 3a). A recorded exception to the Standard's Core release path.
+Context: the Standard says "Terraform: the plan is shown on the pull request; the owner approves; a manual workflow applies it". DryScope has neither: the owner runs plan and apply by hand ("an agent never runs plan or apply against the project", `docs/runbook/terraform-apply.md:3`, step 1). No workflow plans or applies Terraform. Since owner decision 3a the required `node` job runs the offline `infra/dryscope/scripts/check.sh` (format, validate, mocked `terraform test`, the plan check, the destroy guards and the fresh-plan comparison with the committed fixtures); the job and its limit are in `docs/runbook/ci.md` (the `node` (Terraform) row).
+Options: (a) record the hand-run plan and apply as an exception until the organization exists, and run the offline `check.sh` in CI as a separate change; (b) also build a plan on each pull request now with a read-only keyless identity (large; adds a cloud identity).
+Decision: (a). The owner keeps running plan and apply by hand, with the plan check, until the Google Cloud organization exists. Running the offline `check.sh` in CI is a separate pull request (it needs a workflow change and the owner's approval) and does not end this exception.
+Consequences: CI now runs the offline `check.sh`, so a pull request that changes a `.tf` file without regenerating the fixture plans fails, for both roots; the comparison covers only each root's first mocked plan and not outputs (`docs/runbook/ci.md`). The check that covers an apply is the one the runbook requires on the saved real plan before each apply (`docs/runbook/terraform-apply.md`, steps 3 onward), not the fixture comparison. Plan-on-pull-request and the manual apply workflow are reconsidered when the organization exists.
+
+### D-037: CodeQL uses GitHub's default setup instead of a workflow (Nov 18, 2026; kept Nov 19, 2026, option 4a; amended Nov 19, 2026)
+
+Status: accepted (owner, Nov 18, 2026, to save runner minutes; kept on Nov 19, 2026, option 4a; amended on Nov 19, 2026, when the owner approved recommendation 2 of the repository settings review after the repository became public).
+Context: the CodeQL workflow (`.github/workflows/codeql.yml`, now removed) ran on pushes to `master` and every Monday at 09:23 UTC, not on `pull_request`, to save about 6.3 runner-minutes per push on the self-hosted pool, and uploaded nothing, so findings appeared only in the job summary after the merge. The repository is now public, so GitHub Actions minutes on GitHub-hosted runners are free, and the owner turned on code scanning default setup, which reported 16 open alerts. Default setup scans on each push to the default branch or a protected branch, on pull requests against them (not from forks), and weekly, and it disables an existing advanced-setup workflow (https://docs.github.com/en/code-security/concepts/code-scanning/setup-types and https://docs.github.com/en/code-security/how-tos/find-and-fix-code-vulnerabilities/configure-code-scanning/configure-code-scanning).
+Options: (a) keep the push-only workflow; (b) enable code scanning and upload the results, and also scan pull requests; (c) run CodeQL on pull requests that touch `web/` only.
+Decision: originally (a). Amended on Nov 19, 2026: code scanning uses GitHub's default setup, replacing the push-only workflow, because Actions minutes are free on the public repository. `.github/workflows/codeql.yml` is removed. Default setup is a repository setting the owner holds; it is not a required check.
+Consequences: a CodeQL finding on a qualifying pull request (against `master` or another protected branch, from the same repository) shows on the pull request and under Security > Code scanning, not only after the merge; a push to an unprotected branch alone is not scanned (its pull request into `master` is), fork pull requests are not scanned before they land on a protected branch, and the weekly scan needs a qualifying push or pull request scan in the past 180 days. Default setup runs on GitHub's runners, not the self-hosted pool. Triaging the open alerts is separate work.
+
+### D-038: The pipeline runs no unattended review-fix rounds (Nov 17, 2026)
+
+Status: accepted (owner, Nov 17, 2026). A recorded exception to the Standard's validation gate, which allows "auto-fix limited to two rounds".
+Context: `.no-mistakes.yaml` sets `auto_fix: review: 0` (`.no-mistakes.yaml:41-42`; `docs/runbook/ci.md`, the `.no-mistakes.yaml` paragraph).
+Decision: zero unattended review-fix rounds. A review finding is not fixed automatically on its own; it waits for a selection by a person (or the supervising agent), who may direct a fix round or send it to the worker as an ordinary commit.
+Consequences: no review fix lands without a selection, but a selected fix round can still produce a pipeline-authored commit, so the author of a review fix is not always the worker; protected paths still guard every automatic commit. The three-round cap on review fix rounds per pull request is unchanged.
+
+### D-039: The release smoke check is thinner than the Standard until it covers the deployed checks (Nov 19, 2026)
+
+Status: accepted (recorded at the owner's direction, Nov 19, 2026). A tracked, dated exception to the Standard's Core release path.
+Context: the Standard asks for smoke tests on the test copy after every release: "site loads, sign-in works, a fake record is created and submitted, a file uploads, an AI feature answers within its limit." `web/scripts/smoke-release.ts:1-14` checks health (commit, version, database) and that signed-out probes are refused. The gap is already noted in `docs/plans/TC.md:20`.
+Decision: the release keeps the current smoke check until the release smoke check itself covers the deployed checks: sign-in, creating and submitting a fake record, a file upload and, once an AI feature is switched on, an answer within its limit.
+Consequences: until then a release can pass with sign-in, record saving, uploads or AI broken on the test copy; the browser tests (Playwright) run on pull requests that change `web/`, `live-relay-placeholder/` or `.github/workflows/web.yml` and skip their suite on other pull requests (`.github/workflows/web.yml:226-236`, `:269-270`); they exercise the app flows locally and against a local build, not the deployed copy, and do not check that an AI feature answers within its limit. Deployed sign-in, record submission, upload and a real AI answer stay open: the real-model checks run only from the separate manual `.github/workflows/ai-evals.yml:3-11`. This exception ends when the release smoke check covers those deployed checks. Live keeps read-only checks only (S8-17).

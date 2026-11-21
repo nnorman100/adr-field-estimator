@@ -23,6 +23,7 @@ import {
   hasCushionBrackets,
   type CushionBand,
   type Item,
+  type NamedAdjustment,
   type Policy,
   type Table,
   type Trade,
@@ -45,7 +46,22 @@ export type End = {
   minimumCharge: Dec;
   overheadProfit: Dec;
   tax: Dec;
+  /** What price-point rounding added, untaxed and outside every bucket; zero when off or already a price point. */
+  pricePoint: Dec;
+  /** The price: the lines and charges above, then the approved named adjustment. */
   total: Dec;
+  /** The approved named adjustment applied to this end; absent when none applies (S5b-7). */
+  adjustment?: AppliedAdjustment;
+};
+
+/** The named adjustment applied to an end's price: `before` ∓ `amount` = `after`. */
+export type AppliedAdjustment = {
+  adjustmentId: string;
+  name: string;
+  direction: 'discount' | 'charge';
+  before: Dec;
+  amount: Dec;
+  after: Dec;
 };
 
 export type Totals = {
@@ -148,24 +164,78 @@ function roomPercents(data: Inspection, policy: Policy): Map<string, Dec> {
   return percents;
 }
 
+type Ranked = { rows: AreaRow[]; totalArea: () => Dec; order: () => { row: AreaRow; index: number }[] };
+
+/** The rows with their total area, worked out on first use, and their order dearest rate first (ties keep their line order). */
+function rankRows(rows: AreaRow[]): Ranked {
+  let total: Dec | null = null;
+  return {
+    rows,
+    totalArea: () => {
+      total ??= sumDec(rows.map((row) => row.area), ZERO);
+      return total;
+    },
+    order: () => {
+      const rated = rows.map((row, index) => ({ row, index, rate: row.total.div(row.area) }));
+      rated.sort((left, right) => right.rate.cmp(left.rate));
+      return rated;
+    },
+  };
+}
+
 /** Each row's dollars within the dearest `first` square feet, by row index, in the order they are taken. */
-function topShares(rows: AreaRow[], first: Dec): Map<number, Dec> {
+function topShares(ranked: Ranked, first: Dec): Map<number, Dec> {
   const shares = new Map<number, Dec>();
-  if (sumDec(rows.map((row) => row.area), ZERO).cmp(first) <= 0) {
+  const { rows } = ranked;
+  if (ranked.totalArea().cmp(first) <= 0) {
     rows.forEach((row, index) => shares.set(index, row.total));
     return shares;
   }
   let remaining = first;
-  const ordered = rows
-    .map((row, index) => ({ row, index }))
-    .sort((left, right) => right.row.total.div(right.row.area).cmp(left.row.total.div(left.row.area)));
-  for (const { row, index } of ordered) {
+  for (const { row, index } of ranked.order()) {
     const take = minDec(remaining, row.area);
     shares.set(index, take.eq(row.area) ? row.total : row.total.mul(take).div(row.area));
     remaining = remaining.sub(take);
     if (remaining.isZero()) break;
   }
   return shares;
+}
+
+/**
+ * Each row's allowance across the bands, by row index: what the row adds to its share of the dearest square feet at
+ * each band, at that band's percent. One walk down the rows dearest first; each band's area left is cut by every row
+ * in turn, as a walk per band would, and a row divides only at the bands whose area left ends within its own square
+ * feet, so the divisions grow with rows plus bands, not rows times bands.
+ */
+function bandAllowances(ranked: Ranked, bands: CushionBand[]): Dec[] {
+  const steps = bands.map((band) => {
+    const limit = band.up_to_sf === null ? null : Dec.fromInt(band.up_to_sf);
+    return { left: limit !== null && ranked.totalArea().cmp(limit) > 0 ? limit : null, percent: Dec.parse(band.percent) };
+  });
+  const walk = steps.some((step) => step.left !== null)
+    ? ranked.order()
+    : ranked.rows.map((row, index) => ({ row, index }));
+  const allowances = ranked.rows.map(() => ZERO);
+  let start = 0;
+  for (const { row, index } of walk) {
+    while (steps[start]?.left?.isZero()) start += 1;
+    let previous = ZERO;
+    let allowance = ZERO;
+    let whole = false;
+    for (let band = start; band < steps.length; band += 1) {
+      const step = steps[band];
+      if (!step || (whole && step.left === null)) break;
+      const take = step.left === null ? row.area : minDec(step.left, row.area);
+      if (step.left !== null) step.left = step.left.sub(take);
+      if (whole) continue;
+      const share = take.eq(row.area) ? row.total : row.total.mul(take).div(row.area);
+      allowance = allowance.add(share.sub(previous).mul(step.percent).div(HUNDRED));
+      previous = share;
+      whole = share === row.total;
+    }
+    allowances[index] = allowance;
+  }
+  return allowances;
 }
 
 function cushionRows(lines: PriceLine[], policy: Policy): AreaRow[] {
@@ -193,6 +263,7 @@ function cushion(data: Inspection, policy: Policy, items: Item[], labor: PriceLi
   const areaLines = labor.filter((line) => line.area !== null);
   const bands = cushionBrackets(policy);
   const areas = cushionRows(areaLines, policy);
+  const ranked = rankRows(areas);
   const inPricedOrder = (areaAmounts: Dec[], otherPercent: Dec): Entry[] => {
     const byLine = new Map(areaLines.map((line, index) => [line, areaAmounts[index] ?? line.total]));
     return labor.map((line) => ({ line, amount: byLine.get(line) ?? line.total.mul(ONE.add(otherPercent)) }));
@@ -207,25 +278,13 @@ function cushion(data: Inspection, policy: Policy, items: Item[], labor: PriceLi
     const first = Dec.parse(firstBand.percent).div(HUNDRED);
     const beyond = Dec.parse(secondBand.percent).div(HUNDRED);
     if (firstBand.up_to_sf === null) throw new Error('cushion');
-    const shares = topShares(areas, Dec.fromInt(firstBand.up_to_sf));
+    const shares = topShares(ranked, Dec.fromInt(firstBand.up_to_sf));
     return inPricedOrder(
       areaLines.map((line, index) => ONE.add(beyond).mul(line.total).add(first.sub(beyond).mul(shares.get(index) ?? ZERO))),
       first,
     );
   }
-  let previousShares = new Map<number, Dec>();
-  const allowances = areaLines.map(() => ZERO);
-  for (const band of bands) {
-    const shares =
-      band.up_to_sf === null
-        ? new Map(areas.map((row, index) => [index, row.total]))
-        : topShares(areas, Dec.fromInt(band.up_to_sf));
-    areas.forEach((_, index) => {
-      const added = (shares.get(index) ?? ZERO).sub(previousShares.get(index) ?? ZERO);
-      allowances[index] = (allowances[index] ?? ZERO).add(added.mul(Dec.parse(band.percent)).div(HUNDRED));
-    });
-    previousShares = shares;
-  }
+  const allowances = bandAllowances(ranked, bands);
   const firstPercent = Dec.parse(firstBand?.percent ?? '0').div(HUNDRED);
   return inPricedOrder(
     areaLines.map((line, index) => line.total.add(allowances[index] ?? ZERO)),
@@ -311,6 +370,7 @@ export function computeTotals(data: Inspection, lines: PriceLine[], policy: Poli
         minimumCharge: floor,
         overheadProfit,
         tax,
+        pricePoint: ZERO,
         total: subtotal.add(adjustment).add(topUps).add(floor).add(overheadProfit).add(tax),
       },
     };
@@ -334,8 +394,8 @@ export function computeTotals(data: Inspection, lines: PriceLine[], policy: Poli
   }
   return {
     mode: policy.estimate_mode,
-    low,
-    high,
+    low: roundToPricePoint(low, policy),
+    high: high ? roundToPricePoint(high, policy) : null,
     laborMaterialLow: lowLabor,
     laborMaterialHigh: highLaborAmount,
     afterHoursLabel: policy.after_hours.label,
@@ -344,6 +404,24 @@ export function computeTotals(data: Inspection, lines: PriceLine[], policy: Poli
     rangeExplanation: rangeExplanation(policy, data),
     uncertainty: uncertainEnd ? uncertaintyJson(data, policy) : null,
   };
+}
+
+/**
+ * The smallest amount at or above `total` that is `ending` plus a whole number of `steps` (S4-4e).
+ * It never rounds down, so an end is never quoted below its priced total.
+ */
+export function pricePointOf(total: Dec, step: Dec, ending: Dec): Dec {
+  return ending.add(total.sub(ending).div(step).toIntegral('CEILING').mul(step));
+}
+
+/**
+ * Price-point rounding applies last, after the minimums, overhead and profit, and tax, to each end's own total.
+ */
+function roundToPricePoint(end: End, policy: Policy): End {
+  const rule = policy.price_point;
+  if (!rule) return end;
+  const total = money(pricePointOf(end.total, Dec.parse(rule.step), Dec.parse(rule.ending)));
+  return { ...end, pricePoint: total.sub(end.total), total };
 }
 
 function equipmentClause(data: Inspection, policy: Policy): string {
@@ -494,9 +572,43 @@ export function explanation(policy: Policy, data: Inspection, items: Item[]): st
   return sentences.join(' ');
 }
 
-/** Price a saved draft from a parsed table with the dryscope-v3 formulas. */
-export function priceAndRange(data: Inspection, table: Table): Priced {
+/**
+ * The named adjustment (S5b-7), when one is approved on the job: it changes each end's price after price-point
+ * rounding and the result is not rounded again. A percent is of the price before it, rounded to cents once; a
+ * discount larger than the price is refused rather than quoting below zero, and so is an id the table does not
+ * have. Only an adjustment approved on the job is passed in (S5b-8); none by default.
+ */
+export function applyAdjustment(totals: Totals, defined: NamedAdjustment[], approved: string | undefined): Totals {
+  if (approved === undefined) return totals;
+  const chosen = defined.find((adjustment) => adjustment.adjustment_id === approved);
+  if (!chosen) throw new Error('The approved adjustment is not in the price table.');
+  const value = Dec.parse(chosen.value);
+  const discount = chosen.direction === 'discount';
+  const adjust = (end: End): End => {
+    const before = end.total;
+    const amount = chosen.kind === 'percent' ? money(before.mul(value).div(HUNDRED)) : money(value);
+    if (discount && amount.cmp(before) > 0) throw new Error(`The discount "${chosen.name}" is larger than the price.`);
+    const after = discount ? before.sub(amount) : before.add(amount);
+    const adjustment: AppliedAdjustment = {
+      adjustmentId: chosen.adjustment_id,
+      name: chosen.name,
+      direction: chosen.direction,
+      before,
+      amount,
+      after,
+    };
+    return { ...end, total: after, adjustment };
+  };
+  return { ...totals, low: adjust(totals.low), high: totals.high ? adjust(totals.high) : null };
+}
+
+/** Price a saved draft from a parsed table with the dryscope-v3 formulas. `approved`: the id of the named adjustment approved on this job (S5b-7). */
+export function priceAndRange(data: Inspection, table: Table, approved?: string): Priced {
   const scoped = priceScopeV2(data, table.items, table.policy);
-  const totals = computeTotals(data, scoped.lines, table.policy, table.items, table.trades ?? []);
+  const totals = applyAdjustment(
+    computeTotals(data, scoped.lines, table.policy, table.items, table.trades ?? []),
+    table.adjustments ?? [],
+    approved,
+  );
   return { lines: scoped.lines, totals, warnings: scoped.warnings, calculationVersion: ENGINE_VERSION };
 }

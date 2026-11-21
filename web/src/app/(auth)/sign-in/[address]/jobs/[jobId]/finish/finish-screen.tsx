@@ -3,12 +3,15 @@
 import type { Auth, User } from 'firebase/auth';
 import { onAuthStateChanged } from 'firebase/auth';
 import Link from 'next/link';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import type { BrowserSignInConfig } from '@/lib/config';
 import { manifestDigest, type FieldManifest } from '@/lib/field/canonical';
 import { signInOf, signOutOnRefusal, signOutOrShow, type FailedSignOut } from '@/lib/field/sign-out';
 import { belongsTo, callApi, companyAuth } from '@/lib/firebase-client';
+import { useDraftReadiness } from '@/lib/readiness/client';
+import { readinessEnabled } from '@/lib/readiness/feature';
+import { fixFor } from '@/lib/readiness/fix';
 import { endsSession, meOutcome } from '@/lib/sign-in/outcome';
 import { fieldDatabase, readShownDraft } from '@/lib/submissions/field-reader';
 import { draftSummary, finisherOf, jobOf, outcomeOf, type JobOnScreen, type Next } from '@/lib/submissions/screen';
@@ -25,7 +28,15 @@ export type FinishScreenProps = {
   config: BrowserSignInConfig | null;
 };
 
-type Ready = { user: User; companyId: string; canFinish: boolean; job: JobOnScreen; manifest: FieldManifest | null };
+type Ready = {
+  user: User;
+  canFinish: boolean;
+  job: JobOnScreen;
+  manifest: FieldManifest | null;
+  readinessRevision: number | null;
+  pricesManage: boolean;
+  owner: boolean;
+};
 
 type Phase =
   | { name: 'checking' }
@@ -85,7 +96,9 @@ function Finish({ address, companyName, tenantId, jobId, config }: FinishScreenP
         if (!shown) return setPhase({ name: 'unavailable' });
         manifest = shown.manifest;
       }
-      setPhase({ name: 'ready', user, companyId: who.companyId, canFinish: who.canFinish, job, manifest });
+      const revision = (answer.body as { job?: { revision?: unknown } } | null)?.job?.revision;
+      const readinessRevision = who.canFinish && readinessEnabled(me.body) && typeof revision === 'number' ? revision : null;
+      setPhase({ name: 'ready', user, canFinish: who.canFinish, job, manifest, readinessRevision, pricesManage: (me.body as { capabilities: unknown[] }).capabilities.includes('prices_manage'), owner: outcome.role === 'owner' });
     },
     [config, jobId, tenantId],
   );
@@ -93,11 +106,19 @@ function Finish({ address, companyName, tenantId, jobId, config }: FinishScreenP
   useEffect(() => {
     const auth = companyAuth({ config, tenantId });
     authRef.current = auth;
-    return onAuthStateChanged(auth, (user) => {
+    const stop = onAuthStateChanged(auth, (user) => {
       if (!user) return setPhase({ name: 'signed-out' });
       if (!belongsTo(user, tenantId)) return void signOutOrShow(() => signOutOnRefusal(auth, tenantId, config, 'not-this-company'), setPhase);
       void load(user);
     });
+    const restore = (event: PageTransitionEvent) => {
+      if (event.persisted && auth.currentUser && belongsTo(auth.currentUser, tenantId)) void load(auth.currentUser);
+    };
+    window.addEventListener('pageshow', restore);
+    return () => {
+      stop();
+      window.removeEventListener('pageshow', restore);
+    };
   }, [config, tenantId, load]);
 
   const signInLink = (
@@ -145,11 +166,13 @@ function Finish({ address, companyName, tenantId, jobId, config }: FinishScreenP
         </FocusedPanel>
       );
     case 'ready':
-      return <FinishActions {...phase} reviewHref={`/sign-in/${address}/jobs/${encodeURIComponent(jobId)}/review`} reload={() => void load(phase.user)} />;
+      return <FinishActions {...phase} address={address} reviewHref={`/sign-in/${address}/jobs/${encodeURIComponent(jobId)}/review`} reload={() => void load(phase.user)} />;
   }
 }
 
-function FinishActions({ user, canFinish, job, manifest, reviewHref, reload }: Ready & { reviewHref: string; reload: () => void }) {
+function FinishActions({
+  user, canFinish, job, manifest, readinessRevision, pricesManage, owner, address, reviewHref, reload,
+}: Ready & { address: string; reviewHref: string; reload: () => void }) {
   const [current, setCurrent] = useState<JobOnScreen>(job);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<Problem | null>(null);
@@ -158,6 +181,26 @@ function FinishActions({ user, canFinish, job, manifest, reviewHref, reload }: R
   // same request and never a second record or a second draft.
   const pendingSubmit = useRef<{ id: string; digest: string; draftId: string } | null>(null);
   const pendingDraft = useRef<{ draftId: string; fromDraftId: string } | null>(null);
+  const dialog = useRef<HTMLDialogElement>(null);
+  const back = useRef<HTMLButtonElement>(null);
+  const readinessJob = useMemo(
+    () => readinessRevision !== null && current.status === 'draft' && current.currentDraftId === job.currentDraftId
+      ? { ...current, revision: readinessRevision }
+      : null,
+    [readinessRevision, current, job.currentDraftId],
+  );
+  const showArchived = () => setCurrent({ ...current, status: 'archived' });
+  const advisory = useDraftReadiness(user, readinessJob, manifest, 0, showArchived);
+  const items = useMemo(
+    () => (manifest && advisory ? advisory.gaps.flatMap((gap) => {
+      const fix = fixFor(gap, job.id, manifest, pricesManage ? `/sign-in/${address}/prices` : null, owner);
+      return fix ? [{ key: `${gap.code}/${gap.roomId ?? ''}`, ...fix }] : [];
+    }) : []),
+    [advisory, manifest, job.id, pricesManage, owner, address],
+  );
+
+  // A refusal that says the job moved on (not a lost answer) ends the checklist it was read for.
+  const prompted = problem && problem.next !== 'retry' ? [] : items;
 
   async function finish() {
     if (!manifest) return;
@@ -167,6 +210,7 @@ function FinishActions({ user, canFinish, job, manifest, reviewHref, reload }: R
     pendingSubmit.current ??= { id: crypto.randomUUID(), digest: await manifestDigest(manifest), draftId: current.currentDraftId };
     const answer = await callApi(user, `/api/jobs/${encodeURIComponent(current.id)}/submissions`, { method: 'POST', json: pendingSubmit.current });
     setBusy(false);
+    if (answer.status === 410) return showArchived();
     const next = answer.status === 200 || answer.status === 201 ? jobOf(answer.body) : null;
     if (next) {
       pendingSubmit.current = null;
@@ -201,7 +245,7 @@ function FinishActions({ user, canFinish, job, manifest, reviewHref, reload }: R
   const summary = manifest ? draftSummary(manifest) : null;
   const editing = current.status === 'draft';
   const submitted = current.status === 'submitted';
-  const title = editing ? 'Finish and review' : submitted ? 'Finished' : 'This job is signed';
+  const title = editing ? 'Finish and review' : submitted ? 'Finished' : current.status === 'archived' ? 'This job is archived' : 'This job is signed';
 
   return (
     <FocusedPanel title={title}>
@@ -245,9 +289,57 @@ function FinishActions({ user, canFinish, job, manifest, reviewHref, reload }: R
             Finishing saves this draft as the job&apos;s record and locks it, on every phone. The review comes next. To change the job
             afterwards, use Back to editing. Finish needs a connection.
           </p>
-          <Button disabled={busy} onClick={() => void finish()}>
+          <Button
+            disabled={busy}
+            onClick={(event) => {
+              const prompt = dialog.current;
+              if (!prompt || prompted.length === 0) return void finish();
+              // Some touch browsers do not focus a tapped button. Make it the focus return target.
+              event.currentTarget.focus();
+              prompt.showModal();
+              back.current?.focus();
+            }}
+          >
             Finish and review
           </Button>
+          {prompted.length ? (
+            <dialog
+              ref={dialog}
+              aria-labelledby="readiness-heading"
+              className="fixed inset-0 m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-sm overflow-auto rounded-lg border border-foreground/30 bg-background p-4 text-foreground overscroll-contain backdrop:overflow-hidden backdrop:overscroll-contain backdrop:bg-black/50"
+            >
+              <div className="flex max-h-[calc(100dvh-4rem)] flex-col">
+                <h2 id="readiness-heading" className="text-lg font-semibold">Ready to review?</h2>
+                <p className="mt-2 text-sm">Check these items now or continue to save the draft for review.</p>
+                <ul className="mt-3 min-h-0 divide-y divide-foreground/20 overflow-y-auto overscroll-contain">
+                  {prompted.map((fix) => (
+                    <li key={fix.key} className="flex items-center justify-between gap-3 py-1 text-sm">
+                      <span className="min-w-0 break-words">{fix.label}</span>
+                      {fix.href ? (
+                        // Leaving Finish releases its Firestore connections before the next document loads.
+                        <a href={fix.href} aria-label={`${fix.action ?? 'Fix'}: ${fix.label}`} className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center underline">
+                          {fix.action ?? 'Fix'}
+                        </a>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+                <form method="dialog" className="mt-3 flex flex-wrap gap-2">
+                  <Button ref={back} type="submit" variant="outline">Back</Button>
+                  <Button
+                    type="button"
+                    onClick={() => {
+                      if (!dialog.current?.open) return;
+                      dialog.current.close();
+                      void finish();
+                    }}
+                  >
+                    Continue anyway
+                  </Button>
+                </form>
+              </div>
+            </dialog>
+          ) : null}
         </>
       ) : null}
 

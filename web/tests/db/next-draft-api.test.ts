@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { canonicalManifest } from '@/lib/field/canonical';
 import type { SubmissionsService } from '@/lib/submissions/service';
-import { flow } from './submission-flow';
+import { flow, json } from './submission-flow';
 import type { FakeClaims, Harness } from './team-harness';
 
 // S5a-8, Back to editing (owner decision J4; docs/plans/S5.md, section 4, step 7): the next draft
@@ -109,11 +109,13 @@ describe('Back to editing', () => {
   it('two calls with the same new id make one draft', async () => {
     const { jobId, draftId } = await submittedJob();
     const body = { draftId: randomUUID(), fromDraftId: draftId };
+    const calls = h.field.calls.length;
     expect((await f.nextDraft(ESTIMATOR_A, jobId, body)).status).toBe(201);
     const after = await f.job(jobId);
     expect(await f.nextDraft(ESTIMATOR_A, jobId, body)).toEqual({ status: 200, body: { job: { id: jobId, status: 'draft', currentDraftId: body.draftId, revision: after.revision } } });
     expect(await f.job(jobId)).toEqual(after);
-    expect(h.field.calls.filter((call) => call === 'createFrom')).toHaveLength(2);
+    // One draft sync each; the second finds the draft as Postgres says.
+    expect(h.field.calls.slice(calls).filter((call) => call === 'sync')).toHaveLength(2);
     expect(Object.keys(h.field.data()).filter((key) => key.endsWith(body.draftId))).toHaveLength(1);
     expect((await f.auditActions(jobId)).filter((action) => action === 'job_back_to_editing')).toHaveLength(1);
   });
@@ -149,6 +151,145 @@ describe('Back to editing', () => {
     }
   });
 
+  // Security audit F1: a job's own earlier draft, or a draft the field database holds for another
+  // job, is never its next draft version.
+  it('refuses the job’s own earlier draft and a draft made for another job, and leaves both as they are', async () => {
+    const { jobId, draftId, manifest } = await submittedJob();
+    const second = randomUUID();
+    expect((await f.nextDraft(ESTIMATOR_A, jobId, { draftId: second, fromDraftId: draftId })).status).toBe(201);
+    h.field.put(h.seed.a, second, manifest);
+    expect((await f.submitShown(ESTIMATOR_A, jobId, second, manifest)).answer.status).toBe(201);
+    const before = await f.job(jobId);
+    const earlier = structuredClone(h.field.draft(h.seed.a, draftId));
+    expect(await f.nextDraft(ESTIMATOR_A, jobId, { draftId, fromDraftId: second })).toMatchObject({ status: 409, body: { error: 'conflict' } });
+    expect(await f.job(jobId)).toEqual(before);
+    expect(h.field.draft(h.seed.a, draftId)).toEqual(earlier);
+
+    const foreign = randomUUID();
+    const key = `${h.seed.a}/${foreign}`;
+    h.drafts.plant(key, { fieldOwnerUid: 'estimator-a2', jobId: randomUUID() });
+    const stored = structuredClone(h.field.draft(h.seed.a, foreign));
+    expect(await f.nextDraft(ESTIMATOR_A, jobId, { draftId: foreign, fromDraftId: second })).toMatchObject({ status: 409, body: { error: 'conflict' } });
+    expect(h.field.draft(h.seed.a, foreign)).toEqual(stored);
+    expect(await f.job(jobId)).toEqual(before);
+    expect(await h.admin`SELECT job_id FROM job_drafts WHERE draft_id = ${foreign}`).toEqual([]);
+    // The job is still on its submitted draft, so a fresh id still goes back to editing.
+    expect((await f.nextDraft(ESTIMATOR_A, jobId, { draftId: randomUUID(), fromDraftId: second })).status).toBe(201);
+  });
+
+  // Security audit F1, the planned regression: after job A submits and moves off its first draft,
+  // Back to editing on job B with that id answers 409, and the draft and its field owner stay as they
+  // are; so does job B.
+  it('refuses another job’s earlier draft as a job’s next draft, and leaves both jobs and that draft as they are', async () => {
+    const a = await submittedJob();
+    expect((await f.nextDraft(ESTIMATOR_A, a.jobId, { draftId: randomUUID(), fromDraftId: a.draftId })).status).toBe(201);
+    const b = await submittedJob(ESTIMATOR_A2);
+    const key = `${h.seed.a}/${a.draftId}`;
+    const draft = structuredClone(h.field.draft(h.seed.a, a.draftId));
+    const owner = structuredClone(h.drafts.owner(key));
+    const before = await everything(h.admin);
+    expect(await f.nextDraft(ESTIMATOR_A2, b.jobId, { draftId: a.draftId, fromDraftId: b.draftId })).toMatchObject({ status: 409, body: { error: 'conflict' } });
+    expect(await everything(h.admin)).toBe(before);
+    expect(h.field.draft(h.seed.a, a.draftId)).toEqual(draft);
+    expect(h.drafts.owner(key)).toEqual(owner);
+    expect(owner?.fieldOwnerUid).toBe('estimator-a');
+    expect(h.drafts.jobOf(key)).toBe(a.jobId);
+  });
+
+  // Security audit F1: a next draft is never the draft it comes from. Sent with one id as both, even
+  // for a job whose current draft the previous version left unclaimed, it is refused before any claim,
+  // so the refused id commits nothing.
+  it('refuses the same id as next draft and source before any claim, so nothing is committed', async () => {
+    const { jobId, draftId } = await submittedJob();
+    await h.admin`DELETE FROM job_drafts WHERE draft_id = ${draftId}`;
+    const before = await everything(h.admin);
+    const stored = structuredClone(h.field.draft(h.seed.a, draftId));
+    expect(await f.nextDraft(ESTIMATOR_A, jobId, { draftId, fromDraftId: draftId })).toMatchObject({ status: 409, body: { error: 'conflict' } });
+    expect(await everything(h.admin)).toBe(before);
+    expect(await h.admin`SELECT job_id FROM job_drafts WHERE draft_id = ${draftId}`).toEqual([]);
+    expect(h.field.draft(h.seed.a, draftId)).toEqual(stored);
+  });
+
+  // Security audit F1, across a release: the migration runs while the previous version still serves,
+  // and that version puts jobs on drafts and submits them without claiming them or writing their job
+  // id on the draft. Such a submitted draft is still no other job's, nor its own job's next draft.
+  it('refuses a submitted draft the previous version left unclaimed, to another job and to its own job', async () => {
+    const { jobId, draftId, manifest } = await submittedJob();
+    const second = randomUUID();
+    expect((await f.nextDraft(ESTIMATOR_A, jobId, { draftId: second, fromDraftId: draftId })).status).toBe(201);
+    await h.admin`DELETE FROM job_drafts WHERE job_id = ${jobId}`;
+    const key = `${h.seed.a}/${draftId}`;
+    h.drafts.unstamp(key);
+    const stored = structuredClone(h.drafts.owner(key));
+
+    const other = randomUUID();
+    const made = await json(jobsRoute.POST(request(ESTIMATOR_A2, '/api/jobs', { method: 'POST', body: { id: other, draftId } }), params({})));
+    expect(made).toMatchObject({ status: 409, body: { error: 'conflict' } });
+    expect(await h.admin`SELECT id FROM jobs WHERE id = ${other}`).toEqual([]);
+    expect(await h.admin`SELECT job_id FROM job_drafts WHERE draft_id = ${draftId}`).toEqual([]);
+    expect(h.drafts.owner(key)).toEqual(stored);
+    expect(h.drafts.jobOf(key)).toBeUndefined();
+
+    h.field.put(h.seed.a, second, manifest);
+    expect((await f.submitShown(ESTIMATOR_A, jobId, second, manifest)).answer.status).toBe(201);
+    const before = await f.job(jobId);
+    expect(await f.nextDraft(ESTIMATOR_A, jobId, { draftId, fromDraftId: second })).toMatchObject({ status: 409, body: { error: 'conflict' } });
+    expect(await f.job(jobId)).toEqual(before);
+  });
+
+  // Security audit F1, across a release: the previous version went back to editing without claiming
+  // the new draft id or writing the job id on the draft it made. The same request sent again claims
+  // the id for the job in Postgres first, then stamps the draft; an id Postgres holds for another job
+  // is refused and its draft not stamped.
+  it('claims and stamps a next draft the previous version made when the same request is sent again, and refuses one another job holds', async () => {
+    const { jobId, draftId } = await submittedJob();
+    const body = { draftId: randomUUID(), fromDraftId: draftId };
+    expect((await f.nextDraft(ESTIMATOR_A, jobId, body)).status).toBe(201);
+    await h.admin`DELETE FROM job_drafts WHERE draft_id = ${body.draftId}`;
+    h.field.unstamp(h.seed.a, body.draftId);
+    const other = await f.readyJob(ESTIMATOR_A, h.seed.a);
+    await h.admin`INSERT INTO job_drafts (company_id, draft_id, job_id) VALUES (${h.seed.a}, ${body.draftId}, ${other.jobId})`;
+    const stored = structuredClone(h.field.draft(h.seed.a, body.draftId));
+    expect(await f.nextDraft(ESTIMATOR_A, jobId, body)).toMatchObject({ status: 409, body: { error: 'conflict' } });
+    expect(h.field.draft(h.seed.a, body.draftId)).toEqual(stored);
+    expect(stored?.jobId).toBeUndefined();
+
+    await h.admin`DELETE FROM job_drafts WHERE draft_id = ${body.draftId}`;
+    expect((await f.nextDraft(ESTIMATOR_A, jobId, body)).status).toBe(200);
+    expect(await h.admin`SELECT job_id::text AS job FROM job_drafts WHERE draft_id = ${body.draftId}`).toEqual([{ job: jobId }]);
+    expect(h.field.draft(h.seed.a, body.draftId)).toEqual({ ...stored, jobId });
+  });
+
+  // Security audit F1: the claim commits before the stamp, so a lost answer from the stamp never leaves
+  // a draft the previous version made stamped without its claim.
+  it('commits the claim before stamping a next draft the previous version made, so a lost answer leaves it claimed', async () => {
+    const { jobId, draftId } = await submittedJob();
+    const body = { draftId: randomUUID(), fromDraftId: draftId };
+    expect((await f.nextDraft(ESTIMATOR_A, jobId, body)).status).toBe(201);
+    await h.admin`DELETE FROM job_drafts WHERE draft_id = ${body.draftId}`;
+    h.field.unstamp(h.seed.a, body.draftId);
+    // The draft sync stamps it and loses its answer, on its try and its one more try.
+    h.field.loseNext.sync = 2;
+    expect((await f.nextDraft(ESTIMATOR_A, jobId, body)).status).toBe(503);
+    expect(h.field.draft(h.seed.a, body.draftId)?.jobId).toBe(jobId);
+    expect(await h.admin`SELECT job_id::text AS job FROM job_drafts WHERE draft_id = ${body.draftId}`).toEqual([{ job: jobId }]);
+    expect((await f.nextDraft(ESTIMATOR_A, jobId, body)).status).toBe(200);
+  });
+
+  it('gives a new draft id to one of two jobs that claim it at once, and refuses the other (security audit F1)', async () => {
+    const { jobId, draftId } = await submittedJob();
+    const contested = randomUUID();
+    const other = randomUUID();
+    const [back, made] = await Promise.all([
+      f.nextDraft(ESTIMATOR_A, jobId, { draftId: contested, fromDraftId: draftId }),
+      json(jobsRoute.POST(request(ESTIMATOR_A2, '/api/jobs', { method: 'POST', body: { id: other, draftId: contested } }), params({}))),
+    ]);
+    expect([back.status, made.status].sort()).toEqual([201, 409]);
+    const winner = back.status === 201 ? jobId : other;
+    expect(await h.admin`SELECT job_id::text AS job FROM job_drafts WHERE draft_id = ${contested}`).toEqual([{ job: winner }]);
+    expect(await h.admin`SELECT id::text FROM jobs WHERE current_draft_id = ${contested}`).toEqual([{ id: winner }]);
+  });
+
   it('only the estimator who owns the field work goes back to editing, not the owner who does not; another company never reaches the job', async () => {
     const { jobId, draftId } = await submittedJob();
     const before = await everything(h.admin);
@@ -167,7 +308,8 @@ describe('Back to editing', () => {
   it('makes the missing draft when the same request is sent again after the field database failed', async () => {
     const { jobId, draftId } = await submittedJob();
     const body = { draftId: randomUUID(), fromDraftId: draftId };
-    h.field.failNext.createFrom = true;
+    // The draft sync fails on its try and its one more try.
+    h.field.failNext.sync = 2;
     expect(await f.nextDraft(ESTIMATOR_A, jobId, body)).toMatchObject({ status: 503, body: { error: 'submissions_unavailable' } });
     expect((await f.job(jobId)).current_draft_id).toBe(body.draftId);
     expect(h.field.draft(h.seed.a, body.draftId)).toBeNull();
@@ -178,7 +320,8 @@ describe('Back to editing', () => {
   it('makes the missing draft on a retry even after the office saved the claim in between', async () => {
     const { jobId, draftId, submissionId } = await submittedJob();
     const body = { draftId: randomUUID(), fromDraftId: draftId };
-    h.field.failNext.createFrom = true;
+    // The draft sync fails on its try and its one more try.
+    h.field.failNext.sync = 2;
     expect((await f.nextDraft(ESTIMATOR_A, jobId, body)).status).toBe(503);
     const claim = {
       revision: (await f.job(jobId)).revision,
@@ -207,7 +350,8 @@ describe('Back to editing', () => {
     h.field.put(h.seed.a, second, manifest);
     expect((await f.submitShown(ESTIMATOR_A, jobId, second, manifest)).answer.status).toBe(201);
     const third = randomUUID();
-    h.field.failNext.createFrom = true;
+    // The draft sync fails on its try and its one more try.
+    h.field.failNext.sync = 2;
     expect((await f.nextDraft(ESTIMATOR_A, jobId, { draftId: third, fromDraftId: second })).status).toBe(503);
     expect(await f.nextDraft(ESTIMATOR_A, jobId, { draftId: third, fromDraftId: draftId })).toMatchObject({ status: 409, body: { error: 'conflict' } });
     expect(h.field.draft(h.seed.a, third)).toBeNull();

@@ -18,7 +18,7 @@ Billing uses the approved Citi Bank account ending F05CC3. Sharing a billing acc
 
 ## Sign-in and saved jobs
 
-Production has run with `WORKSPACES_ENABLED=true` since October 15, 2026 (see [RELEASES.md](../RELEASES.md)). The legacy owner-only mode, used when it is false, relies on verified Google sign-in and the `STAFF_EMAILS` allowlist, which fails closed: an unset or empty value admits nobody. For how deploys set it, see [Deployment](#deployment) and [Automatic deploys](#automatic-deploys). The company-workspace build replaces this with private memberships and company/job permissions when `WORKSPACES_ENABLED=true`; its migration binds `nathanaelcnorman@gmail.com` as initial superadmin and ADR owner. Read [company-workspaces.md](company-workspaces.md) before enabling it, configuring invitation email, migrating access or rolling it back. Rolling back to a workspaces-off revision restores the legacy owner-only mode.
+Production has run with `WORKSPACES_ENABLED=true` since October 15, 2026 (see [RELEASES.md](../RELEASES.md)). The legacy owner-only mode, used when it is false, relies on verified Google sign-in and the `STAFF_EMAILS` allowlist, which fails closed: an unset or empty value admits nobody. For how deploys set it, see [Deployment](#deployment). The company-workspace build replaces this with private memberships and company/job permissions when `WORKSPACES_ENABLED=true`; its migration binds `nathanaelcnorman@gmail.com` as initial superadmin and the first company's owner. Read [company-workspaces.md](company-workspaces.md) before enabling it, configuring invitation email, migrating access or rolling it back. Rolling back to a workspaces-off revision restores the legacy owner-only mode.
 
 Private drafts live in `inspections`, with schema version 3 for new records, owner UID, expected revision, structured scope, separate transcripts and photo references. Existing version-2 drafts remain readable and are updated in place; signed records remain immutable. Updates use Firestore transactions; conflicts return 409. Individual original photos live under `users/{uid}/inspections/{id}`; uploads also store a 1600 px JPEG copy beside each original (`<name>-1600.jpg`, recorded as the photo's `model_file`), which the audit sends instead of the original. Photos without a readable copy fall back to the original. Phones upload each photo as a binary multipart body (a `metadata` JSON part and one `file` part); older app versions still send base64 JSON. A photo larger than 2,560 px on its longest edge uploads as a 2,560 px JPEG copy (quality about 0.85) that becomes the photo's `file`, and the upload records the full-size original's SHA-256 and type as the photo's `original`. The phone later sends that original as the raw body of `POST /api/inspections/{id}/photos/{photo_id}/original`; the server checks type, size and decoding as for any photo, accepts only bytes matching the recorded hash and stores them beside the copy as `original-<sha256>.<type>` with `if_generation_match=0` (a retry that finds the object is a success). Nothing in the inspection or a signed agreement changes when it arrives. Documents, OCR and the 1600 px model copy all use the 2,560 px copy; the original is evidence only. OCR status and result belong to the exact photo and room. Audits hash the saved revision, inputs, evidence and all four validated documents.
 
@@ -79,6 +79,8 @@ Other sites and databases in `mitigation-project` are unchanged. The old backend
 
 ## Deployment
 
+> **Historical.** The old app is retired and switched off, and its project is never deployed to or changed (`architecture/product-rules.md`). The commands in this section are kept as a record, not as instructions.
+
 Never use a blanket `firebase deploy`. Keep both `index.html` copies (the landing page) identical; the app shell is `public/app.html`, served at `/app`. Deploy indexes separately and verify they are READY before enabling paginated queries.
 
 Deploy the backend only with `scripts/deploy_backend.py`. Cloud Run copies environment variables from the latest service template, which can be a staged revision with no traffic, so a raw `gcloud run deploy` can silently inherit `WORKSPACES_ENABLED`, `AI_FEATURES`, `PRICE_BOOKS_ENABLED` or `RETENTION_ENABLED` from that revision. The script requires `--workspaces on|off` and always sets `WORKSPACES_ENABLED`, `AI_FEATURES`, `PRICE_BOOKS_ENABLED` and `RETENTION_ENABLED`. The defaults are the repository baseline, today `AI_FEATURES=readiness`, price books off (`PRICE_BOOKS_ENABLED=false`) and record retention off (`RETENTION_ENABLED=false`); see [Turning a feature on or off](#turning-a-feature-on-or-off). `--ai-features` and `--price-books on|off` set one revision only, such as a staged 0% check, and are not how a feature is turned on. The script prints the baseline, always mounts the Maps key secret (`--update-secrets`, see [Address suggestions and the job map](#address-suggestions-and-the-job-map)), keeps the other existing variables (model settings, and the staff list unless `--staff-emails` sets it on purpose; it refuses, `--dry-run` included, when the flag is omitted and the service template has no `STAFF_EMAILS`), and stages a tagged revision with `--no-traffic`. Review the command with `--dry-run`, then rerun with `--yes`.
@@ -100,7 +102,7 @@ python scripts/deploy_backend.py --workspaces off --tag workspaces-off-YYYYMMDD 
 # {"status":"healthy","schema_version":3,"version":"<the release version>","source_commit":"<the stamped commit>"}.
 curl.exe -s <tagged-revision-url>/api/health
 # Configuration, including the chosen flag ("workspaces_enabled":false for --workspaces off), is staff-only at
-# /api/health/details; `node scripts/verify_live_browser.js --backend-tag <tag>` prints it after normal staff sign-in.
+# /api/health/details; the retired `scripts/verify_live_browser.js --backend-tag <tag>` printed it after normal staff sign-in (removed from the repository).
 gcloud run services update-traffic alert-disaster-field-estimator --to-tags=workspaces-off-YYYYMMDD=100 --region=us-west2 --project=alert-disaster-field-2026 --billing-project=alert-disaster-field-2026
 # Append a "100% (promoted)" row for the backend to RELEASES.md.
 firebase.cmd deploy --only firestore:rules --project alert-disaster-field-2026
@@ -116,88 +118,27 @@ python scripts/auto_deploy.py --publish "$(git rev-parse HEAD)"
 
 The backend rejects a different project ID or evidence bucket. Production never enables local demo fallbacks.
 
-### Automatic deploys
+### Retired deployment workflow
 
-`.github/workflows/deploy.yml` releases a master commit after its CI run succeeds on a push to master.
-It runs `scripts/auto_deploy.py`, which computes the next UTC date-style version (`YYYY.MM.DD-N`, starting at `1` each day) and uses the manual path: `deploy_backend.py --workspaces on
---ai-features <repository baseline> --price-books <repository baseline> --staff-emails <serving value> --version <YYYY.MM.DD-N>` stages a tagged 0% revision (the tag is `a<7-character commit prefix>-<run id digits>`, trimmed so tag plus service name stays within Cloud Run's 46 characters);
-the staged revision's environment, secret bindings, service account and limits must equal the serving
-revision's apart from the three baseline flags; the service must also keep one minimum instance
-(`MIN_INSTANCES` in `deploy_backend.py`, set as the service-level `--min=1`, not the per-revision
-`--min-instances`), checked on the service after staging; the tagged URL must report healthy, schema 3, the release `version` and the
-stamped commit and answer the signed-out requests listed in `REFUSED_GET` and `REFUSED_POST` with 401;
-only then does traffic move. Next it stamps the shell with `--version <YYYY.MM.DD-N>`, deploys only `hosting:alert-disaster`, runs
-`verify_hosting.js` and resets the stamp. Only after verification succeeds, a separate workflow step (the only one holding a GitHub write token) creates the immutable git tag for the version the live backend reports and a GitHub Release whose notes list the merged pull requests in plain words. A failure before promotion promotes nothing and creates no tag. A failure after
-it restores traffic to the revision that was serving, clones the previous Hosting version back to the
-live channel and fails the run without creating a tag. One release runs at a time (`concurrency: production-deploy`).
-
-It stops with a message, and the owner releases that commit by hand, when:
-
-- `firestore.rules` or `firestore.indexes.json` changed since the serving commit. The workflow never
-  deploys rules, indexes or TTL policies. After releasing them by hand (and confirming the indexes are
-  READY), release the commit by hand too; later merges deploy automatically again.
-- The serving revision's `source-commit` label is not a clean commit in this history, or traffic is not
-  100% on one revision.
-- A Firestore TTL policy is missing (`scripts/ensure_firestore_ttls.py`, read-only).
-- The serving revision has no non-empty, valid `STAFF_EMAILS`. The check runs before anything is staged;
-  set the variable on the service by hand, then rerun.
-- The repository baseline would turn off a feature the serving revision has on. The check runs before
-  anything is staged and names the setting; see
-  [Turning a feature on or off](#turning-a-feature-on-or-off).
-
-A commit that is already serving, or older than what is serving, is skipped without error, so a manual
-release made in parallel is never overwritten. So is a commit whose changes since the serving commit touch
-no file the legacy app is built from: `backend/`, `public/`, the root `index.html`, `firebase.json`,
-`.firebaserc`, `firestore.rules`, `firestore.indexes.json`, the root `package.json` and lockfile, and the
-release scripts listed in `LEGACY_FILES` (`scripts/auto_deploy_helpers.py`). A DryScope rebuild merge
-(`web/`, `infra/`, docs, tests, workflows) therefore exits cleanly with the logged reason `No file the
-legacy app is built from changed ...` and deploys nothing; the next merge that does change a listed file
-releases everything merged since. A check-only run still runs every refusal check and notes that a real run
-would skip. The rules and index check above runs first, so a rules or index change still stops for a hand
-release. Add a path to the list if the legacy build or release starts reading it.
-
-Each run's job summary is the release record; see [RELEASES.md](../RELEASES.md). Stale tags accumulate on old revisions at 0% traffic; Cloud Run
-allows 1000 tags per service, so clear old ones occasionally with `gcloud run services update-traffic
---remove-tags`.
-
-**Warm instance.** One minimum instance removes the Python cold start (about 5 to 8 seconds) when scaling up from zero after an idle spell or a deploy; a second concurrent instance (up to `--max-instances=2`) still starts cold. The service-level minimum follows the traffic split, so tagged revisions at 0% keep no warm instance of their own and the service keeps exactly one; a per-revision minimum would bill one more instance for every tagged revision. It takes effect when staging runs, warming the serving revision until promotion. The minimum is held to the repository value, not to the service before staging, so the first release that adds it is recorded as a baseline change instead of stopping. One always-on instance costs about $7 to $10 a month.
-
-**Owner setup, once.** Nothing below is done by the repository or its agents.
-
-1. Review, then run, with `gcloud` signed in as a project owner:
-   ```bash
-   scripts/setup_auto_deploy.sh --dry-run   # prints each change
-   scripts/setup_auto_deploy.sh
-   ```
-   It enables the IAM Credentials and STS APIs; creates the `adr-deployer` service account (no keys), a
-   Workload Identity pool and an OIDC provider whose condition admits only repository
-   `nnorman100/adr-field-estimator`, ref `refs/heads/master` and the `deploy.yml` workflow; lets that
-   repository impersonate the account; and grants it `run.developer`, `cloudbuild.builds.editor`,
-   `logging.viewer`, `serviceusage.serviceUsageConsumer`, `firebasehosting.admin`, `firebase.viewer` and
-   `datastore.viewer` on the project, `serviceAccountUser` on `adr-runtime` and `adr-builder` only, and
-   write access to the Cloud Run source bucket and Artifact Registry repository only. It cannot edit
-   Firestore rules, indexes or TTLs, IAM, or any other project.
-2. Set the two repository variables the script prints, `GCP_WORKLOAD_IDENTITY_PROVIDER` and
-   `GCP_DEPLOY_SERVICE_ACCOUNT`, and `AUTO_DEPLOY_ENABLED=true`.
-3. Run **Deploy** once from the Actions tab (`workflow_dispatch`, `version` left blank). It runs only the refusal checks
-   (`--check-only`) and proves authentication, the roles for reading the service and the TTL check,
-   without staging or deploying.
-4. The first real release is the next merge. The roles for source builds and Hosting were derived from
-   reading the scripts, not from a live run; a missing permission fails the run before promotion. Watch
-   the first run and add only what its error names.
-
-Set `AUTO_DEPLOY_ENABLED` to anything but `true` to pause automatic deploys; manual releases are
-unaffected.
+The legacy Deploy workflow and its setup script have been removed. Past runs remain in GitHub
+Actions history. The old app's project is never deployed to or changed (`architecture/product-rules.md`), so the
+legacy commands kept in this repository ([release and rollback runbook](runbook/releases.md)) are historical records. The rebuilt app has its own [release workflow](runbook/test-release.md).
 
 ### Turning a feature on or off
 
-The production baseline is three repository constants in `scripts/deploy_backend.py`: `DEFAULT_PRICE_BOOKS` sets `PRICE_BOOKS_ENABLED`, `DEFAULT_RETENTION` sets `RETENTION_ENABLED` (the daily record-retention deletion, [Record retention](company-workspaces.md#record-retention)) and `DEFAULT_AI_FEATURES` sets `AI_FEATURES`. Today they are off, off and `readiness`. Every automatic release stages with them and a hand `deploy_backend.py` run defaults to them.
+Historical (retired old app). Three constants in `scripts/deploy_backend.py` define the legacy release baseline.
+`DEFAULT_PRICE_BOOKS` sets `PRICE_BOOKS_ENABLED`, `DEFAULT_RETENTION` sets `RETENTION_ENABLED`
+([record retention](company-workspaces.md#record-retention)), and `DEFAULT_AI_FEATURES` sets
+`AI_FEATURES`. Their defaults are off, off and `readiness`.
 
-- **Turning a feature on is one reviewed pull request.** Rated High, it changes the constant (for `AI_FEATURES`, add the name and keep the ones already on), the tests that pin today's values (`BASELINE` and the staged values in `tests/test_auto_deploy.py`, the default baseline in `tests/test_deploy_backend.py`) and, in the batch after merges, `docs/status/`. Do any rules, index or data step the feature needs first. Merging it with the owner's go is the release: the automatic deploy stages the new baseline, and every later merge stages the same one, so no later merge can undo it. A commit with a rules or index change still stops for a hand release, which uses the same constants.
-- **Turning a feature off is a reviewed pull request plus one confirmation.** The pull request changes the constant back. The automatic deploy then refuses that commit, as below, because the refusal cannot tell a deliberate change from a mistake. Release it by hand with `python3 scripts/auto_deploy.py --commit <commit> --confirm-baseline`, then `--publish <commit>` and append the rows to [RELEASES.md](../RELEASES.md). Later merges deploy automatically again.
-- **`--ai-features`, `--price-books` and `--retention` are not how a feature is turned on.** They set one revision only, such as a staged 0% check. If one is promoted, the next automatic release refuses until the constant matches or the owner confirms.
+- **Turning a feature on** requires a reviewed High-risk change to the constant and the tests that pin it (`tests/test_legacy_release_cli.py` and `tests/test_deploy_backend.py`). Keep existing names in `AI_FEATURES`. Complete any required rules, index or data steps before the owner releases the commit by hand.
+- **Turning a feature off** also requires the owner to confirm the change. Change the constant, then release the reviewed commit with `python3 scripts/auto_deploy.py --commit <commit> --confirm-baseline`. Publish the version with `--publish <commit>` and record it in [RELEASES.md](../RELEASES.md).
+- `--ai-features`, `--price-books` and `--retention` set one revision, such as a tagged revision at 0% traffic. The constants set the release baseline.
 
-**The refusal.** Before anything is staged, including on a check-only run, `scripts/auto_deploy.py` compares the serving revision with the repository baseline the way the server reads them: price books are on only for the value `true` in any case, `AI_FEATURES` is a set of names, and an unset flag is off. If the baseline would turn off anything now serving, the run fails and names the setting (`PRICE_BOOKS_ENABLED: serving 'true', repository baseline 'false'`). `--confirm-baseline` is accepted only on a hand run or a rollback dispatch; the automatic run never passes it. A baseline that adds to what is serving is not blocked, and is recorded as a `Baseline change` line in the job summary.
+Before staging, including on a check-only run, `scripts/auto_deploy.py` compares the baseline with
+the serving revision. Price books are on only for the value `true` in any case, `AI_FEATURES` is a
+set of names, and an unset flag is off. A reduction stops the release and names the setting unless
+the owner passes `--confirm-baseline`. Additions are recorded as baseline changes.
 
 ### Firestore TTL policies
 
@@ -226,20 +167,28 @@ A new policy reports `CREATING` while Firestore backfills, then `ACTIVE`; the sc
 
 ## Verification and review scope
 
-Local tests cover pricing, documents, ownership, retries, authentication, bounded uploads, failures, revision conflicts, Live formats and teardown. Chromium/WebKit tests exercise the real UI with synthetic adapters. Release verification uses scripts/verify_live_browser.js with normal staff sign-in and makes no IAM changes. Each verifier takes the dedicated backend URL as a required argument and has no default target. The historical `verify_migration.py`, `verify_repairs.py` and `verify_review_fixes.py` probes, which minted synthetic custom tokens through a signing grant, were removed; their shared helpers now live in `scripts/verify_common.py`.
+Local tests cover pricing, documents, ownership, retries, authentication, bounded uploads, failures, revision conflicts, Live formats and teardown. Chromium/WebKit tests exercise the real UI with synthetic adapters. Release verification historically used scripts/verify_live_browser.js with normal staff sign-in and made no IAM changes; that verifier and `verify_live_release.py` were removed from the repository. The historical `verify_migration.py`, `verify_repairs.py` and `verify_review_fixes.py` probes, which minted synthetic custom tokens through a signing grant, were removed; their shared helpers now live in `scripts/verify_common.py`.
 
 The [original review](https://chatgpt.com/space/page_4a5293fc2ec481918bd32e5c78fb2dca) remains the baseline. Current repair status and device acceptance are in `docs/review-repairs.md`.
 
 ## Rollback
 
-To roll back to a previous `YYYY.MM.DD-N` release version in one step:
+Historical (retired old app; its project is never deployed to or changed, `architecture/product-rules.md`). The owner could fetch tags with `git fetch --tags` and run
+`python3 scripts/auto_deploy.py --rollback <YYYY.MM.DD-N>`. Record the result in
+[RELEASES.md](../RELEASES.md).
 
-- **GitHub Actions**: run **Deploy** (`workflow_dispatch` with `version` set to the target `YYYY.MM.DD-N`). This needs `AUTO_DEPLOY_ENABLED` set to `true`.
-- **Single operator command**: `git fetch --tags`, then `python3 scripts/auto_deploy.py --rollback <YYYY.MM.DD-N>`. Use this while automatic deploys are paused, and append rows to [RELEASES.md](../RELEASES.md) as for any manual release.
+The command resolves the target tag and checks the Firestore `_migrations` ledger. It stops before
+staging if an applied migration is newer than the target, the ledger cannot be read, or
+`firestore.rules` or `firestore.indexes.json` changed since the target. The owner can confirm that
+warning with `--confirm-past-migration`. The rollback changes the backend and Hosting, leaving
+Firestore data, rules and indexes as deployed.
 
-The rollback resolves the version tag and checks the Firestore `_migrations` ledger (#184) for any applied data migrations newer than the target version. When it finds one, or cannot read the ledger, it emits a `::warning::` banner and job-summary warning and stops before staging, because rolling back code does not undo Firestore data changes; `--confirm-past-migration` (workflow input `confirm_past_migration` set to `yes`) goes ahead anyway. A change to `firestore.rules` or `firestore.indexes.json` between the target and what is serving warns and stops the same way, with the same confirmation: a rollback does not roll them back, so they stay at the newer hand-released version, and the next automatic release stops for a hand release. It then redeploys that tag's backend and Hosting through the same staged checks and `verify_hosting.js` verification. Afterwards, pause automatic deploys (`AUTO_DEPLOY_ENABLED`) or revert the bad change before the next merge, otherwise the next release brings it back.
-
-A rollback restores code, not the baseline. It stages the target's code with the baseline of the checkout running it, which on the **Deploy** workflow is the commit it runs from, normally `master`. When that baseline would turn off a feature now serving it stops before staging, and `--confirm-baseline` (workflow input `confirm_baseline` set to `yes`) goes ahead; both refusals are reported together when a migration or rules warning also applies. The target's own deploy script runs the stage, so a target that does not know a name in `AI_FEATURES` stops before staging with `unknown AI feature` (`estimate_assist` is unknown before `2026.11.04-2`); use the traffic restore below for one of those. The automatic rollback after a failed release is separate: it moves traffic back to the revision that was serving, flags included, and stages nothing, so this check never stops it.
+The rollback stages the target's code using the baseline of the checkout running the command.
+It stops if that baseline would turn off a serving feature unless the owner passes
+`--confirm-baseline`. Both sets of warnings are reported together when applicable.
+If the target does not recognize an `AI_FEATURES` name, staging stops. The retained traffic-restore
+procedure below uses a previously deployed revision. After rolling back, fix or revert the bad
+change before the next manual release.
 
 The previous dedicated backend revisions also remain available for manual traffic restoration. Restore traffic only with an explicit dedicated project/region and the matching Firebase Hosting release; do not pair the old backend with the new schema-3 frontend. No stored data is deleted on rollback. A revision from before address suggestions rejects a draft that holds `coordinates` (its contract forbids unknown fields), so fix forward rather than roll back once technicians have chosen suggestions. The historical shared project is not a repair rollback target.
 
@@ -265,7 +214,7 @@ No direct-client keys, ephemeral tokens, vocabulary options or Live tools are en
 
 ## Normal staff sign-in release verification
 
-The current release helper does not mint synthetic user tokens or change IAM. Start it from
+**Historical:** the release helper (`scripts/verify_live_browser.js`) was removed from the repository, so the commands below can no longer be run. It did not mint synthetic user tokens or change IAM. It started from
 the repository root:
 
 ```powershell
@@ -274,8 +223,8 @@ node scripts/verify_live_browser.js --backend-tag body-limits --hold
 
 Select the exact candidate tag after checking its revision in the dedicated project and in
 [RELEASES.md](../RELEASES.md); tags such as `body-limits` name past releases, not a permanent staging
-alias. There is no implicit historical staged target. `--expect-commit <commit>` makes
-`verify_live_release.py` fail unless the backend reports that `source_commit`.
+alias. There is no implicit historical staged target. `--expect-commit <commit>` made
+the removed `verify_live_release.py` fail unless the backend reported that `source_commit`.
 Staged requests reach the tagged revision directly, so its signing-link phase reports `ip_address absent`; after the Hosting release, confirm with one synthetic link signature made through Hosting that the record's `signer.ip_address` is the signing device's public address.
 `--workspaces` explicitly selects the
 workspace staging tag (`workspaces`) and is not appropriate for a repairs-only release. `--production` verifies
@@ -318,7 +267,7 @@ IDs created by that run and their exact evidence prefixes. Failed-test checkpoin
 also uses an update-time precondition and cannot erase another inspection's checkpoint.
 The existing staff identity, other jobs and staff quotas are retained.
 
-Credential-free initialization check:
+Credential-free initialization check (historical, same removal):
 
 ```powershell
 node scripts/verify_live_browser.js --headless --auth-smoke

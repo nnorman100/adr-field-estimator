@@ -82,6 +82,7 @@ describe('API sign-in gate', () => {
       '/api/invitations/:id',
       '/api/invitations/:id/accept',
       '/api/prices',
+      '/api/prices/item-list',
       '/api/prices/working-copy',
       '/api/prices/preview',
       '/api/prices/publish',
@@ -98,9 +99,18 @@ describe('API sign-in gate', () => {
       '/api/jobs/:id/submissions',
       '/api/jobs/:id/drafts',
       '/api/jobs/:id/estimate',
+      '/api/jobs/:id/reprice',
+      '/api/jobs/:id/approvals',
+      '/api/jobs/:id/approvals/:id',
+      '/api/jobs/:id/approvals/:id/approve',
       '/api/jobs/:id/ai/summary-draft',
       '/api/jobs/:id/agreements',
       '/api/jobs/:id/scope-lists',
+      '/api/jobs/:id/readiness',
+      '/api/jobs/:id/drying-readings',
+      '/api/jobs/:id/drying-readings/:id/void',
+      '/api/jobs/:id/drying-watch',
+      '/api/jobs/:id/drying-watch/actions',
       '/api/jobs/:id/signing-link',
       '/api/jobs/:id/document-links',
       '/api/jobs/:id/document-links/:id',
@@ -131,6 +141,7 @@ describe('API sign-in gate', () => {
     expect(call(`/api/jobs/${id}/photos/${id}`, 'PUT').headers.get('x-middleware-next')).toBe('1');
     expect(call(`/api/jobs/${id}/submissions`, 'POST').headers.get('x-middleware-next')).toBe('1');
     expect(call(`/api/jobs/${id}/drafts`, 'POST').headers.get('x-middleware-next')).toBe('1');
+    expect(call(`/api/jobs/${id}/reprice`, 'POST').headers.get('x-middleware-next')).toBe('1');
     expect(call(`/api/jobs/${id}/ai/summary-draft`, 'POST').headers.get('x-middleware-next')).toBe('1');
     for (const path of [`/api/jobs/${id}/ai/summary-draft/`, `/api/jobs/${id}/ai/summary`, `/api/jobs/${id}/ai`, '/api/jobs/x/ai/summary-draft']) {
       expect({ path, status: call(path, 'POST').status }).toEqual({ path, status: 401 });
@@ -149,6 +160,10 @@ describe('API sign-in gate', () => {
       `/api/jobs/${id}/photos/${id}/`,
       `/api/jobs/${id}/submissions/${id}`,
       `/api/jobs/${id}/drafts/`,
+      `/api/jobs/${id}/reprice/`,
+      `/api/jobs/${id}/reprice/extra`,
+      '/api/jobs/current/reprice',
+      '/api/jobs/not-a-uuid/reprice',
       '/api/invitations/..%2Fme',
     ]) {
       expect({ path, status: call(path).status }).toEqual({ path, status: 401 });

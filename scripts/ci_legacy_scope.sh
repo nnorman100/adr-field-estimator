@@ -3,9 +3,9 @@
 #
 # The old Python app (backend/, public/, tests/ and their tooling) is frozen reference code for
 # the TypeScript rebuild in web/ and infra/dryscope/. Its other CI jobs were removed (see
-# docs/runbook/ci.md, "Legacy CI retired"); the CodeQL Python analysis is the one job that still calls
-# this script right after checkout and skips its real steps, with a logged reason, when nothing the
-# legacy app depends on changed.
+# docs/runbook/ci.md, "Legacy CI retired"); no workflow calls this script any more. It is kept until S8 retires the old
+# app. A job that called it did so right after checkout and skipped its real steps, with a logged
+# reason, when nothing the legacy app depends on changed.
 #
 # Inputs (environment): SUITE (name for the log), EVENT_NAME, BASE_SHA (base or before commit),
 # GITHUB_OUTPUT. Output: run=true or run=false. When the base commit is unavailable (new branch,
@@ -48,7 +48,6 @@ legacy_paths=(
   scripts/
   ops/
   docs/ai-inventory.md
-  docs/adr-pricing-source.md
   docs/pricing-source.md
   pyproject.toml
   eslint.config.js

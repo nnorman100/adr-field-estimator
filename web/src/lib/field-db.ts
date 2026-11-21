@@ -25,7 +25,9 @@ import {
 import { appCheckSettings, startAppCheck } from '@/lib/app-check-client';
 import type { BrowserSignInConfig } from '@/lib/config';
 import { companyAuth } from '@/lib/firebase-client';
+import { forgetItemLists } from '@/lib/field/ds-prices';
 import { forgetUnsent, keepPhotosHere, mayHaveUnsent, noteWrite, settled, writesNow } from '@/lib/field/unsent';
+import { addingEntries, forgetJournal, journalInMemory, readJournal } from '@/lib/field/journal';
 import type { AppCheckSeam } from '@/lib/field/sync-gate';
 import { whileNoFieldWindow } from '@/lib/field/window-lock';
 
@@ -121,7 +123,8 @@ export async function mirrorSignIn(person: FieldPerson): Promise<boolean> {
   await Promise.all([company.authStateReady(), auth.authStateReady()]);
   const user = company.currentUser;
   if (user && user.uid === person.uid) {
-    if (auth.currentUser?.uid !== user.uid) await updateCurrentUser(auth, user);
+    const mirrored = auth.currentUser;
+    if (mirrored?.uid !== user.uid || mirrored.metadata.lastSignInTime !== user.metadata.lastSignInTime) await updateCurrentUser(auth, user);
     return true;
   }
   if (auth.currentUser) await signOut(auth);
@@ -200,13 +203,18 @@ export async function startFieldClient(
   return { kind: 'ready', client: memory, fellBack: true };
 }
 
-// Clears the unsent mark once every write made so far has been acknowledged. Waits for as long as
-// the network is off; harmless to call again.
+// Clears the unsent mark once every write made so far has been acknowledged and the recovery
+// journal holds nothing of this person's (an entry waiting, refused or changed is work the server
+// does not have; with a memory cache, the journal this page holds) and no entry is being added. Waits for as long as the network is off; harmless to
+// call again.
 export async function settle(client: FieldClient): Promise<void> {
   const { tenantId, uid } = client.person;
   const writes = writesNow(tenantId, uid);
   if (writes === null) return;
   await waitForPendingWrites(client.db);
+  const memory = client.cache !== 'persistent';
+  if (memory) journalInMemory({ tenantId, uid });
+  if ((memory || typeof indexedDB !== 'undefined') && (addingEntries({ tenantId, uid }) || (await readJournal({ tenantId, uid })).length > 0)) return;
   settled(tenantId, uid, writes);
 }
 
@@ -245,7 +253,7 @@ export async function stopFieldClient(person: Pick<FieldPerson, 'tenantId' | 'ui
 
 export type DiscardResult = 'discarded' | 'elsewhere' | 'failed' | 'kept';
 
-// Removes this person's cache and unsent work for this company from the phone: Discard at sign-out,
+// Removes this person's cache, recovery journal and unsent work for this company from the phone: Discard at sign-out,
 // or the 30-day limit for locked work (O5). Only this (tenant, person)'s database: another
 // company's or another person's is a database of its own and stays. A field window open elsewhere
 // holds the database, so it answers 'elsewhere' and removes nothing; `lockHeld` is for the field
@@ -258,6 +266,12 @@ export async function discardFieldWork(
   const work = async (): Promise<DiscardResult> => {
     await stopFieldClient(person);
     if (stillWanted && !stillWanted()) return 'kept';
+    if (!(await forgetItemLists(person, stillWanted).then(() => true, () => false))) return 'failed';
+    if (stillWanted && !stillWanted()) return 'kept';
+    // The recovery journal first: kept beside an emptied cache, its entries would be sent again at the
+    // next start. Removed while the cache stays (a failure below), the phone is as it was before S6-4.
+    const forgotten = await within(forgetJournal(person).then(() => 'forgotten' as const, () => 'failed' as const), 5_000);
+    if (forgotten !== 'forgotten') return 'failed';
     const databaseId = person.config.firestoreDatabaseId;
     if (databaseId) {
       const app = fieldApp(person);

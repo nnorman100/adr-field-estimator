@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { priceEstimate } from '@/engine/estimate';
 import type { EstimateView } from '@/lib/estimates/result';
 import { item, job as pricedJob, priced, room, table } from './estimate-fixtures';
-import { chargeRows, dollars, notReadyReasons, outcomeOf, photoLine, priceLines, quantityNoteLine, reviewAnswerOf, reviewerOf, warningText } from '@/lib/estimates/screen';
+import { chargeRows, dollars, notReadyReasons, outcomeOf, photoLine, priceLines, pricePointLine, quantityNoteLine, reviewAnswerOf, reviewerOf, warningText } from '@/lib/estimates/screen';
 
 // S5a-9, what the Review before signing screen decides in the browser. Presentation only: amounts
 // are the server's strings, printed with thousands separators and never recomputed.
@@ -84,6 +84,25 @@ describe('the review screen', () => {
     expect(chargeRows(every, 'Night work').reduce((sum, row) => sum + cents(row.amount), 0)).toBe(cents(every.total));
   });
 
+  it('prints the price-point adjustment last, so the rows add up to the rounded total (S4-4e)', () => {
+    const rounded = { ...END, tax: '10.00', price_point: '54.50', total: '1299.00' };
+    expect(chargeRows(rounded, 'After-hours adjustment')).toEqual([
+      { label: 'Subtotal', amount: '1234.50' },
+      { label: 'Sales tax', amount: '10.00' },
+      { label: 'Price-point adjustment', amount: '54.50' },
+    ]);
+  });
+
+  it('states the price-point adjustment of each end the price shows, and leaves it out of the rows it prints beside', () => {
+    const low = { ...END, price_point: '67.83', total: '2499.00' };
+    const high = { ...END, price_point: '12.00', total: '2999.00' };
+    expect(pricePointLine(low, null)).toBe('Price-point adjustment (not taxed): $67.83');
+    expect(pricePointLine(low, high)).toBe('Price-point adjustment (not taxed): $67.83 at the low end, $12.00 at the high end');
+    expect(pricePointLine(END, { ...END, price_point: '5.00' })).toBe('Price-point adjustment (not taxed): $0.00 at the low end, $5.00 at the high end');
+    expect(pricePointLine(END, END)).toBeNull();
+    expect(chargeRows(low, 'After-hours adjustment', false).map((row) => row.label)).toEqual(['Subtotal']);
+  });
+
   it('names the after-hours adjustment as the company’s price table does', () => {
     // Demolition 100 sf x $2.00 = $200.00, flagged after-hours; multiplier 1.5: a $100.00 adjustment.
     const result = priced(
@@ -110,6 +129,13 @@ describe('the review screen', () => {
     expect(notReadyReasons(stale)).toEqual([changed]);
     const missing = { documents: null, staffNotes: { companySetupMissing: [] }, needsReview: true, missingDetails: ['Property address is missing'] } as unknown as EstimateView;
     expect(notReadyReasons(missing)).toEqual([changed, 'Property address is missing. The documents are shown again once it is added on the job.']);
+  });
+
+  it('says additions wait for the owner, not that the scope has no work', () => {
+    const waiting = { documents: { signable: false, unpricedWork: [], pendingExtras: 2 }, staffNotes: { companySetupMissing: [] }, needsReview: false, missingDetails: [] } as unknown as EstimateView;
+    expect(notReadyReasons(waiting)).toEqual([
+      'Additions or additional work are waiting for the owner to approve them. Go back to editing, finish, propose them again and have the owner approve before making the estimate.',
+    ]);
   });
 });
 

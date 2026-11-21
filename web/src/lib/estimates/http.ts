@@ -1,12 +1,13 @@
 import { IdentityRefusal, type Identity } from '@/lib/auth';
 import { JobError } from '@/lib/jobs/access';
 import { EstimateError } from './errors';
+import { repriceBody } from './schema';
 import { estimatesServices } from './services';
 
 // The estimate routes (src/app/api/jobs/[jobId]/estimate). Each is wrapped there in
 // requireFlag('price_books', ...), so a company without price books gets 404 before anything here
 // runs; these add the job and estimate rules. The company comes only from the verified sign-in: no
-// path or body names one, and the request has no body to read.
+// path or body names one; only Reprice reads a body.
 
 type RouteContext = { params: Promise<Record<string, string | string[] | undefined>> };
 
@@ -56,5 +57,34 @@ export async function readEstimate(_request: Request, identity: Identity, contex
   return respond(async () => {
     const id = await jobId(context);
     return json(await estimatesServices().read(identity, id));
+  });
+}
+
+// POST /api/jobs/{jobId}/reprice  { revision, changeId, versionId }
+// The owner's Reprice this draft (S5b-6): moves the job's pin to the price version the owner
+// reviewed, which must still be the company's newest, for the job revision they saw; the same
+// changeId again is answered as the first time.
+export async function repriceJob(request: Request, identity: Identity, context: RouteContext): Promise<Response> {
+  return respond(async () => {
+    const id = await jobId(context);
+    let raw: unknown;
+    try {
+      raw = await request.json();
+    } catch {
+      throw new EstimateError('invalid_request');
+    }
+    const parsed = repriceBody.safeParse(raw);
+    if (!parsed.success) throw new EstimateError('invalid_request');
+    return json(await estimatesServices().reprice(identity, id, parsed.data));
+  });
+}
+
+// GET /api/jobs/{jobId}/reprice
+// The owner's before/after preview of Reprice this draft (S5b-6): `reprice` null when there is
+// nothing to reprice. Writes nothing.
+export async function previewReprice(_request: Request, identity: Identity, context: RouteContext): Promise<Response> {
+  return respond(async () => {
+    const id = await jobId(context);
+    return json(await estimatesServices().repricePreview(identity, id));
   });
 }

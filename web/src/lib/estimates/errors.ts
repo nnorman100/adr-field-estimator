@@ -1,10 +1,18 @@
 // What the estimate routes can be refused with, beside the job-access refusals (JobError in
 // src/lib/jobs/access.ts: not found, archived, not allowed). The codes are safe to show the caller.
 export const ESTIMATE_ERRORS = {
+  // Reprice (S5b-6) takes a body; it did not read through its schema.
+  invalid_request: 400,
   // The job is still being edited: Finish and review records it first.
   not_submitted: 409,
   // A signed job keeps its signed documents (S5a-11); a change goes through S5b-9.
   job_signed: 409,
+  // Reprice (S5b-6) on a job never priced: it has no pin to move; the first estimate pins it.
+  not_priced: 409,
+  // Reprice (S5b-6): the version the owner reviewed is no longer the company's newest.
+  prices_superseded: 409,
+  // Reprice (S5b-6): the job is already priced from the company's newest version.
+  prices_unchanged: 409,
   // The company has no published price version, so nothing can be priced (pricing plan 3.2).
   prices_not_set: 409,
   // The submitted record's scope was not confirmed (docs/spec.md 2.3, Review before signing).

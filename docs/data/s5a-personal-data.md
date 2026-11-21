@@ -6,20 +6,20 @@ Where the rebuilt app's job, photo, signing and link features (S5a, `docs/plans/
 it, and what proves the company boundary for it (S5a-12). Each row points at the file with the full detail; this page adds
 no rule of its own. "The job's people" means the company's owner and office user, and the estimator who made the job or
 owns its field work ([Jobs routes](../access/jobs.md)); another estimator of the same company, and every person of another
-company, gets 404. No platform operator route reads any of it.
+company, gets 404. The platform operator reads it only through the three read-only support routes under `/api/platform/companies/{id}/jobs` (S5b-5, [Superadmin](../access/superadmin.md)): GET only, each view writes one audit row of ids, and a refused or failed view writes none.
 
 | Where | Personal data | Who reads it | Detail |
 | --- | --- | --- | --- |
-| Postgres `jobs` | `property_address` | The job's people | [Core job tables](postgres-jobs.md) |
-| Postgres `job_customers` | `name`, `phone`, `email` | The job's people | [Core job tables](postgres-jobs.md) |
-| Postgres `job_claims` | `adjuster_name`, `adjuster_email`, `adjuster_phone`, carrier, claim and policy numbers, `loss_cause`, `deductible`, `date_of_loss` | The job's people | [Core job tables](postgres-jobs.md) |
+| Postgres `jobs` | `property_address` | The job's people; the platform operator, read-only and audited | [Core job tables](postgres-jobs.md) |
+| Postgres `job_customers` | `name`, `phone`, `email` | The job's people; the platform operator, read-only and audited | [Core job tables](postgres-jobs.md) |
+| Postgres `job_claims` | `adjuster_name`, `adjuster_email`, `adjuster_phone`, carrier, claim and policy numbers, `loss_cause`, `deductible`, `date_of_loss` | The job's people; the platform operator, read-only and audited | [Core job tables](postgres-jobs.md) |
 | Postgres `job_submissions` | `snapshot_bytes` (the field work, customer and claim as submitted) | The job's people, through the estimate | [Submissions, estimates and agreements](postgres-submissions.md) |
 | Postgres `job_estimates` | `proposal_bytes` (the customer's name, address, claim details and prices as printed) | The job's people; the homeowner holding the job's signing link | [Submissions, estimates and agreements](postgres-submissions.md) |
-| Postgres `agreements` | `documents_bytes` (the documents as signed), `signer_name`, `signer_role` | The job's people; the holder of one of its document links (that set only) | [Submissions, estimates and agreements](postgres-submissions.md), [Signing links](postgres-documents-and-links.md) |
+| Postgres `agreements` | `documents_bytes` (the documents as signed), `signer_name`, `signer_role` | The job's people; the holder of one of its document links (that set only); the platform operator, read-only and audited (the signed agreement as stored) | [Submissions, estimates and agreements](postgres-submissions.md), [Signing links](postgres-documents-and-links.md) |
 | Postgres `signing_links`, `document_links` | None: ids, the SHA-256 of the token, states, times and counters | The job's people (never a token) | [Signing links](postgres-documents-and-links.md) |
 | Postgres `companies` profile columns | None beyond the company's own business details and wording, printed on its documents | The owner, through the profile route; printed on the company's documents | [Core job tables](postgres-jobs.md), [Company documents](postgres-documents-and-links.md) |
-| Postgres `evidence_objects` | None: object names of ids, hashes, sizes and types | The job's people | [Core job tables](postgres-jobs.md) |
-| Evidence bucket (`dryscope-evidence-<env>`) | Photo, full-size original and signature image bytes under `companies/<company>/jobs/<job>/…` | The job's people through the photo route; a link holder sees that record's photos and signature only | [Photo routes](../access/photos.md), [Signing links](../access/signing-links.md) |
+| Postgres `evidence_objects` | None: object names of ids, hashes, sizes and types | The job's people; the platform operator, read-only and audited | [Core job tables](postgres-jobs.md) |
+| Evidence bucket (`dryscope-evidence-<env>`) | Photo, full-size original and signature image bytes under `companies/<company>/jobs/<job>/…` | The job's people through the photo route; a link holder sees that record's photos and signature only; the platform operator through the audited support photo route, and a signature only when a committed agreement of the job names it | [Photo routes](../access/photos.md), [Signing links](../access/signing-links.md) |
 | Field database (`dryscope-field-<env>`) drafts | `notes`, `summary`, a room's `prepTasks` and `findings` (free text) | The company's owner and office user, and the draft's field owner; never another company's tenant | [Field rules](field-rules.md) |
 | Link tokens | The token itself is a bearer secret | Only the person it was sent to; it is in no table, log or audit row, and travels in the page address's fragment and the `X-Link-Token` header | [Signing links](../access/signing-links.md) |
 

@@ -1,15 +1,16 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import type { Firestore } from 'firebase/firestore';
 import { UnsentMarkNotSaved } from '@/lib/field-db';
-import { queueFieldEdit } from '@/lib/field/local-edit';
-import { fieldRefusal } from '@/lib/field/store';
+import { ReopenTheApp } from '@/lib/field/idb';
+import { JournalNotSaved, type DocWrite } from '@/lib/field/journal';
+import { journaledEdit } from '@/lib/field/journal-sync';
+import { draftDocs, fieldRefusal, type FieldDraft } from '@/lib/field/store';
 import type { JobContext } from './job-screens';
 
 // A form waits for local persistence, so the technician can keep working with no signal.
 // Only its own SDK promise may later say Saved. A newer save owns the notice; an older promise
-// must not replace it. No retry or recovery journal is introduced here (S6-4).
+// must not replace it. Each edit goes into the phone's recovery journal first (S6-4).
 export function useFieldEdit(job: JobContext) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -21,8 +22,10 @@ export function useFieldEdit(job: JobContext) {
     return () => { live.current = false; };
   }, []);
 
-  async function save(write: (db: Firestore) => Promise<void>, saved: string, locallySaved: () => void = () => undefined) {
-    if (!job.editable || job.stale) return;
+  // Answers whether the change was saved on the phone, also when the form is gone by then.
+  async function save(writes: DocWrite[], saved: string, locallySaved: () => void = () => undefined, acknowledgedBy: () => void = () => undefined, base: FieldDraft | null = job.draft): Promise<boolean> {
+    if (!job.editable || job.stale) return false;
+    let onPhone = false;
     const mine = ++latest.current;
     const current = () => live.current && mine === latest.current;
     setBusy(true);
@@ -30,7 +33,7 @@ export function useFieldEdit(job: JobContext) {
     setNotice(null);
     const refused = (error: unknown) => {
       if (current()) {
-        setError(error instanceof UnsentMarkNotSaved
+        setError(error instanceof UnsentMarkNotSaved || error instanceof JournalNotSaved || error instanceof ReopenTheApp
           ? `Can't save. ${error.message}`
           : "Can't save. The server has not accepted this change. Check access and try again.");
         setNotice(null);
@@ -38,9 +41,10 @@ export function useFieldEdit(job: JobContext) {
       job.checkAccess(fieldRefusal(error));
     };
     try {
-      const { acknowledged } = await queueFieldEdit(job.session.client, job.draftRef, write);
+      const { acknowledged } = await journaledEdit(job.session.client, job.draftRef, writes, job.jobId, draftDocs(job.draftRef, base));
       // The SDK's local transaction is finished; update the draft before clearing the form's edits.
       await job.reloadDraft('cache');
+      onPhone = true;
       if (current()) {
         locallySaved();
         setNotice(job.session.client.cache === 'persistent'
@@ -49,6 +53,8 @@ export function useFieldEdit(job: JobContext) {
       }
       void acknowledged.then(
         () => {
+          acknowledgedBy();
+          job.readiness.recheck();
           if (current()) setNotice(saved);
         },
         refused,
@@ -58,6 +64,7 @@ export function useFieldEdit(job: JobContext) {
     } finally {
       if (current()) setBusy(false);
     }
+    return onPhone;
   }
   return { busy, error, notice, setError, setNotice, save };
 }

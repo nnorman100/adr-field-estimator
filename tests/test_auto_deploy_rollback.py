@@ -1,23 +1,17 @@
-"""Version publication and rollback coverage for automatic releases."""
+"""Version publication and rollback coverage for the legacy release CLI."""
 
 import json
-import shlex
 
 import pytest
-import yaml
 
 from scripts import auto_deploy as auto
-from tests.test_auto_deploy import (
+from tests.test_legacy_release_cli import (
     NEW,
     OLD,
-    WORKFLOW,
     FakeRunner,
-    confirmations,
-    deploy_job,
     release,
     serving_with,
     stage_values,
-    step_argv,
     summary,
     todays_baseline,
 )
@@ -140,6 +134,18 @@ def test_next_version_prints_no_number_when_the_tags_cannot_be_fetched(capsys):
     assert capsys.readouterr().out == ''
 
 
+def test_rollback_refuses_a_missing_tag_without_fetch_advice(summary, capsys):
+    runner = rollback_runner()
+    assert auto.main(['--rollback', '2099.01.01-1'], runner=runner) == 1
+    message = "Release version tag '2099.01.01-1' is not in this checkout."
+    stderr = capsys.readouterr().err
+    assert message in stderr
+    assert message in summary.text()
+    assert 'git fetch --tags' not in stderr
+    assert 'git fetch --tags' not in summary.text()
+    assert not {'stage', 'traffic', 'stamp', 'hosting-deploy'} & set(runner.keys())
+
+
 def test_rollback_past_a_migration_warns_and_stops_before_staging(summary, capsys):
     runner = rollback_runner(
         migrations=[ledger_doc('workspaces', OLD), ledger_doc('price-books-v1', NEW)]
@@ -163,7 +169,7 @@ def test_confirmed_rollback_past_a_migration_redeploys_the_tag(summary, capsys):
     assert 'rolled back to 2026.10.30-1' in summary.text()
     stage = next(argv for key, argv in runner.calls if key == 'stage')
     assert stage[stage.index('--version') + 1] == '2026.10.30-1'
-    assert 'AUTO_DEPLOY_ENABLED' in summary.text() and 'before the next merge' in summary.text()
+    assert 'before the next manual release' in summary.text()
     assert runner.tags == {'2026.10.30-1': OLD, '2026.11.02-1': NEW}
 
 
@@ -259,25 +265,12 @@ def test_rollback_from_a_detached_checkout_returns_to_that_commit(summary):
     assert runner.head == NEW
 
 
-def test_workflow_offers_a_rollback_with_an_explicit_migration_confirmation():
-    inputs = yaml.safe_load(WORKFLOW)[True]['workflow_dispatch']['inputs']
-    assert set(inputs) == {'version', 'confirm_past_migration', 'confirm_baseline'}
-    assert inputs['confirm_baseline']['default'] == 'no'
-    assert inputs['confirm_baseline']['options'] == ['no', 'yes']
-    assert inputs['version']['required'] is False
-    assert inputs['confirm_past_migration']['default'] == 'no'
-    assert inputs['confirm_past_migration']['options'] == ['no', 'yes']
-
-
-def test_workflow_rollback_step_stops_at_a_migration_unless_confirmed(summary):
-    env = {'ROLLBACK_VERSION': '2026.10.30-1', 'RUN_ID': '41140166919'}
-    plain = step_argv('Roll back to version', {**env, 'CONFIRM_ARGS': ''})
+def test_confirmed_rollback_with_a_run_id_uses_a_valid_revision_tag(summary):
+    plain = ['--rollback', '2026.10.30-1', '--run-id', '41140166919']
     runner = rollback_runner(migrations=[ledger_doc('price-books-v1', NEW)])
     assert auto.main(plain, runner=runner) == 1
     assert 'stage' not in runner.keys()
-    confirmed = step_argv(
-        'Roll back to version', {**env, 'CONFIRM_ARGS': '--confirm-past-migration'}
-    )
+    confirmed = [*plain, '--confirm-past-migration']
     runner = rollback_runner(migrations=[ledger_doc('price-books-v1', NEW)])
     assert auto.main(confirmed, runner=runner) == 0
     stage = next(argv for key, argv in runner.calls if key == 'stage')
@@ -291,7 +284,7 @@ def test_rollback_with_a_less_permissive_baseline_stops_before_staging(summary, 
     assert runner.head == NEW
     text = summary.text()
     assert 'PRICE_BOOKS_ENABLED' in text and 'Nothing was staged' in text
-    assert 'confirm_baseline=yes' in text
+    assert '--confirm-baseline' in text
 
 
 def test_rollback_names_a_migration_and_a_lower_baseline_in_one_refusal(summary, todays_baseline):
@@ -305,46 +298,23 @@ def test_rollback_names_a_migration_and_a_lower_baseline_in_one_refusal(summary,
     assert '--confirm-past-migration' in text and '--confirm-baseline' in text
 
 
-def test_workflow_rollback_step_restores_an_older_revision_when_the_baseline_is_confirmed(
+def test_rollback_cli_restores_an_older_revision_when_the_baseline_is_confirmed(
     summary, todays_baseline
 ):
-    env = {'ROLLBACK_VERSION': '2026.10.30-1', 'RUN_ID': '41140166919'}
-    plain = step_argv('Roll back to version', {**env, 'CONFIRM_ARGS': ''})
+    plain = ['--rollback', '2026.10.30-1', '--run-id', '41140166919']
     runner = serving_with(rollback_runner(), NEW, PRICE_BOOKS_ENABLED='true')
     assert auto.main(plain, runner=runner) == 1
     assert 'stage' not in runner.keys()
 
-    confirmed = step_argv('Roll back to version', {**env, 'CONFIRM_ARGS': '--confirm-baseline'})
+    confirmed = [*plain, '--confirm-baseline']
     runner = serving_with(rollback_runner(), NEW, PRICE_BOOKS_ENABLED='true')
     assert auto.main(confirmed, runner=runner) == 0
     assert stage_values(runner) == ('readiness', 'off')
     assert 'Rolled production back to version 2026.10.30-1' in summary.text()
 
 
-def test_workflow_passes_each_rollback_confirmation_from_its_own_input():
-    assert confirmations(deploy_job()['env']['CONFIRM_ARGS']) == {
-        'confirm_past_migration': '--confirm-past-migration',
-        'confirm_baseline': '--confirm-baseline',
-    }
-
-
-def test_workflow_publish_step_publishes_the_commit_that_was_released(summary):
-    argv = step_argv('Publish version', {'COMMIT': NEW})
+def test_publish_cli_tags_the_commit_that_was_released(summary):
+    argv = ['--publish', NEW]
     runner = FakeRunner(serving_commit=NEW, serving_version='2026.11.02-1')
     assert auto.main(argv, runner=runner) == 0
     assert runner.remote_tags == {'2026.11.02-1': NEW}
-
-
-def test_only_the_publish_step_receives_a_github_write_token():
-    job = deploy_job()
-    assert job['permissions'] == {'contents': 'write', 'id-token': 'write'}
-    assert 'GH_TOKEN' not in job['env']
-    checkout = job['steps'][0]
-    assert checkout['uses'].startswith('actions/checkout@')
-    assert checkout['with']['persist-credentials'] is False
-    holders = [step for step in job['steps'] if 'github.token' in json.dumps(step)]
-    assert [step['name'] for step in holders] == ['Publish version']
-    assert holders[0]['env'] == {'GH_TOKEN': '${{ github.token }}'}
-    assert holders[0]['if'] == "${{ github.event_name == 'workflow_run' }}"
-    run = holders[0]['run']
-    assert not {'npm', 'npx', 'pip', 'deploy_backend'} & set(shlex.split(run))

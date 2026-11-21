@@ -8,7 +8,7 @@ The app is `web/`: TypeScript, Next.js, Zod at every route boundary; Cloud SQL P
 ## Commands (what CI runs)
 - Set up: `npm ci` at the root and in `web/`; `npx playwright install chromium webkit` in `web/`.
 - Root: `npm run format:check`, `npm run lint`, `npx vitest run`.
-- In `web/`: `npm run typecheck`, `lint`, `test`, `build`, `test:db` (local PostgreSQL 16), `test:emu` (Java 21+, `demo-` project only), `test:e2e` (Playwright, for UI changes).
+- In `web/`: `npm run typecheck`, `lint`, `test`, `build`, `test:db` (local PostgreSQL 16), `test:emu` (Java 21+, `demo-` project only), `test:isolation` (the company-isolation gate; needs PostgreSQL and Java), `test:e2e` (Playwright, for UI changes).
 
 ## Hard rules
 1. Never weaken, skip, delete or loosen a test, eval fixture, threshold or workflow to get green; fix the code. The Test guard blocks it. Never add or request `test-change-approved`.
@@ -17,15 +17,16 @@ The app is `web/`: TypeScript, Next.js, Zod at every route boundary; Cloud SQL P
 4. Company isolation on every business endpoint: check identity, membership and job access server-side. New actions go in the role matrix (`web/src/lib/access/`) and `docs/ACCESS.md`.
 5. Signed records are immutable; later coordination goes in sidecars.
 6. No secrets, keys, tokens, prompts, transcripts, emails, addresses or coordinates in logs or git. Never read or print secrets; never touch other projects or peer sites.
-7. Water and mold losses only; web app only. Each company's identity (name, licence number, sign-off) comes only from its company profile and prints exactly as entered; the California pre-1978 and estimate clauses are exact: keep them as in `docs/ARCHITECTURE.md`.
+7. Water and mold losses only; web app only. Each company's identity (name, licence number, sign-off) comes only from its company profile and prints exactly as entered; the California pre-1978 and estimate clauses are exact: keep them as in `docs/architecture/product-rules.md` (section 4) and `web/src/engine/documents.ts`.
 
 ## Every change
 One small PR with a test that fails without it; the eight checks in `docs/roadmap.md`; no edits to `docs/status/` in feature PRs (updated in a batch after merges). Report what changed, what you were unsure of, and what the owner must check on a phone. Search functions by name; write the failing test first.
+Before coding or answering a review finding, load the `dryscope-gotchas` skill.
 
 ## Technology Standard 2.10 (build and agent rules)
 Profile and exceptions: `docs/ARCHITECTURE.md`, `docs/DECISIONS.md` (D-013 to D-016); stage plans: `docs/plans/`.
 - Migrations: add first, switch over, remove later; never rename or drop in one step. Drops or row deletions need a fresh backup and the owner. Test-copy migrations run from the release workflow's job; live ones need the owner. One database-changing job at a time.
-- CI runs on the self-hosted pool. Never set or delete `CI_RUNNER` or move a job to GitHub-hosted runners ($0 Actions hard stop).
+- CI runs on standard GitHub-hosted runners (`ubuntu-latest`, free for this public repo). Never move a job to a self-hosted runner or a larger runner, and never set or delete `CI_RUNNER`.
 - New dependency: reason in the PR, check the package is genuine, reviewer approval.
 - UI work: consult the Modern Web Guidance skill (`.agents/skills/modern-web-guidance`).
 

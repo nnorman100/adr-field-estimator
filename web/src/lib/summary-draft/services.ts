@@ -6,7 +6,7 @@ import { serverDatabase } from '@/lib/auth/services';
 import { parseAiConfig, parseProjectionConfig } from '@/lib/config';
 import { firestoreFor } from '@/lib/projection/firestore';
 import { firestoreSummaryDraftReader } from './draft-reader';
-import { summaryDraftService, type SummaryDraftBoundary, type SummaryDraftService } from './service';
+import { summaryDraftService, type SummaryDraftBoundary, type SummaryDraftReader, type SummaryDraftService } from './service';
 
 // Model Armor's answer is awaited this long before the call is refused (fails closed), as the
 // evaluation runner waits (web/scripts/eval-ai.ts).
@@ -14,6 +14,7 @@ const ARMOR_TIMEOUT_MS = 10_000;
 
 let service: SummaryDraftService | null = null;
 let boundary: SummaryDraftBoundary | null = null;
+let reader: SummaryDraftReader | null = null;
 
 // The real AI boundary: the Vertex text model, Model Armor on the environment's text template, and
 // the Postgres ledger for the quota and the budget. Built on the first call whose company switch is
@@ -32,12 +33,18 @@ function aiBoundary(): SummaryDraftBoundary {
   return boundary;
 }
 
+// The field database reader, built on the first request that reaches the draft (after the job, the
+// switch and the replay decisions), so a missing field database setting never changes those answers.
+function fieldReader(): SummaryDraftReader {
+  if (!reader) reader = firestoreSummaryDraftReader(firestoreFor(parseProjectionConfig(process.env)));
+  return reader;
+}
+
 // Built on the first request from the checked server configuration (the same field database the
 // job drafts use), then reused. A missing setting throws and that request fails closed.
 export function summaryDraftServices(): SummaryDraftService {
   if (!service) {
-    const reader = firestoreSummaryDraftReader(firestoreFor(parseProjectionConfig(process.env)));
-    service = summaryDraftService(serverDatabase(), reader, aiBoundary);
+    service = summaryDraftService(serverDatabase(), fieldReader, aiBoundary);
   }
   return service;
 }

@@ -7,6 +7,8 @@ import {
   addBand,
   addRoomType,
   addRoomTypeRow,
+  addAdjustment,
+  adjustmentNameFits,
   addTrade,
   categoryPricingOn,
   changed,
@@ -14,7 +16,9 @@ import {
   idFromName,
   removeBand,
   removeRoomType,
+  removeAdjustment,
   removeTrade,
+  setAdjustment,
   rowId,
   setCategoryPricing,
   setDefaultForm,
@@ -221,6 +225,51 @@ describe('the editor changes', () => {
     expect(removeTrade(table, 'contents_pack_out').trades!.some((trade) => trade.trade_id === 'contents_pack_out')).toBe(false);
     expect(idFromName('Kitchen', new Set(['kitchen', 'kitchen_2']), 30)).toBe('kitchen_3');
     expect(idFromName('!', new Set(), 30)).toBe('new');
+  });
+
+  it('adds, edits and removes a named adjustment with an id the schema accepts; a new one needs a value before it saves', () => {
+    const added = addAdjustment(priced(), 'Returning customer');
+    expect(added.adjustments).toEqual([{ adjustment_id: 'returning_customer', name: 'Returning customer', kind: 'percent', direction: 'discount', value: '' }]);
+    expect(() => parseTable(added)).toThrow();
+    const edited = setAdjustment(added, 'returning_customer', { kind: 'amount', direction: 'charge', value: '50' });
+    expect(parseTable(edited).adjustments).toEqual([{ adjustment_id: 'returning_customer', name: 'Returning customer', kind: 'amount', direction: 'charge', value: '50' }]);
+    expect(addAdjustment(edited, 'Returning customer').adjustments!.map((row) => row.adjustment_id)).toEqual(['returning_customer', 'returning_customer_2']);
+    expect(removeAdjustment(edited, 'returning_customer')).not.toHaveProperty('adjustments');
+  });
+
+  it('keeps an adjustment name exactly as entered, padding and all', () => {
+    const added = addAdjustment(priced(), ' Weekend start ');
+    expect(added.adjustments![0]).toMatchObject({ adjustment_id: 'weekend_start', name: ' Weekend start ' });
+  });
+
+  it('holds an adjustment name to 60 characters counted the way the schema counts them, refusing an edit past it', () => {
+    const house = '\u{1F3E0}';
+    const full = `${'a'.repeat(59)}${house}`;
+    expect(adjustmentNameFits(full)).toBe(true);
+    expect(adjustmentNameFits(`${full}b`)).toBe(false);
+    const created = addAdjustment(priced(), full);
+    const id = created.adjustments![0]!.adjustment_id;
+    const added = setAdjustment(created, id, { value: '5' });
+    expect(parseTable(added).adjustments).toHaveLength(1);
+    expect(setAdjustment(added, id, { name: `x${full}` }).adjustments![0]!.name).toBe(full);
+    expect(setAdjustment(added, id, { name: ` ${full.slice(1)}` }).adjustments![0]!.name).toBe(` ${full.slice(1)}`);
+  });
+
+  it('refuses a rename that is empty once trimmed and keeps the padding of a valid one', () => {
+    const added = addAdjustment(priced(), 'Weekend start');
+    const id = added.adjustments![0]!.adjustment_id;
+    for (const blank of ['', '   ']) expect(setAdjustment(added, id, { name: blank }).adjustments![0]!.name).toBe('Weekend start');
+    expect(setAdjustment(added, id, { name: ' After hours ', value: '5' }).adjustments![0]).toMatchObject({ name: ' After hours ', value: '5' });
+    expect(setAdjustment(added, id, { name: '  ' })).toBe(added);
+  });
+
+  it('makes an id that fits the schema even when a numbered suffix is needed', () => {
+    const name = 'Service area zone '.repeat(3);
+    let table = priced();
+    for (let n = 0; n < 100; n += 1) table = addAdjustment(table, name);
+    const ids = table.adjustments!.map((row) => row.adjustment_id);
+    expect(new Set(ids).size).toBe(100);
+    for (const id of ids) expect(id).toMatch(/^[a-z][a-z0-9_]{1,39}$/);
   });
 
   it('counts two tables that differ only in key order as unchanged', () => {

@@ -1,11 +1,11 @@
 import { and, desc, eq, sql } from 'drizzle-orm';
-import { actors, agreements, jobs, jobSubmissions } from '@/db/schema';
-import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
+import { agreements, jobs, jobSubmissions } from '@/db/schema';
+import { holdAcrossOutsideCall, withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
-import type { FieldDoc } from '@/lib/field/canonical';
-import { snapshotManifest } from '@/lib/submissions/snapshot';
-import { canSeeJob, draftSubmitted, hasAny, jobAccess, JobError, lockedJob, type JobCaller, type JobRow } from './access';
+import { canSeeJob, claimDraft, hasAny, holdDraft, jobAccess, JobError, type JobCaller, type JobRow } from './access';
 import type { ArchiveStore } from './archive-store';
+import type { DraftSync } from './draft-sync';
+import { afterFieldStep, stillMember, syncJobDrafts } from './sync-job';
 import { copyDigest, type ArchiveInput, type CopyInput } from './schema';
 import { audit, CHECK_VIOLATION, detailOf, errorCode, type JobDetail, type JobView } from './service';
 
@@ -13,20 +13,20 @@ import { audit, CHECK_VIOLATION, detailOf, errorCode, type JobDetail, type JobVi
 // test or a duplicate): the job leaves every list but the owner's archived list, and every job route
 // answers it with 410; nothing of it is deleted. Restore puts it back as it was. Copy starts a new
 // draft from a signed job's scope. Each write is one Postgres transaction with one audit row (ids
-// and revisions only); the field draft follows, under the job's row lock, as the job is then (an
-// archive or restore that lands late never undoes a newer one). Any archive or restore the owner
+// and revisions only); the field draft follows, once that transaction has ended, as the job is then
+// (the job revision kept in the field database is the fence: an archive or restore that lands late
+// never undoes a newer one). Any archive or restore the owner
 // sends again repairs a field step that did not get through (503 `draft_unavailable` until then),
 // even after the job changed since, when it is answered `archived` or `not_archived`.
 
 // The owner archives and restores (docs/access/roles.md); every role copies a signed job.
 const ARCHIVE: readonly Capability[] = ['jobs_archive'];
 const COPY: readonly Capability[] = ['jobs_copy'];
+// The copy's answer is the job as the caller may read it.
+const READ: readonly Capability[] = ['jobs_read'];
 
-// The keys of a signed draft's field map a copy leaves out: what the technician approved on the
-// signed visit, which they confirm again on the new draft (the old app's copy cleared the same).
-// The field map holds no transcript (a Live walkthrough's transcript is never kept in a draft), and
-// photos are not copied: they are the signed job's evidence and stay with it.
-export const COPY_CLEARED_KEYS = ['scopeConfirmed'] as const;
+// The copy rule (copy-rule.ts), shared with the draft sync.
+export { COPY_CLEARED_KEYS, copiedManifest } from './copy-rule';
 
 export type ArchiveService = {
   archive(caller: JobCaller, jobId: string, input: ArchiveInput): Promise<{ job: JobView }>;
@@ -68,8 +68,6 @@ async function restoredStatus(tx: CompanyTransaction, row: JobRow): Promise<'dra
   return latest?.draftId === row.currentDraftId ? 'submitted' : 'draft';
 }
 
-const draftState = (status: JobRow['status']): 'editing' | 'submitted' => (status === 'draft' ? 'editing' : 'submitted');
-
 // The answers after which the job's field draft is still brought to its state: the job is already
 // as asked, by this request or another.
 const SETTLED = new Set(['archived', 'not_archived']);
@@ -78,15 +76,7 @@ function jobView(detail: JobDetail): { job: JobView } {
   return { job: detail.job };
 }
 
-// The field map and rooms a copy starts from: the signed record's, less COPY_CLEARED_KEYS.
-function copiedField(bytes: Buffer | Uint8Array): { draft: Record<string, unknown>; rooms: FieldDoc[] } {
-  const manifest = snapshotManifest(bytes);
-  const draft = { ...((manifest.draft ?? {}) as Record<string, unknown>) };
-  for (const key of COPY_CLEARED_KEYS) delete draft[key];
-  return { draft, rooms: manifest.rooms };
-}
-
-export function archiveService(db: Database, store: ArchiveStore): ArchiveService {
+export function archiveService(db: Database, store: ArchiveStore, sync: DraftSync): ArchiveService {
   async function inCompany<T>(companyId: string, run: (tx: CompanyTransaction) => Promise<T>): Promise<T> {
     try {
       return await withCompany(db, companyId, run);
@@ -107,37 +97,23 @@ export function archiveService(db: Database, store: ArchiveStore): ArchiveServic
     }
   }
 
-  async function ownerUid(tx: CompanyTransaction, row: JobRow): Promise<string | null> {
-    if (!row.fieldOwnerActorId) return null;
-    const [actor] = await tx
-      .select({ uid: actors.uid })
-      .from(actors)
-      .where(and(eq(actors.companyId, row.companyId), eq(actors.id, row.fieldOwnerActorId)));
-    return actor?.uid ?? null;
-  }
-
-  // The job's current draft brought to the job's state as Postgres holds it now, under the job's
-  // lock: `archived` while the job is, else out of `archived` to its status's state (a draft in any
-  // other state keeps it, restoreDraft). A draft not made yet has nothing to change: it is made only
-  // while its job is not archived (lockedJob).
+  // Every draft of the job brought to the job's state as Postgres holds it now, at its field revision, in
+  // one Firestore transaction (sync-job.ts): archived while the job is, else its status's state. A slower
+  // archive or restore never lands after a newer change, whatever it is (the job's marker refuses it),
+  // and no Postgres transaction waits on the field database.
   async function settle(companyId: string, jobId: string): Promise<void> {
-    await inCompany(companyId, async (tx) => {
-      const row = await lockedJob(tx, companyId, jobId);
-      await field(() =>
-        row.status === 'archived'
-          ? store.archiveDraft(companyId, row.currentDraftId, row.revision)
-          : store.restoreDraft(companyId, row.currentDraftId, draftState(row.status), row.revision),
-      );
-    });
+    await syncJobDrafts(db, sync, store, companyId, jobId);
   }
 
   // The answer of an archive or restore, once the field draft is settled after it.
-  async function settled(companyId: string, jobId: string, decided: Promise<JobDetail>): Promise<{ job: JobView }> {
+  async function settled(caller: JobCaller, jobId: string, decided: Promise<JobDetail>): Promise<{ job: JobView }> {
     const outcome = await decided.catch((error: unknown) => {
       if (error instanceof JobError && SETTLED.has(error.code)) return error;
       throw error;
     });
-    await settle(companyId, jobId);
+    // Any answer after the field step, the job's details, a settled refusal or the field step's own
+    // failure, only to a caller still an active member of an active company with its role (afterFieldStep).
+    await afterFieldStep(db, caller, () => settle(caller.companyId, jobId));
     if (outcome instanceof JobError) throw outcome;
     return jobView(outcome);
   }
@@ -171,7 +147,7 @@ export function archiveService(db: Database, store: ArchiveStore): ArchiveServic
         await audit(tx, caller, 'job_archived', row.id, { revision: next!.revision });
         return detailOf(tx, next!);
       });
-      return settled(caller.companyId, jobId, decided);
+      return settled(caller, jobId, decided);
     },
 
     async restore(caller, jobId, input) {
@@ -201,7 +177,7 @@ export function archiveService(db: Database, store: ArchiveStore): ArchiveServic
         await audit(tx, caller, 'job_restored', row.id, { revision: next!.revision });
         return detailOf(tx, next!);
       });
-      return settled(caller.companyId, jobId, decided);
+      return settled(caller, jobId, decided);
     },
 
     async copy(caller, sourceJobId, input) {
@@ -236,6 +212,7 @@ export function archiveService(db: Database, store: ArchiveStore): ArchiveServic
             currentDraftId: input.draftId,
             propertyAddress: address,
             requestDigest: digest,
+            copiedFromJobId: source.id,
           })
           // The same id, or a draft id another job holds, makes no second row.
           .onConflictDoNothing()
@@ -245,25 +222,56 @@ export function archiveService(db: Database, store: ArchiveStore): ArchiveServic
           const [existing] = await tx
             .select()
             .from(jobs)
-            .where(and(eq(jobs.companyId, caller.companyId), eq(jobs.id, input.id)));
+            .where(and(eq(jobs.companyId, caller.companyId), eq(jobs.id, input.id)))
+            .for('update');
           // A retry only when it is the same copy of the same job, by someone who may see the copy.
           if (!existing || existing.requestDigest !== digest || !canSeeJob(caller, existing)) throw new JobError('conflict');
           if (existing.status === 'archived') throw new JobError('archived');
+          // A retry holds its draft id for the job in Postgres (security audit F1), in this transaction, which
+          // commits before the field database is touched: a draft the previous version made is stamped only
+          // once the claim is committed, so a lost answer from that stamp never leaves it unclaimed.
+          if (!(await holdDraft(tx, caller.companyId, existing.id, input.draftId))) throw new JobError('conflict');
+          // The same digest is the same source: a copy without it (made before 0018) gets it now.
+          if (existing.copiedFromJobId === null) {
+            await tx
+              .update(jobs)
+              .set({ copiedFromJobId: source.id })
+              .where(and(eq(jobs.companyId, caller.companyId), eq(jobs.id, existing.id)));
+          }
           row = existing;
         } else {
-          if (await draftSubmitted(tx, caller.companyId, input.draftId)) throw new JobError('conflict');
+          if (!(await claimDraft(tx, caller.companyId, row.id, input.draftId))) throw new JobError('conflict');
+          // A draft id claimed now was never this job's: a draft already under it was made for another.
+          await holdAcrossOutsideCall(tx);
+          if (await field(() => store.findDraft(caller.companyId, input.draftId))) throw new JobError('conflict');
           await audit(tx, caller, 'job_copied', row.id, { revision: row.revision, copiedFrom: source.id });
         }
-        return { created: inserted !== undefined, ownerUid: await ownerUid(tx, row), field: copiedField(signed.bytes), detail: await detailOf(tx, row) };
+        // What the projection needs; the answer is read after the field step.
+        return { created: inserted !== undefined, job: { id: row.id, currentDraftId: row.currentDraftId, revision: row.revision } };
       });
-      await inCompany(caller.companyId, async (tx) => {
-        await lockedJob(tx, caller.companyId, input.id, { live: true });
-        await field(() => store.createCopy(caller.companyId, input.draftId, made.ownerUid, made.field));
-      });
-      await field(() =>
-        store.projectJob(caller.companyId, made.detail.job.id, { currentDraftId: made.detail.job.currentDraftId, revision: made.detail.job.revision }),
+      // The copy's first draft, as the draft sync makes every draft (the draft life-cycle redesign, slice 5):
+      // from its source's signed record less COPY_CLEARED_KEYS (copied_from_job_id), naming the field owner
+      // Postgres holds when the sync reads it. A draft another job holds under the id is 409; a placeholder
+      // an older version left is replaced; nothing is written for one. Its answer only to a caller still an
+      // active member of an active company (afterFieldStep).
+      await afterFieldStep(db, caller, () => syncJobDrafts(db, sync, store, caller.companyId, input.id, { requireDraft: true }));
+      // The copy as Postgres holds it after the field step, read with the caller's access again (the caller
+      // still a member of an active company, in the same snapshot): a change committed meanwhile (an archive,
+      // a move) is the answer, not the row this request wrote. The locator follows that read.
+      const detail = await withCompany(
+        db,
+        caller.companyId,
+        async (tx) => {
+          await stillMember(tx, caller);
+          return detailOf(tx, await jobAccess(tx, caller, input.id, READ));
+        },
+        { snapshot: true },
       );
-      return { created: made.created, detail: made.detail };
+      // The locator write is a field step too: the caller is checked again after it, written or not.
+      await afterFieldStep(db, caller, () =>
+        field(() => store.projectJob(caller.companyId, made.job.id, { currentDraftId: detail.job.currentDraftId, revision: detail.job.revision })),
+      );
+      return { created: made.created, detail };
     },
   };
 }

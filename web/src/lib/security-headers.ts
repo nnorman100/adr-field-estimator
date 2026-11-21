@@ -7,8 +7,9 @@
 // framing ban for browsers that predate frame-ancestors.
 //
 // Next sets these before the route answers and then drops a route's own header of the same name.
-// The photo download (src/lib/photos/http.ts) sends a stricter policy of its own, so the content
-// policy rule skips that path and the route's policy is the one the browser gets.
+// The photo downloads (src/lib/photos/http.ts, and the operator's support view, src/lib/platform/
+// support-http.ts) send a stricter policy of their own, so the content policy rule skips those
+// paths and the route's policy is the one the browser gets.
 
 type Header = { key: string; value: string };
 
@@ -27,5 +28,8 @@ export const CONTENT_SECURITY_POLICY: Header = {
 
 export const SECURITY_HEADER_RULES: { source: string; headers: Header[] }[] = [
   { source: '/:path*', headers: [...SECURITY_HEADERS] },
-  { source: '/:path((?!api/jobs/[^/]+/photos/[^/]+/?$).*)', headers: [CONTENT_SECURITY_POLICY] },
+  {
+    source: '/:path((?!api/jobs/[^/]+/photos/[^/]+/?$|api/platform/companies/[^/]+/jobs/[^/]+/photos/[^/]+/?$).*)',
+    headers: [CONTENT_SECURITY_POLICY],
+  },
 ];

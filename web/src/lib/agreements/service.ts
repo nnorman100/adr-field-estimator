@@ -27,7 +27,7 @@ import type { SignerRole } from './screen';
 //    at its current pin (so a new record or a reprice voids an older estimate for signing), the
 //    proposal hash is the stored one, the estimate does not need review, and its documents are
 //    signable with both texts inside the proposal bytes the hash binds.
-// 4. The signature was received for this job.
+// 4. The signature was received for this job, for this estimate's proposal.
 // 5. The agreement row is inserted (insert-only; migration 0011's trigger checks it restates the
 //    estimate and that the pin has not moved) with the signed record's bytes, and the job becomes
 //    `signed`. One audit row. The agreement's two document links (the homeowner's set and the
@@ -100,6 +100,12 @@ async function originalOf(tx: CompanyTransaction, companyId: string, jobId: stri
     .from(agreements)
     .where(and(eq(agreements.companyId, companyId), eq(agreements.jobId, jobId), eq(agreements.kind, 'original')));
   return row ? { ...row, documentsBytes: Buffer.from(row.documentsBytes) } : null;
+}
+
+/** The job's original agreement as its stored record, or null (the operator's support view, S5b-5). */
+export async function originalAgreementView(tx: CompanyTransaction, companyId: string, jobId: string): Promise<AgreementView | null> {
+  const row = await originalOf(tx, companyId, jobId);
+  return row ? viewOf(row) : null;
 }
 
 async function signatureOf(tx: CompanyTransaction, companyId: string, jobId: string, objectId: string) {
@@ -199,6 +205,23 @@ export async function signInTransaction(
   // 4. The signature.
   const signature = await signatureOf(tx, caller.companyId, jobId, input.signatureId);
   if (!signature) throw new AgreementError('signature_missing');
+  // A signature binds to the proposal it was captured for (named at capture, recorded in the receipt's
+  // audit row): one captured for an earlier estimate does not sign this one, so a revised estimate
+  // always needs a new signature.
+  const [bound] = await tx
+    .select({ id: auditEvents.id })
+    .from(auditEvents)
+    .where(
+      and(
+        eq(auditEvents.companyId, caller.companyId),
+        eq(auditEvents.target, jobId),
+        eq(auditEvents.action, 'signature_received'),
+        sql`${auditEvents.details}->>'object' = ${input.signatureId}`,
+        sql`${auditEvents.details}->>'proposal_sha256' = ${estimate.proposalSha256}`,
+      ),
+    )
+    .limit(1);
+  if (!bound) throw new AgreementError('signature_missing');
 
   // 5. The agreement, and the job signed.
   const signedAt = await serverTime(tx);

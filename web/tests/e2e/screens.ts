@@ -17,6 +17,8 @@ export const SCREENS: Record<string, string> = {
   '/operator/[tenantId]': 'operator.spec.ts',
   '/operator/[tenantId]/companies/[companyId]': 'operator.spec.ts',
   '/operator/[tenantId]/companies/[companyId]/team': 'operator.spec.ts',
+  '/operator/[tenantId]/companies/[companyId]/jobs': 'operator-jobs.spec.ts',
+  '/operator/[tenantId]/companies/[companyId]/jobs/[jobId]': 'operator-jobs.spec.ts',
 };
 
 // The views of the field page (S5a-6): every field screen is a view of /field picked by the

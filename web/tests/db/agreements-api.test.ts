@@ -163,8 +163,12 @@ type Body = Record<string, any>;
 type Reply = Answer & { body: Body };
 const make = (claims: FakeClaims | null, jobId: string): Promise<Reply> =>
   json(estimateRoute.POST(request(claims, `/api/jobs/${jobId}/estimate`, { method: 'POST' }), params({ jobId })));
-const putSignature = (claims: FakeClaims | null, jobId: string, signatureId: string, bytes: Uint8Array): Promise<Reply> =>
-  json(photoRoute.PUT(request(claims, `/api/jobs/${jobId}/photos/${signatureId}?kind=signature`, { method: 'PUT', body: bytes }), params({ jobId, photoId: signatureId })));
+// The signature as the phone sends it: bound to the proposal it was drawn for.
+const putSignature = (claims: FakeClaims | null, jobId: string, signatureId: string, bytes: Uint8Array, proposalSha256?: string): Promise<Reply> => {
+  const built = request(claims, `/api/jobs/${jobId}/photos/${signatureId}?kind=signature`, { method: 'PUT', body: bytes });
+  if (proposalSha256 !== undefined) built.headers.set('X-Proposal-Sha256', proposalSha256);
+  return json(photoRoute.PUT(built, params({ jobId, photoId: signatureId })));
+};
 const sign = (claims: FakeClaims | null, jobId: string, body: unknown): Promise<Reply> =>
   json(agreementsRoute.POST(request(claims, `/api/jobs/${jobId}/agreements`, { method: 'POST', body }), params({ jobId })));
 const readSigned = (claims: FakeClaims | null, jobId: string): Promise<Reply> =>
@@ -187,7 +191,7 @@ async function readyToSign(claims: FakeClaims = ESTIMATOR_A) {
   const estimate = (await make(claims, job.jobId)).body.estimate as Body;
   const signatureId = randomUUID();
   const signature = image(`signature ${signatureId}`);
-  expect((await putSignature(claims, job.jobId, signatureId, signature)).status).toBe(201);
+  expect((await putSignature(claims, job.jobId, signatureId, signature, estimate.proposalSha256)).status).toBe(201);
   return { ...job, estimate, signatureId, signature };
 }
 
@@ -275,7 +279,7 @@ describe('signing on the phone', () => {
 
   it('the same signature twice returns one receipt and one agreement', async () => {
     const { jobId, estimate, signatureId, signature } = await readyToSign();
-    const again = await putSignature(ESTIMATOR_A, jobId, signatureId, signature);
+    const again = await putSignature(ESTIMATOR_A, jobId, signatureId, signature, estimate.proposalSha256);
     expect(again).toMatchObject({ status: 200, body: { photoId: signatureId, kind: 'signature', sha256: sha256(signature) } });
     const body = bodyFor(estimate, signatureId);
     const first = await sign(ESTIMATOR_A, jobId, body);
@@ -283,7 +287,7 @@ describe('signing on the phone', () => {
     expect([first.status, second.status]).toEqual([201, 200]);
     expect(second.body.agreement).toEqual(first.body.agreement);
     // After signing, the same signature sent again (a lost answer) is still the same receipt.
-    expect((await putSignature(ESTIMATOR_A, jobId, signatureId, signature)).status).toBe(200);
+    expect((await putSignature(ESTIMATOR_A, jobId, signatureId, signature, estimate.proposalSha256)).status).toBe(200);
     expect(await agreementRows(jobId)).toHaveLength(1);
     expect(await signatureRows(jobId)).toEqual([{ object_id: signatureId, sha256: sha256(signature) }]);
     expect([...h.evidence.objects.keys()].filter((name) => name.includes('/signatures/'))).toEqual([`companies/${h.seed.a}/jobs/${jobId}/signatures/${signatureId}`]);
@@ -373,7 +377,7 @@ describe('what signing refuses, writing nothing', () => {
     expect(estimate.staffNotes.companySetupMissing).toEqual(['Start-work authorization', 'Payment terms']);
     expect(estimate.documents.signable).toBe(false);
     const signatureId = randomUUID();
-    expect((await putSignature(ESTIMATOR_A, jobId, signatureId, image(signatureId))).status).toBe(201);
+    expect((await putSignature(ESTIMATOR_A, jobId, signatureId, image(signatureId), estimate.proposalSha256)).status).toBe(201);
     const before = await everything(h.admin);
     expect(await sign(ESTIMATOR_A, jobId, bodyFor(estimate, signatureId))).toEqual({
       status: 409,
@@ -408,7 +412,12 @@ describe('what signing refuses, writing nothing', () => {
     expect(await sign(ESTIMATOR_A, jobId, bodyFor(old, signatureId))).toMatchObject({ status: 409, body: { error: 'estimate_superseded' } });
     expect(await sign(ESTIMATOR_A, jobId, bodyFor(revised, signatureId, { proposalSha256: old.proposalSha256 }))).toMatchObject({ status: 409, body: { error: 'proposal_changed' } });
     expect(await everything(h.admin)).toBe(before);
-    const signed = await sign(ESTIMATOR_A, jobId, bodyFor(revised, signatureId));
+    // A revised estimate always needs a new signature (S5b-6): the one captured for the old estimate is refused.
+    expect(await sign(ESTIMATOR_A, jobId, bodyFor(revised, signatureId))).toMatchObject({ status: 409, body: { error: 'signature_missing' } });
+    expect(await everything(h.admin)).toBe(before);
+    const fresh = randomUUID();
+    expect((await putSignature(ESTIMATOR_A, jobId, fresh, image(`signature ${fresh}`), revised.proposalSha256)).status).toBe(201);
+    const signed = await sign(ESTIMATOR_A, jobId, bodyFor(revised, fresh));
     expect(signed.status).toBe(201);
     expect(signed.body.agreement.record.basis.estimate_id).toBe(revised.id);
   });

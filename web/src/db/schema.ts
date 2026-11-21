@@ -7,6 +7,7 @@ import {
   foreignKey,
   integer,
   jsonb,
+  numeric,
   pgTable,
   primaryKey,
   text,
@@ -359,10 +360,23 @@ export const jobs = pgTable(
     requestDigest: text('request_digest').notNull(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
+    // The drafts' life-cycle version (0018): raised by one by triggers on every life-cycle input, the
+    // highest one the sync has written to Firestore, and when it last rose (set by the trigger).
+    fieldRevision: bigint('field_revision', { mode: 'number' }).notNull().default(0),
+    fieldSyncedRevision: bigint('field_synced_revision', { mode: 'number' }).notNull().default(0),
+    fieldChangedAt: timestamp('field_changed_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    // The job a copy was made from, set when the copy is inserted (0018).
+    copiedFromJobId: uuid('copied_from_job_id'),
   },
   (t) => [
     primaryKey({ columns: [t.companyId, t.id] }),
     unique('jobs_company_current_draft_key').on(t.companyId, t.currentDraftId),
+    // DEFERRABLE INITIALLY DEFERRED in 0018 (checked at commit).
+    foreignKey({
+      name: 'jobs_copied_from_fkey',
+      columns: [t.companyId, t.copiedFromJobId],
+      foreignColumns: [t.companyId, t.id],
+    }),
     foreignKey({
       name: 'jobs_created_by_fkey',
       columns: [t.companyId, t.createdByActorId],
@@ -467,7 +481,8 @@ export const evidenceObjects = pgTable(
   ],
 );
 
-export const submissionKinds = ['original', 'change_order'] as const;
+// A revision (0019, S5b-9) supersedes a signed agreement and names it as its parent, as a change order does.
+export const submissionKinds = ['original', 'change_order', 'revision'] as const;
 export type SubmissionKind = (typeof submissionKinds)[number];
 export const submissionStatuses = ['pending', 'committed', 'aborted'] as const;
 export type SubmissionStatus = (typeof submissionStatuses)[number];
@@ -601,6 +616,80 @@ export const jobEstimates = pgTable(
     foreignKey({
       name: 'job_estimates_created_by_fkey',
       columns: [t.companyId, t.createdByActorId],
+      foreignColumns: [actors.companyId, actors.id],
+    }),
+  ],
+);
+
+export const priceApprovalKinds = ['named_adjustment', 'line_multiplier', 'hourly', 'unit', 'flat'] as const;
+export type PriceApprovalKind = (typeof priceApprovalKinds)[number];
+export const priceApprovalEndReasons = ['edited', 'replaced', 'repriced'] as const;
+
+// What the estimator proposes on a submitted job and the owner approves (0019, S5b-8), bound to the
+// committed submission, the job revision and the pinned version's content hash. What a row says never
+// changes; it is approved once and ended once (the database sets both times). Decimals are strings.
+export const jobPriceApprovals = pgTable(
+  'job_price_approvals',
+  {
+    id: uuid('id').notNull(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companies.id),
+    jobId: uuid('job_id').notNull(),
+    submissionId: uuid('submission_id').notNull(),
+    pinId: uuid('pin_id').notNull(),
+    tableHash: text('table_hash').notNull(),
+    jobRevision: integer('job_revision').notNull(),
+    kind: text('kind', { enum: priceApprovalKinds }).notNull(),
+    adjustmentId: text('adjustment_id'),
+    itemId: text('item_id'),
+    roomId: text('room_id'),
+    multiplier: numeric('multiplier'),
+    description: text('description'),
+    quantity: numeric('quantity'),
+    unit: text('unit'),
+    price: numeric('price'),
+    taxable: boolean('taxable'),
+    requestDigest: text('request_digest').notNull(),
+    proposedByActorId: uuid('proposed_by_actor_id').notNull(),
+    proposedAt: timestamp('proposed_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    approvedByActorId: uuid('approved_by_actor_id'),
+    approvedAt: timestamp('approved_at', { withTimezone: true, mode: 'date' }),
+    approvedByName: text('approved_by_name'),
+    endedByActorId: uuid('ended_by_actor_id'),
+    endedAt: timestamp('ended_at', { withTimezone: true, mode: 'date' }),
+    endedReason: text('ended_reason', { enum: priceApprovalEndReasons }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.companyId, t.id] }),
+    foreignKey({
+      name: 'job_price_approvals_job_fkey',
+      columns: [t.companyId, t.jobId],
+      foreignColumns: [jobs.companyId, jobs.id],
+    }),
+    foreignKey({
+      name: 'job_price_approvals_submission_fkey',
+      columns: [t.companyId, t.jobId, t.submissionId],
+      foreignColumns: [jobSubmissions.companyId, jobSubmissions.jobId, jobSubmissions.id],
+    }),
+    foreignKey({
+      name: 'job_price_approvals_pin_fkey',
+      columns: [t.companyId, t.jobId, t.pinId],
+      foreignColumns: [jobPricePins.companyId, jobPricePins.jobId, jobPricePins.id],
+    }),
+    foreignKey({
+      name: 'job_price_approvals_proposed_by_fkey',
+      columns: [t.companyId, t.proposedByActorId],
+      foreignColumns: [actors.companyId, actors.id],
+    }),
+    foreignKey({
+      name: 'job_price_approvals_approved_by_fkey',
+      columns: [t.companyId, t.approvedByActorId],
+      foreignColumns: [actors.companyId, actors.id],
+    }),
+    foreignKey({
+      name: 'job_price_approvals_ended_by_fkey',
+      columns: [t.companyId, t.endedByActorId],
       foreignColumns: [actors.companyId, actors.id],
     }),
   ],
@@ -775,8 +864,26 @@ export const jobCoordination = pgTable(
     lastChangeId: uuid('last_change_id'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
+    // The drying watch's accepted actions (0020, S5b-10): its own revision and receipts, apart from the
+    // coordination revision; null until the first action.
+    dryingWatch: jsonb('drying_watch').$type<DryingWatch>(),
   },
   (t) => [primaryKey({ columns: [t.companyId, t.jobId] })],
+);
+
+// Each field draft id a job has been on, claimed once per company with its job (0016, security audit
+// F1): insert-only.
+export const jobDrafts = pgTable(
+  'job_drafts',
+  {
+    companyId: uuid('company_id').notNull(),
+    draftId: uuid('draft_id').notNull(),
+    jobId: uuid('job_id').notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.companyId, t.draftId] }),
+    foreignKey({ name: 'job_drafts_job_fkey', columns: [t.companyId, t.jobId], foreignColumns: [jobs.companyId, jobs.id] }),
+  ],
 );
 
 export const correctionFields = ['property_address', 'customer_name', 'customer_phone', 'customer_email'] as const;
@@ -800,6 +907,20 @@ export const agreementCorrections = pgTable(
   (t) => [primaryKey({ columns: [t.companyId, t.id] })],
 );
 
+export const dryingWatchActions = ['mark_dry', 'extend', 'close'] as const;
+
+// One accepted drying watch action (0020); the database stamps `at` (UTC) over any time the writer sends.
+export type DryingWatchReceipt = {
+  action: (typeof dryingWatchActions)[number];
+  agreement_id: string;
+  reason: string;
+  actor_id: string;
+  at: string;
+  request_id: string;
+  request_digest: string;
+};
+export type DryingWatch = { revision: number; receipts: DryingWatchReceipt[] };
+
 export const schema = {
   migrationLedger,
   authTenants,
@@ -820,10 +941,12 @@ export const schema = {
   jobSubmissions,
   jobPricePins,
   jobEstimates,
+  jobPriceApprovals,
   agreements,
   signingLinks,
   documentLinks,
   jobAssignments,
   jobCoordination,
+  jobDrafts,
   agreementCorrections,
 };

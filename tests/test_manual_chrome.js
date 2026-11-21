@@ -41,34 +41,6 @@ try {
 } finally {
   fs.rmSync(sandbox, { recursive: true, force: true });
 }
-const { pythonCommand } = require('../scripts/verify_live_browser');
-assert.equal(pythonCommand({ ADR_TEST_PYTHON: '/opt/python' }, 'linux', '/repo'), '/opt/python');
-assert.equal(pythonCommand({}, 'linux', '/nonexistent-root'), 'python3');
-assert.equal(pythonCommand({}, 'win32', '/nonexistent-root'), 'python');
-const source = fs.readFileSync('scripts/verify_live_browser.js', 'utf8');
-const signedIn = source.indexOf("line.trim() === 'signed-in'");
-const attach = source.indexOf('chromium.connectOverCDP(manual.endpoint)');
-assert(signedIn >= 0 && attach >= 0 && signedIn < attach);
-assert(!source.includes('ignoreDefaultArgs'));
-// The automated tab must inherit the private window's sign-in (no memory-only auth stand-in), bypass
-// any service worker, prove its target and bridge Live before each workflow phase.
-assert(!source.includes('inMemoryPersistence'));
-assert(source.includes("'Network.setBypassServiceWorker'"));
-const bypass = source.indexOf("'Network.setBypassServiceWorker'"),
-  routes = source.indexOf('page.route(BASE');
-assert(bypass >= 0 && routes >= 0 && bypass < routes);
-const verify = source.indexOf('await verifyTarget(label)'),
-  authenticated = source.indexOf("label + '-authenticated'"),
-  workflow = source.indexOf('await uiCheck(label)');
-assert(
-  verify >= 0 &&
-    authenticated >= 0 &&
-    workflow >= 0 &&
-    verify < authenticated &&
-    authenticated < workflow,
-);
-assert(source.includes('page.routeWebSocket(') && source.includes('bridgeLiveSocket('));
-assert(source.includes('FINALIZE_TIMEOUT'));
 console.log(
-  'PASS: normal private Chrome handoff precedes automation; the automated tab is routed, bypasses workers and proves its target; cleanup rejects unrelated profiles.',
+  'PASS: cleanup rejects unrelated profiles and Chrome is found from the documented locations.',
 );

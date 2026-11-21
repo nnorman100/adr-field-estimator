@@ -2,7 +2,7 @@ import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 import { MAX_PHOTO_REFS } from '@/lib/field/schema';
 import type { DraftStates } from '@/lib/photos/drafts';
 import type { EvidenceStore } from '@/lib/photos/store';
-import type { FakeDrafts } from './draft-fake';
+import type { Backing } from '../submissions/field-fake';
 
 // Stand-ins at the two boundaries the photo routes use (S5a-5): the evidence bucket and the field
 // draft's state. The bucket keeps what the real one would, including the create-only rule (a
@@ -57,23 +57,25 @@ export function fakeEvidence(): FakeEvidence {
   return store;
 }
 
-// The state of each draft the jobs service made through the fake drafts: `editing` until a test
-// sets another, null for a draft nobody made. `refs` is each draft's photo-reference count (0 unless set).
-export type FakeDraftStates = DraftStates & { set: Map<string, string>; refs: Map<string, number>; fail: boolean };
+// The state of each draft and its photo-reference count, as the one field record holds them
+// (tests/submissions/field-fake.ts, shared with the jobs and field stand-ins): null for a draft that is
+// not there. `fail` makes every read fail as if Firestore were unreachable.
+export type FakeDraftStates = DraftStates & { fail: boolean };
 
-export function fakeDraftStates(drafts: FakeDrafts): FakeDraftStates {
+export function fakeDraftStates(backing: Backing): FakeDraftStates {
   const states: FakeDraftStates = {
-    set: new Map(),
-    refs: new Map(),
     fail: false,
     async state(companyId, draftId) {
       if (states.fail) throw new Error('field database unreachable');
-      const key = `${companyId}/${draftId}`;
-      return states.set.get(key) ?? (drafts.made.has(key) ? 'editing' : null);
+      const found = backing.load().drafts[`${companyId}/${draftId}`];
+      if (!found) return null;
+      // As the real reader: a draft with no readable state is not one to add photos to.
+      return typeof found.state === 'string' ? found.state : '';
     },
     async photoRefs(companyId, draftId) {
       if (states.fail) throw new Error('field database unreachable');
-      return Math.min(states.refs.get(`${companyId}/${draftId}`) ?? 0, MAX_PHOTO_REFS);
+      const found = backing.load().drafts[`${companyId}/${draftId}`];
+      return Math.min(found ? Object.keys(found.photos).length : 0, MAX_PHOTO_REFS);
     },
   };
   return states;

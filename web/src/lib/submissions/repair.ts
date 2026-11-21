@@ -1,8 +1,9 @@
 import { and, eq, or, sql } from 'drizzle-orm';
+import { isLockTimeout } from '@/db/client';
 import { auditEvents, jobSubmissions } from '@/db/schema';
 import { withCompany, type Database } from '@/db/tenant';
-import type { FenceStore } from './fence';
-import { abortPending, writeMarker, type DecidedRow } from './service';
+import { lockedJob } from '@/lib/jobs/access';
+import { abortPending, writeMarker, type DecidedRow, type SubmitStore } from './service';
 
 // The Submit side of the S3-12 worker (docs/plans/S5.md, section 4, step 6), run in the same
 // scheduled pass as the access projection. It never decides a row that could still commit before
@@ -12,11 +13,17 @@ import { abortPending, writeMarker, type DecidedRow } from './service';
 //   first wins and the worker changes nothing), then its draft goes back to `editing`, for that
 //   epoch only.
 // - A decided row whose marker is still unwritten after the grace (the request that decided it
-//   died or could not reach Firestore) gets its marker: `submitted` after a commit, `editing` after
-//   an abort.
+//   died or could not reach Firestore) gets its job's draft sync: `submitted` after a commit,
+//   `editing` after an abort. (Every other job whose drafts fell behind Postgres is synced by the
+//   draft sync's own repair pass, src/lib/jobs/sync-repair.ts.)
 // - An aborted row whose marker is written and whose expiry passed within the last REOPEN_SECONDS
-//   has its release written again, so a draft still fenced by that epoch goes back to `editing`.
-//   Only companies the lookup returns for other work are visited for this.
+//   has its release written again, so a draft still fenced by that epoch goes back to `editing`: a
+//   fence a previous-version Submit, still serving while a release rolls out, closed after its
+//   release. Only companies the lookup returns for other work are visited for this. (The draft
+//   life-cycle redesign removes it once no previous version serves.)
+// - A pending row whose lock, or whose job's, another transaction still holds past the lock limit
+//   (a fence call in progress) is left for the next pass and counted as failed; the pass goes on
+//   with the rest. The job row is locked before the submission row, as in every request.
 //
 // Only finding the companies with work crosses companies, through job_submission_due_companies
 // (migration 0011), which returns company ids and nothing else. Every row is read and changed inside
@@ -34,7 +41,7 @@ export type RepairOptions = { maxCompanies?: number; maxRowsPerCompany?: number;
 
 export async function runSubmissionRepair(
   db: Database,
-  store: FenceStore,
+  store: SubmitStore,
   { maxCompanies = 50, maxRowsPerCompany = 200, markerGraceSeconds = MARKER_GRACE_SECONDS }: RepairOptions = {},
 ): Promise<RepairSummary> {
   const companies = await db.transaction(async (tx) => {
@@ -75,6 +82,11 @@ export async function runSubmissionRepair(
       let row: DecidedRow = found;
       if (row.status === 'pending') {
         const decided = await withCompany(db, companyId, async (tx) => {
+          // The job row first, as every request takes it, before the submission row, so a request
+          // holding the job never waits on a submission row the worker holds while the worker waits
+          // on the job (the draft life-cycle redesign's field-revision trigger will lock the job row
+          // whenever a submission's status moves).
+          await lockedJob(tx, companyId, row.jobId);
           const aborted = await abortPending(tx, companyId, row.id);
           if (aborted) {
             await tx
@@ -86,7 +98,14 @@ export async function runSubmissionRepair(
             .from(jobSubmissions)
             .where(and(eq(jobSubmissions.companyId, companyId), eq(jobSubmissions.id, row.id)));
           return { aborted, status: now!.status };
+        }).catch((error: unknown) => {
+          if (!isLockTimeout(error)) throw error;
+          return null;
         });
+        if (!decided) {
+          summary.failed += 1;
+          continue;
+        }
         if (decided.aborted) summary.aborted += 1;
         row = { ...row, status: decided.status };
       }

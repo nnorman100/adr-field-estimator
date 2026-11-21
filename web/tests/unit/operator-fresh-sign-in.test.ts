@@ -40,10 +40,15 @@ vi.mock('@/lib/platform', () => ({
   supportChangeRole: standIn('supportChangeRole'),
   supportEnableMember: standIn('supportEnableMember'),
   supportInvitationAction: standIn('supportInvitationAction'),
+  supportHead: standIn('supportHead'),
+  supportJob: standIn('supportJob'),
+  supportJobs: standIn('supportJobs'),
+  supportPhoto: standIn('supportPhoto'),
   supportPrices: standIn('supportPrices'),
   supportTeam: standIn('supportTeam'),
 }));
 vi.mock('@/lib/ai/http', () => ({ setAiSettings: standIn('setAiSettings') }));
+vi.mock('@/lib/records-check/http', () => ({ recordsCheck: standIn('recordsCheck') }));
 
 const session = vi.hoisted(() => ({ signedInAgo: 60 }));
 const OPERATOR = '0b5a1c1e-7d2f-4c8e-9a6b-3f4e5d6c7b8a';
@@ -101,8 +106,9 @@ const call = (handler: Handler) =>
     params: Promise.resolve({}),
   });
 
-// The routes that change something a company's people rely on. Reads and creating a new, empty
-// company keep the operator's 12-hour sign-in.
+// The routes that change something a company's people rely on, and the records check, which reads
+// across a company's stores (S8-3 asks for a fresh sign-in). The other reads and creating a new,
+// empty company keep the operator's 12-hour sign-in.
 const FRESH_SIGN_IN_ROUTES = [
   // Team and second-step changes (D7 as decided 2026-11-10).
   'POST platform/companies/[companyId]/invitations/[invitationId]/cancel',
@@ -116,6 +122,8 @@ const FRESH_SIGN_IN_ROUTES = [
   'POST platform/companies/[companyId]/tenant',
   'POST platform/companies/[companyId]/flags',
   'PUT platform/companies/[companyId]/ai-settings',
+  // S8-3: the records check after a restore.
+  'POST platform/companies/[companyId]/records-check',
 ].sort();
 
 beforeEach(() => {
@@ -124,7 +132,7 @@ beforeEach(() => {
 });
 
 describe('operator routes that need a fresh sign-in', () => {
-  it('are exactly the team, second-step, company status, tenant, feature and AI limit changes', async () => {
+  it('are exactly the team, second-step, company status, tenant, feature and AI limit changes and the records check', async () => {
     session.signedInAgo = 16 * 60;
     const refused: string[] = [];
     for (const [name, handler] of await operatorHandlers()) {

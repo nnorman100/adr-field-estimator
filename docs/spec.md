@@ -9,6 +9,9 @@
 > Feature state (built, on, phone-checked) is in [STATUS.md](STATUS.md); who may do what is in
 > [ACCESS.md](ACCESS.md); data is in [DATA.md](DATA.md); AI is in [AI.md](AI.md); physical phone and
 > device acceptance procedures are in [phone-acceptance.md](phone-acceptance.md).
+> Every screen of the rebuilt app (jobs and field work, team and invitations, sign-in, company
+> settings, prices and the operator pages), one spec per screen as built today, is in
+> [spec/screens/](spec/screens/README.md).
 
 Each acceptance check is written so a browser test can prove it, with the Playwright suite's fake
 cloud adapters or a Firestore emulator. "Flag" names the switch that must be on
@@ -22,7 +25,7 @@ returns 404.
 | Owner | company owner (one active owner per company) | all of the company's jobs and signed documents, team, prices | everything in the company: jobs, scope, photos, Live, audit, signing, archive drafts, coordination and close, team and invitations, company profile, delivery and record-retention settings, prices (flag), approve additional work |
 | Estimator | field technician | only jobs they created or are assigned | start and edit jobs, scope, photos, readings, Live, meter reading, Finish and review, sign on the phone, send a signing link, copy a signed job to a draft, read prices (flag) |
 | Office | coordinator | all company jobs and signed documents | start jobs (empty scope only), coordination and claim details, assign estimators, record a signed job's close, resend documents, read prices (flag); cannot edit scope, add photos, run Live, audit or sign |
-| Superadmin | platform operator (not a company role) | any company, read-only, each view audited | create, suspend, reactivate and archive companies; invite or replace owners; create an owner login with a temporary password; listed support actions (resend or cancel a staff invitation, switch estimator and office, re-enable a member, archive or restore an unsigned draft) |
+| Superadmin | platform operator (not a company role) | any company, read-only, each view audited | create, suspend, reactivate and archive companies; invite or replace owners; create an owner login with a temporary password; listed support actions (resend or cancel a staff invitation, switch estimator and office, re-enable a member; since 2026-11-19 (owner decision, S5b-5) the operator does not archive or restore a job and asks the company owner to) |
 | Homeowner with a signing link | customer, no account | the four documents and photos for one saved revision | review, sign once, ask for an emailed copy |
 | Holder of a document link | homeowner or adjuster, no account | one signed document set | read it, 30 days, until revoked |
 
@@ -74,6 +77,10 @@ Every screen below is at `/app` unless noted. "Data" is what the screen captures
 | QR tags | any signed-in user with an editable draft | C: scan or enter a code, print a sheet | |
 | Help, remove-room, archive and reset-password dialogs | per role | | help lines for a switched-off feature are hidden |
 
+Check Scope's dated, price-free reference comes from `GET /api/prices/item-list`. Phones that
+keep jobs can reopen it offline, and Check Scope refreshes it when connected. Before the first
+publication it shows "Prices not set". See [Check Scope](spec/screens/check-scope.md).
+
 ### 2.4 Platform administration (superadmin)
 
 | Screen | Data | Acceptance checks |
@@ -109,10 +116,10 @@ agreements, evidence, photos, coordination, delivery, prices, drying-watch, outc
 records: every request answers 403 or 404, no lists contain A's records, and a superadmin's view
 of A is audited.
 
-Existing proof: `tests/test_workspaces_part1.py::test_roles_and_cross_company_scoped_jobs`,
-`tests/test_workspaces_part2.py::test_signed_job_records_evidence_and_coordination_stay_scoped`,
+Existing proof: `tests/test_workspaces_part2.py::test_signed_job_records_evidence_and_coordination_stay_scoped`,
 `tests/test_job_archive_and_customer.py::test_other_company_owner_cannot_reach_this_company`,
 `tests/test_outcomes.py` (isolation and 404 cases), `tests/test_drying_watch.py::test_lists_are_company_scoped_and_support_is_read_only`,
+Historical, removed with the first company's price book files: `tests/test_workspaces_part1.py` and
 `tests/browser/workspaces.spec.js` (branding and account-switch isolation).
 **[open]** These run against the in-memory fake store, not the Firestore emulator. No test was
 found that fetches company A's photo bytes or full-size original as company B, and no rules test
@@ -155,10 +162,9 @@ second signature is rejected and the stored records are unchanged.
 Existing proof: `tests/test_firestore_emulator.py::test_concurrent_signing_retries_return_one_receipt`,
 `::test_signed_records_cannot_be_altered`, `::test_link_and_device_signatures_race_to_one_agreement`,
 `::test_link_signature_and_edit_race_never_both_land`,
-`tests/test_backend.py::test_authenticated_durable_flow_and_immutable_retry`,
 `tests/test_signing_links.py::test_link_reads_the_bound_documents_and_signs_once_as_the_technician`,
-`tests/browser/workflows.spec.js` (failed save keeps the retry reference),
-`tests/browser/signing-link.spec.js` (homeowner retry).
+`tests/browser/signing-link.spec.js` (homeowner retry). Historical, removed with the first company's price book
+files: `tests/test_backend.py` and `tests/browser/workflows.spec.js` (failed save keeps the retry reference).
 **[open]** No browser test double-clicks the sign buttons (the buttons disable during the call);
 the old app has no HTTP-level race of two simultaneous homeowner signing requests (it is tested at
 store level in the emulator). The rebuilt app closes this at its route handlers: `web/tests/db/signing-links.test.ts`
@@ -185,8 +191,8 @@ and no false conflict.
 Existing proof: `tests/browser/photo-originals.spec.js` (a failed photo upload resends only that
 photo; an original whose copy reached the server unseen), `tests/browser/offline-notes.spec.js`
 (a note saved with its response lost appears once), `tests/browser/scope-items-office.spec.js` (a lost
-create response), `tests/browser/workflows.spec.js` and `local-drafts.spec.js` (offline draft,
-reconnection), `tests/test_inspection_store.py::test_photo_retry_same_id_cannot_substitute_room_or_evidence`,
+create response), `tests/browser/local-drafts.spec.js` (offline draft, reconnection; the earlier
+`tests/browser/workflows.spec.js` coverage is historical, removed), `tests/test_inspection_store.py::test_photo_retry_same_id_cannot_substitute_room_or_evidence`,
 `tests/test_photo_originals.py::test_a_retried_original_that_is_already_stored_succeeds`,
 `tests/test_voice_notes.py::test_retried_voice_note_is_not_transcribed_or_appended_twice`.
 **[open]** Not covered by any test: a lost response to the autosave `PUT` after the server saved
@@ -216,7 +222,7 @@ mid-body, and voice notes and drying readings are not built yet.
 None of these is built, except the owner-filled pricing template noted below. The owner's stance
 on each, from the 2026-11-09 review, in plain words:
 
-- **Company workbook upload:** never ADR's Excel workbook. Instead, a pricing template that each
+- **Company workbook upload:** never one company's own Excel workbook. Instead, a pricing template that each
   owner fills in with their own prices. Arbitrary workbook upload is not built. The fixed
   template is built but switched off: with `PRICE_BOOKS_ENABLED` on, a company owner downloads a
   blank CSV or XLSX template from the Prices page, fills it in, imports it and publishes it
@@ -242,7 +248,7 @@ and must not be read as current behaviour. Anything not decided is marked **[ope
 
 ### 6.1 Company-neutral pricing additions and change orders
 
-Source: the ADR-neutral plan (`dry-adr-neutral-plan` report), questions Q1–Q13, accepted as
+Source: the company-neutral plan (`dry-adr-neutral-plan` report), questions Q1–Q13, accepted as
 supplied (rebuild plan, supersession ledger). Prices stay server Decimal math; a model never
 supplies a price.
 
@@ -255,7 +261,13 @@ supplies a price.
 | Change orders after signing | An incremental, separately signed change order for positive added work only, linked to the original agreement; the original is never edited or repriced (Q5). | approve added money: owner; sign: the customer; who may create it: **[open]** |
 | Old drafts and records | Pinned drafts are not moved automatically; the owner reprices an unsigned draft only on explicit review; signed records never change (Q8). | owner |
 
-Target acceptance checks (**not built**):
+Status (S5b-8, server and engine): built are estimator proposals and owner approvals of named
+adjustments, custom multipliers, and hourly, unit and flat additions (routes under
+`/api/jobs/{id}/approvals`, flag `priced_extras`, key `additions_approve`), each bound to the job
+revision and price version and priced by the estimate (owner decisions B1 to B3). The screens come
+after; change orders are not built.
+
+Target acceptance checks (**not built** except where the status above says so):
 
 - A company with no published table still cannot price an estimate; a new company's table has
   multipliers of 1 and no allowance it did not choose.
@@ -273,11 +285,13 @@ Target acceptance checks (**not built**):
 - Two concurrent change orders on the same signed job cannot both build on a stale parent.
 - Change orders are not counted as separate completed jobs in estimate accuracy.
 
-Still **[open]**: the calculation version name, chosen with the price-bracket work (#228); whether
-custom adjustments apply to bracket-derived lines (the plan recommends yes, only through explicit
-eligible-item selection); whether a minimum or trip charge applies again on a change order (the
-plan recommends off unless selected); where the parent/child link is stored; and credits,
-reductions and whole-agreement replacement, which are outside the first workflow.
+Still **[open]**: the calculation version name, chosen with the price-bracket work (#228); whether a
+minimum or trip charge applies again on a change order (the plan recommends off unless selected);
+where the parent/child link is stored; and credits, reductions and whole-agreement replacement,
+which are outside the first workflow.
+
+Decided (owner decision D2, 2026-11-20): bracket-derived lines are eligible for a custom multiplier,
+through the estimator's explicit selection of the line (not built yet).
 
 ### 6.2 Field and office ownership
 

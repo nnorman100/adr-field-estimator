@@ -1,11 +1,13 @@
 import { and, asc, eq, isNull, sql } from 'drizzle-orm';
-import { actors, jobAssignments, jobCoordination, jobs, jobSubmissions, memberships } from '@/db/schema';
-import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
+import { actors, jobAssignments, jobCoordination, jobs, memberships } from '@/db/schema';
+import { holdAcrossOutsideCall, withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
 import { hasAny, jobAccess, JobError, type JobCaller, type JobRow } from './access';
-import type { DraftStore } from './drafts';
+import type { DraftSync } from './draft-sync';
+import { draftOfOtherJob, type DraftStore } from './drafts';
 import { assignDigest, type AssignInput, type CoordinationInput, type TransferInput } from './schema';
-import { audit, CHECK_VIOLATION, detailOf, errorCode, type JobDetail } from './service';
+import { audit, CHECK_VIOLATION, detailOf, errorCode, findDraft, type JobDetail } from './service';
+import { afterFieldStep, claimJobDrafts, stillMember, syncJobDrafts } from './sync-job';
 
 // Office jobs, assignment and the field owner (S5b-1, docs/plans/S5.md; docs/spec.md 6.2). Every
 // function runs inside withCompany for the company of the verified sign-in and goes through the one
@@ -154,28 +156,8 @@ async function viewOf(tx: CompanyTransaction, row: JobRow): Promise<Coordination
   };
 }
 
-async function uidOf(tx: CompanyTransaction, companyId: string, actorId: string): Promise<string | null> {
-  const [found] = await tx
-    .select({ uid: actors.uid })
-    .from(actors)
-    .where(and(eq(actors.companyId, companyId), eq(actors.id, actorId)));
-  return found?.uid ?? null;
-}
 
-// The job's drafts: each earlier draft a submission was made from, then its current draft last.
-// Every one of them names the job's field owner, so a person who no longer owns the field work
-// reads none of them (web/firestore.rules). The current draft is set last, so while any draft does
-// not name the owner yet, the current one does not either, and the job screens offer Start field
-// work, which sets them all again.
-async function draftIdsOf(tx: CompanyTransaction, row: JobRow): Promise<string[]> {
-  const found = await tx
-    .selectDistinct({ draftId: jobSubmissions.draftId })
-    .from(jobSubmissions)
-    .where(and(eq(jobSubmissions.companyId, row.companyId), eq(jobSubmissions.jobId, row.id)));
-  return [...found.map((one) => one.draftId).filter((id) => id !== row.currentDraftId), row.currentDraftId];
-}
-
-export function officeService(db: Database, drafts: DraftStore): OfficeService {
+export function officeService(db: Database, drafts: DraftStore, sync: DraftSync): OfficeService {
   async function inCompany<T>(companyId: string, run: (tx: CompanyTransaction) => Promise<T>): Promise<T> {
     try {
       return await withCompany(db, companyId, run);
@@ -185,24 +167,21 @@ export function officeService(db: Database, drafts: DraftStore): OfficeService {
     }
   }
 
-  // The Firestore step: each of the job's drafts names its field owner as Postgres has it, at that
-  // revision. A current draft that is not there yet (Back to editing makes its draft after its own
-  // commit) or a Firestore that cannot be reached answers 503; the same request again sets it. A
-  // newer owner already on a draft means a later change won, which is the answer Postgres holds too.
-  async function project(companyId: string, draftIds: readonly string[], uid: string | null, revision: number): Promise<void> {
-    if (uid === null) throw new JobError('draft_unavailable');
-    for (const [index, draftId] of draftIds.entries()) {
-      let result;
-      try {
-        result = await drafts.setFieldOwner(companyId, draftId, uid, revision);
-      } catch (error) {
-        // Fixed text only: the SDK's message may quote a path.
-        console.error('job field owner unavailable', error instanceof Error ? error.name : 'unknown');
-        throw new JobError('draft_unavailable');
-      }
-      if (result === 'missing' && index === draftIds.length - 1) throw new JobError('draft_unavailable');
-    }
+  // The job's drafts (claimJobDrafts, sync-job.ts), read before the commit: a current draft the field database holds
+  // for another job is never handed on, and the request changes nothing (security audit F1).
+  async function draftsToName(tx: CompanyTransaction, row: JobRow): Promise<void> {
+    await claimJobDrafts(tx, row);
+    await holdAcrossOutsideCall(tx);
+    const found = await findDraft(drafts, row.companyId, row.currentDraftId);
+    if (found && draftOfOtherJob(found.jobId, row.id)) throw new JobError('conflict');
   }
+
+  // The Firestore step after the commit: every draft of the job written as Postgres holds it now, at its
+  // field revision, in one transaction (sync-job.ts). A slower request never overwrites a newer state
+  // (the job's marker refuses it), and the current draft, when the field database lost it, is made from
+  // the job's latest record. When Firestore cannot be reached, the answer is 503 and the same request
+  // again sets it; a current draft of another job is 409.
+  const fieldStep = (companyId: string, jobId: string) => syncJobDrafts(db, sync, drafts, companyId, jobId);
 
   return {
     async coordination(caller, jobId) {
@@ -294,19 +273,28 @@ export function officeService(db: Database, drafts: DraftStore): OfficeService {
         const row = await jobAccess(tx, caller, jobId, CLAIM, { lock: true });
         if (row.fieldOwnerActorId !== null && row.fieldOwnerActorId !== caller.actorId) throw new JobError('field_owner_taken');
         let next = row;
-        let revision: number;
         if (row.fieldOwnerActorId === null) {
           if (row.status === 'signed') throw new JobError('job_signed');
           next = await setFieldOwner(tx, row, caller.actorId);
-          revision = await advanceCoordination(tx, row, null);
+          const revision = await advanceCoordination(tx, row, null);
           await audit(tx, caller, 'job_field_owner_claimed', row.id, { revision });
-        } else {
-          revision = (await readCoordination(tx, row)).revision;
         }
-        return { claimed: next !== row, revision, draftIds: await draftIdsOf(tx, next), detail: await detailOf(tx, next) };
+        await draftsToName(tx, next);
+        return { claimed: next !== row };
       });
-      await project(caller.companyId, made.draftIds, caller.uid, made.revision);
-      return { claimed: made.claimed, detail: made.detail };
+      await afterFieldStep(db, caller, () => fieldStep(caller.companyId, jobId));
+      // The job as Postgres holds it after the field step, read with the caller's access again: a change
+      // committed meanwhile (an archive, a move, an unassignment) is the answer, not what this request saw.
+      const detail = await withCompany(
+        db,
+        caller.companyId,
+        async (tx) => {
+          await stillMember(tx, caller);
+          return detailOf(tx, await jobAccess(tx, caller, jobId, CLAIM));
+        },
+        { snapshot: true },
+      );
+      return { claimed: made.claimed, detail };
     },
 
     // Owner decision J5: the owner moves the field work to themself or to an estimator assigned to
@@ -316,7 +304,7 @@ export function officeService(db: Database, drafts: DraftStore): OfficeService {
     // nothing in Postgres and only sends the field owner to every draft once more.
     async transferFieldOwner(caller, jobId, input) {
       need(caller, TRANSFER);
-      const made = await inCompany(caller.companyId, async (tx) => {
+      await inCompany(caller.companyId, async (tx) => {
         const row = await jobAccess(tx, caller, jobId, TRANSFER, { lock: true });
         const current = await readCoordination(tx, row);
         let next = row;
@@ -342,15 +330,20 @@ export function officeService(db: Database, drafts: DraftStore): OfficeService {
             });
           }
         }
-        return {
-          revision,
-          draftIds: await draftIdsOf(tx, next),
-          uid: next.fieldOwnerActorId ? await uidOf(tx, caller.companyId, next.fieldOwnerActorId) : null,
-          view: await viewOf(tx, next),
-        };
+        await draftsToName(tx, next);
       });
-      await project(caller.companyId, made.draftIds, made.uid, made.revision);
-      return made.view;
+      await afterFieldStep(db, caller, () => fieldStep(caller.companyId, jobId));
+      // The coordination as Postgres holds it after the field step: a later move's owner and revision,
+      // when one committed meanwhile, never this request's superseded ones.
+      return withCompany(
+        db,
+        caller.companyId,
+        async (tx) => {
+          await stillMember(tx, caller);
+          return viewOf(tx, await jobAccess(tx, caller, jobId, TRANSFER));
+        },
+        { snapshot: true },
+      );
     },
   };
 }

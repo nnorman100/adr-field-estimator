@@ -213,6 +213,7 @@ export async function resetTeamDatabase(
   const seed = await seedCompanies(admin);
   const apiUrl = urlAs(server, server.roles.api);
   const handle = openDatabase({ APP_ENV: 'test', DATABASE_URL: apiUrl });
+  const record = memoryBacking();
   const harness: Harness = {
     server,
     admin,
@@ -229,7 +230,8 @@ export async function resetTeamDatabase(
     prices: pricesService(handle.db),
     profile: profileService(handle.db),
     jobs: null as unknown as JobRoutesService,
-    drafts: fakeDrafts(),
+    // One field record for every field stand-in (tests/submissions/field-fake.ts).
+    drafts: fakeDrafts(record),
     photos: null as unknown as PhotosService,
     evidence: fakeEvidence(),
     draftStates: null as unknown as FakeDraftStates,
@@ -267,13 +269,13 @@ export async function resetTeamDatabase(
   };
   harness.platform = platformService(handle.db, users, projectInto, noEmailService);
   harness.team = teamService(handle.db, users, projectInto);
-  harness.draftStates = fakeDraftStates(harness.drafts);
+  harness.draftStates = fakeDraftStates(record);
   harness.photos = photosService(handle.db, harness.evidence, harness.draftStates);
-  harness.field = fakeField(memoryBacking(), { drafts: harness.drafts, states: harness.draftStates });
+  harness.field = fakeField(record);
   harness.jobs = {
-    ...jobsService(handle.db, harness.drafts),
-    ...officeService(handle.db, harness.drafts),
-    ...archiveService(handle.db, harness.field),
+    ...jobsService(handle.db, harness.drafts, harness.field),
+    ...officeService(handle.db, harness.drafts, harness.field),
+    ...archiveService(handle.db, harness.field, harness.field),
   };
   harness.submissions = submissionsService(handle.db, harness.field);
   return harness;

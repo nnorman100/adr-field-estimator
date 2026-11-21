@@ -1,0 +1,11 @@
+{
+  "about": "The load test's pass marks (docs/plans/S8/S8-7.md), written before any run. web/scripts/load-test.ts judges the measured ones, counts every request Cloud Run itself refused for lack of an instance (owner decision 2026-11-18, option A, in place of 'Cloud Run below its instance limit'), and judges the owner's readings from the test project's logs and charts (refused database connections, database processor, database connections against max_connections). It exits non-zero when one fails or a reading is not given.",
+  "readsP95Ms": 2000,
+  "photoP95Ms": 5000,
+  "finishMaxMs": 5000,
+  "errorRateBelow": 0.02,
+  "databaseConnectionErrors": 0,
+  "instanceRefusals": 0,
+  "databaseCpuBelowPercent": 80,
+  "connectionHeadroom": 10
+}

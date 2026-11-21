@@ -241,13 +241,18 @@ describe('runtime role and row-level security (migration 0003)', () => {
       company_ai_settings: ['SELECT'],
       company_feature_flags: ['SELECT'],
       document_links: ['INSERT', 'SELECT'],
+      drying_readings: ['SELECT'],
+      estimate_history: ['SELECT'],
       evidence_objects: ['INSERT', 'SELECT'],
       invitations: ['INSERT', 'SELECT', 'UPDATE'],
       job_assignments: ['INSERT', 'SELECT'],
       job_claims: ['INSERT', 'SELECT'],
+      job_closes: ['SELECT'],
       job_coordination: ['INSERT', 'SELECT'],
       job_customers: ['INSERT', 'SELECT'],
+      job_drafts: ['INSERT', 'SELECT'],
       job_estimates: ['INSERT', 'SELECT'],
+      job_price_approvals: ['INSERT', 'SELECT'],
       job_price_pins: ['INSERT', 'SELECT'],
       job_submissions: ['INSERT', 'SELECT'],
       jobs: ['INSERT', 'SELECT'],
@@ -516,7 +521,7 @@ describe('runtime role and row-level security (migration 0003)', () => {
     const migrator = connect(MIGRATOR, migratorPassword);
     try {
       expect(await migrator`SELECT * FROM companies`).toHaveLength(0);
-      expect(await migrator`SELECT * FROM migration_ledger`).toHaveLength(15);
+      expect(await migrator`SELECT * FROM migration_ledger`).toHaveLength(20);
     } finally {
       await migrator.end({ timeout: 5 });
     }

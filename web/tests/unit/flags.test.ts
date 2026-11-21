@@ -90,6 +90,9 @@ describe('the known flags', () => {
       'ai_meter_reading',
       'ai_voice_notes',
       'ai_job_summary',
+      'readiness',
+      'priced_extras',
+      'drying_watch',
     ]);
     expect(Object.isFrozen(FLAG_NAMES)).toBe(true);
     expect(ALL_OFF).toEqual({
@@ -100,6 +103,9 @@ describe('the known flags', () => {
       ai_meter_reading: false,
       ai_voice_notes: false,
       ai_job_summary: false,
+      readiness: false,
+      priced_extras: false,
+      drying_watch: false,
     });
     expect(flagsFromRows([])).toEqual(ALL_OFF);
     expect(flagsFromRows(null)).toEqual(ALL_OFF);
@@ -148,7 +154,9 @@ describe('the known flags', () => {
     expect([...AI_FLAG_NAMES].sort()).toEqual(
       ['ai_job_summary', 'ai_meter_reading', 'ai_scope_fill', 'ai_summary', 'ai_voice_notes', 'live_voice'].sort(),
     );
-    expect(FLAG_NAMES.filter((n) => n !== 'price_books')).toEqual([...AI_FLAG_NAMES]);
+    expect(FLAG_NAMES.filter((n) => n !== 'price_books' && n !== 'priced_extras' && n !== 'readiness' && n !== 'drying_watch')).toEqual([
+      ...AI_FLAG_NAMES,
+    ]);
     expect(Object.keys(AI_FLAG_DETAILS).sort()).toEqual([...AI_FLAG_NAMES].sort());
     for (const name of AI_FLAG_NAMES) {
       const { owner, purpose, removeBy } = AI_FLAG_DETAILS[name];
