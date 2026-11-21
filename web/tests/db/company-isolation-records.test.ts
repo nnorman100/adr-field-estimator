@@ -330,8 +330,8 @@ beforeEach(async () => {
   live.harness = h;
   made = new Set();
   await seedSides();
-  // Readiness on in both companies, so its route answers by job access, not only by its switch.
-  await h.admin`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${h.seed.a}, 'readiness', true), (${h.seed.b}, 'readiness', true)`;
+  // Readiness and the drying watch on in both companies, so their routes answer by job access, not only by their switches.
+  await h.admin`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${h.seed.a}, 'readiness', true), (${h.seed.b}, 'readiness', true), (${h.seed.a}, 'drying_watch', true), (${h.seed.b}, 'drying_watch', true)`;
 });
 
 afterAll(async () => {
@@ -454,7 +454,9 @@ describe('the S5a routes', () => {
           for (const row of reads) {
             const answer = await call(row, claims.uid, claims, idsOf(self, job));
             const where = `${self.name} ${role}: ${row.method} ${row.route} on its ${job} job`;
-            expect({ where, status: [200, 403, 404].includes(answer.status) }).toEqual({ where, status: true });
+            // The drying watch is a signed job's (S5b-10): the job with a pending signing link is 409.
+            const allowed = row.route === 'api/jobs/[jobId]/drying-watch' && job === 'pending' ? [409] : [200, 403, 404];
+            expect({ where, status: allowed.includes(answer.status) }).toEqual({ where, status: true });
             expect({ where, leaked: leaks(answer.text, other) }).toEqual({ where, leaked: [] });
           }
         }
@@ -464,6 +466,10 @@ describe('the S5a routes', () => {
         const answer = await call({ route, method: 'GET' }, 'owner', self.people.owner, idsOf(self, 'signed'));
         expect({ route, as: self.name, status: answer.status, own: leaks(answer.text, self).length > 0 }).toEqual({ route, as: self.name, status: 200, own: true });
       }
+      // The drying watch answers the company's own owner about its signed job (S5b-10), so its refusals
+      // above are job access, not the switch.
+      const watched = await call({ route: 'api/jobs/[jobId]/drying-watch', method: 'GET' }, 'owner', self.people.owner, idsOf(self, 'signed'));
+      expect({ as: self.name, status: watched.status, jobId: (JSON.parse(watched.text) as { jobId?: string }).jobId }).toEqual({ as: self.name, status: 200, jobId: idsOf(self, 'signed').jobId });
       // Readiness answers the company's own owner about both of its jobs (neither is editing now), so its
       // refusals above are job access, not the switch.
       for (const job of ['signed', 'pending'] as const) {
