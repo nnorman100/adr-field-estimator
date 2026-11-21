@@ -3,6 +3,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { signedWhen } from '@/lib/agreements/screen';
+import { answerMessage } from '@/lib/field/api';
 import {
   createReceipt,
   dryingErrorCode,
@@ -20,6 +21,7 @@ import {
   dryingPath,
   dryingRequest,
   readFailure,
+  unsent,
   useDryingRead,
   type DryingSession,
 } from './requests';
@@ -131,6 +133,33 @@ function ReadingDetails({ entry }: { entry: Reading }) {
 type PendingAdd = { reading: ReadingInput; accepted: () => void };
 type PendingVoid = { entry: Reading; request: { changeId: string; expectedState: 'active' } };
 
+function Unsent({
+  reading,
+  rooms,
+}: {
+  reading: ReadingInput;
+  rooms: Array<{ id: string; label: string }>;
+}) {
+  const outside = reading.kind === 'air' && reading.zone === 'outside';
+  const room = reading.roomId
+    ? (rooms.find(({ id }) => id === reading.roomId)?.label ?? 'Chosen room')
+    : outside
+      ? 'Outside'
+      : 'Whole job';
+  const detail =
+    reading.kind === 'air'
+      ? `${zones[reading.zone]} air · ${reading.temperatureF} °F · ${reading.relativeHumidity}% RH`
+      : reading.kind === 'material'
+        ? `${reading.material} · ${reading.affected ? 'Affected' : 'Unaffected'} · ${reading.moisture} ${reading.unit}`
+        : `${patterns[reading.pattern]} · ${reading.deltaTF} Δ°F`;
+  return (
+    <p className="break-words">
+      Unsent reading: {room} · <time dateTime={reading.takenAt}>{signedWhen(reading.takenAt)}</time>{' '}
+      · {detail}
+    </p>
+  );
+}
+
 export function DryingLog({
   session,
   onChanges,
@@ -139,20 +168,26 @@ export function DryingLog({
   onChanges: () => void;
 }) {
   const id = useId();
+  const { scope, markUnsaved } = session;
   const [expanded, setExpanded] = useState(false);
   const visible = expanded && session.visible;
   const logSession = { ...session, visible };
   const log = useDryingRead(logSession, true, readLog);
   const rooms = useDryingRead(logSession, session.canAdd, readRooms);
-  const [pendingAdd, setPendingAdd] = useState<PendingAdd | null>(null);
+  const [pendingAdd, setPendingAdd] = useState<PendingAdd | null>(() => {
+    const reading = unsent.get(scope);
+    return reading ? { reading, accepted: () => undefined } : null;
+  });
   const [voiding, setVoiding] = useState<PendingVoid | null>(null);
   const [formOpened, setFormOpened] = useState(false);
+  const [formKey, setFormKey] = useState(0);
+  const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState<'save' | 'void' | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [formNotice, setFormNotice] = useState<string | null>(null);
   const [voidError, setVoidError] = useState<string | null>(null);
   const [voidNotice, setVoidNotice] = useState<string | null>(null);
-  const [retryVoid, setRetryVoid] = useState<PendingVoid | null>(null);
+  const [retryVoids, setRetryVoids] = useState<Record<string, PendingVoid>>({});
   const dialog = useRef<HTMLDialogElement>(null);
   const inFlight = useRef<AbortController | null>(null);
   const logData = log.result.kind === 'ready' ? log.result.data : null;
@@ -162,14 +197,26 @@ export function DryingLog({
     log.result.kind === 'refused' ||
     (rooms.result.kind === 'refused' && session.canAdd);
   const canChange = session.canAdd && logData?.canChange === true && !refusal;
-  const canEnter = canChange && roomData !== null;
 
   // Once offered, keep the same form mounted so a refusal or disconnect preserves the entry.
-  if (canEnter && !formOpened) setFormOpened(true);
-  const { onRefused } = session;
+  if (session.canAdd && canChange && !formOpened) setFormOpened(true);
+  if (pendingAdd && session.canAdd && !formOpened) setFormOpened(true);
+  const unsentForm = dirty || pendingAdd !== null;
   useEffect(() => {
-    if (refusal) onRefused();
-  }, [refusal, onRefused]);
+    markUnsaved?.(
+      'drying-reading',
+      () => {
+        unsent.clear(scope);
+        setPendingAdd(null);
+        setDirty(false);
+        setFormError(null);
+        setFormNotice(null);
+        setFormKey((key) => key + 1);
+      },
+      unsentForm,
+    );
+  }, [markUnsaved, scope, unsentForm]);
+  useEffect(() => () => markUnsaved?.('drying-reading', null), [markUnsaved]);
   useLayoutEffect(() => {
     if (!visible) dialog.current?.close();
     return () => inFlight.current?.abort();
@@ -185,16 +232,18 @@ export function DryingLog({
     if (!session.online || !visible || !session.isCurrent() || inFlight.current) return null;
     const controller = new AbortController();
     inFlight.current = controller;
+    const finish = session.startSave?.();
     setBusy(operation);
     const answer = await dryingRequest(session.user, path, controller.signal, payload);
     inFlight.current = null;
+    finish?.(answer.status === 0 || answer.status >= 500);
     if (!session.isCurrent()) return null;
     setBusy(null);
     return controller.signal.aborted ? null : answer;
   }
 
   function refuse(status: number) {
-    session.onRefused();
+    session.onRefused(status);
     log.setResult({ kind: 'refused', status });
     rooms.setResult({ kind: 'refused', status });
   }
@@ -204,6 +253,7 @@ export function DryingLog({
     setFormNotice(null);
     setFormError(null);
     setPendingAdd(pending);
+    unsent.set(scope, pending.reading);
     const answer = await write(
       `${dryingPath(session.jobId)}/drying-readings`,
       pending.reading,
@@ -215,7 +265,9 @@ export function DryingLog({
       (answer.status === 200 || answer.status === 201) &&
       receipt?.reading.id === pending.reading.id
     ) {
+      unsent.clear(scope);
       setPendingAdd(null);
+      setDirty(false);
       pending.accepted();
       setFormNotice('Reading saved.');
       log.refresh();
@@ -232,31 +284,39 @@ export function DryingLog({
       );
       return;
     }
+    unsent.clear(scope);
     setPendingAdd(null);
     if (accessRefused(answer.status)) refuse(answer.status);
     const code = dryingErrorCode(answer.body) ?? '';
-    setFormError(errors[code] ?? 'Can’t save this reading. Your entry is still here.');
+    setFormError(
+      errors[code] ?? `${answerMessage(answer.status, answer.body)} Your entry is still here.`,
+    );
     if (code === 'unknown_room') rooms.refresh();
   }
 
   async function voidReading(pending: PendingVoid) {
     if (!canChange || inFlight.current || !session.online || !visible || !session.isCurrent()) return;
+    const readingId = pending.entry.id;
     setVoidError(null);
     setVoidNotice(null);
-    setRetryVoid(pending);
+    setRetryVoids((current) => ({ ...current, [readingId]: pending }));
     const answer = await write(
-      `${dryingPath(session.jobId)}/drying-readings/${encodeURIComponent(pending.entry.id)}/void`,
+      `${dryingPath(session.jobId)}/drying-readings/${encodeURIComponent(readingId)}/void`,
       pending.request,
       'void',
     );
     if (!answer) return;
+    const resolved = () =>
+      setRetryVoids((current) =>
+        Object.fromEntries(Object.entries(current).filter(([key]) => key !== readingId)),
+      );
     const receipt = voidReceipt.safeParse(answer.body).data?.void;
     if (
       answer.status === 200 &&
-      receipt?.id === pending.entry.id &&
+      receipt?.id === readingId &&
       receipt.changeId === pending.request.changeId
     ) {
-      setRetryVoid(null);
+      resolved();
       setVoidNotice('Reading voided.');
       dialog.current?.close();
       log.refresh();
@@ -273,16 +333,19 @@ export function DryingLog({
       );
       return;
     }
-    setRetryVoid(null);
+    resolved();
     const code = dryingErrorCode(answer.body) ?? '';
     if (accessRefused(answer.status) && code !== 'reading_not_found') refuse(answer.status);
     else log.refresh();
-    setVoidError(errors[code] ?? 'Can’t void this reading.');
+    setVoidError(errors[code] ?? answerMessage(answer.status, answer.body));
     dialog.current?.close();
   }
 
   return (
-    <div className="flex min-w-0 flex-col gap-2">
+    <div
+      hidden={session.blocked === true && !unsentForm}
+      className="min-w-0 flex-col gap-2 [&:not([hidden])]:flex"
+    >
       <Button
         type="button"
         variant="outline"
@@ -326,16 +389,12 @@ export function DryingLog({
                       <Button
                         type="button"
                         variant="outline"
-                        disabled={
-                          busy !== null ||
-                          !session.online ||
-                          (retryVoid !== null && retryVoid.entry.id !== entry.id)
-                        }
+                        disabled={busy !== null || !session.online}
                         onClick={() => {
                           setVoidError(null);
                           setVoidNotice(null);
                           setVoiding(
-                            retryVoid ?? {
+                            retryVoids[entry.id] ?? {
                               entry,
                               request: { changeId: crypto.randomUUID(), expectedState: 'active' },
                             },
@@ -356,7 +415,7 @@ export function DryingLog({
         <Outcome notice={voidNotice} error={voiding ? null : voidError} />
         {rooms.result.kind === 'retry' && !refusal && session.canAdd ? (
           <div>
-            <p>Could not read the room list.</p>
+            <p>Could not read the room list. Outside air and whole-job readings can still be saved.</p>
             <Button
               type="button"
               variant="outline"
@@ -368,17 +427,25 @@ export function DryingLog({
           </div>
         ) : null}
         {formOpened ? (
-          <ReadingForm
-            rooms={!refusal && session.canAdd ? (roomData ?? []) : []}
-            busy={busy === 'save'}
-            pending={pendingAdd !== null}
-            online={session.online}
-            locked={!canChange || busy === 'void'}
-            error={formError}
-            notice={formNotice}
-            submit={(reading, accepted) => void save({ reading, accepted })}
-            saveAgain={() => pendingAdd && void save(pendingAdd)}
-          />
+          <>
+            {pendingAdd ? <Unsent reading={pendingAdd.reading} rooms={roomData ?? []} /> : null}
+            <ReadingForm
+              key={formKey}
+              rooms={!refusal && session.canAdd ? (roomData ?? []) : []}
+              busy={busy === 'save'}
+              pending={pendingAdd !== null}
+              online={session.online}
+              locked={!canChange || busy === 'void'}
+              error={formError}
+              notice={formNotice}
+              onEdit={() => {
+                setDirty(true);
+                setFormNotice(null);
+              }}
+              submit={(reading, accepted) => void save({ reading, accepted })}
+              saveAgain={() => pendingAdd && void save(pendingAdd)}
+            />
+          </>
         ) : null}
         {voiding && !refusal ? (
           <DryingConfirmation
@@ -409,7 +476,7 @@ export function DryingLog({
                   disabled={busy === 'void' || !session.online}
                   onClick={() => void voidReading(voiding)}
                 >
-                  {retryVoid ? 'Try again' : 'Void reading'}
+                  {retryVoids[voiding.entry.id] ? 'Try again' : 'Void reading'}
                 </Button>
               </div>
             </div>

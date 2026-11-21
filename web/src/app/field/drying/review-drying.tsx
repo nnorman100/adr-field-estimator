@@ -1,7 +1,7 @@
 'use client';
 
 import type { Auth, User } from 'firebase/auth';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { dryingWatchEnabled } from '@/lib/drying/client';
 import { stillSameSignIn, type SignIn } from '@/lib/field/sign-out';
 import { meActor, meFacts } from '@/lib/field/sync-gate';
@@ -39,6 +39,7 @@ export function ReviewDrying({
   jobId,
   agreementId,
   initial,
+  onRefused,
 }: {
   auth: Auth;
   signIn: SignIn;
@@ -46,11 +47,19 @@ export function ReviewDrying({
   jobId: string;
   agreementId: string;
   initial: DryingAccess;
+  // Rereads the whole review, which drops what it shows until the server answers again.
+  onRefused: () => void;
 }) {
   const isCurrent = useCallback(() => stillSameSignIn(auth, signIn), [auth, signIn]);
   const [access, setAccess] = useState<DryingAccess | null>(initial);
   const [checking, setChecking] = useState(false);
   const online = useBrowserOnline();
+  const scope = JSON.stringify([initial.companyId, initial.actorId, signIn.key, jobId]);
+  const latest = useRef(onRefused);
+  useLayoutEffect(() => {
+    latest.current = onRefused;
+  });
+  const refused = useCallback(() => latest.current(), []);
 
   // Review has no field sync gate. Recheck its live feature flag and identity on foreground resume.
   useEffect(() => {
@@ -68,13 +77,11 @@ export function ReviewDrying({
       if (current.signal.aborted || !isCurrent()) return;
       if (answer.status === 200) {
         const latest = dryingAccess(answer.body);
-        setAccess(
-          latest?.actorId === initial.actorId && latest.companyId === initial.companyId
-            ? latest
-            : null,
-        );
+        if (latest?.actorId === initial.actorId && latest.companyId === initial.companyId)
+          setAccess(latest);
+        else refused();
       } else if (accessRefused(answer.status)) {
-        setAccess(null);
+        refused();
       }
       setChecking(false);
     }
@@ -96,7 +103,7 @@ export function ReviewDrying({
       window.removeEventListener('pagehide', suspend);
       window.removeEventListener('online', recheck);
     };
-  }, [initial.actorId, initial.companyId, isCurrent, user]);
+  }, [initial.actorId, initial.companyId, isCurrent, user, refused]);
 
   if (!access || !isCurrent()) return null;
   return (
@@ -104,6 +111,8 @@ export function ReviewDrying({
       session={{
         user,
         jobId,
+        scope,
+        refreshOn: agreementId,
         isCurrent,
         online: online && !checking,
         visible: true,
@@ -112,6 +121,7 @@ export function ReviewDrying({
       }}
       watchEnabled={access.watchEnabled}
       agreementId={agreementId}
+      onRefused={refused}
     />
   );
 }

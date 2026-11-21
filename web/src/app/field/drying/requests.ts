@@ -2,21 +2,41 @@
 
 import type { User } from 'firebase/auth';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import type { ReadingInput } from '@/lib/drying/schema';
 import { callApi, type ApiAnswer } from '@/lib/firebase-client';
 
 export type DryingContext = {
   user: User;
   jobId: string;
+  // The sign-in, company, actor and job this card belongs to; unsent input is kept only under it.
+  scope: string;
   isCurrent: () => boolean;
   visible: boolean;
   online: boolean;
   canAdd: boolean;
   office: boolean;
+  // The job is archived, refused or being verified: fetched data is hidden, unsent input stays.
+  blocked?: boolean;
+  // Changes when the job's status or draft changes, so the watch is read again.
+  refreshOn?: string;
+  // The field screen's Back to Finish guard and readiness recheck, when it has them.
+  markUnsaved?: (form: string, discard: (() => void) | null, unsaved?: boolean) => void;
+  startSave?: () => (failed?: boolean) => void;
+  changed?: () => void;
 };
 
 export type DryingSession = DryingContext & {
   refused: boolean;
-  onRefused: () => void;
+  // `ambiguous` marks a 404 that may only mean the feature is off: the screen rechecks job access.
+  onRefused: (status: number, ambiguous?: boolean) => void;
+};
+
+const unsentReadings = new Map<string, ReadingInput>();
+// The exact reading request (and its id) of a save with no answer yet, until it is resolved.
+export const unsent = {
+  get: (scope: string) => unsentReadings.get(scope) ?? null,
+  set: (scope: string, reading: ReadingInput) => void unsentReadings.set(scope, reading),
+  clear: (scope: string) => void unsentReadings.delete(scope),
 };
 
 export const dryingPath = (jobId: string) => `/api/jobs/${encodeURIComponent(jobId)}`;
@@ -66,12 +86,13 @@ export function useDryingRead<T>(
   session: DryingSession,
   enabled: boolean,
   read: Read<T>,
-  changes = 0,
+  changes: number | string = 0,
+  ambiguousNotFound = false,
 ) {
-  const { user, jobId, isCurrent, visible, online, refused } = session;
+  const { user, jobId, isCurrent, visible, online, refused, onRefused } = session;
   const [result, setResult] = useState<Result<T>>({ kind: 'loading' });
   const available = enabled && online && !refused;
-  if (!available && result.kind === 'ready') setResult({ kind: 'loading' });
+  if ((!available || !visible) && result.kind === 'ready') setResult({ kind: 'loading' });
   const [version, setVersion] = useState(0);
   const request = useRef<AbortController | null>(null);
   const suspend = useCallback(() => request.current?.abort(), []);
@@ -100,7 +121,9 @@ export function useDryingRead<T>(
       const current = new AbortController();
       request.current = current;
       const answer = await read(user, jobId, current.signal);
-      if (!current.signal.aborted && isCurrent()) setResult(answer);
+      if (current.signal.aborted || !isCurrent()) return;
+      setResult(answer);
+      if (answer.kind === 'refused') onRefused(answer.status, ambiguousNotFound && answer.status === 404);
     }
     function shown() {
       if (document.visibilityState === 'visible') void load();
@@ -122,7 +145,7 @@ export function useDryingRead<T>(
       window.removeEventListener('pageshow', restored);
       window.removeEventListener('pagehide', forget);
     };
-  }, [user, jobId, isCurrent, visible, available, read, changes, version, suspend]);
+  }, [user, jobId, isCurrent, visible, available, read, changes, version, suspend, onRefused, ambiguousNotFound]);
 
   const current: Result<T> = refused ? { kind: 'refused', status: 403 } : result;
   return { result: current, refresh, setResult: replace };

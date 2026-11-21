@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
+import { useId, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { signedWhen } from '@/lib/agreements/screen';
 import {
@@ -65,7 +65,16 @@ async function readWatch(user: DryingSession['user'], jobId: string, signal: Abo
     : readFailure(answer.status);
 }
 
+const roomMaterials = (watch: AvailableWatch, roomId: string | null) =>
+  watch.materials.filter((material) => material.roomId === roomId);
+// A room is covered only when it has an affected material reading and each has its dry standard.
+const covered = (watch: AvailableWatch, roomId: string) => {
+  const materials = roomMaterials(watch, roomId);
+  return materials.length > 0 && materials.every((material) => material.dryStandard !== null);
+};
+
 function Facts({ watch }: { watch: AvailableWatch }) {
+  const complete = watch.signedRooms.filter((room) => covered(watch, room.id)).length;
   return (
     <>
       <p className="font-medium">{statusText[watch.status]}</p>
@@ -73,6 +82,12 @@ function Facts({ watch }: { watch: AvailableWatch }) {
         {watch.summary.map((line, i) => (
           <li key={i}>{line}</li>
         ))}
+        {complete !== watch.signedRooms.length - watch.missingRooms.length ? (
+          <li>
+            Only {complete} of {watch.signedRooms.length} signed rooms have every affected material
+            reading with a dry standard.
+          </li>
+        ) : null}
       </ul>
       <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
         <dt>Next reading due</dt>
@@ -89,25 +104,44 @@ function Rooms({ watch }: { watch: AvailableWatch }) {
     roomId === null
       ? 'Whole job'
       : (watch.signedRooms.find((room) => room.id === roomId)?.name ?? 'Other room');
+  const listed = new Set(watch.roomReadings.map(({ roomId }) => roomId));
+  const rows = [
+    ...watch.roomReadings,
+    ...watch.signedRooms
+      .filter((room) => !listed.has(room.id))
+      .map((room) => ({ roomId: room.id as string | null, lastReadingAt: null, overdue: false })),
+  ];
   return (
     <>
       {watch.flags.includes('missing_dry_standard') ? (
         <p>Some affected materials still need a reading or a dry standard.</p>
       ) : null}
-      {watch.roomReadings.length ? (
+      {rows.length ? (
         <ul className="space-y-2" aria-label="Room reading status">
-          {watch.roomReadings.map(({ roomId, lastReadingAt, overdue }) => (
-            <li key={roomId ?? ''}>
-              <strong>{name(roomId)}</strong>
-              <div>
-                {when(lastReadingAt, 'No reading yet')}
-                {overdue ? ' · Overdue' : ''}
-              </div>
-              {roomId !== null && watch.missingRooms.includes(roomId) ? (
-                <div>Missing affected material reading</div>
-              ) : null}
-            </li>
-          ))}
+          {rows.map(({ roomId, lastReadingAt, overdue }) => {
+            const materials = roomMaterials(watch, roomId);
+            const signed = roomId !== null && watch.signedRooms.some((room) => room.id === roomId);
+            return (
+              <li key={roomId ?? ''}>
+                <strong>{name(roomId)}</strong>
+                <div>
+                  {when(lastReadingAt, 'No reading yet')}
+                  {overdue ? ' · Overdue' : ''}
+                </div>
+                {signed && materials.length === 0 ? (
+                  <div>Missing affected material reading</div>
+                ) : null}
+                {materials.map((material, i) => (
+                  <div key={i}>
+                    {material.material}: {material.moisture} {material.unit} ·{' '}
+                    {material.dryStandard === null
+                      ? 'No dry standard'
+                      : `Dry standard ${material.dryStandard} ${material.unit}`}
+                  </div>
+                ))}
+              </li>
+            );
+          })}
         </ul>
       ) : null}
       {watch.airTrends.length ? (
@@ -146,13 +180,13 @@ export function DryingWatch({
 }: {
   session: DryingSession;
   agreementId?: string;
-  changes: number;
+  changes: number | string;
 }) {
   const heading = useId();
   const title = useId();
   const dialog = useRef<HTMLDialogElement>(null);
   const inFlight = useRef<AbortController | null>(null);
-  const { result, refresh, setResult } = useDryingRead(session, true, readWatch, changes);
+  const { result, refresh, setResult } = useDryingRead(session, true, readWatch, changes, true);
   const watch =
     !session.refused &&
     result.kind === 'ready' &&
@@ -165,15 +199,16 @@ export function DryingWatch({
     null,
   );
   const reason = draftReason?.action === prompt?.action.action ? (draftReason?.reason ?? '') : '';
-  const [retry, setRetry] = useState<ActionRequest | null>(null);
+  const [retries, setRetries] = useState<Partial<Record<WatchAction, ActionRequest>>>({});
+  const retry = prompt ? (retries[prompt.action.action] ?? null) : null;
+  const settle = (action: WatchAction) =>
+    setRetries((current) =>
+      Object.fromEntries(Object.entries(current).filter(([key]) => key !== action)),
+    );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const { onRefused } = session;
-  useEffect(() => {
-    if (result.kind === 'refused' && result.status !== 404) onRefused();
-  }, [result, onRefused]);
   useLayoutEffect(() => {
     const element = dialog.current;
     if (!session.visible) element?.close();
@@ -185,28 +220,27 @@ export function DryingWatch({
   useLayoutEffect(() => {
     if (
       prompt &&
-      (session.office ||
-        session.refused ||
+      (session.refused ||
         result.kind === 'refused' ||
         (watch && watch.agreementId !== prompt.watch.agreementId))
     )
       dialog.current?.close();
-  }, [prompt, result.kind, session.office, session.refused, watch]);
+  }, [prompt, result.kind, session.refused, watch]);
 
   async function confirm(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (
       !prompt ||
-      session.office ||
       !session.online ||
       !watch ||
+      !watch.can[prompt.action.permission] ||
       watch.agreementId !== prompt.watch.agreementId ||
       !session.isCurrent() ||
       inFlight.current
     )
       return;
     if (!reason.trim()) return setError('Enter a reason.');
-    const payload = retry ?? {
+    const payload: ActionRequest = retry ?? {
       id: crypto.randomUUID(),
       action: prompt.action.action,
       factsHash: prompt.watch.factsHash,
@@ -218,7 +252,7 @@ export function DryingWatch({
     setBusy(true);
     setError(null);
     setNotice(null);
-    setRetry(payload);
+    setRetries((current) => ({ ...current, [payload.action]: payload }));
     const answer = await dryingRequest(
       session.user,
       `${dryingPath(session.jobId)}/drying-watch/actions`,
@@ -229,13 +263,14 @@ export function DryingWatch({
     if (!session.isCurrent()) return;
     setBusy(false);
     if (controller.signal.aborted) return;
+    const settled = payload.action;
     const receipt = watchReceipt.safeParse(answer.body).data?.receipt;
     if (
       (answer.status === 200 || answer.status === 201) &&
       receipt?.id === payload.id &&
       receipt.action === payload.action
     ) {
-      setRetry(null);
+      settle(settled);
       setDraftReason(null);
       setNotice('Monitoring decision saved.');
       dialog.current?.close();
@@ -252,11 +287,11 @@ export function DryingWatch({
       );
       return;
     }
-    setRetry(null);
+    settle(settled);
     dialog.current?.close();
     const code = dryingErrorCode(answer.body);
     if ([401, 403, 404, 410].includes(answer.status)) {
-      if (answer.status !== 404) onRefused();
+      session.onRefused(answer.status, answer.status === 404);
       setResult({ kind: 'refused', status: answer.status });
       setError('Can’t save. Monitoring access changed.');
     } else if (code === 'stale_facts') {
@@ -277,7 +312,8 @@ export function DryingWatch({
   return (
     <section
       aria-labelledby={heading}
-      className="flex min-w-0 flex-col gap-3 break-words rounded-md border border-input p-4 text-sm"
+      hidden={session.blocked === true}
+      className="min-w-0 flex-col gap-3 break-words rounded-md border border-input p-4 text-sm [&:not([hidden])]:flex"
     >
       <h3 id={heading} className="text-lg font-semibold">
         Drying watch
@@ -313,31 +349,25 @@ export function DryingWatch({
               ))}
             </ul>
           ) : null}
-          {session.office ? (
-            <p>Read only.</p>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {actions
-                .filter(({ permission }) => watch.can[permission])
-                .map((action) => (
-                  <Button
-                    key={action.action}
-                    type="button"
-                    variant="outline"
-                    disabled={
-                      !session.online || busy || (retry !== null && retry.action !== action.action)
-                    }
-                    onClick={() => {
-                      setError(null);
-                      setNotice(null);
-                      setPrompt({ action, watch });
-                    }}
-                  >
-                    {action.label}
-                  </Button>
-                ))}
-            </div>
-          )}
+          <div className="flex flex-wrap gap-2">
+            {actions
+              .filter(({ permission }) => watch.can[permission])
+              .map((action) => (
+                <Button
+                  key={action.action}
+                  type="button"
+                  variant="outline"
+                  disabled={!session.online || busy}
+                  onClick={() => {
+                    setError(null);
+                    setNotice(null);
+                    setPrompt({ action, watch });
+                  }}
+                >
+                  {action.label}
+                </Button>
+              ))}
+          </div>
         </>
       ) : null}
       <Outcome error={prompt ? null : error} notice={notice} />

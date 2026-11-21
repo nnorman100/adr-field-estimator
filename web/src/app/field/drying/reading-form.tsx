@@ -24,6 +24,34 @@ const fieldStyle =
 const wholeJob = ':whole-job';
 const areaStyle = 'min-h-20 w-full rounded-md border border-input bg-background p-2 text-base';
 
+const half = 1_800_000;
+
+// Every instant whose local wall clock reads `value`: none in a skipped hour, two in a repeated one.
+export function localInstants(value: string): Date[] {
+  const parts = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value)?.slice(1).map(Number);
+  if (!parts || parts[0]! < 100) return [];
+  const [year, month, day, hour, minute] = parts as [number, number, number, number, number];
+  const base = new Date(year, month - 1, day, hour, minute).getTime();
+  const found = new Set<number>();
+  for (let step = -4; step <= 4; step += 1) {
+    const at = new Date(base + step * half);
+    if (
+      at.getFullYear() === year &&
+      at.getMonth() === month - 1 &&
+      at.getDate() === day &&
+      at.getHours() === hour &&
+      at.getMinutes() === minute
+    )
+      found.add(at.getTime());
+  }
+  return [...found].sort((a, b) => a - b).map((time) => new Date(time));
+}
+
+const zoneName = (date: Date) =>
+  new Intl.DateTimeFormat(undefined, { timeZoneName: 'short' })
+    .formatToParts(date)
+    .find((part) => part.type === 'timeZoneName')?.value ?? '';
+
 function Label({ name, children }: { name: string; children: (id: string) => ReactNode }) {
   const id = useId();
   return (
@@ -78,6 +106,7 @@ export function ReadingForm({
   notice,
   submit,
   saveAgain,
+  onEdit,
 }: {
   rooms: Array<{ id: string; label: string }>;
   busy: boolean;
@@ -88,12 +117,14 @@ export function ReadingForm({
   notice: string | null;
   submit: (payload: ReadingInput, accepted: () => void) => void;
   saveAgain: () => void;
+  onEdit: () => void;
 }) {
   const id = useId();
   const [kind, setKind] = useState<keyof typeof kinds>('air');
   const [zone, setZone] = useState<keyof typeof zones>('affected');
   const [room, setRoom] = useState('');
   const [dateError, setDateError] = useState<string | null>(null);
+  const [repeated, setRepeated] = useState<Date[]>([]);
   const outside = kind === 'air' && zone === 'outside';
   const roomUnavailable = room !== wholeJob && !rooms.some(({ id }) => id === room);
 
@@ -104,10 +135,23 @@ export function ReadingForm({
     const form = event.currentTarget;
     const values = new FormData(form);
     const text = (name: string) => String(values.get(name) ?? '');
-    const date = new Date(text('takenAt'));
-    if (!Number.isFinite(date.getTime()) || date.getFullYear() < 100 || date.getFullYear() > 9999)
-      return setDateError('Enter a valid date and time.');
+    const instants = localInstants(text('takenAt'));
+    if (!instants.length) {
+      setRepeated([]);
+      return setDateError(
+        'Enter a valid date and time. That local time may not exist when the clocks change.',
+      );
+    }
+    const pick = text('occurrence');
+    const chosen =
+      instants.length === 1 ? instants[0] : pick === '' ? undefined : instants[Number(pick)];
+    if (!chosen) {
+      setRepeated(instants);
+      return setDateError('That time happens twice when the clocks change. Choose which one.');
+    }
+    const date = chosen;
     setDateError(null);
+    setRepeated([]);
     const common = {
       id: crypto.randomUUID(),
       roomId: outside || room === wholeJob ? null : room,
@@ -155,7 +199,12 @@ export function ReadingForm({
   }
 
   return (
-    <form onSubmit={save} aria-labelledby={id} className="flex min-w-0 flex-col gap-3">
+    <form
+      onSubmit={save}
+      onChange={onEdit}
+      aria-labelledby={id}
+      className="flex min-w-0 flex-col gap-3"
+    >
       <h3 id={id} className="font-semibold">
         Add a reading
       </h3>
@@ -234,9 +283,26 @@ export function ReadingForm({
               required
               aria-describedby={dateError ? `${id}-date-error` : undefined}
               aria-invalid={dateError ? true : undefined}
+              onChange={() => setRepeated([])}
             />
           )}
         </Label>
+        {repeated.length ? (
+          <Label name="Which time">
+            {(fieldId) => (
+              <select id={fieldId} className={fieldStyle} name="occurrence" defaultValue="" required>
+                <option value="" disabled>
+                  Choose the first or second time
+                </option>
+                {repeated.map((date, index) => (
+                  <option key={date.getTime()} value={index}>
+                    {index === 0 ? 'First' : 'Second'} ({zoneName(date)})
+                  </option>
+                ))}
+              </select>
+            )}
+          </Label>
+        ) : null}
         {dateError ? (
           <p role="alert" id={`${id}-date-error`}>
             {dateError}

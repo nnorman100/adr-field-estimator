@@ -49,14 +49,20 @@ active log.
 
 These actions need a connection. A lost save reply leaves the fields in place and offers **Save
 again**, which sends the same reading. A refusal keeps the entered values and shows why the save
-could not be confirmed or accepted. The unsent form lives on the open job screen.
+could not be confirmed or accepted. The unsent form lives on the open job screen and counts as
+unsaved input for Back to Finish. A local time that does not exist, or happens twice when the clocks
+change, is not guessed: the technician corrects it or chooses the first or second occurrence. When
+the server refuses the job, the fetched job, prices and drying data leave the screen and only the
+unsent reading stays.
 
 On a signed job with the company’s drying-watch switch enabled, **Drying watch** shows the signed
 plan, current day, next due reading, last reading, room gaps and affected-air trend. An older
 signed job without saved drying days says there is no plan. A reading added or voided here
-refreshes the watch. Owners can mark dry, add an extension note or close monitoring. Estimators
-can mark dry. Office staff can read the watch. A monitoring decision requires an explicit
-confirmation and reason. If the facts changed, review them again before confirming. Extension
+refreshes the watch and the readiness check. Each room shows its affected material readings and dry
+standards, and a room with a missing dry standard is not counted as complete. The actions offered
+(mark dry, extension note, close monitoring) are the ones the server's watch answer permits for the
+person, office staff included; the office drying log itself stays read only. A monitoring decision
+requires an explicit confirmation and reason. If the facts changed, review them again before confirming. Extension
 notes leave the signed drying days as agreed.
 
 ## Who may see it and do what

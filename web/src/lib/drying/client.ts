@@ -79,6 +79,15 @@ const availableWatch = z.object({
   signedRooms: z.array(z.object({ id: z.string(), name: z.string() })),
   roomReadings: z.array(z.object({ roomId, lastReadingAt: date.nullable(), overdue: z.boolean() })),
   missingRooms: z.array(z.string()),
+  materials: z.array(
+    z.object({
+      roomId,
+      material: z.string(),
+      unit: z.string(),
+      moisture: z.number(),
+      dryStandard: z.number().nullable(),
+    }),
+  ),
   flags: z.array(z.string()),
   airTrends: z.array(z.object({ roomId, trend: z.enum(['stalled', 'improving', 'recorded']) })),
   air: z.array(

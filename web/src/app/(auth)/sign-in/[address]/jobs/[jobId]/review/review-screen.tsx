@@ -234,8 +234,9 @@ function ReviewBody({ user, reviewer, links, canReprice, revision: firstRevision
         <SignedAgreementView agreement={agreement} loadSignature={loadSignature} />
         {drying && agreement.record.job_id === job.id ? (
           <ReviewDrying
-            key={JSON.stringify([drying.access.companyId, drying.access.actorId, drying.signIn.key, job.id, agreement.id])}
+            key={JSON.stringify([drying.access.companyId, drying.access.actorId, drying.signIn.key, job.id])}
             auth={drying.auth} signIn={drying.signIn} initial={drying.access} user={user} jobId={job.id} agreementId={agreement.id}
+            onRefused={reload}
           />
         ) : null}
         <DocumentLinks user={user} jobId={job.id} canSend={links.canSend} canRevoke={links.canRevoke} issued={issued.tokens} listed={issued.listed} />

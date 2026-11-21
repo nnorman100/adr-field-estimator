@@ -4,7 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { Button } from '@/components/ui/button';
 import { companyAuth } from '@/lib/firebase-client';
 import { signInOf, stillSameSignIn } from '@/lib/field/sign-out';
-import { readJob, type JobDetail, type Refusal } from '@/lib/field/api';
+import { answerMessage, readJob, type JobDetail, type Refusal } from '@/lib/field/api';
 import { loadJobProjection, type JobProjection } from '@/lib/field/job-projection';
 import { watchJournal } from '@/lib/field/journal';
 import { journalFailed, readEntries } from '@/lib/field/journal-sync';
@@ -732,14 +732,19 @@ export function JobScreens({
       {draftView && !draft && !draftError && cachedError ? <p role="status">{cachedError}</p> : null}
       {/* The views of one job stay mounted and only the open one shows, so moving between them
           keeps what the person has typed and not saved. */}
-      {row && !archived && !denial && signInKey && session.capabilities.includes('jobs_read') ? (
+      {row && signInKey && session.capabilities.includes('jobs_read') ? (
         <DryingCards
-          key={JSON.stringify([session.companyId, session.actorId, signInKey, jobId, row.currentDraftId, row.status])}
+          key={JSON.stringify([session.companyId, session.actorId, signInKey, jobId])}
           session={{
-            user: session.user, jobId, isCurrent: dryingIsCurrent, visible: view === 'scope', online: session.online,
+            user: session.user, jobId, scope: JSON.stringify([session.companyId, session.actorId, signInKey, jobId]),
+            isCurrent: dryingIsCurrent, visible: view === 'scope', online: session.online,
             canAdd: session.capabilities.includes('scope') && session.role !== 'office', office: session.role === 'office',
+            blocked: archived || archiveChecking || verifying !== null || Boolean(denial),
+            refreshOn: `${row.currentDraftId}:${row.status}`,
+            markUnsaved, startSave, changed: recheck,
           }}
           watchEnabled={row.status === 'signed' && session.dryingWatch}
+          onRefused={(status) => checkAccess({ status, message: answerMessage(status, null) })}
         />
       ) : null}
       <div hidden={view !== 'scope'}>{draft ? <ScopeView key={draftAt} job={context} draft={draft} open={view === 'scope'} readinessFix={fix ? readinessFix : null} /> : null}</div>
