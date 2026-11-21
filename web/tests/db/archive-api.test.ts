@@ -25,6 +25,14 @@ vi.mock('@/lib/jobs/services', () => ({ jobsServices: () => live.harness!.jobs }
 vi.mock('@/lib/photos/services', () => ({ photosServices: () => live.harness!.photos }));
 vi.mock('@/lib/submissions/services', () => ({ submissionsServices: () => live.harness!.submissions }));
 vi.mock('@/lib/prices/services', () => ({ pricesServices: () => live.harness!.prices }));
+// The AI summary draft (S7-6) over the field stand-in; a model call here would be a failure.
+vi.mock('@/lib/summary-draft/services', async () => {
+  const { summaryDraftService } = await import('@/lib/summary-draft/service');
+  const { fieldSummaryReader, refusingBoundary } = await import('./summary-draft-fake');
+  return {
+    summaryDraftServices: () => summaryDraftService(live.harness!.handle.db, () => fieldSummaryReader(live.harness!.field), refusingBoundary),
+  };
+});
 vi.mock('@/lib/estimates/services', async () => {
   const { estimatesService } = await import('@/lib/estimates/service');
   return { estimatesServices: () => estimatesService(live.harness!.handle.db) };

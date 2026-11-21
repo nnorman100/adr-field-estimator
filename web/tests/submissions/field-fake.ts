@@ -96,6 +96,8 @@ export type FakeField = FenceStore & ArchiveStore & DraftSync & {
   // Takes the job id off a draft, as on one the previous version made before drafts carried it
   // (security audit F1).
   unstamp(companyId: string, draftId: string): void;
+  // Names a job on a draft, as one made for that job.
+  stamp(companyId: string, draftId: string, jobId: string): void;
   // Removes a draft from the record, as one that is not there.
   remove(companyId: string, draftId: string): void;
   // Leaves the operator's draft sync generation document as given, as scripts/raise-draft-sync-generation.ts would.
@@ -298,6 +300,12 @@ export function fakeField(backing: Backing = memoryBacking()): FakeField {
       edit((record) => {
         if (data === null) delete record.generation;
         else record.generation = { ...data };
+      });
+    },
+    stamp(companyId, draftId, jobId) {
+      edit(({ drafts: data }) => {
+        const draft = data[key(companyId, draftId)];
+        if (draft) draft.jobId = jobId;
       });
     },
     unstamp(companyId, draftId) {

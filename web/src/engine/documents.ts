@@ -144,7 +144,9 @@ const CLAIM = z.strictObject({
 type Claim = z.output<typeof CLAIM>;
 
 const NOTE = text(0, 1000);
-const AI = z.strictObject({
+// The AI notes a document carries: also the output the findings summary draft must give
+// (web/src/lib/summary-draft/request.ts), so a proposal fits the document it is accepted into.
+export const AI_NOTES = z.strictObject({
   summary: text(1, 6000),
   suggestions: z.array(NOTE).max(30),
   unpriced_work: z.array(NOTE).max(30),
@@ -375,7 +377,7 @@ export function makeDocuments(input: {
   /** The id of the named adjustment approved on the job, applied after price-point rounding (S5b-7). */
   adjustment?: string;
 }): JObj {
-  const ai = parse(AI, input.ai, 'ai');
+  const ai = parse(AI_NOTES, input.ai, 'ai');
   const settings = parse(LAYOUT_SETTINGS, input.settings, 'settings');
   const roomWords = input.rooms === undefined ? null : parse(ROOM_WORDS, input.rooms, 'rooms');
   const photos = input.photos.map((photo) => photoOf(photo));

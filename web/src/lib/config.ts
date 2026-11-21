@@ -31,6 +31,10 @@ const FIRESTORE_DATABASE = /^(\(default\)|[a-z][a-z0-9-]{2,61}[a-z0-9])$/;
 // starting and ending with a letter or digit.
 const BUCKET_NAME = /^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$/;
 
+// A Model Armor template's full resource name (web/src/lib/ai/armor.ts reads its location from it).
+const ARMOR_TEMPLATE =
+  /^projects\/[a-z][a-z0-9-]{4,28}[a-z0-9]\/locations\/[a-z]+(?:-[a-z]+\d*)?\/templates\/[A-Za-z0-9_-]{1,63}$/;
+
 // host:port of a loopback emulator, as the Firebase CLI writes it.
 function isLoopbackHost(value: string): boolean {
   if (!/^[\w.:[\]-]{1,100}:\d{1,5}$/.test(value)) return false;
@@ -121,6 +125,13 @@ const shape = {
     .string()
     .regex(BUCKET_NAME, { message: 'EVIDENCE_BUCKET must be a Cloud Storage bucket name' })
     .optional(),
+  // The Model Armor template the AI boundary screens text with (infra/dryscope/modules/naming:
+  // dryscope-text-<env> in us-central1, V3). Cloud Run gets it from Terraform. It is listed here
+  // only because config.ts reads it; its value is checked in parseAiConfig, which runs on the first
+  // AI request with the company's switch on, so a blank or malformed value never stops the server
+  // (docs/plans/S7.md, S7-6 corrections). The image template is read when an image feature (S7-8)
+  // needs it.
+  MODEL_ARMOR_TEXT_TEMPLATE: z.string().optional(),
   // firebase-admin reads this one itself too and then writes to the emulator with no credentials;
   // the same limits as the Auth emulator apply.
   FIRESTORE_EMULATOR_HOST: z
@@ -442,4 +453,23 @@ export function parseBrowserSignInConfig(
 // allows it only on a developer machine beside the Auth emulator with no database.
 export function parseLocalSignInFixture(env: Record<string, string | undefined>): string | null {
   return checked(env).LOCAL_SIGN_IN_FIXTURE ?? null;
+}
+
+export type AiConfig = { projectId: string; armorTextTemplate: string };
+
+// What a REST text AI call needs: the project the text model runs in and the Model Armor text template.
+// Called on the first AI request whose company switch is on, so the shell boots without these; that
+// request then fails closed.
+export function parseAiConfig(env: Record<string, string | undefined>): AiConfig {
+  const data = checked(env);
+  const problems: string[] = [];
+  if (!data.GOOGLE_CLOUD_PROJECT) problems.push('GOOGLE_CLOUD_PROJECT: GOOGLE_CLOUD_PROJECT is required for AI requests');
+  const template = data.MODEL_ARMOR_TEXT_TEMPLATE?.trim() ?? '';
+  if (template === '') {
+    problems.push('MODEL_ARMOR_TEXT_TEMPLATE: MODEL_ARMOR_TEXT_TEMPLATE is required for AI requests');
+  } else if (!ARMOR_TEMPLATE.test(template)) {
+    problems.push('MODEL_ARMOR_TEXT_TEMPLATE: MODEL_ARMOR_TEXT_TEMPLATE must be a Model Armor template name');
+  }
+  if (problems.length > 0 || !data.GOOGLE_CLOUD_PROJECT) throw new ConfigError(problems);
+  return { projectId: data.GOOGLE_CLOUD_PROJECT, armorTextTemplate: template };
 }

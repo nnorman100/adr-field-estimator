@@ -75,10 +75,11 @@ export type AiQuotaPort = {
 // A refused reservation says why and, when it knows, how many seconds until it may fit: the UTC
 // day's or month's end for a spent ceiling or a used-up quota, a minute for room taken only by calls
 // still in progress. `quota` is the ledger's own count of the person's calls today, checked in the
-// same transaction as the money, so parallel calls cannot pass the quota together.
+// same transaction as the money, so parallel calls cannot pass the quota together. `reused` answers a
+// fresh reservation whose call id the ledger already holds.
 export type AiReservation =
   | { ok: true; reservationId: string }
-  | { ok: false; reason: 'daily' | 'monthly' | 'held' | 'quota'; retryAfterSeconds?: number };
+  | { ok: false; reason: 'daily' | 'monthly' | 'held' | 'quota' | 'reused'; retryAfterSeconds?: number };
 
 export type AiBudgetPort = {
   reserve(request: {
@@ -89,6 +90,8 @@ export type AiBudgetPort = {
     model: AiModel;
     microUsd: number;
     at: Date;
+    // The caller named the call id: only a new ledger row is granted, so one id runs one model call.
+    fresh?: boolean;
   }): Promise<AiReservation>;
   // The call's real cost (zero when no model work happened).
   settle(reservationId: string, microUsd: number): Promise<void>;
@@ -129,6 +132,9 @@ export type AiRequest<T> = {
   schema: z.ZodType<T>;
   // The feature's own server rules, after the price rule (pre-1978 advice, exact quotes).
   rules?: (output: T) => T;
+  // The phone's own id for this call (a uuid), so a retry after a lost answer names the same ledger
+  // row and the same stored proposal (S7-6). A new id is made when there is none.
+  callId?: string;
 };
 
 // retryAfterSeconds is set for a quota or budget refusal when the ledger knows when it may fit; the
@@ -149,6 +155,7 @@ const REFUSALS: Readonly<Record<AiRefusalCode, { retryable: boolean; message: st
   not_ready: { retryable: false, message: `This AI feature is not available yet. ${KEEP_WORKING}` },
   quota: { retryable: false, message: `You have used this AI feature as often as allowed today. ${KEEP_WORKING}` },
   budget: { retryable: false, message: `Your company's AI allowance does not cover this request now. ${KEEP_WORKING}` },
+  call_reused: { retryable: false, message: `This AI request was already sent. ${KEEP_WORKING}` },
   unsupported_input: { retryable: false, message: `This AI feature cannot read that input. ${KEEP_WORKING}` },
   input_blocked: { retryable: false, message: `The safety check stopped this AI request. ${KEEP_WORKING}` },
   screen_unavailable: { retryable: true, message: TRY_AGAIN },
@@ -158,6 +165,11 @@ const REFUSALS: Readonly<Record<AiRefusalCode, { retryable: boolean; message: st
   invalid_output: { retryable: true, message: TRY_AGAIN },
   output_blocked: { retryable: false, message: `The safety check stopped the AI answer. ${KEEP_WORKING}` },
 };
+
+// The fixed answer for a refusal, for a route that refuses before it calls (a switch that is off).
+export function aiRefusal(code: AiRefusalCode): AiRefusal {
+  return { code, ...REFUSALS[code] };
+}
 
 const contextSchema = z.object({
   companyId: z.uuid(),
@@ -282,7 +294,8 @@ export function createAiBoundary(deps: BoundaryDeps) {
 
   async function call<T>(context: AiCallerContext, request: AiRequest<T>): Promise<AiOutcome<T>> {
     const started = Date.now();
-    const callId = newCallId();
+    const clientCallId = request?.callId;
+    const callId = clientCallId ?? newCallId();
     const entry = isAiFeature(request?.feature) ? registry[request.feature] : undefined;
     const line: Partial<AiLogLine> = {
       feature: entry?.feature,
@@ -320,6 +333,7 @@ export function createAiBoundary(deps: BoundaryDeps) {
       try {
         // 1. Caller context.
         if (!entry || !contextSchema.safeParse(context).success) throw new Refused('invalid_context');
+        if (clientCallId !== undefined && !z.uuid().safeParse(clientCallId).success) throw new Refused('invalid_context');
         // 2. Capability and feature switch (exactly true; anything else is off).
         if (!context.capabilities.includes(entry.capability)) throw new Refused('not_allowed');
         if (context.flags[entry.flag] !== true) throw new Refused('feature_off');
@@ -327,9 +341,12 @@ export function createAiBoundary(deps: BoundaryDeps) {
           throw new Refused('not_ready');
         const parts = inputParts(entry, request);
         const at = now();
-        // 3. Per-user quota.
+        // 3. Per-user quota. A named call id skips this early count: its reservation settles a reused
+        // id first, then counts the quota in the same transaction, so a duplicate of a call that took
+        // the last one is answered as reused, not as over quota.
         const day = utcDay(at);
         if (
+          clientCallId === undefined &&
           !(await deps.quota.take({
             companyId: context.companyId,
             actorId: context.actorId,
@@ -354,8 +371,10 @@ export function createAiBoundary(deps: BoundaryDeps) {
           model: entry.model,
           microUsd,
           at,
+          ...(clientCallId === undefined ? {} : { fresh: true }),
         });
         if (!held.ok) {
+          if (held.reason === 'reused') throw new Refused('call_reused');
           const after = held.retryAfterSeconds;
           if (held.reason === 'quota') throw new Refused('quota', 'not_screened', undefined, after);
           throw new Refused('budget', 'not_screened', held.reason === 'held', after);

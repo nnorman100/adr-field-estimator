@@ -171,6 +171,9 @@ export const MATRIX: readonly MatrixRow[] = [
   row('api/jobs/[jobId]/approvals', 'POST', 'company', { body: JOB_PROPOSAL, own: 'cross' }),
   row('api/jobs/[jobId]/approvals/[approvalId]', 'PUT', 'company', { body: { ...JOB_PROPOSAL, id: '1e6b4d82-7c39-4f05-a8d2-5b9e3c7a0f64' }, own: 'cross' }),
   row('api/jobs/[jobId]/approvals/[approvalId]/approve', 'POST', 'company', { body: JOB_APPROVE, own: 'cross' }),
+  // S7-6: the AI summary draft names the phone's own call id; another company's job is 404 to every
+  // role, before the switch or the draft is read, and no model is called.
+  row('api/jobs/[jobId]/ai/summary-draft', 'POST', 'company', { body: { callId: '2d7e9b41-6c3a-4f85-a0d2-8e1b5c9f3a76' }, own: 'cross' }),
   // S5a-11: signing names the phone's own agreement, estimate and signature ids; another company's
   // job is 404 to every role, and no agreement is made.
   row('api/jobs/[jobId]/agreements', 'POST', 'company', { body: JOB_SIGN, own: 'cross' }),

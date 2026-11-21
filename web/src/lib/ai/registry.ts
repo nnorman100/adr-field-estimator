@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { Capability } from '@/lib/access';
 import type { AiFlagName } from '@/lib/flags/known';
 import type { AiModel } from './pricing';
+import summaryDraftText from './prompts/summary-draft';
 
 // The AI registry: one entry per AI feature, read by call.ts on every model call and by the TC-8
 // release manifest (prompt and model versions). docs/plans/S7.md section 3 and step S7-1.
@@ -84,7 +85,7 @@ export const AI_REGISTRY: AiRegistry = Object.freeze({
     model: 'gemini-3.8-flash',
     endpoint: 'text',
     usesPrompt: true,
-    prompt: null, // S7-6
+    prompt: definePrompt(summaryDraftText),
     inputScreen: 'text',
     output: 'json',
     outputTokenCap: 16_384,

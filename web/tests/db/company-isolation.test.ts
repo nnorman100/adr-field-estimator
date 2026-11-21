@@ -51,6 +51,14 @@ vi.mock('@/lib/approvals/services', async () => {
   const { approvalsService } = await import('@/lib/approvals/service');
   return { approvalsServices: () => approvalsService(live.harness!.handle.db) };
 });
+// The AI summary draft (S7-6) over the field stand-in; a model call here would be a failure.
+vi.mock('@/lib/summary-draft/services', async () => {
+  const { summaryDraftService } = await import('@/lib/summary-draft/service');
+  const { fieldSummaryReader, refusingBoundary } = await import('./summary-draft-fake');
+  return {
+    summaryDraftServices: () => summaryDraftService(live.harness!.handle.db, () => fieldSummaryReader(live.harness!.field), refusingBoundary),
+  };
+});
 vi.mock('@/lib/agreements/services', async () => {
   const { agreementsService } = await import('@/lib/agreements/service');
   return { agreementsServices: () => agreementsService(live.harness!.handle.db) };
