@@ -47,7 +47,7 @@ type Phase =
   | ({ name: 'ready' } & Ready);
 
 // A refusal or failure shown above the actions, and what the person can do next.
-type Problem = { message: string; next: Next; keepChecklist?: boolean };
+type Problem = { message: string; next: Next; checklist?: 'checking' | 'current' };
 
 export function FinishScreen(props: FinishScreenProps) {
   if (!props.config) {
@@ -203,9 +203,9 @@ function FinishActions({
 
   // A field ownership refusal keeps the checklist only once the job and its readiness are read again
   // and still match this draft.
-  const prompted = problem && problem.next !== 'retry' && !problem.keepChecklist ? [] : items;
-  // Finish waits for the answer of that second readiness read, so no click meets a checklist not yet back.
-  const rechecking = checked.recheck > 0 && readinessJob !== null && advisory === undefined;
+  const prompted = problem && problem.next !== 'retry' && problem.checklist !== 'current' ? [] : items;
+  // The refusal is visible during the refresh. Finish waits for the job and the readiness answer.
+  const rechecking = problem?.checklist === 'checking' || (checked.recheck > 0 && readinessJob !== null && advisory === undefined);
 
   async function finish() {
     if (!manifest) return;
@@ -226,7 +226,12 @@ function FinishActions({
     const outcome = outcomeOf(answer.status, answer.body);
     if (outcome.next !== 'retry') pendingSubmit.current = null;
     const notOwner = answer.status === 403 && (answer.body as { error?: unknown } | null)?.error === 'not_field_owner';
-    setProblem({ ...outcome, keepChecklist: notOwner && (await recheckChecklist()) });
+    const refresh = notOwner && checked.revision !== null;
+    setProblem(refresh ? { ...outcome, checklist: 'checking' } : outcome);
+    if (refresh) {
+      const currentChecklist = await recheckChecklist();
+      setProblem(currentChecklist ? { ...outcome, checklist: 'current' } : outcome);
+    }
   }
 
   // Reads the job again after an ownership refusal, which the server gives before looking at the
@@ -241,7 +246,7 @@ function FinishActions({
     if (!next) return false;
     setCurrent(next);
     const revision = (answer.body as { job?: { revision?: unknown } } | null)?.job?.revision;
-    if (checked.revision === null || next.status !== 'draft' || next.currentDraftId !== job.currentDraftId || typeof revision !== 'number') return false;
+    if (next.status !== 'draft' || next.currentDraftId !== job.currentDraftId || typeof revision !== 'number') return false;
     setChecked((was) => ({ revision, recheck: was.recheck + 1 }));
     return true;
   }

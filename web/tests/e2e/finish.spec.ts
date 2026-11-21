@@ -496,6 +496,36 @@ test.describe('Ready to review', () => {
     await expect(dialog.getByRole('link', { name: 'Fix: Add the year built' })).toBeVisible();
   });
 
+  test('with readiness off, an ownership refusal appears without another job read', async ({ page }) => {
+    const { company, jobId, finishPath, signIn } = await openJob(page, false);
+    await page.goto(`/sign-in/${company.address}`);
+    await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+    await expect(page.getByRole('heading', { name: `Sign in to ${company.name}` })).toBeVisible();
+    await signIn('owner');
+    await page.goto(finishPath);
+    const finish = page.getByRole('button', { name: 'Finish and review' });
+    await expect(finish).toBeEnabled();
+
+    const release = Promise.withResolvers<void>();
+    let jobReads = 0;
+    await page.route(`**/api/jobs/${jobId}`, async (route) => {
+      jobReads += 1;
+      await release.promise;
+      await route.continue();
+    });
+    try {
+      const refused = page.waitForResponse((answer) => new URL(answer.url()).pathname === `/api/jobs/${jobId}/submissions`);
+      await finish.click();
+      const answer = await refused;
+      expect(answer.status()).toBe(403);
+      expect(await answer.json()).toMatchObject({ error: 'not_field_owner' });
+      await expect(page.getByRole('alert').filter({ hasText: 'Reload the job' })).toBeVisible();
+      expect(jobReads).toBe(0);
+    } finally {
+      release.resolve();
+    }
+  });
+
   test('Fix opens the saved field and Continue anyway commits one submission', async ({ page }) => {
     const { jobId, finishPath } = await openJob(page);
     await page.getByLabel('New room name').fill('Kitchen');
