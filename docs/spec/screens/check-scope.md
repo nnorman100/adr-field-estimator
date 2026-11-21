@@ -92,15 +92,13 @@ job's field work is no longer yours…" (unsent changes stay on the phone, read 
   hidden at once and the saved copy for that person and company is erased. The same erase runs when
   the field gate's `GET /api/me` lets the person in without `prices_read`, whether or not Check
   Scope is open, and when the sign-in page or the Prices, Company settings, Team, Finish or Review
-  screen accepts a `GET /api/me` answer for the current sign-in without `prices_read` (Company settings, Team, Finish
-  and Review drop an answer that arrives after the person has left them). The refusal's time is recorded in localStorage before
-  the screen shows its answer and before the erase is tried, also on a phone without IndexedDB, so a
-  copy that could not be erased is never shown and every read erases it first, in any tab and after a
-  reload. A refusal recorded in another tab hides the list in an open Check Scope at once, without
-  asking the server, and when the page comes back from the background or the back-forward cache.
-  An answer is shown and saved only if no refusal was recorded at or after the time its request
-  started, and a copy fetched before a refusal is erased. Clearing the phone's site storage hides
-  nothing, and any later refusal records a newer time. The same version already saved is not
+  screen accepts a `GET /api/me` answer for the current sign-in without `prices_read` (the last four
+  drop an answer that arrives after the person has left them). Known limits: an open Check Scope in
+  another tab keeps showing the list until it next asks the server or is reloaded, and a screen
+  closed before its erase gets the cross-tab lock leaves the refusal unrecorded. The refusal is recorded in localStorage before the erase is tried, so a
+  copy that could not be erased is never shown and every read erases it first, in any tab and
+  after a reload. An answer is shown and saved only if no refusal was recorded after its request
+  started, and a copy fetched before a refusal is erased. The same version already saved is not
   written again. A refusal that only asks the person to sign in again (401 `sign_in_again`) or to
   complete the role's second step (403 `second_step_required`) hides the list in this view and
   keeps the copy. A lost connection, or a 403 or 404 without one of the
