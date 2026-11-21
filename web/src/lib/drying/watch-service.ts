@@ -86,22 +86,43 @@ export type WatchService = {
 export type SignedFacts = { agreementId: string; setupAt: Date; plan: { plannedDays: number; rooms: SignedRoom[] } | null };
 
 // The agreement in force (the latest signed; S5b-9's resolver replaces this when revisions land), the
-// original signing's time, and the plan of the snapshot the agreement in force was signed from.
-export async function signedFacts(tx: CompanyTransaction, job: JobRow): Promise<SignedFacts> {
+// original signing's time, and the plan of the snapshot the agreement in force was signed from, for each
+// of these jobs of the company. Day one is the original signing's; a job signs its original first, so one
+// without it has no entry (no watch).
+export async function signedFactsMany(tx: CompanyTransaction, companyId: string, jobIds: readonly string[]): Promise<Map<string, SignedFacts>> {
+  const found = new Map<string, SignedFacts>();
+  if (jobIds.length === 0) return found;
   const signed = await tx
-    .select({ id: agreements.id, kind: agreements.kind, submissionId: agreements.submissionId, signedAt: agreements.signedAt })
+    .select({ id: agreements.id, jobId: agreements.jobId, kind: agreements.kind, submissionId: agreements.submissionId, signedAt: agreements.signedAt })
     .from(agreements)
-    .where(and(eq(agreements.companyId, job.companyId), eq(agreements.jobId, job.id)))
+    .where(and(eq(agreements.companyId, companyId), inArray(agreements.jobId, [...jobIds])))
     .orderBy(asc(agreements.signedAt), asc(agreements.id));
-  // Day one is the original signing's; a job signs its original first, so one without it has no watch.
-  const original = signed.find((row) => row.kind === 'original');
-  const inForce = signed.at(-1);
-  if (!original || !inForce) throw new JobError('not_signed');
-  const [submission] = await tx
-    .select({ bytes: jobSubmissions.snapshotBytes })
-    .from(jobSubmissions)
-    .where(and(eq(jobSubmissions.companyId, job.companyId), eq(jobSubmissions.id, inForce.submissionId)));
-  return { agreementId: inForce.id, setupAt: original.signedAt, plan: submission?.bytes ? planOf(submission.bytes) : null };
+  const byJob = new Map<string, typeof signed>();
+  for (const row of signed) byJob.set(row.jobId, [...(byJob.get(row.jobId) ?? []), row]);
+  const inForce = new Map<string, (typeof signed)[number]>();
+  for (const [jobId, rows] of byJob) {
+    if (rows.some((row) => row.kind === 'original')) inForce.set(jobId, rows.at(-1)!);
+  }
+  const submissions =
+    inForce.size === 0
+      ? []
+      : await tx
+          .select({ id: jobSubmissions.id, bytes: jobSubmissions.snapshotBytes })
+          .from(jobSubmissions)
+          .where(and(eq(jobSubmissions.companyId, companyId), inArray(jobSubmissions.id, [...new Set([...inForce.values()].map((row) => row.submissionId))])));
+  const bytes = new Map(submissions.map((row) => [row.id, row.bytes]));
+  for (const [jobId, row] of inForce) {
+    const original = byJob.get(jobId)!.find((candidate) => candidate.kind === 'original')!;
+    const snapshot = bytes.get(row.submissionId);
+    found.set(jobId, { agreementId: row.id, setupAt: original.signedAt, plan: snapshot ? planOf(snapshot) : null });
+  }
+  return found;
+}
+
+export async function signedFacts(tx: CompanyTransaction, job: JobRow): Promise<SignedFacts> {
+  const facts = (await signedFactsMany(tx, job.companyId, [job.id])).get(job.id);
+  if (!facts) throw new JobError('not_signed');
+  return facts;
 }
 
 // The signed drying days and rooms, or null for a record that does not keep them.
@@ -124,15 +145,15 @@ function planOf(bytes: Buffer): SignedFacts['plan'] {
 
 type LogFacts = { readings: WatchReading[]; version: { readings: number; voids: number; changedAt: string | null } };
 
-// The active readings of the job for the status (times as text, to keep their microseconds), and the
-// log's version (every reading and void counted, with the latest receive or void time), so any change to
-// the log changes the facts hash. The version is counted in the database; a voided reading's fields are
-// never loaded.
-async function logFacts(tx: CompanyTransaction, job: JobRow): Promise<LogFacts> {
-  const mine = and(eq(dryingReadings.companyId, job.companyId), eq(dryingReadings.jobId, job.id));
+// The active readings of these jobs for the status (times as text, to keep their microseconds), by job.
+// A voided reading's fields are never loaded.
+async function activeReadings(tx: CompanyTransaction, companyId: string, jobIds: readonly string[]): Promise<Map<string, WatchReading[]>> {
+  const found = new Map<string, WatchReading[]>(jobIds.map((id) => [id, []]));
+  if (jobIds.length === 0) return found;
   const rows = await tx
     .select({
       id: dryingReadings.id,
+      jobId: dryingReadings.jobId,
       kind: dryingReadings.kind,
       roomId: dryingReadings.roomId,
       takenAt: micros(dryingReadings.takenAt),
@@ -141,19 +162,10 @@ async function logFacts(tx: CompanyTransaction, job: JobRow): Promise<LogFacts> 
       gpp: dryingReadings.gpp,
     })
     .from(dryingReadings)
-    .where(and(mine, isNull(dryingReadings.voidedAt)));
-  const [counted] = await tx
-    .select({
-      readings: sql<number>`count(*)::int`,
-      voids: sql<number>`count(${dryingReadings.voidedAt})::int`,
-      // Null for an empty log.
-      changedAt: micros(sql`max(greatest(${dryingReadings.receivedAt}, ${dryingReadings.voidedAt}))`),
-    })
-    .from(dryingReadings)
-    .where(mine);
-  const readings: WatchReading[] = rows.map((row) => {
+    .where(and(eq(dryingReadings.companyId, companyId), inArray(dryingReadings.jobId, [...jobIds]), isNull(dryingReadings.voidedAt)));
+  for (const row of rows) {
     const p = row.payload as Record<string, unknown>;
-    return {
+    found.get(row.jobId)!.push({
       id: row.id,
       kind: row.kind,
       roomId: row.roomId,
@@ -163,18 +175,63 @@ async function logFacts(tx: CompanyTransaction, job: JobRow): Promise<LogFacts> 
       ...(row.kind === 'material'
         ? { material: p.material as string, unit: p.unit as string, moisture: p.moisture as number, dryStandard: (p.dry_standard as number | null) ?? null, affected: p.affected !== false }
         : {}),
-    };
-  });
+    });
+  }
+  return found;
+}
+
+// The job's active readings, and the log's version (every reading and void counted, with the latest
+// receive or void time), so any change to the log changes the facts hash. The version is counted in the
+// database.
+async function logFacts(tx: CompanyTransaction, job: JobRow): Promise<LogFacts> {
+  const readings = (await activeReadings(tx, job.companyId, [job.id])).get(job.id)!;
+  const [counted] = await tx
+    .select({
+      readings: sql<number>`count(*)::int`,
+      voids: sql<number>`count(${dryingReadings.voidedAt})::int`,
+      // Null for an empty log.
+      changedAt: micros(sql`max(greatest(${dryingReadings.receivedAt}, ${dryingReadings.voidedAt}))`),
+    })
+    .from(dryingReadings)
+    .where(and(eq(dryingReadings.companyId, job.companyId), eq(dryingReadings.jobId, job.id)));
   // An aggregate with no GROUP BY always answers one row: zero counts and no time for an empty log.
   return { readings, version: { readings: counted!.readings, voids: counted!.voids, changedAt: counted!.changedAt } };
 }
 
-async function watchOf(tx: CompanyTransaction, job: JobRow): Promise<DryingWatch> {
-  const [row] = await tx
-    .select({ watch: jobCoordination.dryingWatch })
+async function watchesOf(tx: CompanyTransaction, companyId: string, jobIds: readonly string[]): Promise<Map<string, DryingWatch>> {
+  if (jobIds.length === 0) return new Map();
+  const rows = await tx
+    .select({ jobId: jobCoordination.jobId, watch: jobCoordination.dryingWatch })
     .from(jobCoordination)
-    .where(and(eq(jobCoordination.companyId, job.companyId), eq(jobCoordination.jobId, job.id)));
-  return row?.watch ?? { revision: 0, receipts: [] };
+    .where(and(eq(jobCoordination.companyId, companyId), inArray(jobCoordination.jobId, [...jobIds])));
+  return new Map(rows.flatMap((row) => (row.watch ? [[row.jobId, row.watch] as const] : [])));
+}
+
+async function watchOf(tx: CompanyTransaction, job: JobRow): Promise<DryingWatch> {
+  return (await watchesOf(tx, job.companyId, [job.id])).get(job.id) ?? { revision: 0, receipts: [] };
+}
+
+// The status worked out from one job's signed plan, its active readings, the staff's decisions and the clock.
+function stateOf(facts: { setupAt: Date; plan: NonNullable<SignedFacts['plan']> }, readings: WatchReading[], watch: DryingWatch, at: string): WatchState {
+  return watchState({ plannedDays: facts.plan.plannedDays, rooms: facts.plan.rooms, setupAt: facts.setupAt, readings, decisions: watch.receipts, at });
+}
+
+/**
+ * The watch status of each of these signed jobs of the company, worked out in a fixed number of queries
+ * (the jobs list's projection): null for a job whose signed record keeps no plan, or has no original
+ * agreement. No facts hash, decision names or action hints are built.
+ */
+export async function watchStatesOf(tx: CompanyTransaction, companyId: string, jobIds: readonly string[], now: string): Promise<Map<string, WatchState | null>> {
+  const facts = await signedFactsMany(tx, companyId, jobIds);
+  const planned = jobIds.filter((id) => facts.get(id)?.plan);
+  const readings = await activeReadings(tx, companyId, planned);
+  const watches = await watchesOf(tx, companyId, planned);
+  return new Map(
+    jobIds.map((id) => {
+      const found = facts.get(id);
+      return [id, found?.plan ? stateOf({ setupAt: found.setupAt, plan: found.plan }, readings.get(id)!, watches.get(id) ?? { revision: 0, receipts: [] }, now) : null];
+    }),
+  );
 }
 
 async function decisionViews(tx: CompanyTransaction, companyId: string, receipts: DryingWatchReceipt[]): Promise<WatchDecisionView[]> {
@@ -196,7 +253,7 @@ async function load(tx: CompanyTransaction, job: JobRow): Promise<Loaded> {
 
 async function viewOf(tx: CompanyTransaction, caller: JobCaller, job: JobRow, now: string, { facts, log }: Loaded, watch: DryingWatch): Promise<WatchView> {
   if (!facts.plan || !log) return { jobId: job.id, status: 'unavailable', reason: 'no_plan' };
-  const state = watchState({ plannedDays: facts.plan.plannedDays, rooms: facts.plan.rooms, setupAt: facts.setupAt, readings: log.readings, decisions: watch.receipts, at: now });
+  const state = stateOf({ setupAt: facts.setupAt, plan: facts.plan }, log.readings, watch, now);
   const open = !watch.receipts.some((receipt) => receipt.action !== 'extend');
   return {
     jobId: job.id,
@@ -224,13 +281,8 @@ export async function finishedDayCount(tx: CompanyTransaction, job: JobRow, fact
   if (!facts.plan) return null;
   const log = await logFacts(tx, job);
   const watch = await watchOf(tx, job);
-  const state = watchState({ plannedDays: facts.plan.plannedDays, rooms: facts.plan.rooms, setupAt: facts.setupAt, readings: log.readings, decisions: watch.receipts, at: now });
+  const state = stateOf({ setupAt: facts.setupAt, plan: facts.plan }, log.readings, watch, now);
   return finishedDayNumber(state, watch.receipts);
-}
-
-/** The watch as its own card shows it (the jobs list's projection reads it). */
-export async function compute(tx: CompanyTransaction, caller: JobCaller, job: JobRow, now: string): Promise<{ view: WatchView }> {
-  return { view: await viewOf(tx, caller, job, now, await load(tx, job), await watchOf(tx, job)) };
 }
 
 // The database's clock (with its microseconds), so the status of a write is worked out at the time its

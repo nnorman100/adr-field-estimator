@@ -8,6 +8,7 @@ import { sha256Of, sniffImageType } from '@/lib/photos/image';
 import type { PhotoKind } from '@/lib/photos/service';
 import type { EvidenceStore } from '@/lib/photos/store';
 import { PlatformError, readCompany, type CompanyView } from './service';
+import { signedRowProjections } from '@/lib/drying/projection';
 
 // The platform operator's read-only support view of a company's jobs (S5b-5; owner decision J8:
 // platform operator only, read-only, audited). Three views: the company's jobs, one job (its header,
@@ -81,7 +82,9 @@ export function supportJobsService(db: Database, openStore: () => EvidenceStore)
         async (tx) => {
           const company = await readCompany(tx, companyId);
           const { entries, nextCursor } = await jobPage(tx, [eq(jobs.companyId, companyId)], after, page.limit);
-          return { company, jobs: entries.map(({ item }) => item), nextCursor };
+          // A signed row's close status and drying watch status, under the company's switches (S5b-10).
+          const outcomes = await signedRowProjections(tx, companyId, entries.map(({ job }) => job));
+          return { company, jobs: entries.map(({ job, item }) => ({ ...item, ...outcomes.get(job.id) })), nextCursor };
         },
         'support_jobs_viewed',
         companyId,
@@ -111,9 +114,11 @@ export function supportJobsService(db: Database, openStore: () => EvidenceStore)
             .from(evidenceObjects)
             .where(and(eq(evidenceObjects.companyId, companyId), eq(evidenceObjects.jobId, jobId), visibleEvidence(companyId, jobId)))
             .orderBy(asc(evidenceObjects.createdAt), asc(evidenceObjects.id));
+          const outcome = (await signedRowProjections(tx, companyId, [row])).get(row.id);
           return {
             company,
             ...detail,
+            ...outcome,
             agreement: await originalAgreementView(tx, companyId, jobId),
             evidence: evidence.map((found) => ({ ...found, createdAt: found.createdAt.toISOString() })),
           };

@@ -150,6 +150,9 @@ export const MATRIX: readonly MatrixRow[] = [
   row(`${PRICES}/versions`, 'GET', 'company', { self: true, own: 'list' }),
   row(`${PRICES}/versions/[versionId]`, 'GET', 'company', { own: 'cross' }),
   row(`${PRICES}/versions/[versionId]/restore`, 'POST', 'company', { body: { expectedRevision: STALE }, own: 'cross' }),
+  // S5b-10: the owner's estimate accuracy numbers, behind `estimate_assist` (on in the isolation suites);
+  // the company is the sign-in's, so the other company's owner is answered about its own company only.
+  row('api/estimate-accuracy', 'GET', 'company', { self: true, own: 'list' }),
   row('api/jobs', 'GET', 'company', { self: true, own: 'list' }),
   row('api/jobs', 'POST', 'company', { body: { id: '3c9a6e12-84d1-4f0b-b7a3-52e8d1c04f96', draftId: 'a1f0d7b4-2e65-4c39-8b1a-9d3e6f20c578' }, own: 'create' }),
   row('api/jobs/[jobId]', 'GET', 'company', { own: 'cross' }),

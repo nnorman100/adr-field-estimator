@@ -12,7 +12,7 @@ export const dynamic = 'force-dynamic';
 // the future (S6-3's sync gate), since a skipped renewal still answers 200. A renewal skipped
 // because the actor was busy leaves its outbox row due, so the next call tries it again.
 // `features` are the company switches the screens read (an allowlist, never the whole flag list):
-// `readiness` turns on "Ready to review?" (S5b-11), `drying_watch` the drying watch and `estimate_assist` the job close (S5b-10). The
+// `readiness` turns on "Ready to review?" (S5b-11), `drying_watch` the drying watch and `estimate_assist` the job close and estimate accuracy (S5b-10). The
 // server checks each again on its own routes.
 export const GET = memberRoute(async (_request, identity) => {
   await renewSignedInAccess(identity);

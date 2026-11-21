@@ -39,6 +39,8 @@ export const memberApiPaths: readonly string[] = [
   '/api/prices/versions',
   '/api/prices/versions/:id',
   '/api/prices/versions/:id/restore',
+  // The owner's estimate accuracy numbers (S5b-10): the company is the sign-in's.
+  '/api/estimate-accuracy',
   '/api/jobs',
   '/api/jobs/:id',
   '/api/jobs/:id/customer',
