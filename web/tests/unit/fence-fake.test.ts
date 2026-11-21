@@ -16,7 +16,10 @@ fenceStoreContract('in-memory', () => {
     },
     // As the draft sync leaves it (the stand-in's previous-version fence and marker write the same keys).
     async place(company, draft, state, fence) {
-      if (store.draft(company, draft)?.state !== 'submitting') await store.fence(company, draft, fence);
+      const now = store.draft(company, draft);
+      // A fence of another epoch is replaced, as the sync replaces an aborted attempt's fence.
+      if (now?.state !== 'submitting') await store.fence(company, draft, fence);
+      else if (now.fence?.epoch !== fence.epoch) await store.fence(company, draft, fence, now.fence?.epoch);
       if (state === 'submitted') await store.markSubmitted(company, draft, fence.epoch, fence.submissionId);
     },
   };

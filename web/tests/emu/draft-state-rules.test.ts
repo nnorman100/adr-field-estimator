@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Firestore } from 'firebase-admin/firestore';
+import { Timestamp, type Firestore } from 'firebase-admin/firestore';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { parseProjectionConfig } from '@/lib/config';
 import { firestoreAccessStore, firestoreFor } from '@/lib/projection/firestore';
@@ -54,16 +54,29 @@ const synced = (job: string, fieldOwnerUid: string | null, revisions = { archive
   ...revisions,
 });
 
-// A company whose estimator owns a draft with a room and a photo reference: the draft as the sync makes
-// it, then the phone's own writes under the rules.
-async function company(name: string) {
+// What the sync writes when a Submit commits: `submitted`, the attempt's fence (with its expiry), and the
+// job's new revision.
+const submitted = (archiveRevision: number) => ({
+  state: 'submitted',
+  fence: { submissionId: randomUUID(), epoch: randomUUID(), expiresAt: Timestamp.fromDate(new Date(Date.now() + 120_000)) },
+  archiveRevision,
+});
+
+// A company's members (an estimator, the company owner, office) and a job id, with no draft yet.
+async function people(name: string) {
   const tenant = await createTenant(`${name}-${randomUUID().slice(0, 6)}`);
   const id = randomUUID();
-  const job = randomUUID();
-  const draft = randomUUID();
   const estimator = await member(tenant, id, 'estimator');
   const owner = await member(tenant, id, 'owner');
   const office = await member(tenant, id, 'office');
+  return { id, job: randomUUID(), estimator, owner, office };
+}
+
+// A company whose estimator owns a draft with a room and a photo reference: the draft as the sync makes
+// it, then the phone's own writes under the rules.
+async function company(name: string) {
+  const { id, job, estimator, owner, office } = await people(name);
+  const draft = randomUUID();
   const at = path(id, draft);
   await db.doc(at).create(synced(job, estimator.uid));
   expect(await updateDoc(estimator.caller, at, { field: { notes: 'wet carpet', roomOrder: ['kitchen'] } })).toBe(200);
@@ -100,6 +113,7 @@ describe('an archived draft', () => {
     // What the company may read stays readable (the phone shows it as archived).
     expect(await getDoc(a.estimator.caller, a.at)).toBe(200);
     expect(await getDoc(a.owner.caller, a.at)).toBe(200);
+    expect(await getDoc(a.office.caller, a.at)).toBe(200);
 
     // The restore's sync puts it back to `editing` at the next revision.
     await db.doc(a.at).update({ state: 'editing', archiveRevision: 3 });
@@ -109,7 +123,7 @@ describe('an archived draft', () => {
   // Moved from archive.test.ts: an office job's archived draft names nobody, so no estimator of the
   // company reads it; the company owner and office still do, and nobody writes it.
   it('is read by no estimator when it names no field owner, and still by the company owner and office', async () => {
-    const a = await company('archive-unowned');
+    const a = await people('archive-unowned');
     const at = path(a.id, randomUUID());
     await db.doc(at).create({ ...synced(a.job, null), state: 'archived', archiveRevision: 2 });
     expect(await getDoc(a.estimator.caller, at)).toBe(403);
@@ -147,8 +161,9 @@ describe('the field owner of a draft', () => {
     const first = await member(tenant, company, 'estimator');
     const second = await member(tenant, company, 'estimator');
     const office = await member(tenant, company, 'office');
+    const owner = await member(tenant, company, 'owner');
     await db.doc(path(company, draft)).create(synced(randomUUID(), null));
-    return { company, draft, first, second, office };
+    return { company, draft, first, second, office, owner };
   }
 
   it('is the only estimator who writes the draft once the sync names them, and a second estimator is refused', async () => {
@@ -186,18 +201,19 @@ describe('the field owner of a draft', () => {
   // Moved from field-owner.test.ts: the job id is the server's, and of the estimators only the field owner
   // reads a submitted draft (the company owner and office read every draft); nobody writes it.
   it('keeps the job id the server’s, and shows a submitted draft and its rooms to its field owner and to no other estimator', async () => {
-    const { company, draft, first, second, office } = await officeDraft('field-owner-d');
+    const { company, draft, first, second, office, owner } = await officeDraft('field-owner-d');
     await db.doc(path(company, draft)).update({ fieldOwnerUid: first.uid, fieldOwnerRevision: 1 });
     expect(await updateDoc(first.caller, path(company, draft), { field: { notes: 'submitted notes' } })).toBe(200);
     expect(await createDoc(first.caller, `${path(company, draft)}/rooms/kitchen`, { field: { name: 'Kitchen' } })).toBe(200);
     expect(await updateDoc(first.caller, path(company, draft), { jobId: randomUUID() })).toBe(403);
     // Submit's marker, as the sync writes it.
-    await db.doc(path(company, draft)).update({ state: 'submitted', fence: { submissionId: randomUUID(), epoch: randomUUID() } });
+    await db.doc(path(company, draft)).update(submitted(2));
     expect(await getDoc(second.caller, path(company, draft))).toBe(403);
     expect(await getDoc(second.caller, `${path(company, draft)}/rooms/kitchen`)).toBe(403);
     expect(await getDoc(first.caller, path(company, draft))).toBe(200);
     expect(await getDoc(first.caller, `${path(company, draft)}/rooms/kitchen`)).toBe(200);
     expect(await getDoc(office.caller, path(company, draft))).toBe(200);
+    expect(await getDoc(owner.caller, path(company, draft))).toBe(200);
     expect(await updateDoc(first.caller, path(company, draft), { field: { notes: 'after Finish' } })).toBe(403);
   });
 });
@@ -207,13 +223,14 @@ describe('the field owner of a draft', () => {
 // by role: an estimator reads only the drafts that name them; the company owner and office read every one.
 describe('a placeholder an earlier version left, and the draft the sync makes over it', () => {
   it('is read by no estimator and written by nobody while it is a placeholder, and the field owner writes the draft the sync replaces it with', async () => {
-    const a = await company('placeholder-rules');
+    const a = await people('placeholder-rules');
     const draft = randomUUID();
     const at = path(a.id, draft);
     await db.doc(at).create({ jobId: a.job, state: 'archived', placeholder: true, archiveRevision: 3 });
     expect(await getDoc(a.estimator.caller, at)).toBe(403);
     // The company owner and office read every draft of the company, a placeholder too, and write none.
     expect(await getDoc(a.owner.caller, at)).toBe(200);
+    expect(await getDoc(a.office.caller, at)).toBe(200);
     for (const who of [a.estimator, a.owner, a.office]) expect(await writes(who.caller, at)).toEqual([403, 403, 403, 403, 403, 403, 403]);
     // The sync makes the job's draft over it (it replaces the whole document), taking the revisions.
     await db.doc(at).set(synced(a.job, a.estimator.uid, { archiveRevision: 4, fieldOwnerRevision: 0 }));
@@ -225,6 +242,8 @@ describe('a placeholder an earlier version left, and the draft the sync makes ov
     const companyId = randomUUID();
     const estimator = await member(tenant, companyId, 'estimator');
     const other = await member(tenant, companyId, 'estimator');
+    const owner = await member(tenant, companyId, 'owner');
+    const office = await member(tenant, companyId, 'office');
     const at = path(companyId, randomUUID());
     const field = { roomOrder: ['kitchen'], notes: 'from the signed job' };
     await db.doc(at).create({ ...synced(randomUUID(), estimator.uid), field });
@@ -233,5 +252,10 @@ describe('a placeholder an earlier version left, and the draft the sync makes ov
     expect(await updateDoc(estimator.caller, `${at}/rooms/kitchen`, { field: { name: 'Galley', category: 2 } })).toBe(200);
     expect(await getDoc(other.caller, at)).toBe(403);
     expect(await updateDoc(other.caller, at, { field: { notes: 'taken' } })).toBe(403);
+    // The company owner and office read it, and write nothing.
+    for (const who of [owner, office]) {
+      expect(await getDoc(who.caller, at)).toBe(200);
+      expect(await updateDoc(who.caller, at, { field: { notes: 'office' } })).toBe(403);
+    }
   });
 });

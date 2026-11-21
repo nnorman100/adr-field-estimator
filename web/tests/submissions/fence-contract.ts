@@ -43,9 +43,14 @@ export function fenceStoreContract(name: string, probe: () => FenceProbe): void 
       expect(same(await store.read(company, draft, fence.epoch), MANIFEST)).toBe(true);
       expect(await store.read(company, draft, randomUUID())).toBeNull();
       expect(await store.read(company, randomUUID(), fence.epoch)).toBeNull();
-      // A submitted draft is not read, its own epoch included.
-      await place(company, draft, 'submitted', fence);
+      // A newer attempt takes the fence (the old one aborted): the old epoch reads nothing, the new one reads it.
+      const newer = fenceOf();
+      await place(company, draft, 'submitting', newer);
       expect(await store.read(company, draft, fence.epoch)).toBeNull();
+      expect(same(await store.read(company, draft, newer.epoch), MANIFEST)).toBe(true);
+      // A submitted draft is not read, its own epoch included.
+      await place(company, draft, 'submitted', newer);
+      expect(await store.read(company, draft, newer.epoch)).toBeNull();
     });
 
     it('reads drafts at the safety caps and refuses one extra room or photo', async () => {
