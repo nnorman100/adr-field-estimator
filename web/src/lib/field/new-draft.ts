@@ -13,14 +13,18 @@
 // merged into: once that new draft holds anything else (an earlier copy, work made on it since), the
 // edits can go into another new draft of their own ('another'), whose ids also come from the edits
 // themselves, so each try of those edits makes one job too.
-// Photo references are not copied: a photo id is registered to its job and cannot be used under
-// another one, and photo bytes are not kept on the phone until the photo queue (S6-5).
+// Existing server photo references are not copied. Unsent photo bytes get new IDs in the
+// new draft through the queue, before the old journal entries are discarded.
 import { collection, doc, getDocFromCache, getDocFromServer, getDocsFromCache, runTransaction } from 'firebase/firestore';
 import { fieldUser, type FieldClient } from '@/lib/field-db';
 import { createJob } from './api';
+import { ReopenTheApp } from './idb';
 import { discardEntries, refusalNow } from './journal-sync';
 import { copyVerdict, jobOf, rejectEntry, type DocWrite, type JournalEntry, type Owner } from './journal';
 import { draftPath, stageWrites, type DraftRef } from './store';
+import { whilePhotoQueueIdle } from './photo-queue';
+import { moveQueuedPhotos, type PhotoQueueEntry } from './photo-queue-storage';
+import { readUnsent } from './unsent';
 
 function uuidOf(bytes: Uint8Array): string {
   const b = Uint8Array.from(bytes.subarray(0, 16));
@@ -110,12 +114,18 @@ async function cachedDraft(client: FieldClient, path: string): Promise<CachedDra
 // draft with this person as its field owner); writes the copy into it in one transaction, only while
 // it is as made (journal.ts copyVerdict), then drops the refused entries: the server has the work
 // now. `another`: into another new draft of their own, once the first one holds other work.
-export async function saveAsNewDraft(client: FieldClient, entries: readonly JournalEntry[], another = false): Promise<SaveAsNew> {
-  const first = entries[0];
+export async function saveAsNewDraft(
+  client: FieldClient,
+  entries: readonly JournalEntry[],
+  another = false,
+  photos: readonly PhotoQueueEntry[] = [],
+): Promise<SaveAsNew> {
+  const path = entries[0]?.draftPath ?? photos[0]?.refusal?.draftPath;
+  const fromJob = jobOf(entries) ?? photos[0]?.jobId ?? null;
   const user = fieldUser(client.person);
-  const companyId = first ? /^companies\/([^/]+)\//.exec(first.draftPath)?.[1] : undefined;
-  if (!first || !user || !companyId) return { kind: 'no-answer' };
-  const reason = await refusalNow(client, first.draftPath, jobOf(entries));
+  const companyId = path ? /^companies\/([^/]+)\//.exec(path)?.[1] : undefined;
+  if (!path || !user || !companyId) return { kind: 'no-answer' };
+  const reason = await refusalNow(client, path, fromJob);
   if (reason === 'no-answer') return { kind: 'no-answer' };
   if (reason === null) return { kind: 'refused', message: NOT_NOW };
   if (!ELIGIBLE.has(reason)) {
@@ -123,11 +133,11 @@ export async function saveAsNewDraft(client: FieldClient, entries: readonly Jour
     return { kind: 'refused', message: 'These changes cannot be saved as a new draft: the reason above changed.' };
   }
   const owner: Owner = { tenantId: client.person.tenantId, uid: client.person.uid };
-  const { jobId, draftId } = await newDraftIds(owner, first.draftPath, another ? entries : undefined);
+  const { jobId, draftId } = await newDraftIds(owner, path, another ? [...entries, ...photos.map((photo) => ({ id: photo.photoId }))] : undefined);
   const ref: DraftRef = { companyId, draftId };
   const newPath = draftPath(ref);
-  const cached = await cachedDraft(client, first.draftPath);
-  const writes = cached ? copyWrites(cached, entries, first.draftPath, newPath) : null;
+  const cached = await cachedDraft(client, path);
+  const writes = cached ? copyWrites(cached, entries, path, newPath) : null;
   if (!writes) return { kind: 'not-kept' };
   const answer = await createJob(user, { id: jobId, draftId, propertyAddress: '' });
   if (!answer.ok) return answer.status === 0 || answer.status >= 500 ? { kind: 'no-answer' } : { kind: 'refused', message: answer.message };
@@ -148,6 +158,16 @@ export async function saveAsNewDraft(client: FieldClient, entries: readonly Jour
   }
   // Another new draft is these edits' own: anything in it is their copy, made on an earlier try.
   if (verdict === 'exists' && !another) return { kind: 'exists' };
+  const fromDraft = path.split('/').at(-1);
+  const mark = readUnsent(owner.tenantId, owner.uid);
+  if (fromJob && fromDraft && (photos.length || mark === 'unreadable' || mark.queuedPhotos?.length)) {
+    try {
+      await whilePhotoQueueIdle(() => moveQueuedPhotos(owner, { jobId: fromJob, draftId: fromDraft }, { jobId, draftId }));
+    } catch (error) {
+      if (error instanceof ReopenTheApp) throw error;
+      return { kind: 'no-answer' };
+    }
+  }
   // The new draft into this phone's cache, so its screen opens on it.
   await getDocFromServer(doc(client.db, newPath)).catch(() => undefined);
   await discardEntries(client, entries);

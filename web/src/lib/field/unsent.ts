@@ -68,8 +68,10 @@ export type UnsentMark = {
   // Every unsent write was made in a memory cache (Online only, an iPhone browser tab, the
   // fallback): nothing of it is kept once that window closes.
   memoryOnly?: true;
-  // IDs only: the current photo path keeps bytes in page memory until S6-5 adds its queue.
+  // IDs only. The online-only photo path holds its bytes in this page.
   photosInMemory?: string[];
+  // The capture IDs whose bytes may still be in ds-queue.
+  queuedPhotos?: string[];
 };
 
 const EMPTY: UnsentMark = { writes: 0, unsentSince: null, lockedSince: null };
@@ -88,6 +90,9 @@ function parse(raw: string | null): UnsentMark | null {
     const mark: UnsentMark = { writes: value.writes, unsentSince, lockedSince };
     if (Array.isArray(value.photosInMemory) && value.photosInMemory.every((id) => typeof id === 'string')) {
       mark.photosInMemory = value.photosInMemory;
+    }
+    if (Array.isArray(value.queuedPhotos) && value.queuedPhotos.every((id) => typeof id === 'string')) {
+      mark.queuedPhotos = value.queuedPhotos;
     }
     if (unsentSince !== null && value.memoryOnly === true) mark.memoryOnly = true;
     if (lockedSince !== null) {
@@ -122,6 +127,7 @@ export function mayHaveUnsent(tenantId: string, uid: string): boolean {
 export function unsentWork(tenantId: string, uid: string): 'none' | 'kept' | 'memory' {
   const mark = readUnsent(tenantId, uid);
   if (mark === 'unreadable') return 'kept';
+  if (mark.queuedPhotos?.length) return 'kept';
   if (mark.unsentSince === null) return 'none';
   return mark.memoryOnly ? 'memory' : 'kept';
 }
@@ -172,6 +178,24 @@ export function photoSent(tenantId: string, uid: string, id: string): void {
   keepPhotosHere(tenantId, uid);
 }
 
+export function noteQueuedPhoto(tenantId: string, uid: string, id: string): boolean {
+  return change(tenantId, uid, (mark) => ({
+    ...mark,
+    unsentSince: mark.unsentSince ?? Date.now(),
+    queuedPhotos: [...new Set([...(mark.queuedPhotos ?? []), id])],
+  }));
+}
+
+export function queuedPhotoDone(tenantId: string, uid: string, id: string): void {
+  const mark = readUnsent(tenantId, uid);
+  if (mark === 'unreadable' || !mark.queuedPhotos?.includes(id)) return;
+  change(tenantId, uid, ({ queuedPhotos, ...current }) => {
+    const left = (queuedPhotos ?? []).filter((other) => other !== id);
+    if (left.length) return { ...current, queuedPhotos: left };
+    return current.writes === 0 && !current.photosInMemory?.length ? { ...current, unsentSince: null } : current;
+  });
+}
+
 // Drops the photos an earlier page noted: their bytes went with it, so they can never be sent.
 // The rest of the mark stays, and the next settle clears what those photos alone held unsent.
 export function keepPhotosHere(tenantId: string, uid: string): void {
@@ -194,7 +218,7 @@ export function writesNow(tenantId: string, uid: string): number | null {
 export function settled(tenantId: string, uid: string, writes: number): void {
   change(tenantId, uid, ({ memoryOnly, ...mark }) =>
     mark.writes === writes
-      ? mark.photosInMemory?.length ? { ...mark, memoryOnly: true } : { ...mark, unsentSince: null }
+      ? mark.queuedPhotos?.length ? mark : mark.photosInMemory?.length ? { ...mark, memoryOnly: true } : { ...mark, unsentSince: null }
       : { ...mark, ...(memoryOnly ? { memoryOnly } : {}) },
   );
 }

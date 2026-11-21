@@ -1,8 +1,11 @@
 import { meOutcome } from '@/lib/sign-in/outcome';
+import { ReopenTheApp } from './idb';
 import { preparePhoto } from './photo';
+import { noteQueuedPhoto, queuedPhotoDone } from './unsent';
 import {
   addCapture,
   changePhoto,
+  hasPhotoBytes,
   readPayload,
   readPendingWork,
   readPhotoQueue,
@@ -18,6 +21,8 @@ export { readPendingWork, readPhotoQueue, type PhotoOwner, type PhotoQueueEntry,
 const CAPTURE_LOCK = 'ds-photo-capture';
 const DRAIN_LOCK = 'ds-photo-drain';
 const CAPTURED = 'ds-photo-captured';
+const activeQueues = new Map<string, () => void>();
+const ownerKey = ({ tenantId, uid }: PhotoOwner) => JSON.stringify([tenantId, uid]);
 const FOREGROUND_INTERVAL_MS = 2_000;
 const UPLOAD_BASE_DEADLINE_MS = 30_000;
 // The photo route allows a request 300 seconds, so no upload is cut off before that.
@@ -45,7 +50,8 @@ export async function capturePhoto(owner: PhotoOwner, target: PhotoTarget, file:
     const original = await file.arrayBuffer();
     const originalSha256 = await sha256Of(original);
     const common = {
-      ...owner,
+      tenantId: owner.tenantId,
+      uid: owner.uid,
       ...target,
       field: { ...target.field, capturedAt: target.field.capturedAt ?? new Date(capturedAt).toISOString() },
       photoId,
@@ -66,7 +72,7 @@ export async function capturePhoto(owner: PhotoOwner, target: PhotoTarget, file:
         reason: UNPREPARED_REASON,
         requested: false,
       };
-      await addCapture([{ entry, data: original }]);
+      await keepCapture([{ entry, data: original }]);
       return entry;
     }
     const data = await resized.arrayBuffer();
@@ -90,7 +96,7 @@ export async function capturePhoto(owner: PhotoOwner, target: PhotoTarget, file:
       stage: 'queued',
       requested: false,
     };
-    await addCapture([
+    await keepCapture([
       { entry, data },
       { entry: waiting, data: original },
     ]);
@@ -98,6 +104,16 @@ export async function capturePhoto(owner: PhotoOwner, target: PhotoTarget, file:
   });
   window.dispatchEvent(new Event(CAPTURED));
   return photo;
+
+  async function keepCapture(payloads: Parameters<typeof addCapture>[0]): Promise<void> {
+    if (!noteQueuedPhoto(owner.tenantId, owner.uid, photoId)) throw new Error('This phone could not record the photo as unsent.');
+    try {
+      await addCapture(payloads);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'QuotaExceededError') queuedPhotoDone(owner.tenantId, owner.uid, photoId);
+      throw error;
+    }
+  }
 }
 
 export async function photoStorageNearlyFull(): Promise<boolean> {
@@ -110,10 +126,11 @@ export async function photoStorageNearlyFull(): Promise<boolean> {
   }
 }
 
+type Refusal = NonNullable<PhotoQueueEntry['refusal']>;
 type UploadResult =
   | { kind: 'receipt'; photoId: string; sha256: string }
-  | { kind: 'failure'; status: number; reason: string; code?: string; retryAfter?: string | null };
-type ReferenceResult = { kind: 'acknowledged' } | { kind: 'blocked'; reason: string } | { kind: 'sign-in' } | { kind: 'retry' };
+  | { kind: 'failure'; status: number; reason: string; code?: string; retryAfter?: string | null; refusal?: Refusal };
+type ReferenceResult = { kind: 'acknowledged' } | { kind: 'blocked'; reason: string; refusal?: Refusal } | { kind: 'sign-in' } | { kind: 'retry' };
 
 type PhotoTransport = {
   canSend(): boolean;
@@ -121,6 +138,9 @@ type PhotoTransport = {
   // Call written once the reference is saved locally. After a reopen the reference has the
   // same id, and the acknowledgement must come from the server.
   reference(entry: PhotoQueueEntry, written: () => Promise<void>, signal: AbortSignal): Promise<ReferenceResult>;
+  // A blocked copy may have a matching server reference after an interrupted recovery. Null
+  // means the answer is still pending.
+  recover?(entry: PhotoQueueEntry, signal: AbortSignal): Promise<boolean | null>;
   changed?(photoId: string, sending: boolean): void;
   // The server refused the sign-in. The queue stops sending and keeps every entry for the next sign-in.
   signInRequired?(): void;
@@ -177,12 +197,34 @@ function readyEntries(entries: PhotoQueueEntry[], now: number): PhotoQueueEntry[
   });
 }
 
+export function stopPhotoQueue(owner: PhotoOwner): void {
+  activeQueues.get(ownerKey(owner))?.();
+}
+
+export async function whilePhotoQueueIdle<T>(work: () => Promise<T>): Promise<T> {
+  const options = { signal: AbortSignal.timeout(5_000) };
+  return await navigator.locks.request(DRAIN_LOCK, options, () => navigator.locks.request(CAPTURE_LOCK, options, work));
+}
+
+// The person's reason to try a refused photo again has cleared: it goes back to the step it stopped at.
+export async function resumeQueuedPhoto(entry: PhotoQueueEntry): Promise<void> {
+  await changePhoto(entry, { stage: entry.receipt ? 'sent' : 'queued', attempts: 0, retryAt: 0 }, ['reason', 'refusal']);
+}
+
+export async function acknowledgeQueuedPhoto(entry: PhotoQueueEntry): Promise<void> {
+  const saved = await changePhoto(entry, { stage: 'done' });
+  if (saved && !(await hasPhotoBytes(entry))) queuedPhotoDone(entry.tenantId, entry.uid, entry.photoId);
+}
+
 export function startPhotoQueue(owner: PhotoOwner, transport: PhotoTransport) {
   const person = { ...owner };
   const lifetime = new AbortController();
   const { signal } = lifetime;
+  const key = ownerKey(owner);
+  stopPhotoQueue(owner);
   let draining = false;
   let signedOut = false;
+  let checkedBlocked = false;
   const canRun = () => !signal.aborted && !signedOut && document.visibilityState === 'visible' && transport.canSend();
   const lock = () => {
     if (signedOut) return;
@@ -196,7 +238,8 @@ export function startPhotoQueue(owner: PhotoOwner, transport: PhotoTransport) {
     let current = entry;
     const retry = (retryAfter?: string | null) =>
       changePhoto(current, { attempts: current.attempts + 1, retryAt: retryTime(current, retryAfter) });
-    const block = (reason: string) => changePhoto(current, { stage: 'blocked', reason });
+    const block = (reason: string, refusal?: Refusal) =>
+      changePhoto(current, { stage: 'blocked', reason, ...(refusal ? { refusal } : {}) }, refusal ? [] : ['refusal']);
     transport.changed?.(entry.photoId, true);
     try {
       if (current.stage === 'queued') {
@@ -220,20 +263,24 @@ export function startPhotoQueue(owner: PhotoOwner, transport: PhotoTransport) {
         if (result.kind === 'failure') {
           if (retriesLater(result.status, result.code)) await retry(result.retryAfter);
           else if (pausesForSignIn(result.status, result.code)) lock();
-          else await block(result.reason);
+          else await block(result.reason, result.refusal);
           return;
         }
         if (result.photoId !== current.photoId || result.sha256 !== current.sha256) {
           await block('The upload receipt did not match this photo.');
           return;
         }
+        if (current.kind === 'original') {
+          await acknowledgeQueuedPhoto(current);
+          return;
+        }
         const saved = await changePhoto(current, {
-          stage: current.kind === 'original' ? 'done' : 'sent',
+          stage: 'sent',
           receipt: true,
           attempts: 0,
           retryAt: 0,
         });
-        if (!saved || saved.kind === 'original') return;
+        if (!saved) return;
         current = saved;
       }
 
@@ -249,20 +296,46 @@ export function startPhotoQueue(owner: PhotoOwner, transport: PhotoTransport) {
       let result: ReferenceResult;
       try {
         result = await transport.reference(current, written, limit.signal);
-      } catch {
+      } catch (error) {
+        if (error instanceof ReopenTheApp) throw error;
         if (!signal.aborted) await retry();
         return;
       } finally {
         limit.release();
       }
       if (signal.aborted) return;
-      if (result.kind === 'acknowledged' && current.stage === 'referenced') await changePhoto(current, { stage: 'done' });
-      else if (result.kind === 'blocked') await block(result.reason);
+      if (result.kind === 'acknowledged' && current.stage === 'referenced') await acknowledgeQueuedPhoto(current);
+      else if (result.kind === 'blocked') await block(result.reason, result.refusal);
       else if (result.kind === 'sign-in') lock();
       else await retry();
     } finally {
       transport.changed?.(entry.photoId, false);
     }
+  }
+
+  // Check blocked copies on startup under the drain lock, even if their journal entries are gone.
+  async function recoverBlocked(): Promise<boolean> {
+    if (!transport.recover) return true;
+    const blocked = (await readPhotoQueue(person)).filter((entry) => entry.kind === 'photo' && entry.stage === 'blocked' && entry.receipt);
+    let complete = true;
+    for (const entry of blocked) {
+      if (!canRun()) return false;
+      const limit = attemptSignal(signal, REFERENCE_DEADLINE_MS);
+      try {
+        const matched = await transport.recover(entry, limit.signal);
+        if (matched === null) complete = false;
+        if (matched && !signal.aborted) {
+          await acknowledgeQueuedPhoto(entry);
+          transport.changed?.(entry.photoId, false);
+        }
+      } catch (error) {
+        if (error instanceof ReopenTheApp) throw error;
+        complete = false;
+      } finally {
+        limit.release();
+      }
+    }
+    return complete;
   }
 
   async function drain(): Promise<void> {
@@ -271,6 +344,7 @@ export function startPhotoQueue(owner: PhotoOwner, transport: PhotoTransport) {
     try {
       await navigator.locks.request(DRAIN_LOCK, { ifAvailable: true }, async (lock) => {
         if (!lock) return;
+        if (!checkedBlocked) checkedBlocked = await recoverBlocked();
         while (canRun()) {
           const entries = readyEntries(await readPendingWork(person), Date.now());
           if (!entries.length) return;
@@ -301,16 +375,24 @@ export function startPhotoQueue(owner: PhotoOwner, transport: PhotoTransport) {
   const timer = window.setInterval(drain, FOREGROUND_INTERVAL_MS);
   void drain();
 
+  const stop = () => {
+    lifetime.abort();
+    window.clearInterval(timer);
+    if (activeQueues.get(key) === stop) activeQueues.delete(key);
+  };
+  activeQueues.set(key, stop);
+
   return {
     drain,
+    resume() {
+      signedOut = false;
+      void drain();
+    },
     async sendOriginals(jobId: string) {
       if (signal.aborted) return;
       await requestOriginals(person, jobId);
       await drain();
     },
-    stop() {
-      lifetime.abort();
-      window.clearInterval(timer);
-    },
+    stop,
   };
 }

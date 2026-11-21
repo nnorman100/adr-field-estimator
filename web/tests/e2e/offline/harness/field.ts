@@ -14,9 +14,13 @@ import { readItemList } from '../../../../src/lib/field/ds-prices';
 import { runFieldSync } from '../../../../src/lib/field/field-sync';
 import { openDatabase, transact, withDatabase, type DbSpec } from '../../../../src/lib/field/idb';
 import { appendEntry, forgetJournal, readJournal } from '../../../../src/lib/field/journal';
-import { basesOf, journaledEdit } from '../../../../src/lib/field/journal-sync';
+import { basesOf, journaledEdit, readEntries } from '../../../../src/lib/field/journal-sync';
+import { mountFieldPhotos, photoCompanyOf, readRefusedPhotos } from '../../../../src/lib/field/photo-field';
+import { capturePhoto, readPhotoQueue } from '../../../../src/lib/field/photo-queue';
+import { changePhoto, readPayload } from '../../../../src/lib/field/photo-queue-storage';
 import { evaluate } from '../../../../src/lib/field/retention';
 import { signOutDiscarding, signOutKeeping, signOutOnRefusal } from '../../../../src/lib/field/sign-out';
+import { syncStatus } from '../../../../src/lib/field/sync-status';
 import type { GateState, SyncGate } from '../../../../src/lib/field/sync-gate';
 import { readUnsent, unsentKey, type LockReason } from '../../../../src/lib/field/unsent';
 
@@ -90,6 +94,37 @@ const withTimeout = <T,>(promise: Promise<T>, ms: number, otherwise: T): Promise
   Promise.race([promise, new Promise<T>((done) => setTimeout(() => done(otherwise), ms))]);
 
 const f = {
+  async captureQueuedPhoto(person: Person, jobId: string, draftId: string) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 32;
+    canvas.height = 32;
+    const image = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('Could not encode the picture')), 'image/jpeg');
+    });
+    return capturePhoto(person, { jobId, draftId, field: { shotTag: 'overview' } }, image);
+  },
+  queuedPhotos: readPhotoQueue,
+  async queuePayloads(person: Person) {
+    const rows = await readPhotoQueue(person);
+    const payloads = await Promise.all(rows.map((row) => readPayload(row)));
+    return rows.filter((_, index) => payloads[index]).map((row) => row.kind).sort();
+  },
+  // A photo whose receipt is held and whose reference stopped with no refusal of its own, as a closed page leaves it.
+  async blockPhoto(person: Person, photoId: string) {
+    const row = (await readPhotoQueue(person)).find((entry) => entry.photoId === photoId && entry.kind === 'photo')!;
+    await changePhoto(row, { stage: 'blocked', receipt: true, reason: 'The photo is stored. Its room and tag could not be saved.' });
+  },
+  async photoRecovery(person: Person) {
+    return syncStatus(await readEntries(get(person).client), true, await readRefusedPhotos(person));
+  },
+  photoDrain(person: Person) {
+    const current = get(person);
+    mountFieldPhotos(
+      current.client,
+      () => (current.gate ? photoCompanyOf(current.gate.current()) : null),
+      () => current.gate?.poke(),
+    );
+  },
   // Signs in on the company's own app, as the sign-in page does.
   async signIn(person: Omit<Person, 'uid'>, email: string, password: string): Promise<string> {
     const auth = companyAuth(person);

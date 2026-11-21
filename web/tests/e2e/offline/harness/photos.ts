@@ -10,6 +10,10 @@ import {
   type PhotoQueueEntry,
   type PhotoUpload,
 } from '@/lib/field/photo-queue';
+import { discardFieldWork } from '@/lib/field-db';
+import { hasWaitingPhotos } from '@/lib/field/photo-field';
+import { moveQueuedPhotos } from '@/lib/field/photo-queue-storage';
+import { unsentWork } from '@/lib/field/unsent';
 
 function drawn(size: [number, number]) {
   const canvas = document.createElement('canvas');
@@ -189,6 +193,16 @@ const photoHarness = {
   failSecondPayload,
   entries: readPhotoQueue,
   pending: readPendingWork,
+  waiting: hasWaitingPhotos,
+  unsent: (owner: PhotoOwner) => unsentWork(owner.tenantId, owner.uid),
+  discard(owner: PhotoOwner) {
+    return discardFieldWork({
+      ...owner, config: { apiKey: 'demo-emulator-api-key', authDomain: 'localhost', projectId: 'demo-field', authEmulatorUrl: null },
+    });
+  },
+  move(owner: PhotoOwner) {
+    return moveQueuedPhotos(owner, { jobId: 'job', draftId: 'draft' }, { jobId: 'new-job', draftId: 'new-draft' });
+  },
   storage: photoStorageNearlyFull,
   open(owner: PhotoOwner, ready = true) {
     queue?.stop();

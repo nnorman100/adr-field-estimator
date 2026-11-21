@@ -9,9 +9,12 @@ import { watchJournal, type JournalEntry } from '@/lib/field/journal';
 import { discardEntries, journalFailed, readEntries, tryAgain } from '@/lib/field/journal-sync';
 import { saveAsNewDraft } from '@/lib/field/new-draft';
 import { pending, usePending } from '@/lib/field/pending';
-import { byDraft, changedFields, chipText, keptText, PHOTOS_STAY, REASONS, RESTORE_FIRST, syncStatus, type Problem, type SyncStatus } from '@/lib/field/sync-status';
+import { changedFields, chipText, draftGroups, keptText, PHOTOS_STAY, REASONS, RESTORE_FIRST, syncStatus, type Problem, type SyncStatus } from '@/lib/field/sync-status';
 import { useFieldClient } from './field-store';
 import { photoReferenceDone } from './photos-view';
+import { finishRecoveredPhotos, readRefusedPhotos, retryRefusedPhotos } from '@/lib/field/photo-field';
+import { QUEUE_CHANGED } from '@/lib/field/photo-queue-storage';
+import type { PhotoQueueEntry } from '@/lib/field/photo-queue-storage';
 import { go, Outcome } from './ui';
 import { beginUpdateActivity } from '@/lib/update-activity';
 
@@ -28,6 +31,8 @@ export const DISCARD_KEEP = 'Keep them';
 export const SAVE_AS_NEW = 'Save as new draft';
 export const SAVE_AS_ANOTHER = 'Save as another new draft';
 
+type ChipRead = { kind: 'read'; status: SyncStatus } | { kind: 'unreadable'; status: SyncStatus | null };
+
 // How a panel names its job: the address this page last read for it, else the start of its id; none
 // once the server refused this person the job (no access), so nothing of it is shown.
 function jobLabel(problem: Problem, listDenied: boolean): string | null {
@@ -40,7 +45,7 @@ function jobLabel(problem: Problem, listDenied: boolean): string | null {
 export function SyncChip({ me }: { me: DsMe }) {
   const field = useFieldClient();
   const client = field?.client ?? null;
-  const [status, setStatus] = useState<SyncStatus | null>(null);
+  const [read, setRead] = useState<ChipRead | null>(null);
   // How many times the sheet was opened: each opening asks the server again what it offers.
   const [opened, setOpened] = useState(0);
   const sheet = useRef<HTMLDialogElement>(null);
@@ -56,7 +61,14 @@ export function SyncChip({ me }: { me: DsMe }) {
     const mine = ++reads.current;
     try {
       const entries = await readEntries(client);
-      if (mine === reads.current) setStatus(syncStatus(entries, canSaveAsNew));
+      try {
+        const photos = await readRefusedPhotos(client.person);
+        if (mine === reads.current) setRead({ kind: 'read', status: syncStatus(entries, canSaveAsNew, photos) });
+      } catch (error) {
+        if (mine !== reads.current) return;
+        setRead((last) => ({ kind: 'unreadable', status: last?.status ?? null }));
+        journalFailed(client, error);
+      }
     } catch (error) {
       // The journal did not answer: the chip keeps what it last said, and a storage connection lost
       // twice goes to the shell, which says "Reopen the app".
@@ -78,21 +90,23 @@ export function SyncChip({ me }: { me: DsMe }) {
       if (document.visibilityState === 'visible') void load();
     };
     document.addEventListener('visibilitychange', shown);
+    window.addEventListener(QUEUE_CHANGED, shown);
     return () => {
       stop();
       document.removeEventListener('visibilitychange', shown);
+      window.removeEventListener(QUEUE_CHANGED, shown);
       reads.current += 1;
     };
   }, [client, load, online]);
 
-  const problems = status?.problems ?? [];
+  const problems = read?.status?.problems ?? [];
   // The sheet closes once its last problem has cleared.
   useEffect(() => {
     if (problems.length === 0 && sheet.current?.open) sheet.current.close();
   }, [problems.length]);
 
-  if (!client || !status) return null;
-  const text = chipText(status);
+  if (!client || !read) return null;
+  const text = read.kind === 'unreadable' ? 'Couldn’t read photos on this phone' : chipText(read.status);
 
   return (
     <div>
@@ -165,7 +179,7 @@ function ProblemPanel({
   const textId = useId();
   const words = REASONS[problem.reason];
   const client = field?.client;
-  const count = problem.entries.length;
+  const count = problem.entries.length + problem.photos.length;
   const listDenied = usePending(() => pending.listDenied());
   const label = jobLabel(problem, listDenied);
   // Once the new draft for these edits holds other work: they can go into another one of their own.
@@ -206,34 +220,45 @@ function ProblemPanel({
     }
   }
 
-  // A photo reference these edits set leaves the photos being sent: it was sent, or discarded.
-  const photosDone = (edits: readonly JournalEntry[]) => {
-    const jobId = edits.find((entry) => entry.jobId)?.jobId;
-    if (!client || !jobId) return;
-    for (const write of edits.flatMap((entry) => entry.writes)) {
-      const photo = /\/photos\/([^/]+)$/.exec(write.path)?.[1];
-      if (photo && write.op === 'set') photoReferenceDone(client, jobId, photo);
+  // A photo reference these edits set leaves the photos being sent: it was sent, or discarded. A
+  // discard also removes the photos the server refused for the job itself.
+  const photosDone = async (edits: readonly JournalEntry[], action: 'acknowledge' | 'discard', refused: readonly PhotoQueueEntry[] = []) => {
+    if (!client) return;
+    for (const group of draftGroups({ entries: edits, photos: refused })) {
+      const jobId = group.entries.find((entry) => entry.jobId)?.jobId ?? group.photos[0]?.jobId;
+      const draftId = (group.entries[0]?.draftPath ?? group.photos[0]?.refusal?.draftPath)?.split('/').at(-1);
+      if (!jobId || !draftId) continue;
+      const ids = new Set<string>(group.photos.map((photo) => photo.photoId));
+      for (const write of group.entries.flatMap((entry) => entry.writes)) {
+        const photo = /\/photos\/([^/]+)$/.exec(write.path)?.[1];
+        if (photo && write.op === 'set') ids.add(photo);
+      }
+      await finishRecoveredPhotos(client, jobId, draftId, ids, action);
+      for (const photo of ids) photoReferenceDone(client, jobId, photo);
     }
   };
 
   // The edits are saved: the job's open screen reads the job and its draft again (the job was
   // restored, or its field work came back).
-  const sent = (edits: readonly JournalEntry[]) => {
+  const sent = async (edits: readonly JournalEntry[]) => {
     const jobId = edits.find((entry) => entry.jobId)?.jobId;
     if (!client || !jobId) return;
     pending.returned(jobId);
     pending.verify(jobId);
-    photosDone(edits);
+    await photosDone(edits, 'acknowledge');
   };
 
   const again = () =>
     run('Sending again…', async () => {
       if (!online) return 'Needs a connection';
       const answers: string[] = [];
-      for (const edits of byDraft(problem.entries)) {
-        const answer = await tryAgain(client!, edits);
-        answers.push(answer);
-        if (answer === 'sent') sent(edits);
+      for (const group of draftGroups(problem)) {
+        if (group.entries.length > 0) {
+          const answer = await tryAgain(client!, group.entries);
+          answers.push(answer);
+          if (answer === 'sent') await sent(group.entries);
+        }
+        if (group.photos.length > 0) answers.push(await retryRefusedPhotos(client!, group.photos));
       }
       if (answers.includes('no-answer')) return 'No answer from DryScope. Check the signal and try again.';
       if (answers.includes('refused')) return 'Still can’t save: the reason above still holds.';
@@ -244,8 +269,8 @@ function ProblemPanel({
     run('Saving as a new draft…', async () => {
       if (!online) return 'Needs a connection';
       let made: string | null = null;
-      for (const edits of byDraft(problem.entries)) {
-        const answer = await saveAsNewDraft(client!, edits, another);
+      for (const group of draftGroups(problem)) {
+        const answer = await saveAsNewDraft(client!, group.entries, another, group.photos);
         if (answer.kind === 'saved') made = answer.jobId;
         else if (answer.kind === 'not-kept') return 'This job’s field work is not kept on this phone, so there is nothing to copy.';
         else if (answer.kind === 'exists') {
@@ -264,8 +289,8 @@ function ProblemPanel({
 
   const discard = () =>
     run('Discarding…', async () => {
+      await photosDone(problem.entries, 'discard', problem.photos);
       await discardEntries(client!, problem.entries);
-      photosDone(problem.entries);
       return null;
     });
 

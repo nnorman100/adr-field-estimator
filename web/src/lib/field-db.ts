@@ -29,6 +29,8 @@ import { forgetItemLists } from '@/lib/field/ds-prices';
 import { meKey } from '@/lib/field/ds-me';
 import { discardKept } from '@/lib/field/update-keep';
 import { forgetUnsent, keepPhotosHere, mayHaveUnsent, noteWrite, settled, writesNow } from '@/lib/field/unsent';
+import { stopPhotoQueue, whilePhotoQueueIdle } from '@/lib/field/photo-queue';
+import { discardQueuedPhotos } from '@/lib/field/photo-queue-storage';
 import { addingEntries, forgetJournal, journalInMemory, readJournal } from '@/lib/field/journal';
 import type { AppCheckSeam } from '@/lib/field/sync-gate';
 import { whileNoFieldWindow } from '@/lib/field/window-lock';
@@ -245,6 +247,7 @@ export function fieldWrite<T>(client: FieldClient, write: (db: Firestore) => Pro
 
 // Ends this page's client for the person, if it has one (sign-out, Discard).
 export async function stopFieldClient(person: Pick<FieldPerson, 'tenantId' | 'uid'>): Promise<void> {
+  stopPhotoQueue(person);
   const name = fieldAppName(person.tenantId, person.uid);
   const client = clients.get(name);
   clients.delete(name);
@@ -294,6 +297,11 @@ export async function discardFieldWork(
       const discarded = await within(discardKept(meKey(person.tenantId, person.uid)).then(() => true, () => false), 5_000);
       if (!discarded) return 'failed';
     }
+    if (stillWanted && !stillWanted()) return 'kept';
+    const photos = () => discardQueuedPhotos(person, undefined, stillWanted);
+    const removed = await (navigator.locks ? whilePhotoQueueIdle(photos) : photos()).catch(() => 'failed' as const);
+    if (removed === 'failed') return 'failed';
+    if (!removed) return 'kept';
     forgetUnsent(person.tenantId, person.uid);
     return 'discarded';
   };

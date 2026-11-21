@@ -215,16 +215,18 @@ export function boundTokenWaits(app: FirebaseApp, waitMs: number = TOKEN_WAIT_MS
 }
 
 const headerSources = new WeakMap<AppCheck, () => Promise<Record<string, string>>>();
+const freshHeaderSources = new WeakMap<AppCheck, () => Promise<Record<string, string>>>();
 
 // The App Check header for one of this app's /api calls: the token when one comes within
 // TOKEN_WAIT_MS, otherwise nothing. Never throws.
-export async function appCheckHeaders(): Promise<Record<string, string>> {
+export async function appCheckHeaders(forceRefresh = false): Promise<Record<string, string>> {
   const appCheck = activeAppCheck();
   if (!appCheck) return {};
-  let source = headerSources.get(appCheck);
+  const sources = forceRefresh ? freshHeaderSources : headerSources;
+  let source = sources.get(appCheck);
   if (!source) {
-    source = tokenHeaders(async () => (await getToken(appCheck, false)).token);
-    headerSources.set(appCheck, source);
+    source = tokenHeaders(async () => (await getToken(appCheck, forceRefresh)).token);
+    sources.set(appCheck, source);
   }
   return source();
 }

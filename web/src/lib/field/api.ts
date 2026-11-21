@@ -13,6 +13,7 @@ import { callApi } from '@/lib/firebase-client';
 import type { ClaimView, CustomerView, JobDetail, JobListItem, JobPage } from '@/lib/jobs/service';
 import { itemListResponseSchema } from '@/lib/prices/item-list';
 import { MAX_PHOTO_REFS } from './schema';
+import type { PhotoUpload } from './photo-queue-storage';
 import type { SummaryProposal } from './summary';
 import type { JobsList } from './views';
 
@@ -223,10 +224,11 @@ export async function copyJob(user: User, jobId: string, input: { id: string; dr
   return answerOf(status, body, jobDetail, [200, 201]) as Answer<JobDetail>;
 }
 
-async function authorized(user: User, path: string, init: RequestInit = {}): Promise<Response | null> {
+async function authorized(user: User, path: string, init: RequestInit = {}, refreshAppCheck = false): Promise<Response | null> {
   try {
     const token = await user.getIdToken();
-    const headers = { ...init.headers, Authorization: `Bearer ${token}`, ...(await appCheckHeaders()) };
+    const headers = { ...init.headers, Authorization: `Bearer ${token}`, ...(await appCheckHeaders(refreshAppCheck)) };
+    init.signal?.throwIfAborted();
     return await apiFetch(path, { ...init, headers, cache: 'no-store' });
   } catch {
     return null;
@@ -235,17 +237,39 @@ async function authorized(user: User, path: string, init: RequestInit = {}): Pro
 
 // Sends a photo's bytes (the screen keeps the same bytes and id for a resend). 201 for a new photo,
 // 200 for the same bytes again.
-export async function sendPhoto(user: User, jobId: string, photoId: string, bytes: Blob): Promise<Answer<{ photoId: string }>> {
+export function sendPhoto(user: User, jobId: string, photoId: string, bytes: Blob): Promise<Answer<{ photoId: string }>> {
+  return photoReceipt(user, jobId, photoId, bytes);
+}
+
+// Only queued photos renew a refused App Check credential and replay the upload.
+export function sendQueuedPhoto(user: User, photo: PhotoUpload, bytes: Blob, signal: AbortSignal) {
+  return photoReceipt(user, photo.jobId, photo.photoId, bytes, { originalOf: photo.kind === 'original' ? photo.photoSha256 : undefined, signal, renewAppCheck: true });
+}
+
+type ReceiptOptions = { originalOf?: string; signal?: AbortSignal; renewAppCheck?: boolean };
+
+async function photoReceipt(user: User, jobId: string, photoId: string, bytes: Blob, { originalOf, signal, renewAppCheck }: ReceiptOptions = {}) {
   // The bytes themselves rather than the Blob: the same body on every send, whatever the browser
   // does with a Blob it streams.
-  const response = await authorized(user, `/api/jobs/${jobId}/photos/${photoId}?kind=photo`, {
+  const path = `/api/jobs/${encodeURIComponent(jobId)}/photos/${encodeURIComponent(photoId)}?kind=${originalOf ? 'original' : 'photo'}`;
+  const init: RequestInit = {
     method: 'PUT',
-    headers: { 'Content-Type': bytes.type || 'application/octet-stream' },
+    headers: {
+      'Content-Type': bytes.type || 'application/octet-stream',
+      ...(originalOf ? { 'X-Photo-Sha256': originalOf } : {}),
+    },
     body: new Uint8Array(await bytes.arrayBuffer()),
-  });
-  if (!response) return { ok: false, status: 0, message: answerMessage(0, null) };
-  const body = await response.json().catch(() => null);
-  return answerOf(response.status, body, receipt, [200, 201]);
+    signal,
+  };
+  const attempt = async (refreshAppCheck: boolean): Promise<Answer<z.infer<typeof receipt>> & { retryAfter?: string | null }> => {
+    const response = await authorized(user, path, init, refreshAppCheck);
+    if (!response) return { ok: false, status: 0, message: answerMessage(0, null) };
+    const body = await response.json().catch(() => null);
+    const answer = answerOf(response.status, body, receipt, [200, 201]);
+    return answer.ok ? answer : { ...answer, retryAfter: response.headers.get('Retry-After') };
+  };
+  const answer = await attempt(false);
+  return renewAppCheck && !answer.ok && answer.status === 401 && answer.code === 'app_check_required' ? attempt(true) : answer;
 }
 
 // A photo's bytes as a local address for an <img>; the server's refusal (401, 403, 404, or 410 for

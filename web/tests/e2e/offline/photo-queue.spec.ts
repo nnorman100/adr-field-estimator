@@ -118,6 +118,61 @@ const payloads = (page: Page) => page.evaluate(() => window.photoHarness.bytes()
 const start = (page: Page, owner = OWNER, ready = true) =>
   page.evaluate(([person, connected]) => window.photoHarness.open(person, connected), [owner, ready] as const);
 
+test('a kept capture survives reload, and the existing discard erases only that person’s queue', async ({ context, photoServer }) => {
+  const page = await open(context, photoServer);
+  await capture(page);
+  await page.evaluate((other) => window.photoHarness.capture(other), OTHER);
+  expect(await page.evaluate((owner) => window.photoHarness.unsent(owner), OWNER)).toBe('kept');
+  await page.reload();
+  expect(await entries(page)).toHaveLength(2);
+  expect(await page.evaluate((owner) => window.photoHarness.unsent(owner), OWNER)).toBe('kept');
+  expect(await page.evaluate((owner) => window.photoHarness.discard(owner), OWNER)).toBe('discarded');
+  expect(await entries(page)).toEqual([]);
+  expect(await page.evaluate((owner) => window.photoHarness.unsent(owner), OWNER)).toBe('none');
+  expect(await page.evaluate((other) => window.photoHarness.entries(other), OTHER)).toHaveLength(2);
+  expect(await payloads(page)).toHaveLength(2);
+});
+
+test('discard also erases the person’s completed photo records', async ({ context, photoServer }) => {
+  const page = await open(context, photoServer);
+  await capture(page);
+  await start(page);
+  await page.evaluate(() => window.photoHarness.originals());
+  await expect.poll(async () => (await entries(page)).every(({ stage }) => stage === 'done')).toBe(true);
+  expect(await entries(page)).toHaveLength(2);
+  expect(await page.evaluate((owner) => window.photoHarness.unsent(owner), OWNER)).toBe('none');
+  expect(await page.evaluate((owner) => window.photoHarness.discard(owner), OWNER)).toBe('discarded');
+  expect(await entries(page)).toEqual([]);
+});
+
+test('moving unsent photos to a new draft assigns one fresh id and keeps both payloads on retry', async ({ context, photoServer }) => {
+  const page = await open(context, photoServer);
+  await capture(page);
+  const before = await entries(page);
+  await page.evaluate((owner) => window.photoHarness.move(owner), OWNER);
+  const moved = await entries(page);
+  expect(moved).toHaveLength(2);
+  expect(new Set(moved.map(({ photoId }) => photoId)).size).toBe(1);
+  expect(moved[0]?.photoId).not.toBe(before[0]?.photoId);
+  expect(moved.every(({ jobId, draftId }) => jobId === 'new-job' && draftId === 'new-draft')).toBe(true);
+  expect(moved.map(({ sha256 }) => sha256).sort()).toEqual(before.map(({ sha256 }) => sha256).sort());
+  await page.reload();
+  await page.evaluate((owner) => window.photoHarness.move(owner), OWNER);
+  expect(await entries(page)).toEqual(moved);
+  expect(await payloads(page)).toHaveLength(2);
+});
+
+test('waiting photos hold Finish until the reference is acknowledged, while a waiting original does not', async ({ context, photoServer }) => {
+  const page = await open(context, photoServer);
+  await capture(page);
+  const waiting = () => page.evaluate((owner) => window.photoHarness.waiting(owner, 'job', 'draft'), OWNER);
+  expect(await waiting()).toBe(true);
+  await start(page);
+  await expect.poll(waiting).toBe(false);
+  expect(await payloads(page)).toEqual([expect.objectContaining({ kind: 'original' })]);
+  expect(await page.evaluate((owner) => window.photoHarness.unsent(owner), OWNER)).toBe('kept');
+});
+
 test('saves a 12 MP capture before showing it, then resumes the same copy and waits for a tap to send the original', async ({ context, photoServer }) => {
   let page = await open(context, photoServer);
   const saved = await page.evaluate((owner) => window.photoHarness.capture(owner, [4000, 3000]), OWNER);
