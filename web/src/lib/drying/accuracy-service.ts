@@ -1,8 +1,12 @@
-import { desc, eq, sql } from 'drizzle-orm';
-import { priceTableVersions } from '@/db/schema';
+import { eq, sql } from 'drizzle-orm';
+import { companyFeatureFlags } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
-import { contentHash, ENGINE_VERSION, parseTable } from '@/engine/table';
-import type { JobCaller } from '@/lib/jobs/access';
+import { ENGINE_VERSION, hasCushionBrackets } from '@/engine/table';
+import { capabilitiesFor } from '@/lib/access';
+import { EstimateError } from '@/lib/estimates/errors';
+import { latestVersion, versionTable } from '@/lib/estimates/service';
+import { accessFlags, flagsFromRows } from '@/lib/flags';
+import { JobError, type JobCaller } from '@/lib/jobs/access';
 import { accuracyOf, type Accuracy, type AccuracyPolicy, type AccuracyRow } from './accuracy';
 import { currentCaller } from './readings';
 
@@ -47,27 +51,23 @@ async function closedRows(tx: CompanyTransaction, companyId: string): Promise<Ac
 // The current published table's estimate settings, or null when there is none or this server cannot
 // price it (another engine version, or one that does not parse or match its hash).
 async function currentPolicy(tx: CompanyTransaction, companyId: string): Promise<AccuracyPolicy | null> {
-  const [version] = await tx
-    .select({ content: priceTableVersions.content, contentHash: priceTableVersions.contentHash, engineVersion: priceTableVersions.engineVersion })
-    .from(priceTableVersions)
-    .where(eq(priceTableVersions.companyId, companyId))
-    .orderBy(desc(priceTableVersions.sequence))
-    .limit(1);
+  const version = await latestVersion(tx, companyId);
   if (!version || version.engineVersion !== ENGINE_VERSION) return null;
-  let table;
   try {
-    table = parseTable(version.content);
-  } catch {
-    return null;
+    const { policy } = versionTable(version);
+    return { estimateMode: policy.estimate_mode, rangeMethod: policy.assist.range_method, beyondPercent: policy.range.beyond_percent, customBrackets: hasCushionBrackets(policy) };
+  } catch (error) {
+    if (error instanceof EstimateError) return null;
+    throw error;
   }
-  if (contentHash(table) !== version.contentHash) return null;
-  const { policy } = table;
-  return {
-    estimateMode: policy.estimate_mode,
-    rangeMethod: policy.assist.range_method,
-    beyondPercent: policy.range.beyond_percent,
-    customBrackets: (policy.range.brackets?.length ?? 0) > 0,
-  };
+}
+
+// The route's two checks again, in the snapshot every history read follows: `estimate_assist` and price
+// books on (404, as the routes) and `prices_manage` from the caller's current role (403).
+async function requireOwnerOfPrices(tx: CompanyTransaction, caller: JobCaller): Promise<void> {
+  const flags = flagsFromRows(await tx.select({ flag: companyFeatureFlags.flag, enabled: companyFeatureFlags.enabled }).from(companyFeatureFlags).where(eq(companyFeatureFlags.companyId, caller.companyId)));
+  if (!flags.estimate_assist || !flags.price_books) throw new JobError('not_found');
+  if (!capabilitiesFor(caller.role, accessFlags(flags)).includes('prices_manage')) throw new JobError('not_allowed');
 }
 
 export function accuracyService(db: Database): AccuracyService {
@@ -78,7 +78,8 @@ export function accuracyService(db: Database): AccuracyService {
         caller.companyId,
         async (tx) => {
           await currentCaller(tx, caller, false);
-          const [signed] = (await tx.execute(sql`SELECT count(DISTINCT job_id)::int AS n FROM estimate_history WHERE company_id = ${caller.companyId}::uuid`)) as unknown as { n: number }[];
+          await requireOwnerOfPrices(tx, caller);
+          const [signed] = (await tx.execute(sql`SELECT count(DISTINCT job_id)::int AS n FROM agreements WHERE company_id = ${caller.companyId}::uuid AND kind = 'original'`)) as unknown as { n: number }[];
           return accuracyOf(await closedRows(tx, caller.companyId), signed?.n ?? 0, await currentPolicy(tx, caller.companyId));
         },
         { snapshot: true },

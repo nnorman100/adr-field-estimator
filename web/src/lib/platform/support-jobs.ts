@@ -9,7 +9,6 @@ import type { PhotoKind } from '@/lib/photos/service';
 import type { EvidenceStore } from '@/lib/photos/store';
 import { PlatformError, readCompany, type CompanyView } from './service';
 import { signedRowProjections } from '@/lib/drying/projection';
-import type { JobCaller } from '@/lib/jobs/access';
 
 // The platform operator's read-only support view of a company's jobs (S5b-5; owner decision J8:
 // platform operator only, read-only, audited). Three views: the company's jobs, one job (its header,
@@ -50,10 +49,6 @@ const visibleEvidence = (companyId: string, jobId: string): SQL =>
     sql`${evidenceObjects.id} IN (SELECT signature_evidence_id FROM agreements WHERE company_id = ${companyId}::uuid AND job_id = ${jobId}::uuid)`,
   )!;
 
-// The operator as the drying watch's projection sees them: read-only support, holding no company key, so
-// the watch's action hints are all off.
-const supportViewer = (companyId: string, operatorId: string): JobCaller => ({ companyId, actorId: operatorId, uid: '', role: 'office', capabilities: [] });
-
 // `openStore` is called only when a photo's bytes are opened, so the views that read the database
 // alone need no evidence bucket.
 export function supportJobsService(db: Database, openStore: () => EvidenceStore): SupportJobsService {
@@ -88,7 +83,7 @@ export function supportJobsService(db: Database, openStore: () => EvidenceStore)
           const company = await readCompany(tx, companyId);
           const { entries, nextCursor } = await jobPage(tx, [eq(jobs.companyId, companyId)], after, page.limit);
           // A signed row's close status and drying watch status, under the company's switches (S5b-10).
-          const outcomes = await signedRowProjections(tx, companyId, entries.map(({ job }) => job), supportViewer(companyId, operatorId));
+          const outcomes = await signedRowProjections(tx, companyId, entries.map(({ job }) => job));
           return { company, jobs: entries.map(({ job, item }) => ({ ...item, ...outcomes.get(job.id) })), nextCursor };
         },
         'support_jobs_viewed',
@@ -119,7 +114,7 @@ export function supportJobsService(db: Database, openStore: () => EvidenceStore)
             .from(evidenceObjects)
             .where(and(eq(evidenceObjects.companyId, companyId), eq(evidenceObjects.jobId, jobId), visibleEvidence(companyId, jobId)))
             .orderBy(asc(evidenceObjects.createdAt), asc(evidenceObjects.id));
-          const outcome = (await signedRowProjections(tx, companyId, [row], supportViewer(companyId, operatorId))).get(row.id);
+          const outcome = (await signedRowProjections(tx, companyId, [row])).get(row.id);
           return {
             company,
             ...detail,

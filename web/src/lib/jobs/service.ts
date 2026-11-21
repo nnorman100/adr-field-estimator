@@ -281,9 +281,9 @@ export async function rebuildableRecord(tx: CompanyTransaction, companyId: strin
 }
 
 export function jobsService(db: Database, drafts: DraftStore, sync: DraftSync): JobsService {
-  async function inCompany<T>(companyId: string, run: (tx: CompanyTransaction) => Promise<T>): Promise<T> {
+  async function inCompany<T>(companyId: string, run: (tx: CompanyTransaction) => Promise<T>, options: { snapshot?: boolean } = {}): Promise<T> {
     try {
-      return await withCompany(db, companyId, run);
+      return await withCompany(db, companyId, run, options);
     } catch (error) {
       if (errorCode(error) === CHECK_VIOLATION) throw new JobError('invalid_request');
       throw error;
@@ -411,14 +411,14 @@ export function jobsService(db: Database, drafts: DraftStore, sync: DraftSync): 
         if (!company) where.push(or(eq(jobs.createdByActorId, caller.actorId), eq(jobs.fieldOwnerActorId, caller.actorId), assigned)!);
         const { entries, nextCursor } = await jobPage(tx, where, after, query.limit);
         // A signed row's close status and drying watch status, under their switches (S5b-10).
-        const outcomes = await signedRowProjections(tx, caller.companyId, entries.map(({ job }) => job), caller);
+        const outcomes = await signedRowProjections(tx, caller.companyId, entries.map(({ job }) => job));
         return {
           // Every row of a caller's own list is theirs (made, owned in the field or assigned); in the
           // company list only an estimator is ever assigned, and they never get that list.
           jobs: entries.map(({ job, item }) => ({ ...item, mine: !company || isOwnJob(caller, job), ...outcomes.get(job.id) })),
           nextCursor,
         };
-      });
+      }, { snapshot: true });
     },
 
     async read(caller, jobId) {

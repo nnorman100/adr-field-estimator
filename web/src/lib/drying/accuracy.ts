@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { Dec } from '@/engine/decimal';
 
 // The estimate accuracy numbers (S5b-10 slice 10B): a port of the old app's backend/outcomes.py
@@ -56,6 +57,31 @@ export type Accuracy = {
   suggestions: null | { hiddenDamagePercent: Record<'1' | '2' | '3', Suggestion>; extraDryingDays: Suggestion } | { firstPercent: CushionSuggestion };
   reason: null | 'no_prices' | 'single_price' | 'custom_brackets';
 };
+
+const count = z.number().int().nonnegative();
+const suggestion = z.strictObject({ value: count.nullable(), jobs: count });
+const categories = z.strictObject({ '1': count, '2': count, '3': count });
+
+/** What the accuracy route answers: closed fields only, every state (none closed, too few jobs, no table) included. */
+export const accuracyResponse = z.strictObject({
+  signed: count,
+  closed: count,
+  inside: count,
+  above: count,
+  below: count,
+  insidePercent: z.number().int().min(0).max(100).nullable(),
+  counts: categories,
+  extraDryingDays: suggestion,
+  estimateMode: z.enum(['range', 'single']).nullable(),
+  method: z.enum(['cushion', 'uncertainty']).nullable(),
+  suggestions: z
+    .union([
+      z.null(),
+      z.strictObject({ hiddenDamagePercent: z.strictObject({ '1': suggestion, '2': suggestion, '3': suggestion }), extraDryingDays: suggestion }),
+      z.strictObject({ firstPercent: z.strictObject({ value: z.string().nullable(), jobs: count, heldAtBeyond: z.boolean() }) }),
+    ]),
+  reason: z.enum(['no_prices', 'single_price', 'custom_brackets']).nullable(),
+});
 
 // A fraction num/den with a positive denominator.
 type Fraction = { num: bigint; den: bigint };

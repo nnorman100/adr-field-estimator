@@ -1,6 +1,7 @@
 import { IdentityRefusal, type Identity } from '@/lib/auth';
 import { JobError } from '@/lib/jobs/access';
 import { readBody, TooLarge } from '@/lib/photos/image';
+import { accuracyResponse } from './accuracy';
 import { DryingError } from './errors';
 import { dryingServices } from './services';
 
@@ -139,7 +140,7 @@ export async function readAccuracy(request: Request, identity: Identity): Promis
   return respond(async () => {
     if (identity.flags?.price_books !== true) throw new JobError('not_found');
     if (!identity.capabilities.includes('prices_manage')) throw new JobError('not_allowed');
-    if ([...new URL(request.url).searchParams.keys()].length > 0) throw new DryingError('invalid_request');
-    return json(await dryingServices().accuracy.read(identity));
+    if (new URL(request.url).search !== '') throw new DryingError('invalid_request');
+    return json(accuracyResponse.parse(await dryingServices().accuracy.read(identity)));
   });
 }

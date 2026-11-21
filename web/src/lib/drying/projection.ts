@@ -3,16 +3,17 @@ import { jobCloses } from '@/db/drying-schema';
 import { companyFeatureFlags } from '@/db/schema';
 import type { CompanyTransaction } from '@/db/tenant';
 import { flagsFromRows } from '@/lib/flags';
-import type { JobCaller, JobRow } from '@/lib/jobs/access';
-import { compute, databaseNow } from './watch-service';
+import type { JobRow } from '@/lib/jobs/access';
+import { databaseNow, watchStatesOf } from './watch-service';
 import type { WatchStatus } from './watch';
 
 // What a jobs list row shows of a signed job's outcome (S5b-10 slice 10B): the close's status and date
 // with the `estimate_assist` switch on, and the drying watch's status and due indicator with
-// `drying_watch` on, each worked out by the same helper as the job's own card (outcome.ts, the watch's
-// compute). Nothing else: no amount, note, reason, reading, person or action. Read in the transaction of
-// the page it decorates, for rows the caller is already allowed to list (the member jobs list, or the
-// operator's audited read-only support views).
+// `drying_watch` on, worked out for the whole page in a fixed number of queries from the same signed facts,
+// readings and decisions as the job's own card (the watch's state function). Nothing else: no amount,
+// note, reason, reading, person, action or facts hash. Read in the read-only snapshot of the page it
+// decorates, for rows the caller is already allowed to list (the member jobs list, or the operator's
+// audited read-only support views).
 
 export type SignedRowProjection = {
   closed?: { closedAt: string | null };
@@ -20,7 +21,7 @@ export type SignedRowProjection = {
 };
 
 /** The projection of each signed row on a page, by job id; a row that is not signed has none. */
-export async function signedRowProjections(tx: CompanyTransaction, companyId: string, rows: readonly JobRow[], viewer: JobCaller): Promise<Map<string, SignedRowProjection>> {
+export async function signedRowProjections(tx: CompanyTransaction, companyId: string, rows: readonly JobRow[]): Promise<Map<string, SignedRowProjection>> {
   const signed = rows.filter((row) => row.status === 'signed');
   const found = new Map<string, SignedRowProjection>();
   if (signed.length === 0) return found;
@@ -43,13 +44,12 @@ export async function signedRowProjections(tx: CompanyTransaction, companyId: st
     for (const row of signed) found.get(row.id)!.closed = { closedAt: closedAt.get(row.id) ?? null };
   }
   if (flags.drying_watch) {
-    const now = await databaseNow(tx);
+    const states = await watchStatesOf(tx, companyId, signed.map((row) => row.id), await databaseNow(tx));
     for (const row of signed) {
-      const { view } = await compute(tx, viewer, row, now);
-      found.get(row.id)!.dryingWatch =
-        view.status === 'unavailable'
-          ? { status: 'unavailable', due: null, nextDueAt: null }
-          : { status: view.status, due: view.flags.includes('overdue') ? 'overdue' : view.flags.includes('due_today') ? 'due_today' : null, nextDueAt: view.nextDueAt };
+      const state = states.get(row.id) ?? null;
+      found.get(row.id)!.dryingWatch = state
+        ? { status: state.status, due: state.flags.includes('overdue') ? 'overdue' : state.flags.includes('due_today') ? 'due_today' : null, nextDueAt: state.nextDueAt }
+        : { status: 'unavailable', due: null, nextDueAt: null };
     }
   }
   return found;
