@@ -76,7 +76,7 @@ export function PhotosView({ job, draft, open, readinessFix }: { job: JobContext
   const camera = useRef<HTMLInputElement>(null);
   // Once the field work moved away from this person nothing more is taken or sent from here (J5): the
   // photos stay on screen, read only. So too once the job is archived (S5b-2).
-  const cameraShown = canTake || (capturing && !job.moved && !job.held);
+  const cameraShown = canTake || (capturing && !job.moved && !job.draftHeld());
   useEffect(() => {
     const input = camera.current;
     if (!input) return;
@@ -95,8 +95,13 @@ export function PhotosView({ job, draft, open, readinessFix }: { job: JobContext
   const update = (id: string, change: Partial<PendingPhoto>) => unsent.updatePhoto(jobId, id, change);
 
   // Whether the job is held now, not as it was when a capture or a send began: both await.
-  const heldNow = () => job.held || unsent.archiveChecking(jobId) || unsent.archived(jobId);
-  const heldMessage = () => (job.archived || unsent.archived(jobId) ? 'Not sent: this job is archived.' : 'Not sent: this job is being checked. Send it again in a moment.');
+  const heldNow = () => job.draftHeld() || unsent.archiveChecking(jobId) || unsent.archived(jobId);
+  const heldMessage = () =>
+    job.archived || unsent.archived(jobId)
+      ? 'Not sent: this job is archived.'
+      : job.held || unsent.archiveChecking(jobId)
+        ? 'Not sent: this job is being checked. Send it again in a moment.'
+        : 'Not sent: this job’s field work is being got ready. Send it again in a moment.';
 
   async function finish(item: PendingPhoto) {
     const db = job.session.db;
@@ -224,7 +229,7 @@ export function PhotosView({ job, draft, open, readinessFix }: { job: JobContext
                 <p role="status">{item.step === 'sending' ? 'Sending the photo…' : item.step === 'saving' ? 'Saving its room and tag…' : 'Not sent yet.'}</p>
                 {item.message ? <p role="alert">{item.message}</p> : null}
                 {item.step === 'send-failed' || item.step === 'save-failed' ? (
-                  <Button variant="outline" disabled={!job.session.online || job.moved || job.held} onClick={() => void finish(item)}>
+                  <Button variant="outline" disabled={!job.session.online || job.moved || job.draftHeld()} onClick={() => void finish(item)}>
                     Send again
                   </Button>
                 ) : null}

@@ -46,6 +46,10 @@ const JOURNAL_READ_MS = 8_000;
 
 const readsEveryDraft = (session: FieldSession) => session.role === 'owner' || session.role === 'office';
 const draftReadable = (session: FieldSession, detail: JobDetail) => readsEveryDraft(session) || fieldWorkOf(session, detail) === 'mine';
+// The draft the job read names, else (no job read yet, offline) the locator's: the one draft the screen
+// reads and edits. A locator that could not be written after a field step may name an older one.
+const jobDraftId = (detail: JobDetail | null | undefined, locator: { currentDraftId: string } | null | undefined): string | undefined =>
+  detail?.job.currentDraftId ?? locator?.currentDraftId;
 
 // Owner decision J5: the field work moved to another person (or this person was unassigned with it).
 // What they typed and did not send stays on this phone, read only; Save as new draft is S6.
@@ -85,6 +89,10 @@ export type JobContext = {
   // Nothing of the job is sent: it is archived, or a read of it must say first whether an archive or
   // another refusal changed it. What was typed stays, read only.
   held: boolean;
+  // Whether the draft's own work (a photo taken or sent) is held now, read when it is about to be sent, not
+  // as it was when it began: `held`, or the job's field work being got ready (only the draft waits for
+  // that; the customer, the claim and the coordination do not).
+  draftHeld: () => boolean;
   // Each mounted form registers how to clear its unsent values on discard, and whether it holds any now.
   markUnsaved: (form: string, discard: (() => void) | null, unsaved?: boolean) => void;
   // Keeps the return guard active during local preparation, before a write can be tracked elsewhere.
@@ -202,12 +210,13 @@ export function JobScreens({
     [jobId, session],
   );
 
-  // `mark`: the job read that started this draft read, whose answers count only while it is the newest.
+  // `mark`: the job read that started this draft read, whose answers count only while it is the newest. A
+  // read no job read started (a photo sent, the journal) counts only for the draft the job names now.
   const reloadDraft = useCallback(
     async (currentDraftId?: string, source?: 'cache', job?: JobDetail, mark?: number) => {
-      const draftId = currentDraftId ?? locator?.currentDraftId ?? detail?.job.currentDraftId;
+      const draftId = currentDraftId ?? jobDraftId(detail, locator);
       if (!draftId || !session.db || !mayReadDraft(job ?? detail)) return;
-      const current = () => mark === undefined || pending.newestRead(jobId, mark);
+      const current = () => pending.draftReadCounts(jobId, draftId, mark, jobDraftId(detail, locator));
       try {
         const found = await readDraft(session.db, { companyId: session.companyId, draftId }, source);
         if (found === SUPERSEDED || !current()) return;
@@ -266,7 +275,7 @@ export function JobScreens({
         setCachedError(null);
         // The draft the job read names, never an older one a locator that could not be written still names
         // (a field step that did not get through): that one is got ready (reloadDraft).
-        await reloadDraft((job ?? detail)?.job.currentDraftId ?? head.currentDraftId, undefined, job ?? detail ?? undefined, mark);
+        await reloadDraft(jobDraftId(job ?? detail, head), undefined, job ?? detail ?? undefined, mark);
       } catch (error) {
         if (!current()) return;
         const refusal = fieldRefusal(error);
@@ -310,6 +319,7 @@ export function JobScreens({
   // started), one at a time. Each answer is applied only if it is the newest read's (apply).
   // Only while a draft view (Check Scope or Photos) is open and the job names this person as field owner.
   const tryInFlight = useRef(false);
+  // A draft view (Check Scope or Photos) is open: the one test of it, for the tries and what they show.
   const draftView = view === 'scope' || view === 'photos';
   const ownsIt = detail !== null && fieldWorkOf(session, detail) === 'mine';
   useEffect(() => {
@@ -573,7 +583,7 @@ export function JobScreens({
   if (!detail && (!locator || !draft)) {
     return <p role="status">{session.online ? 'Opening the job…' : cachedError ?? 'Opening saved field work…'}</p>;
   }
-  const currentDraftId = locator?.currentDraftId ?? detail!.job.currentDraftId;
+  const currentDraftId = jobDraftId(detail, locator)!;
   const fieldWork = detail ? fieldWorkOf(session, detail) : null;
   const reader = readsEveryDraft(session);
   // The field work moved away from this person (J5): the server refused them, or the job named someone
@@ -605,13 +615,13 @@ export function JobScreens({
     editable:
       !moved && !archived && verifying === null && !gettingReady && draftAt === currentDraftId && draft !== null && canEditDraft(draft, session.user.uid, session.capabilities) && (session.online || session.offlineCapture),
     archived,
-    held: archived || archiveChecking || gettingReady,
+    held: archived || archiveChecking,
+    draftHeld: () => archived || archiveChecking || stillGettingReady.current,
     markUnsaved,
     startSave,
     stale: draft !== null && draftError !== null,
     readiness: { checking, answer: checking ? advisory : undefined, recheck },
   };
-  const onDraftViews = view === 'scope' || view === 'photos';
 
   return (
     <div className="flex flex-col gap-4">
@@ -677,8 +687,8 @@ export function JobScreens({
           {MOVED_TEXT}
         </p>
       ) : null}
-      {onDraftViews && startable && detail ? <StartFieldWork context={{ ...context, detail }} /> : null}
-      {onDraftViews && gettingReady && !moved && !archived ? (
+      {draftView && startable && detail ? <StartFieldWork context={{ ...context, detail }} /> : null}
+      {draftView && gettingReady && !moved && !archived ? (
         prepareTries < PREPARE_TRIES ? (
           <p role="status" className="rounded-md bg-foreground/5 p-3 text-sm">
             Getting this job&rsquo;s field work ready&hellip;
@@ -692,14 +702,14 @@ export function JobScreens({
           </div>
         )
       ) : null}
-      {onDraftViews && !moved && !reader && fieldWork === 'other' ? <p className="rounded-md bg-foreground/5 p-3 text-sm">{OTHER_OWNS_TEXT}</p> : null}
-      {onDraftViews && draft !== null && !moved && !archived && !context.editable && !(fieldWork === 'other' && !reader) ? (
+      {draftView && !moved && !reader && fieldWork === 'other' ? <p className="rounded-md bg-foreground/5 p-3 text-sm">{OTHER_OWNS_TEXT}</p> : null}
+      {draftView && draft !== null && !moved && !archived && !context.editable && !(fieldWork === 'other' && !reader) ? (
         <p className="rounded-md bg-foreground/5 p-3 text-sm">
           Read only. Only the estimator who owns this job&rsquo;s field work changes it, while the job is being edited.
         </p>
       ) : null}
-      {onDraftViews && !session.db ? <p role="alert">The field database is not set up for this company yet.</p> : null}
-      {onDraftViews && draftError ? (
+      {draftView && !session.db ? <p role="alert">The field database is not set up for this company yet.</p> : null}
+      {draftView && draftError ? (
         <div className="flex flex-col gap-2">
           <p role="alert">{draftError}</p>
           <Button variant="outline" onClick={() => void openDraft()}>
@@ -707,7 +717,7 @@ export function JobScreens({
           </Button>
         </div>
       ) : null}
-      {onDraftViews && !draft && !draftError && cachedError ? <p role="status">{cachedError}</p> : null}
+      {draftView && !draft && !draftError && cachedError ? <p role="status">{cachedError}</p> : null}
       {/* The views of one job stay mounted and only the open one shows, so moving between them
           keeps what the person has typed and not saved. */}
       <div hidden={view !== 'scope'}>{draft ? <ScopeView key={draftAt} job={context} draft={draft} open={view === 'scope'} readinessFix={fix ? readinessFix : null} /> : null}</div>

@@ -357,6 +357,11 @@ test('the field owner sees the field work being got ready, then edits it, with n
   await expect(page.getByRole('button', { name: 'Start field work' })).toHaveCount(0);
   await expectNoAxeViolations(page);
   await expect(page.getByRole('status').filter({ hasText: 'Getting this job’s field work ready' })).toBeVisible();
+  // Round 3, R4: only the draft waits: the customer and claim can be changed meanwhile.
+  await main(page).getByRole('link', { name: 'Customer and claim' }).click();
+  await expect(page.getByLabel('Customer name')).toBeEditable();
+  await main(page).getByRole('link', { name: 'Check Scope' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Getting this job’s field work ready' })).toBeVisible();
   // The held read (a second later, by itself) makes the draft again.
   release();
   await expect(page.getByLabel('Year built')).toBeEditable();
@@ -390,6 +395,81 @@ test('a locator left on an older submitted draft is not shown: the job’s own d
   await expect(page.getByRole('status').filter({ hasText: 'Getting this job’s field work ready' })).toBeVisible();
   await expect(page.getByLabel('Year built')).toBeEditable();
   await expect(page.getByLabel('Year built')).toHaveValue('');
+});
+
+// Slice 6 review round 3, R1: a locator that stays on an older draft (every write of it fails) never
+// decides what is edited: the draft the job read names is, once it is ready.
+test('a locator that stays on an older draft leaves the job’s own draft editable', async ({ page, request }) => {
+  test.setTimeout(120_000);
+  const company = await seedCompany('stuck-locator', { owner: 'owner' });
+  const { jobId } = await seedJob(request, company, company.people.owner!, '22 Stuck Locator Street', []);
+  const current = await currentDraftOf(company.id, jobId);
+  const drafts = adminDb().collection(`companies/${company.id}/drafts`);
+  const older = `older-${current.slice(0, 20)}`;
+  await drafts.doc(older).set({ ...(await drafts.doc(current).get()).data()!, state: 'submitted' });
+  // Every job read answers; the locator is put back on the older draft each time, as if its write failed.
+  await page.route(`**/api/jobs/${jobId}`, async (route) => {
+    if (route.request().method() !== 'GET') return route.continue();
+    const answer = await route.fetch();
+    await adminDb().doc(`companies/${company.id}/jobs/${jobId}`).set({ currentDraftId: older, revision: 0 });
+    return route.fulfill({ response: answer });
+  });
+  await signIn(page, company, company.people.owner!);
+  await openJob(page, '22 Stuck Locator Street');
+  await expect(page.getByLabel('Year built')).toBeEditable();
+});
+
+// Slice 6 review round 3, R5: a photo already being sent when the field work starts being got ready is
+// held when its upload answers: its reference is not written onto a draft that is not ready.
+test('a photo sent while the field work starts being got ready is held, not saved', async ({ page, request, context }) => {
+  test.setTimeout(120_000);
+  const company = await seedCompany('photo-held-ready', { owner: 'owner' });
+  const { jobId } = await seedJob(request, company, company.people.owner!, '23 Held Photo Road', []);
+  await signIn(page, company, company.people.owner!);
+  await openJob(page, '23 Held Photo Road');
+  await main(page).getByRole('link', { name: 'Photos' }).click();
+  // The upload is held until the screen is getting the field work ready; the job reads after the first
+  // one (the retries) are held too, so it stays getting ready.
+  let releaseUpload!: () => void;
+  const uploadHeld = new Promise<void>((resolve) => (releaseUpload = resolve));
+  let uploading!: () => void;
+  const uploadStarted = new Promise<void>((resolve) => (uploading = resolve));
+  await page.route('**/api/jobs/*/photos/*', async (route) => {
+    // The upload reaches the server; its answer is held.
+    const answer = await route.fetch();
+    uploading();
+    await uploadHeld;
+    return route.fulfill({ response: answer });
+  });
+  let reads = 0;
+  let uploaded = false;
+  void uploadStarted.then(() => (uploaded = true));
+  await page.route(`**/api/jobs/${jobId}`, async (route) => {
+    // Reads before the upload reached the server go through as they are.
+    if (route.request().method() !== 'GET' || !uploaded) return route.continue();
+    reads += 1;
+    if (reads === 1) {
+      const answer = await route.fetch();
+      await adminDb().recursiveDelete(adminDb().doc(`companies/${company.id}/drafts/${await currentDraftOf(company.id, jobId)}`));
+      return route.fulfill({ response: answer });
+    }
+    await new Promise<void>(() => undefined);
+  });
+  await page.getByLabel('Shot').selectOption({ label: 'Overview' });
+  await page.getByLabel('Take photo').setInputFiles({
+    name: 'photo.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAZ0lEQVR4nBWMQQ0AQAyDqmRKqgQlU1IlU1JFl+NJCBIaZARaFHSoSGKGMQOzTJhjykh4sDF4cfDhYokfm89C4KAgscP6y1027LFlJTLEP82SkCMlEjec/+CWC3dcOYkO9d92aejR0gf/sEsBLaIzfQAAAABJRU5ErkJggg==',
+      'base64',
+    ),
+  });
+  await uploadStarted;
+  await context.setOffline(true);
+  await context.setOffline(false);
+  await expect(page.getByRole('status').filter({ hasText: 'Getting this job’s field work ready' })).toBeVisible();
+  releaseUpload();
+  await expect(page.getByText('Not sent: this job’s field work is being got ready. Send it again in a moment.')).toBeVisible();
 });
 
 // Slice 6 review R6 (and R4, the company owner): an archived placeholder a previous version left over a

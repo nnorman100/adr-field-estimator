@@ -404,7 +404,15 @@ export const pending = {
   // answer no longer counts.
   // Whether the read sent under `mark` is still the newest that showed the job (no later read was
   // answered): what it started (its locator and draft reads) is applied only while it is.
-  newestRead: (jobId: string, mark: number): boolean => mark >= (state.readAt[jobId] ?? 0),
+  // An archive or a refusal since (410, archivedSeen, archivalDone, a denial: each moves the job's mark on)
+  // ends it too.
+  newestRead: (jobId: string, mark: number): boolean => mark >= (state.readAt[jobId] ?? 0) && mark >= pending.mark(jobId),
+  // Whether a draft read's answer counts: one a job read (sent under `mark`) started counts while that read
+  // is the newest; one no job read started (a photo sent, the journal) counts only for the draft the job
+  // names now (the newest job read's, else `fallback`, the locator's), so a read of an older draft never
+  // decides whether the field work is ready.
+  draftReadCounts: (jobId: string, draftId: string, mark: number | undefined, fallback?: string): boolean =>
+    mark === undefined ? draftId === (state.details[jobId]?.job.currentDraftId ?? fallback) : pending.newestRead(jobId, mark),
   // A read sent before the newest read that showed the job no longer counts either.
   readAnswered(jobId: string, answer: Answer<unknown>, mark: number): boolean {
     if (mark < pending.mark(jobId) || mark < (state.readAt[jobId] ?? 0)) return false;

@@ -141,4 +141,23 @@ describe('the field owner’s job read', () => {
     await h.admin`UPDATE memberships SET status = 'active' WHERE id = ${h.seed.ownerA.membership}`;
     expect(answer).toEqual({ status: 403, body: { error: 'not_allowed' } });
   });
+
+  // R6 (slice 6 review round 3): a sync that got through but left the job's current draft to a newer
+  // previous-version writer has not got it ready: the read logs that, by name only.
+  it('logs, by name only, a read whose sync leaves the current draft to a newer previous-version archive', async () => {
+    const ids = { id: randomUUID(), draftId: randomUUID() };
+    h.drafts.failNext = { on: true, afterWrite: false };
+    h.field.failNext.sync = 2;
+    expect((await create(OWNER_A, { ...ids, propertyAddress: '3 Held Placeholder Way' })).status).toBe(503);
+    const { revision } = (await read(OFFICE_A, ids.id)).body.job as { revision: number };
+    // A previous version's archive at a revision Postgres has not reached left its placeholder.
+    expect(await h.field.archiveDraft(h.seed.a, ids.id, ids.draftId, revision + 5)).toBe('set');
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const answer = await read(OWNER_A, ids.id);
+    const calls = logged.mock.calls.map((call) => call.map(String));
+    logged.mockRestore();
+    expect(answer.status).toBe(200);
+    expect(calls).toContainEqual(['job draft prepare unsettled', 'superseded']);
+    expect(h.field.draft(h.seed.a, ids.draftId)).toMatchObject({ placeholder: true });
+  });
 });

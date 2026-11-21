@@ -277,7 +277,12 @@ export function jobsService(db: Database, drafts: DraftStore, sync: DraftSync): 
     try {
       const behind = row.fieldSyncedRevision < row.fieldRevision;
       if (!behind && !noDraft(await drafts.findDraft(caller.companyId, row.currentDraftId))) return;
-      await syncJobDrafts(db, sync, drafts, caller.companyId, row.id);
+      const { result, currentDraftId } = await syncJobDrafts(db, sync, drafts, caller.companyId, row.id);
+      // A sync that got through but left the job's current draft to a newer writer (a previous version's
+      // revision holds it) has not got the field work ready: logged, by name only, as a failure is.
+      if ((result.outcome === 'synced' || result.outcome === 'same') && result.superseded.includes(currentDraftId)) {
+        console.error('job draft prepare unsettled', 'superseded');
+      }
     } catch (error) {
       if (isQueueTimeout(error)) throw error;
       console.error('job draft prepare unavailable', error instanceof Error ? error.name : 'unknown');
