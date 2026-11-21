@@ -46,6 +46,9 @@ type Phase =
   | { name: 'not-found' }
   | ({ name: 'ready' } & Ready);
 
+// How long the job is read again after an ownership refusal, including the wait for a sign-in token.
+const RECHECK_WITHIN_MS = 4_000;
+
 // A refusal or failure shown above the actions, and what the person can do next.
 type Problem = { message: string; next: Next; checklist?: 'checking' | 'current' };
 
@@ -237,7 +240,19 @@ function FinishActions({
   // Reads the job again after an ownership refusal, which the server gives before looking at the
   // draft, and asks for its readiness again. Answers whether this draft is still being edited.
   async function recheckChecklist(): Promise<boolean> {
-    const answer = await callApi(user, `/api/jobs/${encodeURIComponent(current.id)}`);
+    const refresh = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const answer = await Promise.race([
+      callApi(user, `/api/jobs/${encodeURIComponent(current.id)}`, { signal: refresh.signal }),
+      new Promise<null>((done) => {
+        timer = setTimeout(() => {
+          refresh.abort();
+          done(null);
+        }, RECHECK_WITHIN_MS);
+      }),
+    ]);
+    clearTimeout(timer);
+    if (!answer) return false;
     if (answer.status === 410) {
       showArchived();
       return false;
@@ -294,7 +309,7 @@ function FinishActions({
       ) : null}
       <p role="status">{busy ? 'Saving…' : (notice ?? '')}</p>
 
-      {editing && summary && !(notice && current.currentDraftId !== job.currentDraftId) ? (
+      {editing && summary && current.currentDraftId === job.currentDraftId ? (
         <section aria-labelledby="finish-draft" className="flex flex-col gap-2">
           <h2 id="finish-draft" className="text-lg font-semibold">
             What will be recorded
