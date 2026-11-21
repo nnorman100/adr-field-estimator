@@ -1,4 +1,4 @@
-import { apiFetch } from '@/lib/api-fetch';
+import { apiFetch, trackedWrite } from '@/lib/api-fetch';
 import type { User } from 'firebase/auth';
 import { appCheckHeaders } from '@/lib/app-check-client';
 import type { CompanyView } from '@/lib/platform/service';
@@ -13,7 +13,11 @@ export type ApiResult<T> = { ok: true; status: number; body: T } | { ok: false; 
 
 type Call = { method?: 'GET' | 'POST'; body?: unknown };
 
-export async function operatorCall<T>(user: Pick<User, 'getIdToken'>, path: string, call: Call = {}): Promise<ApiResult<T>> {
+export function operatorCall<T>(user: Pick<User, 'getIdToken'>, path: string, call: Call = {}): Promise<ApiResult<T>> {
+  return trackedWrite(call.method, 'save', () => sendOperatorCall<T>(user, path, call));
+}
+
+async function sendOperatorCall<T>(user: Pick<User, 'getIdToken'>, path: string, call: Call): Promise<ApiResult<T>> {
   let response: Response;
   try {
     const token = await user.getIdToken();

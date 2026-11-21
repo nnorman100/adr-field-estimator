@@ -26,6 +26,8 @@ import { appCheckSettings, startAppCheck } from '@/lib/app-check-client';
 import type { BrowserSignInConfig } from '@/lib/config';
 import { companyAuth } from '@/lib/firebase-client';
 import { forgetItemLists } from '@/lib/field/ds-prices';
+import { meKey } from '@/lib/field/ds-me';
+import { forgetKept } from '@/lib/field/update-keep';
 import { forgetUnsent, keepPhotosHere, mayHaveUnsent, noteWrite, settled, writesNow } from '@/lib/field/unsent';
 import { addingEntries, forgetJournal, journalInMemory, readJournal } from '@/lib/field/journal';
 import type { AppCheckSeam } from '@/lib/field/sync-gate';
@@ -287,6 +289,10 @@ export async function discardFieldWork(
       auths.delete(app.name);
       await deleteApp(app).catch(() => undefined);
       if (cleared !== 'cleared') return 'failed';
+    }
+    if (typeof indexedDB !== 'undefined') {
+      const discarded = await within(forgetKept(meKey(person.tenantId, person.uid)).then(() => true, () => false), 5_000);
+      if (!discarded) return 'failed';
     }
     forgetUnsent(person.tenantId, person.uid);
     return 'discarded';

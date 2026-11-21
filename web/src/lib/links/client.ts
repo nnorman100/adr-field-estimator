@@ -1,4 +1,4 @@
-import { apiFetch } from '@/lib/api-fetch';
+import { apiFetch, trackedWrite } from '@/lib/api-fetch';
 import { LINK_TOKEN_HEADER } from './header';
 
 // The homeowner's and adjuster's pages' calls to this app's link routes (S5a-11b). The token goes in
@@ -17,16 +17,18 @@ async function linkFetch(token: string, path: string, init: { method?: string; j
     body = init.bytes as BodyInit;
   }
   try {
-    return await apiFetch(path, { method: init.method ?? 'GET', headers, body, cache: 'no-store', referrerPolicy: 'no-referrer', credentials: 'omit' }, init.bytes ? 'upload' : 'save');
+    return await apiFetch(path, { method: init.method ?? 'GET', headers, body, cache: 'no-store', referrerPolicy: 'no-referrer', credentials: 'omit' });
   } catch {
     return null;
   }
 }
 
-export async function linkCall(token: string, path: string, init: { method?: string; json?: unknown; bytes?: Uint8Array; type?: string } = {}): Promise<LinkAnswer> {
-  const response = await linkFetch(token, path, init);
-  if (!response) return { status: 0, body: null };
-  return { status: response.status, body: await response.json().catch(() => null) };
+export function linkCall(token: string, path: string, init: { method?: string; json?: unknown; bytes?: Uint8Array; type?: string } = {}): Promise<LinkAnswer> {
+  return trackedWrite(init.method, init.bytes ? 'upload' : 'save', async () => {
+    const response = await linkFetch(token, path, init);
+    if (!response) return { status: 0, body: null };
+    return { status: response.status, body: await response.json().catch(() => null) };
+  });
 }
 
 /** An image a link route answers, as a local address for an <img>, or null when it cannot be read now. */

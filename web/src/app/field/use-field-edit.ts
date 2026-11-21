@@ -27,7 +27,6 @@ export function useFieldEdit(job: JobContext) {
   async function save(writes: DocWrite[], saved: string, locallySaved: () => void = () => undefined, acknowledgedBy: () => void = () => undefined, base: FieldDraft | null = job.draft): Promise<boolean> {
     if (!job.editable || job.stale) return false;
     const prepared = job.startSave();
-    const savedOnPhone = beginUpdateActivity('save');
     let onPhone = false;
     const mine = ++latest.current;
     const current = () => live.current && mine === latest.current;
@@ -48,6 +47,11 @@ export function useFieldEdit(job: JobContext) {
       // The SDK's local transaction is finished; update the draft before clearing the form's edits.
       await job.reloadDraft('cache');
       onPhone = true;
+      // An edit held only in this window's memory is not safe until the server has it.
+      if (job.session.client.cache !== 'persistent') {
+        const held = beginUpdateActivity('save');
+        void acknowledged.then(held, held);
+      }
       if (current()) {
         locallySaved();
         setNotice(job.session.client.cache === 'persistent'
@@ -67,7 +71,6 @@ export function useFieldEdit(job: JobContext) {
     } finally {
       if (current()) setBusy(false);
       prepared(!onPhone);
-      savedOnPhone();
     }
     return onPhone;
   }

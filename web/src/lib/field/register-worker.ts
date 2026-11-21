@@ -8,15 +8,31 @@
 // so a new build is noticed on the next open.
 const register = () => navigator.serviceWorker.register('/sw.js', { scope: '/', updateViaCache: 'none' });
 
-export function watchFieldWorker(waiting: (worker: ServiceWorker | null) => void): () => void {
-  if (!('serviceWorker' in navigator)) return () => undefined;
+// What a window knows of its worker. `waiting`: a new build downloaded and not yet running.
+// `replaced`: another window already made a new worker the controller of this one, so this window
+// runs old code under it and only needs to reload. `unsupported`: no worker here (an old browser,
+// `next dev`), so a plain reload loads the new build from the server.
+export type WorkerState = { waiting: ServiceWorker | null; replaced: boolean; unsupported: boolean };
+export const NO_WORKER: WorkerState = { waiting: null, replaced: false, unsupported: false };
+
+export function watchFieldWorker(report: (state: WorkerState) => void): () => void {
+  if (!('serviceWorker' in navigator)) {
+    report({ ...NO_WORKER, unsupported: true });
+    return () => undefined;
+  }
   const hour = 60 * 60 * 1000;
   let stop = () => { window.removeEventListener('load', start); };
   let live = true;
+  const controlled = navigator.serviceWorker.controller !== null;
+  let replaced = false;
   const start = () => void register().then((registration) => {
     if (!live) return;
     let installer: ServiceWorker | null = null;
-    const show = () => waiting(registration.waiting);
+    const show = () => report({ waiting: registration.waiting, replaced, unsupported: false });
+    const swapped = () => {
+      if (controlled) replaced = true;
+      show();
+    };
     const installing = () => {
       installer?.removeEventListener('statechange', show);
       installer = registration.installing;
@@ -28,7 +44,7 @@ export function watchFieldWorker(waiting: (worker: ServiceWorker | null) => void
       if (document.visibilityState === 'visible') void registration.update().then(show).catch(() => undefined);
     };
     registration.addEventListener('updatefound', installing);
-    navigator.serviceWorker.addEventListener('controllerchange', show);
+    navigator.serviceWorker.addEventListener('controllerchange', swapped);
     document.addEventListener('visibilitychange', check);
     window.addEventListener('pageshow', check);
     window.addEventListener('online', check);
@@ -36,7 +52,7 @@ export function watchFieldWorker(waiting: (worker: ServiceWorker | null) => void
     stop = () => {
       installer?.removeEventListener('statechange', show);
       registration.removeEventListener('updatefound', installing);
-      navigator.serviceWorker.removeEventListener('controllerchange', show);
+      navigator.serviceWorker.removeEventListener('controllerchange', swapped);
       document.removeEventListener('visibilitychange', check);
       window.removeEventListener('pageshow', check);
       window.removeEventListener('online', check);
@@ -44,7 +60,9 @@ export function watchFieldWorker(waiting: (worker: ServiceWorker | null) => void
     };
     installing();
     check();
-  }).catch(() => undefined);
+  }, () => {
+    if (live) report({ ...NO_WORKER, unsupported: true });
+  });
   // After the page has loaded, so registering never competes with the shell's own files.
   if (document.readyState === 'complete') start();
   else window.addEventListener('load', start, { once: true });
@@ -56,7 +74,9 @@ export function watchFieldWorker(waiting: (worker: ServiceWorker | null) => void
 
 // A waiting worker changes the controller of an already controlled page. A first visit can
 // still be uncontrolled, in which case wait for activation before navigating into that build.
+// A worker that is active already (an earlier tap, or another window's) needs nothing more.
 export function applyWaitingWorker(worker: ServiceWorker): Promise<boolean> {
+  if (worker.state === 'activated') return Promise.resolve(true);
   return new Promise((done) => {
     const workers = navigator.serviceWorker;
     const previous = workers.controller;

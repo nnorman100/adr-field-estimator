@@ -1,7 +1,8 @@
 // Work the phone sent and has no answer for yet (S5a-6), kept for the life of the page rather than
 // of one screen, so moving between views never drops it: a resend after a lost answer must carry
 // the same ids, body and bytes, or it could make a second job or photo, or report a false conflict.
-// It lives in memory only; S6 keeps it on the phone across reloads.
+// It lives in memory only, except across an app update's reload (update-keep.ts); S6 keeps the rest
+// on the phone across reloads.
 //
 // - The new job: one at a time.
 // - Customer and claim: one unsettled save per job. Both change the same job revision, so while one
@@ -86,6 +87,15 @@ export type PendingPhoto = {
   field: PhotoField;
   step: 'sending' | 'send-failed' | 'saving' | 'save-failed';
   message?: string;
+  // Kept through an update and not sent since: the photos screen of its job sends it once.
+  resumed?: true;
+};
+// The unsent work an app update carries across its reload (update-keep.ts): photos with their ids
+// and bytes, saves with no answer, and the values a refused save left on the form.
+export type KeptWork = {
+  photos: Record<string, PendingPhoto[]>;
+  records: Record<string, PendingRecord>;
+  refusals: Record<string, RecordRefusal>;
 };
 
 type State = {
@@ -272,7 +282,29 @@ export const pending = {
     pending.dropRefusal(jobId, 'claim');
   },
   photos: (jobId: string): PendingPhoto[] => state.photos[jobId] ?? NO_PHOTOS,
-  hasPhotos: (): boolean => Object.values(state.photos).some((photos) => photos.length > 0),
+  // The owner and the work an update must carry across its reload, or null when there is none.
+  kept(): { owner: string; work: KeptWork } | null {
+    const { owner, photos, records, refusals } = state;
+    const held = Object.fromEntries(Object.entries(photos).filter(([, list]) => list.length > 0));
+    if (owner === null || (Object.keys(held).length === 0 && Object.keys(records).length === 0 && Object.keys(refusals).length === 0)) return null;
+    return { owner, work: { photos: held, records, refusals } };
+  },
+  // Puts work carried across an update back, for `owner` only, and never over what is held already.
+  restore(owner: string, work: KeptWork): boolean {
+    if (state.owner !== owner) return false;
+    const photos = { ...state.photos };
+    for (const [jobId, list] of Object.entries(work.photos)) {
+      const known = photos[jobId] ?? NO_PHOTOS;
+      const back = list.filter((photo) => !known.some((one) => one.id === photo.id));
+      if (back.length > 0) photos[jobId] = [...known, ...back.map((photo): PendingPhoto => ({ ...photo, step: 'send-failed', message: 'Kept through the update. Sending it now.', resumed: true }))];
+    }
+    change({
+      photos,
+      records: { ...work.records, ...state.records },
+      refusals: { ...work.refusals, ...state.refusals },
+    });
+    return true;
+  },
   addPhoto(jobId: string, photo: PendingPhoto) {
     change({ photos: { ...state.photos, [jobId]: [...pending.photos(jobId), photo] } });
   },

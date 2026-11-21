@@ -417,3 +417,50 @@ describe('text typed and not added', () => {
     expect(pending.roomWriting('job-r', 'd1')).toBe(false);
   });
 });
+
+// An app update carries unsent work across its reload (S6-6): for the same person only, with the
+// photo's own id and bytes, and never over work the page holds already.
+describe('work kept through an app update', () => {
+  const refusal = { edits: { name: 'Ann' }, message: 'Update needed' };
+
+  it('is nothing to keep for no sign-in or no unsent work, and everything held otherwise', () => {
+    pending.openFor('company-k/user-first');
+    expect(pending.kept()).toBeNull();
+    pending.addPhoto(JOB, { ...photo, step: 'send-failed' });
+    pending.setRecord(JOB, { ...record('customer', 'c9'), sending: false });
+    const kept = pending.kept();
+    expect(kept?.owner).toBe('company-k/user-first');
+    expect(kept?.work.photos[JOB]).toHaveLength(1);
+    expect(kept?.work.records[JOB]?.changeId).toBe('c9');
+  });
+
+  it('puts the same photo and refused values back for the same person, to send again once', async () => {
+    pending.openFor('company-k/user-second');
+    pending.addPhoto(JOB, { ...photo, step: 'send-failed' });
+    pending.setRecord(JOB, { ...record('customer', 'c10'), sending: false });
+    const kept = pending.kept()!;
+    pending.openFor('company-k/user-other');
+    pending.openFor('company-k/user-second');
+    expect(pending.photos(JOB)).toEqual([]);
+
+    pending.restore('company-k/user-second', { ...kept.work, refusals: { [`${JOB}/customer`]: refusal } });
+    const [back] = pending.photos(JOB);
+    expect(back).toMatchObject({ id: 'p1', step: 'send-failed', resumed: true });
+    expect(await back!.bytes.text()).toBe('x');
+    expect(pending.record(JOB)?.changeId).toBe('c10');
+    expect(pending.refusal(JOB, 'customer')).toEqual(refusal);
+
+    pending.restore('company-k/user-second', kept.work);
+    expect(pending.photos(JOB)).toHaveLength(1);
+  });
+
+  it('is never put back for another person of the same page', () => {
+    pending.openFor('company-k/user-third');
+    pending.addPhoto(JOB, { ...photo, step: 'send-failed' });
+    const kept = pending.kept()!;
+    pending.openFor('company-k/user-other');
+    pending.restore('company-k/user-third', kept.work);
+    expect(pending.photos(JOB)).toEqual([]);
+    expect(pending.record(JOB)).toBeNull();
+  });
+});

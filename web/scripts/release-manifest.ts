@@ -25,6 +25,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { z } from 'zod';
 import { AI_FEATURES, AI_REGISTRY } from '../src/lib/ai/registry';
+import { MIN_CLIENT_EPOCH } from '../src/lib/app-version';
 import { FLAG_NAMES } from '../src/lib/flags/known';
 import { FIRST_RELEASE, VERSION } from './release-version';
 
@@ -203,8 +204,7 @@ export function buildManifest(input: ManifestInput): ReleaseManifest {
       promptVersion: AI_REGISTRY[feature].prompt?.version ?? null,
     })),
     switchDefaults: Object.fromEntries(FLAG_NAMES.map((name) => [name, false])),
-    // S6-6 sets this from MIN_CLIENT_EPOCH.
-    minClientEpoch: null,
+    minClientEpoch: MIN_CLIENT_EPOCH,
     firstRelease,
     rollback: firstRelease ? null : { command: rollbackCommand(replaced), database: DATABASE_RULE },
     run: input.run,
