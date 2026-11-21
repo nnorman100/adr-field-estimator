@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { and, asc, count, eq, inArray, isNotNull, isNull } from 'drizzle-orm';
-import { auditEvents, companies, jobEstimates, jobPriceApprovals, jobSubmissions, memberships } from '@/db/schema';
+import { auditEvents, jobEstimates, jobPriceApprovals, jobSubmissions } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import { scopeLines, type EstimateJob } from '@/engine/estimate';
 import { MAX_LINE_MULTIPLIERS } from '@/engine/inspection';
