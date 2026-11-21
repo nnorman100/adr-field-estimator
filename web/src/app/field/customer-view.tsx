@@ -129,10 +129,12 @@ function RecordForm({
   const shown = mine?.values ?? { ...baseline, ...changed };
   const { markUnsaved } = job;
   const dirty = Object.entries(changed).some(([key, value]) => baseline[key] !== value);
+  const carried = mine?.edits ?? refusal?.edits;
+  const blocksUpdate = Object.entries(changed).some(([key, value]) => baseline[key] !== value && carried?.[key] !== value);
   useLayoutEffect(() => {
-    markUnsaved(`record/${kind}`, dirty ? () => setEdits({}) : null);
+    markUnsaved(`record/${kind}`, dirty ? () => setEdits({}) : null, dirty, blocksUpdate);
     return () => markUnsaved(`record/${kind}`, null);
-  }, [markUnsaved, kind, dirty]);
+  }, [markUnsaved, kind, dirty, blocksUpdate]);
 
   // Takes a kept refusal's changes into the form's own.
   function takeRefusal() {

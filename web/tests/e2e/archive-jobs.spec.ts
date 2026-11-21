@@ -1,5 +1,6 @@
 import { test as base, expect as baseExpect, type APIRequestContext, type Page } from '@playwright/test';
 import { createHash, randomUUID } from 'node:crypto';
+import { CLIENT_EPOCH, CLIENT_EPOCH_HEADER } from '@/lib/app-version';
 import { expectNoAxeViolations } from './a11y';
 import { JOBS_BASE_URL } from './jobs/backend';
 import { adminSql, currentDraftOf, seedCompany, type Company, type Person } from './jobs/seed';
@@ -55,7 +56,7 @@ async function openJob(page: Page, address: string) {
 
 const bearer = async (company: Company, person: Person) => {
   const token = await idTokenFor(company.tenantId, person.email, PASSWORD);
-  return { Authorization: `Bearer ${person.role === 'estimator' ? token : withSecondFactor(token)}` };
+  return { Authorization: `Bearer ${person.role === 'estimator' ? token : withSecondFactor(token)}`, [CLIENT_EPOCH_HEADER]: String(CLIENT_EPOCH) };
 };
 
 // A draft job made through the API as `maker` would (who holds `scope` owns its field work).

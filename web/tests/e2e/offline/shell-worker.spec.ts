@@ -173,12 +173,16 @@ test.describe('a deployment', () => {
     await expect.poll(() => page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length)).toBe(1);
   });
 
-  test('a build with an empty precache unregisters its worker, and the next navigation reaches the server', async ({ page, lane }) => {
+  test('a build with an empty precache unregisters its worker, and the next navigation reaches the server', async ({ context, page, lane }) => {
     const worker = await workerText(lane);
     await openControlled(page, lane);
     const template = readFileSync(fileURLToPath(new URL('../../../sw/sw.js', import.meta.url)), 'utf8');
     const recovery = makeWorker({ template, buildId: 'recovery', list: [] });
-    expect(precacheOf(recovery)).toEqual([]);
+    // Every file the recovery worker's install asks the server for carries its build id in the query.
+    const installRequests: string[] = [];
+    context.on('request', (sent) => {
+      if (sent.url().includes('ds-precache=recovery')) installRequests.push(sent.url());
+    });
     expect(await cacheNames(page)).toEqual([`ds-field-${buildIdOf(worker)}`]);
     const shell = await (await fetch(`${lane.appUrl}/field`)).text();
     lane.serve('/field', { type: 'text/html; charset=utf-8', body: shell.replace('</body>', '<!--served-by-the-server--></body>') });
@@ -191,6 +195,7 @@ test.describe('a deployment', () => {
     const registrations = () => page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length);
     await expect.poll(registrations).toBe(0);
     await expect.poll(() => cacheNames(page)).toEqual([]);
+    expect(installRequests).toEqual([]);
 
     const asked = lane.bytes('app');
     await page.goto(`${lane.appUrl}/field`);

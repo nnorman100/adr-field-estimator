@@ -1,10 +1,8 @@
 import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
-import { CLIENT_EPOCH as APP_EPOCH, CLIENT_EPOCH_HEADER as APP_EPOCH_HEADER } from '@/lib/app-version';
+import { CLIENT_EPOCH, CLIENT_EPOCH_HEADER } from '@/lib/app-version';
 import {
   ask,
-  CLIENT_EPOCH,
-  CLIENT_EPOCH_HEADER,
   checkTarget,
   connectionLogFilter,
   freshPhoto,
@@ -16,6 +14,7 @@ import {
   readPassMarks,
   readTestConfig,
   refusedForInstance,
+  requestHeaders,
   statsOf,
   testConfigOf,
   type Records,
@@ -215,9 +214,10 @@ describe('signing in', () => {
   });
 });
 
-describe('the client epoch', () => {
-  it('is the one the app code was built with, so the run exercises the same handlers as a current phone', () => {
-    expect({ header: CLIENT_EPOCH_HEADER, epoch: CLIENT_EPOCH }).toEqual({ header: APP_EPOCH_HEADER, epoch: APP_EPOCH });
+describe('the headers of a request', () => {
+  it('carry the epoch the app was built with, so the run reaches the same handlers as a current phone', () => {
+    expect(requestHeaders('t-1')).toEqual({ authorization: 'Bearer t-1', [CLIENT_EPOCH_HEADER]: String(CLIENT_EPOCH) });
+    expect(requestHeaders('t-1', { 'content-type': 'image/jpeg' })).toMatchObject({ [CLIENT_EPOCH_HEADER]: String(CLIENT_EPOCH), 'content-type': 'image/jpeg' });
   });
 });
 

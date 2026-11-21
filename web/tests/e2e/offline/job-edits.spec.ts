@@ -280,9 +280,11 @@ test('an update waits for the camera and upload, and carries a photo refused wit
   const release = Promise.withResolvers<void>();
   let epoch: string | string[] | undefined;
   let heldBytes: Buffer | undefined;
+  let heldType = 'image/jpeg';
   lane.serve(`/api/jobs/${jobId}/photos/${photoId}`, async (headers, _url, request) => {
     epoch = headers['x-dryscope-client-epoch'];
     heldBytes = request.body;
+    heldType = headers['content-type'] ?? heldType;
     await release.promise;
     return { type: 'application/json', status: 426, body: '{"error":"update_required"}' };
   });
@@ -313,6 +315,8 @@ test('an update waits for the camera and upload, and carries a photo refused wit
   // The same photo, with the same bytes, goes with the update and is sent once the new build is open.
   const sent: { epoch: string | string[] | undefined; bytes: Buffer }[] = [];
   lane.serve(`/api/jobs/${jobId}/photos/${photoId}`, async (headers, _url, request) => {
+    if (request.method === 'GET') return { type: heldType, body: heldBytes ?? PICTURE.buffer };
+    expect(request.method).toBe('PUT');
     sent.push({ epoch: headers['x-dryscope-client-epoch'], bytes: request.body });
     const sha256 = createHash('sha256').update(request.body).digest('hex');
     return { type: 'application/json', status: 201, body: JSON.stringify({ photoId, sha256 }) };

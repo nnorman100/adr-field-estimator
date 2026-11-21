@@ -84,7 +84,7 @@ export type JobContext = {
   // another refusal changed it. What was typed stays, read only.
   held: boolean;
   // Each mounted form registers how to clear its unsent values on discard, and whether it holds any now.
-  markUnsaved: (form: string, discard: (() => void) | null, unsaved?: boolean) => void;
+  markUnsaved: (form: string, discard: (() => void) | null, unsaved?: boolean, blocksUpdate?: boolean) => void;
   // Keeps the return guard active during local preparation, before a write can be tracked elsewhere.
   startSave: () => (failed?: boolean) => void;
   // The last read of the draft did not get through, so the draft on screen may be older than what is
@@ -144,15 +144,20 @@ export function JobScreens({
   const [archivalsSeen] = useState(archivalsDone);
   const [draftError, setDraftError] = useState<string | null>(null);
   // The forms of this job on this screen that hold changes not saved (told by each form).
-  const unsavedForms = useRef(new Map<string, { discard: () => void; unsaved: boolean }>());
+  const unsavedForms = useRef(new Map<string, { discard: () => void; unsaved: boolean; blocksUpdate: boolean }>());
   const [hasUnsavedForms, setHasUnsavedForms] = useState(false);
-  const markUnsaved = useCallback((form: string, discard: (() => void) | null, unsaved = true) => {
-    if (discard) unsavedForms.current.set(form, { discard, unsaved });
+  const [hasUpdateBlockers, setHasUpdateBlockers] = useState(false);
+  const markUnsaved = useCallback((form: string, discard: (() => void) | null, unsaved = true, blocksUpdate = unsaved) => {
+    if (discard) unsavedForms.current.set(form, { discard, unsaved, blocksUpdate });
     else unsavedForms.current.delete(form);
-    setHasUnsavedForms([...unsavedForms.current.values()].some((one) => one.unsaved));
+    const forms = [...unsavedForms.current.values()];
+    setHasUnsavedForms(forms.some((one) => one.unsaved));
+    setHasUpdateBlockers(forms.some((one) => one.blocksUpdate));
   }, []);
   const typed = usePending(() => pending.typed(jobId));
   const unsaved = hasUnsavedForms || Object.keys(typed).length > 0;
+  const blocksUpdate = hasUpdateBlockers || Object.keys(typed).length > 0;
+  useEffect(() => (blocksUpdate ? beginUpdateActivity('unsent') : undefined), [blocksUpdate]);
   const hasUnsent = useCallback(
     () => [...unsavedForms.current.values()].some((form) => form.unsaved) || Object.keys(pending.typed(jobId)).length > 0,
     [jobId],

@@ -1,6 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 import { NOT_SAVED_TEXT, OFFLINE_TEXT } from '../../src/app/field/banners';
+import { CLIENT_EPOCH, CLIENT_EPOCH_HEADER } from '../../src/lib/app-version';
 import { PROBE_PATH } from '../../src/app/field/connection';
 import { HOME_SCREEN_HELP, HOME_SCREEN_TITLE } from '../../src/app/field/home-screen-text';
 import { DISCARD_LABEL, KEEP_LABEL, UNSENT_TITLE } from '../../src/app/(auth)/sign-in/[address]/unsent-sign-out-dialog';
@@ -500,7 +501,7 @@ test.describe('field readiness markers', () => {
     const token = await idTokenFor(company.tenantId, company.people.estimator!.email, PASSWORD);
     for (let start = 1; start <= 30; start += 5) {
       const replies = await Promise.all(Array.from({ length: 5 }, (_, offset) => request.post(`${JOBS_BASE_URL}/api/jobs`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${token}`, [CLIENT_EPOCH_HEADER]: String(CLIENT_EPOCH) },
         data: { id: randomUUID(), draftId: randomUUID(), propertyAddress: `${start + offset} Paging Street` },
       })));
       expect(replies.map((reply) => reply.status())).toEqual([201, 201, 201, 201, 201]);

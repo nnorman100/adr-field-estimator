@@ -87,15 +87,22 @@ export type PendingPhoto = {
   field: PhotoField;
   step: 'sending' | 'send-failed' | 'saving' | 'save-failed';
   message?: string;
-  // Kept through an update and not sent since: the photos screen of its job sends it once.
+  // The draft it was taken for: it is sent, and its reference written, to that draft only.
+  draftId: string;
+  // The server refused its bytes with 426 (update needed). After the update its job's photos screen
+  // sends it once (`resumed`); no other kept photo is sent without a tap.
+  updateRefused?: true;
   resumed?: true;
 };
 // The unsent work an app update carries across its reload (update-keep.ts): photos with their ids
-// and bytes, saves with no answer, and the values a refused save left on the form.
+// and bytes, the new job and saves with no answer, and the values a refused save left on a form.
 export type KeptWork = {
+  job: PendingJob | null;
+  jobRefusal: JobRefusal | null;
   photos: Record<string, PendingPhoto[]>;
   records: Record<string, PendingRecord>;
   refusals: Record<string, RecordRefusal>;
+  coord: Record<string, PendingCoord>;
 };
 
 type State = {
@@ -284,26 +291,42 @@ export const pending = {
   photos: (jobId: string): PendingPhoto[] => state.photos[jobId] ?? NO_PHOTOS,
   // The owner and the work an update must carry across its reload, or null when there is none.
   kept(): { owner: string; work: KeptWork } | null {
-    const { owner, photos, records, refusals } = state;
+    const { owner, job, jobRefusal, photos, records, refusals, coord } = state;
     const held = Object.fromEntries(Object.entries(photos).filter(([, list]) => list.length > 0));
-    if (owner === null || (Object.keys(held).length === 0 && Object.keys(records).length === 0 && Object.keys(refusals).length === 0)) return null;
-    return { owner, work: { photos: held, records, refusals } };
+    const none = [held, records, refusals, coord].every((one) => Object.keys(one).length === 0) && job === null && jobRefusal === null;
+    return owner === null || none ? null : { owner, work: { job, jobRefusal, photos: held, records, refusals, coord } };
   },
   // Puts work carried across an update back, for `owner` only, and never over what is held already.
+  // Nothing is sending after a reload, so every save waits to be sent again as it was.
   restore(owner: string, work: KeptWork): boolean {
     if (state.owner !== owner) return false;
     const photos = { ...state.photos };
     for (const [jobId, list] of Object.entries(work.photos)) {
       const known = photos[jobId] ?? NO_PHOTOS;
       const back = list.filter((photo) => !known.some((one) => one.id === photo.id));
-      if (back.length > 0) photos[jobId] = [...known, ...back.map((photo): PendingPhoto => ({ ...photo, step: 'send-failed', message: 'Kept through the update. Sending it now.', resumed: true }))];
+      if (back.length > 0) {
+        photos[jobId] = [...known, ...back.map((photo): PendingPhoto => (
+          photo.updateRefused
+            ? { ...photo, step: 'send-failed', message: 'Kept through the update. Sending it now.', updateRefused: undefined, resumed: true }
+            : photo.step === 'sending' ? { ...photo, step: 'send-failed', message: 'Not sent. Send it again.' }
+              : photo.step === 'saving' ? { ...photo, step: 'save-failed', message: 'Not saved. Save again.' } : photo
+        ))];
+      }
     }
+    const idle = <T extends { sending: boolean }>(one: Record<string, T>) => Object.fromEntries(Object.entries(one).map(([key, value]) => [key, { ...value, sending: false }]));
     change({
+      job: state.job ?? (work.job && { ...work.job, sending: false }),
+      jobRefusal: state.jobRefusal ?? work.jobRefusal,
       photos,
-      records: { ...work.records, ...state.records },
+      records: { ...idle(work.records), ...state.records },
       refusals: { ...work.refusals, ...state.refusals },
+      coord: { ...idle(work.coord), ...state.coord },
     });
     return true;
+  },
+  // This owner's work was discarded: nothing of it may be kept or restored from this page.
+  forget(owner: string) {
+    if (state.owner === owner) change({ ...EMPTY, listAt: listsSent });
   },
   addPhoto(jobId: string, photo: PendingPhoto) {
     change({ photos: { ...state.photos, [jobId]: [...pending.photos(jobId), photo] } });

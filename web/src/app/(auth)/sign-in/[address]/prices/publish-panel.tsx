@@ -10,6 +10,7 @@ import { callApi } from '@/lib/firebase-client';
 import { signInOf, type SignIn } from '@/lib/field/sign-out';
 import { changed } from '@/lib/prices/edit';
 import { moneyText, needsFreshSignIn, pricesMessage, readableDetail, workingCopyOf, type WorkingCopy } from '@/lib/prices/screen';
+import { whileUpdateHeld } from '@/lib/update-activity';
 import { CheckField, Hint, RadioGroup, Section, useBusy } from './ui';
 
 // The owner's preview, publish, versions and price-list file, on the working copy as saved. Each
@@ -374,7 +375,9 @@ export function FileSection({ user, table, working, dirty, lock, onWorkingCopy }
     }
   }
 
-  async function upload(file: File) {
+  const upload = (file: File) => whileUpdateHeld('save', () => uploadFile(file));
+
+  async function uploadFile(file: File) {
     setMessage(null);
     if (file.size > 1_500_000) return setMessage('That file is too large for a price list.');
     setBusy(true);

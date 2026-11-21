@@ -1,6 +1,7 @@
-type Kind = 'camera' | 'save' | 'upload';
+// `unsent`: a form of this window holds input nobody has saved, sent or discarded.
+type Kind = 'camera' | 'save' | 'upload' | 'unsent';
 
-const counts = { camera: 0, save: 0, upload: 0 };
+const counts = { camera: 0, save: 0, upload: 0, unsent: 0 };
 let required = false;
 const listeners = new Set<() => void>();
 const changed = () => listeners.forEach((listener) => listener());
@@ -21,7 +22,8 @@ export function requireAppUpdate(): void {
 export function updateBusy(): Kind | null {
   if (counts.camera) return 'camera';
   if (counts.upload) return 'upload';
-  return counts.save ? 'save' : null;
+  if (counts.save) return 'save';
+  return counts.unsent ? 'unsent' : null;
 }
 
 export function beginUpdateActivity(kind: Kind): () => void {
@@ -34,4 +36,14 @@ export function beginUpdateActivity(kind: Kind): () => void {
     counts[kind]--;
     changed();
   };
+}
+
+// Holds an update off for the whole of `work`, from the person's action to its result.
+export async function whileUpdateHeld<T>(kind: Kind, work: () => Promise<T>): Promise<T> {
+  const end = beginUpdateActivity(kind);
+  try {
+    return await work();
+  } finally {
+    end();
+  }
 }
