@@ -25,8 +25,9 @@ export type AiFlagName = (typeof AI_FLAG_NAMES)[number];
 // owner's approvals on a job (today named adjustments and hourly additions; see docs/access/approvals.md):
 // off, every propose and approve route answers 404 and the estimate ignores approvals. `drying_watch` is the
 // drying watch on a signed job (S5b-10): its status from the signed plan and the drying log, and the staff's
-// confirmed decisions.
-export const FEATURE_FLAG_NAMES = Object.freeze(['readiness', 'priced_extras', 'drying_watch'] as const);
+// confirmed decisions. `estimate_assist` is the job close of a signed job and, later, the estimate accuracy
+// numbers (S5b-10).
+export const FEATURE_FLAG_NAMES = Object.freeze(['readiness', 'priced_extras', 'drying_watch', 'estimate_assist'] as const);
 export type FeatureFlagName = (typeof FEATURE_FLAG_NAMES)[number];
 
 export const FLAG_NAMES = Object.freeze([
@@ -92,6 +93,11 @@ export const FEATURE_FLAG_DETAILS: Readonly<Record<FeatureFlagName, FlagDetails>
   drying_watch: {
     owner: AI_FLAG_OWNER,
     purpose: 'Drying watch (S5b-10): the monitoring status of a signed job from its signed plan and drying log, with Mark dry, Extend plan and Close monitoring after a confirmation.',
+    removeBy: AI_FLAG_REMOVE_BY,
+  },
+  estimate_assist: {
+    owner: AI_FLAG_OWNER,
+    purpose: 'Job close and estimate accuracy (S5b-10): the final invoice of a signed job compared with its first signed estimate; an estimator sees only that it closed.',
     removeBy: AI_FLAG_REMOVE_BY,
   },
 });
