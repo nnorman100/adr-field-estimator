@@ -2,7 +2,7 @@ import { IdentityRefusal, type Identity } from '@/lib/auth';
 import { EstimateError } from '@/lib/estimates/errors';
 import { JobError } from '@/lib/jobs/access';
 import { ApprovalError } from './errors';
-import { approveBody, proposalBody, proposalKind, SUPPORTED_KINDS, type ProposalInput } from './schema';
+import { approveBody, proposalBody, type ProposalInput } from './schema';
 import { approvalsServices } from './services';
 
 // The proposal and approval routes (src/app/api/jobs/[jobId]/approvals). Each is wrapped there in
@@ -57,10 +57,7 @@ async function bodyOf(request: Request): Promise<unknown> {
   }
 }
 
-// A kind the estimate cannot price yet is answered as such, whatever else the body carries.
 function proposal(raw: unknown): ProposalInput {
-  const kind = proposalKind.safeParse(raw);
-  if (kind.success && !(SUPPORTED_KINDS as readonly string[]).includes(kind.data.kind)) throw new ApprovalError('not_yet_supported');
   const parsed = proposalBody.safeParse(raw);
   if (!parsed.success) throw new ApprovalError('invalid_request');
   return parsed.data;
@@ -73,7 +70,8 @@ export async function listApprovals(_request: Request, identity: Identity, conte
 }
 
 // POST /api/jobs/{jobId}/approvals  { id, revision, kind, ... }
-// Proposes a named adjustment or an hourly addition: 201 when made, 200 when this id was already.
+// Proposes a named adjustment, a custom multiplier, or an hourly, unit or flat addition: 201 when made,
+// 200 when this id was already.
 export async function proposeApproval(request: Request, identity: Identity, context: RouteContext): Promise<Response> {
   return priceBooksOff(identity) ?? respond(async () => {
     const id = await jobPath(context);

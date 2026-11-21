@@ -49,6 +49,28 @@ export type Approval = { acceptedByName: string; acceptedAt: string; rate: Dec; 
 
 export type Extra = { id: string; description: string; hours: Dec; approval: Approval | null };
 
+/**
+ * An owner-approved custom multiplier on one priced line (S5b-8, owner decision B1): the item's lines in
+ * one room (by the room's name), or its job-wide lines when `room` is null. A surcharge only.
+ */
+export type LineMultiplier = { itemId: string; room: string | null; multiplier: Dec };
+
+/**
+ * A one-off addition (S5b-8, B2): a quantity of a unit at a price, or a flat amount. Priced only once the
+ * owner approved it (`approvedAt`); until then it prices nothing and counts as pending work, as an
+ * unapproved hourly addition does.
+ */
+export type Addition = {
+  id: string;
+  kind: 'unit' | 'flat';
+  description: string;
+  quantity: Dec | null;
+  unit: string | null;
+  price: Dec;
+  taxable: boolean;
+  approvedAt: string | null;
+};
+
 export type ScopeEntry = { quantity: Dec; count: number; days: number };
 
 export type QuantityOverride = { measured: Dec; entered: Dec; reason: string | null };
@@ -79,6 +101,10 @@ export type Inspection = {
   technicianTranscript: string;
   scopeConfirmed: boolean;
   extras: Extra[];
+  /** Approved custom multipliers (S5b-8); none when absent. */
+  lineMultipliers?: LineMultiplier[];
+  /** Approved unit and flat additions (S5b-8); none when absent. */
+  additions?: Addition[];
   scopeItems: Record<string, ScopeEntry> | null;
   quantityOverrides: Record<string, QuantityOverride> | null;
 };
@@ -256,6 +282,46 @@ const EXTRA = z
     }),
   );
 
+const LINE_MULTIPLIER = z
+  .strictObject({
+    item_id: z.string().regex(ITEM_ID),
+    room: text(1, 120).nullable(),
+    multiplier: amount('1', '3', { above: true, places: 2 }),
+  })
+  .transform((entry): LineMultiplier => ({ itemId: entry.item_id, room: entry.room, multiplier: entry.multiplier }));
+
+const ADDITION = z
+  .strictObject({
+    id: z.string().regex(HEX_ID),
+    kind: z.enum(['unit', 'flat']),
+    description: text(1, 300)
+      .transform((value) => oneLine(value))
+      .refine((value) => value !== '' && printable(value), { message: 'description' }),
+    quantity: amount('0', '100000', { above: true, places: 2 }).nullish(),
+    unit: text(1, 20).nullish(),
+    price: amount('0', '100000', { above: true, places: 2 }),
+    taxable: z.boolean(),
+    approved_at: ISO_TIME.nullable(),
+  })
+  .superRefine((entry, ctx) => {
+    const unit = entry.kind === 'unit';
+    if (unit !== (entry.quantity != null) || unit !== (entry.unit != null)) {
+      ctx.addIssue({ code: 'custom', message: 'a unit addition has a quantity and a unit; a flat one has neither' });
+    }
+  })
+  .transform(
+    (entry): Addition => ({
+      id: entry.id,
+      kind: entry.kind,
+      description: entry.description,
+      quantity: entry.quantity ?? null,
+      unit: entry.unit ?? null,
+      price: entry.price,
+      taxable: entry.taxable,
+      approvedAt: entry.approved_at,
+    }),
+  );
+
 const COORDINATES = z.strictObject({
   latitude: z.number().min(-90).max(90),
   longitude: z.number().min(-180).max(180),
@@ -337,6 +403,8 @@ const INSPECTION = z.strictObject({
   scope_confirmed: z.boolean().default(false),
   capture_metadata: CAPTURE.nullish(),
   extras: z.array(EXTRA).max(30).default([]),
+  line_multipliers: z.array(LINE_MULTIPLIER).max(200).optional(),
+  additions: z.array(ADDITION).max(30).optional(),
   equipment_scans: z.array(SCAN).max(200).optional(),
   scope_items: capped(SCOPE, 150)
     .refine((record) => Object.keys(record).every((key) => ITEM_ID.test(key)), {
@@ -384,6 +452,8 @@ export function validateInspection(value: unknown): Inspection {
     technicianTranscript: raw.technician_transcript,
     scopeConfirmed: raw.scope_confirmed,
     extras: raw.extras,
+    ...(raw.line_multipliers?.length ? { lineMultipliers: raw.line_multipliers } : {}),
+    ...(raw.additions?.length ? { additions: raw.additions } : {}),
     scopeItems: raw.scope_items ?? null,
     quantityOverrides: raw.quantity_overrides ?? null,
   };

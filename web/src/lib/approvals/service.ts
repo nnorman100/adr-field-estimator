@@ -1,12 +1,13 @@
 import { createHash } from 'node:crypto';
-import { and, asc, count, eq, isNotNull, isNull } from 'drizzle-orm';
-import { auditEvents, companies, jobEstimates, jobPriceApprovals, memberships } from '@/db/schema';
+import { and, asc, count, eq, inArray, isNotNull, isNull } from 'drizzle-orm';
+import { auditEvents, companies, jobEstimates, jobPriceApprovals, jobSubmissions, memberships } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Table } from '@/engine/table';
 import type { Capability } from '@/lib/access';
 import { canonicalJson } from '@/lib/field/canonical';
 import { jobAccess, JobError, type JobCaller, type JobRow } from '@/lib/jobs/access';
 import { EstimateError } from '@/lib/estimates/errors';
+import { readSnapshot } from '@/lib/estimates/inputs';
 import {
   confirmationPredatesReprice,
   currentPin,
@@ -19,7 +20,7 @@ import {
 } from '@/lib/estimates/service';
 import { ENGINE_VERSION } from '@/engine/table';
 import { ApprovalError } from './errors';
-import { approvalSwitchesOn, hourlyTotal } from './priced';
+import { approvalSwitchesOn, hourlyTotal, roomNamesOf } from './priced';
 import type { ApproveInput, ProposalInput } from './schema';
 
 // Proposals and approvals on a job (S5b-8; spec 6.1; owner decisions D1 to D5, 2026-11-20). The
@@ -30,8 +31,8 @@ import type { ApproveInput, ProposalInput } from './schema';
 // still refused). The first proposal on a job with no pin pins it to the company's newest published
 // prices, as the first estimate would. Nothing here moves the job revision: approvals are bound to it.
 //
-// The estimate can price a named adjustment and an hourly addition today; a custom multiplier, a unit
-// or a flat addition is refused (not_yet_supported) until it can (firstmate ruling A1).
+// Every kind is priced by the estimate: a named adjustment, a custom multiplier on one priced line (B1),
+// and hourly, unit and flat additions (B2, B3).
 
 const PROPOSE: readonly Capability[] = ['scope'];
 const APPROVE: readonly Capability[] = ['additions_approve'];
@@ -39,12 +40,22 @@ const READ: readonly Capability[] = ['jobs_read'];
 
 export type ApprovalView = {
   id: string;
-  kind: 'named_adjustment' | 'hourly';
+  kind: 'named_adjustment' | 'line_multiplier' | 'hourly' | 'unit' | 'flat';
   adjustmentId: string | null;
+  // A custom multiplier: the item, the room's field id (null for a job-wide item) and the factor.
+  itemId: string | null;
+  roomId: string | null;
+  multiplier: string | null;
   description: string | null;
+  // An hourly addition's hours and saved rate.
   hours: string | null;
   rate: string | null;
-  // The hourly line's total, hours times rate to the cent as the estimate prices it; null for a named adjustment.
+  // A unit addition's quantity and unit; a unit or flat addition's price and whether it is taxable.
+  quantity: string | null;
+  unit: string | null;
+  price: string | null;
+  taxable: boolean | null;
+  // The addition's line total to the cent as the estimate prices it; null for a named adjustment or a multiplier.
   total: string | null;
   jobRevision: number;
   proposedAt: string;
@@ -73,10 +84,24 @@ function viewOf(row: Row): ApprovalView {
     id: row.id,
     kind: row.kind as ApprovalView['kind'],
     adjustmentId: row.adjustmentId,
+    itemId: row.itemId,
+    roomId: row.roomId,
+    multiplier: row.multiplier,
     description: row.description,
-    hours: row.quantity,
-    rate: row.price,
-    total: row.kind === 'hourly' && row.quantity !== null && row.price !== null ? hourlyTotal(row.quantity, row.price) : null,
+    hours: row.kind === 'hourly' ? row.quantity : null,
+    rate: row.kind === 'hourly' ? row.price : null,
+    quantity: row.kind === 'unit' ? row.quantity : null,
+    unit: row.unit,
+    price: row.kind === 'unit' || row.kind === 'flat' ? row.price : null,
+    taxable: row.taxable,
+    total:
+      row.price === null
+        ? null
+        : row.kind === 'hourly' || row.kind === 'unit'
+          ? hourlyTotal(row.quantity!, row.price)
+          : row.kind === 'flat'
+            ? hourlyTotal('1', row.price)
+            : null,
     jobRevision: row.jobRevision,
     proposedAt: row.proposedAt.toISOString(),
     approved: row.approvedAt !== null,
@@ -90,8 +115,10 @@ async function audit(tx: CompanyTransaction, caller: JobCaller, action: string, 
   await tx.insert(auditEvents).values({ companyId: caller.companyId, actorId: caller.actorId, action, target: jobId, details });
 }
 
-// The most hourly rows a record can carry: the estimate's limit on additional work (web/src/engine/inspection.ts).
+// The most hourly rows, and the most unit and flat rows, a record can carry: the estimate's limits on
+// additional work and on additions (web/src/engine/inspection.ts).
 const MAX_HOURLY = 30;
+const MAX_ADDITIONS = 30;
 
 // A proposal of this job by id.
 async function rowById(tx: CompanyTransaction, companyId: string, jobId: string, id: string): Promise<Row | null> {
@@ -128,6 +155,16 @@ async function binding(tx: CompanyTransaction, caller: JobCaller, job: JobRow, p
     pin = await pinFirstPrice(tx, caller, job.id, version);
   }
   return { submissionId, pin, table, tableHash: version.contentHash };
+}
+
+// The record's rooms by field id: a custom multiplier names one of them (or none, for a job-wide item).
+async function recordRoomIds(tx: CompanyTransaction, companyId: string, submissionId: string): Promise<ReadonlySet<string>> {
+  const [row] = await tx
+    .select({ bytes: jobSubmissions.snapshotBytes })
+    .from(jobSubmissions)
+    .where(and(eq(jobSubmissions.companyId, companyId), eq(jobSubmissions.id, submissionId)));
+  if (!row?.bytes) return new Set();
+  return new Set(roomNamesOf(readSnapshot(Buffer.from(row.bytes))).keys());
 }
 
 // The table's additional work rate: its one enabled `extras` item's price, which is per hour.
@@ -192,12 +229,8 @@ export function approvalsService(db: Database): ApprovalsService {
       proposedByActorId: caller.actorId,
     } as const;
     let row: Row | undefined;
-    if (input.kind === 'named_adjustment') {
-      if (!(bound.table.adjustments ?? []).some((entry) => entry.adjustment_id === input.adjustmentId)) throw new ApprovalError('unknown_adjustment');
-      [row] = await tx.insert(jobPriceApprovals).values({ ...values, adjustmentId: input.adjustmentId }).returning();
-    } else {
-      // The rate is the pinned table's additional work rate now; it stays saved on the row (D3).
-      const rate = hourlyRate(bound.table);
+    // Open rows of these kinds on this record at this revision, for the limits below.
+    const openCount = async (kinds: Array<Row['kind']>) => {
       const [open] = await tx
         .select({ n: count() })
         .from(jobPriceApprovals)
@@ -206,11 +239,59 @@ export function approvalsService(db: Database): ApprovalsService {
             eq(jobPriceApprovals.companyId, caller.companyId),
             eq(jobPriceApprovals.submissionId, bound.submissionId),
             eq(jobPriceApprovals.jobRevision, job.revision),
-            eq(jobPriceApprovals.kind, 'hourly'),
+            inArray(jobPriceApprovals.kind, kinds),
             isNull(jobPriceApprovals.endedAt),
           ),
         );
-      if ((open?.n ?? 0) >= MAX_HOURLY) throw new ApprovalError('too_many_additions');
+      return open?.n ?? 0;
+    };
+    if (input.kind === 'line_multiplier') {
+      // The item is one of the pinned prices' items that is on; the room is one of the record's rooms.
+      if (!bound.table.items.some((entry) => entry.item_id === input.itemId && entry.enabled)) throw new ApprovalError('unknown_item');
+      if (input.roomId !== null && !(await recordRoomIds(tx, caller.companyId, bound.submissionId)).has(input.roomId)) {
+        throw new ApprovalError('unknown_room');
+      }
+      // One open multiplier per line (D2): a second proposal for the same line is refused.
+      const [same] = await tx
+        .select({ id: jobPriceApprovals.id })
+        .from(jobPriceApprovals)
+        .where(
+          and(
+            eq(jobPriceApprovals.companyId, caller.companyId),
+            eq(jobPriceApprovals.submissionId, bound.submissionId),
+            eq(jobPriceApprovals.jobRevision, job.revision),
+            eq(jobPriceApprovals.kind, 'line_multiplier'),
+            eq(jobPriceApprovals.itemId, input.itemId),
+            input.roomId === null ? isNull(jobPriceApprovals.roomId) : eq(jobPriceApprovals.roomId, input.roomId),
+            isNull(jobPriceApprovals.endedAt),
+          ),
+        )
+        .limit(1);
+      if (same) throw new ApprovalError('line_already_proposed');
+      [row] = await tx
+        .insert(jobPriceApprovals)
+        .values({ ...values, itemId: input.itemId, roomId: input.roomId, multiplier: input.multiplier })
+        .returning();
+    } else if (input.kind === 'unit' || input.kind === 'flat') {
+      // Never added to the company's price table (spec 6.1): the row holds the addition itself.
+      if ((await openCount(['unit', 'flat'])) >= MAX_ADDITIONS) throw new ApprovalError('too_many_additions');
+      [row] = await tx
+        .insert(jobPriceApprovals)
+        .values({
+          ...values,
+          description: input.description,
+          ...(input.kind === 'unit' ? { quantity: input.quantity, unit: input.unit } : {}),
+          price: input.price,
+          taxable: input.taxable,
+        })
+        .returning();
+    } else if (input.kind === 'named_adjustment') {
+      if (!(bound.table.adjustments ?? []).some((entry) => entry.adjustment_id === input.adjustmentId)) throw new ApprovalError('unknown_adjustment');
+      [row] = await tx.insert(jobPriceApprovals).values({ ...values, adjustmentId: input.adjustmentId }).returning();
+    } else {
+      // The rate is the pinned table's additional work rate now; it stays saved on the row (D3).
+      const rate = hourlyRate(bound.table);
+      if ((await openCount(['hourly'])) >= MAX_HOURLY) throw new ApprovalError('too_many_additions');
       [row] = await tx.insert(jobPriceApprovals).values({ ...values, description: input.description, quantity: input.hours, price: rate }).returning();
     }
     await audit(tx, caller, 'price_proposed', job.id, { approval: row!.id });

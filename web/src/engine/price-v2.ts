@@ -457,7 +457,72 @@ export function priceScopeV2(
       area: null,
     });
   }
+  applyLineMultipliers(lines, data, warnings);
+  for (const addition of data.additions ?? []) if (addition.approvedAt !== null) lines.push(additionLine(addition, extrasItem));
   return { lines, warnings };
+}
+
+/** The code of a unit or flat addition's line, apart from an hourly additional work line (`EXTRA`). */
+export const ADDITION = 'ADDITION';
+
+/**
+ * Each approved custom multiplier (S5b-8, owner decision B1) on the lines it names: the item's lines in
+ * that room, or its job-wide lines. Like the category multiplier it applies at both ends of the range and
+ * before overhead and profit, tax, minimums and after-hours, but to the line as priced: its unit price is
+ * multiplied and its total, after waste and bracket pricing, is multiplied and rounded to the cent. The line
+ * keeps its own description, with "x{multiplier}" beside it. One that matches no line changes nothing and
+ * says so.
+ */
+function applyLineMultipliers(lines: PriceLine[], data: Inspection, warnings: EngineWarning[]): void {
+  for (const entry of data.lineMultipliers ?? []) {
+    const room = entry.room === null ? null : roomKey(entry.room);
+    let matched = false;
+    for (const line of lines) {
+      if (line.itemId !== entry.itemId) continue;
+      if ((line.room === null ? null : roomKey(line.room)) !== room) continue;
+      matched = true;
+      line.unitPrice = line.unitPrice.mul(entry.multiplier);
+      line.total = money(line.total.mul(entry.multiplier));
+      line.description = `${line.description} x${entry.multiplier.normalize().format('f')}`;
+    }
+    if (!matched) warnings.push({ code: 'unmatched_line_multiplier', item_id: entry.itemId, room: entry.room });
+  }
+}
+
+/**
+ * A unit or flat addition's line (S5b-8, owner decision B2): taxed by its own flag (all of it), carrying
+ * overhead and profit, counted toward the job minimum and the additional work item's trade heading, never
+ * after-hours, and in the additional work bucket, so it does not grow at the range's high end. It is never
+ * part of the company's price table. Printed as the owner approved (B3).
+ */
+function additionLine(addition: NonNullable<Inspection['additions']>[number], extrasItem: Item | null): PriceLine {
+  const date = addition.approvedAt!.slice(0, 10);
+  const price = '$' + addition.price.format('.2f');
+  const unit = addition.kind === 'unit';
+  const quantity = unit ? addition.quantity! : ONE;
+  const description = unit
+    ? `${addition.description}: ${addition.quantity!.normalize().format('f')} ${addition.unit!} at ${price}/${addition.unit!}, approved on ${date}.`
+    : `${addition.description}: ${price}, approved on ${date}.`;
+  return {
+    code: ADDITION,
+    itemId: null,
+    group: EXTRAS,
+    bucket: bucketOf(EXTRAS, ADDITION),
+    description,
+    quantity,
+    unit: unit ? addition.unit! : 'each',
+    unitPrice: addition.price,
+    waste: ZERO,
+    total: money(quantity.mul(addition.price)),
+    taxable: addition.taxable,
+    materialsShare: HUNDRED,
+    afterHours: false,
+    noOverheadProfit: false,
+    trade: extrasItem?.trade ?? null,
+    xactimateCode: '',
+    room: null,
+    area: null,
+  };
 }
 
 export function exactAmount(line: PriceLine): Dec {

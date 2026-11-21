@@ -3,6 +3,7 @@ import { companyFeatureFlags, jobPriceApprovals } from '@/db/schema';
 import type { CompanyTransaction } from '@/db/tenant';
 import { Dec, money } from '@/engine/decimal';
 import type { EstimateJob, Json } from '@/engine/estimate';
+import type { Snapshot } from '@/lib/submissions/snapshot';
 
 // Whether the company's `priced_extras` switch is on, read inside the caller's transaction after its
 // job lock, so the switch the work is done under is the one stored at that moment, never the sign-in's
@@ -31,15 +32,16 @@ export const hourlyTotal = (hours: string, rate: string): string => money(Dec.pa
 
 // What the estimate takes of a record's approvals (S5b-8): only rows approved by the owner, still
 // open, at the job's revision and on the pin the estimate is priced from reach a total; any edit, a
-// newer revision or a reprice leaves a row out. An open hourly row not yet approved goes in as
-// additional work with no approval: it prices nothing, and the engine's pending-work check keeps the
-// estimate from being signed until the owner settles it. Read by the estimate service only while the company's
+// newer revision or a reprice leaves a row out. An open hourly, unit or flat row not yet approved goes in
+// with no approval: it prices nothing, and the engine's pending-work check keeps the estimate from being
+// signed until the owner settles it. A custom multiplier names its room by field id here; withApprovals
+// turns it into the room's name, as the engine's lines carry it. Read by the estimate service only while the company's
 // `priced_extras` flag is on (owner decision D5); off, the estimate ignores approvals.
 export async function approvedFor(
   tx: CompanyTransaction,
   companyId: string,
   binding: { submissionId: string; jobRevision: number; pinId: string },
-): Promise<{ adjustment?: string; extras: Json[] }> {
+): Promise<Approved> {
   const rows = await tx
     .select()
     .from(jobPriceApprovals)
@@ -77,11 +79,65 @@ export async function approvedFor(
     },
   }));
   const waiting: Json[] = pending.map((row) => ({ id: row.id.replace(/-/g, ''), description: row.description!, hours: row.quantity! }));
-  return { ...(named ? { adjustment: named.adjustmentId! } : {}), extras: [...extras, ...waiting] };
+  const multipliers = rows
+    .filter((row) => row.kind === 'line_multiplier' && row.approvedAt !== null)
+    .sort((left, right) => left.approvedAt!.getTime() - right.approvedAt!.getTime() || left.id.localeCompare(right.id))
+    .map((row) => ({ itemId: row.itemId!, roomId: row.roomId, multiplier: row.multiplier! }));
+  // Unit and flat additions (B2), approved ones first in approval order, then those waiting for the owner.
+  const additions: Json[] = rows
+    .filter((row) => row.kind === 'unit' || row.kind === 'flat')
+    .sort((left, right) => order(left) - order(right) || left.id.localeCompare(right.id))
+    .map((row) => ({
+      id: row.id.replace(/-/g, ''),
+      kind: row.kind,
+      description: row.description!,
+      ...(row.kind === 'unit' ? { quantity: row.quantity!, unit: row.unit! } : {}),
+      price: row.price!,
+      taxable: row.taxable === true,
+      approved_at: row.approvedAt ? row.approvedAt.toISOString() : null,
+    }));
+  return { ...(named ? { adjustment: named.adjustmentId! } : {}), extras: [...extras, ...waiting], multipliers, additions };
 }
 
-/** The job to price with its approvals: the approved named adjustment and the approved hourly additions in place of any in the record. */
-export function withApprovals(job: EstimateJob, approved: { adjustment?: string; extras: Json[] }): EstimateJob {
-  const inspection = { ...(job.inspection as Record<string, Json>), extras: approved.extras };
+// Approved rows by approval time, then rows not yet approved by proposal time.
+function order(row: { approvedAt: Date | null; proposedAt: Date }): number {
+  return row.approvedAt ? row.approvedAt.getTime() : Number.MAX_SAFE_INTEGER / 2 + row.proposedAt.getTime();
+}
+
+export type Approved = {
+  adjustment?: string;
+  extras: Json[];
+  multipliers: Array<{ itemId: string; roomId: string | null; multiplier: string }>;
+  additions: Json[];
+};
+
+/** Each room of the record by its field id, with the name the engine's lines carry. */
+export function roomNamesOf(snapshot: Pick<Snapshot, 'field'>): ReadonlyMap<string, string> {
+  const names = new Map<string, string>();
+  for (const room of snapshot.field.rooms ?? []) {
+    const name = (room.field as { name?: unknown } | undefined)?.name;
+    if (typeof name === 'string') names.set(room.id, name);
+  }
+  return names;
+}
+
+/**
+ * The job to price with its approvals: the approved named adjustment, and the hourly, unit and flat additions and
+ * the approved custom multipliers in place of any in the record. A multiplier names its room by the record's room
+ * name; one whose room the record does not have is left out (the proposal checked it, so this cannot happen).
+ */
+export function withApprovals(job: EstimateJob, approved: Approved, rooms: ReadonlyMap<string, string>): EstimateJob {
+  const lineMultipliers: Json[] = [];
+  for (const entry of approved.multipliers) {
+    const room = entry.roomId === null ? null : (rooms.get(entry.roomId) ?? undefined);
+    if (room === undefined) continue;
+    lineMultipliers.push({ item_id: entry.itemId, room, multiplier: entry.multiplier });
+  }
+  const inspection = {
+    ...(job.inspection as Record<string, Json>),
+    extras: approved.extras,
+    line_multipliers: lineMultipliers,
+    additions: approved.additions,
+  };
   return { ...job, inspection, ...(approved.adjustment ? { adjustment: approved.adjustment } : {}) };
 }

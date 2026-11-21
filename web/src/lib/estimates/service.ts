@@ -8,7 +8,7 @@ import type { Capability } from '@/lib/access';
 import { canonicalJson } from '@/lib/field/canonical';
 import { FieldMapError } from '@/lib/field/inspection';
 import { hasAny, jobAccess, JobError, type JobCaller, type JobRow } from '@/lib/jobs/access';
-import { approvedFor, pricedExtrasOn, withApprovals } from '@/lib/approvals/priced';
+import { approvedFor, pricedExtrasOn, roomNamesOf, withApprovals } from '@/lib/approvals/priced';
 import { advance } from '@/lib/jobs/service';
 import { readCompanyDocuments, type CompanyDocuments } from '@/lib/profile/documents';
 import { readJobDetails, type JobDetails } from '@/lib/submissions/details';
@@ -397,8 +397,9 @@ async function present(tx: CompanyTransaction, caller: JobCaller, job: JobRow, r
   if (!version) throw new EstimateError('prices_unreadable');
   const company = await companyDocuments(tx, caller.companyId);
   const approved = await pricedWith(tx, caller.companyId, row);
-  const rebuilt = inputOf({ ...readSnapshot(submission.snapshotBytes), ...details }, company).job;
-  const { estimate, table } = priceInput(approved ? withApprovals(rebuilt, approved) : rebuilt, version);
+  const record = readSnapshot(submission.snapshotBytes);
+  const rebuilt = inputOf({ ...record, ...details }, company).job;
+  const { estimate, table } = priceInput(approved ? withApprovals(rebuilt, approved, roomNamesOf(record)) : rebuilt, version);
   const proposal = proposalFor(estimate, company, table, submission, version, readStoredProposal(row.proposalBytes).revised ?? null);
   return estimateView(row, caller.capabilities, { documents: estimate.documents!, proposal, proposalSha256: proposalBytes(proposal).sha256 });
 }
@@ -435,7 +436,7 @@ export function estimatesService(db: Database): EstimatesService {
         if (!input.summary.trim()) throw new EstimateError('summary_missing');
         // The owner's approvals on this record, at the job's revision and pin (S5b-8); none without a pin yet.
         const approved = pin && (await pricedExtrasOn(tx, caller.companyId)) ? await approvedFor(tx, caller.companyId, { submissionId: submission.id, jobRevision: job.revision, pinId: pin.id }) : null;
-        const { estimate, table } = priceInput(approved ? withApprovals(input.job, approved) : input.job, version);
+        const { estimate, table } = priceInput(approved ? withApprovals(input.job, approved, roomNamesOf(snapshot)) : input.job, version);
 
         const pinned = pin ?? (await pinFirstPrice(tx, caller, jobId, version));
 
@@ -566,8 +567,11 @@ export function estimatesService(db: Database): EstimatesService {
         // current draft's while submitted, the one before Back to editing while a new draft is open.
         const record = (await lastSubmission(tx, caller.companyId, jobId))!;
         let pricing: EstimateJob;
+        let rooms: ReadonlyMap<string, string>;
         try {
-          pricing = pricingJob(readSnapshot(record.snapshotBytes));
+          const snapshot = readSnapshot(record.snapshotBytes);
+          pricing = pricingJob(snapshot);
+          rooms = roomNamesOf(snapshot);
         } catch (error) {
           if (error instanceof SnapshotError || error instanceof FieldMapError || error instanceof ZodError) throw new EstimateError('record_unreadable');
           throw error;
@@ -585,7 +589,7 @@ export function estimatesService(db: Database): EstimatesService {
             : null;
         const priced = (version: VersionRow, withApproved: boolean): PricedSide => {
           try {
-            return { price: priceText(priceInput(approved && withApproved ? withApprovals(pricing, approved) : pricing, version).estimate.totals), refused: null };
+            return { price: priceText(priceInput(approved && withApproved ? withApprovals(pricing, approved, rooms) : pricing, version).estimate.totals), refused: null };
           } catch (error) {
             if (error instanceof EstimateError && error.code === 'estimate_refused') return { price: null, refused: { stage: error.extra.stage ?? '' } };
             throw error;
