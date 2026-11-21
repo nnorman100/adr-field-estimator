@@ -24,7 +24,8 @@ decision J1), separate from Notes. A summary the technician types is saved as th
 off by default), the field owner with `audit` sees **Draft with AI** below it; it needs a signal.
 The proposal shows under "AI draft, check it": the drafted summary in an editable box, and the
 suggestions, work with no price and testing advice as tick boxes. **Accept** writes the summary as
-edited, `summarySource` `ai` and the ticked notes (`aiNotes`, replacing any accepted before);
+edited, `summarySource` `ai` and the ticked notes, added to the `aiNotes` accepted before (per list, an
+identical note once, earlier notes first and never removed; a list over its size refuses the accept);
 **Discard** writes nothing. Nothing of a proposal reaches the draft without Accept
 (`acceptChanges` in `web/src/lib/field/summary.ts`). Editing an accepted AI summary keeps it marked
 `ai`; emptying the box deletes the summary and its source. A request that got no answer is sent

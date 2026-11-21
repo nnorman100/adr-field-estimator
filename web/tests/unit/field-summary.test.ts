@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { draftFieldSchema, MAX_AI_NOTE, MAX_SUMMARY, type DraftField } from '@/lib/field/schema';
+import { draftFieldSchema, MAX_AI_NOTE, MAX_AI_TESTING_ADVICE, MAX_SUMMARY, type DraftField } from '@/lib/field/schema';
 import { acceptChanges, noteId, proposalNotes, summaryChanges, type SummaryProposal } from '@/lib/field/summary';
 import { judgeMe } from '@/lib/field/sync-gate';
 
@@ -51,7 +51,7 @@ describe('a save of the summary box', () => {
 describe('the technician’s accept of an AI draft', () => {
   it('writes the summary as edited, its source as AI and only the ticked notes, as the field map reads them', () => {
     const ticked = new Set([noteId('suggestions', 1), noteId('unpricedWork', 0)]);
-    const { changes, errors } = acceptChanges('Edited by the technician.', PROPOSAL, ticked);
+    const { changes, errors } = acceptChanges('Edited by the technician.', PROPOSAL, ticked, {});
     expect(errors).toEqual({});
     expect(changes).toEqual({
       summary: 'Edited by the technician.',
@@ -61,17 +61,43 @@ describe('the technician’s accept of an AI draft', () => {
     expect(draftFieldSchema.safeParse(applied({ yearBuilt: 1972 }, changes)).success).toBe(true);
   });
 
-  it('removes the notes of an earlier accept when none are ticked', () => {
-    const stored: DraftField = { summary: 'Old.', summarySource: 'ai', aiNotes: { suggestions: ['Old note.'] } };
-    const { changes } = acceptChanges(PROPOSAL.summary, PROPOSAL, new Set());
-    expect(changes).toEqual({ summary: PROPOSAL.summary, summarySource: 'ai', aiNotes: null });
-    expect(applied(stored, changes)).toEqual({ summary: PROPOSAL.summary, summarySource: 'ai' });
+  it('adds the ticked notes to those of an earlier accept and never removes an earlier note', () => {
+    const stored: DraftField = { summary: 'Old.', summarySource: 'ai', aiNotes: { suggestions: ['Old note.'], testingAdvice: ['Old advice.'] } };
+    const none = acceptChanges(PROPOSAL.summary, PROPOSAL, new Set(), stored.aiNotes ?? {});
+    expect(none.changes).toEqual({ summary: PROPOSAL.summary, summarySource: 'ai', aiNotes: stored.aiNotes });
+    const ticked = new Set([noteId('suggestions', 1), noteId('unpricedWork', 0)]);
+    const { changes } = acceptChanges(PROPOSAL.summary, PROPOSAL, ticked, stored.aiNotes ?? {});
+    expect(applied(stored, changes)).toEqual({
+      summary: PROPOSAL.summary,
+      summarySource: 'ai',
+      aiNotes: {
+        suggestions: ['Old note.', 'Photograph the toe kick.'],
+        unpricedWork: ['Replace the toe kick, 8 linear feet.'],
+        testingAdvice: ['Old advice.'],
+      },
+    });
+  });
+
+  it('keeps a note accepted twice once', () => {
+    const accepted = { suggestions: ['Photograph the toe kick.'] };
+    const ticked = new Set([noteId('suggestions', 0), noteId('suggestions', 1)]);
+    const { changes } = acceptChanges(PROPOSAL.summary, PROPOSAL, ticked, accepted);
+    expect(changes.aiNotes).toEqual({ suggestions: ['Photograph the toe kick.', 'Check the subfloor under the dishwasher.'] });
+  });
+
+  it('refuses an accept that would pass a list’s size, writing nothing', () => {
+    const accepted = { testingAdvice: Array.from({ length: MAX_AI_TESTING_ADVICE }, (_, index) => `Advice ${index}.`) };
+    const result = acceptChanges(PROPOSAL.summary, PROPOSAL, new Set([noteId('testingAdvice', 0)]), accepted);
+    expect(result.changes).toEqual({});
+    expect(result.errors.notes).toMatch(/full/);
+    const same = acceptChanges(PROPOSAL.summary, { ...PROPOSAL, testing_advice: ['Advice 3.'] }, new Set([noteId('testingAdvice', 0)]), accepted);
+    expect(same.errors).toEqual({});
   });
 
   it('refuses an empty summary and a ticked note the field map cannot hold, writing nothing', () => {
-    expect(acceptChanges(' \n ', PROPOSAL, new Set())).toMatchObject({ changes: {}, errors: { summary: expect.any(String) } });
+    expect(acceptChanges(' \n ', PROPOSAL, new Set(), {})).toMatchObject({ changes: {}, errors: { summary: expect.any(String) } });
     const long = { ...PROPOSAL, suggestions: ['n'.repeat(MAX_AI_NOTE + 1)] };
-    expect(acceptChanges(PROPOSAL.summary, long, new Set([noteId('suggestions', 0)]))).toMatchObject({ changes: {}, errors: { notes: expect.any(String) } });
+    expect(acceptChanges(PROPOSAL.summary, long, new Set([noteId('suggestions', 0)]), {})).toMatchObject({ changes: {}, errors: { notes: expect.any(String) } });
   });
 
   it('offers each note on one line and leaves out empty ones', () => {

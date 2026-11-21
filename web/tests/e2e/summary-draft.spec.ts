@@ -112,8 +112,8 @@ test('the estimator types a summary, then accepts an edited AI draft with the no
     aiNotes: { suggestions: ['Photograph the toe kick.'], unpricedWork: ['Replace the toe kick, 8 linear feet.'] },
   });
   await expect(summary.getByLabel('Summary of findings', { exact: true })).toHaveValue(`${PROPOSAL.summary} Checked on site.`);
-  await expect(page.getByText('Drafted with AI and accepted by you.', { exact: false })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'AI notes you accepted' })).toBeVisible();
+  await expect(page.getByText('Drafted with AI and accepted.', { exact: false })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Accepted AI notes' })).toBeVisible();
 
   // Read again, the screen shows what is stored.
   await page.reload();

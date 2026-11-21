@@ -305,7 +305,7 @@ const summaryProposal = z.object({
       summary: z.string(),
       suggestions: z.array(z.string()),
       unpriced_work: z.array(z.string()),
-      testing_advice: z.array(z.string()).default([]),
+      testing_advice: z.array(z.string()),
     }),
   }),
 });

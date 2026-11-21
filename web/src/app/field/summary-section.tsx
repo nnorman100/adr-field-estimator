@@ -99,6 +99,7 @@ export function SummarySection({ job, draft }: { job: JobContext; draft: FieldDr
     }
     unanswered.current = null;
     if (!answer.ok) {
+      if (!answer.code?.startsWith('ai_')) job.checkAccess({ status: answer.status, message: answer.message });
       setAskError(answer.message);
       if (answer.retryAfterSeconds) {
         setNow(Date.now());
@@ -116,16 +117,17 @@ export function SummarySection({ job, draft }: { job: JobContext; draft: FieldDr
 
   async function accept() {
     if (!review || job.stale) return;
-    const { changes, errors } = acceptChanges(review.summary, review.answer.proposal, review.ticked);
+    const { changes, errors } = acceptChanges(review.summary, review.answer.proposal, review.ticked, stored.aiNotes ?? {});
     const found = errors.summary ?? errors.notes ?? null;
     setFormError(found);
     setNotice(null);
     if (found) return;
     setError(null);
-    const accepted = review;
+    const reviewed = review;
+    const sent = edit;
     await save(draftFieldWrites(job.draftRef, changes), 'Summary saved.', () => {
-      setReview((current) => (current === accepted ? null : current));
-      setEdit(null);
+      setReview((current) => (current === reviewed ? null : current));
+      setEdit((current) => (current === sent ? null : current));
     });
   }
 
@@ -136,8 +138,8 @@ export function SummarySection({ job, draft }: { job: JobContext; draft: FieldDr
   }
 
   const notes = review ? proposalNotes(review.answer.proposal) : null;
-  const accepted = stored.aiNotes ?? {};
-  const acceptedLists = NOTE_LISTS.filter(({ key }) => (accepted[key] ?? []).length > 0);
+  const acceptedNotes = stored.aiNotes ?? {};
+  const acceptedLists = NOTE_LISTS.filter(({ key }) => (acceptedNotes[key] ?? []).length > 0);
 
   return (
     <Section title="Summary of findings">
@@ -154,7 +156,7 @@ export function SummarySection({ job, draft }: { job: JobContext; draft: FieldDr
         </label>
         <p id="fact-summary-hint" className="text-sm">
           {stored.summarySource === 'ai'
-            ? 'Drafted with AI and accepted by you. The documents print it.'
+            ? 'Drafted with AI and accepted. The documents print it.'
             : 'What you found on site, in your words. The documents print it. It is separate from the notes.'}
         </p>
         <textarea
@@ -178,12 +180,12 @@ export function SummarySection({ job, draft }: { job: JobContext; draft: FieldDr
       </form>
       {acceptedLists.length > 0 ? (
         <div className="flex flex-col gap-2">
-          <h4 className="text-base font-semibold">AI notes you accepted</h4>
+          <h4 className="text-base font-semibold">Accepted AI notes</h4>
           {acceptedLists.map(({ key, title }) => (
             <div key={key}>
               <p className="text-sm font-medium">{title}</p>
               <ul className="list-disc pl-5 text-base">
-                {(accepted[key] ?? []).map((note, index) => (
+                {(acceptedNotes[key] ?? []).map((note, index) => (
                   <li key={index}>{note}</li>
                 ))}
               </ul>
@@ -220,6 +222,7 @@ export function SummarySection({ job, draft }: { job: JobContext; draft: FieldDr
             rows={8}
             maxLength={MAX_SUMMARY}
             value={review.summary}
+            readOnly={readOnly}
             onChange={(event) => {
               const summary = event.target.value;
               setReview((current) => (current ? { ...current, summary } : current));
@@ -238,6 +241,7 @@ export function SummarySection({ job, draft }: { job: JobContext; draft: FieldDr
                       type="checkbox"
                       className="mt-0.5 size-6 shrink-0"
                       checked={review.ticked.has(id)}
+                      disabled={readOnly}
                       onChange={(event) => {
                         const on = event.target.checked;
                         setReview((current) => {
@@ -258,7 +262,7 @@ export function SummarySection({ job, draft }: { job: JobContext; draft: FieldDr
             </fieldset>
           ))}
           <div className="grid grid-cols-2 gap-3">
-            <Button type="button" disabled={busy || job.stale} onClick={() => void accept()}>
+            <Button type="button" disabled={busy || job.stale || readOnly} onClick={() => void accept()}>
               Accept
             </Button>
             <Button type="button" variant="outline" disabled={busy} onClick={discard}>

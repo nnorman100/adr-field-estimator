@@ -8,23 +8,18 @@
 // `ai`: it is still an AI draft the technician checked. Emptying the box deletes the summary and its
 // source. An AI draft reaches the field map only through `acceptChanges`, called by the technician's
 // Accept; the server route that drafts it never writes the draft.
-import { aiNotesSchema, draftFieldSchema, type AiNotes, type DraftField } from './schema';
+import type { SummaryProposal } from '@/lib/summary-draft/service';
+import { aiNotesSchema, draftFieldSchema, MAX_AI_SUGGESTIONS, MAX_AI_TESTING_ADVICE, MAX_AI_UNPRICED_WORK, type AiNotes, type DraftField } from './schema';
 import type { FieldChanges, FormResult } from './forms';
 
-/** An AI proposal as the summary draft route answers it (src/lib/summary-draft/service.ts). */
-export type SummaryProposal = {
-  id: string;
-  callId: string;
-  jobId: string;
-  draftId: string;
-  proposal: { summary: string; suggestions: string[]; unpriced_work: string[]; testing_advice: string[] };
-};
+/** An AI proposal as the summary draft route answers it: the server's own type, never its code. */
+export type { SummaryProposal };
 
 /** The three note lists of a proposal, in the order the review screen shows them. */
 export const NOTE_LISTS = [
-  { key: 'suggestions', from: 'suggestions', title: 'Suggestions' },
-  { key: 'unpricedWork', from: 'unpriced_work', title: 'Work with no price' },
-  { key: 'testingAdvice', from: 'testing_advice', title: 'Testing advice' },
+  { key: 'suggestions', from: 'suggestions', title: 'Suggestions', max: MAX_AI_SUGGESTIONS },
+  { key: 'unpricedWork', from: 'unpriced_work', title: 'Work with no price', max: MAX_AI_UNPRICED_WORK },
+  { key: 'testingAdvice', from: 'testing_advice', title: 'Testing advice', max: MAX_AI_TESTING_ADVICE },
 ] as const;
 
 export type NoteKey = (typeof NOTE_LISTS)[number]['key'];
@@ -64,9 +59,16 @@ export function summaryChanges(text: string, stored: DraftField): FormResult {
 }
 
 // What the technician's Accept of an AI draft writes: the summary as they left it in the review box,
-// its source `ai`, and the notes they ticked, in the proposal's order. The ticked notes replace any
-// accepted with an earlier draft; with none ticked the earlier ones are removed.
-export function acceptChanges(summary: string, proposal: SummaryProposal['proposal'], ticked: ReadonlySet<string>): FormResult {
+// its source `ai`, and the notes they ticked, in the proposal's order, added to the notes accepted
+// with an earlier draft (`accepted`): each list keeps its earlier notes first, an identical note is
+// kept once, and an earlier note is never removed. A list that would pass its size refuses the
+// accept and writes nothing.
+export function acceptChanges(
+  summary: string,
+  proposal: SummaryProposal['proposal'],
+  ticked: ReadonlySet<string>,
+  accepted: AiNotes,
+): FormResult {
   const errors: Record<string, string> = {};
   if (summary.trim() === '') {
     errors.summary = 'The drafted summary is empty. Write it, or discard the draft.';
@@ -78,9 +80,14 @@ export function acceptChanges(summary: string, proposal: SummaryProposal['propos
   }
   const offered = proposalNotes(proposal);
   const notes: AiNotes = {};
-  for (const { key } of NOTE_LISTS) {
+  for (const { key, title, max } of NOTE_LISTS) {
     const kept = offered[key].filter((_, index) => ticked.has(noteId(key, index)));
-    if (kept.length > 0) notes[key] = kept;
+    const merged = [...new Set([...(accepted[key] ?? []), ...kept])];
+    if (merged.length > max) {
+      errors.notes = `The ${title.toLowerCase()} list is full (${max} notes). Untick some notes.`;
+      return { changes: {}, errors };
+    }
+    if (merged.length > 0) notes[key] = merged;
   }
   if (!aiNotesSchema.safeParse(notes).success) {
     errors.notes = 'A ticked note is too long to keep. Untick it.';
@@ -89,7 +96,7 @@ export function acceptChanges(summary: string, proposal: SummaryProposal['propos
   const changes: FieldChanges = {
     summary,
     summarySource: 'ai',
-    aiNotes: Object.keys(notes).length > 0 ? notes : null,
+    ...(Object.keys(notes).length > 0 ? { aiNotes: notes } : {}),
   };
   return { changes, errors };
 }
