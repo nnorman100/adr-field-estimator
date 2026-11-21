@@ -11,6 +11,7 @@ import {
   summaryDraftRequest,
   summaryFacts,
   summaryFactsText,
+  summaryDraftOutput,
   SummaryFactsError,
   type SummaryDraftOutput,
   type SummaryFacts,
@@ -292,6 +293,17 @@ describe('the shared prompt builder', () => {
     expect(sent('Oak floor in the hall.', unit)).toContain('Oak floor in the hall.');
   });
 
+  it('removes the street of an address saved without commas, spaced local phones and a coordinate before an end mark', () => {
+    const noCommas = { customerName: '', propertyAddress: '12 Oak Street Testville CA 94000' };
+    for (const variant of ['12 Oak St', 'Oak Street', '12 Oak Street', '12 Oak Street Testville CA 94000']) {
+      expect({ variant, sent: sent(`Meet at ${variant} today.`, noCommas) }).toEqual({ variant, sent: expect.stringContaining('Meet at [removed] today.') });
+    }
+    expect(sent('Meet at 12 Oak St', noCommas)).toContain('Meet at [removed]');
+    expect(sent('Call 555 0101 first.')).toContain('Call [removed] first.');
+    expect(sent('The gate is at -122.4194.')).toContain('The gate is at [removed].');
+    expect(sent('The gate is at -122.4194, by the shed.')).toContain('The gate is at [removed], by the shed.');
+  });
+
   it('removes the full name, the surname with a title and possessives, never a name word standing alone', () => {
     const hall = { customerName: 'Mary Hall', propertyAddress: '' };
     const text = sent("Wet carpet in the hall. Mary Hall's dog was out; Mrs Hall and Hall, Mary agreed. Mary is the tenant.", hall);
@@ -301,6 +313,16 @@ describe('the shared prompt builder', () => {
   it('leaves measurements, temperatures and words that only contain a planted part alone', () => {
     const text = sent('Cascade dryer at 12.5% moisture; readings 12.5, 13.2; room at 70°F; 3 air movers for 4 days; Canada geese.');
     expect(text).toContain('Cascade dryer at 12.5% moisture; readings 12.5, 13.2; room at 70°F; 3 air movers for 4 days; Canada geese.');
+  });
+});
+
+describe('the summary output contract', () => {
+  it("is the document engine's AI notes contract, its limits counted in characters", () => {
+    const answer = (overrides: Record<string, unknown>) => ({ summary: 'Dry.', suggestions: [], unpriced_work: [], ...overrides });
+    expect(summaryDraftOutput.safeParse(answer({ suggestions: ['\u{1F4A7}'.repeat(1000)] })).success).toBe(true);
+    expect(summaryDraftOutput.safeParse(answer({ suggestions: ['\u{1F4A7}'.repeat(1001)] })).success).toBe(false);
+    expect(summaryDraftOutput.safeParse(answer({ summary: '\u{1F4A7}'.repeat(6000) })).success).toBe(true);
+    expect(summaryDraftOutput.safeParse(answer({ summary: '\u{1F4A7}'.repeat(6001) })).success).toBe(false);
   });
 });
 

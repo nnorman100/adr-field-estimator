@@ -8,6 +8,7 @@
 //   left, so a customer named Mary Hall leaves "the hall" alone;
 // - the saved property address: each comma-separated part, in its common spellings (Street or St,
 //   Avenue or Ave, Unit or Apt or #, any case, punctuation or spacing), the street without its number,
+//   the street on its own when the address was saved without commas ("12 Oak Street Testville CA"),
 //   and the ZIP code alone;
 // - any email address and any phone number;
 // - anything shaped like coordinates: a signed or many-decimal pair, latitude or longitude words with
@@ -31,11 +32,12 @@ const POSSESSIVE = "(?:['’]s)?";
 
 const EMAIL = /(?<![\p{L}\p{N}._%+-])[\p{L}\p{N}._%+-]+@[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+/gu;
 // North American numbers with an optional +1, area code in brackets or not, or ten digits run
-// together; seven-digit local numbers written with a separator; international numbers starting with +.
+// together; seven-digit local numbers written with a separator or a space; international numbers
+// starting with +.
 const PHONE = new RegExp(
   `${START}(?:\\+?1[\\s.-]?)?(?:\\(\\d{3}\\)\\s*|\\d{3}[\\s.-])\\d{3}[\\s.-]\\d{4}${END}` +
     `|${START}(?:\\+?1)?\\d{10}${END}` +
-    `|${START}\\d{3}[.-]\\d{4}${END}` +
+    `|${START}\\d{3}[\\s.-]\\d{4}${END}` +
     `|\\+\\d{1,3}(?:[\\s.-]?\\d{2,4}){2,5}${END}`,
   'gu',
 );
@@ -54,8 +56,8 @@ const COORDINATES: readonly RegExp[] = [
   new RegExp(`${NUMBER_DEG}\\s*°(?!\\s*[FC]${END})(?:\\s*[NSEW])?`, 'gi'),
   // A pair with compass letters, whole or decimal ("37N 122W", "36.7N, 119.8W").
   new RegExp(`${START}\\d{1,3}(?:\\.\\d+)?\\s*°?\\s*[NS]\\s*,?\\s*\\d{1,3}(?:\\.\\d+)?\\s*°?\\s*[EW]${END}`, 'gi'),
-  // A decimal degree with four or more decimals.
-  /(?<![\d.])[-+]?\d{1,3}\.\d{4,}(?![\d.])/g,
+  // A decimal degree with four or more decimals, an end mark after it allowed ("at -122.4194.").
+  /(?<![\d.])[-+]?\d{1,3}\.\d{4,}(?!\d|\.\d)/g,
 ];
 
 // Street words and their common short forms; a unit word may be any of the unit words.
@@ -85,6 +87,8 @@ const SPELLINGS: readonly (readonly string[])[] = [
   ['apartment', 'apt', 'unit', 'suite', 'ste', 'no', 'number', '#'],
 ];
 const UNIT_WORDS = SPELLINGS[SPELLINGS.length - 1]!;
+// The words that end a street name (Street to Trail), so a street can be found inside a longer part.
+const STREET_WORDS = SPELLINGS.slice(0, SPELLINGS.findIndex((group) => group[0] === 'north')).flat();
 
 function escape(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -108,14 +112,24 @@ function addressPattern(words: readonly string[]): string {
   return words.map(wordPattern).join(GAP);
 }
 
+// The words of one address part. "#4" or "Apt. 4" read as two words, so every unit spelling matches.
+// When the part holds a street followed by more words (an address saved without commas, "12 Oak
+// Street Testville CA 94000"), the street, with its unit if one follows, is also a part of its own.
+function partWords(part: string): string[][] {
+  const words = part
+    .replace(/#/g, ' # ')
+    .split(/[\s.]+/)
+    .filter((word) => word.length > 0);
+  const street = words.findIndex((word, index) => index > 0 && STREET_WORDS.includes(word.toLowerCase()));
+  if (street < 0) return [words];
+  let end = street + 1;
+  if (end + 1 < words.length && UNIT_WORDS.includes(words[end]!.toLowerCase())) end += 2;
+  return end < words.length ? [words, words.slice(0, end)] : [words];
+}
+
 function addressPatterns(address: string): string[] {
   const patterns: string[] = [];
-  for (const part of address.split(',')) {
-    // "#4" or "Apt. 4" read as two words, so every unit spelling matches.
-    const words = part
-      .replace(/#/g, ' # ')
-      .split(/[\s.]+/)
-      .filter((word) => word.length > 0);
+  for (const words of address.split(',').flatMap(partWords)) {
     if (words.join('').replace(/\W/g, '').length < 2) continue;
     // The part with and without its house number ("Oak St" for "12 Oak Street"), each with and
     // without its unit ("12 Oak Street" and "Oak Street" for "12 Oak Street Apt 4"; "4" alone is not).

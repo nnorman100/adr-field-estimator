@@ -59,6 +59,13 @@ describe('price sentences', () => {
     expect(stripPriceSentences('Drying will cost approx. 900 for labor. The hall is dry.')).toBe('The hall is dry.');
   });
 
+  it('keeps a wrapped amount with its price label when the label holds a quantity', () => {
+    expect(stripPriceSentences('Drying cost for 3 days:\n900.')).toBe('');
+    expect(stripPriceSentences('Drying cost for 3 days\n900.\nThe hall is dry.')).toBe('The hall is dry.');
+    expect(stripPriceSentences('Kitchen wet.\nTotal for 2 rooms =\n1,200\nThe hall is dry.')).toBe('Kitchen wet.\nThe hall is dry.');
+    expect(stripPriceSentences('- Total 900\n- 3 fans in the hall')).toBe('- 3 fans in the hall');
+  });
+
   it('keeps estimate used as a verb', () => {
     const advice = 'Estimate which of the 3 air movers can be removed.';
     expect(statesPrice(advice)).toBe(false);

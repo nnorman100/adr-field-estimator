@@ -29,18 +29,28 @@ function bareAmount(piece: string): boolean {
   return NUMBER.test(piece) && piece.replace(NUMBER_WORDS, '').replace(/[^a-z]/gi, '') === '';
 }
 
+// The line after a price run that still belongs to it: an amount, after a line with no end mark,
+// that is bare ("900.") or follows a label mark (":", "=", a dash).
+function wrappedAmount(before: string, line: string): boolean {
+  if (!NUMBER.test(line) || /[.?!]\s*$/.test(before)) return false;
+  return bareAmount(line) || /[:=\u2013\u2014-]\s*$/.test(before);
+}
+
 // The lines of one sentence `drop` matches with the shortest run of them `run` matches emptied, then
 // the same in what is left before and after it: a clause wrapped over lines goes whole, a line beside
-// it stays.
+// it stays. The run also takes the amount wrapped after it ("Drying cost for 3 days:" then "900."), so
+// an amount never stays behind once its label is dropped.
 function blank(lines: string[], drop: (sentence: string) => boolean, run: (lines: string) => boolean): string[] {
   if (lines.length === 0 || !drop(lines.join('\n'))) return lines;
   for (let size = 1; size < lines.length; size += 1) {
     for (let start = 0; start + size <= lines.length; start += 1) {
       if (run(lines.slice(start, start + size).join('\n'))) {
+        let end = start + size;
+        while (end < lines.length && wrappedAmount(lines[end - 1]!, lines[end]!)) end += 1;
         return [
           ...blank(lines.slice(0, start), drop, run),
-          ...lines.slice(start, start + size).map(() => ''),
-          ...blank(lines.slice(start + size), drop, run),
+          ...lines.slice(start, end).map(() => ''),
+          ...blank(lines.slice(end), drop, run),
         ];
       }
     }

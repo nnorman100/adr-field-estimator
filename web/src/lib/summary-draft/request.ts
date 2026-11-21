@@ -1,4 +1,5 @@
-import { z } from 'zod';
+import { AI_NOTES } from '@/engine/documents';
+import type { z } from 'zod';
 import type { AiRequest } from '@/lib/ai/call';
 import { NO_IDENTITY, promptFacts, type JobIdentity } from '@/lib/ai/prompt-facts';
 import { stripSentences } from '@/lib/ai/rules';
@@ -18,24 +19,13 @@ import type { FieldManifest } from '@/lib/field/canonical';
 // text, before Model Armor or the model sees it. The technician's current summary is left out: it is
 // the field being drafted. The age rule line comes first, as the old prompt gave it.
 
-// The old app's limits (backend/contracts.py AIResult): each item at most 1,000 characters.
-export const MAX_SUMMARY_TEXT = 6_000;
-export const MAX_ITEM = 1_000;
-export const MAX_SUGGESTIONS = 30;
-export const MAX_UNPRICED = 30;
-export const MAX_TESTING_ADVICE = 10;
-
 // The year the pre-1978 rule turns on (docs/ARCHITECTURE.md, California clauses).
 export const TESTING_YEAR = 1978;
 
-const item = z.string().max(MAX_ITEM);
-
-export const summaryDraftOutput = z.strictObject({
-  summary: z.string().min(1).max(MAX_SUMMARY_TEXT),
-  suggestions: z.array(item).max(MAX_SUGGESTIONS),
-  unpriced_work: z.array(item).max(MAX_UNPRICED),
-  testing_advice: z.array(item).max(MAX_TESTING_ADVICE).default([]),
-});
+// The output is the document engine's AI notes contract (web/src/engine/documents.ts): a summary of
+// 1 to 6,000 characters, at most 30 suggestions and 30 unpriced items, at most 10 testing advice
+// items, each item at most 1,000 characters (the old app's backend/contracts.py AIResult).
+export const summaryDraftOutput = AI_NOTES;
 export type SummaryDraftOutput = z.infer<typeof summaryDraftOutput>;
 
 export type SummaryRoomFacts = RoomField & { photoCount: number };
