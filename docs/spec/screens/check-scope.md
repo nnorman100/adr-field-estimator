@@ -88,10 +88,21 @@ job's field work is no longer yours…" (unsent changes stay on the phone, read 
   older copy when it finds a newer version, and shows the newer list with a warning when the phone
   cannot save it. A company without a publication sees "Prices not set", also offline once the
   phone has seen that answer. When the server refuses the list (403, price books off, or a revoked sign-in), the list is
-  hidden at once and the saved copy for that person and company is erased. If the erase fails, it is
-  retried before the copy is next read, and the saved sign-in stops offering `prices_read` until the
-  next online check, so nothing shows meanwhile. A lost connection is not a refusal: the last
-  readable list stays.
+  hidden at once and the saved copy for that person and company is erased. The same erase runs when
+  the field gate's `GET /api/me` lets the person in without `prices_read`, whether or not Check
+  Scope is open, and when the Prices screen or the sign-in page accepts a `GET /api/me` answer
+  without `prices_read`. The refusal is recorded in localStorage before the erase is tried, so a
+  copy that could not be erased is never shown and every read erases it first, in any tab and
+  after a reload. An answer is shown and saved only if no refusal was recorded after its request
+  started, and a copy fetched before a refusal is erased. The same version already saved is not
+  written again. A refusal that only asks the person to sign in again (401 `sign_in_again`) or to
+  complete the role's second step (403 `second_step_required`) hides the list in this view and
+  keeps the copy. A lost connection, or a 403 or 404 without one of the
+  server's own member, capability or feature-flag codes (a captive portal or proxy), is not a
+  refusal: the last readable list stays. Erasing, sign-out and Discard never create the item-list
+  database, and sign-out and Discard fail while an erase cannot finish. Limit: when the phone
+  cannot write localStorage, the refusal is not recorded, so a copy that could not be erased may
+  stay viewable offline until the next online check.
 - Offline with jobs kept: edits save on the phone (the shell's "No signal: your work is saved on
   this phone"); offline with Online only, nothing opens without a signal.
 - Draft unreadable: the error with "Try again".
