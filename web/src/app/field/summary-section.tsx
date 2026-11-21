@@ -59,8 +59,10 @@ export function SummarySection({ job, draft }: { job: JobContext; draft: FieldDr
   const { markUnsaved } = job;
   // The AI draft is this person's only while the company's switch is on and they hold `audit`. A
   // live /api/me answer that turns the switch off (online, so not a gap in the signal) closes an open
-  // proposal, and Accept writes nothing of it.
+  // proposal. Without a signal the switch is unknown: the proposal stays on screen, so a short gap
+  // never loses a paid draft, but Accept waits until the phone is online with the switch confirmed on.
   const aiAllowed = job.session.capabilities.includes('audit') && (job.session.aiSummary || !job.session.online);
+  const acceptAllowed = aiAllowed && job.session.online && job.session.aiSummary;
   const canAsk = job.session.aiSummary && job.session.capabilities.includes('audit') && !readOnly;
   if (review !== null && !aiAllowed) setReview(null);
   const unsaved = (edit !== null && summaryChanges(edit, stored).changes.summary !== undefined) || review !== null;
@@ -135,7 +137,7 @@ export function SummarySection({ job, draft }: { job: JobContext; draft: FieldDr
   }
 
   async function accept() {
-    if (!review || !aiAllowed || job.stale || rereading) return;
+    if (!review || !acceptAllowed || job.stale || rereading) return;
     const { changes, errors } = acceptChanges(review.summary, review.answer.proposal, review.ticked, stored.aiNotes ?? {});
     const found = errors.summary ?? errors.notes ?? null;
     setFormError(found);
@@ -281,13 +283,14 @@ export function SummarySection({ job, draft }: { job: JobContext; draft: FieldDr
             </fieldset>
           ))}
           <div className="grid grid-cols-2 gap-3">
-            <Button type="button" disabled={busy || job.stale || rereading || readOnly} onClick={() => void accept()}>
+            <Button type="button" disabled={busy || job.stale || rereading || readOnly || !acceptAllowed} onClick={() => void accept()}>
               Accept
             </Button>
             <Button type="button" variant="outline" disabled={busy} onClick={discard}>
               Discard
             </Button>
           </div>
+          {!acceptAllowed ? <p className="text-sm">Accept needs a signal. The draft stays here until then.</p> : null}
         </section>
       ) : null}
       {!readOnly && job.stale ? <p className="text-sm">{READ_AGAIN}</p> : null}

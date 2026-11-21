@@ -27,7 +27,7 @@ The proposal shows under "AI draft, check it": the drafted summary in an editabl
 suggestions, work with no price and testing advice as tick boxes. **Accept** writes the summary as
 edited, `summarySource` `ai` and the ticked notes, added to the `aiNotes` accepted before (per list, an
 identical note once, earlier notes first and never removed; a list over its size refuses the accept);
-**Discard** writes nothing. Nothing of a proposal reaches the draft without Accept
+**Discard** writes nothing. Without a signal an open proposal stays on screen and Accept waits until the phone is online with the switch confirmed on; a live answer that the switch is off closes it. Nothing of a proposal reaches the draft without Accept
 (`acceptChanges` in `web/src/lib/field/summary.ts`). Editing an accepted AI summary keeps it marked
 `ai`; emptying the box deletes the summary, and its source when there is one. A request that got no answer is sent
 again with the same call id; an allowance refusal shows the server's words and keeps the button

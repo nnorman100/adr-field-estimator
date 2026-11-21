@@ -215,3 +215,27 @@ test('turning the switch off closes an open AI draft, and nothing of it can be a
   await expect(page.getByRole('button', { name: 'Draft with AI' })).toHaveCount(0);
   expect(await storedField(company, ids.draftId)).toEqual({});
 });
+
+test('without a signal an open AI draft stays on screen, and Accept waits for the signal', async ({ page, context }) => {
+  const company = await seedCompany('summary-ai-offline', { owner: 'owner', estimator: 'estimator' });
+  await flagOn(company);
+  await signIn(page, company, company.people.estimator!);
+  const ids = await startJob(page, company, '25 Example Street, Testville, CA 90000');
+
+  await proposeOnce(page, ids, []);
+  await page.getByRole('button', { name: 'Draft with AI' }).click();
+  const review = page.getByRole('region', { name: 'AI draft, check it' });
+  await review.getByLabel('Photograph the toe kick.').check();
+  await expect(review.getByRole('button', { name: 'Accept' })).toBeEnabled();
+
+  await context.setOffline(true);
+  await expect(review.getByText('Accept needs a signal.', { exact: false })).toBeVisible();
+  await expect(review.getByRole('button', { name: 'Accept' })).toBeDisabled();
+  await expect(review.getByLabel('Photograph the toe kick.')).toBeChecked();
+  expect(await storedField(company, ids.draftId)).toEqual({});
+
+  await context.setOffline(false);
+  await expect(review.getByRole('button', { name: 'Accept' })).toBeEnabled();
+  await review.getByRole('button', { name: 'Accept' }).click();
+  await expect.poll(() => storedField(company, ids.draftId)).toMatchObject({ summarySource: 'ai', aiNotes: { suggestions: ['Photograph the toe kick.'] } });
+});
