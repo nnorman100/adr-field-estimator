@@ -882,6 +882,28 @@ describe('moving the field work (owner decision J5)', () => {
     expect(await editing.running).toEqual({ status: 410, body: { error: 'archived' } });
   });
 
+  // Slice 5 review round 2, R1: a member disabled while New job's or Back to editing's locator is written
+  // gets no details of the job.
+  it('gives a member disabled while New job’s or Back to editing’s locator was written no details of the job', async () => {
+    const disableOnProjection = (target: { projectJob: (...args: never[]) => Promise<void> }) => {
+      const project = target.projectJob;
+      target.projectJob = async (...args) => {
+        target.projectJob = project;
+        await h.admin`UPDATE memberships SET status = 'disabled' WHERE id = ${h.seed.estimatorA.membership}`;
+        return project(...args);
+      };
+    };
+    disableOnProjection(h.drafts);
+    expect(await create(ESTIMATOR_A, { id: randomUUID(), draftId: randomUUID(), propertyAddress: '11 Waiting Way' })).toEqual({ status: 403, body: { error: 'not_allowed' } });
+    await h.admin`UPDATE memberships SET status = 'active' WHERE id = ${h.seed.estimatorA.membership}`;
+
+    const { id, draftId } = await claimedJob();
+    h.field.put(h.seed.a, draftId, MANIFEST);
+    expect((await submitDraft(ESTIMATOR_A, id, { id: randomUUID(), draftId, digest: await manifestDigest(MANIFEST) })).status).toBe(201);
+    disableOnProjection(h.field);
+    expect(await nextDraft(ESTIMATOR_A, id, { draftId: randomUUID(), fromDraftId: draftId })).toEqual({ status: 403, body: { error: 'not_allowed' } });
+  });
+
   it('refuses the company owner field work they do not own, until they move it to themself', async () => {
     const { id, draftId } = await claimedJob();
     h.field.put(h.seed.a, draftId, MANIFEST);

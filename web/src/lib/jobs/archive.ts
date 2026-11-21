@@ -5,7 +5,7 @@ import type { Capability } from '@/lib/access';
 import { canSeeJob, claimDraft, hasAny, holdDraft, jobAccess, JobError, type JobCaller, type JobRow } from './access';
 import type { ArchiveStore } from './archive-store';
 import type { DraftSync } from './draft-sync';
-import { afterFieldStep, syncJobDrafts } from './sync-job';
+import { afterFieldStep, stillMember, syncJobDrafts } from './sync-job';
 import { copyDigest, type ArchiveInput, type CopyInput } from './schema';
 import { audit, CHECK_VIOLATION, detailOf, errorCode, type JobDetail, type JobView } from './service';
 
@@ -246,7 +246,8 @@ export function archiveService(db: Database, store: ArchiveStore, sync: DraftSyn
           if (await field(() => store.findDraft(caller.companyId, input.draftId))) throw new JobError('conflict');
           await audit(tx, caller, 'job_copied', row.id, { revision: row.revision, copiedFrom: source.id });
         }
-        return { created: inserted !== undefined, detail: await detailOf(tx, row) };
+        // What the projection needs; the answer is read after the field step.
+        return { created: inserted !== undefined, job: { id: row.id, currentDraftId: row.currentDraftId, revision: row.revision } };
       });
       // The copy's first draft, as the draft sync makes every draft (the draft life-cycle redesign, slice 5):
       // from its source's signed record less COPY_CLEARED_KEYS (copied_from_job_id), naming the field owner
@@ -255,11 +256,17 @@ export function archiveService(db: Database, store: ArchiveStore, sync: DraftSyn
       // active member of an active company (afterFieldStep).
       await afterFieldStep(db, caller, () => syncJobDrafts(db, sync, store, caller.companyId, input.id));
       await field(() =>
-        store.projectJob(caller.companyId, made.detail.job.id, { currentDraftId: made.detail.job.currentDraftId, revision: made.detail.job.revision }),
+        store.projectJob(caller.companyId, made.job.id, { currentDraftId: made.job.currentDraftId, revision: made.job.revision }),
       );
       // The copy as Postgres holds it after the field step, read with the caller's access again: a change
       // committed meanwhile (an archive, a move) is the answer, not the row this request wrote.
-      const detail = await withCompany(db, caller.companyId, async (tx) => detailOf(tx, await jobAccess(tx, caller, input.id, READ)), { snapshot: true });
+      const detail = await withCompany(db, caller.companyId, async (tx) => {
+          // The caller still a member of an active company, in the same snapshot as the job read.
+          await stillMember(tx, caller);
+          return detailOf(tx, await jobAccess(tx, caller, input.id, READ));
+        },
+        { snapshot: true },
+      );
       return { created: made.created, detail };
     },
   };

@@ -5,7 +5,7 @@ import type { Capability } from '@/lib/access';
 import { canSeeJob, claimDraft, hasAny, holdDraft, isOwnJob, jobAccess, JobError, ownsFieldWork, seesEveryJob, type JobCaller, type JobRow } from './access';
 import type { DraftSync } from './draft-sync';
 import type { DraftFound, DraftLookup, DraftStore } from './drafts';
-import { afterFieldStep, syncJobDrafts } from './sync-job';
+import { afterFieldStep, stillMember, syncJobDrafts } from './sync-job';
 import { IdentityRefusal } from '@/lib/auth';
 import { isQueueTimeout } from '@/db/client';
 import { createDigest, type ClaimInput, type CreateJobInput, type CustomerInput, type ListQuery } from './schema';
@@ -349,7 +349,8 @@ export function jobsService(db: Database, drafts: DraftStore, sync: DraftSync): 
           if (await findDraft(drafts, caller.companyId, input.draftId)) throw new JobError('conflict');
           await audit(tx, caller, 'job_created', row.id, { revision: row.revision });
         }
-        return { created: inserted !== undefined, detail: await detailOf(tx, row) };
+        // What the projection needs; the answer is read after the field step.
+        return { created: inserted !== undefined, job: { id: row.id, currentDraftId: row.currentDraftId, revision: row.revision } };
       });
       try {
         // The job's first draft, as the draft sync makes every draft (the draft life-cycle redesign, slice 5):
@@ -357,9 +358,9 @@ export function jobsService(db: Database, drafts: DraftStore, sync: DraftSync): 
         // creation can never name an owner a later move replaced; a placeholder an older version left
         // under the id is replaced, and nothing is written for one (sync-job.ts).
         // Its answer only to a caller still an active member of an active company (afterFieldStep).
-        await afterFieldStep(db, caller, () => syncJobDrafts(db, sync, drafts, caller.companyId, made.detail.job.id));
-        await drafts.projectJob(caller.companyId, made.detail.job.id, {
-          currentDraftId: made.detail.job.currentDraftId, revision: made.detail.job.revision,
+        await afterFieldStep(db, caller, () => syncJobDrafts(db, sync, drafts, caller.companyId, made.job.id));
+        await drafts.projectJob(caller.companyId, made.job.id, {
+          currentDraftId: made.job.currentDraftId, revision: made.job.revision,
         });
       } catch (error) {
         if (error instanceof JobError || error instanceof IdentityRefusal || isQueueTimeout(error)) throw error;
@@ -369,7 +370,13 @@ export function jobsService(db: Database, drafts: DraftStore, sync: DraftSync): 
       }
       // The job as Postgres holds it after the field step, read with the caller's access again: a change
       // committed meanwhile (an archive, a move) is the answer, not the row this request wrote.
-      const detail = await withCompany(db, caller.companyId, async (tx) => detailOf(tx, await jobAccess(tx, caller, made.detail.job.id, READ)), { snapshot: true });
+      const detail = await withCompany(db, caller.companyId, async (tx) => {
+          // The caller still a member of an active company, in the same snapshot as the job read.
+          await stillMember(tx, caller);
+          return detailOf(tx, await jobAccess(tx, caller, made.job.id, READ));
+        },
+        { snapshot: true },
+      );
       return { created: made.created, detail };
     },
 

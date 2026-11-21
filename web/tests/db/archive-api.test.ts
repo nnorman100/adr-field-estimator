@@ -380,6 +380,18 @@ describe('copy', () => {
     expect(await copyingAgain).toEqual({ status: 403, body: { error: 'not_allowed' } });
   });
 
+  // Slice 5 review round 2, R1: a member disabled while the copy's locator is written gets no details.
+  it('gives a member disabled while the copy’s locator was written no details of the copy', async () => {
+    const { jobId: source } = await signedJob();
+    const project = h.field.projectJob;
+    h.field.projectJob = async (...args) => {
+      h.field.projectJob = project;
+      await h.admin`UPDATE memberships SET status = 'disabled' WHERE id = ${h.seed.estimatorA.membership}`;
+      return project(...args);
+    };
+    expect(await copy(ESTIMATOR_A, source, { id: randomUUID(), draftId: randomUUID() })).toEqual({ status: 403, body: { error: 'not_allowed' } });
+  });
+
   it('commits the claim before stamping a copy draft the previous version made, so a lost answer leaves it claimed', async () => {
     const { jobId: source } = await signedJob();
     const ids = { id: randomUUID(), draftId: randomUUID() };
@@ -426,9 +438,6 @@ function holdEither(methods: (keyof FakeField['gate'])[]): { arrived: Promise<vo
   return { arrived, open };
 }
 
-// Waits for a step that may instead be waiting on a lock another held request has.
-const briefly = (step: Promise<unknown>) => Promise.race([step, new Promise((resolve) => setTimeout(resolve, 1000))]);
-
 describe('overlapping requests', () => {
   it('leaves a copy archived when the owner archives it before its field draft is made', async () => {
     const { jobId: source } = await signedJob();
@@ -437,12 +446,11 @@ describe('overlapping requests', () => {
     const made = holdEither(['sync', 'createCopy']);
     const copying = copy(ESTIMATOR_A, source, ids);
     await made.arrived;
-    const archiving = archive(OWNER_A, ids.id, change(1));
-    await briefly(archiving);
+    // The archive commits (and syncs) while the copy's field step is held: nothing holds the job's lock now.
+    expect((await archive(OWNER_A, ids.id, change(1))).status).toBe(200);
     made.open();
     // The copy's answer is the copy as Postgres holds it after its field step: archived (slice 5).
     expect(await copying).toEqual({ status: 410, body: { error: 'archived' } });
-    expect((await archiving).status).toBe(200);
     expect(h.field.draft(h.seed.a, ids.draftId)?.state).toBe('archived');
   });
 
@@ -454,12 +462,11 @@ describe('overlapping requests', () => {
     const made = holdEither(['sync', 'createFrom']);
     const editing = f.nextDraft(ESTIMATOR_A, jobId, { draftId: next, fromDraftId: draftId });
     await made.arrived;
-    const archiving = archive(OWNER_A, jobId, change((await f.job(jobId)).revision));
-    await briefly(archiving);
+    // The archive commits (and syncs) while Back to editing's field step is held.
+    expect((await archive(OWNER_A, jobId, change((await f.job(jobId)).revision))).status).toBe(200);
     made.open();
     // Back to editing's answer is the job as Postgres holds it after its field step: archived (slice 5).
     expect(await editing).toMatchObject({ status: 410, body: { error: 'archived' } });
-    expect((await archiving).status).toBe(200);
     expect(h.field.draft(h.seed.a, next)?.state).toBe('archived');
   });
 

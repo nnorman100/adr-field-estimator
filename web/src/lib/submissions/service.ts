@@ -10,7 +10,7 @@ import { claimDraft, hasAny, holdDraft, jobAccess, JobError, type JobCaller, typ
 import { jobPriceTable, namesPriceIds, priceIdsKnown, PricesUnreadable } from '@/lib/scope-lists/version';
 import { readJobDetails } from './details';
 import { SubmissionError, type SubmissionErrorCode } from './errors';
-import { afterFieldStep, syncJobDrafts } from '@/lib/jobs/sync-job';
+import { afterFieldStep, stillMember, syncJobDrafts } from '@/lib/jobs/sync-job';
 import type { DraftSync } from '@/lib/jobs/draft-sync';
 import type { FenceStore } from './fence';
 import { submitDigest, type NextDraftInput, type SubmitInput } from './schema';
@@ -535,7 +535,16 @@ export function submissionsService(db: Database, store: SubmitStore, options: Su
       }));
       // The job as Postgres holds it after the field step, read with the caller's access again: a change
       // committed meanwhile (an archive) is the answer, not the row this request wrote.
-      const job = await withCompany(db, caller.companyId, (tx) => jobAccess(tx, caller, jobId, SUBMIT), { snapshot: true });
+      const job = await withCompany(
+        db,
+        caller.companyId,
+        async (tx) => {
+          // The caller still a member of an active company, in the same snapshot as the job read.
+          await stillMember(tx, caller);
+          return jobAccess(tx, caller, jobId, SUBMIT);
+        },
+        { snapshot: true },
+      );
       return { created: made.changed, job: jobState(job) };
     },
   };

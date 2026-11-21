@@ -111,7 +111,9 @@ snapshot of the job with its `field_revision`, the sync, then `field_synced_revi
 (`WHERE field_synced_revision < v`) unless a draft is to be written again. Submit syncs twice: after its intent
 row (the fence, the pending row's `submitting`) and after its decision (`submitted` or `editing`); the submission
 worker syncs a job whose decided row's request could not. No placeholder is written for a missing draft any more;
-one a previous version left is replaced by the draft at the next sync. The scheduled worker's repair pass (`web/src/lib/jobs/sync-repair.ts`) syncs jobs still behind once their
+one a previous version left is replaced by the draft at the next sync of the job, unless that version left a revision
+newer than the job's (the sync then reports it superseded and leaves it until a sync at a newer revision, or the
+operator's generation raise, writes over it). The scheduled worker's repair pass (`web/src/lib/jobs/sync-repair.ts`) syncs jobs still behind once their
 last change is more than 60 seconds old, so a field step that failed or was abandoned heals with no request from a
 phone: within one worker period while a pass's bounds hold every due job (100 companies, the most the lookup
 returns, and 200 jobs in each) and none of them fails. A larger backlog drains over the following periods. Within a company, each period's
