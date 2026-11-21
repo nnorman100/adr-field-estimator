@@ -38,19 +38,22 @@ function wrappedAmount(before: string, line: string): boolean {
 
 // The lines of one sentence `drop` matches with the shortest run of them `run` matches emptied, then
 // the same in what is left before and after it: a clause wrapped over lines goes whole, a line beside
-// it stays. The run also takes the amount wrapped after it ("Drying cost for 3 days:" then "900."), so
-// an amount never stays behind once its label is dropped.
-function blank(lines: string[], drop: (sentence: string) => boolean, run: (lines: string) => boolean): string[] {
+// it stays. With `wrap`, the run also takes the lines after it that `wrap` says belong to it (for a
+// price, the amount wrapped after its label).
+type Wrap = (before: string, line: string) => boolean;
+const NO_WRAP: Wrap = () => false;
+
+function blank(lines: string[], drop: (sentence: string) => boolean, run: (lines: string) => boolean, wrap: Wrap): string[] {
   if (lines.length === 0 || !drop(lines.join('\n'))) return lines;
   for (let size = 1; size < lines.length; size += 1) {
     for (let start = 0; start + size <= lines.length; start += 1) {
       if (run(lines.slice(start, start + size).join('\n'))) {
         let end = start + size;
-        while (end < lines.length && wrappedAmount(lines[end - 1]!, lines[end]!)) end += 1;
+        while (end < lines.length && wrap(lines[end - 1]!, lines[end]!)) end += 1;
         return [
-          ...blank(lines.slice(0, start), drop, run),
+          ...blank(lines.slice(0, start), drop, run, wrap),
           ...lines.slice(start, end).map(() => ''),
-          ...blank(lines.slice(end), drop, run),
+          ...blank(lines.slice(end), drop, run, wrap),
         ];
       }
     }
@@ -69,6 +72,7 @@ export function stripSentences(
   text: string,
   drop: (sentence: string) => boolean,
   run: (lines: string) => boolean = drop,
+  wrap: Wrap = NO_WRAP,
 ): string {
   const parts = text.trim().split(/((?<=[.?!])\s+(?=[^\p{Ll}\d]))/u);
   const units: { text: string; after: string }[] = [];
@@ -86,7 +90,7 @@ export function stripSentences(
   let out = '';
   let breaks = false;
   for (const unit of units) {
-    const kept = blank(unit.text.split('\n'), drop, run).join('\n');
+    const kept = blank(unit.text.split('\n'), drop, run, wrap).join('\n');
     if (kept.trim().length > 0) {
       if (out.length > 0) out += breaks ? '\n' : ' ';
       out += kept;
@@ -102,9 +106,10 @@ export function stripSentences(
 }
 
 // The text without any sentence that states a price; of one over several lines, the lines that state
-// the price with its amount ("Drying cost: $" goes with the "900." below it).
+// the price with its amount ("Drying cost: $" goes with the "900." below it, and "Drying cost for 3
+// days:" with the "900." wrapped after it).
 export function stripPriceSentences(text: string): string {
-  return stripSentences(text, statesPrice, (lines) => statesPrice(lines) && NUMBER.test(lines));
+  return stripSentences(text, statesPrice, (lines) => statesPrice(lines) && NUMBER.test(lines), wrappedAmount);
 }
 
 // The same rule over every string of a structured output; numbers, booleans and shape are kept.

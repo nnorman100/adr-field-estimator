@@ -217,6 +217,23 @@ export function watchState(input: { plannedDays: number; rooms: SignedRoom[]; se
 /** Whether monitoring has finished, so the watch suggests the day count for the job close. */
 export const finished = (status: WatchStatus) => status !== 'active';
 
+export const MAX_FINISHED_DAYS = 365;
+
+/**
+ * The day count a finished watch suggests for the job close: the California day number (the original
+ * signing is day 1) of the instant monitoring finished, never above 365. Mark dry and Close monitoring
+ * finish at their receipt's time, an automatic dry standard at the latest eligible reading. Null while
+ * monitoring is active.
+ */
+export function finishedDayNumber(state: WatchState, receipts: { action: string; at: string }[]): number | null {
+  if (!finished(state.status)) return null;
+  const closing = receipts.find((receipt) => receipt.action === 'mark_dry' || receipt.action === 'close');
+  const instant = closing?.at ?? state.lastReadingAt;
+  if (!instant) return null;
+  const day = daysBetween(calendarDay(new Date(state.setupAt)), calendarDay(new Date(instant))) + 1;
+  return Math.min(MAX_FINISHED_DAYS, Math.max(1, day));
+}
+
 /**
  * The SHA-256 a person reviewed before confirming a watch action: the agreement, the state worked out
  * now, the log's version (every reading and void, so any change to the log is a change), and the

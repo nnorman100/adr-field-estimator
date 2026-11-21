@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { stripPriceSentences, stripPricesDeep, statesPrice } from '@/lib/ai/rules';
+import { stripPriceSentences, stripPricesDeep, stripSentences, statesPrice } from '@/lib/ai/rules';
 
 // Server rules applied to every model output (S7-1, docs/plans/S7.md section 3: AI never prices).
 // Ported from backend/claims.py states_price / ai_note: a sentence that names money, or a price word
@@ -64,6 +64,10 @@ describe('price sentences', () => {
     expect(stripPriceSentences('Drying cost for 3 days\n900.\nThe hall is dry.')).toBe('The hall is dry.');
     expect(stripPriceSentences('Kitchen wet.\nTotal for 2 rooms =\n1,200\nThe hall is dry.')).toBe('Kitchen wet.\nThe hall is dry.');
     expect(stripPriceSentences('- Total 900\n- 3 fans in the hall')).toBe('- 3 fans in the hall');
+  });
+
+  it('takes a wrapped amount only with a price, never with another dropped sentence', () => {
+    expect(stripSentences('Test for asbestos:\n3 rooms are wet.', (text) => /asbestos/i.test(text))).toBe('3 rooms are wet.');
   });
 
   it('keeps estimate used as a verb', () => {

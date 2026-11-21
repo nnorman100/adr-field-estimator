@@ -299,6 +299,8 @@ describe('the shared prompt builder', () => {
       expect({ variant, sent: sent(`Meet at ${variant} today.`, noCommas) }).toEqual({ variant, sent: expect.stringContaining('Meet at [removed] today.') });
     }
     expect(sent('Meet at 12 Oak St', noCommas)).toContain('Meet at [removed]');
+    const saint = { customerName: '', propertyAddress: '12 St Charles Ave Testville CA 94000' };
+    expect(sent('Meet at St Charles Ave today.', saint)).toContain('Meet at [removed] today.');
     expect(sent('Call 555 0101 first.')).toContain('Call [removed] first.');
     expect(sent('The gate is at -122.4194.')).toContain('The gate is at [removed].');
     expect(sent('The gate is at -122.4194, by the shed.')).toContain('The gate is at [removed], by the shed.');

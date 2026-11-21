@@ -4,9 +4,10 @@ Part of [Data](../DATA.md).
 
 `0020_drying_outcomes` adds the drying log, the job close and the estimate history, and the drying watch's decisions on
 `job_coordination` (S5b-10 slice 10A, [S5b-10](../plans/S5/S5b-10.md)). The drying log routes read and write
-`drying_readings` and the drying watch routes read the log and read and write `job_coordination.drying_watch` (slice
-10B, [Drying log](../access/drying.md)); no route reads or writes `job_closes` or `estimate_history` yet (the rest of
-slice 10B), and the screens are slice 10C. All three tables hold a company's rows only inside `withCompany`, with forced
+`drying_readings`, the drying watch routes read the log and read and write `job_coordination.drying_watch`, signing
+writes each agreement's `estimate_history` sample, and the job close routes read and write `job_closes` (writing a
+missing sample of the original agreement) (slice 10B, [Drying log](../access/drying.md)); the estimate accuracy numbers
+that read the history are the rest of slice 10B, and the screens are slice 10C. All three tables hold a company's rows only inside `withCompany`, with forced
 row-level security. A key between rows always carries `company_id`, so a row can never point at another company's
 job, agreement or person. A platform operator reads them only through `withOperator` with the company set, and every
 write policy refuses an operator. The runtime has no `DELETE` or `TRUNCATE` on any of them.

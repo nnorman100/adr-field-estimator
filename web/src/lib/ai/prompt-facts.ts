@@ -120,7 +120,8 @@ function partWords(part: string): string[][] {
     .replace(/#/g, ' # ')
     .split(/[\s.]+/)
     .filter((word) => word.length > 0);
-  const street = words.findIndex((word, index) => index > 0 && STREET_WORDS.includes(word.toLowerCase()));
+  // The last street word ends the street, so "12 St Charles Ave" keeps its "St" inside the name.
+  const street = words.findLastIndex((word, index) => index > 0 && STREET_WORDS.includes(word.toLowerCase()));
   if (street < 0) return [words];
   let end = street + 1;
   if (end + 1 < words.length && UNIT_WORDS.includes(words[end]!.toLowerCase())) end += 2;

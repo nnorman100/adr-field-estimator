@@ -145,8 +145,8 @@ async function seedSides(): Promise<void> {
     await h.admin`INSERT INTO audit_events (company_id, actor_id, action, target) VALUES (${company}, ${by}, 'seeded_event', ${company})`;
     // Priced extras too (S5b-8), so the proposal and approval routes are reached and refused by their access rule, not the switch.
     await h.admin`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${company}, 'price_books', true), (${company}, 'priced_extras', true)`;
-    // Readiness and the drying watch on, so their routes are refused by job access and not only by their switches.
-    await h.admin`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${company}, 'readiness', true), (${company}, 'drying_watch', true)`;
+    // Readiness, the drying watch and the job close on, so their routes are refused by job access and not only by their switches.
+    await h.admin`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${company}, 'readiness', true), (${company}, 'drying_watch', true), (${company}, 'estimate_assist', true)`;
     await h.admin`INSERT INTO access_projection_outbox (company_id, actor_id) VALUES (${company}, ${by})`;
   }
   // Each company has a working copy and a published version, named so a leak of either shows.

@@ -223,8 +223,9 @@ async function signedSide(name: 'A' | 'B', companyId: string, estimator: FakeCla
   };
   const signedAssignment = await coordinate(linked.jobId, `Office Notes Line ${name}`);
   const pendingAssignment = await coordinate(pending.jobId, `Office Notes Second ${name}`);
-  // S5b-10 (0020, no routes yet): a drying reading on each job, and on the signed job a close, its
-  // estimate history sample (the close's baseline) and a drying watch action, written as slice 10B will.
+  // S5b-10 (0020): a drying reading on each job, and on the signed job a close and a drying watch action,
+  // written as slice 10B writes them; the signed job's estimate history sample (the close's baseline) is
+  // the one its signing wrote.
   const [agreement] = await h.admin<{ id: string }[]>`SELECT id::text FROM agreements WHERE job_id = ${linked.jobId}`;
   const readingIds: Record<string, string> = {};
   for (const jobId of [linked.jobId, pending.jobId]) {
@@ -237,16 +238,17 @@ async function signedSide(name: 'A' | 'B', companyId: string, estimator: FakeCla
               ${digestOf(readingId)}, ${estimatorActorId})
     `;
   }
-  await h.admin`
-    INSERT INTO estimate_history (company_id, job_id, agreement_id, signed_at, price_mode, low_cents, high_cents)
-    VALUES (${companyId}, ${linked.jobId}, ${agreement!.id}, now(), 'range', 110000, 140000)
+  const [sample] = await h.admin<{ price_mode: string; low_cents: string; high_cents: string | null }[]>`
+    SELECT price_mode, low_cents::text, high_cents::text FROM estimate_history WHERE job_id = ${linked.jobId} AND agreement_id = ${agreement!.id}
   `;
+  expect(sample).toBeDefined();
   const closeId = randomUUID();
+  // The final invoice at the low end lands inside, in a range or at one price.
   await h.admin`
     INSERT INTO job_closes (id, company_id, job_id, agreement_id, revision, request_digest, final_cents, actual_days, note, baseline_agreement_id, price_mode,
                             baseline_low_cents, baseline_high_cents, landed, closed_by_actor_id)
-    VALUES (${closeId}, ${companyId}, ${linked.jobId}, ${agreement!.id}, 1, ${digestOf(closeId)}, 125000, 4, ${`Close Note ${name}`}, ${agreement!.id}, 'range',
-            110000, 140000, 'inside', ${estimatorActorId})
+    VALUES (${closeId}, ${companyId}, ${linked.jobId}, ${agreement!.id}, 1, ${digestOf(closeId)}, ${Math.max(1, Number(sample!.low_cents))}, 4, ${`Close Note ${name}`},
+            ${agreement!.id}, ${sample!.price_mode}, ${sample!.low_cents}, ${sample!.high_cents}, 'inside', ${estimatorActorId})
   `;
   const watchRequest = randomUUID();
   const watch = {
@@ -338,8 +340,8 @@ beforeEach(async () => {
   live.harness = h;
   made = new Set();
   await seedSides();
-  // Readiness and the drying watch on in both companies, so their routes answer by job access, not only by their switches.
-  await h.admin`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${h.seed.a}, 'readiness', true), (${h.seed.b}, 'readiness', true), (${h.seed.a}, 'drying_watch', true), (${h.seed.b}, 'drying_watch', true)`;
+  // Readiness, the drying watch and the job close on in both companies, so their routes answer by job access, not only by their switches.
+  await h.admin`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${h.seed.a}, 'readiness', true), (${h.seed.b}, 'readiness', true), (${h.seed.a}, 'drying_watch', true), (${h.seed.b}, 'drying_watch', true), (${h.seed.a}, 'estimate_assist', true), (${h.seed.b}, 'estimate_assist', true)`;
 });
 
 afterAll(async () => {
@@ -462,8 +464,9 @@ describe('the S5a routes', () => {
           for (const row of reads) {
             const answer = await call(row, claims.uid, claims, idsOf(self, job));
             const where = `${self.name} ${role}: ${row.method} ${row.route} on its ${job} job`;
-            // The drying watch is a signed job's (S5b-10): the job with a pending signing link is 409.
-            const allowed = row.route === 'api/jobs/[jobId]/drying-watch' && job === 'pending' ? [409] : [200, 403, 404];
+            // The drying watch and the job's outcome are a signed job's (S5b-10): the job with a pending signing link is 409.
+            const signedOnly = row.route === 'api/jobs/[jobId]/drying-watch' || row.route === 'api/jobs/[jobId]/outcome';
+            const allowed = signedOnly && job === 'pending' ? [409] : [200, 403, 404];
             expect({ where, status: allowed.includes(answer.status) }).toEqual({ where, status: true });
             expect({ where, leaked: leaks(answer.text, other) }).toEqual({ where, leaked: [] });
           }
@@ -478,6 +481,9 @@ describe('the S5a routes', () => {
       // above are job access, not the switch.
       const watched = await call({ route: 'api/jobs/[jobId]/drying-watch', method: 'GET' }, 'owner', self.people.owner, idsOf(self, 'signed'));
       expect({ as: self.name, status: watched.status, jobId: (JSON.parse(watched.text) as { jobId?: string }).jobId }).toEqual({ as: self.name, status: 200, jobId: idsOf(self, 'signed').jobId });
+      // The job's outcome answers the company's own owner about its signed job, with its own close (S5b-10).
+      const outcome = await call({ route: 'api/jobs/[jobId]/outcome', method: 'GET' }, 'owner', self.people.owner, idsOf(self, 'signed'));
+      expect({ as: self.name, status: outcome.status, own: leaks(outcome.text, self).length > 0 }).toEqual({ as: self.name, status: 200, own: true });
       // Readiness answers the company's own owner about both of its jobs (neither is editing now), so its
       // refusals above are job access, not the switch.
       for (const job of ['signed', 'pending'] as const) {
