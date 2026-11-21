@@ -95,8 +95,9 @@ job's field work is no longer yours…" (unsent changes stay on the phone, read 
   copy that could not be erased is never shown and every read erases it first, in any tab and
   after a reload. An answer is shown and saved only if no refusal was recorded after its request
   started, and a copy fetched before a refusal is erased. The same version already saved is not
-  written again. A refusal that only asks the person to sign in again (401 `sign_in_again`) hides
-  the list in this view and keeps the copy. A lost connection, or a 403 or 404 without one of the
+  written again. A refusal that only asks the person to sign in again (401 `sign_in_again`) or to
+  complete the role's second step (403 `second_step_required`) hides the list in this view and
+  keeps the copy. A lost connection, or a 403 or 404 without one of the
   server's own member, capability or feature-flag codes (a captive portal or proxy), is not a
   refusal: the last readable list stays. Erasing, sign-out and Discard never create the item-list
   database, and sign-out and Discard fail while an erase cannot finish. Limit: when the phone

@@ -193,9 +193,10 @@ function twice<T>(attempt: () => Promise<T>): Promise<T> {
   });
 }
 
-// Under the lock: removes the rows of `wipe`'s scope (when given) and every row a refusal covers. A
-// phone with no item-list database has none.
-async function erase(person: Person, signal: AbortSignal, wipe: Scope | null): Promise<void> {
+// Under the lock: removes every row of this person a refusal covers. A row saved from a request
+// that started after the refusal was recorded is not covered and stays. A phone with no item-list
+// database has none.
+async function erase(person: Person, signal: AbortSignal): Promise<void> {
   try {
     await onLists('readwrite', signal, false, (store) => {
       const request = store.openCursor(range(person));
@@ -203,8 +204,7 @@ async function erase(person: Person, signal: AbortSignal, wipe: Scope | null): P
         const cursor = request.result;
         if (!cursor) return;
         const row = cursor.value as { companyId?: unknown; seen?: unknown };
-        const inScope = wipe !== null && (wipe.companyId === undefined || wipe.companyId === row.companyId);
-        if (inScope || covered(person, row.companyId, row.seen)) cursor.delete();
+        if (covered(person, row.companyId, row.seen)) cursor.delete();
         cursor.continue();
       };
       return () => undefined;
@@ -234,7 +234,7 @@ export function readItemList(owner: ListOwner): Promise<SavedList> {
     // Refused since it was saved, in this tab or another: never shown, erased first.
     if (covered(owner, owner.companyId, row.seen)) {
       try {
-        await erase(owner, signal, null);
+        await erase(owner, signal);
       } catch (error) {
         if (error instanceof ReopenTheApp) throw error;
         return 'withheld';
@@ -262,6 +262,8 @@ export function replaceItemList(owner: ListOwner, list: ItemList | null, authTim
     const row = await stored(owner, signal);
     if (row?.versionId === versionId && !covered(owner, owner.companyId, row.seen)) return true;
     return onLists('readwrite', signal, true, (store) => {
+      // Asked again now the write has started: a refusal or a newer answer may have come meanwhile.
+      if (!active() || !sameStamp(stamp, refusalStamp(owner))) return () => false;
       store.delete(range(owner, owner.companyId));
       store.put({ ...owner, versionId, list, seen: stamp });
       return () => true;
@@ -274,9 +276,13 @@ export function replaceItemList(owner: ListOwner, list: ItemList | null, authTim
 // when it is not, it is owed (a row stamped below the counter) and every read erases it first.
 export async function eraseItemList(owner: ListOwner): Promise<boolean> {
   if (typeof indexedDB === 'undefined') return true;
+  // Recorded once: a retry of the same erase must not count as a new refusal, which would drop an
+  // answer asked for after access came back.
+  let recorded = false;
   return twice(() => changing(owner, async (signal) => {
-    raise(owner);
-    await erase(owner, signal, owner);
+    if (!recorded) raise(owner);
+    recorded = true;
+    await erase(owner, signal);
   })).then(() => true, () => false);
 }
 
@@ -286,9 +292,11 @@ export async function eraseItemList(owner: ListOwner): Promise<boolean> {
 export async function forgetItemLists(person: Person, active: () => boolean = () => true): Promise<void> {
   if (typeof indexedDB === 'undefined' || !active()) return;
   const whole = { tenantId: person.tenantId, uid: person.uid };
+  let recorded = false;
   await twice(() => changing(person, async (signal) => {
     if (!active()) return;
-    raise(whole);
-    await erase(person, signal, whole);
+    if (!recorded) raise(whole);
+    recorded = true;
+    await erase(person, signal);
   }));
 }

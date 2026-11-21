@@ -355,7 +355,10 @@ test('access given back after a refusal saves the same version again, and the ol
     window.dispatchEvent(new Event('pageshow'));
   });
   await expect(page.getByText('Item list as of Nov 10, 2026', { exact: true })).toBeVisible();
-  await itemListWorkDone(page, scope.person);
+  // The copy saved from the answer asked for after the refusal, not the refused one still on disk.
+  const reader = await FieldPhone.open(context, lane);
+  await expect.poll(() => reader.call('savedItemList', scope.person, scope.companyId)).toBe(first.current.versionId);
+  await reader.page.close();
 
   lane.cut();
   await page.reload();
@@ -379,7 +382,9 @@ test('a sign-out that cannot open the saved lists leaves their erase owed until 
       return open.call(this, name, version);
     };
   });
-  await entry.call('signOutKeep', scope.person);
+  // The cleanup could not finish: the sign-out says so and the person stays signed in.
+  await expect(entry.call('signOutKeep', scope.person)).rejects.toThrow();
+  expect(await entry.call('latestMe')).toBe(`${scope.person.tenantId}/${scope.person.uid}`);
 
   const later = await FieldPhone.open(context, lane);
   expect(await storedKeys(later.page)).toContainEqual(keyOf(scope, first.current.versionId));
@@ -444,4 +449,57 @@ test('discarding on a phone that never saved an item list leaves no item-list da
   const person = await phone.signIn(world, world.owner);
   expect(await phone.call('signOutDiscard', person)).toBe('signed-out');
   expect(await databaseNames(phone.page)).not.toContain('ds-prices');
+});
+
+test('a refusal that asks for the second step the role needs hides the list and keeps the copy', async ({ context, lane }) => {
+  const first = publication('2026-11-10T12:00:00Z', 'Second step item');
+  serve(lane, ITEM_LIST, first);
+  const scope = await openScope(context, lane);
+  const { page } = scope;
+  await expect(page.getByText('Item list as of Nov 10, 2026', { exact: true })).toBeVisible();
+  await expectSaved(scope, first.current.versionId);
+
+  lane.serve(ITEM_LIST, { type: 'application/json', body: '{"error":"second_step_required"}', status: 403 });
+  await page.evaluate(() => window.dispatchEvent(new Event('pageshow')));
+  await expect(page.getByText(UNREADABLE)).toBeVisible();
+  await expect(page.getByText('Item list as of', { exact: false })).toHaveCount(0);
+  await itemListWorkDone(page, scope.person);
+  expect(await storedKeys(page)).toContainEqual(keyOf(scope, first.current.versionId));
+});
+
+test('a 403 with an error code the server never gives neither hides nor erases the list', async ({ context, lane }) => {
+  const first = publication('2026-11-10T12:00:00Z', 'Gateway item');
+  serve(lane, ITEM_LIST, first);
+  const scope = await openScope(context, lane);
+  const { page } = scope;
+  await expect(page.getByText('Item list as of Nov 10, 2026', { exact: true })).toBeVisible();
+  await expectSaved(scope, first.current.versionId);
+
+  lane.serve(ITEM_LIST, { type: 'application/json', body: '{"error":"Forbidden"}', status: 403 });
+  const answered = page.waitForResponse((response) => response.url().endsWith(ITEM_LIST) && response.status() === 403);
+  await page.evaluate(() => window.dispatchEvent(new Event('pageshow')));
+  await answered;
+  await itemListWorkDone(page, scope.person);
+  await expect(page.getByText('Item list as of Nov 10, 2026', { exact: true })).toBeVisible();
+  expect(await storedKeys(page)).toContainEqual(keyOf(scope, first.current.versionId));
+});
+
+test('the same version again on a phone that now refuses writes is kept without a save warning', async ({ context, lane }) => {
+  const first = publication('2026-11-10T12:00:00Z', 'Unchanged item');
+  serve(lane, ITEM_LIST, first);
+  const scope = await openScope(context, lane);
+  const { page } = scope;
+  await expect(page.getByText('Item list as of Nov 10, 2026', { exact: true })).toBeVisible();
+  await expectSaved(scope, first.current.versionId);
+
+  await refuseWrites(page, ['ds-prices']);
+  const answered = page.waitForResponse((response) => response.url().endsWith(ITEM_LIST) && response.status() === 200);
+  await page.evaluate(() => window.dispatchEvent(new Event('pageshow')));
+  await answered;
+  // The answer is checked and then saved under the item-list lock, after the sign-in's token is read.
+  await page.waitForTimeout(1_000);
+  await itemListWorkDone(page, scope.person);
+  await expect(page.getByText('Item list as of Nov 10, 2026', { exact: true })).toBeVisible();
+  await expect(page.getByText('This item list could not be saved on this phone.', { exact: true })).toHaveCount(0);
+  expect(await storedKeys(page)).toEqual([keyOf(scope, first.current.versionId)]);
 });

@@ -60,17 +60,21 @@ function display(view: View): Display {
   return { list: current.list, notes: note ? [note] : [] };
 }
 
-// The codes the server gives when the person, the role or the company's switch no longer allows the
-// list. A 403 or 404 from a captive portal or a proxy carries none of them and is no answer.
-const MEMBER_REFUSALS = new Set(['not_allowed', 'not_a_member', 'member_disabled', 'company_inactive', 'account_disabled']);
+// The 403 codes the server gives when the person, their account, the role or the company no longer
+// allows the list: the route's capability check (`not_allowed`) and the member route's identity
+// check (src/lib/auth/identity.ts, REFUSALS). A 403 or 404 from a captive portal or a proxy carries
+// none of them and is no answer.
+const ACCESS_REFUSALS = new Set([
+  'not_allowed', 'not_a_member', 'member_disabled', 'company_inactive', 'account_disabled', 'email_unverified', 'no_tenant', 'unknown_tenant',
+]);
 
 // What a refusal from the item-list route means for the copy on this phone. 'erase': the person may
-// no longer see this company's list. 'hide': the sign-in must be renewed; the list is hidden now
-// and the copy kept for after it.
+// no longer see this company's list. 'hide': the sign-in must be renewed, or completed with the
+// role's second step; the list is hidden now and the copy kept for after it.
 function refusalOf({ status, code }: { status: number; code?: string }): 'erase' | 'hide' | null {
   if (code === undefined) return null;
-  if ((status === 403 && MEMBER_REFUSALS.has(code)) || (status === 404 && code === 'not_found') || (status === 401 && code === 'sign_in_revoked')) return 'erase';
-  if (status === 401 && code === 'sign_in_again') return 'hide';
+  if ((status === 403 && ACCESS_REFUSALS.has(code)) || (status === 404 && code === 'not_found') || (status === 401 && code === 'sign_in_revoked')) return 'erase';
+  if ((status === 401 && code === 'sign_in_again') || (status === 403 && code === 'second_step_required')) return 'hide';
   return null;
 }
 
