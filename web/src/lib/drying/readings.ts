@@ -259,7 +259,7 @@ export function refusedByDatabase(error: unknown): never {
 
 export type ReadingsService = {
   list(caller: JobCaller, jobId: string, query: Record<string, string>): Promise<ReadingsPage>;
-  rooms(caller: JobCaller, jobId: string): Promise<{ jobId: string; rooms: ReadingRoom[] }>;
+  rooms(caller: JobCaller, jobId: string, query: Record<string, string>): Promise<{ jobId: string; rooms: ReadingRoom[] }>;
   add(caller: JobCaller, jobId: string, body: string | null): Promise<{ created: boolean; reading: ReadingView }>;
   void(caller: JobCaller, jobId: string, readingId: string, body: string | null): Promise<VoidReceipt>;
 };
@@ -347,7 +347,7 @@ export function readingsService(db: Database, reader: () => ReadinessReader): Re
     // GET .../drying-rooms: the rooms a reading of the job may name, by the write's own rule (jobRooms),
     // for every job reader (an assigned estimator who does not own the field work included). Each pass is
     // a read-only snapshot; the field database is read between two, as the write reads it.
-    async rooms(caller, jobId) {
+    async rooms(caller, jobId, query) {
       const pass = (draft: DraftRead | null) =>
         withCompany(
           db,
@@ -355,6 +355,7 @@ export function readingsService(db: Database, reader: () => ReadinessReader): Re
           async (tx) => {
             await currentCaller(tx, caller, false);
             const job = await jobAccess(tx, caller, jobId, READ);
+            if (Object.keys(query).length > 0) throw new DryingError('invalid_request');
             return jobRooms(tx, job, draft);
           },
           { snapshot: true },

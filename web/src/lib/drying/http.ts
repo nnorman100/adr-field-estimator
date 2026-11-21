@@ -77,8 +77,7 @@ export async function listReadings(request: Request, identity: Identity, context
 export async function listRooms(request: Request, identity: Identity, context: RouteContext): Promise<Response> {
   return respond(async () => {
     const id = await jobPathId(context);
-    if ([...new URL(request.url).searchParams.keys()].length > 0) throw new DryingError('invalid_request');
-    return json(await dryingServices().readings.rooms(identity, id));
+    return json(await dryingServices().readings.rooms(identity, id, Object.fromEntries(new URL(request.url).searchParams)));
   });
 }
 
