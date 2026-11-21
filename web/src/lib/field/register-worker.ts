@@ -6,7 +6,9 @@
 //
 // `updateViaCache: 'none'` makes the browser fetch the worker script itself past its HTTP cache,
 // so a new build is noticed on the next open.
-const register = () => navigator.serviceWorker.register('/sw.js', { scope: '/', updateViaCache: 'none' });
+// A browser that blocks workers for the page (a test browser, some privacy settings) can answer
+// with no registration at all rather than refusing.
+const register = (): Promise<ServiceWorkerRegistration | undefined> => navigator.serviceWorker.register('/sw.js', { scope: '/', updateViaCache: 'none' });
 
 // What a window knows of its worker. `waiting`: a new build downloaded and not yet running.
 // `replaced`: a new worker became the controller of this window since it opened, so this window
@@ -30,6 +32,7 @@ export function watchFieldWorker(report: (state: WorkerState) => void): () => vo
   const first = navigator.serviceWorker.controller;
   const start = () => void register().then((registration) => {
     if (!live) return;
+    if (!registration) return report({ ...NO_WORKER, unsupported: true });
     let installer: ServiceWorker | null = null;
     const show = () =>
       report({
@@ -127,6 +130,7 @@ export async function prepareFieldShell(withinMs = PREPARE_WITHIN_MS): Promise<b
   if (typeof navigator === 'undefined' || !('serviceWorker' in navigator) || typeof caches === 'undefined') return false;
   const ready = (async () => {
     const registration = await register();
+    if (!registration) return false;
     if (!registration.active) {
       const coming = registration.installing ?? registration.waiting;
       if (!coming || !(await activated(coming))) return false;
