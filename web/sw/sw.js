@@ -13,7 +13,8 @@
 //     anything that is not a GET. It stores nothing it answers, so the cache holds exactly the
 //     list and no person's data (docs/plans/S6.md section 3).
 // A new build installs beside this one and waits; it reaches a window only when the person taps
-// "Update ready" (S6-6), so a deployment never changes a running window.
+// "Update ready" (S6-6), so a deployment never changes a running window. A build whose list is empty
+// is the kill switch: it unregisters itself when it activates.
 'use strict';
 
 const BUILD_ID = '__BUILD_ID__';
@@ -32,6 +33,7 @@ const KEPT = new Set(PRECACHE);
 const PRECACHE_QUERY = 'ds-precache';
 
 self.addEventListener('install', (event) => {
+  if (PRECACHE.length === 0) return;
   event.waitUntil(
     (async () => {
       const cache = await caches.open(CACHE);
@@ -63,11 +65,21 @@ self.addEventListener('install', (event) => {
   );
 });
 
+self.addEventListener('message', (event) => {
+  if (event.data === 'SKIP_WAITING') event.waitUntil(self.skipWaiting());
+});
+
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     (async () => {
       for (const name of await caches.keys()) {
         if (name.startsWith(CACHE_PREFIX) && name !== CACHE) await caches.delete(name);
+      }
+      // The kill switch (docs/plans/S6.md section 11): a build with an empty list keeps nothing and
+      // removes its own registration, so the next navigation is the server's.
+      if (PRECACHE.length === 0) {
+        await caches.delete(CACHE);
+        await self.registration.unregister();
       }
     })(),
   );
@@ -81,6 +93,7 @@ async function kept(path, request) {
 }
 
 self.addEventListener('fetch', (event) => {
+  if (PRECACHE.length === 0) return;
   const request = event.request;
   if (request.method !== 'GET') return;
   const url = new URL(request.url);

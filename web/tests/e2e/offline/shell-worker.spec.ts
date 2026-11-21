@@ -2,11 +2,16 @@
 // only `setOffline`, which WebKit does not apply to a worker): the shell opens and reloads with no
 // signal; the worker keeps the listed files and nothing else; and a deployment never changes a
 // window that is running.
+import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { expect, test } from './fixture';
-import { missingFromPrecache } from '../../../scripts/build-sw';
+import { makeWorker, missingFromPrecache } from '../../../scripts/build-sw';
 import { PROBE_PATH } from '../../../src/app/field/connection';
 import { buildIdOf, cacheNames, cachedPaths, COMPANY, keptAsFiles, keptEntries, nudge, openControlled, precacheOf, workerText } from './shell';
 import { expectWorkerRuns } from '../service-workers';
+import { estimateFor } from '../review-fixtures';
+import { PASSWORD, readSeed } from '../sign-in/seed';
 
 // Offline and worker tests need the service worker, which the suite blocks by default.
 test.use({ serviceWorkers: 'allow' });
@@ -105,6 +110,158 @@ test.describe('what the worker keeps', () => {
 });
 
 test.describe('a deployment', () => {
+  test('offers a waiting update and reloads into it only after the technician taps', async ({ page, lane }) => {
+    const worker = await workerText(lane);
+    await openControlled(page, lane);
+    const shell = await (await fetch(`${lane.appUrl}/field`)).text();
+    lane.serve('/field', { type: 'text/html; charset=utf-8', body: shell.replace('</body>', '<!--updated-shell--></body>') });
+    lane.serve('/sw.js', { type: 'text/javascript; charset=utf-8', body: worker.replace(buildIdOf(worker), 'update-on-tap') });
+    await nudge(page);
+
+    const update = page.getByRole('button', { name: 'Update now' });
+    await expect(update).toBeEnabled();
+    expect(await page.content()).not.toContain('updated-shell');
+    const reloaded = page.waitForEvent('framenavigated', (frame) => frame === page.mainFrame());
+    await update.click();
+    await reloaded;
+    await page.waitForLoadState('domcontentloaded');
+    expect(await page.content()).toContain('updated-shell');
+    await expect(update).toBeHidden();
+    await expect(page.getByRole('heading', { name: COMPANY })).toBeVisible();
+  });
+
+  test('a waiting update preserves unsaved work in an office window', async ({ context, page, lane }, testInfo) => {
+    const team = readSeed().teams[testInfo.project.name]!;
+    const job = { id: randomUUID(), status: 'submitted', currentDraftId: randomUUID(), revision: 3 };
+    const estimate = estimateFor(team, job.id, job.currentDraftId, 'estimator');
+    const jobApi = `/api/jobs/${job.id}`;
+    lane.serve(jobApi, { type: 'application/json', body: JSON.stringify({ job, customer: {}, claim: {} }) });
+    lane.serve(`${jobApi}/estimate`, { type: 'application/json', body: JSON.stringify({ job, estimate }) });
+
+    const worker = await workerText(lane);
+    await openControlled(page, lane);
+    const office = await context.newPage();
+    await office.goto(`${lane.appUrl}/sign-in/${team.address}`);
+    await office.getByLabel('Email').fill(team.estimator.email);
+    await office.getByLabel('Password').fill(PASSWORD);
+    await office.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await expect(office.getByRole('heading', { name: `Signed in to ${team.companyName}` })).toBeVisible();
+    await office.goto(`${lane.appUrl}/sign-in/${team.address}/jobs/${job.id}/review`);
+    await office.getByRole('checkbox', { name: /I reviewed the proposal/ }).check();
+    const signer = office.getByLabel("Customer's full name");
+    await signer.fill('Casey');
+
+    lane.serve('/sw.js', { type: 'text/javascript', body: worker.replace(buildIdOf(worker), 'office-busy') });
+    await nudge(page);
+    const update = page.getByRole('button', { name: 'Update now' });
+    await expect(update).toBeDisabled();
+    await expect(page.getByRole('status').filter({ hasText: 'Another window has unsaved work.' })).toBeVisible();
+    expect(await cacheNames(page)).toContain(`ds-field-${buildIdOf(worker)}`);
+    await expect(signer).toHaveValue('Casey');
+
+    await signer.clear();
+    await expect(update).toBeEnabled();
+    const reloaded = page.waitForEvent('framenavigated', (frame) => frame === page.mainFrame());
+    await update.click();
+    await reloaded;
+    await page.waitForLoadState('domcontentloaded');
+    await expect.poll(() => cacheNames(page)).toEqual(['ds-field-office-busy']);
+  });
+
+  test('a controller change reloads a second window, and a canceled reload can be tried again', async ({ context, page, lane }) => {
+    const worker = await workerText(lane);
+    await openControlled(page, lane);
+    const other = await context.newPage();
+    await other.goto(`${lane.appUrl}/field`);
+    const shell = await (await fetch(`${lane.appUrl}/field`)).text();
+    lane.serve('/field', { type: 'text/html; charset=utf-8', body: shell.replace('</body>', '<!--updated-shell--></body>') });
+    lane.serve('/sw.js', { type: 'text/javascript; charset=utf-8', body: worker.replace(buildIdOf(worker), 'two-windows') });
+    await nudge(page);
+    await nudge(other);
+    await expect(other.getByRole('button', { name: 'Update now' })).toBeEnabled();
+
+    // Give the second window a user gesture so the browser allows its leave-this-page prompt.
+    await other.getByRole('heading', { name: COMPANY }).click();
+    await other.evaluate(() => {
+      (window as unknown as { stay: EventListener }).stay = (event) => event.preventDefault();
+      addEventListener('beforeunload', (window as unknown as { stay: EventListener }).stay);
+    });
+    other.once('dialog', (dialog) => void dialog.dismiss());
+    const reloaded = page.waitForEvent('framenavigated', (frame) => frame === page.mainFrame());
+    await page.getByRole('button', { name: 'Update now' }).click();
+    await reloaded;
+
+    // The other window attempted to reload from controllerchange without another tap.
+    await expect.poll(() => other.evaluate(async () => (await navigator.serviceWorker.getRegistration())?.waiting ?? null)).toBeNull();
+    await expect(other.getByText('The update did not start. Try again.')).toBeVisible();
+    const update = other.getByRole('button', { name: 'Update now' });
+    await expect(update).toBeEnabled();
+    await other.evaluate(() => removeEventListener('beforeunload', (window as unknown as { stay: EventListener }).stay));
+    const again = other.waitForEvent('framenavigated', (frame) => frame === other.mainFrame());
+    await update.click();
+    await again;
+    await other.waitForLoadState('domcontentloaded');
+    expect(await other.content()).toContain('updated-shell');
+  });
+
+  test('a signing or documents page installs no worker and shows no update', async ({ page, lane }) => {
+    for (const path of ['/sign', '/documents']) {
+      await page.goto(`${lane.appUrl}${path}`);
+      await page.waitForLoadState('load');
+      expect(await page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length)).toBe(0);
+    }
+    await page.goto(`${lane.appUrl}/field`);
+    await expect.poll(() => page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length)).toBe(1);
+  });
+
+  test('a build with an empty precache unregisters its worker, and the next navigation reaches the server', async ({ context, page, lane }) => {
+    const worker = await workerText(lane);
+    await openControlled(page, lane);
+    const template = readFileSync(fileURLToPath(new URL('../../../sw/sw.js', import.meta.url)), 'utf8');
+    const recovery = makeWorker({ template, buildId: 'recovery', list: [] });
+    // Every file the recovery worker's install asks the server for carries its build id in the query.
+    const installRequests: string[] = [];
+    context.on('request', (sent) => {
+      if (sent.url().includes('ds-precache=recovery')) installRequests.push(sent.url());
+    });
+    expect(await cacheNames(page)).toEqual([`ds-field-${buildIdOf(worker)}`]);
+    const shell = await (await fetch(`${lane.appUrl}/field`)).text();
+    lane.serve('/field', { type: 'text/html; charset=utf-8', body: shell.replace('</body>', '<!--served-by-the-server--></body>') });
+    lane.serve('/sw.js', { type: 'text/javascript; charset=utf-8', body: recovery });
+    await nudge(page);
+
+    const reloaded = page.waitForEvent('framenavigated', (frame) => frame === page.mainFrame());
+    await page.getByRole('button', { name: 'Update now' }).click();
+    await reloaded;
+    const registrations = () => page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length);
+    await expect.poll(registrations).toBe(0);
+    await expect.poll(() => cacheNames(page)).toEqual([]);
+    expect(installRequests).toEqual([]);
+
+    const asked = lane.bytes('app');
+    await page.goto(`${lane.appUrl}/field`);
+    expect(await page.content()).toContain('served-by-the-server');
+    expect(lane.bytes('app')).toBeGreaterThan(asked);
+  });
+
+  test('the new worker takes over naturally after the last controlled window closes', async ({ context, page, lane }) => {
+    const worker = await workerText(lane);
+    await openControlled(page, lane);
+    const other = await context.newPage();
+    await other.goto(`${lane.appUrl}/field`);
+    lane.serve('/sw.js', { type: 'text/javascript; charset=utf-8', body: worker.replace(buildIdOf(worker), 'all-windows-closed') });
+    await other.evaluate(async () => (await navigator.serviceWorker.getRegistration())!.update());
+    await expect.poll(() => other.evaluate(async () => (await navigator.serviceWorker.getRegistration())?.waiting?.state)).toBe('installed');
+    await page.close();
+    await expect.poll(() => cacheNames(other)).toContain(`ds-field-${buildIdOf(worker)}`);
+    await other.close();
+
+    const observer = await context.newPage();
+    await observer.goto('about:blank');
+    await observer.goto(`${lane.appUrl}/field`);
+    await expect.poll(() => cacheNames(observer)).toEqual(['ds-field-all-windows-closed']);
+  });
+
   test('installs the files the new build serves, not the copies this worker keeps', async ({ context, lane }) => {
     const worker = await workerText(lane);
     const page = await context.newPage();

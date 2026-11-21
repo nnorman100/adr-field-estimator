@@ -1,5 +1,6 @@
 import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
+import { CLIENT_EPOCH, CLIENT_EPOCH_HEADER } from '@/lib/app-version';
 import {
   ask,
   checkTarget,
@@ -13,6 +14,7 @@ import {
   readPassMarks,
   readTestConfig,
   refusedForInstance,
+  requestHeaders,
   statsOf,
   testConfigOf,
   type Records,
@@ -209,6 +211,13 @@ describe('signing in', () => {
       { path: '/v1/accounts:signInWithPassword', origin: TEST_ORIGIN, referer: `${TEST_ORIGIN}/` },
       { path: '/v2/accounts/mfaSignIn:finalize', origin: TEST_ORIGIN, referer: `${TEST_ORIGIN}/` },
     ]);
+  });
+});
+
+describe('the headers of a request', () => {
+  it('carry the epoch the app was built with, so the run reaches the same handlers as a current phone', () => {
+    expect(requestHeaders('t-1')).toEqual({ authorization: 'Bearer t-1', [CLIENT_EPOCH_HEADER]: String(CLIENT_EPOCH) });
+    expect(requestHeaders('t-1', { 'content-type': 'image/jpeg' })).toMatchObject({ [CLIENT_EPOCH_HEADER]: String(CLIENT_EPOCH), 'content-type': 'image/jpeg' });
   });
 });
 

@@ -1,3 +1,4 @@
+import { apiFetch, trackedWrite } from '@/lib/api-fetch';
 import { getApps, initializeApp } from 'firebase/app';
 import {
   GoogleAuthProvider,
@@ -224,11 +225,15 @@ export async function checkSignIn(
 // status and fixed error code only, as in checkSignIn.
 export type ApiAnswer = { status: number; body: unknown };
 
-export async function callApi(user: User, path: string, init: { method?: string; json?: unknown; signal?: AbortSignal } = {}): Promise<ApiAnswer> {
+export function callApi(user: User, path: string, init: { method?: string; json?: unknown; signal?: AbortSignal } = {}): Promise<ApiAnswer> {
+  return trackedWrite(init.method, 'save', () => sendApiCall(user, path, init));
+}
+
+async function sendApiCall(user: User, path: string, init: { method?: string; json?: unknown; signal?: AbortSignal }): Promise<ApiAnswer> {
   let response: Response;
   try {
     const token = await user.getIdToken();
-    response = await fetch(path, {
+    response = await apiFetch(path, {
       method: init.method ?? 'GET',
       headers: {
         Authorization: `Bearer ${token}`,

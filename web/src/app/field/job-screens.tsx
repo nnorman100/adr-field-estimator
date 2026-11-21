@@ -20,6 +20,7 @@ import { CoordinationView } from './coordination-view';
 import { ArchivedNotice, JobActions } from './job-actions';
 import { StartFieldWork } from './start-field-work';
 import { FieldLink } from './ui';
+import { beginUpdateActivity } from '@/lib/update-activity';
 
 const TABS: { view: JobView; label: string }[] = [
   { view: 'scope', label: 'Check Scope' },
@@ -96,7 +97,7 @@ export type JobContext = {
   // that; the customer, the claim and the coordination do not).
   draftHeld: () => boolean;
   // Each mounted form registers how to clear its unsent values on discard, and whether it holds any now.
-  markUnsaved: (form: string, discard: (() => void) | null, unsaved?: boolean) => void;
+  markUnsaved: (form: string, discard: (() => void) | null, unsaved?: boolean, blocksUpdate?: boolean) => void;
   // Keeps the return guard active during local preparation, before a write can be tracked elsewhere.
   startSave: () => (failed?: boolean) => void;
   // The last read of the draft did not get through, so the draft on screen may be older than what is
@@ -164,15 +165,20 @@ export function JobScreens({
   const [archivalsSeen] = useState(archivalsDone);
   const [draftError, setDraftError] = useState<string | null>(null);
   // The forms of this job on this screen that hold changes not saved (told by each form).
-  const unsavedForms = useRef(new Map<string, { discard: () => void; unsaved: boolean }>());
+  const unsavedForms = useRef(new Map<string, { discard: () => void; unsaved: boolean; blocksUpdate: boolean }>());
   const [hasUnsavedForms, setHasUnsavedForms] = useState(false);
-  const markUnsaved = useCallback((form: string, discard: (() => void) | null, unsaved = true) => {
-    if (discard) unsavedForms.current.set(form, { discard, unsaved });
+  const [hasUpdateBlockers, setHasUpdateBlockers] = useState(false);
+  const markUnsaved = useCallback((form: string, discard: (() => void) | null, unsaved = true, blocksUpdate = unsaved) => {
+    if (discard) unsavedForms.current.set(form, { discard, unsaved, blocksUpdate });
     else unsavedForms.current.delete(form);
-    setHasUnsavedForms([...unsavedForms.current.values()].some((one) => one.unsaved));
+    const forms = [...unsavedForms.current.values()];
+    setHasUnsavedForms(forms.some((one) => one.unsaved));
+    setHasUpdateBlockers(forms.some((one) => one.blocksUpdate));
   }, []);
   const typed = usePending(() => pending.typed(jobId));
   const unsaved = hasUnsavedForms || Object.keys(typed).length > 0;
+  const blocksUpdate = hasUpdateBlockers || Object.keys(typed).length > 0;
+  useEffect(() => (blocksUpdate ? beginUpdateActivity('unsent') : undefined), [blocksUpdate]);
   const hasUnsent = useCallback(
     () => [...unsavedForms.current.values()].some((form) => form.unsaved) || Object.keys(pending.typed(jobId)).length > 0,
     [jobId],
@@ -455,7 +461,9 @@ export function JobScreens({
   const [preparing, setPreparing] = useState(0);
   const startSave = useCallback(() => {
     setPreparing((count) => count + 1);
+    const endActivity = beginUpdateActivity('save');
     return (failed = false) => {
+      endActivity();
       setPreparing((count) => count - 1);
       if (failed) setLeaving((current) => current === 'going' ? 'blocked' : current);
     };

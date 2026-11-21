@@ -1,3 +1,4 @@
+import { apiFetch } from '@/lib/api-fetch';
 import { LINK_TOKEN_HEADER } from './header';
 
 // The homeowner's and adjuster's pages' calls to this app's link routes (S5a-11b). The token goes in
@@ -16,7 +17,7 @@ async function linkFetch(token: string, path: string, init: { method?: string; j
     body = init.bytes as BodyInit;
   }
   try {
-    return await fetch(path, { method: init.method ?? 'GET', headers, body, cache: 'no-store', referrerPolicy: 'no-referrer', credentials: 'omit' });
+    return await apiFetch(path, { method: init.method ?? 'GET', headers, body, cache: 'no-store', referrerPolicy: 'no-referrer', credentials: 'omit' });
   } catch {
     return null;
   }

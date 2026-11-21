@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { CLIENT_EPOCH, CLIENT_EPOCH_HEADER } from '@/lib/app-version';
 import { fullTeam, operatorCall, platformPaths } from '@/lib/operator/client';
 import {
   endsOperatorSession,
@@ -180,7 +181,11 @@ describe('operatorCall', () => {
     await operatorCall(user, '/api/platform/companies', { method: 'POST', body: { name: 'A', signInSlug: 'a' } });
     const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(init.method).toBe('POST');
-    expect(init.headers).toEqual({ Authorization: 'Bearer token-value', 'Content-Type': 'application/json' });
+    expect(Object.fromEntries(new Headers(init.headers))).toEqual({
+      authorization: 'Bearer token-value',
+      'content-type': 'application/json',
+      [CLIENT_EPOCH_HEADER]: String(CLIENT_EPOCH),
+    });
     expect(init.body).toBe('{"name":"A","signInSlug":"a"}');
   });
 

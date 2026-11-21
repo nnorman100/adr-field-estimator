@@ -13,6 +13,7 @@ import { draftDocs, draftPath, fieldRefusal, photoRefWrites, type FieldDraft } f
 import type { FieldClient } from '@/lib/field-db';
 import { BASELINE_SHOTS } from '@/lib/readiness/check';
 import { photoFix } from '@/lib/readiness/fix';
+import { beginUpdateActivity } from '@/lib/update-activity';
 import type { JobContext } from './job-screens';
 import { Choice, Outcome, Section } from './ui';
 
@@ -74,15 +75,24 @@ export function PhotosView({ job, draft, open, readinessFix }: { job: JobContext
   // connection away until it is shown again, and the picture must still reach this page.
   const [capturing, setCapturing] = useState(false);
   const camera = useRef<HTMLInputElement>(null);
+  const endCamera = useRef<(() => void) | null>(null);
   // Once the field work moved away from this person nothing more is taken or sent from here (J5): the
   // photos stay on screen, read only. So too once the job is archived (S5b-2).
   const cameraShown = canTake || (capturing && !job.moved && !job.draftHeld());
   useEffect(() => {
     const input = camera.current;
     if (!input) return;
-    const cancel = () => setCapturing(false);
+    const cancel = () => {
+      endCamera.current?.();
+      endCamera.current = null;
+      setCapturing(false);
+    };
     input.addEventListener('cancel', cancel);
-    return () => input.removeEventListener('cancel', cancel);
+    return () => {
+      input.removeEventListener('cancel', cancel);
+      endCamera.current?.();
+      endCamera.current = null;
+    };
   }, [cameraShown]);
   // Photos on the draft and those of this page not yet on it: the server refuses past the cap.
   const held = draft.photos.length + pending.filter((item) => !draft.photos.some((photo) => photo.id === item.id)).length;
@@ -103,15 +113,39 @@ export function PhotosView({ job, draft, open, readinessFix }: { job: JobContext
         ? 'Not sent: this job is being checked. Send it again in a moment.'
         : 'Not sent: this job’s field work is being got ready. Send it again in a moment.';
 
+  // A photo kept through an app update is sent once, as soon as this job's photos are on screen
+  // and can send: its id and bytes are the ones the old build held.
+  const canSend = job.editable && !job.moved && job.session.online;
+  useEffect(() => {
+    if (!canSend) return;
+    for (const item of pending) {
+      if (!item.resumed || item.step !== 'send-failed') continue;
+      update(item.id, { resumed: undefined });
+      void finish(item);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- finish and update read the screen as it is now
+  }, [pending, canSend]);
+
   async function finish(item: PendingPhoto) {
+    const done = beginUpdateActivity('upload');
+    try {
+      await done.admitted;
+      await finishPhoto(item);
+    } finally {
+      done();
+    }
+  }
+
+  async function finishPhoto(item: PendingPhoto) {
     const db = job.session.db;
     if (job.moved) return update(item.id, { step: 'send-failed', message: 'Not sent: another person now owns this job’s field work.' });
     if (heldNow()) return update(item.id, { step: 'send-failed', message: heldMessage() });
+    if (item.draftId !== job.draftRef.draftId) return update(item.id, { step: 'send-failed', message: 'Not sent: this photo was taken for an earlier draft of the job.' });
     if (!db || !job.session.online) return update(item.id, { step: 'send-failed', message: 'Needs a connection. Send it again when connected.' });
     update(item.id, { step: 'sending', message: undefined });
     const sent = await sendPhoto(job.session.user, jobId, item.id, item.bytes);
     if (!sent.ok) {
-      update(item.id, { step: 'send-failed', message: sent.message });
+      update(item.id, { step: 'send-failed', message: sent.message, updateRefused: sent.status === 426 ? true : undefined });
       return job.checkAccess(sent);
     }
     if (heldNow()) return update(item.id, { step: 'send-failed', message: heldMessage() });
@@ -153,7 +187,7 @@ export function PhotosView({ job, draft, open, readinessFix }: { job: JobContext
       if (!notePhoto(job.session.client.person.tenantId, job.session.user.uid, id)) {
         return setError('This phone could not record the photo as unsent. Try again.');
       }
-      item = { id, bytes, field: fieldOf(roomId, shotTag, capturedAt), step: 'sending' };
+      item = { id, bytes, field: fieldOf(roomId, shotTag, capturedAt), step: 'sending', draftId: job.draftRef.draftId };
       unsent.addPhoto(jobId, item);
     } finally {
       prepared(!item);
@@ -181,10 +215,15 @@ export function PhotosView({ job, draft, open, readinessFix }: { job: JobContext
               capture="environment"
               className="sr-only"
               ref={camera}
-              onClick={() => setCapturing(true)}
+              onClick={() => {
+                endCamera.current ??= beginUpdateActivity('camera');
+                setCapturing(true);
+              }}
               disabled={full}
               aria-describedby={full ? 'photo-limit' : undefined}
               onChange={(event) => {
+                endCamera.current?.();
+                endCamera.current = null;
                 setCapturing(false);
                 const file = event.target.files?.[0];
                 event.target.value = '';

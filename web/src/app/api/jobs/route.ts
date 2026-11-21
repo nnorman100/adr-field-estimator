@@ -1,4 +1,4 @@
-import { memberRoute } from '@/lib/auth';
+import { memberRoute, requireCurrentClient } from '@/lib/auth';
 import { createJob, listJobs } from '@/lib/jobs';
 
 export const dynamic = 'force-dynamic';
@@ -9,4 +9,4 @@ export const GET = memberRoute(listJobs);
 
 // Starts a job from a job id and a first draft id the phone made. Sending it again makes nothing
 // more: whichever of the job and its field draft is missing is made.
-export const POST = memberRoute(createJob);
+export const POST = requireCurrentClient(memberRoute(createJob));

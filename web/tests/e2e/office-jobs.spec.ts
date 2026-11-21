@@ -1,5 +1,6 @@
 import { test as base, expect as baseExpect, type APIRequestContext, type Browser, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+import { CLIENT_EPOCH, CLIENT_EPOCH_HEADER } from '@/lib/app-version';
 import { manifestDigest } from '@/lib/field/canonical';
 import { expectNoAxeViolations } from './a11y';
 import { JOBS_BASE_URL } from './jobs/backend';
@@ -60,10 +61,10 @@ async function openJob(page: Page, address: string) {
 // What the phone that held the field work says once it moved (src/app/field/job-screens.tsx).
 const MOVED = /field work is no longer yours/;
 
-type Headers = { Authorization: string };
+type Headers = { Authorization: string; [CLIENT_EPOCH_HEADER]: string };
 const bearer = async (company: Company, person: Person): Promise<Headers> => {
   const token = await idTokenFor(company.tenantId, person.email, PASSWORD);
-  return { Authorization: `Bearer ${person.role === 'estimator' ? token : withSecondFactor(token)}` };
+  return { Authorization: `Bearer ${person.role === 'estimator' ? token : withSecondFactor(token)}`, [CLIENT_EPOCH_HEADER]: String(CLIENT_EPOCH) };
 };
 
 async function actorsOf(company: Company): Promise<(person: Person) => string> {

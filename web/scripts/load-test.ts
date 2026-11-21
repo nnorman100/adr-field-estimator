@@ -37,7 +37,16 @@ import { readFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline/promises';
 import { Writable } from 'node:stream';
 import { pathToFileURL } from 'node:url';
+import { CLIENT_EPOCH, CLIENT_EPOCH_HEADER } from '../src/lib/app-version.ts';
 import type { FieldManifest } from '../src/lib/field/canonical';
+
+// What every request of the run carries: the load user's token, and the epoch the app was built
+// with, as a current phone sends it.
+export const requestHeaders = (token: string, more?: Record<string, string>): Record<string, string> => ({
+  authorization: `Bearer ${token}`,
+  [CLIENT_EPOCH_HEADER]: String(CLIENT_EPOCH),
+  ...more,
+});
 
 export type PassMarks = {
   readsP95Ms: number;
@@ -453,7 +462,7 @@ export async function runLoadTest(options: LoadOptions, marks: PassMarks, deps: 
         ...init,
         redirect: 'manual',
         signal: AbortSignal.timeout(TIMEOUT_MS),
-        headers: { authorization: `Bearer ${session.token}`, ...(init.headers as Record<string, string> | undefined) },
+        headers: requestHeaders(session.token, init.headers as Record<string, string> | undefined),
       });
       status = res.status;
       const raw = Buffer.from(await res.arrayBuffer());

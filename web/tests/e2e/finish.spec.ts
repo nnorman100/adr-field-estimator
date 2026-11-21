@@ -1,6 +1,7 @@
 import { test as base, expect as baseExpect, type APIRequestContext, type Page, type Request, type Route } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
+import { CLIENT_EPOCH, CLIENT_EPOCH_HEADER } from '@/lib/app-version';
 import { manifestDigest, type FieldManifest } from '@/lib/field/canonical';
 import { expectNoAxeViolations } from './a11y';
 import { JOBS_BASE_URL } from './jobs/backend';
@@ -765,7 +766,7 @@ test.describe('Ready to review', () => {
   async function archiveAsOwner(request: APIRequestContext, company: Company, jobId: string) {
     const token = await idTokenFor(company.tenantId, company.people.owner!.email, PASSWORD);
     const archived = await request.post(`${JOBS_BASE_URL}/api/jobs/${jobId}/archive`, {
-      headers: { Authorization: `Bearer ${withSecondFactor(token)}` },
+      headers: { Authorization: `Bearer ${withSecondFactor(token)}`, [CLIENT_EPOCH_HEADER]: String(CLIENT_EPOCH) },
       data: { revision: 1, changeId: randomUUID() },
     });
     expect(archived.status()).toBe(200);

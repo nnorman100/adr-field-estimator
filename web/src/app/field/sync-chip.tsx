@@ -13,6 +13,7 @@ import { byDraft, changedFields, chipText, keptText, PHOTOS_STAY, REASONS, RESTO
 import { useFieldClient } from './field-store';
 import { photoReferenceDone } from './photos-view';
 import { go, Outcome } from './ui';
+import { beginUpdateActivity } from '@/lib/update-activity';
 
 // The sync chip on every field screen and its "Can't save" sheet (S6-4b; docs/plans/S6/S6-4.md),
 // read from the person's recovery journal (src/lib/field/journal.ts; with an Online only cache, the
@@ -192,12 +193,15 @@ function ProblemPanel({
     if (!client || busy) return;
     setBusy(label);
     setError(null);
+    const endActivity = beginUpdateActivity('save');
     try {
+      await endActivity.admitted;
       setError(await work());
     } catch (error) {
       journalFailed(client, error);
       setError('This phone could not do that just now. Try again.');
     } finally {
+      endActivity();
       setBusy(null);
     }
   }

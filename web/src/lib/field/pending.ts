@@ -1,7 +1,8 @@
 // Work the phone sent and has no answer for yet (S5a-6), kept for the life of the page rather than
 // of one screen, so moving between views never drops it: a resend after a lost answer must carry
 // the same ids, body and bytes, or it could make a second job or photo, or report a false conflict.
-// It lives in memory only; S6 keeps it on the phone across reloads.
+// It lives in memory only, except across an app update's reload (update-keep.ts); S6 keeps the rest
+// on the phone across reloads.
 //
 // - The new job: one at a time.
 // - Customer and claim: one unsettled save per job. Both change the same job revision, so while one
@@ -86,6 +87,23 @@ export type PendingPhoto = {
   field: PhotoField;
   step: 'sending' | 'send-failed' | 'saving' | 'save-failed';
   message?: string;
+  // The draft it was taken for: it is sent, and its reference written, to that draft only.
+  draftId: string;
+  // The server refused its bytes with 426 (update needed). After the update its job's photos screen
+  // sends it once (`resumed`); no other kept photo is sent without a tap.
+  updateRefused?: true;
+  resumed?: true;
+};
+// The unsent work an app update carries across its reload (update-keep.ts): photos with their ids
+// and bytes, the new job, and the boxes a refused save left changed on a form. A customer or claim
+// save with no answer is never carried: its record is the server's and stays out of the phone's storage,
+// so the update waits until it is answered.
+export type KeptWork = {
+  job: PendingJob | null;
+  jobRefusal: JobRefusal | null;
+  photos: Record<string, PendingPhoto[]>;
+  refusals: Record<string, RecordRefusal>;
+  coord: Record<string, PendingCoord>;
 };
 
 type State = {
@@ -169,6 +187,7 @@ const EMPTY = {
 let listsSent = 0;
 let state: State = { owner: null, ...EMPTY };
 const listeners = new Set<() => void>();
+const photoRemoved = new Set<(owner: string, photoId: string) => void>();
 
 function change(next: Partial<State>) {
   state = { ...state, ...next };
@@ -267,6 +286,50 @@ export const pending = {
     pending.dropRefusal(jobId, 'claim');
   },
   photos: (jobId: string): PendingPhoto[] => state.photos[jobId] ?? NO_PHOTOS,
+  // The owner and the work an update must carry across its reload, or null when there is none.
+  kept(): { owner: string; work: KeptWork } | null {
+    const { owner, job, jobRefusal, photos, records, refusals, coord } = state;
+    const held = Object.fromEntries(Object.entries(photos).filter(([, list]) => list.length > 0));
+    const none = [held, records, refusals, coord].every((one) => Object.keys(one).length === 0) && job === null && jobRefusal === null;
+    return owner === null || none ? null : { owner, work: { job, jobRefusal, photos: held, refusals, coord } };
+  },
+  // A customer or claim save has no answer yet: it needs its whole record, which is never carried.
+  recordsHeld: (): boolean => Object.keys(state.records).length > 0,
+  // Told when a photo leaves the unsent photos (its reference is saved, or it is discarded).
+  onPhotoRemoved(listener: (owner: string, photoId: string) => void) {
+    photoRemoved.add(listener);
+  },
+  // Puts work carried across an update back, for `owner` only, and never over what is held already.
+  // Nothing is sending after a reload, so every save waits to be sent again as it was.
+  restore(owner: string, work: KeptWork): boolean {
+    if (state.owner !== owner) return false;
+    const photos = { ...state.photos };
+    for (const [jobId, list] of Object.entries(work.photos)) {
+      const known = photos[jobId] ?? NO_PHOTOS;
+      const back = list.filter((photo) => !known.some((one) => one.id === photo.id));
+      if (back.length > 0) {
+        photos[jobId] = [...known, ...back.map((photo): PendingPhoto => (
+          photo.updateRefused
+            ? { ...photo, step: 'send-failed', message: 'Kept through the update. Sending it now.', updateRefused: undefined, resumed: true }
+            : photo.step === 'sending' ? { ...photo, step: 'send-failed', message: 'Not sent. Send it again.' }
+              : photo.step === 'saving' ? { ...photo, step: 'save-failed', message: 'Not saved. Save again.' } : photo
+        ))];
+      }
+    }
+    const idle = <T extends { sending: boolean }>(one: Record<string, T>) => Object.fromEntries(Object.entries(one).map(([key, value]) => [key, { ...value, sending: false }]));
+    change({
+      job: state.job ?? (work.job && { ...work.job, sending: false }),
+      jobRefusal: state.jobRefusal ?? work.jobRefusal,
+      photos,
+      refusals: { ...work.refusals, ...state.refusals },
+      coord: { ...idle(work.coord), ...state.coord },
+    });
+    return true;
+  },
+  // This owner's work was discarded: nothing of it may be kept or restored from this page.
+  forget(owner: string) {
+    if (state.owner === owner) change({ ...EMPTY, listAt: listsSent });
+  },
   addPhoto(jobId: string, photo: PendingPhoto) {
     change({ photos: { ...state.photos, [jobId]: [...pending.photos(jobId), photo] } });
   },
@@ -276,6 +339,7 @@ export const pending = {
   },
   removePhoto(jobId: string, photoId: string) {
     change({ photos: { ...state.photos, [jobId]: pending.photos(jobId).filter((photo) => photo.id !== photoId) } });
+    if (state.owner !== null) for (const listener of photoRemoved) listener(state.owner, photoId);
   },
   // The job as the server last answered it; an older revision never replaces a newer one.
   detail: (jobId: string): JobDetail | null => state.details[jobId] ?? null,

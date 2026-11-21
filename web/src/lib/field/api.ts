@@ -5,6 +5,7 @@
 //
 // Answers are parsed before use; an answer of another shape counts as no answer. Messages come from
 // the status and the server's fixed error code only.
+import { apiFetch } from '@/lib/api-fetch';
 import type { User } from 'firebase/auth';
 import { z } from 'zod';
 import { appCheckHeaders } from '@/lib/app-check-client';
@@ -226,7 +227,7 @@ async function authorized(user: User, path: string, init: RequestInit = {}): Pro
   try {
     const token = await user.getIdToken();
     const headers = { ...init.headers, Authorization: `Bearer ${token}`, ...(await appCheckHeaders()) };
-    return await fetch(path, { ...init, headers, cache: 'no-store' });
+    return await apiFetch(path, { ...init, headers, cache: 'no-store' });
   } catch {
     return null;
   }

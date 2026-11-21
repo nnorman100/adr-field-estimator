@@ -15,7 +15,7 @@ const record = (kind: PendingRecord['kind'], changeId: string): PendingRecord =>
   edits: { name: 'Ann' },
   sending: true,
 });
-const photo = { id: 'p1', bytes: new Blob(['x']), field: {}, step: 'sending' as const };
+const photo = { id: 'p1', bytes: new Blob(['x']), field: {}, step: 'sending' as const, draftId: 'd1' };
 
 describe('unsent work', () => {
   it('starts empty for another person or company, and keeps it for the same one', () => {
@@ -451,5 +451,81 @@ describe('text typed and not added', () => {
     expect(pending.startRoomWrite('job-r', 'd1')).toBe(true);
     pending.openFor('company-a/user-typed-10');
     expect(pending.roomWriting('job-r', 'd1')).toBe(false);
+  });
+});
+
+// An app update carries unsent work across its reload (S6-6): for the same person only, with the
+// photo's own id and bytes, and never over work the page holds already.
+describe('work kept through an app update', () => {
+  const refusal = { edits: { name: 'Ann' }, message: 'Update needed' };
+
+  it('is nothing to keep for no sign-in or no unsent work, and everything held otherwise', () => {
+    pending.openFor('company-k/user-first');
+    expect(pending.kept()).toBeNull();
+    pending.addPhoto(JOB, { ...photo, step: 'send-failed' });
+    pending.setRecord(JOB, { ...record('customer', 'c9'), sending: false });
+    const kept = pending.kept();
+    expect(kept?.owner).toBe('company-k/user-first');
+    expect(kept?.work.photos[JOB]).toHaveLength(1);
+    expect(kept?.work).not.toHaveProperty('records');
+    expect(pending.recordsHeld()).toBe(true);
+  });
+
+  it('puts the same work back for the same person, and resumes only a photo whose bytes were refused with 426', async () => {
+    pending.openFor('company-k/user-second');
+    pending.addPhoto(JOB, { ...photo, step: 'send-failed', updateRefused: true });
+    pending.addPhoto(JOB, { ...photo, id: 'p2', step: 'send-failed', message: 'Conflict' });
+    pending.addPhoto(JOB, { ...photo, id: 'p3', step: 'save-failed', message: 'Not saved' });
+    pending.setRecord(JOB, { ...record('customer', 'c10'), sending: true });
+    pending.setJob({ id: 'j2', draftId: 'd2', propertyAddress: '2 Main St', sending: true });
+    pending.setCoordWrite(JOB, { key: 'k', at: 'a', done: 'Done', request: { kind: 'unassign', assignmentId: 'x' }, sending: true });
+    const kept = pending.kept()!;
+    pending.openFor('company-k/user-other');
+    pending.openFor('company-k/user-second');
+    expect(pending.photos(JOB)).toEqual([]);
+
+    pending.restore('company-k/user-second', { ...kept.work, refusals: { [`${JOB}/customer`]: refusal }, jobRefusal: { propertyAddress: '3 Main St', message: 'Update needed' } });
+    const [back, conflict, unsaved] = pending.photos(JOB);
+    expect(back).toMatchObject({ id: 'p1', step: 'send-failed', resumed: true, draftId: 'd1' });
+    expect(await back!.bytes.text()).toBe('x');
+    expect(conflict).toMatchObject({ id: 'p2', step: 'send-failed', message: 'Conflict' });
+    expect(conflict?.resumed).toBeUndefined();
+    expect(unsaved).toMatchObject({ id: 'p3', step: 'save-failed' });
+    expect(unsaved?.resumed).toBeUndefined();
+    expect(pending.record(JOB)).toBeNull();
+    expect(pending.refusal(JOB, 'customer')).toEqual(refusal);
+    expect(pending.job()).toMatchObject({ id: 'j2', sending: false });
+    expect(pending.jobRefusal()).toEqual({ propertyAddress: '3 Main St', message: 'Update needed' });
+    expect(pending.coordWrite(JOB)).toMatchObject({ key: 'k', sending: false });
+
+    pending.restore('company-k/user-second', kept.work);
+    expect(pending.photos(JOB)).toHaveLength(3);
+  });
+
+  it('keeps a refused new job and nothing else as work to carry', () => {
+    pending.openFor('company-k/user-fourth');
+    pending.settleJob('none', 'answered');
+    pending.setJob({ id: 'j3', draftId: 'd3', propertyAddress: '4 Main St', sending: true });
+    pending.settleJob('j3', { refused: 'Update needed' });
+    expect(pending.kept()?.work).toMatchObject({ job: null, jobRefusal: { propertyAddress: '4 Main St' } });
+  });
+
+  it('forgets the work of a discarded owner, and of that owner only', () => {
+    pending.openFor('company-k/user-fifth');
+    pending.addPhoto(JOB, { ...photo, step: 'send-failed' });
+    pending.forget('company-k/user-other');
+    expect(pending.kept()).not.toBeNull();
+    pending.forget('company-k/user-fifth');
+    expect(pending.kept()).toBeNull();
+  });
+
+  it('is never put back for another person of the same page', () => {
+    pending.openFor('company-k/user-third');
+    pending.addPhoto(JOB, { ...photo, step: 'send-failed' });
+    const kept = pending.kept()!;
+    pending.openFor('company-k/user-other');
+    pending.restore('company-k/user-third', kept.work);
+    expect(pending.photos(JOB)).toEqual([]);
+    expect(pending.record(JOB)).toBeNull();
   });
 });

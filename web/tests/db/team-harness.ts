@@ -1,4 +1,5 @@
 import postgres from 'postgres';
+import { CLIENT_EPOCH, CLIENT_EPOCH_HEADER } from '@/lib/app-version';
 import { openDatabase } from '@/db/client';
 import { databaseDirectory, databaseOperators } from '@/lib/auth/directory';
 import { IdentityRefusal, type TokenVerifier } from '@/lib/auth/identity';
@@ -182,6 +183,7 @@ export function request(
   init: { method?: string; body?: unknown } = {},
 ): Request {
   const headers = new Headers();
+  if (init.method && init.method !== 'GET') headers.set(CLIENT_EPOCH_HEADER, String(CLIENT_EPOCH));
   if (claims) {
     headers.set('Authorization', `Bearer e30.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.`);
   }

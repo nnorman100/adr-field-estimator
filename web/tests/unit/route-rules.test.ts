@@ -2,6 +2,7 @@ import { readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
+import { CLIENT_EPOCH, CLIENT_EPOCH_HEADER } from '@/lib/app-version';
 import { accessRuleOf, accountRoute, linkRoute, memberRoute, operatorRoute, publicRoute, requireFlag, serviceRoute, type AccessRule } from '@/lib/auth/route';
 
 // Every route handler must be made by an access rule from src/lib/auth/route.ts. This finds every
@@ -64,7 +65,7 @@ function routeFiles(dir: string): string[] {
 
 // The problems of one loaded route module; empty when every handler was made by a rule and every
 // rule but public refused an empty request.
-async function routeProblems(module: Record<string, unknown>): Promise<string[]> {
+async function routeProblems(module: Record<string, unknown>, file = ''): Promise<string[]> {
   const problems: string[] = [];
   if ('default' in module) problems.push('default export');
   const handlers = METHODS.filter((method) => method in module);
@@ -77,7 +78,11 @@ async function routeProblems(module: Record<string, unknown>): Promise<string[]>
       continue;
     }
     if (rule === 'public') continue;
-    const answer = await (handler as Handler)(new Request(`http://localhost/api/${ID}`, { method }), params());
+    // Only a write under /api/jobs is behind the version guard and needs an epoch to reach its access
+    // rule; every other route, a GET and sign-in included, is sent none, so a stray guard there fails.
+    const guarded = file.startsWith('api/jobs/') && !['GET', 'HEAD', 'OPTIONS'].includes(method);
+    const headers = guarded ? { [CLIENT_EPOCH_HEADER]: String(CLIENT_EPOCH) } : undefined;
+    const answer = await (handler as Handler)(new Request(`http://localhost/api/${ID}`, { method, headers }), params());
     const body = await answer.json().catch(() => null);
     if (answer.status !== REFUSED[rule].status || body?.error !== REFUSED[rule].error || answer.headers.get('cache-control') !== 'no-store') {
       problems.push(`${method} (${rule}) answered ${answer.status} ${JSON.stringify(body)} to a request with no sign-in`);
@@ -98,8 +103,8 @@ describe('route access rules', () => {
     expect(files).toEqual(expect.arrayContaining(['api/echo/route.ts', 'api/health/route.ts', 'api/me/route.ts', 'api/sign/route.ts']));
   });
 
-  it.each(ROUTE_FILES)('$file: every handler is made by an access rule, and every rule but public refuses a request with nothing in it', async ({ path }) => {
-    expect(await routeProblems(await import(path))).toEqual([]);
+  it.each(ROUTE_FILES)('$file: every handler is made by an access rule, and every rule but public refuses a request with nothing in it', async ({ file, path }) => {
+    expect(await routeProblems(await import(path), file)).toEqual([]);
   });
 
   it('fails a route module whose handler no rule made, or that has no handler', async () => {

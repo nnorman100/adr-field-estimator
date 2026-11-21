@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
+import { AppUpdate } from './app-update';
 import { ClientErrors } from './client-errors-mount';
 
 export const metadata: Metadata = {
@@ -18,7 +19,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html lang="en">
       <body className="min-h-dvh antialiased">
         <ClientErrors />
-        {children}
+        <AppUpdate>{children}</AppUpdate>
       </body>
     </html>
   );

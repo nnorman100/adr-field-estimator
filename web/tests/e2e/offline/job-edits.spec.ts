@@ -1,6 +1,6 @@
 // The actual job screens behind the network lane, including WebKit's worker-controlled page.
 // Only the SQL reads are stand-ins; field writes and their receipts use the real emulator/rules.
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { HIDDEN_TEXT } from '../../../src/app/field/field-store-text';
 import { firestoreJobProjectionStore } from '../../../src/lib/jobs/projection';
 import { keepKey } from '../../../src/lib/field/keep-consent';
@@ -10,6 +10,8 @@ import { FieldPhone, inDays } from './field-phone';
 import { adminDb, readDraft, seedCompany, type World } from './world';
 import type { Page } from '@playwright/test';
 import type { NetworkLane } from './lane';
+import { buildIdOf, nudge, workerText } from './shell';
+import { CLIENT_EPOCH } from '../../../src/lib/app-version';
 
 test.use({ serviceWorkers: 'allow', viewport: { width: 390, height: 844 } });
 
@@ -251,6 +253,123 @@ test('a photo taken while the camera hid the page is kept to send again', async 
   await expect(page.getByLabel('Take photo')).toHaveCount(0);
   expect(await mark(page, world)).toMatchObject({ photosInMemory: [expect.any(String)] });
   await expectNothingSent(lane);
+});
+
+test('an update waits for the camera and upload, and carries a photo refused with 426 to be sent after it', async ({ context, lane }) => {
+  const world = await seedCompany();
+  const { page } = await signedIn(context, lane, world);
+  const jobId = randomUUID();
+  const photoId = randomUUID();
+  await openJob(page, lane, world, jobId);
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  await page.reload();
+  await page.getByRole('link', { name: 'Photos', exact: true }).click();
+  const worker = await workerText(lane);
+  lane.serve('/sw.js', { type: 'text/javascript', body: worker.replace(buildIdOf(worker), 'camera-open') });
+  await nudge(page);
+  const update = page.getByRole('button', { name: 'Update now' });
+  await expect(update).toBeEnabled();
+
+  const opened = page.waitForEvent('filechooser');
+  await page.getByText('Take photo', { exact: true }).click();
+  const camera = await opened;
+  await expect(update).toBeDisabled();
+  await expect(page.getByText('Close the camera before updating.')).toBeVisible();
+  expect(await page.evaluate(async () => (await navigator.serviceWorker.getRegistration())?.waiting?.state)).toBe('installed');
+
+  const release = Promise.withResolvers<void>();
+  let epoch: string | string[] | undefined;
+  let heldBytes: Buffer | undefined;
+  let heldType = 'image/jpeg';
+  lane.serve(`/api/jobs/${jobId}/photos/${photoId}`, async (headers, _url, request) => {
+    epoch = headers['x-dryscope-client-epoch'];
+    heldBytes = request.body;
+    heldType = headers['content-type'] ?? heldType;
+    await release.promise;
+    return { type: 'application/json', status: 426, body: '{"error":"update_required"}' };
+  });
+  // Give the capture its own predictable id so the network lane can stand in for this upload.
+  await page.evaluate((id) => {
+    const original = crypto.randomUUID;
+    crypto.randomUUID = () => {
+      crypto.randomUUID = original;
+      return id;
+    };
+  }, photoId);
+  try {
+    await camera.setFiles(PICTURE);
+    await expect.poll(() => epoch).toBe(String(CLIENT_EPOCH));
+    await expect(update).toBeDisabled();
+    await expect(page.getByText('Wait for the upload to finish.')).toBeVisible();
+  } finally {
+    release.resolve();
+  }
+
+  const needed = page.getByRole('dialog', { name: 'Update needed' });
+  await expect(needed).toBeVisible();
+  const updateNow = needed.getByRole('button', { name: 'Update now' });
+  await expect(updateNow).toBeEnabled();
+  expect(await mark(page, world)).toMatchObject({ photosInMemory: [photoId] });
+  expect(await page.evaluate(async () => (await navigator.serviceWorker.getRegistration())?.waiting?.state)).toBe('installed');
+
+  // The same photo, with the same bytes, goes with the update and is sent once the new build is open.
+  const sent: { epoch: string | string[] | undefined; bytes: Buffer }[] = [];
+  lane.serve(`/api/jobs/${jobId}/photos/${photoId}`, async (headers, _url, request) => {
+    if (request.method === 'GET') return { type: heldType, body: heldBytes ?? PICTURE.buffer };
+    expect(request.method).toBe('PUT');
+    sent.push({ epoch: headers['x-dryscope-client-epoch'], bytes: request.body });
+    const sha256 = createHash('sha256').update(request.body).digest('hex');
+    return { type: 'application/json', status: 201, body: JSON.stringify({ photoId, sha256 }) };
+  });
+  const reloaded = page.waitForEvent('framenavigated', (frame) => frame === page.mainFrame());
+  await updateNow.click();
+  await reloaded;
+  await expect.poll(() => sent.length).toBe(1);
+  expect(sent[0]).toEqual({ epoch: String(CLIENT_EPOCH), bytes: heldBytes });
+  expect(heldBytes?.length).toBeGreaterThan(0);
+});
+
+test('a write sends the client epoch, defers the update while saving, and presents a 426', async ({ context, lane }) => {
+  const world = await seedCompany();
+  const { page } = await signedIn(context, lane, world);
+  const jobId = randomUUID();
+  await openJob(page, lane, world, jobId);
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  await page.reload();
+  await page.getByRole('link', { name: 'Customer and claim', exact: true }).click();
+  const worker = await workerText(lane);
+  lane.serve('/sw.js', { type: 'text/javascript', body: worker.replace(buildIdOf(worker), 'save-in-progress') });
+  await nudge(page);
+  const update = page.getByRole('button', { name: 'Update now' });
+  await expect(update).toBeEnabled();
+
+  const release = Promise.withResolvers<void>();
+  let epoch: string | string[] | undefined;
+  lane.serve(`/api/jobs/${jobId}/customer`, async (headers) => {
+    epoch = headers['x-dryscope-client-epoch'];
+    await release.promise;
+    return { type: 'application/json', status: 426, body: '{"error":"update_required"}' };
+  });
+  await page.getByLabel('Customer name').fill('Update Test');
+  await page.getByRole('button', { name: 'Save customer' }).click();
+  try {
+    await expect.poll(() => epoch).toBe(String(CLIENT_EPOCH));
+    await expect(update).toBeDisabled();
+    await expect(page.getByText('Wait for the save to finish.')).toBeVisible();
+  } finally {
+    release.resolve();
+  }
+  const needed = page.getByRole('dialog', { name: 'Update needed' });
+  await expect(needed).toBeVisible();
+  await expect(needed.getByRole('button', { name: 'Update now' })).toBeEnabled();
+  await expect(page.getByLabel('Customer name')).toHaveValue('Update Test');
+
+  // What the refused save left on the form goes with the update.
+  const reloaded = page.waitForEvent('framenavigated', (frame) => frame === page.mainFrame());
+  await needed.getByRole('button', { name: 'Update now' }).click();
+  await reloaded;
+  await page.getByRole('link', { name: 'Customer and claim', exact: true }).click();
+  await expect(page.getByLabel('Customer name')).toHaveValue('Update Test');
 });
 
 test('a photo the phone cannot record after the camera hid the page says so', async ({ context, lane }) => {

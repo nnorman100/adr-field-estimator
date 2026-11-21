@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { AI_FEATURES } from '@/lib/ai/registry';
+import { MIN_CLIENT_EPOCH } from '@/lib/app-version';
 import { FLAG_NAMES } from '@/lib/flags';
 import {
   buildManifest,
@@ -50,7 +51,7 @@ describe('release manifest', () => {
       replaced: [{ revision: 'dryscope-api-test-00011-xyz', percent: 100 }],
       migrationLevel: '0012_ai_live_tables.sql',
       terraformTags: { data: null, app: null },
-      minClientEpoch: null,
+      minClientEpoch: MIN_CLIENT_EPOCH,
       run,
     });
     expect(manifest.rollback).toEqual({
