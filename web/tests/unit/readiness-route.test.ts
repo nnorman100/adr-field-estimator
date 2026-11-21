@@ -57,7 +57,7 @@ const checked = (extra: Record<string, unknown> = {}) => ({
 describe('the readiness switch', () => {
   it('is a known flag, off unless stored exactly on, with an owner, a purpose and a review date', () => {
     expect(FLAG_NAMES).toContain('readiness');
-    expect(FEATURE_FLAG_NAMES).toEqual(['readiness']);
+    expect(FEATURE_FLAG_NAMES).toEqual(['readiness', 'priced_extras']);
     expect(flagsFromRows([]).readiness).toBe(false);
     expect(flagsFromRows([{ flag: 'readiness', enabled: 'true' as unknown as boolean }]).readiness).toBe(false);
     expect(flagsFromRows([{ flag: 'readiness', enabled: true }]).readiness).toBe(true);
@@ -65,6 +65,14 @@ describe('the readiness switch', () => {
     expect(owner.trim().length).toBeGreaterThan(0);
     expect(purpose).toMatch(/never blocks Finish or Submit/);
     expect(new Date(`${removeBy}T00:00:00Z`).toISOString().slice(0, 10)).toBe(removeBy);
+  });
+
+  it('registers the priced_extras switch with the same owner and review date as readiness', () => {
+    expect(Object.keys(FEATURE_FLAG_DETAILS).sort()).toEqual([...FEATURE_FLAG_NAMES].sort());
+    expect(FLAG_NAMES.filter((n) => n === 'priced_extras')).toHaveLength(1);
+    expect(FEATURE_FLAG_DETAILS.priced_extras.owner).toBe(FEATURE_FLAG_DETAILS.readiness.owner);
+    expect(FEATURE_FLAG_DETAILS.priced_extras.removeBy).toBe(FEATURE_FLAG_DETAILS.readiness.removeBy);
+    expect(FEATURE_FLAG_DETAILS.priced_extras.purpose).toBe('owner approvals for extras and named adjustments priced on a job');
   });
 });
 

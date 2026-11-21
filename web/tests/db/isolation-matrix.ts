@@ -70,6 +70,9 @@ const JOB_CLAIM = { revision: 1, changeId: '8d2f4a90-61b3-4c7e-a5d8-0e9b3c1f7a24
 const JOB_SUBMIT = { id: '6f1d9c34-2a7e-4b80-9c15-3e8a0d7b5f42', draftId: 'c4e8a2d6-7b19-4f53-8a0e-1d6b9f3c2e75', digest: '0'.repeat(64) };
 const JOB_NEXT_DRAFT = { draftId: '9a3b5c7d-1e2f-4a6b-8c9d-0e1f2a3b4c5d', fromDraftId: 'c4e8a2d6-7b19-4f53-8a0e-1d6b9f3c2e75' };
 const JOB_REPRICE = { revision: 1, changeId: '4d8b2f60-9c1e-4a73-8b05-2e7a6c1d9f38', versionId: '9b1e5c37-2d84-4f06-a3c9-6e0d8b4a1f52' };
+// S5b-8: a valid hourly proposal and an approval, so a refusal is the access rule's.
+const JOB_PROPOSAL = { id: '7a3c9e15-2b84-4d60-9f17-3e6a8c2d5b41', revision: 1, kind: 'hourly', description: 'Move contents', hours: '2' };
+const JOB_APPROVE = { revision: 1, approverName: 'Pat' };
 const JOB_SIGN = {
   id: '2d7f4a91-6c3b-4e85-9a12-7b5c8e0f3d64',
   estimateId: '5b8e1c47-3f2a-4d96-8e01-4c7a9b2d6f15',
@@ -156,6 +159,11 @@ export const MATRIX: readonly MatrixRow[] = [
   row('api/jobs/[jobId]/reprice', 'POST', 'company', { body: JOB_REPRICE, own: 'cross' }),
   // S5b-6: the owner's before/after preview; another company's job is 404 to every role.
   row('api/jobs/[jobId]/reprice', 'GET', 'company', { own: 'cross' }),
+  // S5b-8: proposals and approvals; another company's job is 404 to every role, and nothing is written.
+  row('api/jobs/[jobId]/approvals', 'GET', 'company', { own: 'cross' }),
+  row('api/jobs/[jobId]/approvals', 'POST', 'company', { body: JOB_PROPOSAL, own: 'cross' }),
+  row('api/jobs/[jobId]/approvals/[approvalId]', 'PUT', 'company', { body: { ...JOB_PROPOSAL, id: '1e6b4d82-7c39-4f05-a8d2-5b9e3c7a0f64' }, own: 'cross' }),
+  row('api/jobs/[jobId]/approvals/[approvalId]/approve', 'POST', 'company', { body: JOB_APPROVE, own: 'cross' }),
   // S5a-11: signing names the phone's own agreement, estimate and signature ids; another company's
   // job is 404 to every role, and no agreement is made.
   row('api/jobs/[jobId]/agreements', 'POST', 'company', { body: JOB_SIGN, own: 'cross' }),

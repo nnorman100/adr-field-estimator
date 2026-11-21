@@ -21,11 +21,17 @@ export type AiFlagName = (typeof AI_FLAG_NAMES)[number];
 
 // The switches of deterministic features (no AI): each turns on one feature for a company while it
 // is checked with that company. `readiness` is "Ready to review?" (S5b-11): the advisory gaps before
-// Finish, which never block Finish or Submit.
-export const FEATURE_FLAG_NAMES = Object.freeze(['readiness'] as const);
+// Finish, which never block Finish or Submit. `priced_extras` (S5b-8) is an estimator's proposals and the
+// owner's approvals on a job (today named adjustments and hourly additions; see docs/access/approvals.md):
+// off, every propose and approve route answers 404 and the estimate ignores approvals.
+export const FEATURE_FLAG_NAMES = Object.freeze(['readiness', 'priced_extras'] as const);
 export type FeatureFlagName = (typeof FEATURE_FLAG_NAMES)[number];
 
-export const FLAG_NAMES = Object.freeze(['price_books', ...AI_FLAG_NAMES, ...FEATURE_FLAG_NAMES] as const);
+export const FLAG_NAMES = Object.freeze([
+  'price_books',
+  ...AI_FLAG_NAMES,
+  ...FEATURE_FLAG_NAMES,
+] as const);
 export type FlagName = (typeof FLAG_NAMES)[number];
 
 // Every AI switch's owner, purpose and removal date (the Standard's feature-switch rule). The owner
@@ -74,6 +80,11 @@ export const FEATURE_FLAG_DETAILS: Readonly<Record<FeatureFlagName, FlagDetails>
   readiness: {
     owner: AI_FLAG_OWNER,
     purpose: 'Ready to review? (S5b-11): the advisory list of what a job still lacks before Finish; it never blocks Finish or Submit.',
+    removeBy: AI_FLAG_REMOVE_BY,
+  },
+  priced_extras: {
+    owner: AI_FLAG_OWNER,
+    purpose: 'owner approvals for extras and named adjustments priced on a job',
     removeBy: AI_FLAG_REMOVE_BY,
   },
 });

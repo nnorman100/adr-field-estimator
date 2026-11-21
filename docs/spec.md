@@ -261,7 +261,12 @@ supplies a price.
 | Change orders after signing | An incremental, separately signed change order for positive added work only, linked to the original agreement; the original is never edited or repriced (Q5). | approve added money: owner; sign: the customer; who may create it: **[open]** |
 | Old drafts and records | Pinned drafts are not moved automatically; the owner reprices an unsigned draft only on explicit review; signed records never change (Q8). | owner |
 
-Target acceptance checks (**not built**):
+Status (S5b-8, server): built are estimator proposals and owner approvals of named adjustments and
+hourly additions (routes under `/api/jobs/{id}/approvals`, flag `priced_extras`, key
+`additions_approve`), each bound to the job revision and price version. Custom multipliers, unit and
+flat additions come in the Engine B pull request and the screens after it; change orders are not built.
+
+Target acceptance checks (**not built** except where the status above says so):
 
 - A company with no published table still cannot price an estimate; a new company's table has
   multipliers of 1 and no allowance it did not choose.

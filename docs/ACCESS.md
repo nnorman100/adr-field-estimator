@@ -16,6 +16,7 @@ The sections of this document, one file per area (each keeps its original headin
 - [Photo routes](access/photos.md): Photo routes (rebuilt app, S5a-5).
 - [Submit and Back to editing](access/submit.md): Submit and Back to editing (rebuilt app, S5a-8).
 - [Estimate and review](access/estimate.md): Estimate and review (rebuilt app, S5a-9); Reprice this draft (S5b-6).
+- [Proposals and approvals](access/approvals.md): proposals and approvals on a job (rebuilt app, S5b-8), key `additions_approve`, switch `priced_extras`.
 - [Signing on the phone](access/signing.md): Signing on the phone (rebuilt app, S5a-11).
 - [Check Scope lists](access/scope-lists.md): Check Scope lists (rebuilt app, S5a-10).
 - [Ready to review?](access/readiness.md): Ready to review? (rebuilt app, S5b-11): the advisory gaps before Finish.
