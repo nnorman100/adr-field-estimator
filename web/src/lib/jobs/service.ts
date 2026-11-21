@@ -358,25 +358,34 @@ export function jobsService(db: Database, drafts: DraftStore, sync: DraftSync): 
         // creation can never name an owner a later move replaced; a placeholder an older version left
         // under the id is replaced, and nothing is written for one (sync-job.ts).
         // Its answer only to a caller still an active member of an active company (afterFieldStep).
-        await afterFieldStep(db, caller, () => syncJobDrafts(db, sync, drafts, caller.companyId, made.job.id));
-        await drafts.projectJob(caller.companyId, made.job.id, {
-          currentDraftId: made.job.currentDraftId, revision: made.job.revision,
-        });
+        await afterFieldStep(db, caller, () => syncJobDrafts(db, sync, drafts, caller.companyId, made.job.id, { requireDraft: true }));
       } catch (error) {
         if (error instanceof JobError || error instanceof IdentityRefusal || isQueueTimeout(error)) throw error;
         // Fixed text only: the SDK's message may quote a path.
         console.error('job draft unavailable', error instanceof Error ? error.name : 'unknown');
         throw new JobError('draft_unavailable');
       }
-      // The job as Postgres holds it after the field step, read with the caller's access again: a change
-      // committed meanwhile (an archive, a move) is the answer, not the row this request wrote.
-      const detail = await withCompany(db, caller.companyId, async (tx) => {
-          // The caller still a member of an active company, in the same snapshot as the job read.
+      // The job as Postgres holds it after the field step, read with the caller's access again (the caller
+      // still a member of an active company, in the same snapshot): a change committed meanwhile (an archive,
+      // a move) is the answer, not the row this request wrote. The locator follows that read, never the row.
+      const detail = await withCompany(
+        db,
+        caller.companyId,
+        async (tx) => {
           await stillMember(tx, caller);
           return detailOf(tx, await jobAccess(tx, caller, made.job.id, READ));
         },
         { snapshot: true },
       );
+      // The locator write is a field step too: the caller is checked again after it, written or not.
+      await afterFieldStep(db, caller, async () => {
+        try {
+          await drafts.projectJob(caller.companyId, made.job.id, { currentDraftId: detail.job.currentDraftId, revision: detail.job.revision });
+        } catch (error) {
+          console.error('job draft unavailable', error instanceof Error ? error.name : 'unknown');
+          throw new JobError('draft_unavailable');
+        }
+      });
       return { created: made.created, detail };
     },
 

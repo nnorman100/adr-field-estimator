@@ -856,9 +856,9 @@ describe('moving the field work (owner decision J5)', () => {
     expect(h.field.stateWrites.slice(writes)).toEqual([{ at: `${h.seed.a}/${ids.draftId}`, state: 'editing' }]);
   });
 
-  // Slice 5 review R1/R2: New job and Back to editing answer only a caller still a member after their field
-  // step, and with the job as Postgres holds it then: an archive committed while the sync waited is 410.
-  it('answers New job and Back to editing after their field step as Postgres holds the job then, and only to a member', async () => {
+  // Slice 5 review R1: New job and Back to editing answer only a caller still a member after their field step.
+  // (An archive committed while their sync waited, answered 410, is in archive-api.test.ts's overlap cases.)
+  it('answers New job and Back to editing after their field step only to a caller still a member', async () => {
     const ids = { id: randomUUID(), draftId: randomUUID() };
     const making = await heldSync(() => create(ESTIMATOR_A, { ...ids, propertyAddress: '9 Waiting Way' }));
     await h.admin`UPDATE memberships SET status = 'disabled' WHERE id = ${h.seed.estimatorA.membership}`;
@@ -866,20 +866,13 @@ describe('moving the field work (owner decision J5)', () => {
     expect(await making.running).toEqual({ status: 403, body: { error: 'not_allowed' } });
     await h.admin`UPDATE memberships SET status = 'active' WHERE id = ${h.seed.estimatorA.membership}`;
 
-    const again = { id: randomUUID(), draftId: randomUUID() };
-    const archivedMeanwhile = await heldSync(() => create(ESTIMATOR_A, { ...again, propertyAddress: '10 Waiting Way' }));
-    expect((await archive(OWNER_A, again.id, { revision: 1, changeId: randomUUID() })).status).toBe(200);
-    archivedMeanwhile.open();
-    expect(await archivedMeanwhile.running).toEqual({ status: 410, body: { error: 'archived' } });
-
     const { id, draftId } = await claimedJob();
     h.field.put(h.seed.a, draftId, MANIFEST);
     expect((await submitDraft(ESTIMATOR_A, id, { id: randomUUID(), draftId, digest: await manifestDigest(MANIFEST) })).status).toBe(201);
     const editing = await heldSync(() => nextDraft(ESTIMATOR_A, id, { draftId: randomUUID(), fromDraftId: draftId }));
-    const { revision } = (await read(OWNER_A, id)).body.job as { revision: number };
-    expect((await archive(OWNER_A, id, { revision, changeId: randomUUID() })).status).toBe(200);
+    await h.admin`UPDATE memberships SET status = 'disabled' WHERE id = ${h.seed.estimatorA.membership}`;
     editing.open();
-    expect(await editing.running).toEqual({ status: 410, body: { error: 'archived' } });
+    expect(await editing.running).toEqual({ status: 403, body: { error: 'not_allowed' } });
   });
 
   // Slice 5 review round 2, R1: a member disabled while New job's or Back to editing's locator is written
@@ -902,6 +895,45 @@ describe('moving the field work (owner decision J5)', () => {
     expect((await submitDraft(ESTIMATOR_A, id, { id: randomUUID(), draftId, digest: await manifestDigest(MANIFEST) })).status).toBe(201);
     disableOnProjection(h.field);
     expect(await nextDraft(ESTIMATOR_A, id, { draftId: randomUUID(), fromDraftId: draftId })).toEqual({ status: 403, body: { error: 'not_allowed' } });
+  });
+
+  // Slice 5 review round 3, R2: a placeholder a newer previous-version revision holds is no draft: 503.
+  it('answers New job’s retry 503 while a newer previous-version placeholder holds its draft id', async () => {
+    const ids = { id: randomUUID(), draftId: randomUUID() };
+    h.drafts.failNext = { on: true, afterWrite: false };
+    h.field.failNext.sync = 2;
+    expect((await create(ESTIMATOR_A, { ...ids, propertyAddress: '12 Held Back Road' })).status).toBe(503);
+    expect(await h.field.archiveDraft(h.seed.a, ids.id, ids.draftId, 50)).toBe('set');
+    expect(await create(ESTIMATOR_A, { ...ids, propertyAddress: '12 Held Back Road' })).toEqual({ status: 503, body: { error: 'draft_unavailable' } });
+    expect(h.field.draft(h.seed.a, ids.draftId)).toMatchObject({ placeholder: true, state: 'archived' });
+  });
+
+  // Slice 5 review round 3, R3: the locator follows the job as read after the field step: a Back to editing
+  // that committed while New job's retry waited (its own field step failed, no locator) is its draft.
+  it('projects the job’s locator from the job as read after the field step', async () => {
+    const ids = { id: randomUUID(), draftId: randomUUID() };
+    expect((await create(ESTIMATOR_A, { ...ids, propertyAddress: '13 Moving On Road' })).status).toBe(201);
+    h.field.put(h.seed.a, ids.draftId, MANIFEST);
+    expect((await submitDraft(ESTIMATOR_A, ids.id, { id: randomUUID(), draftId: ids.draftId, digest: await manifestDigest(MANIFEST) })).status).toBe(201);
+    const retry = await heldSync(() => create(ESTIMATOR_A, { ...ids, propertyAddress: '13 Moving On Road' }));
+    const next = randomUUID();
+    h.field.failNext.sync = 2;
+    expect((await nextDraft(ESTIMATOR_A, ids.id, { draftId: next, fromDraftId: ids.draftId })).status).toBe(503);
+    retry.open();
+    const answer = await retry.running;
+    expect(answer).toMatchObject({ status: 200, body: { job: { currentDraftId: next } } });
+    expect(h.drafts.projected.get(`${h.seed.a}/${ids.id}`)).toEqual({ currentDraftId: next, revision: (answer.body as { job: { revision: number } }).job.revision });
+  });
+
+  // Slice 5 review round 3, R4: the access check answers before the failed locator write's 503.
+  it('answers 403, not the locator’s 503, when the member is disabled and the locator write fails', async () => {
+    const project = h.drafts.projectJob;
+    h.drafts.projectJob = async () => {
+      h.drafts.projectJob = project;
+      await h.admin`UPDATE memberships SET status = 'disabled' WHERE id = ${h.seed.estimatorA.membership}`;
+      throw new Error('field database unreachable');
+    };
+    expect(await create(ESTIMATOR_A, { id: randomUUID(), draftId: randomUUID(), propertyAddress: '14 Failing Road' })).toEqual({ status: 403, body: { error: 'not_allowed' } });
   });
 
   it('refuses the company owner field work they do not own, until they move it to themself', async () => {

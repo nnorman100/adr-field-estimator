@@ -10,6 +10,7 @@ import { claimDraft, hasAny, holdDraft, jobAccess, JobError, type JobCaller, typ
 import { jobPriceTable, namesPriceIds, priceIdsKnown, PricesUnreadable } from '@/lib/scope-lists/version';
 import { readJobDetails } from './details';
 import { SubmissionError, type SubmissionErrorCode } from './errors';
+import { noDraft } from '@/lib/jobs/drafts';
 import { afterFieldStep, stillMember, syncJobDrafts } from '@/lib/jobs/sync-job';
 import type { DraftSync } from '@/lib/jobs/draft-sync';
 import type { FenceStore } from './fence';
@@ -179,7 +180,7 @@ export async function writeMarker(db: Database, store: SubmitStore, companyId: s
           tx.select({ currentDraftId: jobs.currentDraftId }).from(jobs).where(and(eq(jobs.companyId, companyId), eq(jobs.id, row.jobId))),
         );
         const found = job ? await store.findDraft(companyId, job.currentDraftId) : null;
-        if (job && (!found || found.placeholder)) {
+        if (job && noDraft(found)) {
           console.error('submission marker refused', 'draft_missing');
           return;
         }
@@ -393,7 +394,7 @@ export function submissionsService(db: Database, store: SubmitStore, options: Su
     // A missing draft (or a placeholder left where one was) holds no field work to submit: never made
     // here for a fence.
     const found = await field(() => store.findDraft(caller.companyId, row.draftId));
-    if (!found || found.placeholder) return 'draft_missing';
+    if (noDraft(found)) return 'draft_missing';
     let synced: Awaited<ReturnType<typeof syncJobDrafts>>;
     try {
       synced = await syncJobDrafts(db, store, store, caller.companyId, row.jobId);
@@ -403,7 +404,7 @@ export function submissionsService(db: Database, store: SubmitStore, options: Su
       // photos left under its id are a conflict): draft_missing, as if the lookup had found it gone;
       // otherwise the draft's conflict, or the field database unavailable.
       const again = await field(() => store.findDraft(caller.companyId, row.draftId));
-      if (!again || again.placeholder) return 'draft_missing';
+      if (noDraft(again)) return 'draft_missing';
       throw new SubmissionError(error.code === 'conflict' ? 'conflict' : 'submissions_unavailable');
     }
     const { result } = synced;
@@ -525,16 +526,14 @@ export function submissionsService(db: Database, store: SubmitStore, options: Su
       // 503 stays Submit's own (submissions_unavailable), as the phone reads it; its answer goes only to a
       // caller still an active member of an active company (afterFieldStep).
       await afterFieldStep(db, caller, () =>
-        syncJobDrafts(db, store, store, caller.companyId, jobId).catch((error: unknown) => {
+        syncJobDrafts(db, store, store, caller.companyId, jobId, { requireDraft: true }).catch((error: unknown) => {
           if (error instanceof JobError && error.code === 'draft_unavailable') throw new SubmissionError('submissions_unavailable');
           throw error;
         }),
       );
-      await field(() => store.projectJob(caller.companyId, jobId, {
-        currentDraftId: made.job.currentDraftId, revision: made.job.revision,
-      }));
       // The job as Postgres holds it after the field step, read with the caller's access again: a change
-      // committed meanwhile (an archive) is the answer, not the row this request wrote.
+      // committed meanwhile (an archive) is the answer, not the row this request wrote. The locator follows
+      // that read.
       const job = await withCompany(
         db,
         caller.companyId,
@@ -545,6 +544,8 @@ export function submissionsService(db: Database, store: SubmitStore, options: Su
         },
         { snapshot: true },
       );
+      // The locator write is a field step too: the caller is checked again after it, written or not.
+      await afterFieldStep(db, caller, () => field(() => store.projectJob(caller.companyId, jobId, { currentDraftId: job.currentDraftId, revision: job.revision })));
       return { created: made.changed, job: jobState(job) };
     },
   };

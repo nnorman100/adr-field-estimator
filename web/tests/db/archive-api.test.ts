@@ -359,18 +359,10 @@ describe('copy', () => {
 
   // Security audit F1: the claim commits before the stamp, so a lost answer from the stamp never leaves
   // a copy draft the previous version made stamped without its claim.
-  // Slice 5 review R1/R2: a copy answers only a caller still a member after its field step, and with the
-  // copy as Postgres holds it then: an archive committed while the sync waited is 410.
-  it('answers a copy after its field step as Postgres holds the copy then, and only to a member', async () => {
+  // Slice 5 review R1: a copy answers only a caller still a member after its field step. (An archive committed
+  // while its sync waited, answered 410, is among the overlap cases below.)
+  it('answers a copy after its field step only to a caller still a member', async () => {
     const { jobId: source } = await signedJob();
-    const ids = { id: randomUUID(), draftId: randomUUID() };
-    const held = holdEither(['sync']);
-    const copying = copy(ESTIMATOR_A, source, ids);
-    await held.arrived;
-    expect((await archive(OWNER_A, ids.id, change(1))).status).toBe(200);
-    held.open();
-    expect(await copying).toEqual({ status: 410, body: { error: 'archived' } });
-
     const other = { id: randomUUID(), draftId: randomUUID() };
     const waiting = holdEither(['sync']);
     const copyingAgain = copy(ESTIMATOR_A, source, other);

@@ -254,18 +254,22 @@ export function archiveService(db: Database, store: ArchiveStore, sync: DraftSyn
       // Postgres holds when the sync reads it. A draft another job holds under the id is 409; a placeholder
       // an older version left is replaced; nothing is written for one. Its answer only to a caller still an
       // active member of an active company (afterFieldStep).
-      await afterFieldStep(db, caller, () => syncJobDrafts(db, sync, store, caller.companyId, input.id));
-      await field(() =>
-        store.projectJob(caller.companyId, made.job.id, { currentDraftId: made.job.currentDraftId, revision: made.job.revision }),
-      );
-      // The copy as Postgres holds it after the field step, read with the caller's access again: a change
-      // committed meanwhile (an archive, a move) is the answer, not the row this request wrote.
-      const detail = await withCompany(db, caller.companyId, async (tx) => {
-          // The caller still a member of an active company, in the same snapshot as the job read.
+      await afterFieldStep(db, caller, () => syncJobDrafts(db, sync, store, caller.companyId, input.id, { requireDraft: true }));
+      // The copy as Postgres holds it after the field step, read with the caller's access again (the caller
+      // still a member of an active company, in the same snapshot): a change committed meanwhile (an archive,
+      // a move) is the answer, not the row this request wrote. The locator follows that read.
+      const detail = await withCompany(
+        db,
+        caller.companyId,
+        async (tx) => {
           await stillMember(tx, caller);
           return detailOf(tx, await jobAccess(tx, caller, input.id, READ));
         },
         { snapshot: true },
+      );
+      // The locator write is a field step too: the caller is checked again after it, written or not.
+      await afterFieldStep(db, caller, () =>
+        field(() => store.projectJob(caller.companyId, made.job.id, { currentDraftId: detail.job.currentDraftId, revision: detail.job.revision })),
       );
       return { created: made.created, detail };
     },
