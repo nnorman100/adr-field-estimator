@@ -97,11 +97,9 @@ Each is flagged for the owner or a later fix; no code was changed.
 8. Estimators and office hold `prices_read` while the company's prices are on, but no screen links
    to Prices for them: the only link is on Company settings, which only the owner opens. They must
    type `/sign-in/{address}/prices`. See [prices.md](prices.md) and [sign-in.md](sign-in.md).
-9. After "Back to editing" answers 503 once the new draft ID is committed and the new draft is
-   missing, the field owner, an estimator or the company owner, gets the Start field work recovery on
-   Check Scope and Photos; the retry of "Back to editing" works only on the Finish screen that sent
-   the request (after a reload, Finish shows "We could not open this job" with no button). For a job whose first draft was never made (New job, Copy or Save as new draft
-   after a 503), an estimator named as field owner gets the Start field work prompt but Start
-   answers 503 again, a company owner named as field owner gets no prompt, and the repair is to send
-   the original action again with its original IDs. See
+9. After a field step answers 503 once its Postgres change is committed (Back to editing, New job,
+   Copy, Save as new draft, Start field work, a move), the field owner (an estimator or the company owner)
+   needs no repair of their own: opening the job reads it, and the read gets the field work ready from
+   Postgres; Check Scope and Photos show "Getting this job's field work ready…" meanwhile. The retry of
+   "Back to editing" still works on the Finish screen that sent the request. See
    [check-scope.md](check-scope.md) and [finish.md](finish.md).

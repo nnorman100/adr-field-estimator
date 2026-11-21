@@ -36,7 +36,7 @@ const claimView = z.object({
   adjusterPhone: z.string(),
   deductible: z.string(),
 });
-const jobDetail = z.object({ job: jobView, customer: customerView, claim: claimView, draftMissing: z.literal(true).optional() });
+const jobDetail = z.object({ job: jobView, customer: customerView, claim: claimView });
 const listItem = jobView
   .pick({ id: true, status: true, propertyAddress: true, revision: true, createdAt: true, updatedAt: true })
   .extend({ customerName: z.string(), mine: z.boolean() });

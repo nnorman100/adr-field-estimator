@@ -58,7 +58,6 @@ type Body = {
   job: { id: string; status: string; currentDraftId: string; fieldOwnerActorId: string | null; propertyAddress: string; revision: number };
   customer: { name: string; phone: string; email: string };
   claim: { dateOfLoss: string | null };
-  draftMissing?: true;
   jobs: { id: string; mine: boolean; customerName: string; propertyAddress: string; revision: number }[];
   nextCursor: string | null;
   error: string;
@@ -510,13 +509,14 @@ describe('listing and reading', () => {
     expect((await read(OFFICE_A, mine.id)).status).toBe(200);
   });
 
-  it('does not say draftMissing for a new job’s first draft, which Start field work has no record to make', async () => {
+  // The draft life-cycle redesign, slice 6: the field owner's read gets a lost first draft ready again.
+  it('makes a new job’s lost first draft again, empty, at its field owner’s read', async () => {
     const started = await seedJob(OWNER_A);
-    expect((await read(OWNER_A, started.id)).body.draftMissing).toBeUndefined();
+    expect((await read(OWNER_A, started.id)).body).not.toHaveProperty('draftMissing');
     h.drafts.remove(`${h.seed.a}/${started.draftId}`);
     const lost = await read(OWNER_A, started.id);
     expect(lost.status).toBe(200);
-    expect(lost.body.draftMissing).toBeUndefined();
+    expect(h.field.draft(h.seed.a, started.draftId)).toMatchObject({ jobId: started.id, state: 'editing', field: {} });
     expect(lost.body.job.currentDraftId).toBe(started.draftId);
   });
 

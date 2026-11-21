@@ -270,18 +270,19 @@ test('the phone that held the field work keeps what was typed when its estimator
   expect(row?.name ?? '').not.toBe('Robin Typed');
 });
 
-test('an estimator whose field work the draft does not name yet starts it again, and customer changes typed before keep when the job is refused', async ({ page, request }) => {
+test('an estimator whose field work the draft does not name yet has it got ready as the job opens, and customer changes typed before keep when the job is refused', async ({ page, request }) => {
   test.setTimeout(120_000);
   const company = await seedCompany('keep-no-draft', { owner: 'owner', office: 'office', first: 'estimator', second: 'estimator' });
   const { jobId, assignments, actorOf, headers } = await seedJob(request, company, company.people.office!, '84 Unread Court', [company.people.first!, company.people.second!]);
-  // The first estimator owns the field work in the database, but the draft does not name them yet
-  // (the first capture's draft step did not get through), so this phone cannot read the draft.
+  // The first estimator owns the field work in the database, but the draft does not name them yet (the
+  // first capture's draft step did not get through): the job read gets it ready (the draft life-cycle
+  // redesign, slice 6), with no Start field work again.
   await adminSql()`UPDATE jobs SET field_owner_actor_id = ${actorOf(company.people.first!)}::uuid, revision = revision + 1 WHERE id = ${jobId}::uuid`;
 
   await signIn(page, company, company.people.first!);
   await openJob(page, '84 Unread Court');
-  await expect(page.getByText('This job’s field work is yours, but this phone cannot open it yet.', { exact: false })).toBeVisible();
-  await expect(page.getByLabel('Year built')).toHaveCount(0);
+  await expect(page.getByLabel('Year built')).toBeEditable();
+  await expect(page.getByRole('button', { name: 'Start field work' })).toHaveCount(0);
   await main(page).getByRole('link', { name: 'Customer and claim' }).click();
   await page.getByLabel('Customer name').fill('Jordan Typed');
   await page.getByLabel('Insurance carrier').fill('Typed Mutual');
@@ -296,7 +297,7 @@ test('an estimator whose field work the draft does not name yet starts it again,
   await expect(page.getByLabel('Insurance carrier')).not.toBeEditable();
 });
 
-test('an estimator whose draft does not name them starts the field work again and edits it', async ({ page, request }) => {
+test('an estimator whose draft does not name them has the field work got ready as the job opens and edits it', async ({ page, request }) => {
   test.setTimeout(120_000);
   const company = await seedCompany('owner-unset', { office: 'office', first: 'estimator' });
   const { jobId, actorOf } = await seedJob(request, company, company.people.office!, '45 Retry Lane', [company.people.first!]);
@@ -304,13 +305,15 @@ test('an estimator whose draft does not name them starts the field work again an
 
   await signIn(page, company, company.people.first!);
   await openJob(page, '45 Retry Lane');
-  await expect(page.getByText('This job’s field work is yours, but this phone cannot open it yet.', { exact: false })).toBeVisible();
-  await page.getByRole('button', { name: 'Start field work' }).click();
+  // No prompt: the job read gets the field work ready (slice 6).
   await expect(page.getByLabel('Year built')).toBeEditable();
   await expect(page.getByRole('button', { name: 'Start field work' })).toHaveCount(0);
+  await page.getByLabel('Year built').fill('1961');
+  await page.getByRole('button', { name: 'Save scope' }).click();
+  await expect(page.getByRole('form', { name: 'Job scope' }).getByRole('status')).toHaveText('Scope saved.');
 });
 
-test('the company owner whose field work has lost its current draft starts the field work again and edits it', async ({ page, request }) => {
+test('the company owner whose field work has lost its current draft has it made again as the job opens and edits it', async ({ page, request }) => {
   test.setTimeout(120_000);
   const company = await seedCompany('owner-no-draft', { owner: 'owner' });
   const { jobId } = await seedJob(request, company, company.people.owner!, '61 Lost Draft Way', []);
@@ -321,10 +324,34 @@ test('the company owner whose field work has lost its current draft starts the f
 
   await signIn(page, company, company.people.owner!);
   await openJob(page, '61 Lost Draft Way');
-  await expect(page.getByText('This job’s field work is yours, but this phone cannot open it yet.', { exact: false })).toBeVisible();
-  await page.getByRole('button', { name: 'Start field work' }).click();
+  // No prompt: the job read makes the draft again from its record (slice 6).
   await expect(page.getByLabel('Year built')).toBeEditable();
   await expect(page.getByRole('button', { name: 'Start field work' })).toHaveCount(0);
+});
+
+// The draft life-cycle redesign, slice 6: a job whose field work is this person's but whose draft the phone
+// cannot read yet shows "Getting this job's field work ready…" and reads the job again, which gets it ready.
+test('the field owner sees the field work being got ready, then edits it, with no Start field work', async ({ page, request }) => {
+  test.setTimeout(120_000);
+  const company = await seedCompany('preparing', { owner: 'owner' });
+  const { jobId } = await seedJob(request, company, company.people.owner!, '17 Ready Soon Road', []);
+  // The first job read answers, then the draft is lost before the phone reads it: the phone sees no draft.
+  let first = true;
+  await page.route(`**/api/jobs/${jobId}`, async (route) => {
+    if (!first || route.request().method() !== 'GET') return route.continue();
+    first = false;
+    const answer = await route.fetch();
+    await adminDb().recursiveDelete(adminDb().doc(`companies/${company.id}/drafts/${await currentDraftOf(company.id, jobId)}`));
+    return route.fulfill({ response: answer });
+  });
+  await signIn(page, company, company.people.owner!);
+  await openJob(page, '17 Ready Soon Road');
+  await expect(page.getByRole('status').filter({ hasText: 'Getting this job’s field work ready' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Start field work' })).toHaveCount(0);
+  await expectNoAxeViolations(page);
+  // The next read (a second later, by itself) makes the draft again.
+  await expect(page.getByLabel('Year built')).toBeEditable();
+  await expect(page.getByRole('status').filter({ hasText: 'Getting this job’s field work ready' })).toHaveCount(0);
 });
 
 test('the company owner keeps an unsaved room change on screen after moving the field work, whatever happens to the room', async ({ page, request }) => {

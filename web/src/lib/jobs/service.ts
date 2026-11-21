@@ -1,10 +1,10 @@
 import { and, asc, desc, eq, ne, or, sql, type SQL } from 'drizzle-orm';
-import { auditEvents, jobAssignments, jobClaims, jobCustomers, jobs, jobSubmissions } from '@/db/schema';
+import { auditEvents, jobAssignments, jobClaims, jobCustomers, jobs } from '@/db/schema';
 import { holdAcrossOutsideCall, withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Capability } from '@/lib/access';
 import { canSeeJob, claimDraft, hasAny, holdDraft, isOwnJob, jobAccess, JobError, ownsFieldWork, seesEveryJob, type JobCaller, type JobRow } from './access';
 import type { DraftSync } from './draft-sync';
-import type { DraftFound, DraftLookup, DraftStore } from './drafts';
+import { noDraft, type DraftFound, type DraftLookup, type DraftStore } from './drafts';
 import { afterFieldStep, stillMember, syncJobDrafts } from './sync-job';
 import { IdentityRefusal } from '@/lib/auth';
 import { isQueueTimeout } from '@/db/client';
@@ -51,9 +51,7 @@ export type ClaimView = {
   deductible: string;
 };
 
-// `draftMissing` is set by the job read alone, when the field database holds no draft under the job's
-// current draft id (Back to editing committed the id but its field step failed): Start field work makes it.
-export type JobDetail = { job: JobView; customer: CustomerView; claim: ClaimView; draftMissing?: true };
+export type JobDetail = { job: JobView; customer: CustomerView; claim: ClaimView };
 
 export type JobListItem = Pick<JobView, 'id' | 'status' | 'propertyAddress' | 'revision' | 'createdAt' | 'updatedAt'> & {
   customerName: string;
@@ -259,27 +257,6 @@ export async function findDraft(drafts: DraftLookup, companyId: string, draftId:
   }
 }
 
-// The record a missing current draft is made from: the job's latest committed submission, while the
-// job is being edited (`draft`) on this draft. Back to editing put the job on this draft from that
-// record and claimed it in the same commit; nothing is submitted since, or the job would not be
-// `draft`. Null when the draft is not one Back to editing made (a new job's first draft): Start field
-// work answers 503 then, and the job read does not offer it.
-export async function rebuildableRecord(tx: CompanyTransaction, companyId: string, jobId: string, draftId: string) {
-  const [row] = await tx
-    .select({ status: jobs.status, currentDraftId: jobs.currentDraftId })
-    .from(jobs)
-    .where(and(eq(jobs.companyId, companyId), eq(jobs.id, jobId)));
-  if (row?.status !== 'draft' || row.currentDraftId !== draftId) return null;
-  const [latest] = await tx
-    .select({ id: jobSubmissions.id, draftId: jobSubmissions.draftId, snapshotBytes: jobSubmissions.snapshotBytes })
-    .from(jobSubmissions)
-    .where(and(eq(jobSubmissions.companyId, companyId), eq(jobSubmissions.jobId, jobId), eq(jobSubmissions.status, 'committed')))
-    .orderBy(desc(jobSubmissions.createdAt))
-    .limit(1);
-  if (!latest?.snapshotBytes || latest.draftId === draftId) return null;
-  return { snapshotBytes: latest.snapshotBytes, previous: { draftId: latest.draftId, submissionId: latest.id } };
-}
-
 export function jobsService(db: Database, drafts: DraftStore, sync: DraftSync): JobsService {
   async function inCompany<T>(companyId: string, run: (tx: CompanyTransaction) => Promise<T>, options: { snapshot?: boolean } = {}): Promise<T> {
     try {
@@ -290,17 +267,21 @@ export function jobsService(db: Database, drafts: DraftStore, sync: DraftSync): 
     }
   }
 
-  // Whether Start field work can make this job's current draft: the caller owns the field work (no other
-  // caller learns whether a draft exists), the field database holds none, and a committed record is there
-  // to make it from. A lookup that does not get through says nothing; it never fails the read.
-  async function draftMissing(caller: JobCaller, detail: JobDetail): Promise<boolean> {
-    if (detail.job.status !== 'draft' || !ownsFieldWork(caller, detail.job)) return false;
+  // The field owner's open prepares the job's drafts (the draft life-cycle redesign, slice 6): when they fell
+  // behind Postgres (a field step that did not get through) or the current draft is missing or only a
+  // placeholder, the read syncs the job, so the phone opens what Postgres says with no Start field work
+  // again. Best effort: the read never fails for it (the field screens read the draft and, while it is not
+  // there yet, read the job again); true when it synced, so the answer is read again.
+  async function prepare(caller: JobCaller, row: JobRow): Promise<boolean> {
+    if (row.status === 'archived' || !ownsFieldWork(caller, row)) return false;
     try {
-      if (await drafts.findDraft(caller.companyId, detail.job.currentDraftId)) return false;
-      const record = await inCompany(caller.companyId, (tx) => rebuildableRecord(tx, caller.companyId, detail.job.id, detail.job.currentDraftId));
-      return record !== null;
+      const behind = row.fieldSyncedRevision < row.fieldRevision;
+      if (!behind && !noDraft(await drafts.findDraft(caller.companyId, row.currentDraftId))) return false;
+      await syncJobDrafts(db, sync, drafts, caller.companyId, row.id);
+      return true;
     } catch (error) {
-      console.error('job draft unavailable', error instanceof Error ? error.name : 'unknown');
+      if (isQueueTimeout(error)) throw error;
+      console.error('job draft prepare unavailable', error instanceof Error ? error.name : 'unknown');
       return false;
     }
   }
@@ -423,7 +404,24 @@ export function jobsService(db: Database, drafts: DraftStore, sync: DraftSync): 
 
     async read(caller, jobId) {
       need(caller, READ);
-      const detail = await inCompany(caller.companyId, async (tx) => detailOf(tx, await jobAccess(tx, caller, jobId, READ)));
+      const read = (tx: CompanyTransaction) => jobAccess(tx, caller, jobId, READ);
+      const first = await inCompany(caller.companyId, async (tx) => {
+        const found = await read(tx);
+        return { row: found, detail: await detailOf(tx, found) };
+      });
+      let detail = first.detail;
+      // After a prepare, the job as Postgres holds it then, the caller still a member of an active company.
+      if (await prepare(caller, first.row)) {
+        detail = await withCompany(
+          db,
+          caller.companyId,
+          async (tx) => {
+            await stillMember(tx, caller);
+            return detailOf(tx, await read(tx));
+          },
+          { snapshot: true },
+        );
+      }
       // Lazy population repairs existing jobs on an authorized online open; no bulk backfill.
       try {
         await drafts.projectJob(caller.companyId, jobId, {
@@ -433,7 +431,7 @@ export function jobsService(db: Database, drafts: DraftStore, sync: DraftSync): 
         console.error('job projection unavailable', error instanceof Error ? error.name : 'unknown');
         throw new JobError('draft_unavailable');
       }
-      return (await draftMissing(caller, detail)) ? { ...detail, draftMissing: true } : detail;
+      return detail;
     },
 
     async saveCustomer(caller, jobId, input) {

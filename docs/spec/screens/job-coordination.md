@@ -52,7 +52,7 @@ from here (no Unassign button for them).
 | Save the office notes | `PUT /api/jobs/{id}/coordination` | `coordination` |
 | Assign an estimator | `POST /api/jobs/{id}/assignments` | `assignment` |
 | Unassign an estimator | `DELETE /api/jobs/{id}/assignments/{assignmentId}` | `assignment` |
-| Move field work (a 503 after the move is saved is finished by sending it again, or by the new owner's Start field work recovery, including the owner's move to themself; Start does not make a first draft that was never made) | `POST /api/jobs/{id}/field-owner/transfer` | `field_owner_transfer` |
+| Move field work (a 503 after the move is saved is finished by sending it again, by the draft sync's repair pass, or when the new owner opens the job, whose read gets the field work ready) | `POST /api/jobs/{id}/field-owner/transfer` | `field_owner_transfer` |
 
 Rules: `docs/access/jobs.md` ("Office jobs routes"), owner decision J5 (`docs/plans/S5.md`).
 

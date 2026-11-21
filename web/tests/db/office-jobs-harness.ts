@@ -42,7 +42,6 @@ type Person = { actorId: string; displayName: string | null; email: string };
 type Body = {
   job: { id: string; status: string; currentDraftId: string; fieldOwnerActorId: string | null; revision: number };
   customer: { name: string };
-  draftMissing?: true;
   jobs: { id: string; mine: boolean }[];
   jobId: string;
   revision: number;
